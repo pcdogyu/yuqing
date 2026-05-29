@@ -38,6 +38,7 @@ type pageData struct {
 	Notices       []model.SystemNotice
 	TaskRuns      []model.TaskRun
 	Error         string
+	Message       string
 	FilterKeyword string
 	FilterProject string
 	FilterSource  string
@@ -121,8 +122,12 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request, user any) {
 	if r.Method == http.MethodPost {
-		_, _ = s.client.R().Post(s.cfg.AnalysisURL + "/api/v1/admin/tasks/analysis/refresh")
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		resp, err := s.client.R().Post(s.cfg.AnalysisURL + "/api/v1/admin/tasks/analysis/refresh")
+		message := "分析刷新已提交"
+		if err != nil || !resp.IsSuccess() {
+			message = "分析刷新失败"
+		}
+		http.Redirect(w, r, "/?msg="+message, http.StatusSeeOther)
 		return
 	}
 	dashboard := model.DashboardSnapshot{}
@@ -131,7 +136,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request, user an
 	_ = s.getJSON(s.cfg.AnalysisURL+"/api/v1/analysis/overview", &dashboard)
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/system/notices", &notices)
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/system/task-runs?limit=10", &taskRuns)
-	_ = s.render(w, "dashboard", pageData{Title: "总览", User: user, Dashboard: dashboard, Notices: notices, TaskRuns: taskRuns})
+	_ = s.render(w, "dashboard", pageData{Title: "总览", User: user, Dashboard: dashboard, Notices: notices, TaskRuns: taskRuns, Message: r.URL.Query().Get("msg")})
 }
 
 func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request, user any) {
@@ -237,9 +242,9 @@ func (s *Server) handleArticles(w http.ResponseWriter, r *http.Request, user any
 				_, _ = s.client.R().SetQueryParam("user_id", strconv.FormatInt(userID, 10)).Post(s.cfg.ContentURL + "/api/v1/articles/" + itemID + "/read")
 			}
 		}
-		redirectURL := "/articles?keyword=" + r.URL.Query().Get("keyword")
-		if mode := r.URL.Query().Get("mode"); mode != "" {
-			redirectURL += "&mode=" + mode
+		redirectURL := r.Referer()
+		if strings.TrimSpace(redirectURL) == "" {
+			redirectURL = "/articles"
 		}
 		http.Redirect(w, r, redirectURL, http.StatusSeeOther)
 		return
@@ -338,11 +343,16 @@ func (s *Server) handleReports(w http.ResponseWriter, r *http.Request, user any)
 		http.Redirect(w, r, "/reports", http.StatusSeeOther)
 		return
 	}
+	projectID := strings.TrimSpace(r.URL.Query().Get("project_id"))
 	reports := []model.Report{}
 	projects := []model.Project{}
-	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/reports", &reports)
+	reportURL := s.cfg.ContentURL + "/api/v1/reports"
+	if projectID != "" {
+		reportURL += "?project_id=" + projectID
+	}
+	_ = s.getJSON(reportURL, &reports)
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/projects", &projects)
-	_ = s.render(w, "reports", pageData{Title: "报告中心", User: user, Reports: reports, Projects: projects})
+	_ = s.render(w, "reports", pageData{Title: "报告中心", User: user, Reports: reports, Projects: projects, FilterProject: projectID})
 }
 
 func (s *Server) handleReportDetail(w http.ResponseWriter, r *http.Request, user any) {
@@ -359,12 +369,18 @@ func (s *Server) handleReportDetail(w http.ResponseWriter, r *http.Request, user
 func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) {
 	if r.Method == http.MethodPost {
 		_ = r.ParseForm()
+		message := "操作已提交"
 		switch r.FormValue("form_type") {
 		case "feedback":
-			_, _ = s.client.R().SetBody(map[string]any{
+			resp, err := s.client.R().SetBody(map[string]any{
 				"title":   r.FormValue("title"),
 				"content": r.FormValue("content"),
 			}).Post(s.cfg.ContentURL + "/api/v1/system/feedback")
+			if err != nil || !resp.IsSuccess() {
+				message = "反馈提交失败"
+			} else {
+				message = "反馈已提交"
+			}
 		case "crawl":
 			params := map[string]string{}
 			if sourceType := strings.TrimSpace(r.FormValue("source_type")); sourceType != "" {
@@ -374,18 +390,28 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) 
 			for key, value := range params {
 				req.SetQueryParam(key, value)
 			}
-			_, _ = req.Post(s.cfg.CrawlerURL + "/api/v1/admin/tasks/crawl")
+			resp, err := req.Post(s.cfg.CrawlerURL + "/api/v1/admin/tasks/crawl")
+			if err != nil || !resp.IsSuccess() {
+				message = "抓取任务提交失败"
+			} else {
+				message = "抓取任务已提交"
+			}
 		case "analysis":
-			_, _ = s.client.R().Post(s.cfg.AnalysisURL + "/api/v1/admin/tasks/analysis/refresh")
+			resp, err := s.client.R().Post(s.cfg.AnalysisURL + "/api/v1/admin/tasks/analysis/refresh")
+			if err != nil || !resp.IsSuccess() {
+				message = "分析刷新失败"
+			} else {
+				message = "分析刷新已提交"
+			}
 		}
-		http.Redirect(w, r, "/system", http.StatusSeeOther)
+		http.Redirect(w, r, "/system?msg="+message, http.StatusSeeOther)
 		return
 	}
 	notices := []model.SystemNotice{}
 	taskRuns := []model.TaskRun{}
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/system/notices", &notices)
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/system/task-runs?limit=20", &taskRuns)
-	_ = s.render(w, "system", pageData{Title: "系统设置", User: user, Notices: notices, TaskRuns: taskRuns})
+	_ = s.render(w, "system", pageData{Title: "系统设置", User: user, Notices: notices, TaskRuns: taskRuns, Message: r.URL.Query().Get("msg")})
 }
 
 func (s *Server) requireSession(next func(http.ResponseWriter, *http.Request, any)) http.HandlerFunc {
@@ -511,7 +537,7 @@ const loginTemplate = `
 `
 
 const dashboardTemplate = `
-{{define "dashboard"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.metric{padding:16px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.metric strong{display:block;font-size:28px;margin-top:6px}` + `</style></head><body><header><h1>总览</h1>{{template "nav" .}}</header><main><section><h2>核心指标</h2><form method="post"><button type="submit">手动刷新分析</button></form><div class="metric-grid"><div class="metric">文章数<strong>{{.Dashboard.Overview.ArticleCount}}</strong></div><div class="metric">项目数<strong>{{.Dashboard.Overview.ProjectCount}}</strong></div><div class="metric">报告数<strong>{{.Dashboard.Overview.ReportCount}}</strong></div><div class="metric">活跃规则<strong>{{.Dashboard.Overview.AlertRuleCount}}</strong></div></div></section><section><h2>近 7 日趋势</h2><table><tr><th>日期</th><th>文章数</th></tr>{{range .Dashboard.Trends}}<tr><td>{{.Label}}</td><td>{{.Count}}</td></tr>{{end}}</table></section><section><h2>来源分布</h2><table><tr><th>来源</th><th>数量</th></tr>{{range .Dashboard.Sources}}<tr><td>{{.SourceType}}</td><td>{{.Count}}</td></tr>{{end}}</table></section><section><h2>关键词热点</h2><table><tr><th>关键词</th><th>次数</th></tr>{{range .Dashboard.Keywords}}<tr><td>{{.Keyword}}</td><td>{{.Count}}</td></tr>{{end}}</table></section><section><h2>系统公告</h2><table><tr><th>标题</th><th>时间</th></tr>{{range .Notices}}<tr><td>{{.Title}}</td><td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td></tr>{{end}}</table></section><section><h2>最近任务</h2><table><tr><th>任务</th><th>状态</th><th>开始时间</th></tr>{{range .TaskRuns}}<tr><td>{{.TaskName}}</td><td>{{.Status}}</td><td>{{.StartedAt.Format "2006-01-02 15:04"}}</td></tr>{{end}}</table></section></main></body></html>{{end}}
+{{define "dashboard"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.metric{padding:16px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.metric strong{display:block;font-size:28px;margin-top:6px}.toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}` + `</style></head><body><header><h1>总览</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><div class="toolbar"><h2>核心指标</h2><form method="post"><button type="submit">手动刷新分析</button></form></div><div class="metric-grid"><div class="metric">文章数<strong>{{.Dashboard.Overview.ArticleCount}}</strong></div><div class="metric">项目数<strong>{{.Dashboard.Overview.ProjectCount}}</strong></div><div class="metric">报告数<strong>{{.Dashboard.Overview.ReportCount}}</strong></div><div class="metric">活跃规则<strong>{{.Dashboard.Overview.AlertRuleCount}}</strong></div></div></section><section><h2>近 7 日趋势</h2><table><tr><th>日期</th><th>文章数</th></tr>{{range .Dashboard.Trends}}<tr><td>{{.Label}}</td><td>{{.Count}}</td></tr>{{end}}</table></section><section><h2>来源分布</h2><table><tr><th>来源</th><th>数量</th></tr>{{range .Dashboard.Sources}}<tr><td>{{.SourceType}}</td><td>{{.Count}}</td></tr>{{end}}</table></section><section><h2>关键词热点</h2><table><tr><th>关键词</th><th>次数</th></tr>{{range .Dashboard.Keywords}}<tr><td>{{.Keyword}}</td><td>{{.Count}}</td></tr>{{end}}</table></section><section><h2>系统公告</h2><table><tr><th>标题</th><th>时间</th></tr>{{range .Notices}}<tr><td>{{.Title}}</td><td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td></tr>{{end}}</table></section><section><h2>最近任务</h2><table><tr><th>任务</th><th>状态</th><th>开始时间</th></tr>{{range .TaskRuns}}<tr><td>{{.TaskName}}</td><td>{{.Status}}</td><td>{{.StartedAt.Format "2006-01-02 15:04"}}</td></tr>{{end}}</table></section></main></body></html>{{end}}
 `
 
 const projectsTemplate = `
@@ -523,7 +549,7 @@ const rulesTemplate = `
 `
 
 const articlesTemplate = `
-{{define "articles"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.pill{display:inline-block;padding:4px 10px;border-radius:999px;background:#ece7dc}` + `</style></head><body><header><h1>文章中心</h1>{{template "nav" .}}</header><main><section><form class="inline" method="get"><select name="mode"><option value="" {{if eq .SearchMode ""}}selected{{end}}>普通筛选</option><option value="search" {{if eq .SearchMode "search"}}selected{{end}}>全文搜索</option></select><input name="keyword" placeholder="关键词" value="{{.FilterKeyword}}"><select name="project_id"><option value="">全部项目</option>{{range .Projects}}<option value="{{.ID}}" {{if eq (printf "%d" .ID) $.FilterProject}}selected{{end}}>{{.Name}}</option>{{end}}</select><select name="source_type"><option value="">全部来源</option><option value="flash" {{if eq .FilterSource "flash"}}selected{{end}}>flash</option><option value="headline" {{if eq .FilterSource "headline"}}selected{{end}}>headline</option></select><input type="date" name="start" value="{{.FilterStart}}"><input type="date" name="end" value="{{.FilterEnd}}"><button type="submit">筛选</button></form></section><section><h2>列表</h2><table><tr><th>标题</th><th>来源</th><th>状态</th><th>时间</th><th>操作</th></tr>{{range .Articles.Items}}<tr><td><a class="inline" href="/articles/{{.ID}}">{{.Title}}</a></td><td>{{.SourceType}}</td><td>{{if .Read}}<span class="pill">已读</span>{{else}}<span class="pill">未读</span>{{end}} {{if .Favorited}}<span class="pill">已收藏</span>{{end}}</td><td>{{.CapturedAt.Format "2006-01-02 15:04"}}</td><td><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="read"><button type="submit">标记已读</button></form><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="favorite"><button type="submit">{{if .Favorited}}取消收藏{{else}}收藏{{end}}</button></form></td></tr>{{end}}</table><p>共 {{.Articles.Total}} 条</p></section></main></body></html>{{end}}
+{{define "articles"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.pill{display:inline-block;padding:4px 10px;border-radius:999px;background:#ece7dc}` + `</style></head><body><header><h1>文章中心</h1>{{template "nav" .}}</header><main><section><form class="inline" method="get"><select name="mode"><option value="" {{if eq .SearchMode ""}}selected{{end}}>普通筛选</option><option value="search" {{if eq .SearchMode "search"}}selected{{end}}>全文搜索</option></select><input name="keyword" placeholder="关键词" value="{{.FilterKeyword}}"><select name="project_id"><option value="">全部项目</option>{{range .Projects}}<option value="{{.ID}}" {{if eq (printf "%d" .ID) $.FilterProject}}selected{{end}}>{{.Name}}</option>{{end}}</select><select name="source_type"><option value="">全部来源</option><option value="flash" {{if eq .FilterSource "flash"}}selected{{end}}>flash</option><option value="headline" {{if eq .FilterSource "headline"}}selected{{end}}>headline</option></select><input type="date" name="start" value="{{.FilterStart}}"><input type="date" name="end" value="{{.FilterEnd}}"><button type="submit">筛选</button></form></section><section><h2>{{if eq .SearchMode "search"}}全文搜索结果{{else}}列表{{end}}</h2><table><tr><th>标题</th><th>来源</th><th>状态</th><th>时间</th><th>操作</th></tr>{{range .Articles.Items}}<tr><td><a class="inline" href="/articles/{{.ID}}">{{.Title}}</a></td><td>{{.SourceType}}</td><td>{{if .Read}}<span class="pill">已读</span>{{else}}<span class="pill">未读</span>{{end}} {{if .Favorited}}<span class="pill">已收藏</span>{{end}}</td><td>{{.CapturedAt.Format "2006-01-02 15:04"}}</td><td><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="read"><button type="submit">标记已读</button></form><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="favorite"><button type="submit">{{if .Favorited}}取消收藏{{else}}收藏{{end}}</button></form></td></tr>{{end}}</table><p>共 {{.Articles.Total}} 条</p></section></main></body></html>{{end}}
 `
 
 const articleTemplate = `
@@ -531,7 +557,7 @@ const articleTemplate = `
 `
 
 const reportsTemplate = `
-{{define "reports"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `</style></head><body><header><h1>报告中心</h1>{{template "nav" .}}</header><main><section><h2>生成报告</h2><form method="post"><select name="project_id">{{range .Projects}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select><input name="title" placeholder="报告标题"><textarea name="content" placeholder="输入文章摘要、正文或人工内容"></textarea><button type="submit">生成报告</button></form></section><section><h2>报告列表</h2><table><tr><th>ID</th><th>标题</th><th>状态</th><th>更新时间</th></tr>{{range .Reports}}<tr><td>{{.ID}}</td><td><a class="inline" href="/reports/{{.ID}}">{{.Title}}</a></td><td>{{.Status}}</td><td>{{.UpdatedAt.Format "2006-01-02 15:04"}}</td></tr>{{end}}</table></section></main></body></html>{{end}}
+{{define "reports"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `</style></head><body><header><h1>报告中心</h1>{{template "nav" .}}</header><main><section><h2>生成报告</h2><form method="post"><select name="project_id">{{range .Projects}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select><input name="title" placeholder="报告标题"><textarea name="content" placeholder="输入文章摘要、正文或人工内容"></textarea><button type="submit">生成报告</button></form></section><section><h2>报告筛选</h2><form class="inline" method="get"><select name="project_id"><option value="">全部项目</option>{{range .Projects}}<option value="{{.ID}}" {{if eq (printf "%d" .ID) $.FilterProject}}selected{{end}}>{{.Name}}</option>{{end}}</select><button type="submit">筛选</button></form></section><section><h2>报告列表</h2><table><tr><th>ID</th><th>项目ID</th><th>标题</th><th>状态</th><th>更新时间</th></tr>{{range .Reports}}<tr><td>{{.ID}}</td><td>{{.ProjectID}}</td><td><a class="inline" href="/reports/{{.ID}}">{{.Title}}</a></td><td>{{.Status}}</td><td>{{.UpdatedAt.Format "2006-01-02 15:04"}}</td></tr>{{end}}</table></section></main></body></html>{{end}}
 `
 
 const reportTemplate = `
@@ -539,5 +565,5 @@ const reportTemplate = `
 `
 
 const systemTemplate = `
-{{define "system"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `</style></head><body><header><h1>系统页</h1>{{template "nav" .}}</header><main><section><h2>手动任务</h2><form method="post"><input type="hidden" name="form_type" value="crawl"><select name="source_type"><option value="">全部来源</option><option value="flash">flash</option><option value="headline">headline</option></select><button type="submit">立即抓取</button></form><form method="post"><input type="hidden" name="form_type" value="analysis"><button type="submit">刷新分析快照</button></form></section><section><h2>提交反馈</h2><form method="post"><input type="hidden" name="form_type" value="feedback"><input name="title" placeholder="标题"><textarea name="content" placeholder="问题描述或需求"></textarea><button type="submit">提交</button></form></section><section><h2>公告</h2><table><tr><th>标题</th><th>时间</th></tr>{{range .Notices}}<tr><td>{{.Title}}</td><td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td></tr>{{end}}</table></section><section><h2>任务记录</h2><table><tr><th>任务</th><th>状态</th><th>说明</th></tr>{{range .TaskRuns}}<tr><td>{{.TaskName}}</td><td>{{.Status}}</td><td>{{.Message}}</td></tr>{{end}}</table></section></main></body></html>{{end}}
+{{define "system"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}` + `</style></head><body><header><h1>系统页</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><h2>手动任务</h2><form method="post"><input type="hidden" name="form_type" value="crawl"><select name="source_type"><option value="">全部来源</option><option value="flash">flash</option><option value="headline">headline</option></select><button type="submit">立即抓取</button></form><form method="post"><input type="hidden" name="form_type" value="analysis"><button type="submit">刷新分析快照</button></form></section><section><h2>提交反馈</h2><form method="post"><input type="hidden" name="form_type" value="feedback"><input name="title" placeholder="标题"><textarea name="content" placeholder="问题描述或需求"></textarea><button type="submit">提交</button></form></section><section><h2>公告</h2><table><tr><th>标题</th><th>时间</th></tr>{{range .Notices}}<tr><td>{{.Title}}</td><td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td></tr>{{end}}</table></section><section><h2>任务记录</h2><table><tr><th>任务</th><th>状态</th><th>说明</th></tr>{{range .TaskRuns}}<tr><td>{{.TaskName}}</td><td>{{.Status}}</td><td>{{.Message}}</td></tr>{{end}}</table></section></main></body></html>{{end}}
 `
