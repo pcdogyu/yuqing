@@ -203,10 +203,19 @@ func (s *Server) handleProjectDetail(w http.ResponseWriter, r *http.Request, use
 	project := model.Project{}
 	articles := model.ItemListResult{}
 	reports := []model.Report{}
+	allRules := []model.MonitorRule{}
+	projectID, _ := strconv.ParseInt(id, 10, 64)
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/projects/"+id, &project)
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/articles?page=1&page_size=10&project_id="+id, &articles)
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/reports?project_id="+id, &reports)
-	_ = s.render(w, "project", pageData{Title: "项目详情", User: user, Project: project, Articles: articles, Reports: reports})
+	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/monitor-rules", &allRules)
+	rules := make([]model.MonitorRule, 0, len(allRules))
+	for _, rule := range allRules {
+		if rule.ProjectID == projectID {
+			rules = append(rules, rule)
+		}
+	}
+	_ = s.render(w, "project", pageData{Title: "项目详情", User: user, Project: project, Rules: rules, Articles: articles, Reports: reports})
 }
 
 func (s *Server) handleRules(w http.ResponseWriter, r *http.Request, user any) {
@@ -256,12 +265,17 @@ func (s *Server) handleRuleDetail(w http.ResponseWriter, r *http.Request, user a
 		return
 	}
 	rule := model.MonitorRule{}
+	project := model.Project{}
 	articles := model.ItemListResult{}
+	reports := []model.Report{}
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/monitor-rules/"+id, &rule)
 	if rule.ProjectID > 0 {
-		_ = s.getJSON(s.cfg.ContentURL+"/api/v1/articles?page=1&page_size=10&project_id="+strconv.FormatInt(rule.ProjectID, 10), &articles)
+		projectID := strconv.FormatInt(rule.ProjectID, 10)
+		_ = s.getJSON(s.cfg.ContentURL+"/api/v1/projects/"+projectID, &project)
+		_ = s.getJSON(s.cfg.ContentURL+"/api/v1/articles?page=1&page_size=10&project_id="+projectID, &articles)
+		_ = s.getJSON(s.cfg.ContentURL+"/api/v1/reports?project_id="+projectID, &reports)
 	}
-	_ = s.render(w, "rule", pageData{Title: "规则详情", User: user, Rule: rule, Articles: articles})
+	_ = s.render(w, "rule", pageData{Title: "规则详情", User: user, Rule: rule, Project: project, Articles: articles, Reports: reports})
 }
 
 func (s *Server) handleArticles(w http.ResponseWriter, r *http.Request, user any) {
@@ -581,7 +595,7 @@ const projectsTemplate = `
 `
 
 const projectTemplate = `
-{{define "project"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `</style></head><body><header><h1>项目详情</h1>{{template "nav" .}}</header><main><section><h2>{{.Project.Name}}</h2><p>项目组：{{.Project.GroupName}} | 状态：{{.Project.Status}}</p><p>关键词：{{.Project.Keywords}}</p><pre>{{.Project.Description}}</pre></section><section><h2>最近文章</h2><table><tr><th>标题</th><th>来源</th><th>时间</th></tr>{{range .Articles.Items}}<tr><td><a class="inline" href="/articles/{{.ID}}">{{.Title}}</a></td><td>{{.SourceType}}</td><td>{{.CapturedAt.Format "2006-01-02 15:04"}}</td></tr>{{end}}</table></section><section><h2>关联报告</h2><table><tr><th>ID</th><th>标题</th><th>状态</th></tr>{{range .Reports}}<tr><td>{{.ID}}</td><td><a class="inline" href="/reports/{{.ID}}">{{.Title}}</a></td><td>{{.Status}}</td></tr>{{end}}</table></section></main></body></html>{{end}}
+{{define "project"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.summary-card{padding:14px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.summary-card strong{display:block;font-size:24px;margin-top:6px}.toolbar{display:flex;gap:12px;flex-wrap:wrap}` + `</style></head><body><header><h1>项目详情</h1>{{template "nav" .}}</header><main><section><div class="toolbar"><a class="inline" href="/projects">返回项目中心</a><a class="inline" href="/articles?project_id={{.Project.ID}}">查看全部文章</a><a class="inline" href="/reports?project_id={{.Project.ID}}">查看全部报告</a></div><h2>{{.Project.Name}}</h2><p>项目组：{{.Project.GroupName}} | 状态：{{.Project.Status}}</p><p>关键词：{{.Project.Keywords}}</p><pre>{{.Project.Description}}</pre><div class="summary-grid"><div class="summary-card">关联规则<strong>{{len .Rules}}</strong></div><div class="summary-card">最近文章<strong>{{len .Articles.Items}}</strong></div><div class="summary-card">关联报告<strong>{{len .Reports}}</strong></div></div></section><section><h2>关联规则</h2><table><tr><th>名称</th><th>等级</th><th>状态</th><th>来源</th></tr>{{range .Rules}}<tr><td><a class="inline" href="/monitor-rules/{{.ID}}">{{.Name}}</a></td><td>{{.Severity}}</td><td>{{.Status}}</td><td>{{.Channels}}</td></tr>{{else}}<tr><td colspan="4">暂无关联规则</td></tr>{{end}}</table></section><section><h2>最近文章</h2><table><tr><th>标题</th><th>来源</th><th>时间</th></tr>{{range .Articles.Items}}<tr><td><a class="inline" href="/articles/{{.ID}}">{{.Title}}</a></td><td>{{.SourceType}}</td><td>{{.CapturedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="3">暂无文章</td></tr>{{end}}</table></section><section><h2>关联报告</h2><table><tr><th>ID</th><th>标题</th><th>状态</th><th>更新时间</th></tr>{{range .Reports}}<tr><td>{{.ID}}</td><td><a class="inline" href="/reports/{{.ID}}">{{.Title}}</a></td><td>{{.Status}}</td><td>{{.UpdatedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="4">暂无报告</td></tr>{{end}}</table></section></main></body></html>{{end}}
 `
 
 const rulesTemplate = `
@@ -589,7 +603,7 @@ const rulesTemplate = `
 `
 
 const ruleTemplate = `
-{{define "rule"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `</style></head><body><header><h1>规则详情</h1>{{template "nav" .}}</header><main><section><h2>{{.Rule.Name}}</h2><p>项目：{{.Rule.ProjectName}} | 状态：{{.Rule.Status}} | 等级：{{.Rule.Severity}}</p><p>包含关键词：{{.Rule.IncludeKeywords}}</p><p>排除关键词：{{.Rule.ExcludeKeywords}}</p><p>来源：{{.Rule.Channels}}</p></section><section><h2>关联项目最近文章</h2><table><tr><th>标题</th><th>来源</th><th>时间</th></tr>{{range .Articles.Items}}<tr><td><a class="inline" href="/articles/{{.ID}}">{{.Title}}</a></td><td>{{.SourceType}}</td><td>{{.CapturedAt.Format "2006-01-02 15:04"}}</td></tr>{{end}}</table></section></main></body></html>{{end}}
+{{define "rule"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.summary-card{padding:14px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.summary-card strong{display:block;font-size:24px;margin-top:6px}.toolbar{display:flex;gap:12px;flex-wrap:wrap}` + `</style></head><body><header><h1>规则详情</h1>{{template "nav" .}}</header><main><section><div class="toolbar"><a class="inline" href="/monitor-rules">返回规则中心</a>{{if .Project.ID}}<a class="inline" href="/projects/{{.Project.ID}}">所属项目详情</a><a class="inline" href="/articles?project_id={{.Project.ID}}">查看项目文章</a>{{end}}</div><h2>{{.Rule.Name}}</h2><p>项目：{{.Rule.ProjectName}} | 状态：{{.Rule.Status}} | 等级：{{.Rule.Severity}}</p><p>包含关键词：{{.Rule.IncludeKeywords}}</p><p>排除关键词：{{.Rule.ExcludeKeywords}}</p><p>来源：{{.Rule.Channels}}</p><div class="summary-grid"><div class="summary-card">所属项目<strong>{{if .Project.Name}}{{.Project.Name}}{{else}}未关联{{end}}</strong></div><div class="summary-card">最近文章<strong>{{len .Articles.Items}}</strong></div><div class="summary-card">最近报告<strong>{{len .Reports}}</strong></div></div></section>{{if .Project.ID}}<section><h2>所属项目</h2><table><tr><th>项目</th><th>项目组</th><th>状态</th><th>关键词</th></tr><tr><td><a class="inline" href="/projects/{{.Project.ID}}">{{.Project.Name}}</a></td><td>{{.Project.GroupName}}</td><td>{{.Project.Status}}</td><td>{{.Project.Keywords}}</td></tr></table></section>{{end}}<section><h2>关联项目最近文章</h2><table><tr><th>标题</th><th>来源</th><th>时间</th></tr>{{range .Articles.Items}}<tr><td><a class="inline" href="/articles/{{.ID}}">{{.Title}}</a></td><td>{{.SourceType}}</td><td>{{.CapturedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="3">暂无文章</td></tr>{{end}}</table></section><section><h2>关联项目最近报告</h2><table><tr><th>ID</th><th>标题</th><th>状态</th><th>更新时间</th></tr>{{range .Reports}}<tr><td>{{.ID}}</td><td><a class="inline" href="/reports/{{.ID}}">{{.Title}}</a></td><td>{{.Status}}</td><td>{{.UpdatedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="4">暂无报告</td></tr>{{end}}</table></section></main></body></html>{{end}}
 `
 
 const articlesTemplate = `
