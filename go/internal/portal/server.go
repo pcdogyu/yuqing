@@ -36,6 +36,7 @@ type pageData struct {
 	Articles      model.ItemListResult
 	Article       model.Item
 	Related       []model.Item
+	CrawlRuns     []model.CrawlRun
 	Reports       []model.Report
 	Report        model.Report
 	Notices       []model.SystemNotice
@@ -238,7 +239,7 @@ func (s *Server) handleProjectDetail(w http.ResponseWriter, r *http.Request, use
 		case "crawl":
 			req := s.client.R()
 			if sourceType := strings.TrimSpace(r.FormValue("source_type")); sourceType != "" {
-				req.SetBody(map[string]string{"source_type": sourceType})
+				req.SetQueryParam("source_type", sourceType)
 			}
 			resp, err := req.Post(s.cfg.CrawlerURL + "/api/v1/admin/tasks/crawl")
 			if err != nil || !resp.IsSuccess() {
@@ -259,20 +260,24 @@ func (s *Server) handleProjectDetail(w http.ResponseWriter, r *http.Request, use
 	}
 	project := model.Project{}
 	articles := model.ItemListResult{}
+	crawlRuns := []model.CrawlRun{}
 	reports := []model.Report{}
 	allRules := []model.MonitorRule{}
+	taskRuns := []model.TaskRun{}
 	projectID, _ := strconv.ParseInt(id, 10, 64)
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/projects/"+id, &project)
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/articles?page=1&page_size=10&project_id="+id, &articles)
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/reports?project_id="+id, &reports)
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/monitor-rules", &allRules)
+	_ = s.getJSON(s.cfg.CrawlerURL+"/api/v1/admin/tasks/crawl/runs?limit=10", &crawlRuns)
+	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/system/task-runs?limit=10", &taskRuns)
 	rules := make([]model.MonitorRule, 0, len(allRules))
 	for _, rule := range allRules {
 		if rule.ProjectID == projectID {
 			rules = append(rules, rule)
 		}
 	}
-	_ = s.render(w, "project", pageData{Title: "项目详情", User: user, Project: project, Rules: rules, Articles: articles, Reports: reports, Message: r.URL.Query().Get("msg")})
+	_ = s.render(w, "project", pageData{Title: "项目详情", User: user, Project: project, Rules: rules, Articles: articles, CrawlRuns: crawlRuns, Reports: reports, TaskRuns: taskRuns, Message: r.URL.Query().Get("msg")})
 }
 
 func (s *Server) handleRules(w http.ResponseWriter, r *http.Request, user any) {
@@ -766,7 +771,7 @@ const projectsTemplate = `
 `
 
 const projectTemplate = `
-{{define "project"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.summary-card{padding:14px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.summary-card strong{display:block;font-size:24px;margin-top:6px}.toolbar{display:flex;gap:12px;flex-wrap:wrap}.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}` + `</style></head><body><header><h1>项目详情</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><div class="toolbar"><a class="inline" href="/projects">返回项目中心</a><a class="inline" href="/articles?project_id={{.Project.ID}}">查看全部文章</a><a class="inline" href="/reports?project_id={{.Project.ID}}">查看全部报告</a></div><h2>{{.Project.Name}}</h2><p>项目组：{{.Project.GroupName}} | 状态：{{.Project.Status}}</p><p>关键词：{{.Project.Keywords}}</p><pre>{{.Project.Description}}</pre><div class="summary-grid"><div class="summary-card">关联规则<strong>{{len .Rules}}</strong></div><div class="summary-card">最近文章<strong>{{len .Articles.Items}}</strong></div><div class="summary-card">关联报告<strong>{{len .Reports}}</strong></div></div></section><section><h2>快速任务</h2><form class="inline" method="post"><input type="hidden" name="form_type" value="crawl"><select name="source_type"><option value="">全部来源</option><option value="flash">flash</option><option value="headline">headline</option></select><button type="submit">立即抓取</button></form><form method="post"><input type="hidden" name="form_type" value="analysis"><button type="submit">刷新分析</button></form></section><section><h2>快速创建规则</h2><form class="inline" method="post"><input type="hidden" name="form_type" value="rule"><input name="name" placeholder="规则名称"><input name="include_keywords" value="{{.Project.Keywords}}" placeholder="包含关键词"><input name="exclude_keywords" placeholder="排除关键词"><input name="channels" placeholder="来源，如 flash,headline"><select name="severity"><option value="medium">medium</option><option value="high">high</option><option value="low">low</option></select><button type="submit">创建规则</button></form></section><section><h2>快速生成报告</h2><form method="post"><input type="hidden" name="form_type" value="report"><input name="title" value="{{.Project.Name}} 每日简报" placeholder="报告标题"><textarea name="content" placeholder="输入摘要、正文或人工分析内容"></textarea><button type="submit">生成报告</button></form></section><section><h2>关联规则</h2><table><tr><th>名称</th><th>等级</th><th>状态</th><th>来源</th></tr>{{range .Rules}}<tr><td><a class="inline" href="/monitor-rules/{{.ID}}">{{.Name}}</a></td><td>{{.Severity}}</td><td>{{.Status}}</td><td>{{.Channels}}</td></tr>{{else}}<tr><td colspan="4">暂无关联规则</td></tr>{{end}}</table></section><section><h2>最近文章</h2><table><tr><th>标题</th><th>来源</th><th>时间</th></tr>{{range .Articles.Items}}<tr><td><a class="inline" href="/articles/{{.ID}}">{{.Title}}</a></td><td>{{.SourceType}}</td><td>{{.CapturedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="3">暂无文章</td></tr>{{end}}</table></section><section><h2>关联报告</h2><table><tr><th>ID</th><th>标题</th><th>状态</th><th>更新时间</th></tr>{{range .Reports}}<tr><td>{{.ID}}</td><td><a class="inline" href="/reports/{{.ID}}">{{.Title}}</a></td><td>{{.Status}}</td><td>{{.UpdatedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="4">暂无报告</td></tr>{{end}}</table></section></main></body></html>{{end}}
+{{define "project"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.summary-card{padding:14px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.summary-card strong{display:block;font-size:24px;margin-top:6px}.toolbar{display:flex;gap:12px;flex-wrap:wrap}.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}` + `</style></head><body><header><h1>项目详情</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><div class="toolbar"><a class="inline" href="/projects">返回项目中心</a><a class="inline" href="/articles?project_id={{.Project.ID}}">查看全部文章</a><a class="inline" href="/reports?project_id={{.Project.ID}}">查看全部报告</a></div><h2>{{.Project.Name}}</h2><p>项目组：{{.Project.GroupName}} | 状态：{{.Project.Status}}</p><p>关键词：{{.Project.Keywords}}</p><pre>{{.Project.Description}}</pre><div class="summary-grid"><div class="summary-card">关联规则<strong>{{len .Rules}}</strong></div><div class="summary-card">最近文章<strong>{{len .Articles.Items}}</strong></div><div class="summary-card">关联报告<strong>{{len .Reports}}</strong></div></div></section><section><h2>快速任务</h2><form class="inline" method="post"><input type="hidden" name="form_type" value="crawl"><select name="source_type"><option value="">全部来源</option><option value="flash">flash</option><option value="headline">headline</option></select><button type="submit">立即抓取</button></form><form method="post"><input type="hidden" name="form_type" value="analysis"><button type="submit">刷新分析</button></form></section><section><h2>快速创建规则</h2><form class="inline" method="post"><input type="hidden" name="form_type" value="rule"><input name="name" placeholder="规则名称"><input name="include_keywords" value="{{.Project.Keywords}}" placeholder="包含关键词"><input name="exclude_keywords" placeholder="排除关键词"><input name="channels" placeholder="来源，如 flash,headline"><select name="severity"><option value="medium">medium</option><option value="high">high</option><option value="low">low</option></select><button type="submit">创建规则</button></form></section><section><h2>快速生成报告</h2><form method="post"><input type="hidden" name="form_type" value="report"><input name="title" value="{{.Project.Name}} 每日简报" placeholder="报告标题"><textarea name="content" placeholder="输入摘要、正文或人工分析内容"></textarea><button type="submit">生成报告</button></form></section><section><h2>最近任务记录</h2><table><tr><th>任务</th><th>状态</th><th>时间</th><th>说明</th></tr>{{range .TaskRuns}}<tr><td>{{.TaskName}}</td><td>{{.Status}}</td><td>{{.StartedAt.Format "2006-01-02 15:04"}}</td><td>{{.Message}}</td></tr>{{else}}<tr><td colspan="4">暂无任务记录</td></tr>{{end}}</table></section><section><h2>最近抓取状态</h2><table><tr><th>来源</th><th>状态</th><th>抓取数</th><th>入库数</th><th>开始时间</th></tr>{{range .CrawlRuns}}<tr><td>{{.SourceType}}</td><td>{{.Status}}</td><td>{{.FetchedCount}}</td><td>{{.InsertedCount}}</td><td>{{.StartedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="5">暂无抓取记录</td></tr>{{end}}</table></section><section><h2>关联规则</h2><table><tr><th>名称</th><th>等级</th><th>状态</th><th>来源</th></tr>{{range .Rules}}<tr><td><a class="inline" href="/monitor-rules/{{.ID}}">{{.Name}}</a></td><td>{{.Severity}}</td><td>{{.Status}}</td><td>{{.Channels}}</td></tr>{{else}}<tr><td colspan="4">暂无关联规则</td></tr>{{end}}</table></section><section><h2>最近文章</h2><table><tr><th>标题</th><th>来源</th><th>时间</th></tr>{{range .Articles.Items}}<tr><td><a class="inline" href="/articles/{{.ID}}">{{.Title}}</a></td><td>{{.SourceType}}</td><td>{{.CapturedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="3">暂无文章</td></tr>{{end}}</table></section><section><h2>关联报告</h2><table><tr><th>ID</th><th>标题</th><th>状态</th><th>更新时间</th></tr>{{range .Reports}}<tr><td>{{.ID}}</td><td><a class="inline" href="/reports/{{.ID}}">{{.Title}}</a></td><td>{{.Status}}</td><td>{{.UpdatedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="4">暂无报告</td></tr>{{end}}</table></section></main></body></html>{{end}}
 `
 
 const rulesTemplate = `
