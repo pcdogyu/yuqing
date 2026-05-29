@@ -509,8 +509,37 @@ func (s *Server) handleReportDetail(w http.ResponseWriter, r *http.Request, user
 		return
 	}
 	report := model.Report{}
+	project := model.Project{}
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/reports/"+id, &report)
-	_ = s.render(w, "report", pageData{Title: "报告详情", User: user, Report: report})
+	if r.Method == http.MethodPost {
+		_ = r.ParseForm()
+		message := "报告操作失败"
+		var generated model.Report
+		var envelope struct {
+			Data json.RawMessage `json:"data"`
+		}
+		resp, err := s.client.R().
+			SetBody(map[string]any{
+				"project_id": report.ProjectID,
+				"title":      nonEmpty(r.FormValue("title"), report.Title+" 重生成"),
+				"text":       nonEmpty(r.FormValue("content"), report.Content),
+			}).
+			SetResult(&envelope).
+			Post(s.cfg.ContentURL + "/api/v1/reports/generate")
+		if err == nil && resp.IsSuccess() {
+			if json.Unmarshal(envelope.Data, &generated) == nil && generated.ID > 0 {
+				http.Redirect(w, r, "/reports/"+strconv.FormatInt(generated.ID, 10)+"?msg=报告已重新生成", http.StatusSeeOther)
+				return
+			}
+			message = "报告已提交重新生成"
+		}
+		http.Redirect(w, r, "/reports/"+id+"?msg="+message, http.StatusSeeOther)
+		return
+	}
+	if report.ProjectID > 0 {
+		_ = s.getJSON(s.cfg.ContentURL+"/api/v1/projects/"+strconv.FormatInt(report.ProjectID, 10), &project)
+	}
+	_ = s.render(w, "report", pageData{Title: "报告详情", User: user, Report: report, Project: project, Message: r.URL.Query().Get("msg")})
 }
 
 func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) {
@@ -716,7 +745,7 @@ const reportsTemplate = `
 `
 
 const reportTemplate = `
-{{define "report"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `</style></head><body><header><h1>报告详情</h1>{{template "nav" .}}</header><main><section><h2>{{.Report.Title}}</h2><p>状态：{{.Report.Status}} | 更新时间：{{.Report.UpdatedAt.Format "2006-01-02 15:04"}}</p><h3>摘要</h3><pre>{{.Report.Summary}}</pre><h3>正文</h3><pre>{{.Report.Content}}</pre></section></main></body></html>{{end}}
+{{define "report"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.toolbar{display:flex;gap:12px;flex-wrap:wrap}.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}` + `</style></head><body><header><h1>报告详情</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><div class="toolbar"><a class="inline" href="/reports">返回报告中心</a>{{if .Project.ID}}<a class="inline" href="/projects/{{.Project.ID}}">返回所属项目</a><a class="inline" href="/reports?project_id={{.Project.ID}}">查看项目全部报告</a>{{end}}</div><h2>{{.Report.Title}}</h2><p>状态：{{.Report.Status}} | 更新时间：{{.Report.UpdatedAt.Format "2006-01-02 15:04"}}</p>{{if .Project.ID}}<p>所属项目：<a class="inline" href="/projects/{{.Project.ID}}">{{.Project.Name}}</a></p>{{end}}<h3>摘要</h3><pre>{{.Report.Summary}}</pre><h3>正文</h3><pre>{{.Report.Content}}</pre></section><section><h2>重新生成报告</h2><form method="post"><input name="title" value="{{.Report.Title}} 重生成" placeholder="新报告标题"><textarea name="content" placeholder="可修改正文后重新生成">{{.Report.Content}}</textarea><button type="submit">重新生成</button></form></section></main></body></html>{{end}}
 `
 
 const systemTemplate = `
