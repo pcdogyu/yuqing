@@ -19,6 +19,7 @@ import (
 func main() {
 	cfg := config.Load()
 	logging.Setup(cfg.LogLevel)
+	app.LogStartup("content-service", cfg.ContentAddr, cfg)
 
 	store, err := app.NewStore(cfg)
 	if err != nil {

@@ -2,8 +2,13 @@ package app
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"runtime"
+	"time"
 
 	"github.com/go-resty/resty/v2"
+	"github.com/rs/zerolog/log"
 
 	"github.com/stonedt-yuqing/go-jin10/internal/config"
 	"github.com/stonedt-yuqing/go-jin10/internal/provider"
@@ -11,6 +16,12 @@ import (
 	"github.com/stonedt-yuqing/go-jin10/internal/provider/jin10xnews"
 	"github.com/stonedt-yuqing/go-jin10/internal/service"
 	sqlitestore "github.com/stonedt-yuqing/go-jin10/internal/store/sqlite"
+)
+
+var (
+	Version   = "dev"
+	GitCommit = "unknown"
+	BuildTime = "unknown"
 )
 
 func NewStore(cfg config.Config) (*sqlitestore.Store, error) {
@@ -38,4 +49,44 @@ func NewCrawler(cfg config.Config, store *sqlitestore.Store) *service.Crawler {
 		Flash:    jin10flash.NewProvider(httpClient, cfg.FlashURL),
 		Headline: jin10xnews.NewProvider(httpClient, cfg.HeadlineURL),
 	})
+}
+
+func LogStartup(serviceName, listenAddr string, cfg config.Config) {
+	dbPath, dbPathErr := filepath.Abs(cfg.DatabasePath)
+
+	event := log.Debug().
+		Str("service", serviceName).
+		Str("version", Version).
+		Str("git_commit", GitCommit).
+		Str("build_time", BuildTime).
+		Str("go_version", runtime.Version()).
+		Str("log_level", cfg.LogLevel).
+		Str("listen_addr", listenAddr).
+		Dur("http_timeout", cfg.HTTPTimeout).
+		Dur("flash_interval", cfg.FlashInterval).
+		Dur("headline_interval", cfg.HeadlineInterval).
+		Dur("analysis_interval", cfg.AnalysisInterval).
+		Dur("session_ttl", cfg.SessionTTL).
+		Str("database_path", cfg.DatabasePath).
+		Str("database_path_abs", dbPath).
+		Bool("database_path_resolved", dbPathErr == nil).
+		Bool("database_file_exists", fileExists(cfg.DatabasePath)).
+		Str("flash_url", cfg.FlashURL).
+		Str("headline_url", cfg.HeadlineURL).
+		Str("gateway_web_url", cfg.GatewayWebURL).
+		Str("auth_url", cfg.AuthURL).
+		Str("content_url", cfg.ContentURL).
+		Str("crawler_url", cfg.CrawlerURL).
+		Str("analysis_url", cfg.AnalysisURL).
+		Str("nlp_url", cfg.NLPURL).
+		Str("generated_at", time.Now().UTC().Format(time.RFC3339))
+	event.Msg("startup debug info")
+}
+
+func fileExists(path string) bool {
+	if path == "" {
+		return false
+	}
+	_, err := os.Stat(path)
+	return err == nil
 }

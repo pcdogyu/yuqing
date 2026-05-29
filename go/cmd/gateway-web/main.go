@@ -10,6 +10,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 
+	"github.com/stonedt-yuqing/go-jin10/internal/app"
 	"github.com/stonedt-yuqing/go-jin10/internal/config"
 	"github.com/stonedt-yuqing/go-jin10/internal/logging"
 	"github.com/stonedt-yuqing/go-jin10/internal/portal"
@@ -18,6 +19,7 @@ import (
 func main() {
 	cfg := config.Load()
 	logging.Setup(cfg.LogLevel)
+	app.LogStartup("gateway-web", cfg.GatewayWebAddr, cfg)
 	server := &http.Server{
 		Addr:              cfg.GatewayWebAddr,
 		Handler:           portal.NewServer(cfg).Router(),

@@ -11,6 +11,7 @@ import (
 	"github.com/go-resty/resty/v2"
 	"github.com/rs/zerolog/log"
 
+	"github.com/stonedt-yuqing/go-jin10/internal/app"
 	"github.com/stonedt-yuqing/go-jin10/internal/config"
 	"github.com/stonedt-yuqing/go-jin10/internal/httpapi"
 	"github.com/stonedt-yuqing/go-jin10/internal/logging"
@@ -24,6 +25,7 @@ import (
 func main() {
 	cfg := config.Load()
 	logging.Setup(cfg.LogLevel)
+	app.LogStartup("server", cfg.ListenAddr, cfg)
 
 	store, err := sqlitestore.New(cfg.DatabasePath)
 	if err != nil {
