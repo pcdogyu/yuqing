@@ -33,7 +33,7 @@ func TestUpsertAndListItems(t *testing.T) {
 		t.Fatalf("unexpected second insert/update counts: %d/%d", inserted, updated)
 	}
 
-	list, err := store.ListItems(ctx, 1, 10, "华尔街", "headline")
+	list, err := store.ListItems(ctx, model.ArticleFilter{Page: 1, PageSize: 10, Keyword: "华尔街", SourceType: "headline"})
 	if err != nil {
 		t.Fatalf("ListItems error: %v", err)
 	}

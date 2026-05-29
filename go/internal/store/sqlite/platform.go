@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"sort"
 	"strings"
 	"time"
 
@@ -112,8 +113,69 @@ func (s *Store) ResolveAPIToken(ctx context.Context, token string) (model.User, 
 	return s.GetUserByID(ctx, userID)
 }
 
+func (s *Store) ListProjectGroups(ctx context.Context) ([]model.ProjectGroup, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, description, created_at, updated_at FROM project_groups ORDER BY updated_at DESC, id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	list := make([]model.ProjectGroup, 0)
+	for rows.Next() {
+		group, err := scanProjectGroup(rows)
+		if err != nil {
+			return nil, err
+		}
+		list = append(list, group)
+	}
+	return list, rows.Err()
+}
+
+func (s *Store) GetProjectGroup(ctx context.Context, id int64) (model.ProjectGroup, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT id, name, description, created_at, updated_at FROM project_groups WHERE id = ?`, id)
+	group, err := scanProjectGroup(row)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return model.ProjectGroup{}, ErrNotFound
+		}
+		return model.ProjectGroup{}, err
+	}
+	return group, nil
+}
+
+func (s *Store) CreateProjectGroup(ctx context.Context, group model.ProjectGroup) (model.ProjectGroup, error) {
+	now := time.Now().UTC()
+	group.CreatedAt = now
+	group.UpdatedAt = now
+	res, err := s.db.ExecContext(ctx, `INSERT INTO project_groups (name, description, created_at, updated_at) VALUES (?, ?, ?, ?)`,
+		group.Name, group.Description, now.Format(time.RFC3339), now.Format(time.RFC3339))
+	if err != nil {
+		return model.ProjectGroup{}, err
+	}
+	group.ID, _ = res.LastInsertId()
+	return group, nil
+}
+
+func (s *Store) UpdateProjectGroup(ctx context.Context, group model.ProjectGroup) (model.ProjectGroup, error) {
+	group.UpdatedAt = time.Now().UTC()
+	_, err := s.db.ExecContext(ctx, `UPDATE project_groups SET name = ?, description = ?, updated_at = ? WHERE id = ?`,
+		group.Name, group.Description, group.UpdatedAt.Format(time.RFC3339), group.ID)
+	if err != nil {
+		return model.ProjectGroup{}, err
+	}
+	return s.GetProjectGroup(ctx, group.ID)
+}
+
+func (s *Store) DeleteProjectGroup(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM project_groups WHERE id = ?`, id)
+	return err
+}
+
 func (s *Store) ListProjects(ctx context.Context) ([]model.Project, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, group_id, name, keywords, description, status, created_at, updated_at FROM projects ORDER BY updated_at DESC, id DESC`)
+	rows, err := s.db.QueryContext(ctx, `
+SELECT p.id, p.group_id, COALESCE(g.name, ''), p.name, p.keywords, p.description, p.status, p.created_at, p.updated_at
+FROM projects p
+LEFT JOIN project_groups g ON g.id = p.group_id
+ORDER BY p.updated_at DESC, p.id DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -129,24 +191,61 @@ func (s *Store) ListProjects(ctx context.Context) ([]model.Project, error) {
 	return list, rows.Err()
 }
 
+func (s *Store) GetProject(ctx context.Context, id int64) (model.Project, error) {
+	row := s.db.QueryRowContext(ctx, `
+SELECT p.id, p.group_id, COALESCE(g.name, ''), p.name, p.keywords, p.description, p.status, p.created_at, p.updated_at
+FROM projects p
+LEFT JOIN project_groups g ON g.id = p.group_id
+WHERE p.id = ?`, id)
+	project, err := scanProject(row)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return model.Project{}, ErrNotFound
+		}
+		return model.Project{}, err
+	}
+	return project, nil
+}
+
 func (s *Store) CreateProject(ctx context.Context, project model.Project) (model.Project, error) {
 	now := time.Now().UTC()
 	project.CreatedAt = now
 	project.UpdatedAt = now
+	project.Status = nonEmpty(project.Status, "active")
 	res, err := s.db.ExecContext(ctx, `INSERT INTO projects (group_id, name, keywords, description, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		project.GroupID, project.Name, project.Keywords, project.Description, nonEmpty(project.Status, "active"),
+		project.GroupID, project.Name, project.Keywords, project.Description, project.Status,
 		now.Format(time.RFC3339), now.Format(time.RFC3339),
 	)
 	if err != nil {
 		return model.Project{}, err
 	}
 	project.ID, _ = res.LastInsertId()
+	return s.GetProject(ctx, project.ID)
+}
+
+func (s *Store) UpdateProject(ctx context.Context, project model.Project) (model.Project, error) {
+	project.UpdatedAt = time.Now().UTC()
 	project.Status = nonEmpty(project.Status, "active")
-	return project, nil
+	_, err := s.db.ExecContext(ctx, `UPDATE projects SET group_id = ?, name = ?, keywords = ?, description = ?, status = ?, updated_at = ? WHERE id = ?`,
+		project.GroupID, project.Name, project.Keywords, project.Description, project.Status, project.UpdatedAt.Format(time.RFC3339), project.ID,
+	)
+	if err != nil {
+		return model.Project{}, err
+	}
+	return s.GetProject(ctx, project.ID)
+}
+
+func (s *Store) DeleteProject(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM projects WHERE id = ?`, id)
+	return err
 }
 
 func (s *Store) ListMonitorRules(ctx context.Context) ([]model.MonitorRule, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, project_id, name, include_keywords, exclude_keywords, channels, severity, created_at, updated_at FROM monitor_rules ORDER BY updated_at DESC, id DESC`)
+	rows, err := s.db.QueryContext(ctx, `
+SELECT r.id, r.project_id, COALESCE(p.name, ''), r.name, r.include_keywords, r.exclude_keywords, r.channels, r.severity, r.status, r.created_at, r.updated_at
+FROM monitor_rules r
+LEFT JOIN projects p ON p.id = r.project_id
+ORDER BY r.updated_at DESC, r.id DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -162,47 +261,124 @@ func (s *Store) ListMonitorRules(ctx context.Context) ([]model.MonitorRule, erro
 	return result, rows.Err()
 }
 
+func (s *Store) ListActiveMonitorRules(ctx context.Context) ([]model.MonitorRule, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT r.id, r.project_id, COALESCE(p.name, ''), r.name, r.include_keywords, r.exclude_keywords, r.channels, r.severity, r.status, r.created_at, r.updated_at
+FROM monitor_rules r
+LEFT JOIN projects p ON p.id = r.project_id
+WHERE r.status = 'active'
+ORDER BY r.updated_at DESC, r.id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]model.MonitorRule, 0)
+	for rows.Next() {
+		rule, err := scanMonitorRule(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, rule)
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) GetMonitorRule(ctx context.Context, id int64) (model.MonitorRule, error) {
+	row := s.db.QueryRowContext(ctx, `
+SELECT r.id, r.project_id, COALESCE(p.name, ''), r.name, r.include_keywords, r.exclude_keywords, r.channels, r.severity, r.status, r.created_at, r.updated_at
+FROM monitor_rules r
+LEFT JOIN projects p ON p.id = r.project_id
+WHERE r.id = ?`, id)
+	rule, err := scanMonitorRule(row)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return model.MonitorRule{}, ErrNotFound
+		}
+		return model.MonitorRule{}, err
+	}
+	return rule, nil
+}
+
 func (s *Store) CreateMonitorRule(ctx context.Context, rule model.MonitorRule) (model.MonitorRule, error) {
 	now := time.Now().UTC()
-	res, err := s.db.ExecContext(ctx, `INSERT INTO monitor_rules (project_id, name, include_keywords, exclude_keywords, channels, severity, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		rule.ProjectID, rule.Name, rule.IncludeKeywords, rule.ExcludeKeywords, rule.Channels, nonEmpty(rule.Severity, "medium"),
+	rule.Status = nonEmpty(rule.Status, "active")
+	res, err := s.db.ExecContext(ctx, `INSERT INTO monitor_rules (project_id, name, include_keywords, exclude_keywords, channels, severity, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		rule.ProjectID, rule.Name, rule.IncludeKeywords, rule.ExcludeKeywords, rule.Channels, nonEmpty(rule.Severity, "medium"), rule.Status,
 		now.Format(time.RFC3339), now.Format(time.RFC3339),
 	)
 	if err != nil {
 		return model.MonitorRule{}, err
 	}
 	rule.ID, _ = res.LastInsertId()
-	rule.CreatedAt = now
-	rule.UpdatedAt = now
-	rule.Severity = nonEmpty(rule.Severity, "medium")
-	return rule, nil
+	return s.GetMonitorRule(ctx, rule.ID)
 }
 
-func (s *Store) SearchItemsFTS(ctx context.Context, keyword string, page, pageSize int) (model.SearchResult, error) {
-	page = max(page, 1)
-	pageSize = max(pageSize, 1)
-	offset := (page - 1) * pageSize
-	keyword = strings.TrimSpace(keyword)
-	if keyword == "" {
-		list, err := s.ListItems(ctx, page, pageSize, "", "")
+func (s *Store) UpdateMonitorRule(ctx context.Context, rule model.MonitorRule) (model.MonitorRule, error) {
+	rule.UpdatedAt = time.Now().UTC()
+	rule.Status = nonEmpty(rule.Status, "active")
+	_, err := s.db.ExecContext(ctx, `UPDATE monitor_rules SET project_id = ?, name = ?, include_keywords = ?, exclude_keywords = ?, channels = ?, severity = ?, status = ?, updated_at = ? WHERE id = ?`,
+		rule.ProjectID, rule.Name, rule.IncludeKeywords, rule.ExcludeKeywords, rule.Channels, nonEmpty(rule.Severity, "medium"), rule.Status, rule.UpdatedAt.Format(time.RFC3339), rule.ID,
+	)
+	if err != nil {
+		return model.MonitorRule{}, err
+	}
+	return s.GetMonitorRule(ctx, rule.ID)
+}
+
+func (s *Store) DeleteMonitorRule(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM monitor_rules WHERE id = ?`, id)
+	return err
+}
+
+func (s *Store) SearchItemsFTS(ctx context.Context, filter model.ArticleFilter) (model.SearchResult, error) {
+	filter.Page = max(filter.Page, 1)
+	filter.PageSize = max(filter.PageSize, 1)
+	filter.Keyword = strings.TrimSpace(filter.Keyword)
+	if filter.Keyword == "" {
+		list, err := s.ListItems(ctx, filter)
 		if err != nil {
 			return model.SearchResult{}, err
 		}
-		return model.SearchResult{Items: list.Items, Keyword: "", Total: list.Total, Page: page, PageSize: pageSize}, nil
+		return model.SearchResult{Items: list.Items, Keyword: "", Total: list.Total, Page: filter.Page, PageSize: filter.PageSize}, nil
 	}
 
+	whereParts := []string{"items_fts MATCH ?"}
+	args := []any{filter.Keyword}
+	joins := "JOIN items i ON i.id = f.rowid"
+	if filter.ProjectID > 0 {
+		joins += " JOIN item_relations ir ON ir.item_id = i.id"
+		whereParts = append(whereParts, "ir.project_id = ?")
+		args = append(args, filter.ProjectID)
+	}
+	if filter.SourceType != "" {
+		whereParts = append(whereParts, "i.source_type = ?")
+		args = append(args, filter.SourceType)
+	}
+	if filter.Start != "" {
+		whereParts = append(whereParts, "i.captured_at >= ?")
+		args = append(args, filter.Start)
+	}
+	if filter.End != "" {
+		whereParts = append(whereParts, "i.captured_at <= ?")
+		args = append(args, filter.End)
+	}
+	where := " WHERE " + strings.Join(whereParts, " AND ")
+
 	var total int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM items_fts WHERE items_fts MATCH ?`, keyword).Scan(&total); err != nil {
+	countQuery := `SELECT COUNT(DISTINCT i.id) FROM items_fts f ` + joins + where
+	if err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
 		return model.SearchResult{}, err
 	}
 
-	rows, err := s.db.QueryContext(ctx, `
-SELECT i.id, i.source_type, i.source_key, i.title, i.content, i.summary, i.publish_time, i.publish_time_text, i.detail_url, i.source_url, i.tag_flags, i.from_text, i.external_source_host, i.is_vip, i.has_image, i.raw_payload, i.captured_at, i.created_at, i.updated_at
+	offset := (filter.Page - 1) * filter.PageSize
+	query := `
+SELECT DISTINCT i.id, i.source_type, i.source_key, i.title, i.content, i.summary, i.publish_time, i.publish_time_text, i.detail_url, i.source_url, i.tag_flags, i.from_text, i.external_source_host, i.is_vip, i.has_image, i.raw_payload, i.captured_at, i.created_at, i.updated_at
 FROM items_fts f
-JOIN items i ON i.id = f.rowid
-WHERE items_fts MATCH ?
+` + joins + where + `
 ORDER BY bm25(items_fts), i.captured_at DESC
-LIMIT ? OFFSET ?`, keyword, pageSize, offset)
+LIMIT ? OFFSET ?`
+	queryArgs := append(args, filter.PageSize, offset)
+	rows, err := s.db.QueryContext(ctx, query, queryArgs...)
 	if err != nil {
 		return model.SearchResult{}, err
 	}
@@ -211,7 +387,10 @@ LIMIT ? OFFSET ?`, keyword, pageSize, offset)
 	if err != nil {
 		return model.SearchResult{}, err
 	}
-	return model.SearchResult{Items: items, Keyword: keyword, Total: total, Page: page, PageSize: pageSize}, nil
+	if err := s.attachProjectIDs(ctx, items); err != nil {
+		return model.SearchResult{}, err
+	}
+	return model.SearchResult{Items: items, Keyword: filter.Keyword, Total: total, Page: filter.Page, PageSize: filter.PageSize}, nil
 }
 
 func (s *Store) Overview(ctx context.Context) (model.Overview, error) {
@@ -228,42 +407,182 @@ func (s *Store) Overview(ctx context.Context) (model.Overview, error) {
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM crawl_runs`).Scan(&overview.CrawlRunCount); err != nil {
 		return overview, err
 	}
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM monitor_rules`).Scan(&overview.AlertRuleCount); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM monitor_rules WHERE status = 'active'`).Scan(&overview.AlertRuleCount); err != nil {
 		return overview, err
 	}
 	return overview, nil
 }
 
-func (s *Store) ListReports(ctx context.Context) ([]model.Report, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, project_id, title, summary, content, status, created_at, updated_at FROM reports ORDER BY updated_at DESC, id DESC`)
+func (s *Store) BuildDashboardSnapshot(ctx context.Context) (model.DashboardSnapshot, error) {
+	overview, err := s.Overview(ctx)
+	if err != nil {
+		return model.DashboardSnapshot{}, err
+	}
+	trends, err := s.BuildTrendPoints(ctx)
+	if err != nil {
+		return model.DashboardSnapshot{}, err
+	}
+	sources, err := s.BuildSourceBreakdowns(ctx)
+	if err != nil {
+		return model.DashboardSnapshot{}, err
+	}
+	keywords, err := s.BuildKeywordHotspots(ctx)
+	if err != nil {
+		return model.DashboardSnapshot{}, err
+	}
+	return model.DashboardSnapshot{
+		Overview:  overview,
+		Trends:    trends,
+		Sources:   sources,
+		Keywords:  keywords,
+		UpdatedAt: time.Now().UTC(),
+	}, nil
+}
+
+func (s *Store) BuildTrendPoints(ctx context.Context) ([]model.TrendPoint, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT substr(captured_at, 1, 10) AS day, COUNT(1)
+FROM items
+GROUP BY substr(captured_at, 1, 10)
+ORDER BY day DESC
+LIMIT 7`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	reports := make([]model.Report, 0)
+	points := make([]model.TrendPoint, 0)
 	for rows.Next() {
-		report, err := scanReport(rows)
-		if err != nil {
+		var point model.TrendPoint
+		if err := rows.Scan(&point.Label, &point.Count); err != nil {
 			return nil, err
 		}
-		reports = append(reports, report)
+		points = append(points, point)
 	}
-	return reports, rows.Err()
+	sort.Slice(points, func(i, j int) bool { return points[i].Label < points[j].Label })
+	return points, rows.Err()
 }
 
-func (s *Store) CreateReport(ctx context.Context, report model.Report) (model.Report, error) {
-	now := time.Now().UTC()
-	report.Status = nonEmpty(report.Status, "draft")
-	report.CreatedAt = now
-	report.UpdatedAt = now
-	res, err := s.db.ExecContext(ctx, `INSERT INTO reports (project_id, title, summary, content, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		report.ProjectID, report.Title, report.Summary, report.Content, report.Status, now.Format(time.RFC3339), now.Format(time.RFC3339),
-	)
+func (s *Store) BuildSourceBreakdowns(ctx context.Context) ([]model.SourceBreakdown, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT source_type, COUNT(1) FROM items GROUP BY source_type ORDER BY COUNT(1) DESC, source_type ASC`)
 	if err != nil {
-		return model.Report{}, err
+		return nil, err
 	}
-	report.ID, _ = res.LastInsertId()
-	return report, nil
+	defer rows.Close()
+	result := make([]model.SourceBreakdown, 0)
+	for rows.Next() {
+		var row model.SourceBreakdown
+		if err := rows.Scan(&row.SourceType, &row.Count); err != nil {
+			return nil, err
+		}
+		result = append(result, row)
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) BuildKeywordHotspots(ctx context.Context) ([]model.KeywordHotspot, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT title, summary, content FROM items ORDER BY captured_at DESC LIMIT 200`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	counts := make(map[string]int)
+	for rows.Next() {
+		var title, summary, content string
+		if err := rows.Scan(&title, &summary, &content); err != nil {
+			return nil, err
+		}
+		for _, keyword := range extractKeywords(title + " " + summary + " " + content) {
+			counts[keyword]++
+		}
+	}
+
+	result := make([]model.KeywordHotspot, 0, len(counts))
+	for keyword, count := range counts {
+		result = append(result, model.KeywordHotspot{Keyword: keyword, Count: count})
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Count == result[j].Count {
+			return result[i].Keyword < result[j].Keyword
+		}
+		return result[i].Count > result[j].Count
+	})
+	if len(result) > 10 {
+		result = result[:10]
+	}
+	return result, nil
+}
+
+func (s *Store) RefreshAnalysis(ctx context.Context) (model.DashboardSnapshot, error) {
+	snapshot, err := s.BuildDashboardSnapshot(ctx)
+	if err != nil {
+		return model.DashboardSnapshot{}, err
+	}
+	payload, err := json.Marshal(snapshot)
+	if err != nil {
+		return model.DashboardSnapshot{}, err
+	}
+	now := time.Now().UTC()
+
+	if err := s.UpsertAnalysisSnapshot(ctx, model.AnalysisSnapshot{
+		Scope:     "system",
+		ScopeID:   0,
+		Title:     "Dashboard Snapshot",
+		Payload:   string(payload),
+		CreatedAt: now,
+	}); err != nil {
+		return model.DashboardSnapshot{}, err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return model.DashboardSnapshot{}, err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	if _, err = tx.ExecContext(ctx, `DELETE FROM trend_points WHERE scope = 'system' AND scope_id = 0`); err != nil {
+		return model.DashboardSnapshot{}, err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM source_breakdowns WHERE scope = 'system' AND scope_id = 0`); err != nil {
+		return model.DashboardSnapshot{}, err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM keyword_hotspots WHERE scope = 'system' AND scope_id = 0`); err != nil {
+		return model.DashboardSnapshot{}, err
+	}
+	for _, point := range snapshot.Trends {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO trend_points (scope, scope_id, label, count, created_at) VALUES ('system', 0, ?, ?, ?)`,
+			point.Label, point.Count, now.Format(time.RFC3339)); err != nil {
+			return model.DashboardSnapshot{}, err
+		}
+	}
+	for _, source := range snapshot.Sources {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO source_breakdowns (scope, scope_id, source_type, count, created_at) VALUES ('system', 0, ?, ?, ?)`,
+			source.SourceType, source.Count, now.Format(time.RFC3339)); err != nil {
+			return model.DashboardSnapshot{}, err
+		}
+	}
+	for _, keyword := range snapshot.Keywords {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO keyword_hotspots (scope, scope_id, keyword, count, created_at) VALUES ('system', 0, ?, ?, ?)`,
+			keyword.Keyword, keyword.Count, now.Format(time.RFC3339)); err != nil {
+			return model.DashboardSnapshot{}, err
+		}
+	}
+	err = tx.Commit()
+	return snapshot, err
+}
+
+func (s *Store) GetAnalysisSnapshot(ctx context.Context, scope string, scopeID int64) (model.AnalysisSnapshot, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT id, scope, scope_id, title, payload, created_at FROM analysis_snapshots WHERE scope = ? AND scope_id = ?`, scope, scopeID)
+	var snapshot model.AnalysisSnapshot
+	var createdAt string
+	if err := row.Scan(&snapshot.ID, &snapshot.Scope, &snapshot.ScopeID, &snapshot.Title, &snapshot.Payload, &createdAt); err != nil {
+		return model.AnalysisSnapshot{}, err
+	}
+	snapshot.CreatedAt = mustParseRFC3339(createdAt)
+	return snapshot, nil
 }
 
 func (s *Store) UpsertAnalysisSnapshot(ctx context.Context, snapshot model.AnalysisSnapshot) error {
@@ -283,15 +602,127 @@ ON CONFLICT(scope, scope_id) DO UPDATE SET
 	return err
 }
 
-func (s *Store) GetAnalysisSnapshot(ctx context.Context, scope string, scopeID int64) (model.AnalysisSnapshot, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, scope, scope_id, title, payload, created_at FROM analysis_snapshots WHERE scope = ? AND scope_id = ?`, scope, scopeID)
-	var snapshot model.AnalysisSnapshot
-	var createdAt string
-	if err := row.Scan(&snapshot.ID, &snapshot.Scope, &snapshot.ScopeID, &snapshot.Title, &snapshot.Payload, &createdAt); err != nil {
-		return model.AnalysisSnapshot{}, err
+func (s *Store) ListTrendPoints(ctx context.Context) ([]model.TrendPoint, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT label, count FROM trend_points WHERE scope = 'system' AND scope_id = 0 ORDER BY label ASC`)
+	if err != nil {
+		return nil, err
 	}
-	snapshot.CreatedAt = mustParseRFC3339(createdAt)
-	return snapshot, nil
+	defer rows.Close()
+	result := make([]model.TrendPoint, 0)
+	for rows.Next() {
+		var point model.TrendPoint
+		if err := rows.Scan(&point.Label, &point.Count); err != nil {
+			return nil, err
+		}
+		result = append(result, point)
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) ListSourceBreakdowns(ctx context.Context) ([]model.SourceBreakdown, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT source_type, count FROM source_breakdowns WHERE scope = 'system' AND scope_id = 0 ORDER BY count DESC, source_type ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]model.SourceBreakdown, 0)
+	for rows.Next() {
+		var row model.SourceBreakdown
+		if err := rows.Scan(&row.SourceType, &row.Count); err != nil {
+			return nil, err
+		}
+		result = append(result, row)
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) ListKeywordHotspots(ctx context.Context) ([]model.KeywordHotspot, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT keyword, count FROM keyword_hotspots WHERE scope = 'system' AND scope_id = 0 ORDER BY count DESC, keyword ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]model.KeywordHotspot, 0)
+	for rows.Next() {
+		var row model.KeywordHotspot
+		if err := rows.Scan(&row.Keyword, &row.Count); err != nil {
+			return nil, err
+		}
+		result = append(result, row)
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) ListReports(ctx context.Context, projectID int64) ([]model.Report, error) {
+	args := []any{}
+	query := `SELECT id, project_id, title, summary, content, status, created_at, updated_at FROM reports`
+	if projectID > 0 {
+		query += ` WHERE project_id = ?`
+		args = append(args, projectID)
+	}
+	query += ` ORDER BY updated_at DESC, id DESC`
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	reports := make([]model.Report, 0)
+	for rows.Next() {
+		report, err := scanReport(rows)
+		if err != nil {
+			return nil, err
+		}
+		reports = append(reports, report)
+	}
+	return reports, rows.Err()
+}
+
+func (s *Store) GetReport(ctx context.Context, id int64) (model.Report, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT id, project_id, title, summary, content, status, created_at, updated_at FROM reports WHERE id = ?`, id)
+	report, err := scanReport(row)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return model.Report{}, ErrNotFound
+		}
+		return model.Report{}, err
+	}
+	return report, nil
+}
+
+func (s *Store) CreateReport(ctx context.Context, report model.Report) (model.Report, error) {
+	now := time.Now().UTC()
+	report.Status = nonEmpty(report.Status, "draft")
+	report.CreatedAt = now
+	report.UpdatedAt = now
+	res, err := s.db.ExecContext(ctx, `INSERT INTO reports (project_id, title, summary, content, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		report.ProjectID, report.Title, report.Summary, report.Content, report.Status, now.Format(time.RFC3339), now.Format(time.RFC3339),
+	)
+	if err != nil {
+		return model.Report{}, err
+	}
+	report.ID, _ = res.LastInsertId()
+	if err := s.seedReportSections(ctx, report); err != nil {
+		return model.Report{}, err
+	}
+	return report, nil
+}
+
+func (s *Store) seedReportSections(ctx context.Context, report model.Report) error {
+	parts := strings.Split(report.Content, "\n")
+	now := time.Now().UTC().Format(time.RFC3339)
+	order := 0
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		order++
+		if _, err := s.db.ExecContext(ctx, `INSERT INTO report_sections (report_id, heading, content, sort_order, created_at) VALUES (?, ?, ?, ?, ?)`,
+			report.ID, nonEmpty(report.Title, "报告"), part, order, now); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) ListNotices(ctx context.Context) ([]model.SystemNotice, error) {
@@ -313,28 +744,60 @@ func (s *Store) ListNotices(ctx context.Context) ([]model.SystemNotice, error) {
 	return notices, rows.Err()
 }
 
-func (s *Store) EnsureSeedData(ctx context.Context) error {
+func (s *Store) CreateFeedback(ctx context.Context, feedback model.Feedback) (model.Feedback, error) {
+	feedback.CreatedAt = time.Now().UTC()
+	res, err := s.db.ExecContext(ctx, `INSERT INTO feedback (user_id, title, content, created_at) VALUES (?, ?, ?, ?)`,
+		feedback.UserID, feedback.Title, feedback.Content, feedback.CreatedAt.Format(time.RFC3339))
+	if err != nil {
+		return model.Feedback{}, err
+	}
+	feedback.ID, _ = res.LastInsertId()
+	return feedback, nil
+}
+
+func (s *Store) MarkItemRead(ctx context.Context, userID, itemID int64) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO item_reads (user_id, item_id, created_at) VALUES (?, ?, ?)`, userID, itemID, now)
+	return err
+}
+
+func (s *Store) ToggleFavorite(ctx context.Context, userID, itemID int64) (bool, error) {
 	var count int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM solution_groups`).Scan(&count); err != nil {
-		return err
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM favorites WHERE user_id = ? AND item_id = ?`, userID, itemID).Scan(&count); err != nil {
+		return false, err
+	}
+	if count > 0 {
+		_, err := s.db.ExecContext(ctx, `DELETE FROM favorites WHERE user_id = ? AND item_id = ?`, userID, itemID)
+		return false, err
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	if count == 0 {
-		_, err := s.db.ExecContext(ctx, `INSERT INTO solution_groups (name, description, created_at, updated_at) VALUES ('默认方案组', 'Go 重构后的默认方案组', ?, ?)`, now, now)
-		if err != nil {
-			return err
+	_, err := s.db.ExecContext(ctx, `INSERT INTO favorites (user_id, item_id, created_at) VALUES (?, ?, ?)`, userID, itemID, now)
+	return true, err
+}
+
+func (s *Store) ListTaskRuns(ctx context.Context, limit int) ([]model.TaskRun, error) {
+	limit = max(limit, 1)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, task_name, status, message, started_at, finished_at FROM task_runs ORDER BY started_at DESC, id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	list := make([]model.TaskRun, 0)
+	for rows.Next() {
+		var run model.TaskRun
+		var startedAt string
+		var finishedAt sql.NullString
+		if err := rows.Scan(&run.ID, &run.TaskName, &run.Status, &run.Message, &startedAt, &finishedAt); err != nil {
+			return nil, err
 		}
-	}
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM system_notices`).Scan(&count); err != nil {
-		return err
-	}
-	if count == 0 {
-		_, err := s.db.ExecContext(ctx, `INSERT INTO system_notices (title, content, created_at) VALUES ('Go 系统已启用', '当前门户已切换到 Go 多服务骨架。', ?)`, now)
-		if err != nil {
-			return err
+		run.StartedAt = mustParseRFC3339(startedAt)
+		if finishedAt.Valid {
+			value := mustParseRFC3339(finishedAt.String)
+			run.FinishedAt = &value
 		}
+		list = append(list, run)
 	}
-	return nil
+	return list, rows.Err()
 }
 
 func (s *Store) RecordTaskRun(ctx context.Context, name, status, message string, startedAt time.Time, finishedAt *time.Time) error {
@@ -349,29 +812,34 @@ func (s *Store) RecordTaskRun(ctx context.Context, name, status, message string,
 	return err
 }
 
-func (s *Store) BuildOverviewSnapshot(ctx context.Context) (model.AnalysisSnapshot, error) {
-	overview, err := s.Overview(ctx)
-	if err != nil {
-		return model.AnalysisSnapshot{}, err
+func (s *Store) EnsureSeedData(ctx context.Context) error {
+	var count int
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM project_groups`).Scan(&count); err != nil {
+		return err
 	}
-	payload, err := json.Marshal(overview)
-	if err != nil {
-		return model.AnalysisSnapshot{}, err
+	if count == 0 {
+		if _, err := s.db.ExecContext(ctx, `INSERT INTO project_groups (name, description, created_at, updated_at) VALUES ('默认项目组', 'Go 重构后的默认项目组', ?, ?)`, now, now); err != nil {
+			return err
+		}
 	}
-	return model.AnalysisSnapshot{
-		Scope:     "system",
-		ScopeID:   0,
-		Title:     "System Overview",
-		Payload:   string(payload),
-		CreatedAt: time.Now().UTC(),
-	}, nil
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM system_notices`).Scan(&count); err != nil {
+		return err
+	}
+	if count == 0 {
+		if _, err := s.db.ExecContext(ctx, `INSERT INTO system_notices (title, content, created_at) VALUES ('Go 系统已启用', '当前门户已切换到 Go 多服务骨架。', ?)`, now); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-type userScanner interface {
+type scanner interface {
 	Scan(dest ...any) error
 }
 
-func scanUser(scanner userScanner) (model.User, error) {
+func scanUser(scanner scanner) (model.User, error) {
 	var user model.User
 	var createdAt, updatedAt string
 	if err := scanner.Scan(&user.ID, &user.Username, &user.DisplayName, &user.Email, &user.Role, &user.PasswordHash, &createdAt, &updatedAt); err != nil {
@@ -382,10 +850,21 @@ func scanUser(scanner userScanner) (model.User, error) {
 	return user, nil
 }
 
-func scanProject(scanner userScanner) (model.Project, error) {
+func scanProjectGroup(scanner scanner) (model.ProjectGroup, error) {
+	var group model.ProjectGroup
+	var createdAt, updatedAt string
+	if err := scanner.Scan(&group.ID, &group.Name, &group.Description, &createdAt, &updatedAt); err != nil {
+		return model.ProjectGroup{}, err
+	}
+	group.CreatedAt = mustParseRFC3339(createdAt)
+	group.UpdatedAt = mustParseRFC3339(updatedAt)
+	return group, nil
+}
+
+func scanProject(scanner scanner) (model.Project, error) {
 	var project model.Project
 	var createdAt, updatedAt string
-	if err := scanner.Scan(&project.ID, &project.GroupID, &project.Name, &project.Keywords, &project.Description, &project.Status, &createdAt, &updatedAt); err != nil {
+	if err := scanner.Scan(&project.ID, &project.GroupID, &project.GroupName, &project.Name, &project.Keywords, &project.Description, &project.Status, &createdAt, &updatedAt); err != nil {
 		return model.Project{}, err
 	}
 	project.CreatedAt = mustParseRFC3339(createdAt)
@@ -393,10 +872,10 @@ func scanProject(scanner userScanner) (model.Project, error) {
 	return project, nil
 }
 
-func scanMonitorRule(scanner userScanner) (model.MonitorRule, error) {
+func scanMonitorRule(scanner scanner) (model.MonitorRule, error) {
 	var rule model.MonitorRule
 	var createdAt, updatedAt string
-	if err := scanner.Scan(&rule.ID, &rule.ProjectID, &rule.Name, &rule.IncludeKeywords, &rule.ExcludeKeywords, &rule.Channels, &rule.Severity, &createdAt, &updatedAt); err != nil {
+	if err := scanner.Scan(&rule.ID, &rule.ProjectID, &rule.ProjectName, &rule.Name, &rule.IncludeKeywords, &rule.ExcludeKeywords, &rule.Channels, &rule.Severity, &rule.Status, &createdAt, &updatedAt); err != nil {
 		return model.MonitorRule{}, err
 	}
 	rule.CreatedAt = mustParseRFC3339(createdAt)
@@ -404,7 +883,7 @@ func scanMonitorRule(scanner userScanner) (model.MonitorRule, error) {
 	return rule, nil
 }
 
-func scanReport(scanner userScanner) (model.Report, error) {
+func scanReport(scanner scanner) (model.Report, error) {
 	var report model.Report
 	var createdAt, updatedAt string
 	if err := scanner.Scan(&report.ID, &report.ProjectID, &report.Title, &report.Summary, &report.Content, &report.Status, &createdAt, &updatedAt); err != nil {
@@ -413,4 +892,33 @@ func scanReport(scanner userScanner) (model.Report, error) {
 	report.CreatedAt = mustParseRFC3339(createdAt)
 	report.UpdatedAt = mustParseRFC3339(updatedAt)
 	return report, nil
+}
+
+func extractKeywords(text string) []string {
+	normalized := strings.NewReplacer("，", " ", "。", " ", ",", " ", ".", " ", "\n", " ", "\r", " ", "\t", " ").Replace(text)
+	fields := strings.Fields(normalized)
+	counts := make(map[string]int)
+	for _, field := range fields {
+		field = strings.TrimSpace(field)
+		if len([]rune(field)) < 2 {
+			continue
+		}
+		counts[field]++
+	}
+	result := make([]string, 0, len(counts))
+	for field, count := range counts {
+		if count >= 2 {
+			result = append(result, field)
+		}
+	}
+	if len(result) == 0 {
+		for field := range counts {
+			result = append(result, field)
+		}
+	}
+	sort.Strings(result)
+	if len(result) > 20 {
+		result = result[:20]
+	}
+	return result
 }

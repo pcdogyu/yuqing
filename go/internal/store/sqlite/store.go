@@ -127,12 +127,20 @@ CREATE TABLE IF NOT EXISTS api_tokens (
 	last_used_at TEXT
 );
 
-CREATE TABLE IF NOT EXISTS solution_groups (
+CREATE TABLE IF NOT EXISTS project_groups (
 	id INTEGER PRIMARY KEY,
 	name TEXT NOT NULL,
 	description TEXT NOT NULL DEFAULT '',
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS project_members (
+	id INTEGER PRIMARY KEY,
+	project_id INTEGER NOT NULL,
+	user_id INTEGER NOT NULL,
+	role TEXT NOT NULL DEFAULT 'editor',
+	created_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS projects (
@@ -154,11 +162,34 @@ CREATE TABLE IF NOT EXISTS monitor_rules (
 	exclude_keywords TEXT NOT NULL DEFAULT '',
 	channels TEXT NOT NULL DEFAULT '',
 	severity TEXT NOT NULL DEFAULT 'medium',
+	status TEXT NOT NULL DEFAULT 'active',
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS item_relations (
+	item_id INTEGER NOT NULL,
+	project_id INTEGER NOT NULL,
+	rule_id INTEGER NOT NULL DEFAULT 0,
+	created_at TEXT NOT NULL,
+	PRIMARY KEY (item_id, project_id, rule_id)
+);
+
+CREATE TABLE IF NOT EXISTS item_tags (
+	item_id INTEGER NOT NULL,
+	tag TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	PRIMARY KEY (item_id, tag)
+);
+
 CREATE TABLE IF NOT EXISTS favorites (
+	user_id INTEGER NOT NULL,
+	item_id INTEGER NOT NULL,
+	created_at TEXT NOT NULL,
+	PRIMARY KEY (user_id, item_id)
+);
+
+CREATE TABLE IF NOT EXISTS item_reads (
 	user_id INTEGER NOT NULL,
 	item_id INTEGER NOT NULL,
 	created_at TEXT NOT NULL,
@@ -176,6 +207,15 @@ CREATE TABLE IF NOT EXISTS reports (
 	updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS report_sections (
+	id INTEGER PRIMARY KEY,
+	report_id INTEGER NOT NULL,
+	heading TEXT NOT NULL,
+	content TEXT NOT NULL,
+	sort_order INTEGER NOT NULL DEFAULT 0,
+	created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS analysis_snapshots (
 	id INTEGER PRIMARY KEY,
 	scope TEXT NOT NULL,
@@ -184,6 +224,33 @@ CREATE TABLE IF NOT EXISTS analysis_snapshots (
 	payload TEXT NOT NULL,
 	created_at TEXT NOT NULL,
 	UNIQUE(scope, scope_id)
+);
+
+CREATE TABLE IF NOT EXISTS trend_points (
+	id INTEGER PRIMARY KEY,
+	scope TEXT NOT NULL DEFAULT 'system',
+	scope_id INTEGER NOT NULL DEFAULT 0,
+	label TEXT NOT NULL,
+	count INTEGER NOT NULL DEFAULT 0,
+	created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS keyword_hotspots (
+	id INTEGER PRIMARY KEY,
+	scope TEXT NOT NULL DEFAULT 'system',
+	scope_id INTEGER NOT NULL DEFAULT 0,
+	keyword TEXT NOT NULL,
+	count INTEGER NOT NULL DEFAULT 0,
+	created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS source_breakdowns (
+	id INTEGER PRIMARY KEY,
+	scope TEXT NOT NULL DEFAULT 'system',
+	scope_id INTEGER NOT NULL DEFAULT 0,
+	source_type TEXT NOT NULL,
+	count INTEGER NOT NULL DEFAULT 0,
+	created_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS system_notices (
@@ -211,14 +278,22 @@ CREATE TABLE IF NOT EXISTS task_runs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_items_source_type_captured_at ON items(source_type, captured_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_items_title ON items(title);
 CREATE INDEX IF NOT EXISTS idx_crawl_runs_source_type_started_at ON crawl_runs(source_type, started_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_projects_group_id ON projects(group_id);
 CREATE INDEX IF NOT EXISTS idx_monitor_rules_project_id ON monitor_rules(project_id);
 CREATE INDEX IF NOT EXISTS idx_reports_project_id ON reports(project_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_item_relations_project_id ON item_relations(project_id, item_id DESC);
+CREATE INDEX IF NOT EXISTS idx_trend_points_scope ON trend_points(scope, scope_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_keyword_hotspots_scope ON keyword_hotspots(scope, scope_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_source_breakdowns_scope ON source_breakdowns(scope, scope_id, created_at DESC);
 `
-	_, err := s.db.ExecContext(ctx, schema)
-	return err
+	if _, err := s.db.ExecContext(ctx, schema); err != nil {
+		return err
+	}
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE monitor_rules ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`)
+	return nil
 }
 
 func (s *Store) StartCrawlRun(ctx context.Context, sourceType string, startedAt time.Time) (int64, error) {
@@ -329,22 +404,22 @@ ON CONFLICT(source_key) DO UPDATE SET
 	return inserted, updated, err
 }
 
-func (s *Store) ListItems(ctx context.Context, page, pageSize int, keyword, sourceType string) (model.ItemListResult, error) {
-	page = max(page, 1)
-	pageSize = max(pageSize, 1)
-	offset := (page - 1) * pageSize
+func (s *Store) ListItems(ctx context.Context, filter model.ArticleFilter) (model.ItemListResult, error) {
+	filter.Page = max(filter.Page, 1)
+	filter.PageSize = max(filter.PageSize, 1)
+	offset := (filter.Page - 1) * filter.PageSize
 
-	where, args := buildItemFilter(keyword, sourceType)
-	countQuery := "SELECT COUNT(1) FROM items " + where
+	where, args, joins := buildItemFilter(filter)
+	countQuery := "SELECT COUNT(DISTINCT items.id) FROM items " + joins + " " + where
 
 	var total int
 	if err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
 		return model.ItemListResult{}, err
 	}
 
-	query := "SELECT id, source_type, source_key, title, content, summary, publish_time, publish_time_text, detail_url, source_url, tag_flags, from_text, external_source_host, is_vip, has_image, raw_payload, captured_at, created_at, updated_at FROM items " + where + " ORDER BY captured_at DESC, id DESC LIMIT ? OFFSET ?"
-	args = append(args, pageSize, offset)
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	query := "SELECT DISTINCT items.id, items.source_type, items.source_key, items.title, items.content, items.summary, items.publish_time, items.publish_time_text, items.detail_url, items.source_url, items.tag_flags, items.from_text, items.external_source_host, items.is_vip, items.has_image, items.raw_payload, items.captured_at, items.created_at, items.updated_at FROM items " + joins + " " + where + " ORDER BY items.captured_at DESC, items.id DESC LIMIT ? OFFSET ?"
+	queryArgs := append(args, filter.PageSize, offset)
+	rows, err := s.db.QueryContext(ctx, query, queryArgs...)
 	if err != nil {
 		return model.ItemListResult{}, err
 	}
@@ -354,26 +429,31 @@ func (s *Store) ListItems(ctx context.Context, page, pageSize int, keyword, sour
 	if err != nil {
 		return model.ItemListResult{}, err
 	}
+	if err := s.attachProjectIDs(ctx, items); err != nil {
+		return model.ItemListResult{}, err
+	}
+	if filter.UserID > 0 {
+		if err := s.attachUserState(ctx, filter.UserID, items); err != nil {
+			return model.ItemListResult{}, err
+		}
+	}
 
 	return model.ItemListResult{
 		Items:    items,
-		Page:     page,
-		PageSize: pageSize,
+		Page:     filter.Page,
+		PageSize: filter.PageSize,
 		Total:    total,
 	}, nil
 }
 
 func (s *Store) LatestItems(ctx context.Context, limit int, sourceType string) ([]model.Item, error) {
 	limit = max(limit, 1)
-	where, args := buildItemFilter("", sourceType)
-	query := "SELECT id, source_type, source_key, title, content, summary, publish_time, publish_time_text, detail_url, source_url, tag_flags, from_text, external_source_host, is_vip, has_image, raw_payload, captured_at, created_at, updated_at FROM items " + where + " ORDER BY captured_at DESC, id DESC LIMIT ?"
-	args = append(args, limit)
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	filter := model.ArticleFilter{Page: 1, PageSize: limit, SourceType: sourceType}
+	list, err := s.ListItems(ctx, filter)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	return scanItems(rows)
+	return list.Items, nil
 }
 
 func (s *Store) GetItem(ctx context.Context, id int64) (model.Item, error) {
@@ -385,7 +465,39 @@ func (s *Store) GetItem(ctx context.Context, id int64) (model.Item, error) {
 		}
 		return model.Item{}, err
 	}
+	if err := s.attachProjectIDs(ctx, []model.Item{item}); err == nil {
+		list := []model.Item{item}
+		_ = s.attachProjectIDs(ctx, list)
+		item = list[0]
+	}
 	return item, nil
+}
+
+func (s *Store) GetRelatedItems(ctx context.Context, id int64, limit int) ([]model.Item, error) {
+	item, err := s.GetItem(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	limit = max(limit, 1)
+	needle := firstKeyword(item.Title, item.Content)
+	rows, err := s.db.QueryContext(ctx, `
+SELECT id, source_type, source_key, title, content, summary, publish_time, publish_time_text, detail_url, source_url, tag_flags, from_text, external_source_host, is_vip, has_image, raw_payload, captured_at, created_at, updated_at
+FROM items
+WHERE id <> ? AND source_type = ? AND (title LIKE ? OR content LIKE ?)
+ORDER BY captured_at DESC, id DESC
+LIMIT ?`, id, item.SourceType, "%"+needle+"%", "%"+needle+"%", limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items, err := scanItems(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.attachProjectIDs(ctx, items); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 func (s *Store) ListCrawlRuns(ctx context.Context, limit int, sourceType string) ([]model.CrawlRun, error) {
@@ -422,6 +534,37 @@ func (s *Store) ListCrawlRuns(ctx context.Context, limit int, sourceType string)
 	return runs, rows.Err()
 }
 
+func (s *Store) LinkItemsToProjects(ctx context.Context, sourceKeys []string, projectIDs []int64, ruleID int64) error {
+	if len(sourceKeys) == 0 || len(projectIDs) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	now := time.Now().UTC().Format(time.RFC3339)
+	for _, sourceKey := range sourceKeys {
+		itemID, lookupErr := s.itemIDBySourceKeyTx(ctx, tx, sourceKey)
+		if lookupErr != nil {
+			err = lookupErr
+			return err
+		}
+		for _, projectID := range projectIDs {
+			if _, execErr := tx.ExecContext(ctx, `INSERT OR IGNORE INTO item_relations (item_id, project_id, rule_id, created_at) VALUES (?, ?, ?, ?)`, itemID, projectID, ruleID, now); execErr != nil {
+				err = execErr
+				return err
+			}
+		}
+	}
+	err = tx.Commit()
+	return err
+}
+
 var ErrNotFound = errors.New("not found")
 
 func (s *Store) sourceKeyExistsTx(ctx context.Context, tx *sql.Tx, sourceKey string) (bool, error) {
@@ -432,22 +575,127 @@ func (s *Store) sourceKeyExistsTx(ctx context.Context, tx *sql.Tx, sourceKey str
 	return count > 0, nil
 }
 
-func buildItemFilter(keyword, sourceType string) (string, []any) {
-	filters := make([]string, 0, 2)
-	args := make([]any, 0, 2)
-	if sourceType != "" {
-		filters = append(filters, "source_type = ?")
-		args = append(args, sourceType)
+func (s *Store) itemIDBySourceKeyTx(ctx context.Context, tx *sql.Tx, sourceKey string) (int64, error) {
+	var itemID int64
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM items WHERE source_key = ?`, sourceKey).Scan(&itemID); err != nil {
+		return 0, err
 	}
-	if keyword != "" {
-		filters = append(filters, "(title LIKE ? OR content LIKE ? OR summary LIKE ?)")
-		like := "%" + keyword + "%"
+	return itemID, nil
+}
+
+func buildItemFilter(filter model.ArticleFilter) (where string, args []any, joins string) {
+	filters := make([]string, 0, 6)
+	args = make([]any, 0, 6)
+	if filter.ProjectID > 0 {
+		joins = "JOIN item_relations ir ON ir.item_id = items.id"
+		filters = append(filters, "ir.project_id = ?")
+		args = append(args, filter.ProjectID)
+	}
+	if filter.SourceType != "" {
+		filters = append(filters, "items.source_type = ?")
+		args = append(args, filter.SourceType)
+	}
+	if filter.Keyword != "" {
+		filters = append(filters, "(items.title LIKE ? OR items.content LIKE ? OR items.summary LIKE ?)")
+		like := "%" + filter.Keyword + "%"
 		args = append(args, like, like, like)
 	}
-	if len(filters) == 0 {
-		return "", args
+	if filter.Start != "" {
+		filters = append(filters, "items.captured_at >= ?")
+		args = append(args, filter.Start)
 	}
-	return "WHERE " + strings.Join(filters, " AND "), args
+	if filter.End != "" {
+		filters = append(filters, "items.captured_at <= ?")
+		args = append(args, filter.End)
+	}
+	if len(filters) == 0 {
+		return "", args, joins
+	}
+	return "WHERE " + strings.Join(filters, " AND "), args, joins
+}
+
+func (s *Store) attachProjectIDs(ctx context.Context, items []model.Item) error {
+	if len(items) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(items))
+	args := make([]any, 0, len(items))
+	lookup := make(map[int64]*model.Item, len(items))
+	for index := range items {
+		ids = append(ids, "?")
+		args = append(args, items[index].ID)
+		lookup[items[index].ID] = &items[index]
+	}
+	query := `SELECT item_id, project_id FROM item_relations WHERE item_id IN (` + strings.Join(ids, ",") + `)`
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var itemID, projectID int64
+		if err := rows.Scan(&itemID, &projectID); err != nil {
+			return err
+		}
+		if item, ok := lookup[itemID]; ok {
+			item.ProjectIDs = append(item.ProjectIDs, projectID)
+		}
+	}
+	return rows.Err()
+}
+
+func (s *Store) attachUserState(ctx context.Context, userID int64, items []model.Item) error {
+	if userID <= 0 || len(items) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(items))
+	args := make([]any, 0, len(items)+1)
+	lookup := make(map[int64]*model.Item, len(items))
+	for index := range items {
+		ids = append(ids, "?")
+		args = append(args, items[index].ID)
+		lookup[items[index].ID] = &items[index]
+	}
+
+	favoriteArgs := append([]any{userID}, args...)
+	favoriteQuery := `SELECT item_id FROM favorites WHERE user_id = ? AND item_id IN (` + strings.Join(ids, ",") + `)`
+	rows, err := s.db.QueryContext(ctx, favoriteQuery, favoriteArgs...)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var itemID int64
+		if err := rows.Scan(&itemID); err != nil {
+			rows.Close()
+			return err
+		}
+		if item, ok := lookup[itemID]; ok {
+			item.Favorited = true
+		}
+	}
+	rows.Close()
+
+	readArgs := append([]any{userID}, args...)
+	readQuery := `SELECT item_id FROM item_reads WHERE user_id = ? AND item_id IN (` + strings.Join(ids, ",") + `)`
+	readRows, err := s.db.QueryContext(ctx, readQuery, readArgs...)
+	if err != nil {
+		return err
+	}
+	defer readRows.Close()
+	for readRows.Next() {
+		var itemID int64
+		if err := readRows.Scan(&itemID); err != nil {
+			return err
+		}
+		if item, ok := lookup[itemID]; ok {
+			item.Read = true
+		}
+	}
+	return readRows.Err()
+}
+
+func (s *Store) PopulateUserItemState(ctx context.Context, userID int64, items []model.Item) error {
+	return s.attachUserState(ctx, userID, items)
 }
 
 type itemScanner interface {
@@ -524,6 +772,17 @@ func nonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func firstKeyword(values ...string) string {
+	for _, value := range values {
+		for _, field := range strings.Fields(strings.TrimSpace(value)) {
+			if len([]rune(field)) >= 2 {
+				return field
+			}
+		}
+	}
+	return "快讯"
 }
 
 func max(value, fallback int) int {

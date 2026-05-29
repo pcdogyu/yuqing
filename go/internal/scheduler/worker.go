@@ -37,9 +37,9 @@ func (w *Worker) Run(ctx context.Context) {
 			Post(w.cfg.CrawlerURL + "/api/v1/admin/tasks/crawl")
 		return err
 	})
-	go w.loop(ctx, "analysis-refresh", 2*time.Minute, func() error {
+	go w.loop(ctx, "analysis-refresh", w.cfg.AnalysisInterval, func() error {
 		_, err := w.client.R().
-			Post(w.cfg.ContentURL + "/api/v1/admin/tasks/analysis/refresh")
+			Post(w.cfg.AnalysisURL + "/api/v1/admin/tasks/analysis/refresh")
 		return err
 	})
 	<-ctx.Done()

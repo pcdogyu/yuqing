@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/stonedt-yuqing/go-jin10/internal/config"
+	"github.com/stonedt-yuqing/go-jin10/internal/model"
 	"github.com/stonedt-yuqing/go-jin10/internal/provider"
 	"github.com/stonedt-yuqing/go-jin10/internal/service"
 )
@@ -37,11 +38,13 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListItems(w http.ResponseWriter, r *http.Request) {
-	page := intQuery(r, "page", 1)
-	pageSize := intQuery(r, "page_size", 20)
-	keyword := r.URL.Query().Get("keyword")
-	sourceType := validSourceType(r.URL.Query().Get("source_type"))
-	result, err := s.crawler.ListItems(r.Context(), page, pageSize, keyword, sourceType)
+	filter := model.ArticleFilter{
+		Page:       intQuery(r, "page", 1),
+		PageSize:   intQuery(r, "page_size", 20),
+		Keyword:    r.URL.Query().Get("keyword"),
+		SourceType: validSourceType(r.URL.Query().Get("source_type")),
+	}
+	result, err := s.crawler.ListItems(r.Context(), filter)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, err.Error(), nil)
 		return

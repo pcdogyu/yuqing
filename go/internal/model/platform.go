@@ -28,7 +28,7 @@ type APIToken struct {
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 }
 
-type SolutionGroup struct {
+type ProjectGroup struct {
 	ID          int64     `json:"id"`
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
@@ -39,6 +39,7 @@ type SolutionGroup struct {
 type Project struct {
 	ID          int64     `json:"id"`
 	GroupID     int64     `json:"group_id"`
+	GroupName   string    `json:"group_name,omitempty"`
 	Name        string    `json:"name"`
 	Keywords    string    `json:"keywords"`
 	Description string    `json:"description"`
@@ -50,11 +51,13 @@ type Project struct {
 type MonitorRule struct {
 	ID              int64     `json:"id"`
 	ProjectID       int64     `json:"project_id"`
+	ProjectName     string    `json:"project_name,omitempty"`
 	Name            string    `json:"name"`
 	IncludeKeywords string    `json:"include_keywords"`
 	ExcludeKeywords string    `json:"exclude_keywords"`
 	Channels        string    `json:"channels"`
 	Severity        string    `json:"severity"`
+	Status          string    `json:"status"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }
@@ -74,6 +77,15 @@ type Report struct {
 	Status    string    `json:"status"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type ReportSection struct {
+	ID        int64     `json:"id"`
+	ReportID  int64     `json:"report_id"`
+	Heading   string    `json:"heading"`
+	Content   string    `json:"content"`
+	SortOrder int       `json:"sort_order"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type AnalysisSnapshot struct {
@@ -123,6 +135,29 @@ type Overview struct {
 	ReportCount    int `json:"report_count"`
 	CrawlRunCount  int `json:"crawl_run_count"`
 	AlertRuleCount int `json:"alert_rule_count"`
+}
+
+type TrendPoint struct {
+	Label string `json:"label"`
+	Count int    `json:"count"`
+}
+
+type SourceBreakdown struct {
+	SourceType string `json:"source_type"`
+	Count      int    `json:"count"`
+}
+
+type KeywordHotspot struct {
+	Keyword string `json:"keyword"`
+	Count   int    `json:"count"`
+}
+
+type DashboardSnapshot struct {
+	Overview  Overview          `json:"overview"`
+	Trends    []TrendPoint      `json:"trends"`
+	Sources   []SourceBreakdown `json:"sources"`
+	Keywords  []KeywordHotspot  `json:"keywords"`
+	UpdatedAt time.Time         `json:"updated_at"`
 }
 
 type NLPRequest struct {

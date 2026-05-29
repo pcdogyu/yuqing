@@ -6,6 +6,7 @@ import (
 	"errors"
 	"html/template"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/go-resty/resty/v2"
@@ -23,14 +24,21 @@ type Server struct {
 }
 
 type pageData struct {
-	Title    string
-	User     any
-	Overview any
-	Projects any
-	Articles any
-	Reports  any
-	Notices  any
-	Error    string
+	Title         string
+	User          any
+	Dashboard     model.DashboardSnapshot
+	Groups        []model.ProjectGroup
+	Projects      []model.Project
+	Rules         []model.MonitorRule
+	Articles      model.ItemListResult
+	Article       model.Item
+	Related       []model.Item
+	Reports       []model.Report
+	Report        model.Report
+	Notices       []model.SystemNotice
+	TaskRuns      []model.TaskRun
+	Error         string
+	FilterKeyword string
 }
 
 func NewServer(cfg config.Config) *Server {
@@ -38,8 +46,12 @@ func NewServer(cfg config.Config) *Server {
 	template.Must(tpl.New("login").Parse(loginTemplate))
 	template.Must(tpl.New("dashboard").Parse(dashboardTemplate))
 	template.Must(tpl.New("projects").Parse(projectsTemplate))
+	template.Must(tpl.New("rules").Parse(rulesTemplate))
 	template.Must(tpl.New("articles").Parse(articlesTemplate))
+	template.Must(tpl.New("article").Parse(articleTemplate))
 	template.Must(tpl.New("reports").Parse(reportsTemplate))
+	template.Must(tpl.New("report").Parse(reportTemplate))
+	template.Must(tpl.New("system").Parse(systemTemplate))
 
 	return &Server{
 		cfg: cfg,
@@ -55,8 +67,12 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/login", s.handleLoginPage)
 	mux.HandleFunc("/logout", s.handleLogout)
 	mux.HandleFunc("/projects", s.requireSession(s.handleProjects))
+	mux.HandleFunc("/monitor-rules", s.requireSession(s.handleRules))
+	mux.HandleFunc("/articles/", s.requireSession(s.handleArticleDetail))
 	mux.HandleFunc("/articles", s.requireSession(s.handleArticles))
+	mux.HandleFunc("/reports/", s.requireSession(s.handleReportDetail))
 	mux.HandleFunc("/reports", s.requireSession(s.handleReports))
+	mux.HandleFunc("/system", s.requireSession(s.handleSystem))
 	mux.HandleFunc("/", s.requireSession(s.handleDashboard))
 	return mux
 }
@@ -92,66 +108,242 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if cookie, err := r.Cookie(sessionCookieName); err == nil {
 		_, _ = s.client.R().
 			SetQueryParam("session_token", cookie.Value).
-			Post(s.cfg.ContentURL + "/api/v1/auth/logout")
+			Post(s.cfg.AuthURL + "/api/v1/auth/logout")
 	}
 	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/", MaxAge: -1})
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request, user any) {
-	overview := map[string]any{}
-	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/analysis/overview", &overview)
+	dashboard := model.DashboardSnapshot{}
 	notices := []model.SystemNotice{}
+	taskRuns := []model.TaskRun{}
+	_ = s.getJSON(s.cfg.AnalysisURL+"/api/v1/analysis/overview", &dashboard)
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/system/notices", &notices)
-	_ = s.render(w, "dashboard", pageData{Title: "总览", User: user, Overview: overview, Notices: notices})
+	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/system/task-runs?limit=10", &taskRuns)
+	_ = s.render(w, "dashboard", pageData{Title: "总览", User: user, Dashboard: dashboard, Notices: notices, TaskRuns: taskRuns})
 }
 
 func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request, user any) {
 	if r.Method == http.MethodPost {
-		if err := r.ParseForm(); err == nil {
-			_, _ = s.client.R().
-				SetBody(map[string]string{
-					"name":        r.FormValue("name"),
-					"keywords":    r.FormValue("keywords"),
-					"description": r.FormValue("description"),
-				}).
-				Post(s.cfg.ContentURL + "/api/v1/projects")
+		_ = r.ParseForm()
+		switch r.FormValue("form_type") {
+		case "group":
+			action := r.FormValue("action")
+			groupID := r.FormValue("group_id")
+			body := map[string]string{
+				"name":        r.FormValue("name"),
+				"description": r.FormValue("description"),
+			}
+			switch action {
+			case "update":
+				_, _ = s.client.R().SetBody(body).Put(s.cfg.ContentURL + "/api/v1/project-groups/" + groupID)
+			case "delete":
+				_, _ = s.client.R().Delete(s.cfg.ContentURL + "/api/v1/project-groups/" + groupID)
+			default:
+				_, _ = s.client.R().SetBody(body).Post(s.cfg.ContentURL + "/api/v1/project-groups")
+			}
+		case "project":
+			action := r.FormValue("action")
+			groupID, _ := strconv.ParseInt(r.FormValue("group_id"), 10, 64)
+			body := map[string]any{
+				"group_id":    groupID,
+				"name":        r.FormValue("name"),
+				"keywords":    r.FormValue("keywords"),
+				"description": r.FormValue("description"),
+				"status":      nonEmpty(r.FormValue("status"), "active"),
+			}
+			projectID := r.FormValue("project_id")
+			switch action {
+			case "update":
+				_, _ = s.client.R().SetBody(body).Put(s.cfg.ContentURL + "/api/v1/projects/" + projectID)
+			case "delete":
+				_, _ = s.client.R().Delete(s.cfg.ContentURL + "/api/v1/projects/" + projectID)
+			default:
+				_, _ = s.client.R().SetBody(body).Post(s.cfg.ContentURL + "/api/v1/projects")
+			}
 		}
 		http.Redirect(w, r, "/projects", http.StatusSeeOther)
 		return
 	}
+	groups := []model.ProjectGroup{}
 	projects := []model.Project{}
+	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/project-groups", &groups)
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/projects", &projects)
-	_ = s.render(w, "projects", pageData{Title: "项目中心", User: user, Projects: projects})
+	_ = s.render(w, "projects", pageData{Title: "项目中心", User: user, Groups: groups, Projects: projects})
+}
+
+func (s *Server) handleRules(w http.ResponseWriter, r *http.Request, user any) {
+	if r.Method == http.MethodPost {
+		_ = r.ParseForm()
+		action := r.FormValue("action")
+		projectID, _ := strconv.ParseInt(r.FormValue("project_id"), 10, 64)
+		body := map[string]any{
+			"project_id":       projectID,
+			"name":             r.FormValue("name"),
+			"include_keywords": r.FormValue("include_keywords"),
+			"exclude_keywords": r.FormValue("exclude_keywords"),
+			"channels":         r.FormValue("channels"),
+			"severity":         r.FormValue("severity"),
+			"status":           nonEmpty(r.FormValue("status"), "active"),
+		}
+		ruleID := r.FormValue("rule_id")
+		switch action {
+		case "update":
+			_, _ = s.client.R().SetBody(body).Put(s.cfg.ContentURL + "/api/v1/monitor-rules/" + ruleID)
+		case "toggle":
+			status := "active"
+			if r.FormValue("status") == "active" {
+				status = "paused"
+			}
+			body["status"] = status
+			_, _ = s.client.R().SetBody(body).Put(s.cfg.ContentURL + "/api/v1/monitor-rules/" + ruleID)
+		case "delete":
+			_, _ = s.client.R().Delete(s.cfg.ContentURL + "/api/v1/monitor-rules/" + ruleID)
+		default:
+			_, _ = s.client.R().SetBody(body).Post(s.cfg.ContentURL + "/api/v1/monitor-rules")
+		}
+		http.Redirect(w, r, "/monitor-rules", http.StatusSeeOther)
+		return
+	}
+	rules := []model.MonitorRule{}
+	projects := []model.Project{}
+	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/monitor-rules", &rules)
+	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/projects", &projects)
+	_ = s.render(w, "rules", pageData{Title: "监测规则", User: user, Rules: rules, Projects: projects})
 }
 
 func (s *Server) handleArticles(w http.ResponseWriter, r *http.Request, user any) {
-	articles := map[string]any{}
+	userID := userIDFromMap(user)
+	if r.Method == http.MethodPost {
+		_ = r.ParseForm()
+		itemID := r.FormValue("item_id")
+		action := r.FormValue("action")
+		if itemID != "" && userID > 0 {
+			switch action {
+			case "favorite":
+				_, _ = s.client.R().SetQueryParam("user_id", strconv.FormatInt(userID, 10)).Post(s.cfg.ContentURL + "/api/v1/articles/" + itemID + "/favorite")
+			case "read":
+				_, _ = s.client.R().SetQueryParam("user_id", strconv.FormatInt(userID, 10)).Post(s.cfg.ContentURL + "/api/v1/articles/" + itemID + "/read")
+			}
+		}
+		http.Redirect(w, r, "/articles?keyword="+r.URL.Query().Get("keyword"), http.StatusSeeOther)
+		return
+	}
 	query := "/api/v1/articles?page=1&page_size=20"
 	if keyword := strings.TrimSpace(r.URL.Query().Get("keyword")); keyword != "" {
 		query += "&keyword=" + keyword
 	}
+	if projectID := strings.TrimSpace(r.URL.Query().Get("project_id")); projectID != "" {
+		query += "&project_id=" + projectID
+	}
+	if sourceType := strings.TrimSpace(r.URL.Query().Get("source_type")); sourceType != "" {
+		query += "&source_type=" + sourceType
+	}
+	if userID > 0 {
+		query += "&user_id=" + strconv.FormatInt(userID, 10)
+	}
+	articles := model.ItemListResult{}
+	projects := []model.Project{}
 	_ = s.getJSON(s.cfg.ContentURL+query, &articles)
-	_ = s.render(w, "articles", pageData{Title: "文章中心", User: user, Articles: articles})
+	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/projects", &projects)
+	_ = s.render(w, "articles", pageData{Title: "文章中心", User: user, Articles: articles, Projects: projects, FilterKeyword: r.URL.Query().Get("keyword")})
+}
+
+func (s *Server) handleArticleDetail(w http.ResponseWriter, r *http.Request, user any) {
+	id := strings.TrimPrefix(r.URL.Path, "/articles/")
+	if id == "" {
+		http.Redirect(w, r, "/articles", http.StatusSeeOther)
+		return
+	}
+	userID := userIDFromMap(user)
+	if r.Method == http.MethodPost && userID > 0 {
+		_ = r.ParseForm()
+		action := r.FormValue("action")
+		switch action {
+		case "favorite":
+			_, _ = s.client.R().SetQueryParam("user_id", strconv.FormatInt(userID, 10)).Post(s.cfg.ContentURL + "/api/v1/articles/" + id + "/favorite")
+		case "read":
+			_, _ = s.client.R().SetQueryParam("user_id", strconv.FormatInt(userID, 10)).Post(s.cfg.ContentURL + "/api/v1/articles/" + id + "/read")
+		}
+		http.Redirect(w, r, "/articles/"+id, http.StatusSeeOther)
+		return
+	}
+	article := model.Item{}
+	related := []model.Item{}
+	querySuffix := ""
+	if userID > 0 {
+		querySuffix = "?user_id=" + strconv.FormatInt(userID, 10)
+	}
+	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/articles/"+id+querySuffix, &article)
+	relatedURL := s.cfg.ContentURL + "/api/v1/articles/" + id + "/related"
+	if userID > 0 {
+		relatedURL += "?user_id=" + strconv.FormatInt(userID, 10)
+	}
+	_ = s.getJSON(relatedURL, &related)
+	_ = s.render(w, "article", pageData{Title: "文章详情", User: user, Article: article, Related: related})
 }
 
 func (s *Server) handleReports(w http.ResponseWriter, r *http.Request, user any) {
 	if r.Method == http.MethodPost {
-		if err := r.ParseForm(); err == nil {
-			_, _ = s.client.R().
-				SetBody(map[string]any{
-					"project_id": 0,
-					"title":      r.FormValue("title"),
-					"text":       r.FormValue("content"),
-				}).
-				Post(s.cfg.ContentURL + "/api/v1/reports/generate")
-		}
+		_ = r.ParseForm()
+		projectID, _ := strconv.ParseInt(r.FormValue("project_id"), 10, 64)
+		_, _ = s.client.R().SetBody(map[string]any{
+			"project_id": projectID,
+			"title":      r.FormValue("title"),
+			"text":       r.FormValue("content"),
+		}).Post(s.cfg.ContentURL + "/api/v1/reports/generate")
 		http.Redirect(w, r, "/reports", http.StatusSeeOther)
 		return
 	}
 	reports := []model.Report{}
+	projects := []model.Project{}
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/reports", &reports)
-	_ = s.render(w, "reports", pageData{Title: "报告中心", User: user, Reports: reports})
+	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/projects", &projects)
+	_ = s.render(w, "reports", pageData{Title: "报告中心", User: user, Reports: reports, Projects: projects})
+}
+
+func (s *Server) handleReportDetail(w http.ResponseWriter, r *http.Request, user any) {
+	id := strings.TrimPrefix(r.URL.Path, "/reports/")
+	if id == "" {
+		http.Redirect(w, r, "/reports", http.StatusSeeOther)
+		return
+	}
+	report := model.Report{}
+	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/reports/"+id, &report)
+	_ = s.render(w, "report", pageData{Title: "报告详情", User: user, Report: report})
+}
+
+func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) {
+	if r.Method == http.MethodPost {
+		_ = r.ParseForm()
+		switch r.FormValue("form_type") {
+		case "feedback":
+			_, _ = s.client.R().SetBody(map[string]any{
+				"title":   r.FormValue("title"),
+				"content": r.FormValue("content"),
+			}).Post(s.cfg.ContentURL + "/api/v1/system/feedback")
+		case "crawl":
+			params := map[string]string{}
+			if sourceType := strings.TrimSpace(r.FormValue("source_type")); sourceType != "" {
+				params["source_type"] = sourceType
+			}
+			req := s.client.R()
+			for key, value := range params {
+				req.SetQueryParam(key, value)
+			}
+			_, _ = req.Post(s.cfg.CrawlerURL + "/api/v1/admin/tasks/crawl")
+		case "analysis":
+			_, _ = s.client.R().Post(s.cfg.AnalysisURL + "/api/v1/admin/tasks/analysis/refresh")
+		}
+		http.Redirect(w, r, "/system", http.StatusSeeOther)
+		return
+	}
+	notices := []model.SystemNotice{}
+	taskRuns := []model.TaskRun{}
+	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/system/notices", &notices)
+	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/system/task-runs?limit=20", &taskRuns)
+	_ = s.render(w, "system", pageData{Title: "系统设置", User: user, Notices: notices, TaskRuns: taskRuns})
 }
 
 func (s *Server) requireSession(next func(http.ResponseWriter, *http.Request, any)) http.HandlerFunc {
@@ -181,7 +373,7 @@ func (s *Server) getSessionUser(token string) (map[string]any, error) {
 	resp2, err := s.client.R().
 		SetQueryParam("session_token", token).
 		SetResult(&authResp).
-		Get(s.cfg.ContentURL + "/api/v1/auth/session")
+		Get(s.cfg.AuthURL + "/api/v1/auth/session")
 	if err != nil {
 		return nil, err
 	}
@@ -203,7 +395,7 @@ func (s *Server) authLogin(username, password string) (struct {
 	httpResp, err := s.client.R().
 		SetBody(map[string]string{"username": username, "password": password}).
 		SetResult(&resp).
-		Post(s.cfg.ContentURL + "/api/v1/auth/login")
+		Post(s.cfg.AuthURL + "/api/v1/auth/login")
 	if err != nil {
 		return struct {
 			SessionToken string `json:"session_token"`
@@ -239,26 +431,71 @@ func (s *Server) render(w http.ResponseWriter, name string, data pageData) error
 	return s.templates.ExecuteTemplate(w, name, data)
 }
 
+func userIDFromMap(user any) int64 {
+	mapped, ok := user.(map[string]any)
+	if !ok {
+		return 0
+	}
+	switch value := mapped["id"].(type) {
+	case float64:
+		return int64(value)
+	case int64:
+		return value
+	case json.Number:
+		parsed, _ := value.Int64()
+		return parsed
+	default:
+		return 0
+	}
+}
+
+func nonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
 const layoutTemplate = `
-{{define "nav"}}<nav><a href="/">总览</a><a href="/projects">项目中心</a><a href="/articles">文章中心</a><a href="/reports">报告中心</a><a href="/logout">退出</a></nav>{{end}}
+{{define "nav"}}<nav><a href="/">总览</a><a href="/projects">项目</a><a href="/monitor-rules">规则</a><a href="/articles">文章</a><a href="/reports">报告</a><a href="/system">系统</a><a href="/logout">退出</a></nav>{{end}}
 `
 
+const baseStyles = `body{font-family:Segoe UI,system-ui;background:#f7f3eb;margin:0;color:#222}header,main{max-width:1180px;margin:0 auto;padding:24px}nav a{margin-right:16px;color:#214e34;text-decoration:none;font-weight:600}section{background:#fff;border-radius:16px;padding:20px;margin-top:20px;box-shadow:0 8px 24px rgba(0,0,0,.06)}input,select,textarea,button{width:100%;padding:12px;margin:8px 0;border-radius:10px;border:1px solid #d0c8b8;box-sizing:border-box}button{background:#214e34;color:#fff;border:none;cursor:pointer}table{width:100%;border-collapse:collapse}th,td{padding:10px;border-bottom:1px solid #ece7dc;text-align:left}pre{white-space:pre-wrap;line-height:1.6}a.inline{margin-right:0;color:#214e34}form.inline{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;align-items:end}`
+
 const loginTemplate = `
-{{define "login"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>body{font-family:Segoe UI,system-ui;background:#f4f0e8;margin:0;padding:40px;color:#1b1b1b}main{max-width:420px;margin:8vh auto;background:#fff;padding:32px;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.08)}input,button,textarea{width:100%;padding:12px;margin:8px 0;border-radius:10px;border:1px solid #d0c8b8}button{background:#214e34;color:#fff;border:none}small{color:#666}</style></head><body><main><h1>Go 舆情门户</h1>{{if .Error}}<p style="color:#9b1c1c">{{.Error}}</p>{{end}}<form method="post"><input name="username" placeholder="用户名" value="admin"><input name="password" type="password" placeholder="密码" value="admin123"><button type="submit">登录</button></form><small>默认账号由系统启动时自动写入 SQLite。</small></main></body></html>{{end}}
+{{define "login"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `main{max-width:420px}</style></head><body><main><section><h1>Go 舆情系统</h1>{{if .Error}}<p style="color:#9b1c1c">{{.Error}}</p>{{end}}<form method="post"><input name="username" placeholder="用户名" value="admin"><input name="password" type="password" placeholder="密码" value="admin123"><button type="submit">登录</button></form></section></main></body></html>{{end}}
 `
 
 const dashboardTemplate = `
-{{define "dashboard"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>body{font-family:Segoe UI,system-ui;background:#f7f3eb;margin:0;color:#222}header,main{max-width:1080px;margin:0 auto;padding:24px}nav a{margin-right:16px;color:#214e34;text-decoration:none}section{background:#fff;border-radius:16px;padding:20px;margin-top:20px;box-shadow:0 8px 24px rgba(0,0,0,.06)}pre{white-space:pre-wrap}</style></head><body><header><h1>Go 舆情门户</h1>{{template "nav" .}}</header><main><section><h2>系统总览</h2><pre>{{printf "%+v" .Overview}}</pre></section><section><h2>系统公告</h2><pre>{{printf "%+v" .Notices}}</pre></section></main></body></html>{{end}}
+{{define "dashboard"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.metric{padding:16px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.metric strong{display:block;font-size:28px;margin-top:6px}` + `</style></head><body><header><h1>总览</h1>{{template "nav" .}}</header><main><section><h2>核心指标</h2><div class="metric-grid"><div class="metric">文章数<strong>{{.Dashboard.Overview.ArticleCount}}</strong></div><div class="metric">项目数<strong>{{.Dashboard.Overview.ProjectCount}}</strong></div><div class="metric">报告数<strong>{{.Dashboard.Overview.ReportCount}}</strong></div><div class="metric">活跃规则<strong>{{.Dashboard.Overview.AlertRuleCount}}</strong></div></div></section><section><h2>近 7 日趋势</h2><table><tr><th>日期</th><th>文章数</th></tr>{{range .Dashboard.Trends}}<tr><td>{{.Label}}</td><td>{{.Count}}</td></tr>{{end}}</table></section><section><h2>来源分布</h2><table><tr><th>来源</th><th>数量</th></tr>{{range .Dashboard.Sources}}<tr><td>{{.SourceType}}</td><td>{{.Count}}</td></tr>{{end}}</table></section><section><h2>关键词热点</h2><table><tr><th>关键词</th><th>次数</th></tr>{{range .Dashboard.Keywords}}<tr><td>{{.Keyword}}</td><td>{{.Count}}</td></tr>{{end}}</table></section><section><h2>系统公告</h2><table><tr><th>标题</th><th>时间</th></tr>{{range .Notices}}<tr><td>{{.Title}}</td><td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td></tr>{{end}}</table></section><section><h2>最近任务</h2><table><tr><th>任务</th><th>状态</th><th>开始时间</th></tr>{{range .TaskRuns}}<tr><td>{{.TaskName}}</td><td>{{.Status}}</td><td>{{.StartedAt.Format "2006-01-02 15:04"}}</td></tr>{{end}}</table></section></main></body></html>{{end}}
 `
 
 const projectsTemplate = `
-{{define "projects"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>body{font-family:Segoe UI,system-ui;background:#f7f3eb;margin:0;color:#222}header,main{max-width:1080px;margin:0 auto;padding:24px}nav a{margin-right:16px;color:#214e34;text-decoration:none}section{background:#fff;border-radius:16px;padding:20px;margin-top:20px;box-shadow:0 8px 24px rgba(0,0,0,.06)}input,textarea,button{width:100%;padding:12px;margin:8px 0;border-radius:10px;border:1px solid #d0c8b8}button{background:#214e34;color:#fff;border:none}</style></head><body><header><h1>项目中心</h1>{{template "nav" .}}</header><main><section><h2>新建项目</h2><form method="post"><input name="name" placeholder="项目名称"><input name="keywords" placeholder="关键词，逗号分隔"><textarea name="description" placeholder="项目描述"></textarea><button type="submit">创建</button></form></section><section><h2>项目列表</h2><pre>{{printf "%+v" .Projects}}</pre></section></main></body></html>{{end}}
+{{define "projects"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.compact td form{margin:0}.compact input,.compact textarea,.compact select,.compact button{margin:4px 0;padding:8px}` + `</style></head><body><header><h1>项目中心</h1>{{template "nav" .}}</header><main><section><h2>新建项目组</h2><form method="post"><input type="hidden" name="form_type" value="group"><input name="name" placeholder="项目组名称"><textarea name="description" placeholder="项目组描述"></textarea><button type="submit">创建项目组</button></form></section><section><h2>项目组列表</h2><table class="compact"><tr><th>ID</th><th>名称</th><th>描述</th><th>操作</th></tr>{{range .Groups}}<tr><td>{{.ID}}</td><td><form method="post"><input type="hidden" name="form_type" value="group"><input type="hidden" name="action" value="update"><input type="hidden" name="group_id" value="{{.ID}}"><input name="name" value="{{.Name}}"></td><td><textarea name="description">{{.Description}}</textarea></td><td><button type="submit">保存</button></form><form method="post"><input type="hidden" name="form_type" value="group"><input type="hidden" name="action" value="delete"><input type="hidden" name="group_id" value="{{.ID}}"><button type="submit">删除</button></form></td></tr>{{end}}</table></section><section><h2>新建项目</h2><form method="post"><input type="hidden" name="form_type" value="project"><select name="group_id">{{range .Groups}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select><input name="name" placeholder="项目名称"><input name="keywords" placeholder="关键词，逗号分隔"><textarea name="description" placeholder="项目描述"></textarea><button type="submit">创建项目</button></form></section><section><h2>项目列表</h2><table class="compact"><tr><th>ID</th><th>项目组ID</th><th>项目组</th><th>名称</th><th>关键词</th><th>描述</th><th>状态</th><th>操作</th></tr>{{range .Projects}}<tr><td>{{.ID}}</td><td><form method="post"><input type="hidden" name="form_type" value="project"><input type="hidden" name="action" value="update"><input type="hidden" name="project_id" value="{{.ID}}"><input name="group_id" value="{{.GroupID}}"></td><td>{{.GroupName}}</td><td><input name="name" value="{{.Name}}"></td><td><input name="keywords" value="{{.Keywords}}"></td><td><textarea name="description">{{.Description}}</textarea></td><td><select name="status"><option value="active" {{if eq .Status "active"}}selected{{end}}>active</option><option value="paused" {{if eq .Status "paused"}}selected{{end}}>paused</option></select></td><td><button type="submit">保存</button></form><form method="post"><input type="hidden" name="form_type" value="project"><input type="hidden" name="action" value="delete"><input type="hidden" name="project_id" value="{{.ID}}"><button type="submit">删除</button></form></td></tr>{{end}}</table></section></main></body></html>{{end}}
+`
+
+const rulesTemplate = `
+{{define "rules"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.compact td form{margin:0}.compact input,.compact textarea,.compact select,.compact button{margin:4px 0;padding:8px}` + `</style></head><body><header><h1>监测规则</h1>{{template "nav" .}}</header><main><section><h2>新建规则</h2><form method="post"><select name="project_id">{{range .Projects}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select><input name="name" placeholder="规则名称"><input name="include_keywords" placeholder="包含关键词"><input name="exclude_keywords" placeholder="排除关键词"><input name="channels" placeholder="来源，如 flash,headline"><select name="severity"><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select><button type="submit">创建规则</button></form></section><section><h2>规则列表</h2><table class="compact"><tr><th>ID</th><th>项目ID</th><th>项目</th><th>名称</th><th>包含</th><th>排除</th><th>来源</th><th>等级</th><th>状态</th><th>操作</th></tr>{{range .Rules}}<tr><td>{{.ID}}</td><td><form method="post"><input type="hidden" name="action" value="update"><input type="hidden" name="rule_id" value="{{.ID}}"><input name="project_id" value="{{.ProjectID}}"></td><td>{{.ProjectName}}</td><td><input name="name" value="{{.Name}}"></td><td><input name="include_keywords" value="{{.IncludeKeywords}}"></td><td><input name="exclude_keywords" value="{{.ExcludeKeywords}}"></td><td><input name="channels" value="{{.Channels}}"></td><td><select name="severity"><option value="low" {{if eq .Severity "low"}}selected{{end}}>low</option><option value="medium" {{if eq .Severity "medium"}}selected{{end}}>medium</option><option value="high" {{if eq .Severity "high"}}selected{{end}}>high</option></select></td><td><select name="status"><option value="active" {{if eq .Status "active"}}selected{{end}}>active</option><option value="paused" {{if eq .Status "paused"}}selected{{end}}>paused</option></select></td><td><button type="submit">保存</button></form><form method="post"><input type="hidden" name="action" value="toggle"><input type="hidden" name="rule_id" value="{{.ID}}"><input type="hidden" name="project_id" value="{{.ProjectID}}"><input type="hidden" name="name" value="{{.Name}}"><input type="hidden" name="include_keywords" value="{{.IncludeKeywords}}"><input type="hidden" name="exclude_keywords" value="{{.ExcludeKeywords}}"><input type="hidden" name="channels" value="{{.Channels}}"><input type="hidden" name="severity" value="{{.Severity}}"><input type="hidden" name="status" value="{{.Status}}"><button type="submit">{{if eq .Status "active"}}停用{{else}}启用{{end}}</button></form><form method="post"><input type="hidden" name="action" value="delete"><input type="hidden" name="rule_id" value="{{.ID}}"><button type="submit">删除</button></form></td></tr>{{end}}</table></section></main></body></html>{{end}}
 `
 
 const articlesTemplate = `
-{{define "articles"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>body{font-family:Segoe UI,system-ui;background:#f7f3eb;margin:0;color:#222}header,main{max-width:1080px;margin:0 auto;padding:24px}nav a{margin-right:16px;color:#214e34;text-decoration:none}section{background:#fff;border-radius:16px;padding:20px;margin-top:20px;box-shadow:0 8px 24px rgba(0,0,0,.06)}input,button{padding:12px;border-radius:10px;border:1px solid #d0c8b8}button{background:#214e34;color:#fff;border:none}</style></head><body><header><h1>文章中心</h1>{{template "nav" .}}</header><main><section><form method="get"><input name="keyword" placeholder="搜索标题或内容"><button type="submit">搜索</button></form></section><section><pre>{{printf "%+v" .Articles}}</pre></section></main></body></html>{{end}}
+{{define "articles"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.pill{display:inline-block;padding:4px 10px;border-radius:999px;background:#ece7dc}` + `</style></head><body><header><h1>文章中心</h1>{{template "nav" .}}</header><main><section><form class="inline" method="get"><input name="keyword" placeholder="关键词" value="{{.FilterKeyword}}"><select name="project_id"><option value="">全部项目</option>{{range .Projects}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select><select name="source_type"><option value="">全部来源</option><option value="flash">flash</option><option value="headline">headline</option></select><button type="submit">筛选</button></form></section><section><h2>列表</h2><table><tr><th>标题</th><th>来源</th><th>状态</th><th>时间</th><th>操作</th></tr>{{range .Articles.Items}}<tr><td><a class="inline" href="/articles/{{.ID}}">{{.Title}}</a></td><td>{{.SourceType}}</td><td>{{if .Read}}<span class="pill">已读</span>{{else}}<span class="pill">未读</span>{{end}} {{if .Favorited}}<span class="pill">已收藏</span>{{end}}</td><td>{{.CapturedAt.Format "2006-01-02 15:04"}}</td><td><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="read"><button type="submit">标记已读</button></form><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="favorite"><button type="submit">{{if .Favorited}}取消收藏{{else}}收藏{{end}}</button></form></td></tr>{{end}}</table><p>共 {{.Articles.Total}} 条</p></section></main></body></html>{{end}}
+`
+
+const articleTemplate = `
+{{define "article"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.pill{display:inline-block;padding:4px 10px;border-radius:999px;background:#ece7dc;margin-right:8px}` + `</style></head><body><header><h1>文章详情</h1>{{template "nav" .}}</header><main><section><h2>{{.Article.Title}}</h2><p>来源：{{.Article.SourceType}} | 抓取时间：{{.Article.CapturedAt.Format "2006-01-02 15:04"}}</p><p>{{if .Article.Read}}<span class="pill">已读</span>{{else}}<span class="pill">未读</span>{{end}}{{if .Article.Favorited}}<span class="pill">已收藏</span>{{end}}</p><form method="post"><input type="hidden" name="action" value="read"><button type="submit">标记已读</button></form><form method="post"><input type="hidden" name="action" value="favorite"><button type="submit">{{if .Article.Favorited}}取消收藏{{else}}收藏{{end}}</button></form><pre>{{.Article.Content}}</pre></section><section><h2>相关文章</h2><table><tr><th>标题</th><th>来源</th><th>状态</th></tr>{{range .Related}}<tr><td><a class="inline" href="/articles/{{.ID}}">{{.Title}}</a></td><td>{{.SourceType}}</td><td>{{if .Read}}已读{{else}}未读{{end}}{{if .Favorited}} / 已收藏{{end}}</td></tr>{{end}}</table></section></main></body></html>{{end}}
 `
 
 const reportsTemplate = `
-{{define "reports"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>body{font-family:Segoe UI,system-ui;background:#f7f3eb;margin:0;color:#222}header,main{max-width:1080px;margin:0 auto;padding:24px}nav a{margin-right:16px;color:#214e34;text-decoration:none}section{background:#fff;border-radius:16px;padding:20px;margin-top:20px;box-shadow:0 8px 24px rgba(0,0,0,.06)}input,textarea,button{width:100%;padding:12px;margin:8px 0;border-radius:10px;border:1px solid #d0c8b8}button{background:#214e34;color:#fff;border:none}</style></head><body><header><h1>报告中心</h1>{{template "nav" .}}</header><main><section><h2>生成报告</h2><form method="post"><input name="title" placeholder="报告标题"><textarea name="content" placeholder="输入待生成的报告正文"></textarea><button type="submit">生成</button></form></section><section><h2>报告列表</h2><pre>{{printf "%+v" .Reports}}</pre></section></main></body></html>{{end}}
+{{define "reports"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `</style></head><body><header><h1>报告中心</h1>{{template "nav" .}}</header><main><section><h2>生成报告</h2><form method="post"><select name="project_id">{{range .Projects}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select><input name="title" placeholder="报告标题"><textarea name="content" placeholder="输入文章摘要、正文或人工内容"></textarea><button type="submit">生成报告</button></form></section><section><h2>报告列表</h2><table><tr><th>ID</th><th>标题</th><th>状态</th><th>更新时间</th></tr>{{range .Reports}}<tr><td>{{.ID}}</td><td><a class="inline" href="/reports/{{.ID}}">{{.Title}}</a></td><td>{{.Status}}</td><td>{{.UpdatedAt.Format "2006-01-02 15:04"}}</td></tr>{{end}}</table></section></main></body></html>{{end}}
+`
+
+const reportTemplate = `
+{{define "report"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `</style></head><body><header><h1>报告详情</h1>{{template "nav" .}}</header><main><section><h2>{{.Report.Title}}</h2><p>状态：{{.Report.Status}} | 更新时间：{{.Report.UpdatedAt.Format "2006-01-02 15:04"}}</p><h3>摘要</h3><pre>{{.Report.Summary}}</pre><h3>正文</h3><pre>{{.Report.Content}}</pre></section></main></body></html>{{end}}
+`
+
+const systemTemplate = `
+{{define "system"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `</style></head><body><header><h1>系统页</h1>{{template "nav" .}}</header><main><section><h2>手动任务</h2><form method="post"><input type="hidden" name="form_type" value="crawl"><select name="source_type"><option value="">全部来源</option><option value="flash">flash</option><option value="headline">headline</option></select><button type="submit">立即抓取</button></form><form method="post"><input type="hidden" name="form_type" value="analysis"><button type="submit">刷新分析快照</button></form></section><section><h2>提交反馈</h2><form method="post"><input type="hidden" name="form_type" value="feedback"><input name="title" placeholder="标题"><textarea name="content" placeholder="问题描述或需求"></textarea><button type="submit">提交</button></form></section><section><h2>公告</h2><table><tr><th>标题</th><th>时间</th></tr>{{range .Notices}}<tr><td>{{.Title}}</td><td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td></tr>{{end}}</table></section><section><h2>任务记录</h2><table><tr><th>任务</th><th>状态</th><th>说明</th></tr>{{range .TaskRuns}}<tr><td>{{.TaskName}}</td><td>{{.Status}}</td><td>{{.Message}}</td></tr>{{end}}</table></section></main></body></html>{{end}}
 `

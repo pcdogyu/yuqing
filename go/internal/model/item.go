@@ -19,6 +19,9 @@ type Item struct {
 	IsVIP              bool      `json:"is_vip"`
 	HasImage           bool      `json:"has_image"`
 	RawPayload         string    `json:"raw_payload"`
+	ProjectIDs         []int64   `json:"project_ids,omitempty"`
+	Favorited          bool      `json:"favorited"`
+	Read               bool      `json:"read"`
 	CapturedAt         time.Time `json:"captured_at"`
 	CreatedAt          time.Time `json:"created_at"`
 	UpdatedAt          time.Time `json:"updated_at"`
@@ -51,4 +54,15 @@ type ItemListResult struct {
 	Page     int    `json:"page"`
 	PageSize int    `json:"page_size"`
 	Total    int    `json:"total"`
+}
+
+type ArticleFilter struct {
+	Page       int    `json:"page"`
+	PageSize   int    `json:"page_size"`
+	Keyword    string `json:"keyword"`
+	SourceType string `json:"source_type"`
+	ProjectID  int64  `json:"project_id"`
+	UserID     int64  `json:"user_id"`
+	Start      string `json:"start"`
+	End        string `json:"end"`
 }

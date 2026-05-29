@@ -1,94 +1,96 @@
 # Stonedt Go Platform
 
-这个目录现在是 Go 版舆情门户的主实现，不再只是单独的金十采集子系统。当前版本已经具备一套可运行的多服务骨架：
+Go 版已经从早期 `jin10` 采集骨架收敛为一套可运行的一期多服务系统，核心范围包括：
 
-- `portal-web`
-  Go SSR 门户，提供登录页、总览、项目中心、文章中心、报告中心。
-- `content-service`
-  承接 `/api/v1/auth/*`、项目、监测、文章、搜索、分析、报告、公告等 API。
-- `crawler-service`
-  承接采集任务与文章最新数据接口，当前已接入金十快讯和头条。
-- `nlp-service`
-  提供摘要、标题、关键词的本地化轻量 NLP 接口。
-- `scheduler-worker`
-  定时触发采集和分析快照刷新。
+- `gateway-web`：SSR 门户
+- `auth-service`：登录、会话、API Token
+- `content-service`：项目组、项目、监测规则、文章、报告、公告、反馈、任务记录
+- `crawler-service`：抓取执行与抓取运行记录
+- `analysis-service`：总览、趋势、来源分布、关键词热点、分析刷新
+- `scheduler-service`：定时触发抓取和分析刷新
+- `nlp-service`：轻量标题/摘要/关键词生成
 
-## 目录
+## 默认端口
 
-- `cmd/portal-web`
-- `cmd/content-service`
-- `cmd/crawler-service`
-- `cmd/nlp-service`
-- `cmd/scheduler-worker`
-- `internal/store/sqlite`
-- `internal/provider/jin10flash`
-- `internal/provider/jin10xnews`
-- `openapi.yaml`
+- `gateway-web`: `8080`
+- `auth-service`: `8081`
+- `content-service`: `8082`
+- `crawler-service`: `8083`
+- `analysis-service`: `8084`
+- `nlp-service`: `8085`
+- `scheduler-service`: `8086`
 
-## 数据与运行
+## 数据
 
-- 主数据库：SQLite，默认 `go/data/jin10.db`
-- 检索：SQLite FTS5
+- 主数据库：SQLite
+- 默认路径：`go/data/yuqing.db`
 - 默认管理员：`admin / admin123`
-- 服务默认端口：
-  - `portal-web`: `8080`
-  - `content-service`: `8081`
-  - `crawler-service`: `8082`
-  - `nlp-service`: `8083`
 
 ## 启动
 
-```bash
-cd go
-go run ./cmd/content-service
+Windows PowerShell:
+
+```powershell
+cd D:\yuqing\go
+go run .\cmd\auth-service
+go run .\cmd\content-service
+go run .\cmd\crawler-service
+go run .\cmd\analysis-service
+go run .\cmd\nlp-service
+go run .\cmd\gateway-web
+go run .\cmd\scheduler-service
 ```
 
-```bash
-cd go
-go run ./cmd/crawler-service
+或者直接运行：
+
+```powershell
+.\run.bat
 ```
 
-```bash
-cd go
-go run ./cmd/nlp-service
+浏览器打开：
+
+```text
+http://127.0.0.1:8080
 ```
 
-```bash
-cd go
-go run ./cmd/portal-web
-```
+## 关键接口
 
-```bash
-cd go
-go run ./cmd/scheduler-worker
-```
+- `POST /api/v1/auth/login`
+- `GET|POST|PUT|DELETE /api/v1/project-groups`
+- `GET|POST|PUT|DELETE /api/v1/projects`
+- `GET|POST|PUT|DELETE /api/v1/monitor-rules`
+- `GET /api/v1/articles`
+- `GET /api/v1/articles/{id}`
+- `GET /api/v1/articles/{id}/related`
+- `GET /api/v1/search/articles`
+- `GET /api/v1/analysis/overview`
+- `GET /api/v1/analysis/trends`
+- `GET /api/v1/analysis/sources`
+- `GET|POST /api/v1/reports`
+- `GET /api/v1/reports/{id}`
+- `GET /api/v1/system/notices`
+- `POST /api/v1/system/feedback`
+- `GET /api/v1/system/task-runs`
+- `POST /api/v1/admin/tasks/crawl`
+- `GET /api/v1/admin/tasks/crawl/runs`
+- `POST /api/v1/admin/tasks/analysis/refresh`
 
-## 已实现能力
+## 已完成的一期范围
 
-- 账号密码登录、会话校验、API token 发放
-- 项目创建与项目列表
-- 监测规则列表与创建
-- 金十头条/快讯采集、采集运行记录、文章最新接口
-- 文章分页、关键词过滤、SQLite FTS 搜索
-- 总览分析快照刷新
-- 报告生成与报告列表
-- Go SSR 门户页面
-- OpenAPI 文档骨架
+- 账号登录、会话守卫、API Token
+- 项目组/项目/监测规则的基础 CRUD API
+- 文章列表、详情、相关文章、FTS 搜索
+- 按监测规则把抓取结果关联到项目
+- 总览、趋势、来源分布、关键词热点
+- 报告生成与详情查看
+- 系统公告、反馈、任务记录页面
+- Windows 启动脚本和多服务入口
 
-## 验证命令
+## 暂未迁移
 
-```bash
-go test ./...
-```
-
-```bash
-curl http://127.0.0.1:8081/healthz
-curl -X POST http://127.0.0.1:8081/api/v1/auth/login -H "Content-Type: application/json" -d "{\"username\":\"admin\",\"password\":\"admin123\"}"
-curl -X POST "http://127.0.0.1:8082/api/v1/admin/tasks/crawl?source_type=headline" -H "X-Service-Token: stonedt-internal-token"
-```
-
-## 当前边界
-
-- 已经完成全量 Go 化的主架构切换和核心骨架，不再依赖 Java 运行。
-- 业务上仍是首版重构，不等价覆盖原 Java 的全部 269 条路由和全部页面细节。
-- 微信扫码、OCR、复杂 AI 写作、原大屏视觉和高级舆情分析仍需继续补齐。
+- 微信登录/绑定
+- OCR 与外部平台集成
+- 邮件配置
+- 大屏和移动端
+- Java 全量高级全文检索
+- 复杂传播/情感/专题分析

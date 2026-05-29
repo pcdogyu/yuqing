@@ -19,12 +19,12 @@ func main() {
 	cfg := config.Load()
 	logging.Setup(cfg.LogLevel)
 	server := &http.Server{
-		Addr:              cfg.PortalWebAddr,
+		Addr:              cfg.GatewayWebAddr,
 		Handler:           portal.NewServer(cfg).Router(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go func() {
-		log.Info().Str("service", "portal-web").Str("addr", cfg.PortalWebAddr).Msg("listening")
+		log.Info().Str("service", "portal-web").Str("addr", cfg.GatewayWebAddr).Msg("listening")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatal().Err(err).Msg("server stopped")
 		}

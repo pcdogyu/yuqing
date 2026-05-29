@@ -11,8 +11,8 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/stonedt-yuqing/go-jin10/internal/app"
+	"github.com/stonedt-yuqing/go-jin10/internal/auth"
 	"github.com/stonedt-yuqing/go-jin10/internal/config"
-	"github.com/stonedt-yuqing/go-jin10/internal/content"
 	"github.com/stonedt-yuqing/go-jin10/internal/logging"
 )
 
@@ -26,14 +26,12 @@ func main() {
 	}
 	defer store.Close()
 
-	contentSvc := content.NewService(cfg, store)
-
 	server := &http.Server{
-		Addr:              cfg.ContentAddr,
-		Handler:           contentSvc.Router(),
+		Addr:              cfg.AuthAddr,
+		Handler:           auth.NewService(cfg, store).Router(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	run(server, "content-service", cfg.ContentAddr)
+	run(server, "auth-service", cfg.AuthAddr)
 }
 
 func run(server *http.Server, name, addr string) {

@@ -44,11 +44,68 @@ func TestAuthAndFTSFlow(t *testing.T) {
 		t.Fatalf("UpsertItems error: %v", err)
 	}
 
-	result, err := store.SearchItemsFTS(ctx, "semiconductor", 1, 10)
+	result, err := store.SearchItemsFTS(ctx, model.ArticleFilter{Page: 1, PageSize: 10, Keyword: "semiconductor"})
 	if err != nil {
 		t.Fatalf("SearchItemsFTS error: %v", err)
 	}
 	if result.Total != 1 || len(result.Items) != 1 {
 		t.Fatalf("unexpected search result: %+v", result)
+	}
+}
+
+func TestFavoriteAndReadState(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	if err := store.EnsureDefaultAdmin(ctx, "admin", "admin123"); err != nil {
+		t.Fatalf("EnsureDefaultAdmin error: %v", err)
+	}
+	user, err := store.AuthenticateUser(ctx, "admin", "admin123")
+	if err != nil {
+		t.Fatalf("AuthenticateUser error: %v", err)
+	}
+
+	now := time.Date(2026, 5, 29, 3, 0, 0, 0, time.UTC)
+	_, _, err = store.UpsertItems(ctx, []model.Item{{
+		SourceType:  "flash",
+		SourceKey:   "state-key-1",
+		Title:       "favorite read state",
+		Content:     "favorite read content",
+		Summary:     "favorite read summary",
+		SourceURL:   "https://www.jin10.com/",
+		CapturedAt:  now,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		PublishTime: "2026-05-29 11:00:00",
+	}})
+	if err != nil {
+		t.Fatalf("UpsertItems error: %v", err)
+	}
+
+	list, err := store.ListItems(ctx, model.ArticleFilter{Page: 1, PageSize: 10})
+	if err != nil || len(list.Items) != 1 {
+		t.Fatalf("ListItems error: %v %+v", err, list)
+	}
+	itemID := list.Items[0].ID
+
+	if err := store.MarkItemRead(ctx, user.ID, itemID); err != nil {
+		t.Fatalf("MarkItemRead error: %v", err)
+	}
+	favorited, err := store.ToggleFavorite(ctx, user.ID, itemID)
+	if err != nil || !favorited {
+		t.Fatalf("ToggleFavorite first error: %v favorited=%v", err, favorited)
+	}
+
+	list, err = store.ListItems(ctx, model.ArticleFilter{Page: 1, PageSize: 10, UserID: user.ID})
+	if err != nil {
+		t.Fatalf("ListItems with user state error: %v", err)
+	}
+	if !list.Items[0].Read || !list.Items[0].Favorited {
+		t.Fatalf("expected read and favorited state, got %+v", list.Items[0])
+	}
+
+	favorited, err = store.ToggleFavorite(ctx, user.ID, itemID)
+	if err != nil || favorited {
+		t.Fatalf("ToggleFavorite second error: %v favorited=%v", err, favorited)
 	}
 }

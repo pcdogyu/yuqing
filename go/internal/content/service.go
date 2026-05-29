@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-resty/resty/v2"
@@ -17,20 +16,34 @@ import (
 )
 
 type Store interface {
-	ListProjects(context.Context) ([]model.Project, error)
-	CreateProject(context.Context, model.Project) (model.Project, error)
-	ListMonitorRules(context.Context) ([]model.MonitorRule, error)
-	CreateMonitorRule(context.Context, model.MonitorRule) (model.MonitorRule, error)
-	ListItems(context.Context, int, int, string, string) (model.ItemListResult, error)
-	GetItem(context.Context, int64) (model.Item, error)
-	SearchItemsFTS(context.Context, string, int, int) (model.SearchResult, error)
-	Overview(context.Context) (model.Overview, error)
-	ListReports(context.Context) ([]model.Report, error)
-	CreateReport(context.Context, model.Report) (model.Report, error)
-	ListNotices(context.Context) ([]model.SystemNotice, error)
-	BuildOverviewSnapshot(context.Context) (model.AnalysisSnapshot, error)
-	UpsertAnalysisSnapshot(context.Context, model.AnalysisSnapshot) error
-	GetAnalysisSnapshot(context.Context, string, int64) (model.AnalysisSnapshot, error)
+	ListProjectGroups(rctx context.Context) ([]model.ProjectGroup, error)
+	GetProjectGroup(rctx context.Context, id int64) (model.ProjectGroup, error)
+	CreateProjectGroup(rctx context.Context, group model.ProjectGroup) (model.ProjectGroup, error)
+	UpdateProjectGroup(rctx context.Context, group model.ProjectGroup) (model.ProjectGroup, error)
+	DeleteProjectGroup(rctx context.Context, id int64) error
+	ListProjects(rctx context.Context) ([]model.Project, error)
+	GetProject(rctx context.Context, id int64) (model.Project, error)
+	CreateProject(rctx context.Context, project model.Project) (model.Project, error)
+	UpdateProject(rctx context.Context, project model.Project) (model.Project, error)
+	DeleteProject(rctx context.Context, id int64) error
+	ListMonitorRules(rctx context.Context) ([]model.MonitorRule, error)
+	GetMonitorRule(rctx context.Context, id int64) (model.MonitorRule, error)
+	CreateMonitorRule(rctx context.Context, rule model.MonitorRule) (model.MonitorRule, error)
+	UpdateMonitorRule(rctx context.Context, rule model.MonitorRule) (model.MonitorRule, error)
+	DeleteMonitorRule(rctx context.Context, id int64) error
+	ListItems(rctx context.Context, filter model.ArticleFilter) (model.ItemListResult, error)
+	GetItem(rctx context.Context, id int64) (model.Item, error)
+	GetRelatedItems(rctx context.Context, id int64, limit int) ([]model.Item, error)
+	PopulateUserItemState(rctx context.Context, userID int64, items []model.Item) error
+	SearchItemsFTS(rctx context.Context, filter model.ArticleFilter) (model.SearchResult, error)
+	MarkItemRead(rctx context.Context, userID, itemID int64) error
+	ToggleFavorite(rctx context.Context, userID, itemID int64) (bool, error)
+	ListReports(rctx context.Context, projectID int64) ([]model.Report, error)
+	GetReport(rctx context.Context, id int64) (model.Report, error)
+	CreateReport(rctx context.Context, report model.Report) (model.Report, error)
+	ListNotices(rctx context.Context) ([]model.SystemNotice, error)
+	CreateFeedback(rctx context.Context, feedback model.Feedback) (model.Feedback, error)
+	ListTaskRuns(rctx context.Context, limit int) ([]model.TaskRun, error)
 }
 
 type Service struct {
@@ -56,23 +69,114 @@ func (s *Service) Router() http.Handler {
 }
 
 func (s *Service) Routes(r chi.Router) {
+	r.Get("/healthz", s.handleHealthz)
+
+	r.Get("/api/v1/project-groups", s.handleListProjectGroups)
+	r.Post("/api/v1/project-groups", s.handleCreateProjectGroup)
+	r.Get("/api/v1/project-groups/{id}", s.handleGetProjectGroup)
+	r.Put("/api/v1/project-groups/{id}", s.handleUpdateProjectGroup)
+	r.Delete("/api/v1/project-groups/{id}", s.handleDeleteProjectGroup)
+
 	r.Get("/api/v1/projects", s.handleListProjects)
 	r.Post("/api/v1/projects", s.handleCreateProject)
-	r.Get("/api/v1/monitors", s.handleListRules)
-	r.Post("/api/v1/monitors", s.handleCreateRule)
+	r.Get("/api/v1/projects/{id}", s.handleGetProject)
+	r.Put("/api/v1/projects/{id}", s.handleUpdateProject)
+	r.Delete("/api/v1/projects/{id}", s.handleDeleteProject)
+
+	r.Get("/api/v1/monitor-rules", s.handleListRules)
+	r.Post("/api/v1/monitor-rules", s.handleCreateRule)
+	r.Get("/api/v1/monitor-rules/{id}", s.handleGetRule)
+	r.Put("/api/v1/monitor-rules/{id}", s.handleUpdateRule)
+	r.Delete("/api/v1/monitor-rules/{id}", s.handleDeleteRule)
+
 	r.Get("/api/v1/articles", s.handleListArticles)
 	r.Get("/api/v1/articles/{id}", s.handleGetArticle)
+	r.Get("/api/v1/articles/{id}/related", s.handleGetRelatedArticles)
+	r.Post("/api/v1/articles/{id}/read", s.handleMarkArticleRead)
+	r.Post("/api/v1/articles/{id}/favorite", s.handleToggleFavorite)
 	r.Get("/api/v1/search/articles", s.handleSearchArticles)
-	r.Get("/api/v1/analysis/overview", s.handleOverview)
-	r.Post("/api/v1/admin/tasks/analysis/refresh", s.handleRefreshAnalysis)
+
 	r.Get("/api/v1/reports", s.handleListReports)
+	r.Post("/api/v1/reports", s.handleCreateReport)
+	r.Get("/api/v1/reports/{id}", s.handleGetReport)
 	r.Post("/api/v1/reports/generate", s.handleGenerateReport)
+
 	r.Get("/api/v1/system/notices", s.handleListNotices)
-	r.Get("/api/v1/public-opinion/overview", s.handlePublicOpinion)
+	r.Post("/api/v1/system/feedback", s.handleCreateFeedback)
+	r.Get("/api/v1/system/task-runs", s.handleListTaskRuns)
 }
 
 func (s *Service) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]string{"status": "ok"})
+}
+
+func (s *Service) handleListProjectGroups(w http.ResponseWriter, r *http.Request) {
+	groups, err := s.store.ListProjectGroups(r.Context())
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", groups)
+}
+
+func (s *Service) handleGetProjectGroup(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	group, err := s.store.GetProjectGroup(r.Context(), id)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusNotFound, "not found", nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", group)
+}
+
+func (s *Service) handleCreateProjectGroup(w http.ResponseWriter, r *http.Request) {
+	var group model.ProjectGroup
+	if !decodeJSON(w, r, &group) {
+		return
+	}
+	if strings.TrimSpace(group.Name) == "" {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "group name required", nil)
+		return
+	}
+	created, err := s.store.CreateProjectGroup(r.Context(), group)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", created)
+}
+
+func (s *Service) handleUpdateProjectGroup(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	var group model.ProjectGroup
+	if !decodeJSON(w, r, &group) {
+		return
+	}
+	group.ID = id
+	updated, err := s.store.UpdateProjectGroup(r.Context(), group)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", updated)
+}
+
+func (s *Service) handleDeleteProjectGroup(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	if err := s.store.DeleteProjectGroup(r.Context(), id); err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]bool{"deleted": true})
 }
 
 func (s *Service) handleListProjects(w http.ResponseWriter, r *http.Request) {
@@ -84,10 +188,22 @@ func (s *Service) handleListProjects(w http.ResponseWriter, r *http.Request) {
 	apiutil.WriteJSON(w, http.StatusOK, "ok", projects)
 }
 
+func (s *Service) handleGetProject(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	project, err := s.store.GetProject(r.Context(), id)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusNotFound, "not found", nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", project)
+}
+
 func (s *Service) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	var project model.Project
-	if err := json.NewDecoder(r.Body).Decode(&project); err != nil {
-		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid body", nil)
+	if !decodeJSON(w, r, &project) {
 		return
 	}
 	if strings.TrimSpace(project.Name) == "" {
@@ -102,6 +218,36 @@ func (s *Service) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	apiutil.WriteJSON(w, http.StatusOK, "ok", created)
 }
 
+func (s *Service) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	var project model.Project
+	if !decodeJSON(w, r, &project) {
+		return
+	}
+	project.ID = id
+	updated, err := s.store.UpdateProject(r.Context(), project)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", updated)
+}
+
+func (s *Service) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	if err := s.store.DeleteProject(r.Context(), id); err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]bool{"deleted": true})
+}
+
 func (s *Service) handleListRules(w http.ResponseWriter, r *http.Request) {
 	rules, err := s.store.ListMonitorRules(r.Context())
 	if err != nil {
@@ -111,10 +257,26 @@ func (s *Service) handleListRules(w http.ResponseWriter, r *http.Request) {
 	apiutil.WriteJSON(w, http.StatusOK, "ok", rules)
 }
 
+func (s *Service) handleGetRule(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	rule, err := s.store.GetMonitorRule(r.Context(), id)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusNotFound, "not found", nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", rule)
+}
+
 func (s *Service) handleCreateRule(w http.ResponseWriter, r *http.Request) {
 	var rule model.MonitorRule
-	if err := json.NewDecoder(r.Body).Decode(&rule); err != nil {
-		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid body", nil)
+	if !decodeJSON(w, r, &rule) {
+		return
+	}
+	if rule.ProjectID <= 0 || strings.TrimSpace(rule.Name) == "" {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "project_id and name required", nil)
 		return
 	}
 	created, err := s.store.CreateMonitorRule(r.Context(), rule)
@@ -125,12 +287,39 @@ func (s *Service) handleCreateRule(w http.ResponseWriter, r *http.Request) {
 	apiutil.WriteJSON(w, http.StatusOK, "ok", created)
 }
 
+func (s *Service) handleUpdateRule(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	var rule model.MonitorRule
+	if !decodeJSON(w, r, &rule) {
+		return
+	}
+	rule.ID = id
+	updated, err := s.store.UpdateMonitorRule(r.Context(), rule)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", updated)
+}
+
+func (s *Service) handleDeleteRule(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	if err := s.store.DeleteMonitorRule(r.Context(), id); err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]bool{"deleted": true})
+}
+
 func (s *Service) handleListArticles(w http.ResponseWriter, r *http.Request) {
-	page := apiutil.IntQuery(r, "page", 1)
-	pageSize := apiutil.IntQuery(r, "page_size", 20)
-	sourceType := r.URL.Query().Get("source_type")
-	keyword := r.URL.Query().Get("keyword")
-	result, err := s.store.ListItems(r.Context(), page, pageSize, keyword, sourceType)
+	filter := articleFilterFromRequest(r)
+	result, err := s.store.ListItems(r.Context(), filter)
 	if err != nil {
 		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
 		return
@@ -139,9 +328,8 @@ func (s *Service) handleListArticles(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) handleGetArticle(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid id", nil)
+	id, ok := parseID(w, r, "id")
+	if !ok {
 		return
 	}
 	item, err := s.store.GetItem(r.Context(), id)
@@ -149,14 +337,69 @@ func (s *Service) handleGetArticle(w http.ResponseWriter, r *http.Request) {
 		apiutil.WriteJSON(w, http.StatusNotFound, "not found", nil)
 		return
 	}
+	if userID := filterUserID(r); userID > 0 {
+		items := []model.Item{item}
+		_ = s.store.PopulateUserItemState(r.Context(), userID, items)
+		item = items[0]
+	}
 	apiutil.WriteJSON(w, http.StatusOK, "ok", item)
 }
 
+func (s *Service) handleGetRelatedArticles(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	items, err := s.store.GetRelatedItems(r.Context(), id, apiutil.IntQuery(r, "limit", 5))
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	if userID := filterUserID(r); userID > 0 {
+		_ = s.store.PopulateUserItemState(r.Context(), userID, items)
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", items)
+}
+
+func (s *Service) handleMarkArticleRead(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	userID := filterUserID(r)
+	if userID <= 0 {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "user_id required", nil)
+		return
+	}
+	if err := s.store.MarkItemRead(r.Context(), userID, id); err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]bool{"read": true})
+}
+
+func (s *Service) handleToggleFavorite(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	userID := filterUserID(r)
+	if userID <= 0 {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "user_id required", nil)
+		return
+	}
+	favorited, err := s.store.ToggleFavorite(r.Context(), userID, id)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]bool{"favorited": favorited})
+}
+
 func (s *Service) handleSearchArticles(w http.ResponseWriter, r *http.Request) {
-	page := apiutil.IntQuery(r, "page", 1)
-	pageSize := apiutil.IntQuery(r, "page_size", 20)
-	keyword := r.URL.Query().Get("q")
-	result, err := s.store.SearchItemsFTS(r.Context(), keyword, page, pageSize)
+	filter := articleFilterFromRequest(r)
+	filter.Keyword = r.URL.Query().Get("q")
+	result, err := s.store.SearchItemsFTS(r.Context(), filter)
 	if err != nil {
 		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
 		return
@@ -164,49 +407,44 @@ func (s *Service) handleSearchArticles(w http.ResponseWriter, r *http.Request) {
 	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
 }
 
-func (s *Service) handleOverview(w http.ResponseWriter, r *http.Request) {
-	snapshot, err := s.store.GetAnalysisSnapshot(r.Context(), "system", 0)
-	if err == nil {
-		var payload any
-		_ = json.Unmarshal([]byte(snapshot.Payload), &payload)
-		apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]any{
-			"snapshot":   payload,
-			"created_at": snapshot.CreatedAt,
-		})
-		return
-	}
-	overview, err := s.store.Overview(r.Context())
-	if err != nil {
-		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
-		return
-	}
-	apiutil.WriteJSON(w, http.StatusOK, "ok", overview)
-}
-
-func (s *Service) handleRefreshAnalysis(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("X-Service-Token") != s.cfg.ServiceToken {
-		apiutil.WriteJSON(w, http.StatusUnauthorized, "unauthorized", nil)
-		return
-	}
-	snapshot, err := s.store.BuildOverviewSnapshot(r.Context())
-	if err != nil {
-		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
-		return
-	}
-	if err := s.store.UpsertAnalysisSnapshot(r.Context(), snapshot); err != nil {
-		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
-		return
-	}
-	apiutil.WriteJSON(w, http.StatusOK, "ok", snapshot)
-}
-
 func (s *Service) handleListReports(w http.ResponseWriter, r *http.Request) {
-	reports, err := s.store.ListReports(r.Context())
+	projectID, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("project_id")), 10, 64)
+	reports, err := s.store.ListReports(r.Context(), projectID)
 	if err != nil {
 		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
 		return
 	}
 	apiutil.WriteJSON(w, http.StatusOK, "ok", reports)
+}
+
+func (s *Service) handleGetReport(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	report, err := s.store.GetReport(r.Context(), id)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusNotFound, "not found", nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", report)
+}
+
+func (s *Service) handleCreateReport(w http.ResponseWriter, r *http.Request) {
+	var report model.Report
+	if !decodeJSON(w, r, &report) {
+		return
+	}
+	if strings.TrimSpace(report.Title) == "" {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "report title required", nil)
+		return
+	}
+	created, err := s.store.CreateReport(r.Context(), report)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", created)
 }
 
 func (s *Service) handleGenerateReport(w http.ResponseWriter, r *http.Request) {
@@ -215,8 +453,7 @@ func (s *Service) handleGenerateReport(w http.ResponseWriter, r *http.Request) {
 		Title     string `json:"title"`
 		Text      string `json:"text"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid body", nil)
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	report := model.Report{
@@ -261,18 +498,66 @@ func (s *Service) handleListNotices(w http.ResponseWriter, r *http.Request) {
 	apiutil.WriteJSON(w, http.StatusOK, "ok", notices)
 }
 
-func (s *Service) handlePublicOpinion(w http.ResponseWriter, r *http.Request) {
-	overview, err := s.store.Overview(r.Context())
+func (s *Service) handleCreateFeedback(w http.ResponseWriter, r *http.Request) {
+	var feedback model.Feedback
+	if !decodeJSON(w, r, &feedback) {
+		return
+	}
+	if strings.TrimSpace(feedback.Title) == "" || strings.TrimSpace(feedback.Content) == "" {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "title and content required", nil)
+		return
+	}
+	created, err := s.store.CreateFeedback(r.Context(), feedback)
 	if err != nil {
 		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
 		return
 	}
-	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]any{
-		"headline":      "Go 重构版舆情总览",
-		"article_count": overview.ArticleCount,
-		"report_count":  overview.ReportCount,
-		"updated_at":    time.Now().UTC(),
-	})
+	apiutil.WriteJSON(w, http.StatusOK, "ok", created)
+}
+
+func (s *Service) handleListTaskRuns(w http.ResponseWriter, r *http.Request) {
+	runs, err := s.store.ListTaskRuns(r.Context(), apiutil.IntQuery(r, "limit", 20))
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", runs)
+}
+
+func articleFilterFromRequest(r *http.Request) model.ArticleFilter {
+	projectID, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("project_id")), 10, 64)
+	return model.ArticleFilter{
+		Page:       apiutil.IntQuery(r, "page", 1),
+		PageSize:   apiutil.IntQuery(r, "page_size", 20),
+		Keyword:    strings.TrimSpace(r.URL.Query().Get("keyword")),
+		SourceType: strings.TrimSpace(r.URL.Query().Get("source_type")),
+		ProjectID:  projectID,
+		UserID:     filterUserID(r),
+		Start:      strings.TrimSpace(r.URL.Query().Get("start")),
+		End:        strings.TrimSpace(r.URL.Query().Get("end")),
+	}
+}
+
+func filterUserID(r *http.Request) int64 {
+	userID, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("user_id")), 10, 64)
+	return userID
+}
+
+func decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
+	if err := json.NewDecoder(r.Body).Decode(target); err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid body", nil)
+		return false
+	}
+	return true
+}
+
+func parseID(w http.ResponseWriter, r *http.Request, key string) (int64, bool) {
+	id, err := strconv.ParseInt(chi.URLParam(r, key), 10, 64)
+	if err != nil || id <= 0 {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid id", nil)
+		return 0, false
+	}
+	return id, true
 }
 
 func summarizeText(text string) string {
