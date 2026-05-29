@@ -299,6 +299,50 @@ func (s *Server) handleRuleDetail(w http.ResponseWriter, r *http.Request, user a
 		http.Redirect(w, r, "/monitor-rules", http.StatusSeeOther)
 		return
 	}
+	if r.Method == http.MethodPost {
+		_ = r.ParseForm()
+		action := r.FormValue("action")
+		projectID, _ := strconv.ParseInt(r.FormValue("project_id"), 10, 64)
+		body := map[string]any{
+			"project_id":       projectID,
+			"name":             r.FormValue("name"),
+			"include_keywords": r.FormValue("include_keywords"),
+			"exclude_keywords": r.FormValue("exclude_keywords"),
+			"channels":         r.FormValue("channels"),
+			"severity":         nonEmpty(r.FormValue("severity"), "medium"),
+			"status":           nonEmpty(r.FormValue("status"), "active"),
+		}
+		message := "规则更新成功"
+		switch action {
+		case "toggle":
+			if body["status"] == "active" {
+				body["status"] = "paused"
+				message = "规则已停用"
+			} else {
+				body["status"] = "active"
+				message = "规则已启用"
+			}
+			resp, err := s.client.R().SetBody(body).Put(s.cfg.ContentURL + "/api/v1/monitor-rules/" + id)
+			if err != nil || !resp.IsSuccess() {
+				message = "规则状态更新失败"
+			}
+		case "delete":
+			resp, err := s.client.R().Delete(s.cfg.ContentURL + "/api/v1/monitor-rules/" + id)
+			if err != nil || !resp.IsSuccess() {
+				http.Redirect(w, r, "/monitor-rules/"+id+"?msg=规则删除失败", http.StatusSeeOther)
+				return
+			}
+			http.Redirect(w, r, "/monitor-rules?msg=规则已删除", http.StatusSeeOther)
+			return
+		default:
+			resp, err := s.client.R().SetBody(body).Put(s.cfg.ContentURL + "/api/v1/monitor-rules/" + id)
+			if err != nil || !resp.IsSuccess() {
+				message = "规则更新失败"
+			}
+		}
+		http.Redirect(w, r, "/monitor-rules/"+id+"?msg="+message, http.StatusSeeOther)
+		return
+	}
 	rule := model.MonitorRule{}
 	project := model.Project{}
 	articles := model.ItemListResult{}
@@ -310,7 +354,7 @@ func (s *Server) handleRuleDetail(w http.ResponseWriter, r *http.Request, user a
 		_ = s.getJSON(s.cfg.ContentURL+"/api/v1/articles?page=1&page_size=10&project_id="+projectID, &articles)
 		_ = s.getJSON(s.cfg.ContentURL+"/api/v1/reports?project_id="+projectID, &reports)
 	}
-	_ = s.render(w, "rule", pageData{Title: "规则详情", User: user, Rule: rule, Project: project, Articles: articles, Reports: reports})
+	_ = s.render(w, "rule", pageData{Title: "规则详情", User: user, Rule: rule, Project: project, Articles: articles, Reports: reports, Message: r.URL.Query().Get("msg")})
 }
 
 func (s *Server) handleArticles(w http.ResponseWriter, r *http.Request, user any) {
@@ -638,7 +682,7 @@ const rulesTemplate = `
 `
 
 const ruleTemplate = `
-{{define "rule"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.summary-card{padding:14px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.summary-card strong{display:block;font-size:24px;margin-top:6px}.toolbar{display:flex;gap:12px;flex-wrap:wrap}` + `</style></head><body><header><h1>规则详情</h1>{{template "nav" .}}</header><main><section><div class="toolbar"><a class="inline" href="/monitor-rules">返回规则中心</a>{{if .Project.ID}}<a class="inline" href="/projects/{{.Project.ID}}">所属项目详情</a><a class="inline" href="/articles?project_id={{.Project.ID}}">查看项目文章</a>{{end}}</div><h2>{{.Rule.Name}}</h2><p>项目：{{.Rule.ProjectName}} | 状态：{{.Rule.Status}} | 等级：{{.Rule.Severity}}</p><p>包含关键词：{{.Rule.IncludeKeywords}}</p><p>排除关键词：{{.Rule.ExcludeKeywords}}</p><p>来源：{{.Rule.Channels}}</p><div class="summary-grid"><div class="summary-card">所属项目<strong>{{if .Project.Name}}{{.Project.Name}}{{else}}未关联{{end}}</strong></div><div class="summary-card">最近文章<strong>{{len .Articles.Items}}</strong></div><div class="summary-card">最近报告<strong>{{len .Reports}}</strong></div></div></section>{{if .Project.ID}}<section><h2>所属项目</h2><table><tr><th>项目</th><th>项目组</th><th>状态</th><th>关键词</th></tr><tr><td><a class="inline" href="/projects/{{.Project.ID}}">{{.Project.Name}}</a></td><td>{{.Project.GroupName}}</td><td>{{.Project.Status}}</td><td>{{.Project.Keywords}}</td></tr></table></section>{{end}}<section><h2>关联项目最近文章</h2><table><tr><th>标题</th><th>来源</th><th>时间</th></tr>{{range .Articles.Items}}<tr><td><a class="inline" href="/articles/{{.ID}}">{{.Title}}</a></td><td>{{.SourceType}}</td><td>{{.CapturedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="3">暂无文章</td></tr>{{end}}</table></section><section><h2>关联项目最近报告</h2><table><tr><th>ID</th><th>标题</th><th>状态</th><th>更新时间</th></tr>{{range .Reports}}<tr><td>{{.ID}}</td><td><a class="inline" href="/reports/{{.ID}}">{{.Title}}</a></td><td>{{.Status}}</td><td>{{.UpdatedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="4">暂无报告</td></tr>{{end}}</table></section></main></body></html>{{end}}
+{{define "rule"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.summary-card{padding:14px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.summary-card strong{display:block;font-size:24px;margin-top:6px}.toolbar{display:flex;gap:12px;flex-wrap:wrap}.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}.danger button{background:#8f2d2d}` + `</style></head><body><header><h1>规则详情</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><div class="toolbar"><a class="inline" href="/monitor-rules">返回规则中心</a>{{if .Project.ID}}<a class="inline" href="/projects/{{.Project.ID}}">所属项目详情</a><a class="inline" href="/articles?project_id={{.Project.ID}}">查看项目文章</a>{{end}}</div><h2>{{.Rule.Name}}</h2><p>项目：{{.Rule.ProjectName}} | 状态：{{.Rule.Status}} | 等级：{{.Rule.Severity}}</p><p>包含关键词：{{.Rule.IncludeKeywords}}</p><p>排除关键词：{{.Rule.ExcludeKeywords}}</p><p>来源：{{.Rule.Channels}}</p><div class="summary-grid"><div class="summary-card">所属项目<strong>{{if .Project.Name}}{{.Project.Name}}{{else}}未关联{{end}}</strong></div><div class="summary-card">最近文章<strong>{{len .Articles.Items}}</strong></div><div class="summary-card">最近报告<strong>{{len .Reports}}</strong></div></div></section><section><h2>编辑规则</h2><form class="inline" method="post"><input type="hidden" name="action" value="update"><input type="hidden" name="project_id" value="{{.Rule.ProjectID}}"><input type="hidden" name="status" value="{{.Rule.Status}}"><input name="name" value="{{.Rule.Name}}" placeholder="规则名称"><input name="include_keywords" value="{{.Rule.IncludeKeywords}}" placeholder="包含关键词"><input name="exclude_keywords" value="{{.Rule.ExcludeKeywords}}" placeholder="排除关键词"><input name="channels" value="{{.Rule.Channels}}" placeholder="来源"><select name="severity"><option value="low" {{if eq .Rule.Severity "low"}}selected{{end}}>low</option><option value="medium" {{if eq .Rule.Severity "medium"}}selected{{end}}>medium</option><option value="high" {{if eq .Rule.Severity "high"}}selected{{end}}>high</option></select><button type="submit">保存规则</button></form><form class="inline" method="post"><input type="hidden" name="action" value="toggle"><input type="hidden" name="project_id" value="{{.Rule.ProjectID}}"><input type="hidden" name="name" value="{{.Rule.Name}}"><input type="hidden" name="include_keywords" value="{{.Rule.IncludeKeywords}}"><input type="hidden" name="exclude_keywords" value="{{.Rule.ExcludeKeywords}}"><input type="hidden" name="channels" value="{{.Rule.Channels}}"><input type="hidden" name="severity" value="{{.Rule.Severity}}"><input type="hidden" name="status" value="{{.Rule.Status}}"><button type="submit">{{if eq .Rule.Status "active"}}停用规则{{else}}启用规则{{end}}</button></form><form class="danger" method="post"><input type="hidden" name="action" value="delete"><button type="submit">删除规则</button></form></section>{{if .Project.ID}}<section><h2>所属项目</h2><table><tr><th>项目</th><th>项目组</th><th>状态</th><th>关键词</th></tr><tr><td><a class="inline" href="/projects/{{.Project.ID}}">{{.Project.Name}}</a></td><td>{{.Project.GroupName}}</td><td>{{.Project.Status}}</td><td>{{.Project.Keywords}}</td></tr></table></section>{{end}}<section><h2>关联项目最近文章</h2><table><tr><th>标题</th><th>来源</th><th>时间</th></tr>{{range .Articles.Items}}<tr><td><a class="inline" href="/articles/{{.ID}}">{{.Title}}</a></td><td>{{.SourceType}}</td><td>{{.CapturedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="3">暂无文章</td></tr>{{end}}</table></section><section><h2>关联项目最近报告</h2><table><tr><th>ID</th><th>标题</th><th>状态</th><th>更新时间</th></tr>{{range .Reports}}<tr><td>{{.ID}}</td><td><a class="inline" href="/reports/{{.ID}}">{{.Title}}</a></td><td>{{.Status}}</td><td>{{.UpdatedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="4">暂无报告</td></tr>{{end}}</table></section></main></body></html>{{end}}
 `
 
 const articlesTemplate = `
