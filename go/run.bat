@@ -52,7 +52,7 @@ start "scheduler-service" "%BIN_DIR%\scheduler-service.exe"
 
 echo.
 echo Services started.
-echo Gateway: http://127.0.0.1:8080
+echo Gateway: http://127.0.0.1
 echo LogLevel: %YUQING_LOG_LEVEL%
 echo Version: %YUQING_RUN_VERSION%
 echo Commit: %YUQING_GIT_COMMIT%

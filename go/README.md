@@ -12,7 +12,7 @@ Go 版已经从早期 `jin10` 采集骨架收敛为一套可运行的一期多�
 
 ## 默认端口
 
-- `gateway-web`: `8080`
+- `gateway-web`: `80`
 - `auth-service`: `8081`
 - `content-service`: `8082`
 - `crawler-service`: `8083`
@@ -50,7 +50,7 @@ go run .\cmd\scheduler-service
 浏览器打开：
 
 ```text
-http://127.0.0.1:8080
+http://127.0.0.1
 ```
 
 ## 关键接口

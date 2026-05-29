@@ -27,6 +27,9 @@ func TestLoadUsesDefaults(t *testing.T) {
 	if cfg.ListenAddr != ":8090" {
 		t.Fatalf("expected default listen addr, got %q", cfg.ListenAddr)
 	}
+	if cfg.GatewayWebAddr != ":80" {
+		t.Fatalf("expected default gateway addr, got %q", cfg.GatewayWebAddr)
+	}
 	if cfg.FlashURL != "https://www.jin10.com/" {
 		t.Fatalf("expected default flash url, got %q", cfg.FlashURL)
 	}
@@ -38,6 +41,9 @@ func TestLoadUsesDefaults(t *testing.T) {
 	}
 	if cfg.LogLevel != "info" {
 		t.Fatalf("expected default log level, got %q", cfg.LogLevel)
+	}
+	if cfg.GatewayWebURL != "http://127.0.0.1" {
+		t.Fatalf("expected default gateway url, got %q", cfg.GatewayWebURL)
 	}
 }
 
