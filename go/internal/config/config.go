@@ -19,6 +19,19 @@ type Config struct {
 	HeadlineInterval time.Duration
 	UserAgent        string
 	LogLevel         string
+	ServiceToken     string
+	SessionTTL       time.Duration
+	PortalWebAddr    string
+	ContentAddr      string
+	CrawlerAddr      string
+	NLPAddr          string
+	SchedulerAddr    string
+	PortalWebURL     string
+	ContentURL       string
+	CrawlerURL       string
+	NLPURL           string
+	DefaultAdminUser string
+	DefaultAdminPass string
 }
 
 func Load() Config {
@@ -34,6 +47,19 @@ func Load() Config {
 		HeadlineInterval: envDurationSeconds("JIN10_HEADLINE_INTERVAL_SEC", 60),
 		UserAgent:        envOrDefault("JIN10_USER_AGENT", defaultUserAgent),
 		LogLevel:         envOrDefault("JIN10_LOG_LEVEL", "info"),
+		ServiceToken:     envOrDefault("JIN10_SERVICE_TOKEN", "stonedt-internal-token"),
+		SessionTTL:       envDurationSeconds("JIN10_SESSION_TTL_SEC", 86400),
+		PortalWebAddr:    envOrDefault("JIN10_PORTAL_WEB_ADDR", ":8080"),
+		ContentAddr:      envOrDefault("JIN10_CONTENT_ADDR", ":8081"),
+		CrawlerAddr:      envOrDefault("JIN10_CRAWLER_ADDR", ":8082"),
+		NLPAddr:          envOrDefault("JIN10_NLP_ADDR", ":8083"),
+		SchedulerAddr:    envOrDefault("JIN10_SCHEDULER_ADDR", ":8085"),
+		PortalWebURL:     envOrDefault("JIN10_PORTAL_WEB_URL", "http://127.0.0.1:8080"),
+		ContentURL:       envOrDefault("JIN10_CONTENT_URL", "http://127.0.0.1:8081"),
+		CrawlerURL:       envOrDefault("JIN10_CRAWLER_URL", "http://127.0.0.1:8082"),
+		NLPURL:           envOrDefault("JIN10_NLP_URL", "http://127.0.0.1:8083"),
+		DefaultAdminUser: envOrDefault("JIN10_DEFAULT_ADMIN_USER", "admin"),
+		DefaultAdminPass: envOrDefault("JIN10_DEFAULT_ADMIN_PASS", "admin123"),
 	}
 }
 

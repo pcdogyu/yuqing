@@ -43,6 +43,8 @@ func (s *Store) Close() error {
 
 func (s *Store) migrate(ctx context.Context) error {
 	schema := `
+PRAGMA journal_mode=WAL;
+
 CREATE TABLE IF NOT EXISTS items (
 	id INTEGER PRIMARY KEY,
 	source_type TEXT NOT NULL,
@@ -77,8 +79,143 @@ CREATE TABLE IF NOT EXISTS crawl_runs (
 	error_text TEXT
 );
 
+CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
+	title,
+	content,
+	summary,
+	content='items',
+	content_rowid='id',
+	tokenize='unicode61'
+);
+
+CREATE TRIGGER IF NOT EXISTS items_ai AFTER INSERT ON items BEGIN
+  INSERT INTO items_fts(rowid, title, content, summary) VALUES (new.id, new.title, new.content, new.summary);
+END;
+
+CREATE TRIGGER IF NOT EXISTS items_ad AFTER DELETE ON items BEGIN
+  INSERT INTO items_fts(items_fts, rowid, title, content, summary) VALUES('delete', old.id, old.title, old.content, old.summary);
+END;
+
+CREATE TRIGGER IF NOT EXISTS items_au AFTER UPDATE ON items BEGIN
+  INSERT INTO items_fts(items_fts, rowid, title, content, summary) VALUES('delete', old.id, old.title, old.content, old.summary);
+  INSERT INTO items_fts(rowid, title, content, summary) VALUES (new.id, new.title, new.content, new.summary);
+END;
+
+CREATE TABLE IF NOT EXISTS users (
+	id INTEGER PRIMARY KEY,
+	username TEXT NOT NULL UNIQUE,
+	display_name TEXT NOT NULL,
+	email TEXT NOT NULL DEFAULT '',
+	role TEXT NOT NULL DEFAULT 'admin',
+	password_hash TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+	token TEXT PRIMARY KEY,
+	user_id INTEGER NOT NULL,
+	expires_at TEXT NOT NULL,
+	created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS api_tokens (
+	token TEXT PRIMARY KEY,
+	user_id INTEGER NOT NULL,
+	name TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	last_used_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS solution_groups (
+	id INTEGER PRIMARY KEY,
+	name TEXT NOT NULL,
+	description TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS projects (
+	id INTEGER PRIMARY KEY,
+	group_id INTEGER NOT NULL DEFAULT 0,
+	name TEXT NOT NULL,
+	keywords TEXT NOT NULL DEFAULT '',
+	description TEXT NOT NULL DEFAULT '',
+	status TEXT NOT NULL DEFAULT 'active',
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS monitor_rules (
+	id INTEGER PRIMARY KEY,
+	project_id INTEGER NOT NULL,
+	name TEXT NOT NULL,
+	include_keywords TEXT NOT NULL DEFAULT '',
+	exclude_keywords TEXT NOT NULL DEFAULT '',
+	channels TEXT NOT NULL DEFAULT '',
+	severity TEXT NOT NULL DEFAULT 'medium',
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS favorites (
+	user_id INTEGER NOT NULL,
+	item_id INTEGER NOT NULL,
+	created_at TEXT NOT NULL,
+	PRIMARY KEY (user_id, item_id)
+);
+
+CREATE TABLE IF NOT EXISTS reports (
+	id INTEGER PRIMARY KEY,
+	project_id INTEGER NOT NULL DEFAULT 0,
+	title TEXT NOT NULL,
+	summary TEXT NOT NULL DEFAULT '',
+	content TEXT NOT NULL DEFAULT '',
+	status TEXT NOT NULL DEFAULT 'draft',
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS analysis_snapshots (
+	id INTEGER PRIMARY KEY,
+	scope TEXT NOT NULL,
+	scope_id INTEGER NOT NULL DEFAULT 0,
+	title TEXT NOT NULL,
+	payload TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	UNIQUE(scope, scope_id)
+);
+
+CREATE TABLE IF NOT EXISTS system_notices (
+	id INTEGER PRIMARY KEY,
+	title TEXT NOT NULL,
+	content TEXT NOT NULL,
+	created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS feedback (
+	id INTEGER PRIMARY KEY,
+	user_id INTEGER NOT NULL DEFAULT 0,
+	title TEXT NOT NULL,
+	content TEXT NOT NULL,
+	created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS task_runs (
+	id INTEGER PRIMARY KEY,
+	task_name TEXT NOT NULL,
+	status TEXT NOT NULL,
+	message TEXT NOT NULL DEFAULT '',
+	started_at TEXT NOT NULL,
+	finished_at TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_items_source_type_captured_at ON items(source_type, captured_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_crawl_runs_source_type_started_at ON crawl_runs(source_type, started_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_projects_group_id ON projects(group_id);
+CREATE INDEX IF NOT EXISTS idx_monitor_rules_project_id ON monitor_rules(project_id);
+CREATE INDEX IF NOT EXISTS idx_reports_project_id ON reports(project_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 `
 	_, err := s.db.ExecContext(ctx, schema)
 	return err

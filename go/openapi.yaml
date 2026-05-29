@@ -1,0 +1,116 @@
+openapi: 3.1.0
+info:
+  title: Stonedt Go Portal API
+  version: 0.1.0
+  description: Go 重构版舆情门户开放接口说明。
+servers:
+  - url: http://127.0.0.1:8081
+paths:
+  /api/v1/auth/login:
+    post:
+      summary: 登录
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string }
+      responses:
+        '200':
+          description: 登录成功
+  /api/v1/auth/session:
+    get:
+      summary: 校验会话
+      parameters:
+        - in: query
+          name: session_token
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: 会话有效
+  /api/v1/projects:
+    get:
+      summary: 项目列表
+      responses:
+        '200': { description: 项目列表 }
+    post:
+      summary: 创建项目
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                keywords: { type: string }
+                description: { type: string }
+      responses:
+        '200': { description: 创建成功 }
+  /api/v1/articles:
+    get:
+      summary: 文章列表
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: page_size
+          schema: { type: integer, default: 20 }
+        - in: query
+          name: keyword
+          schema: { type: string }
+        - in: query
+          name: source_type
+          schema: { type: string, enum: [flash, headline] }
+      responses:
+        '200': { description: 文章列表 }
+  /api/v1/search/articles:
+    get:
+      summary: FTS 搜索
+      parameters:
+        - in: query
+          name: q
+          schema: { type: string }
+      responses:
+        '200': { description: 搜索结果 }
+  /api/v1/analysis/overview:
+    get:
+      summary: 总览分析
+      responses:
+        '200': { description: 分析结果 }
+  /api/v1/reports:
+    get:
+      summary: 报告列表
+      responses:
+        '200': { description: 报告列表 }
+  /api/v1/reports/generate:
+    post:
+      summary: 生成报告
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                project_id: { type: integer }
+                title: { type: string }
+                text: { type: string }
+      responses:
+        '200': { description: 生成成功 }
+  /api/v1/admin/tasks/crawl:
+    post:
+      summary: 手动触发采集
+      parameters:
+        - in: query
+          name: source_type
+          schema: { type: string, enum: [flash, headline] }
+      responses:
+        '200': { description: 触发成功 }

@@ -1,61 +1,94 @@
-# Jin10 Go Crawler
+# Stonedt Go Platform
 
-这个目录是新增的独立 Go 子系统，用于采集金十公开数据源并写入 SQLite。
+这个目录现在是 Go 版舆情门户的主实现，不再只是单独的金十采集子系统。当前版本已经具备一套可运行的多服务骨架：
 
-当前覆盖：
-
-- `https://www.jin10.com/` 快讯
-- `https://xnews.jin10.com/` 头条
+- `portal-web`
+  Go SSR 门户，提供登录页、总览、项目中心、文章中心、报告中心。
+- `content-service`
+  承接 `/api/v1/auth/*`、项目、监测、文章、搜索、分析、报告、公告等 API。
+- `crawler-service`
+  承接采集任务与文章最新数据接口，当前已接入金十快讯和头条。
+- `nlp-service`
+  提供摘要、标题、关键词的本地化轻量 NLP 接口。
+- `scheduler-worker`
+  定时触发采集和分析快照刷新。
 
 ## 目录
 
-- `cmd/server`: REST API
-- `cmd/worker`: 常驻采集 worker
-- `internal/provider/jin10flash`: 快讯抓取与解析
-- `internal/provider/jin10xnews`: 头条抓取与解析
-- `internal/store/sqlite`: SQLite 持久化
-- `internal/service`: 抓取编排与去重
-- `internal/httpapi`: HTTP 接口
+- `cmd/portal-web`
+- `cmd/content-service`
+- `cmd/crawler-service`
+- `cmd/nlp-service`
+- `cmd/scheduler-worker`
+- `internal/store/sqlite`
+- `internal/provider/jin10flash`
+- `internal/provider/jin10xnews`
+- `openapi.yaml`
 
-## 运行要求
+## 数据与运行
 
-- Go `1.22+`
-
-## 环境变量
-
-- `JIN10_LISTEN_ADDR`: API 监听地址，默认 `:8090`
-- `JIN10_DB_PATH`: SQLite 路径，默认 `data/jin10.db`
-- `JIN10_FLASH_URL`: 快讯页地址，默认 `https://www.jin10.com/`
-- `JIN10_HEADLINE_URL`: 头条页地址，默认 `https://xnews.jin10.com/`
-- `JIN10_HTTP_TIMEOUT_SEC`: HTTP 超时秒数，默认 `20`
-- `JIN10_FLASH_INTERVAL_SEC`: 快讯轮询间隔，默认 `15`
-- `JIN10_HEADLINE_INTERVAL_SEC`: 头条轮询间隔，默认 `60`
-- `JIN10_LOG_LEVEL`: `debug|info|warn|error`
+- 主数据库：SQLite，默认 `go/data/jin10.db`
+- 检索：SQLite FTS5
+- 默认管理员：`admin / admin123`
+- 服务默认端口：
+  - `portal-web`: `8080`
+  - `content-service`: `8081`
+  - `crawler-service`: `8082`
+  - `nlp-service`: `8083`
 
 ## 启动
 
 ```bash
 cd go
-go run ./cmd/server
+go run ./cmd/content-service
 ```
 
 ```bash
 cd go
-go run ./cmd/worker
+go run ./cmd/crawler-service
 ```
-
-## 常用接口
 
 ```bash
-curl http://127.0.0.1:8090/healthz
-curl "http://127.0.0.1:8090/api/v1/items?page=1&page_size=20&source_type=headline"
-curl "http://127.0.0.1:8090/api/v1/items/latest?limit=5&source_type=flash"
-curl -X POST "http://127.0.0.1:8090/api/v1/crawl/run?source_type=flash"
-curl http://127.0.0.1:8090/api/v1/crawl/runs
+cd go
+go run ./cmd/nlp-service
 ```
 
-## 说明
+```bash
+cd go
+go run ./cmd/portal-web
+```
 
-- 第一阶段只采集公开内容，不处理登录态和 VIP 解锁。
-- 快讯优先解析首页嵌入 `data-list`，找不到时降级到 HTML 链接兜底。
-- 头条当前采集公开列表，不做深分页。
+```bash
+cd go
+go run ./cmd/scheduler-worker
+```
+
+## 已实现能力
+
+- 账号密码登录、会话校验、API token 发放
+- 项目创建与项目列表
+- 监测规则列表与创建
+- 金十头条/快讯采集、采集运行记录、文章最新接口
+- 文章分页、关键词过滤、SQLite FTS 搜索
+- 总览分析快照刷新
+- 报告生成与报告列表
+- Go SSR 门户页面
+- OpenAPI 文档骨架
+
+## 验证命令
+
+```bash
+go test ./...
+```
+
+```bash
+curl http://127.0.0.1:8081/healthz
+curl -X POST http://127.0.0.1:8081/api/v1/auth/login -H "Content-Type: application/json" -d "{\"username\":\"admin\",\"password\":\"admin123\"}"
+curl -X POST "http://127.0.0.1:8082/api/v1/admin/tasks/crawl?source_type=headline" -H "X-Service-Token: stonedt-internal-token"
+```
+
+## 当前边界
+
+- 已经完成全量 Go 化的主架构切换和核心骨架，不再依赖 Java 运行。
+- 业务上仍是首版重构，不等价覆盖原 Java 的全部 269 条路由和全部页面细节。
+- 微信扫码、OCR、复杂 AI 写作、原大屏视觉和高级舆情分析仍需继续补齐。
