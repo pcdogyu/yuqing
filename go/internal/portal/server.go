@@ -6,6 +6,7 @@ import (
 	"errors"
 	"html/template"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -43,6 +44,7 @@ type pageData struct {
 	Message       string
 	FilterKeyword string
 	FilterProject string
+	FilterStatus  string
 	FilterSource  string
 	FilterStart   string
 	FilterEnd     string
@@ -491,6 +493,8 @@ func (s *Server) handleReports(w http.ResponseWriter, r *http.Request, user any)
 		return
 	}
 	projectID := strings.TrimSpace(r.URL.Query().Get("project_id"))
+	status := strings.TrimSpace(r.URL.Query().Get("status"))
+	order := strings.TrimSpace(r.URL.Query().Get("order"))
 	reports := []model.Report{}
 	projects := []model.Project{}
 	reportURL := s.cfg.ContentURL + "/api/v1/reports"
@@ -499,7 +503,24 @@ func (s *Server) handleReports(w http.ResponseWriter, r *http.Request, user any)
 	}
 	_ = s.getJSON(reportURL, &reports)
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/projects", &projects)
-	_ = s.render(w, "reports", pageData{Title: "报告中心", User: user, Reports: reports, Projects: projects, FilterProject: projectID})
+	filtered := make([]model.Report, 0, len(reports))
+	for _, report := range reports {
+		if status != "" && report.Status != status {
+			continue
+		}
+		filtered = append(filtered, report)
+	}
+	if order == "asc" {
+		sort.Slice(filtered, func(i, j int) bool {
+			return filtered[i].UpdatedAt.Before(filtered[j].UpdatedAt)
+		})
+	} else {
+		order = "desc"
+		sort.Slice(filtered, func(i, j int) bool {
+			return filtered[i].UpdatedAt.After(filtered[j].UpdatedAt)
+		})
+	}
+	_ = s.render(w, "reports", pageData{Title: "报告中心", User: user, Reports: filtered, Projects: projects, FilterProject: projectID, FilterStatus: status, FilterSource: order})
 }
 
 func (s *Server) handleReportDetail(w http.ResponseWriter, r *http.Request, user any) {
@@ -741,7 +762,7 @@ const articleTemplate = `
 `
 
 const reportsTemplate = `
-{{define "reports"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `</style></head><body><header><h1>报告中心</h1>{{template "nav" .}}</header><main><section><h2>生成报告</h2><form method="post"><select name="project_id">{{range .Projects}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select><input name="title" placeholder="报告标题"><textarea name="content" placeholder="输入文章摘要、正文或人工内容"></textarea><button type="submit">生成报告</button></form></section><section><h2>报告筛选</h2><form class="inline" method="get"><select name="project_id"><option value="">全部项目</option>{{range .Projects}}<option value="{{.ID}}" {{if eq (printf "%d" .ID) $.FilterProject}}selected{{end}}>{{.Name}}</option>{{end}}</select><button type="submit">筛选</button></form></section><section><h2>报告列表</h2><table><tr><th>ID</th><th>项目ID</th><th>标题</th><th>状态</th><th>更新时间</th></tr>{{range .Reports}}<tr><td>{{.ID}}</td><td>{{.ProjectID}}</td><td><a class="inline" href="/reports/{{.ID}}">{{.Title}}</a></td><td>{{.Status}}</td><td>{{.UpdatedAt.Format "2006-01-02 15:04"}}</td></tr>{{end}}</table></section></main></body></html>{{end}}
+{{define "reports"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `</style></head><body><header><h1>报告中心</h1>{{template "nav" .}}</header><main><section><h2>生成报告</h2><form method="post"><select name="project_id">{{range .Projects}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select><input name="title" placeholder="报告标题"><textarea name="content" placeholder="输入文章摘要、正文或人工内容"></textarea><button type="submit">生成报告</button></form></section><section><h2>报告筛选</h2><form class="inline" method="get"><select name="project_id"><option value="">全部项目</option>{{range .Projects}}<option value="{{.ID}}" {{if eq (printf "%d" .ID) $.FilterProject}}selected{{end}}>{{.Name}}</option>{{end}}</select><select name="status"><option value="">全部状态</option><option value="generated" {{if eq .FilterStatus "generated"}}selected{{end}}>generated</option><option value="draft" {{if eq .FilterStatus "draft"}}selected{{end}}>draft</option><option value="archived" {{if eq .FilterStatus "archived"}}selected{{end}}>archived</option></select><select name="order"><option value="desc" {{if eq .FilterSource "desc"}}selected{{end}}>更新时间倒序</option><option value="asc" {{if eq .FilterSource "asc"}}selected{{end}}>更新时间正序</option></select><button type="submit">筛选</button></form></section><section><h2>报告列表</h2><table><tr><th>ID</th><th>项目ID</th><th>标题</th><th>状态</th><th>更新时间</th></tr>{{range .Reports}}<tr><td>{{.ID}}</td><td>{{.ProjectID}}</td><td><a class="inline" href="/reports/{{.ID}}">{{.Title}}</a></td><td>{{.Status}}</td><td>{{.UpdatedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="5">没有符合条件的报告</td></tr>{{end}}</table></section></main></body></html>{{end}}
 `
 
 const reportTemplate = `
