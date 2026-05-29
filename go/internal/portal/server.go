@@ -39,6 +39,11 @@ type pageData struct {
 	TaskRuns      []model.TaskRun
 	Error         string
 	FilterKeyword string
+	FilterProject string
+	FilterSource  string
+	FilterStart   string
+	FilterEnd     string
+	SearchMode    string
 }
 
 func NewServer(cfg config.Config) *Server {
@@ -115,6 +120,11 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request, user any) {
+	if r.Method == http.MethodPost {
+		_, _ = s.client.R().Post(s.cfg.AnalysisURL + "/api/v1/admin/tasks/analysis/refresh")
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
 	dashboard := model.DashboardSnapshot{}
 	notices := []model.SystemNotice{}
 	taskRuns := []model.TaskRun{}
@@ -227,18 +237,39 @@ func (s *Server) handleArticles(w http.ResponseWriter, r *http.Request, user any
 				_, _ = s.client.R().SetQueryParam("user_id", strconv.FormatInt(userID, 10)).Post(s.cfg.ContentURL + "/api/v1/articles/" + itemID + "/read")
 			}
 		}
-		http.Redirect(w, r, "/articles?keyword="+r.URL.Query().Get("keyword"), http.StatusSeeOther)
+		redirectURL := "/articles?keyword=" + r.URL.Query().Get("keyword")
+		if mode := r.URL.Query().Get("mode"); mode != "" {
+			redirectURL += "&mode=" + mode
+		}
+		http.Redirect(w, r, redirectURL, http.StatusSeeOther)
 		return
 	}
+	mode := strings.TrimSpace(r.URL.Query().Get("mode"))
+	keyword := strings.TrimSpace(r.URL.Query().Get("keyword"))
+	projectID := strings.TrimSpace(r.URL.Query().Get("project_id"))
+	sourceType := strings.TrimSpace(r.URL.Query().Get("source_type"))
+	start := strings.TrimSpace(r.URL.Query().Get("start"))
+	end := strings.TrimSpace(r.URL.Query().Get("end"))
 	query := "/api/v1/articles?page=1&page_size=20"
-	if keyword := strings.TrimSpace(r.URL.Query().Get("keyword")); keyword != "" {
+	if mode == "search" {
+		query = "/api/v1/search/articles?page=1&page_size=20"
+		if keyword != "" {
+			query += "&q=" + keyword
+		}
+	} else if keyword != "" {
 		query += "&keyword=" + keyword
 	}
-	if projectID := strings.TrimSpace(r.URL.Query().Get("project_id")); projectID != "" {
+	if projectID != "" {
 		query += "&project_id=" + projectID
 	}
-	if sourceType := strings.TrimSpace(r.URL.Query().Get("source_type")); sourceType != "" {
+	if sourceType != "" {
 		query += "&source_type=" + sourceType
+	}
+	if start != "" {
+		query += "&start=" + start
+	}
+	if end != "" {
+		query += "&end=" + end
 	}
 	if userID > 0 {
 		query += "&user_id=" + strconv.FormatInt(userID, 10)
@@ -247,7 +278,18 @@ func (s *Server) handleArticles(w http.ResponseWriter, r *http.Request, user any
 	projects := []model.Project{}
 	_ = s.getJSON(s.cfg.ContentURL+query, &articles)
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/projects", &projects)
-	_ = s.render(w, "articles", pageData{Title: "文章中心", User: user, Articles: articles, Projects: projects, FilterKeyword: r.URL.Query().Get("keyword")})
+	_ = s.render(w, "articles", pageData{
+		Title:         "文章中心",
+		User:          user,
+		Articles:      articles,
+		Projects:      projects,
+		FilterKeyword: keyword,
+		FilterProject: projectID,
+		FilterSource:  sourceType,
+		FilterStart:   start,
+		FilterEnd:     end,
+		SearchMode:    mode,
+	})
 }
 
 func (s *Server) handleArticleDetail(w http.ResponseWriter, r *http.Request, user any) {
@@ -469,7 +511,7 @@ const loginTemplate = `
 `
 
 const dashboardTemplate = `
-{{define "dashboard"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.metric{padding:16px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.metric strong{display:block;font-size:28px;margin-top:6px}` + `</style></head><body><header><h1>总览</h1>{{template "nav" .}}</header><main><section><h2>核心指标</h2><div class="metric-grid"><div class="metric">文章数<strong>{{.Dashboard.Overview.ArticleCount}}</strong></div><div class="metric">项目数<strong>{{.Dashboard.Overview.ProjectCount}}</strong></div><div class="metric">报告数<strong>{{.Dashboard.Overview.ReportCount}}</strong></div><div class="metric">活跃规则<strong>{{.Dashboard.Overview.AlertRuleCount}}</strong></div></div></section><section><h2>近 7 日趋势</h2><table><tr><th>日期</th><th>文章数</th></tr>{{range .Dashboard.Trends}}<tr><td>{{.Label}}</td><td>{{.Count}}</td></tr>{{end}}</table></section><section><h2>来源分布</h2><table><tr><th>来源</th><th>数量</th></tr>{{range .Dashboard.Sources}}<tr><td>{{.SourceType}}</td><td>{{.Count}}</td></tr>{{end}}</table></section><section><h2>关键词热点</h2><table><tr><th>关键词</th><th>次数</th></tr>{{range .Dashboard.Keywords}}<tr><td>{{.Keyword}}</td><td>{{.Count}}</td></tr>{{end}}</table></section><section><h2>系统公告</h2><table><tr><th>标题</th><th>时间</th></tr>{{range .Notices}}<tr><td>{{.Title}}</td><td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td></tr>{{end}}</table></section><section><h2>最近任务</h2><table><tr><th>任务</th><th>状态</th><th>开始时间</th></tr>{{range .TaskRuns}}<tr><td>{{.TaskName}}</td><td>{{.Status}}</td><td>{{.StartedAt.Format "2006-01-02 15:04"}}</td></tr>{{end}}</table></section></main></body></html>{{end}}
+{{define "dashboard"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.metric{padding:16px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.metric strong{display:block;font-size:28px;margin-top:6px}` + `</style></head><body><header><h1>总览</h1>{{template "nav" .}}</header><main><section><h2>核心指标</h2><form method="post"><button type="submit">手动刷新分析</button></form><div class="metric-grid"><div class="metric">文章数<strong>{{.Dashboard.Overview.ArticleCount}}</strong></div><div class="metric">项目数<strong>{{.Dashboard.Overview.ProjectCount}}</strong></div><div class="metric">报告数<strong>{{.Dashboard.Overview.ReportCount}}</strong></div><div class="metric">活跃规则<strong>{{.Dashboard.Overview.AlertRuleCount}}</strong></div></div></section><section><h2>近 7 日趋势</h2><table><tr><th>日期</th><th>文章数</th></tr>{{range .Dashboard.Trends}}<tr><td>{{.Label}}</td><td>{{.Count}}</td></tr>{{end}}</table></section><section><h2>来源分布</h2><table><tr><th>来源</th><th>数量</th></tr>{{range .Dashboard.Sources}}<tr><td>{{.SourceType}}</td><td>{{.Count}}</td></tr>{{end}}</table></section><section><h2>关键词热点</h2><table><tr><th>关键词</th><th>次数</th></tr>{{range .Dashboard.Keywords}}<tr><td>{{.Keyword}}</td><td>{{.Count}}</td></tr>{{end}}</table></section><section><h2>系统公告</h2><table><tr><th>标题</th><th>时间</th></tr>{{range .Notices}}<tr><td>{{.Title}}</td><td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td></tr>{{end}}</table></section><section><h2>最近任务</h2><table><tr><th>任务</th><th>状态</th><th>开始时间</th></tr>{{range .TaskRuns}}<tr><td>{{.TaskName}}</td><td>{{.Status}}</td><td>{{.StartedAt.Format "2006-01-02 15:04"}}</td></tr>{{end}}</table></section></main></body></html>{{end}}
 `
 
 const projectsTemplate = `
@@ -481,7 +523,7 @@ const rulesTemplate = `
 `
 
 const articlesTemplate = `
-{{define "articles"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.pill{display:inline-block;padding:4px 10px;border-radius:999px;background:#ece7dc}` + `</style></head><body><header><h1>文章中心</h1>{{template "nav" .}}</header><main><section><form class="inline" method="get"><input name="keyword" placeholder="关键词" value="{{.FilterKeyword}}"><select name="project_id"><option value="">全部项目</option>{{range .Projects}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select><select name="source_type"><option value="">全部来源</option><option value="flash">flash</option><option value="headline">headline</option></select><button type="submit">筛选</button></form></section><section><h2>列表</h2><table><tr><th>标题</th><th>来源</th><th>状态</th><th>时间</th><th>操作</th></tr>{{range .Articles.Items}}<tr><td><a class="inline" href="/articles/{{.ID}}">{{.Title}}</a></td><td>{{.SourceType}}</td><td>{{if .Read}}<span class="pill">已读</span>{{else}}<span class="pill">未读</span>{{end}} {{if .Favorited}}<span class="pill">已收藏</span>{{end}}</td><td>{{.CapturedAt.Format "2006-01-02 15:04"}}</td><td><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="read"><button type="submit">标记已读</button></form><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="favorite"><button type="submit">{{if .Favorited}}取消收藏{{else}}收藏{{end}}</button></form></td></tr>{{end}}</table><p>共 {{.Articles.Total}} 条</p></section></main></body></html>{{end}}
+{{define "articles"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.pill{display:inline-block;padding:4px 10px;border-radius:999px;background:#ece7dc}` + `</style></head><body><header><h1>文章中心</h1>{{template "nav" .}}</header><main><section><form class="inline" method="get"><select name="mode"><option value="" {{if eq .SearchMode ""}}selected{{end}}>普通筛选</option><option value="search" {{if eq .SearchMode "search"}}selected{{end}}>全文搜索</option></select><input name="keyword" placeholder="关键词" value="{{.FilterKeyword}}"><select name="project_id"><option value="">全部项目</option>{{range .Projects}}<option value="{{.ID}}" {{if eq (printf "%d" .ID) $.FilterProject}}selected{{end}}>{{.Name}}</option>{{end}}</select><select name="source_type"><option value="">全部来源</option><option value="flash" {{if eq .FilterSource "flash"}}selected{{end}}>flash</option><option value="headline" {{if eq .FilterSource "headline"}}selected{{end}}>headline</option></select><input type="date" name="start" value="{{.FilterStart}}"><input type="date" name="end" value="{{.FilterEnd}}"><button type="submit">筛选</button></form></section><section><h2>列表</h2><table><tr><th>标题</th><th>来源</th><th>状态</th><th>时间</th><th>操作</th></tr>{{range .Articles.Items}}<tr><td><a class="inline" href="/articles/{{.ID}}">{{.Title}}</a></td><td>{{.SourceType}}</td><td>{{if .Read}}<span class="pill">已读</span>{{else}}<span class="pill">未读</span>{{end}} {{if .Favorited}}<span class="pill">已收藏</span>{{end}}</td><td>{{.CapturedAt.Format "2006-01-02 15:04"}}</td><td><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="read"><button type="submit">标记已读</button></form><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="favorite"><button type="submit">{{if .Favorited}}取消收藏{{else}}收藏{{end}}</button></form></td></tr>{{end}}</table><p>共 {{.Articles.Total}} 条</p></section></main></body></html>{{end}}
 `
 
 const articleTemplate = `
