@@ -45,7 +45,11 @@ func (p *Provider) Fetch(ctx context.Context) ([]model.Item, error) {
 	if resp.IsError() {
 		return nil, fmt.Errorf("flash fetch failed: %s", resp.Status())
 	}
-	return ParseHTML(resp.String(), p.pageURL, time.Now().UTC())
+	items, err := ParseHTML(resp.String(), p.pageURL, time.Now().UTC())
+	if err != nil {
+		return nil, err
+	}
+	return p.enrichItems(ctx, items), nil
 }
 
 func ParseHTML(html, pageURL string, capturedAt time.Time) ([]model.Item, error) {
@@ -139,6 +143,65 @@ func parseFallbackHTML(html, pageURL string, capturedAt time.Time) []model.Item 
 		})
 	}
 	return items
+}
+
+func (p *Provider) enrichItems(ctx context.Context, items []model.Item) []model.Item {
+	for idx := range items {
+		if !shouldFetchDetail(items[idx]) {
+			continue
+		}
+		resp, err := p.client.R().
+			SetContext(ctx).
+			Get(items[idx].DetailURL)
+		if err != nil || resp.IsError() {
+			continue
+		}
+		title, content, publishTime := parseDetailHTML(resp.String())
+		if strings.TrimSpace(title) != "" {
+			items[idx].Title = title
+		}
+		if strings.TrimSpace(content) != "" {
+			items[idx].Content = content
+		}
+		if strings.TrimSpace(publishTime) != "" {
+			items[idx].PublishTime = publishTime
+		}
+	}
+	return items
+}
+
+func shouldFetchDetail(item model.Item) bool {
+	if strings.TrimSpace(item.DetailURL) == "" {
+		return false
+	}
+	return strings.Contains(item.DetailURL, "flash.jin10.com/detail/")
+}
+
+func parseDetailHTML(html string) (title string, content string, publishTime string) {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
+	if err != nil {
+		return "", "", ""
+	}
+
+	title = cleanText(doc.Find(".content-title div").First().Text())
+	if title == "" {
+		title = cleanText(doc.Find("title").First().Text())
+		title = strings.TrimSuffix(title, " - 金十数据")
+	}
+	content = title
+
+	if node := doc.Find(".content-time").First(); node.Length() > 0 {
+		parts := make([]string, 0, 3)
+		node.Find("span").Each(func(_ int, s *goquery.Selection) {
+			text := cleanText(s.Text())
+			if text != "" && text != "周一" && text != "周二" && text != "周三" && text != "周四" && text != "周五" && text != "周六" && text != "周日" {
+				parts = append(parts, text)
+			}
+		})
+		publishTime = strings.Join(parts, " ")
+	}
+
+	return strings.TrimSpace(title), strings.TrimSpace(content), strings.TrimSpace(publishTime)
 }
 
 func dedupe(items []model.Item) []model.Item {

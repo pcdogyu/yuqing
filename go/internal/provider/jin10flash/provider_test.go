@@ -41,6 +41,22 @@ func TestParseHTMLFallsBackToLinks(t *testing.T) {
 	}
 }
 
+func TestParseDetailHTML(t *testing.T) {
+	html := mustReadFixture(t, "flash_detail.html")
+
+	title, content, publishTime := parseDetailHTML(html)
+
+	if title == "" {
+		t.Fatal("expected title from detail page")
+	}
+	if content == "" {
+		t.Fatal("expected content from detail page")
+	}
+	if publishTime != "2026-06-01 14:21:41" {
+		t.Fatalf("unexpected publish time: %q", publishTime)
+	}
+}
+
 func mustReadFixture(t *testing.T, name string) string {
 	t.Helper()
 	path := filepath.Join("testdata", name)

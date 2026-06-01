@@ -165,10 +165,32 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request, user an
 	notices := []model.SystemNotice{}
 	taskRuns := []model.TaskRun{}
 	crawlRuns := []model.CrawlRun{}
+	projects := []model.Project{}
+	rules := []model.MonitorRule{}
+	reports := []model.Report{}
+	articles := model.ItemListResult{}
 	_ = s.getJSON(s.cfg.AnalysisURL+"/api/v1/analysis/overview", &dashboard)
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/system/notices", &notices)
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/system/task-runs?limit=10", &taskRuns)
 	_ = s.getJSON(s.cfg.CrawlerURL+"/api/v1/admin/tasks/crawl/runs?limit=10", &crawlRuns)
+	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/articles?page=1&page_size=1", &articles); err == nil {
+		dashboard.Overview.ArticleCount = articles.Total
+	}
+	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/projects", &projects); err == nil {
+		dashboard.Overview.ProjectCount = len(projects)
+	}
+	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/reports", &reports); err == nil {
+		dashboard.Overview.ReportCount = len(reports)
+	}
+	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/monitor-rules", &rules); err == nil {
+		activeRules := 0
+		for _, rule := range rules {
+			if strings.EqualFold(strings.TrimSpace(rule.Status), "active") {
+				activeRules++
+			}
+		}
+		dashboard.Overview.AlertRuleCount = activeRules
+	}
 	_ = s.render(w, "dashboard", pageData{
 		Title:     "总览",
 		User:      user,
@@ -679,9 +701,9 @@ func (s *Server) handleArticles(w http.ResponseWriter, r *http.Request, user any
 	flagFilter := strings.TrimSpace(r.URL.Query().Get("favorite"))
 	start := strings.TrimSpace(r.URL.Query().Get("start"))
 	end := strings.TrimSpace(r.URL.Query().Get("end"))
-	query := "/api/v1/articles?page=1&page_size=20"
+	query := "/api/v1/articles?page=1&page_size=200"
 	if mode == "search" {
-		query = "/api/v1/search/articles?page=1&page_size=20"
+		query = "/api/v1/search/articles?page=1&page_size=200"
 		if keyword != "" {
 			query += "&q=" + keyword
 		}
@@ -735,7 +757,9 @@ func (s *Server) handleArticles(w http.ResponseWriter, r *http.Request, user any
 		filteredItems = append(filteredItems, item)
 	}
 	articles.Items = filteredItems
-	articles.Total = len(filteredItems)
+	if readFilter != "" || flagFilter != "" {
+		articles.Total = len(filteredItems)
+	}
 	returnTo := url.QueryEscape(r.URL.RequestURI())
 	_ = s.render(w, "articles", pageData{
 		Title:         "文章中心",
