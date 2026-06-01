@@ -59,6 +59,9 @@ type pageData struct {
 	ProjectNames  map[int64]string
 	CountActive   int
 	CountPaused   int
+	CountRead     int
+	CountUnread   int
+	CountFlagged  int
 }
 
 type serviceStatus struct {
@@ -666,6 +669,9 @@ func (s *Server) handleArticles(w http.ResponseWriter, r *http.Request, user any
 	_ = s.getJSON(s.cfg.ContentURL+query, &articles)
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/projects", &projects)
 	filteredItems := make([]model.Item, 0, len(articles.Items))
+	readCount := 0
+	unreadCount := 0
+	flaggedCount := 0
 	for _, item := range articles.Items {
 		if readFilter == "read" && !item.Read {
 			continue
@@ -678,6 +684,14 @@ func (s *Server) handleArticles(w http.ResponseWriter, r *http.Request, user any
 		}
 		if flagFilter == "unfavorited" && item.Favorited {
 			continue
+		}
+		if item.Read {
+			readCount++
+		} else {
+			unreadCount++
+		}
+		if item.Favorited {
+			flaggedCount++
 		}
 		filteredItems = append(filteredItems, item)
 	}
@@ -698,6 +712,9 @@ func (s *Server) handleArticles(w http.ResponseWriter, r *http.Request, user any
 		FilterStart:   start,
 		FilterEnd:     end,
 		SearchMode:    mode,
+		CountRead:     readCount,
+		CountUnread:   unreadCount,
+		CountFlagged:  flaggedCount,
 		Message:       r.URL.Query().Get("msg"),
 	})
 }
@@ -1170,7 +1187,7 @@ const ruleTemplate = `
 `
 
 const articlesTemplate = `
-{{define "articles"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.pill{display:inline-block;padding:4px 10px;border-radius:999px;background:#ece7dc}.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}.subtle{color:#6a6257}.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.summary-card{padding:14px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.summary-card strong{display:block;font-size:24px;margin-top:6px}` + `</style></head><body><header><h1>文章中心</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><form class="inline" method="get"><select name="mode"><option value="" {{if eq .SearchMode ""}}selected{{end}}>普通筛选</option><option value="search" {{if eq .SearchMode "search"}}selected{{end}}>全文搜索</option></select><input name="keyword" placeholder="关键词" value="{{.FilterKeyword}}"><select name="project_id"><option value="">全部项目</option>{{range .Projects}}<option value="{{.ID}}" {{if eq (printf "%d" .ID) $.FilterProject}}selected{{end}}>{{.Name}}</option>{{end}}</select><select name="source_type"><option value="">全部来源</option><option value="flash" {{if eq .FilterSource "flash"}}selected{{end}}>flash</option><option value="headline" {{if eq .FilterSource "headline"}}selected{{end}}>headline</option></select><select name="read"><option value="">全部阅读状态</option><option value="read" {{if eq .FilterRead "read"}}selected{{end}}>已读</option><option value="unread" {{if eq .FilterRead "unread"}}selected{{end}}>未读</option></select><select name="favorite"><option value="">全部收藏状态</option><option value="favorited" {{if eq .FilterFlag "favorited"}}selected{{end}}>已收藏</option><option value="unfavorited" {{if eq .FilterFlag "unfavorited"}}selected{{end}}>未收藏</option></select><input type="date" name="start" value="{{.FilterStart}}"><input type="date" name="end" value="{{.FilterEnd}}"><button type="submit">筛选</button></form>{{if or .FilterKeyword .FilterProject .FilterSource .FilterRead .FilterFlag .FilterStart .FilterEnd .SearchMode}}<p class="subtle">当前筛选已生效 <a class="inline" href="/articles">清空筛选</a></p>{{end}}</section><section><h2>当前结果</h2><div class="summary-grid"><div class="summary-card">文章<strong>{{.Articles.Total}}</strong></div><div class="summary-card">模式<strong>{{if eq .SearchMode "search"}}全文{{else}}筛选{{end}}</strong></div></div></section><section><h2>{{if eq .SearchMode "search"}}全文搜索结果{{else}}列表{{end}}</h2><table><tr><th>标题</th><th>来源</th><th>状态</th><th>时间</th><th>操作</th></tr>{{range .Articles.Items}}<tr><td><a class="inline" href="/articles/{{.ID}}?return_to={{$.ReturnTo}}">{{.Title}}</a></td><td>{{.SourceType}}</td><td>{{if .Read}}<span class="pill">已读</span>{{else}}<span class="pill">未读</span>{{end}} {{if .Favorited}}<span class="pill">已收藏</span>{{end}}</td><td>{{.CapturedAt.Format "2006-01-02 15:04"}}</td><td><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="read"><button type="submit">标记已读</button></form><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="favorite"><button type="submit">{{if .Favorited}}取消收藏{{else}}收藏{{end}}</button></form></td></tr>{{else}}<tr><td colspan="5">没有符合条件的文章</td></tr>{{end}}</table><p>共 {{.Articles.Total}} 条</p></section></main></body></html>{{end}}
+{{define "articles"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.pill{display:inline-block;padding:4px 10px;border-radius:999px;background:#ece7dc}.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}.subtle{color:#6a6257}.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.summary-card{padding:14px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.summary-card strong{display:block;font-size:24px;margin-top:6px}` + `</style></head><body><header><h1>文章中心</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><form class="inline" method="get"><select name="mode"><option value="" {{if eq .SearchMode ""}}selected{{end}}>普通筛选</option><option value="search" {{if eq .SearchMode "search"}}selected{{end}}>全文搜索</option></select><input name="keyword" placeholder="关键词" value="{{.FilterKeyword}}"><select name="project_id"><option value="">全部项目</option>{{range .Projects}}<option value="{{.ID}}" {{if eq (printf "%d" .ID) $.FilterProject}}selected{{end}}>{{.Name}}</option>{{end}}</select><select name="source_type"><option value="">全部来源</option><option value="flash" {{if eq .FilterSource "flash"}}selected{{end}}>flash</option><option value="headline" {{if eq .FilterSource "headline"}}selected{{end}}>headline</option></select><select name="read"><option value="">全部阅读状态</option><option value="read" {{if eq .FilterRead "read"}}selected{{end}}>已读</option><option value="unread" {{if eq .FilterRead "unread"}}selected{{end}}>未读</option></select><select name="favorite"><option value="">全部收藏状态</option><option value="favorited" {{if eq .FilterFlag "favorited"}}selected{{end}}>已收藏</option><option value="unfavorited" {{if eq .FilterFlag "unfavorited"}}selected{{end}}>未收藏</option></select><input type="date" name="start" value="{{.FilterStart}}"><input type="date" name="end" value="{{.FilterEnd}}"><button type="submit">筛选</button></form>{{if or .FilterKeyword .FilterProject .FilterSource .FilterRead .FilterFlag .FilterStart .FilterEnd .SearchMode}}<p class="subtle">当前筛选已生效 <a class="inline" href="/articles">清空筛选</a></p>{{end}}</section><section><h2>当前结果</h2><div class="summary-grid"><div class="summary-card">文章<strong>{{.Articles.Total}}</strong></div><div class="summary-card">已读<strong>{{.CountRead}}</strong></div><div class="summary-card">未读<strong>{{.CountUnread}}</strong></div><div class="summary-card">已收藏<strong>{{.CountFlagged}}</strong></div><div class="summary-card">模式<strong>{{if eq .SearchMode "search"}}全文{{else}}筛选{{end}}</strong></div></div></section><section><h2>{{if eq .SearchMode "search"}}全文搜索结果{{else}}列表{{end}}</h2><table><tr><th>标题</th><th>来源</th><th>状态</th><th>时间</th><th>操作</th></tr>{{range .Articles.Items}}<tr><td><a class="inline" href="/articles/{{.ID}}?return_to={{$.ReturnTo}}">{{.Title}}</a></td><td>{{.SourceType}}</td><td>{{if .Read}}<span class="pill">已读</span>{{else}}<span class="pill">未读</span>{{end}} {{if .Favorited}}<span class="pill">已收藏</span>{{end}}</td><td>{{.CapturedAt.Format "2006-01-02 15:04"}}</td><td><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="read"><button type="submit">标记已读</button></form><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="favorite"><button type="submit">{{if .Favorited}}取消收藏{{else}}收藏{{end}}</button></form></td></tr>{{else}}<tr><td colspan="5">没有符合条件的文章</td></tr>{{end}}</table><p>共 {{.Articles.Total}} 条</p></section></main></body></html>{{end}}
 `
 
 const articleTemplate = `
