@@ -790,9 +790,32 @@ func (s *Server) handleReportDetail(w http.ResponseWriter, r *http.Request, user
 	report := model.Report{}
 	project := model.Project{}
 	articles := model.ItemListResult{}
+	crawlRuns := []model.CrawlRun{}
+	taskRuns := []model.TaskRun{}
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/reports/"+id, &report)
 	if r.Method == http.MethodPost {
 		_ = r.ParseForm()
+		if formType := r.FormValue("form_type"); formType == "crawl" || formType == "analysis" {
+			message := "报告关联任务提交失败"
+			switch formType {
+			case "crawl":
+				req := s.client.R()
+				if sourceType := strings.TrimSpace(r.FormValue("source_type")); sourceType != "" {
+					req.SetQueryParam("source_type", sourceType)
+				}
+				resp, err := req.Post(s.cfg.CrawlerURL + "/api/v1/admin/tasks/crawl")
+				if err == nil && resp.IsSuccess() {
+					message = "报告关联项目抓取已触发"
+				}
+			case "analysis":
+				resp, err := s.client.R().Post(s.cfg.AnalysisURL + "/api/v1/admin/tasks/analysis/refresh")
+				if err == nil && resp.IsSuccess() {
+					message = "报告关联项目分析已刷新"
+				}
+			}
+			http.Redirect(w, r, appendMessage("/reports/"+id+"?return_to="+url.QueryEscape(returnURL), message), http.StatusSeeOther)
+			return
+		}
 		message := "报告操作失败"
 		var generated model.Report
 		var envelope struct {
@@ -820,8 +843,10 @@ func (s *Server) handleReportDetail(w http.ResponseWriter, r *http.Request, user
 		projectID := strconv.FormatInt(report.ProjectID, 10)
 		_ = s.getJSON(s.cfg.ContentURL+"/api/v1/projects/"+projectID, &project)
 		_ = s.getJSON(s.cfg.ContentURL+"/api/v1/articles?page=1&page_size=5&project_id="+projectID, &articles)
+		_ = s.getJSON(s.cfg.CrawlerURL+"/api/v1/admin/tasks/crawl/runs?limit=10", &crawlRuns)
+		_ = s.getJSON(s.cfg.ContentURL+"/api/v1/system/task-runs?limit=10", &taskRuns)
 	}
-	_ = s.render(w, "report", pageData{Title: "报告详情", User: user, Report: report, Project: project, Articles: articles, Message: r.URL.Query().Get("msg"), ReturnURL: returnURL, ReturnTo: url.QueryEscape(returnURL)})
+	_ = s.render(w, "report", pageData{Title: "报告详情", User: user, Report: report, Project: project, Articles: articles, CrawlRuns: crawlRuns, TaskRuns: taskRuns, Message: r.URL.Query().Get("msg"), ReturnURL: returnURL, ReturnTo: url.QueryEscape(returnURL)})
 }
 
 func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) {
@@ -1094,7 +1119,7 @@ const reportsTemplate = `
 `
 
 const reportTemplate = `
-{{define "report"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.toolbar{display:flex;gap:12px;flex-wrap:wrap}.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}` + `</style></head><body><header><h1>报告详情</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><div class="toolbar"><a class="inline" href="{{.ReturnURL}}">返回筛选结果</a><a class="inline" href="/reports">返回报告中心</a>{{if .Project.ID}}<a class="inline" href="/projects/{{.Project.ID}}">返回所属项目</a><a class="inline" href="/reports?project_id={{.Project.ID}}">查看项目全部报告</a><a class="inline" href="/articles?project_id={{.Project.ID}}">查看项目文章</a>{{end}}</div><h2>{{.Report.Title}}</h2><p>状态：{{.Report.Status}} | 更新时间：{{.Report.UpdatedAt.Format "2006-01-02 15:04"}}</p>{{if .Project.ID}}<p>所属项目：<a class="inline" href="/projects/{{.Project.ID}}">{{.Project.Name}}</a></p>{{end}}<h3>摘要</h3><pre>{{.Report.Summary}}</pre><h3>正文</h3><pre>{{.Report.Content}}</pre></section>{{if .Project.ID}}<section><h2>所属项目最近文章</h2><table><tr><th>标题</th><th>来源</th><th>时间</th></tr>{{range .Articles.Items}}<tr><td><a class="inline" href="/articles/{{.ID}}?return_to=%2Farticles%3Fproject_id%3D{{$.Project.ID}}">{{.Title}}</a></td><td>{{.SourceType}}</td><td>{{.CapturedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="3">暂无关联文章</td></tr>{{end}}</table></section>{{end}}<section><h2>重新生成报告</h2><form method="post"><input name="title" value="{{.Report.Title}} 重生成" placeholder="新报告标题"><textarea name="content" placeholder="可修改正文后重新生成">{{.Report.Content}}</textarea><button type="submit">重新生成</button></form></section></main></body></html>{{end}}
+{{define "report"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.toolbar{display:flex;gap:12px;flex-wrap:wrap}.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}` + `</style></head><body><header><h1>报告详情</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><div class="toolbar"><a class="inline" href="{{.ReturnURL}}">返回筛选结果</a><a class="inline" href="/reports">返回报告中心</a>{{if .Project.ID}}<a class="inline" href="/projects/{{.Project.ID}}">返回所属项目</a><a class="inline" href="/reports?project_id={{.Project.ID}}">查看项目全部报告</a><a class="inline" href="/articles?project_id={{.Project.ID}}">查看项目文章</a>{{end}}</div><h2>{{.Report.Title}}</h2><p>状态：{{.Report.Status}} | 更新时间：{{.Report.UpdatedAt.Format "2006-01-02 15:04"}}</p>{{if .Project.ID}}<p>所属项目：<a class="inline" href="/projects/{{.Project.ID}}">{{.Project.Name}}</a></p>{{end}}<h3>摘要</h3><pre>{{.Report.Summary}}</pre><h3>正文</h3><pre>{{.Report.Content}}</pre></section>{{if .Project.ID}}<section><h2>报告任务</h2><form class="inline" method="post"><input type="hidden" name="form_type" value="crawl"><select name="source_type"><option value="">全部来源</option><option value="flash">flash</option><option value="headline">headline</option></select><button type="submit">立即抓取</button></form><form method="post"><input type="hidden" name="form_type" value="analysis"><button type="submit">刷新分析</button></form></section><section><h2>最近任务记录</h2><table><tr><th>任务</th><th>状态</th><th>时间</th><th>说明</th></tr>{{range .TaskRuns}}<tr><td>{{.TaskName}}</td><td>{{.Status}}</td><td>{{.StartedAt.Format "2006-01-02 15:04"}}</td><td>{{.Message}}</td></tr>{{else}}<tr><td colspan="4">暂无任务记录</td></tr>{{end}}</table></section><section><h2>最近抓取状态</h2><table><tr><th>来源</th><th>状态</th><th>抓取数</th><th>入库数</th><th>开始时间</th></tr>{{range .CrawlRuns}}<tr><td>{{.SourceType}}</td><td>{{.Status}}</td><td>{{.FetchedCount}}</td><td>{{.InsertedCount}}</td><td>{{.StartedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="5">暂无抓取记录</td></tr>{{end}}</table></section><section><h2>所属项目最近文章</h2><table><tr><th>标题</th><th>来源</th><th>时间</th></tr>{{range .Articles.Items}}<tr><td><a class="inline" href="/articles/{{.ID}}?return_to=%2Farticles%3Fproject_id%3D{{$.Project.ID}}">{{.Title}}</a></td><td>{{.SourceType}}</td><td>{{.CapturedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="3">暂无关联文章</td></tr>{{end}}</table></section>{{end}}<section><h2>重新生成报告</h2><form method="post"><input name="title" value="{{.Report.Title}} 重生成" placeholder="新报告标题"><textarea name="content" placeholder="可修改正文后重新生成">{{.Report.Content}}</textarea><button type="submit">重新生成</button></form></section></main></body></html>{{end}}
 `
 
 const systemTemplate = `
