@@ -805,6 +805,19 @@ func (s *Server) handleArticleDetail(w http.ResponseWriter, r *http.Request, use
 	}
 	_ = s.getJSON(relatedURL, &related)
 	reportSeen := make(map[int64]struct{})
+	readCount := 0
+	unreadCount := 0
+	flaggedCount := 0
+	for _, item := range related {
+		if item.Read {
+			readCount++
+		} else {
+			unreadCount++
+		}
+		if item.Favorited {
+			flaggedCount++
+		}
+	}
 	for _, projectID := range article.ProjectIDs {
 		project := model.Project{}
 		if err := s.getJSON(s.cfg.ContentURL+"/api/v1/projects/"+strconv.FormatInt(projectID, 10), &project); err == nil && project.ID > 0 {
@@ -824,6 +837,19 @@ func (s *Server) handleArticleDetail(w http.ResponseWriter, r *http.Request, use
 	sort.Slice(reports, func(i, j int) bool {
 		return reports[i].UpdatedAt.After(reports[j].UpdatedAt)
 	})
+	draftCount := 0
+	generatedCount := 0
+	archivedCount := 0
+	for _, report := range reports {
+		switch report.Status {
+		case "draft":
+			draftCount++
+		case "generated":
+			generatedCount++
+		case "archived":
+			archivedCount++
+		}
+	}
 	if len(reports) > 8 {
 		reports = reports[:8]
 	}
@@ -831,7 +857,24 @@ func (s *Server) handleArticleDetail(w http.ResponseWriter, r *http.Request, use
 	for _, project := range projects {
 		projectNames[project.ID] = project.Name
 	}
-	_ = s.render(w, "article", pageData{Title: "文章详情", User: user, Article: article, Related: related, Projects: projects, Reports: reports, ProjectNames: projectNames, Message: r.URL.Query().Get("msg"), ReturnURL: returnURL, ReturnTo: url.QueryEscape(returnURL)})
+	_ = s.render(w, "article", pageData{
+		Title:          "文章详情",
+		User:           user,
+		Article:        article,
+		Related:        related,
+		Projects:       projects,
+		Reports:        reports,
+		ProjectNames:   projectNames,
+		Message:        r.URL.Query().Get("msg"),
+		ReturnURL:      returnURL,
+		ReturnTo:       url.QueryEscape(returnURL),
+		CountRead:      readCount,
+		CountUnread:    unreadCount,
+		CountFlagged:   flaggedCount,
+		CountDraft:     draftCount,
+		CountGenerated: generatedCount,
+		CountArchived:  archivedCount,
+	})
 }
 
 func (s *Server) handleReports(w http.ResponseWriter, r *http.Request, user any) {
@@ -1279,7 +1322,7 @@ const articlesTemplate = `
 `
 
 const articleTemplate = `
-{{define "article"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.pill{display:inline-block;padding:4px 10px;border-radius:999px;background:#ece7dc;margin-right:8px}.toolbar{display:flex;gap:12px;flex-wrap:wrap}.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}` + `</style></head><body><header><h1>文章详情</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><div class="toolbar"><a class="inline" href="{{.ReturnURL}}">返回筛选结果</a><a class="inline" href="/articles">返回文章中心</a></div><h2>{{.Article.Title}}</h2><p>来源：{{.Article.SourceType}} | 抓取时间：{{.Article.CapturedAt.Format "2006-01-02 15:04"}}</p><p>{{if .Article.Read}}<span class="pill">已读</span>{{else}}<span class="pill">未读</span>{{end}}{{if .Article.Favorited}}<span class="pill">已收藏</span>{{end}}</p><form method="post"><input type="hidden" name="action" value="read"><button type="submit">标记已读</button></form><form method="post"><input type="hidden" name="action" value="favorite"><button type="submit">{{if .Article.Favorited}}取消收藏{{else}}收藏{{end}}</button></form><pre>{{.Article.Content}}</pre></section>{{if .Projects}}<section><h2>关联项目</h2><table><tr><th>项目</th><th>项目组</th><th>状态</th><th>关键词</th></tr>{{range .Projects}}<tr><td><a class="inline" href="/projects/{{.ID}}">{{.Name}}</a></td><td>{{.GroupName}}</td><td>{{.Status}}</td><td>{{.Keywords}}</td></tr>{{end}}</table></section>{{end}}{{if .Reports}}<section><h2>关联项目最近报告</h2><table><tr><th>ID</th><th>项目</th><th>标题</th><th>状态</th><th>更新时间</th></tr>{{range .Reports}}<tr><td>{{.ID}}</td><td>{{index $.ProjectNames .ProjectID}}</td><td><a class="inline" href="/reports/{{.ID}}?return_to=%2Freports%3Fproject_id%3D{{.ProjectID}}">{{.Title}}</a></td><td>{{.Status}}</td><td>{{.UpdatedAt.Format "2006-01-02 15:04"}}</td></tr>{{end}}</table></section>{{end}}<section><h2>相关文章</h2><table><tr><th>标题</th><th>来源</th><th>状态</th></tr>{{range .Related}}<tr><td><a class="inline" href="/articles/{{.ID}}?return_to={{$.ReturnTo}}">{{.Title}}</a></td><td>{{.SourceType}}</td><td>{{if .Read}}已读{{else}}未读{{end}}{{if .Favorited}} / 已收藏{{end}}</td></tr>{{else}}<tr><td colspan="3">暂无相关文章</td></tr>{{end}}</table></section></main></body></html>{{end}}
+{{define "article"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.pill{display:inline-block;padding:4px 10px;border-radius:999px;background:#ece7dc;margin-right:8px}.toolbar{display:flex;gap:12px;flex-wrap:wrap}.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.summary-card{padding:14px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.summary-card strong{display:block;font-size:24px;margin-top:6px}` + `</style></head><body><header><h1>文章详情</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><div class="toolbar"><a class="inline" href="{{.ReturnURL}}">返回筛选结果</a><a class="inline" href="/articles">返回文章中心</a></div><h2>{{.Article.Title}}</h2><p>来源：{{.Article.SourceType}} | 抓取时间：{{.Article.CapturedAt.Format "2006-01-02 15:04"}}</p><p>{{if .Article.Read}}<span class="pill">已读</span>{{else}}<span class="pill">未读</span>{{end}}{{if .Article.Favorited}}<span class="pill">已收藏</span>{{end}}</p><div class="summary-grid"><div class="summary-card">关联项目<strong>{{len .Projects}}</strong></div><div class="summary-card">关联报告<strong>{{len .Reports}}</strong></div><div class="summary-card">generated 报告<strong>{{.CountGenerated}}</strong></div><div class="summary-card">draft 报告<strong>{{.CountDraft}}</strong></div><div class="summary-card">archived 报告<strong>{{.CountArchived}}</strong></div><div class="summary-card">相关文章<strong>{{len .Related}}</strong></div><div class="summary-card">相关文章已读<strong>{{.CountRead}}</strong></div><div class="summary-card">相关文章已收藏<strong>{{.CountFlagged}}</strong></div></div><form method="post"><input type="hidden" name="action" value="read"><button type="submit">标记已读</button></form><form method="post"><input type="hidden" name="action" value="favorite"><button type="submit">{{if .Article.Favorited}}取消收藏{{else}}收藏{{end}}</button></form><pre>{{.Article.Content}}</pre></section>{{if .Projects}}<section><h2>关联项目</h2><table><tr><th>项目</th><th>项目组</th><th>状态</th><th>关键词</th></tr>{{range .Projects}}<tr><td><a class="inline" href="/projects/{{.ID}}">{{.Name}}</a></td><td>{{.GroupName}}</td><td>{{.Status}}</td><td>{{.Keywords}}</td></tr>{{end}}</table></section>{{end}}{{if .Reports}}<section><h2>关联项目最近报告</h2><table><tr><th>ID</th><th>项目</th><th>标题</th><th>状态</th><th>更新时间</th></tr>{{range .Reports}}<tr><td>{{.ID}}</td><td>{{index $.ProjectNames .ProjectID}}</td><td><a class="inline" href="/reports/{{.ID}}?return_to=%2Freports%3Fproject_id%3D{{.ProjectID}}">{{.Title}}</a></td><td>{{.Status}}</td><td>{{.UpdatedAt.Format "2006-01-02 15:04"}}</td></tr>{{end}}</table></section>{{end}}<section><h2>相关文章</h2><table><tr><th>标题</th><th>来源</th><th>状态</th></tr>{{range .Related}}<tr><td><a class="inline" href="/articles/{{.ID}}?return_to={{$.ReturnTo}}">{{.Title}}</a></td><td>{{.SourceType}}</td><td>{{if .Read}}已读{{else}}未读{{end}}{{if .Favorited}} / 已收藏{{end}}</td></tr>{{else}}<tr><td colspan="3">暂无相关文章</td></tr>{{end}}</table></section></main></body></html>{{end}}
 `
 
 const reportsTemplate = `
