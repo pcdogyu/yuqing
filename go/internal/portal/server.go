@@ -56,6 +56,7 @@ type pageData struct {
 	FilterEnd     string
 	SearchMode    string
 	Services      []serviceStatus
+	ProjectNames  map[int64]string
 }
 
 type serviceStatus struct {
@@ -516,19 +517,26 @@ func (s *Server) handleArticles(w http.ResponseWriter, r *http.Request, user any
 		_ = r.ParseForm()
 		itemID := r.FormValue("item_id")
 		action := r.FormValue("action")
+		message := "文章操作失败"
 		if itemID != "" && userID > 0 {
 			switch action {
 			case "favorite":
-				_, _ = s.client.R().SetQueryParam("user_id", strconv.FormatInt(userID, 10)).Post(s.cfg.ContentURL + "/api/v1/articles/" + itemID + "/favorite")
+				resp, err := s.client.R().SetQueryParam("user_id", strconv.FormatInt(userID, 10)).Post(s.cfg.ContentURL + "/api/v1/articles/" + itemID + "/favorite")
+				if err == nil && resp.IsSuccess() {
+					message = "收藏状态已更新"
+				}
 			case "read":
-				_, _ = s.client.R().SetQueryParam("user_id", strconv.FormatInt(userID, 10)).Post(s.cfg.ContentURL + "/api/v1/articles/" + itemID + "/read")
+				resp, err := s.client.R().SetQueryParam("user_id", strconv.FormatInt(userID, 10)).Post(s.cfg.ContentURL + "/api/v1/articles/" + itemID + "/read")
+				if err == nil && resp.IsSuccess() {
+					message = "文章已标记为已读"
+				}
 			}
 		}
-		redirectURL := r.Referer()
+		redirectURL := localRedirectTarget(r.Referer())
 		if strings.TrimSpace(redirectURL) == "" {
 			redirectURL = "/articles"
 		}
-		http.Redirect(w, r, redirectURL, http.StatusSeeOther)
+		http.Redirect(w, r, appendMessage(redirectURL, message), http.StatusSeeOther)
 		return
 	}
 	mode := strings.TrimSpace(r.URL.Query().Get("mode"))
@@ -600,6 +608,7 @@ func (s *Server) handleArticles(w http.ResponseWriter, r *http.Request, user any
 		FilterStart:   start,
 		FilterEnd:     end,
 		SearchMode:    mode,
+		Message:       r.URL.Query().Get("msg"),
 	})
 }
 
@@ -619,13 +628,20 @@ func (s *Server) handleArticleDetail(w http.ResponseWriter, r *http.Request, use
 	if r.Method == http.MethodPost && userID > 0 {
 		_ = r.ParseForm()
 		action := r.FormValue("action")
+		message := "文章操作失败"
 		switch action {
 		case "favorite":
-			_, _ = s.client.R().SetQueryParam("user_id", strconv.FormatInt(userID, 10)).Post(s.cfg.ContentURL + "/api/v1/articles/" + id + "/favorite")
+			resp, err := s.client.R().SetQueryParam("user_id", strconv.FormatInt(userID, 10)).Post(s.cfg.ContentURL + "/api/v1/articles/" + id + "/favorite")
+			if err == nil && resp.IsSuccess() {
+				message = "收藏状态已更新"
+			}
 		case "read":
-			_, _ = s.client.R().SetQueryParam("user_id", strconv.FormatInt(userID, 10)).Post(s.cfg.ContentURL + "/api/v1/articles/" + id + "/read")
+			resp, err := s.client.R().SetQueryParam("user_id", strconv.FormatInt(userID, 10)).Post(s.cfg.ContentURL + "/api/v1/articles/" + id + "/read")
+			if err == nil && resp.IsSuccess() {
+				message = "文章已标记为已读"
+			}
 		}
-		http.Redirect(w, r, "/articles/"+id+"?return_to="+url.QueryEscape(returnURL), http.StatusSeeOther)
+		http.Redirect(w, r, appendMessage("/articles/"+id+"?return_to="+url.QueryEscape(returnURL), message), http.StatusSeeOther)
 		return
 	}
 	article := model.Item{}
@@ -665,7 +681,11 @@ func (s *Server) handleArticleDetail(w http.ResponseWriter, r *http.Request, use
 	if len(reports) > 8 {
 		reports = reports[:8]
 	}
-	_ = s.render(w, "article", pageData{Title: "文章详情", User: user, Article: article, Related: related, Projects: projects, Reports: reports, ReturnURL: returnURL, ReturnTo: url.QueryEscape(returnURL)})
+	projectNames := make(map[int64]string, len(projects))
+	for _, project := range projects {
+		projectNames[project.ID] = project.Name
+	}
+	_ = s.render(w, "article", pageData{Title: "文章详情", User: user, Article: article, Related: related, Projects: projects, Reports: reports, ProjectNames: projectNames, Message: r.URL.Query().Get("msg"), ReturnURL: returnURL, ReturnTo: url.QueryEscape(returnURL)})
 }
 
 func (s *Server) handleReports(w http.ResponseWriter, r *http.Request, user any) {
@@ -691,12 +711,16 @@ func (s *Server) handleReports(w http.ResponseWriter, r *http.Request, user any)
 	returnTo := url.QueryEscape(r.URL.RequestURI())
 	reports := []model.Report{}
 	projects := []model.Project{}
+	projectNames := map[int64]string{}
 	reportURL := s.cfg.ContentURL + "/api/v1/reports"
 	if projectID != "" {
 		reportURL += "?project_id=" + projectID
 	}
 	_ = s.getJSON(reportURL, &reports)
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/projects", &projects)
+	for _, project := range projects {
+		projectNames[project.ID] = project.Name
+	}
 	filtered := make([]model.Report, 0, len(reports))
 	for _, report := range reports {
 		if keyword != "" && !strings.Contains(strings.ToLower(report.Title), strings.ToLower(keyword)) {
@@ -717,7 +741,7 @@ func (s *Server) handleReports(w http.ResponseWriter, r *http.Request, user any)
 			return filtered[i].UpdatedAt.After(filtered[j].UpdatedAt)
 		})
 	}
-	_ = s.render(w, "reports", pageData{Title: "报告中心", User: user, Reports: filtered, Projects: projects, ReturnTo: returnTo, FilterKeyword: keyword, FilterProject: projectID, FilterStatus: status, FilterSource: order, Message: r.URL.Query().Get("msg")})
+	_ = s.render(w, "reports", pageData{Title: "报告中心", User: user, Reports: filtered, Projects: projects, ProjectNames: projectNames, ReturnTo: returnTo, FilterKeyword: keyword, FilterProject: projectID, FilterStatus: status, FilterSource: order, Message: r.URL.Query().Get("msg")})
 }
 
 func (s *Server) handleReportDetail(w http.ResponseWriter, r *http.Request, user any) {
@@ -939,6 +963,39 @@ func nonEmpty(values ...string) string {
 	return ""
 }
 
+func appendMessage(rawURL, message string) string {
+	if strings.TrimSpace(rawURL) == "" || strings.TrimSpace(message) == "" {
+		return rawURL
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	query := parsed.Query()
+	query.Set("msg", message)
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
+}
+
+func localRedirectTarget(rawURL string) string {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return ""
+	}
+	if strings.HasPrefix(rawURL, "/") {
+		return rawURL
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil || !strings.HasPrefix(parsed.Path, "/") {
+		return ""
+	}
+	target := parsed.Path
+	if parsed.RawQuery != "" {
+		target += "?" + parsed.RawQuery
+	}
+	return target
+}
+
 func (s *Server) collectServiceStatuses() []serviceStatus {
 	services := []serviceStatus{
 		{Name: "auth-service", URL: s.cfg.AuthURL + "/healthz"},
@@ -994,15 +1051,15 @@ const ruleTemplate = `
 `
 
 const articlesTemplate = `
-{{define "articles"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.pill{display:inline-block;padding:4px 10px;border-radius:999px;background:#ece7dc}` + `</style></head><body><header><h1>文章中心</h1>{{template "nav" .}}</header><main><section><form class="inline" method="get"><select name="mode"><option value="" {{if eq .SearchMode ""}}selected{{end}}>普通筛选</option><option value="search" {{if eq .SearchMode "search"}}selected{{end}}>全文搜索</option></select><input name="keyword" placeholder="关键词" value="{{.FilterKeyword}}"><select name="project_id"><option value="">全部项目</option>{{range .Projects}}<option value="{{.ID}}" {{if eq (printf "%d" .ID) $.FilterProject}}selected{{end}}>{{.Name}}</option>{{end}}</select><select name="source_type"><option value="">全部来源</option><option value="flash" {{if eq .FilterSource "flash"}}selected{{end}}>flash</option><option value="headline" {{if eq .FilterSource "headline"}}selected{{end}}>headline</option></select><select name="read"><option value="">全部阅读状态</option><option value="read" {{if eq .FilterRead "read"}}selected{{end}}>已读</option><option value="unread" {{if eq .FilterRead "unread"}}selected{{end}}>未读</option></select><select name="favorite"><option value="">全部收藏状态</option><option value="favorited" {{if eq .FilterFlag "favorited"}}selected{{end}}>已收藏</option><option value="unfavorited" {{if eq .FilterFlag "unfavorited"}}selected{{end}}>未收藏</option></select><input type="date" name="start" value="{{.FilterStart}}"><input type="date" name="end" value="{{.FilterEnd}}"><button type="submit">筛选</button></form></section><section><h2>{{if eq .SearchMode "search"}}全文搜索结果{{else}}列表{{end}}</h2><table><tr><th>标题</th><th>来源</th><th>状态</th><th>时间</th><th>操作</th></tr>{{range .Articles.Items}}<tr><td><a class="inline" href="/articles/{{.ID}}?return_to={{$.ReturnTo}}">{{.Title}}</a></td><td>{{.SourceType}}</td><td>{{if .Read}}<span class="pill">已读</span>{{else}}<span class="pill">未读</span>{{end}} {{if .Favorited}}<span class="pill">已收藏</span>{{end}}</td><td>{{.CapturedAt.Format "2006-01-02 15:04"}}</td><td><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="read"><button type="submit">标记已读</button></form><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="favorite"><button type="submit">{{if .Favorited}}取消收藏{{else}}收藏{{end}}</button></form></td></tr>{{else}}<tr><td colspan="5">没有符合条件的文章</td></tr>{{end}}</table><p>共 {{.Articles.Total}} 条</p></section></main></body></html>{{end}}
+{{define "articles"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.pill{display:inline-block;padding:4px 10px;border-radius:999px;background:#ece7dc}.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}` + `</style></head><body><header><h1>文章中心</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><form class="inline" method="get"><select name="mode"><option value="" {{if eq .SearchMode ""}}selected{{end}}>普通筛选</option><option value="search" {{if eq .SearchMode "search"}}selected{{end}}>全文搜索</option></select><input name="keyword" placeholder="关键词" value="{{.FilterKeyword}}"><select name="project_id"><option value="">全部项目</option>{{range .Projects}}<option value="{{.ID}}" {{if eq (printf "%d" .ID) $.FilterProject}}selected{{end}}>{{.Name}}</option>{{end}}</select><select name="source_type"><option value="">全部来源</option><option value="flash" {{if eq .FilterSource "flash"}}selected{{end}}>flash</option><option value="headline" {{if eq .FilterSource "headline"}}selected{{end}}>headline</option></select><select name="read"><option value="">全部阅读状态</option><option value="read" {{if eq .FilterRead "read"}}selected{{end}}>已读</option><option value="unread" {{if eq .FilterRead "unread"}}selected{{end}}>未读</option></select><select name="favorite"><option value="">全部收藏状态</option><option value="favorited" {{if eq .FilterFlag "favorited"}}selected{{end}}>已收藏</option><option value="unfavorited" {{if eq .FilterFlag "unfavorited"}}selected{{end}}>未收藏</option></select><input type="date" name="start" value="{{.FilterStart}}"><input type="date" name="end" value="{{.FilterEnd}}"><button type="submit">筛选</button></form></section><section><h2>{{if eq .SearchMode "search"}}全文搜索结果{{else}}列表{{end}}</h2><table><tr><th>标题</th><th>来源</th><th>状态</th><th>时间</th><th>操作</th></tr>{{range .Articles.Items}}<tr><td><a class="inline" href="/articles/{{.ID}}?return_to={{$.ReturnTo}}">{{.Title}}</a></td><td>{{.SourceType}}</td><td>{{if .Read}}<span class="pill">已读</span>{{else}}<span class="pill">未读</span>{{end}} {{if .Favorited}}<span class="pill">已收藏</span>{{end}}</td><td>{{.CapturedAt.Format "2006-01-02 15:04"}}</td><td><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="read"><button type="submit">标记已读</button></form><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="favorite"><button type="submit">{{if .Favorited}}取消收藏{{else}}收藏{{end}}</button></form></td></tr>{{else}}<tr><td colspan="5">没有符合条件的文章</td></tr>{{end}}</table><p>共 {{.Articles.Total}} 条</p></section></main></body></html>{{end}}
 `
 
 const articleTemplate = `
-{{define "article"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.pill{display:inline-block;padding:4px 10px;border-radius:999px;background:#ece7dc;margin-right:8px}.toolbar{display:flex;gap:12px;flex-wrap:wrap}` + `</style></head><body><header><h1>文章详情</h1>{{template "nav" .}}</header><main><section><div class="toolbar"><a class="inline" href="{{.ReturnURL}}">返回筛选结果</a><a class="inline" href="/articles">返回文章中心</a></div><h2>{{.Article.Title}}</h2><p>来源：{{.Article.SourceType}} | 抓取时间：{{.Article.CapturedAt.Format "2006-01-02 15:04"}}</p><p>{{if .Article.Read}}<span class="pill">已读</span>{{else}}<span class="pill">未读</span>{{end}}{{if .Article.Favorited}}<span class="pill">已收藏</span>{{end}}</p><form method="post"><input type="hidden" name="action" value="read"><button type="submit">标记已读</button></form><form method="post"><input type="hidden" name="action" value="favorite"><button type="submit">{{if .Article.Favorited}}取消收藏{{else}}收藏{{end}}</button></form><pre>{{.Article.Content}}</pre></section>{{if .Projects}}<section><h2>关联项目</h2><table><tr><th>项目</th><th>项目组</th><th>状态</th><th>关键词</th></tr>{{range .Projects}}<tr><td><a class="inline" href="/projects/{{.ID}}">{{.Name}}</a></td><td>{{.GroupName}}</td><td>{{.Status}}</td><td>{{.Keywords}}</td></tr>{{end}}</table></section>{{end}}{{if .Reports}}<section><h2>关联项目最近报告</h2><table><tr><th>ID</th><th>项目ID</th><th>标题</th><th>状态</th><th>更新时间</th></tr>{{range .Reports}}<tr><td>{{.ID}}</td><td>{{.ProjectID}}</td><td><a class="inline" href="/reports/{{.ID}}?return_to=%2Freports%3Fproject_id%3D{{.ProjectID}}">{{.Title}}</a></td><td>{{.Status}}</td><td>{{.UpdatedAt.Format "2006-01-02 15:04"}}</td></tr>{{end}}</table></section>{{end}}<section><h2>相关文章</h2><table><tr><th>标题</th><th>来源</th><th>状态</th></tr>{{range .Related}}<tr><td><a class="inline" href="/articles/{{.ID}}?return_to={{$.ReturnTo}}">{{.Title}}</a></td><td>{{.SourceType}}</td><td>{{if .Read}}已读{{else}}未读{{end}}{{if .Favorited}} / 已收藏{{end}}</td></tr>{{else}}<tr><td colspan="3">暂无相关文章</td></tr>{{end}}</table></section></main></body></html>{{end}}
+{{define "article"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.pill{display:inline-block;padding:4px 10px;border-radius:999px;background:#ece7dc;margin-right:8px}.toolbar{display:flex;gap:12px;flex-wrap:wrap}.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}` + `</style></head><body><header><h1>文章详情</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><div class="toolbar"><a class="inline" href="{{.ReturnURL}}">返回筛选结果</a><a class="inline" href="/articles">返回文章中心</a></div><h2>{{.Article.Title}}</h2><p>来源：{{.Article.SourceType}} | 抓取时间：{{.Article.CapturedAt.Format "2006-01-02 15:04"}}</p><p>{{if .Article.Read}}<span class="pill">已读</span>{{else}}<span class="pill">未读</span>{{end}}{{if .Article.Favorited}}<span class="pill">已收藏</span>{{end}}</p><form method="post"><input type="hidden" name="action" value="read"><button type="submit">标记已读</button></form><form method="post"><input type="hidden" name="action" value="favorite"><button type="submit">{{if .Article.Favorited}}取消收藏{{else}}收藏{{end}}</button></form><pre>{{.Article.Content}}</pre></section>{{if .Projects}}<section><h2>关联项目</h2><table><tr><th>项目</th><th>项目组</th><th>状态</th><th>关键词</th></tr>{{range .Projects}}<tr><td><a class="inline" href="/projects/{{.ID}}">{{.Name}}</a></td><td>{{.GroupName}}</td><td>{{.Status}}</td><td>{{.Keywords}}</td></tr>{{end}}</table></section>{{end}}{{if .Reports}}<section><h2>关联项目最近报告</h2><table><tr><th>ID</th><th>项目</th><th>标题</th><th>状态</th><th>更新时间</th></tr>{{range .Reports}}<tr><td>{{.ID}}</td><td>{{index $.ProjectNames .ProjectID}}</td><td><a class="inline" href="/reports/{{.ID}}?return_to=%2Freports%3Fproject_id%3D{{.ProjectID}}">{{.Title}}</a></td><td>{{.Status}}</td><td>{{.UpdatedAt.Format "2006-01-02 15:04"}}</td></tr>{{end}}</table></section>{{end}}<section><h2>相关文章</h2><table><tr><th>标题</th><th>来源</th><th>状态</th></tr>{{range .Related}}<tr><td><a class="inline" href="/articles/{{.ID}}?return_to={{$.ReturnTo}}">{{.Title}}</a></td><td>{{.SourceType}}</td><td>{{if .Read}}已读{{else}}未读{{end}}{{if .Favorited}} / 已收藏{{end}}</td></tr>{{else}}<tr><td colspan="3">暂无相关文章</td></tr>{{end}}</table></section></main></body></html>{{end}}
 `
 
 const reportsTemplate = `
-{{define "reports"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}` + `</style></head><body><header><h1>报告中心</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><h2>生成报告</h2><form method="post"><select name="project_id">{{range .Projects}}<option value="{{.ID}}" {{if eq (printf "%d" .ID) $.FilterProject}}selected{{end}}>{{.Name}}</option>{{end}}</select><input name="title" placeholder="报告标题"><textarea name="content" placeholder="输入文章摘要、正文或人工内容"></textarea><button type="submit">生成报告</button></form></section><section><h2>报告筛选</h2><form class="inline" method="get"><input name="keyword" placeholder="标题关键词" value="{{.FilterKeyword}}"><select name="project_id"><option value="">全部项目</option>{{range .Projects}}<option value="{{.ID}}" {{if eq (printf "%d" .ID) $.FilterProject}}selected{{end}}>{{.Name}}</option>{{end}}</select><select name="status"><option value="">全部状态</option><option value="generated" {{if eq .FilterStatus "generated"}}selected{{end}}>generated</option><option value="draft" {{if eq .FilterStatus "draft"}}selected{{end}}>draft</option><option value="archived" {{if eq .FilterStatus "archived"}}selected{{end}}>archived</option></select><select name="order"><option value="desc" {{if eq .FilterSource "desc"}}selected{{end}}>更新时间倒序</option><option value="asc" {{if eq .FilterSource "asc"}}selected{{end}}>更新时间正序</option></select><button type="submit">筛选</button></form></section><section><h2>报告列表</h2><table><tr><th>ID</th><th>项目ID</th><th>标题</th><th>状态</th><th>更新时间</th></tr>{{range .Reports}}<tr><td>{{.ID}}</td><td>{{.ProjectID}}</td><td><a class="inline" href="/reports/{{.ID}}?return_to={{$.ReturnTo}}">{{.Title}}</a></td><td>{{.Status}}</td><td>{{.UpdatedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="5">没有符合条件的报告</td></tr>{{end}}</table></section></main></body></html>{{end}}
+{{define "reports"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}` + `</style></head><body><header><h1>报告中心</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><h2>生成报告</h2><form method="post"><select name="project_id">{{range .Projects}}<option value="{{.ID}}" {{if eq (printf "%d" .ID) $.FilterProject}}selected{{end}}>{{.Name}}</option>{{end}}</select><input name="title" placeholder="报告标题"><textarea name="content" placeholder="输入文章摘要、正文或人工内容"></textarea><button type="submit">生成报告</button></form></section><section><h2>报告筛选</h2><form class="inline" method="get"><input name="keyword" placeholder="标题关键词" value="{{.FilterKeyword}}"><select name="project_id"><option value="">全部项目</option>{{range .Projects}}<option value="{{.ID}}" {{if eq (printf "%d" .ID) $.FilterProject}}selected{{end}}>{{.Name}}</option>{{end}}</select><select name="status"><option value="">全部状态</option><option value="generated" {{if eq .FilterStatus "generated"}}selected{{end}}>generated</option><option value="draft" {{if eq .FilterStatus "draft"}}selected{{end}}>draft</option><option value="archived" {{if eq .FilterStatus "archived"}}selected{{end}}>archived</option></select><select name="order"><option value="desc" {{if eq .FilterSource "desc"}}selected{{end}}>更新时间倒序</option><option value="asc" {{if eq .FilterSource "asc"}}selected{{end}}>更新时间正序</option></select><button type="submit">筛选</button></form></section><section><h2>报告列表</h2><table><tr><th>ID</th><th>项目</th><th>标题</th><th>状态</th><th>更新时间</th></tr>{{range .Reports}}<tr><td>{{.ID}}</td><td>{{index $.ProjectNames .ProjectID}}</td><td><a class="inline" href="/reports/{{.ID}}?return_to={{$.ReturnTo}}">{{.Title}}</a></td><td>{{.Status}}</td><td>{{.UpdatedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="5">没有符合条件的报告</td></tr>{{end}}</table></section></main></body></html>{{end}}
 `
 
 const reportTemplate = `
