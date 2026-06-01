@@ -243,7 +243,11 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request, user any
 				}
 			}
 		}
-		http.Redirect(w, r, "/projects?msg="+message, http.StatusSeeOther)
+		redirectURL := localRedirectTarget(r.Referer())
+		if strings.TrimSpace(redirectURL) == "" {
+			redirectURL = "/projects"
+		}
+		http.Redirect(w, r, appendMessage(redirectURL, message), http.StatusSeeOther)
 		return
 	}
 	groups := []model.ProjectGroup{}
@@ -433,7 +437,11 @@ func (s *Server) handleRules(w http.ResponseWriter, r *http.Request, user any) {
 				message = "规则创建失败"
 			}
 		}
-		http.Redirect(w, r, "/monitor-rules?msg="+message, http.StatusSeeOther)
+		redirectURL := localRedirectTarget(r.Referer())
+		if strings.TrimSpace(redirectURL) == "" {
+			redirectURL = "/monitor-rules"
+		}
+		http.Redirect(w, r, appendMessage(redirectURL, message), http.StatusSeeOther)
 		return
 	}
 	rules := []model.MonitorRule{}
@@ -743,7 +751,11 @@ func (s *Server) handleReports(w http.ResponseWriter, r *http.Request, user any)
 		if err != nil || !resp.IsSuccess() {
 			message = "报告生成失败"
 		}
-		http.Redirect(w, r, "/reports?msg="+message, http.StatusSeeOther)
+		redirectURL := localRedirectTarget(r.Referer())
+		if strings.TrimSpace(redirectURL) == "" {
+			redirectURL = "/reports"
+		}
+		http.Redirect(w, r, appendMessage(redirectURL, message), http.StatusSeeOther)
 		return
 	}
 	projectID := strings.TrimSpace(r.URL.Query().Get("project_id"))
