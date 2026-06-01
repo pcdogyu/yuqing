@@ -26,42 +26,45 @@ type Server struct {
 }
 
 type pageData struct {
-	Title         string
-	User          any
-	Dashboard     model.DashboardSnapshot
-	Groups        []model.ProjectGroup
-	Project       model.Project
-	Projects      []model.Project
-	Rule          model.MonitorRule
-	Rules         []model.MonitorRule
-	Articles      model.ItemListResult
-	Article       model.Item
-	Related       []model.Item
-	CrawlRuns     []model.CrawlRun
-	Reports       []model.Report
-	Report        model.Report
-	Notices       []model.SystemNotice
-	TaskRuns      []model.TaskRun
-	Error         string
-	Message       string
-	ReturnTo      string
-	ReturnURL     string
-	FilterKeyword string
-	FilterProject string
-	FilterStatus  string
-	FilterRead    string
-	FilterFlag    string
-	FilterSource  string
-	FilterStart   string
-	FilterEnd     string
-	SearchMode    string
-	Services      []serviceStatus
-	ProjectNames  map[int64]string
-	CountActive   int
-	CountPaused   int
-	CountRead     int
-	CountUnread   int
-	CountFlagged  int
+	Title          string
+	User           any
+	Dashboard      model.DashboardSnapshot
+	Groups         []model.ProjectGroup
+	Project        model.Project
+	Projects       []model.Project
+	Rule           model.MonitorRule
+	Rules          []model.MonitorRule
+	Articles       model.ItemListResult
+	Article        model.Item
+	Related        []model.Item
+	CrawlRuns      []model.CrawlRun
+	Reports        []model.Report
+	Report         model.Report
+	Notices        []model.SystemNotice
+	TaskRuns       []model.TaskRun
+	Error          string
+	Message        string
+	ReturnTo       string
+	ReturnURL      string
+	FilterKeyword  string
+	FilterProject  string
+	FilterStatus   string
+	FilterRead     string
+	FilterFlag     string
+	FilterSource   string
+	FilterStart    string
+	FilterEnd      string
+	SearchMode     string
+	Services       []serviceStatus
+	ProjectNames   map[int64]string
+	CountActive    int
+	CountPaused    int
+	CountRead      int
+	CountUnread    int
+	CountFlagged   int
+	CountDraft     int
+	CountGenerated int
+	CountArchived  int
 }
 
 type serviceStatus struct {
@@ -833,12 +836,23 @@ func (s *Server) handleReports(w http.ResponseWriter, r *http.Request, user any)
 		projectNames[project.ID] = project.Name
 	}
 	filtered := make([]model.Report, 0, len(reports))
+	draftCount := 0
+	generatedCount := 0
+	archivedCount := 0
 	for _, report := range reports {
 		if keyword != "" && !strings.Contains(strings.ToLower(report.Title), strings.ToLower(keyword)) {
 			continue
 		}
 		if status != "" && report.Status != status {
 			continue
+		}
+		switch report.Status {
+		case "draft":
+			draftCount++
+		case "generated":
+			generatedCount++
+		case "archived":
+			archivedCount++
 		}
 		filtered = append(filtered, report)
 	}
@@ -852,7 +866,7 @@ func (s *Server) handleReports(w http.ResponseWriter, r *http.Request, user any)
 			return filtered[i].UpdatedAt.After(filtered[j].UpdatedAt)
 		})
 	}
-	_ = s.render(w, "reports", pageData{Title: "报告中心", User: user, Reports: filtered, Projects: projects, ProjectNames: projectNames, ReturnTo: returnTo, FilterKeyword: keyword, FilterProject: projectID, FilterStatus: status, FilterSource: order, Message: r.URL.Query().Get("msg")})
+	_ = s.render(w, "reports", pageData{Title: "报告中心", User: user, Reports: filtered, Projects: projects, ProjectNames: projectNames, ReturnTo: returnTo, FilterKeyword: keyword, FilterProject: projectID, FilterStatus: status, FilterSource: order, CountDraft: draftCount, CountGenerated: generatedCount, CountArchived: archivedCount, Message: r.URL.Query().Get("msg")})
 }
 
 func (s *Server) handleReportDetail(w http.ResponseWriter, r *http.Request, user any) {
@@ -1195,7 +1209,7 @@ const articleTemplate = `
 `
 
 const reportsTemplate = `
-{{define "reports"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}.subtle{color:#6a6257}.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.summary-card{padding:14px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.summary-card strong{display:block;font-size:24px;margin-top:6px}` + `</style></head><body><header><h1>报告中心</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><h2>生成报告</h2><form method="post"><select name="project_id">{{range .Projects}}<option value="{{.ID}}" {{if eq (printf "%d" .ID) $.FilterProject}}selected{{end}}>{{.Name}}</option>{{end}}</select><input name="title" placeholder="报告标题"><textarea name="content" placeholder="输入文章摘要、正文或人工内容"></textarea><button type="submit">生成报告</button></form></section><section><h2>报告筛选</h2><form class="inline" method="get"><input name="keyword" placeholder="标题关键词" value="{{.FilterKeyword}}"><select name="project_id"><option value="">全部项目</option>{{range .Projects}}<option value="{{.ID}}" {{if eq (printf "%d" .ID) $.FilterProject}}selected{{end}}>{{.Name}}</option>{{end}}</select><select name="status"><option value="">全部状态</option><option value="generated" {{if eq .FilterStatus "generated"}}selected{{end}}>generated</option><option value="draft" {{if eq .FilterStatus "draft"}}selected{{end}}>draft</option><option value="archived" {{if eq .FilterStatus "archived"}}selected{{end}}>archived</option></select><select name="order"><option value="desc" {{if eq .FilterSource "desc"}}selected{{end}}>更新时间倒序</option><option value="asc" {{if eq .FilterSource "asc"}}selected{{end}}>更新时间正序</option></select><button type="submit">筛选</button></form>{{if or .FilterKeyword .FilterProject .FilterStatus .FilterSource}}<p class="subtle">当前筛选已生效 <a class="inline" href="/reports">清空筛选</a></p>{{end}}</section><section><h2>当前结果</h2><div class="summary-grid"><div class="summary-card">报告<strong>{{len .Reports}}</strong></div><div class="summary-card">项目<strong>{{len .Projects}}</strong></div></div></section><section><h2>报告列表</h2><table><tr><th>ID</th><th>项目</th><th>标题</th><th>状态</th><th>更新时间</th><th>跳转</th></tr>{{range .Reports}}<tr><td>{{.ID}}</td><td>{{index $.ProjectNames .ProjectID}}</td><td><a class="inline" href="/reports/{{.ID}}?return_to={{$.ReturnTo}}">{{.Title}}</a></td><td>{{.Status}}</td><td>{{.UpdatedAt.Format "2006-01-02 15:04"}}</td><td><a class="inline" href="/projects/{{.ProjectID}}">项目</a><a class="inline" href="/articles?project_id={{.ProjectID}}">文章</a></td></tr>{{else}}<tr><td colspan="6">没有符合条件的报告</td></tr>{{end}}</table></section></main></body></html>{{end}}
+{{define "reports"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}.subtle{color:#6a6257}.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.summary-card{padding:14px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.summary-card strong{display:block;font-size:24px;margin-top:6px}` + `</style></head><body><header><h1>报告中心</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><h2>生成报告</h2><form method="post"><select name="project_id">{{range .Projects}}<option value="{{.ID}}" {{if eq (printf "%d" .ID) $.FilterProject}}selected{{end}}>{{.Name}}</option>{{end}}</select><input name="title" placeholder="报告标题"><textarea name="content" placeholder="输入文章摘要、正文或人工内容"></textarea><button type="submit">生成报告</button></form></section><section><h2>报告筛选</h2><form class="inline" method="get"><input name="keyword" placeholder="标题关键词" value="{{.FilterKeyword}}"><select name="project_id"><option value="">全部项目</option>{{range .Projects}}<option value="{{.ID}}" {{if eq (printf "%d" .ID) $.FilterProject}}selected{{end}}>{{.Name}}</option>{{end}}</select><select name="status"><option value="">全部状态</option><option value="generated" {{if eq .FilterStatus "generated"}}selected{{end}}>generated</option><option value="draft" {{if eq .FilterStatus "draft"}}selected{{end}}>draft</option><option value="archived" {{if eq .FilterStatus "archived"}}selected{{end}}>archived</option></select><select name="order"><option value="desc" {{if eq .FilterSource "desc"}}selected{{end}}>更新时间倒序</option><option value="asc" {{if eq .FilterSource "asc"}}selected{{end}}>更新时间正序</option></select><button type="submit">筛选</button></form>{{if or .FilterKeyword .FilterProject .FilterStatus .FilterSource}}<p class="subtle">当前筛选已生效{{if .FilterKeyword}}，关键词：{{.FilterKeyword}}{{end}}{{if .FilterProject}}，项目ID：{{.FilterProject}}{{end}}{{if .FilterStatus}}，状态：{{.FilterStatus}}{{end}}{{if .FilterSource}}，排序：{{.FilterSource}}{{end}} <a class="inline" href="/reports">清空筛选</a></p>{{end}}</section><section><h2>当前结果</h2><div class="summary-grid"><div class="summary-card">报告<strong>{{len .Reports}}</strong></div><div class="summary-card">draft<strong>{{.CountDraft}}</strong></div><div class="summary-card">generated<strong>{{.CountGenerated}}</strong></div><div class="summary-card">archived<strong>{{.CountArchived}}</strong></div><div class="summary-card">项目<strong>{{len .Projects}}</strong></div></div></section><section><h2>报告列表</h2><table><tr><th>ID</th><th>项目</th><th>标题</th><th>状态</th><th>更新时间</th><th>跳转</th></tr>{{range .Reports}}<tr><td>{{.ID}}</td><td>{{index $.ProjectNames .ProjectID}}</td><td><a class="inline" href="/reports/{{.ID}}?return_to={{$.ReturnTo}}">{{.Title}}</a></td><td>{{.Status}}</td><td>{{.UpdatedAt.Format "2006-01-02 15:04"}}</td><td><a class="inline" href="/projects/{{.ProjectID}}">项目</a><a class="inline" href="/articles?project_id={{.ProjectID}}">文章</a></td></tr>{{else}}<tr><td colspan="6">没有符合条件的报告</td></tr>{{end}}</table></section></main></body></html>{{end}}
 `
 
 const reportTemplate = `
