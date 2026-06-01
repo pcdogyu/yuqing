@@ -156,6 +156,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request, user an
 func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request, user any) {
 	if r.Method == http.MethodPost {
 		_ = r.ParseForm()
+		message := "操作已完成"
 		switch r.FormValue("form_type") {
 		case "group":
 			action := r.FormValue("action")
@@ -166,11 +167,26 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request, user any
 			}
 			switch action {
 			case "update":
-				_, _ = s.client.R().SetBody(body).Put(s.cfg.ContentURL + "/api/v1/project-groups/" + groupID)
+				resp, err := s.client.R().SetBody(body).Put(s.cfg.ContentURL + "/api/v1/project-groups/" + groupID)
+				if err != nil || !resp.IsSuccess() {
+					message = "项目组更新失败"
+				} else {
+					message = "项目组更新成功"
+				}
 			case "delete":
-				_, _ = s.client.R().Delete(s.cfg.ContentURL + "/api/v1/project-groups/" + groupID)
+				resp, err := s.client.R().Delete(s.cfg.ContentURL + "/api/v1/project-groups/" + groupID)
+				if err != nil || !resp.IsSuccess() {
+					message = "项目组删除失败"
+				} else {
+					message = "项目组已删除"
+				}
 			default:
-				_, _ = s.client.R().SetBody(body).Post(s.cfg.ContentURL + "/api/v1/project-groups")
+				resp, err := s.client.R().SetBody(body).Post(s.cfg.ContentURL + "/api/v1/project-groups")
+				if err != nil || !resp.IsSuccess() {
+					message = "项目组创建失败"
+				} else {
+					message = "项目组创建成功"
+				}
 			}
 		case "project":
 			action := r.FormValue("action")
@@ -185,14 +201,29 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request, user any
 			projectID := r.FormValue("project_id")
 			switch action {
 			case "update":
-				_, _ = s.client.R().SetBody(body).Put(s.cfg.ContentURL + "/api/v1/projects/" + projectID)
+				resp, err := s.client.R().SetBody(body).Put(s.cfg.ContentURL + "/api/v1/projects/" + projectID)
+				if err != nil || !resp.IsSuccess() {
+					message = "项目更新失败"
+				} else {
+					message = "项目更新成功"
+				}
 			case "delete":
-				_, _ = s.client.R().Delete(s.cfg.ContentURL + "/api/v1/projects/" + projectID)
+				resp, err := s.client.R().Delete(s.cfg.ContentURL + "/api/v1/projects/" + projectID)
+				if err != nil || !resp.IsSuccess() {
+					message = "项目删除失败"
+				} else {
+					message = "项目已删除"
+				}
 			default:
-				_, _ = s.client.R().SetBody(body).Post(s.cfg.ContentURL + "/api/v1/projects")
+				resp, err := s.client.R().SetBody(body).Post(s.cfg.ContentURL + "/api/v1/projects")
+				if err != nil || !resp.IsSuccess() {
+					message = "项目创建失败"
+				} else {
+					message = "项目创建成功"
+				}
 			}
 		}
-		http.Redirect(w, r, "/projects", http.StatusSeeOther)
+		http.Redirect(w, r, "/projects?msg="+message, http.StatusSeeOther)
 		return
 	}
 	groups := []model.ProjectGroup{}
@@ -220,7 +251,7 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request, user any
 		groups = groupFiltered
 		projects = projectFiltered
 	}
-	_ = s.render(w, "projects", pageData{Title: "项目中心", User: user, Groups: groups, Projects: projects, FilterKeyword: keyword})
+	_ = s.render(w, "projects", pageData{Title: "项目中心", User: user, Groups: groups, Projects: projects, FilterKeyword: keyword, Message: r.URL.Query().Get("msg")})
 }
 
 func (s *Server) handleProjectDetail(w http.ResponseWriter, r *http.Request, user any) {
@@ -336,6 +367,7 @@ func (s *Server) handleRules(w http.ResponseWriter, r *http.Request, user any) {
 	if r.Method == http.MethodPost {
 		_ = r.ParseForm()
 		action := r.FormValue("action")
+		message := "规则创建成功"
 		projectID, _ := strconv.ParseInt(r.FormValue("project_id"), 10, 64)
 		body := map[string]any{
 			"project_id":       projectID,
@@ -349,20 +381,39 @@ func (s *Server) handleRules(w http.ResponseWriter, r *http.Request, user any) {
 		ruleID := r.FormValue("rule_id")
 		switch action {
 		case "update":
-			_, _ = s.client.R().SetBody(body).Put(s.cfg.ContentURL + "/api/v1/monitor-rules/" + ruleID)
+			resp, err := s.client.R().SetBody(body).Put(s.cfg.ContentURL + "/api/v1/monitor-rules/" + ruleID)
+			if err != nil || !resp.IsSuccess() {
+				message = "规则更新失败"
+			} else {
+				message = "规则更新成功"
+			}
 		case "toggle":
 			status := "active"
 			if r.FormValue("status") == "active" {
 				status = "paused"
+				message = "规则已停用"
+			} else {
+				message = "规则已启用"
 			}
 			body["status"] = status
-			_, _ = s.client.R().SetBody(body).Put(s.cfg.ContentURL + "/api/v1/monitor-rules/" + ruleID)
+			resp, err := s.client.R().SetBody(body).Put(s.cfg.ContentURL + "/api/v1/monitor-rules/" + ruleID)
+			if err != nil || !resp.IsSuccess() {
+				message = "规则状态更新失败"
+			}
 		case "delete":
-			_, _ = s.client.R().Delete(s.cfg.ContentURL + "/api/v1/monitor-rules/" + ruleID)
+			resp, err := s.client.R().Delete(s.cfg.ContentURL + "/api/v1/monitor-rules/" + ruleID)
+			if err != nil || !resp.IsSuccess() {
+				message = "规则删除失败"
+			} else {
+				message = "规则已删除"
+			}
 		default:
-			_, _ = s.client.R().SetBody(body).Post(s.cfg.ContentURL + "/api/v1/monitor-rules")
+			resp, err := s.client.R().SetBody(body).Post(s.cfg.ContentURL + "/api/v1/monitor-rules")
+			if err != nil || !resp.IsSuccess() {
+				message = "规则创建失败"
+			}
 		}
-		http.Redirect(w, r, "/monitor-rules", http.StatusSeeOther)
+		http.Redirect(w, r, "/monitor-rules?msg="+message, http.StatusSeeOther)
 		return
 	}
 	rules := []model.MonitorRule{}
@@ -384,7 +435,7 @@ func (s *Server) handleRules(w http.ResponseWriter, r *http.Request, user any) {
 		}
 		rules = filtered
 	}
-	_ = s.render(w, "rules", pageData{Title: "监测规则", User: user, Rules: rules, Projects: projects, FilterKeyword: keyword})
+	_ = s.render(w, "rules", pageData{Title: "监测规则", User: user, Rules: rules, Projects: projects, FilterKeyword: keyword, Message: r.URL.Query().Get("msg")})
 }
 
 func (s *Server) handleRuleDetail(w http.ResponseWriter, r *http.Request, user any) {
@@ -571,6 +622,8 @@ func (s *Server) handleArticleDetail(w http.ResponseWriter, r *http.Request, use
 	}
 	article := model.Item{}
 	related := []model.Item{}
+	projects := make([]model.Project, 0)
+	reports := make([]model.Report, 0)
 	querySuffix := ""
 	if userID > 0 {
 		querySuffix = "?user_id=" + strconv.FormatInt(userID, 10)
@@ -581,7 +634,30 @@ func (s *Server) handleArticleDetail(w http.ResponseWriter, r *http.Request, use
 		relatedURL += "?user_id=" + strconv.FormatInt(userID, 10)
 	}
 	_ = s.getJSON(relatedURL, &related)
-	_ = s.render(w, "article", pageData{Title: "文章详情", User: user, Article: article, Related: related, ReturnURL: returnURL, ReturnTo: url.QueryEscape(returnURL)})
+	reportSeen := make(map[int64]struct{})
+	for _, projectID := range article.ProjectIDs {
+		project := model.Project{}
+		if err := s.getJSON(s.cfg.ContentURL+"/api/v1/projects/"+strconv.FormatInt(projectID, 10), &project); err == nil && project.ID > 0 {
+			projects = append(projects, project)
+		}
+		projectReports := []model.Report{}
+		if err := s.getJSON(s.cfg.ContentURL+"/api/v1/reports?project_id="+strconv.FormatInt(projectID, 10), &projectReports); err == nil {
+			for _, report := range projectReports {
+				if _, ok := reportSeen[report.ID]; ok {
+					continue
+				}
+				reportSeen[report.ID] = struct{}{}
+				reports = append(reports, report)
+			}
+		}
+	}
+	sort.Slice(reports, func(i, j int) bool {
+		return reports[i].UpdatedAt.After(reports[j].UpdatedAt)
+	})
+	if len(reports) > 8 {
+		reports = reports[:8]
+	}
+	_ = s.render(w, "article", pageData{Title: "文章详情", User: user, Article: article, Related: related, Projects: projects, Reports: reports, ReturnURL: returnURL, ReturnTo: url.QueryEscape(returnURL)})
 }
 
 func (s *Server) handleReports(w http.ResponseWriter, r *http.Request, user any) {
@@ -860,7 +936,7 @@ const dashboardTemplate = `
 `
 
 const projectsTemplate = `
-{{define "projects"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.compact td form{margin:0}.compact input,.compact textarea,.compact select,.compact button{margin:4px 0;padding:8px}` + `</style></head><body><header><h1>项目中心</h1>{{template "nav" .}}</header><main><section><h2>列表搜索</h2><form class="inline" method="get"><input name="keyword" placeholder="搜索项目组、项目名、关键词、描述" value="{{.FilterKeyword}}"><button type="submit">搜索</button></form></section><section><h2>新建项目组</h2><form method="post"><input type="hidden" name="form_type" value="group"><input name="name" placeholder="项目组名称"><textarea name="description" placeholder="项目组描述"></textarea><button type="submit">创建项目组</button></form></section><section><h2>项目组列表</h2><table class="compact"><tr><th>ID</th><th>名称</th><th>描述</th><th>操作</th></tr>{{range .Groups}}<tr><td>{{.ID}}</td><td><form method="post"><input type="hidden" name="form_type" value="group"><input type="hidden" name="action" value="update"><input type="hidden" name="group_id" value="{{.ID}}"><input name="name" value="{{.Name}}"></td><td><textarea name="description">{{.Description}}</textarea></td><td><button type="submit">保存</button></form><form method="post"><input type="hidden" name="form_type" value="group"><input type="hidden" name="action" value="delete"><input type="hidden" name="group_id" value="{{.ID}}"><button type="submit">删除</button></form></td></tr>{{else}}<tr><td colspan="4">没有符合条件的项目组</td></tr>{{end}}</table></section><section><h2>新建项目</h2><form method="post"><input type="hidden" name="form_type" value="project"><select name="group_id">{{range .Groups}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select><input name="name" placeholder="项目名称"><input name="keywords" placeholder="关键词，逗号分隔"><textarea name="description" placeholder="项目描述"></textarea><button type="submit">创建项目</button></form></section><section><h2>项目列表</h2><table class="compact"><tr><th>ID</th><th>项目组ID</th><th>项目组</th><th>名称</th><th>关键词</th><th>描述</th><th>状态</th><th>操作</th></tr>{{range .Projects}}<tr><td><a class="inline" href="/projects/{{.ID}}">{{.ID}}</a></td><td><form method="post"><input type="hidden" name="form_type" value="project"><input type="hidden" name="action" value="update"><input type="hidden" name="project_id" value="{{.ID}}"><input name="group_id" value="{{.GroupID}}"></td><td>{{.GroupName}}</td><td><input name="name" value="{{.Name}}"></td><td><input name="keywords" value="{{.Keywords}}"></td><td><textarea name="description">{{.Description}}</textarea></td><td><select name="status"><option value="active" {{if eq .Status "active"}}selected{{end}}>active</option><option value="paused" {{if eq .Status "paused"}}selected{{end}}>paused</option></select></td><td><button type="submit">保存</button></form><a class="inline" href="/projects/{{.ID}}">详情</a><form method="post"><input type="hidden" name="form_type" value="project"><input type="hidden" name="action" value="delete"><input type="hidden" name="project_id" value="{{.ID}}"><button type="submit">删除</button></form></td></tr>{{else}}<tr><td colspan="8">没有符合条件的项目</td></tr>{{end}}</table></section></main></body></html>{{end}}
+{{define "projects"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.compact td form{margin:0}.compact input,.compact textarea,.compact select,.compact button{margin:4px 0;padding:8px}.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}` + `</style></head><body><header><h1>项目中心</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><h2>列表搜索</h2><form class="inline" method="get"><input name="keyword" placeholder="搜索项目组、项目名、关键词、描述" value="{{.FilterKeyword}}"><button type="submit">搜索</button></form></section><section><h2>新建项目组</h2><form method="post"><input type="hidden" name="form_type" value="group"><input name="name" placeholder="项目组名称"><textarea name="description" placeholder="项目组描述"></textarea><button type="submit">创建项目组</button></form></section><section><h2>项目组列表</h2><table class="compact"><tr><th>ID</th><th>名称</th><th>描述</th><th>操作</th></tr>{{range .Groups}}<tr><td>{{.ID}}</td><td><form method="post"><input type="hidden" name="form_type" value="group"><input type="hidden" name="action" value="update"><input type="hidden" name="group_id" value="{{.ID}}"><input name="name" value="{{.Name}}"></td><td><textarea name="description">{{.Description}}</textarea></td><td><button type="submit">保存</button></form><form method="post"><input type="hidden" name="form_type" value="group"><input type="hidden" name="action" value="delete"><input type="hidden" name="group_id" value="{{.ID}}"><button type="submit">删除</button></form></td></tr>{{else}}<tr><td colspan="4">没有符合条件的项目组</td></tr>{{end}}</table></section><section><h2>新建项目</h2><form method="post"><input type="hidden" name="form_type" value="project"><select name="group_id">{{range .Groups}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select><input name="name" placeholder="项目名称"><input name="keywords" placeholder="关键词，逗号分隔"><textarea name="description" placeholder="项目描述"></textarea><button type="submit">创建项目</button></form></section><section><h2>项目列表</h2><table class="compact"><tr><th>ID</th><th>项目组ID</th><th>项目组</th><th>名称</th><th>关键词</th><th>描述</th><th>状态</th><th>操作</th></tr>{{range .Projects}}<tr><td><a class="inline" href="/projects/{{.ID}}">{{.ID}}</a></td><td><form method="post"><input type="hidden" name="form_type" value="project"><input type="hidden" name="action" value="update"><input type="hidden" name="project_id" value="{{.ID}}"><input name="group_id" value="{{.GroupID}}"></td><td>{{.GroupName}}</td><td><input name="name" value="{{.Name}}"></td><td><input name="keywords" value="{{.Keywords}}"></td><td><textarea name="description">{{.Description}}</textarea></td><td><select name="status"><option value="active" {{if eq .Status "active"}}selected{{end}}>active</option><option value="paused" {{if eq .Status "paused"}}selected{{end}}>paused</option></select></td><td><button type="submit">保存</button></form><a class="inline" href="/projects/{{.ID}}">详情</a><form method="post"><input type="hidden" name="form_type" value="project"><input type="hidden" name="action" value="delete"><input type="hidden" name="project_id" value="{{.ID}}"><button type="submit">删除</button></form></td></tr>{{else}}<tr><td colspan="8">没有符合条件的项目</td></tr>{{end}}</table></section></main></body></html>{{end}}
 `
 
 const projectTemplate = `
@@ -868,7 +944,7 @@ const projectTemplate = `
 `
 
 const rulesTemplate = `
-{{define "rules"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.compact td form{margin:0}.compact input,.compact textarea,.compact select,.compact button{margin:4px 0;padding:8px}` + `</style></head><body><header><h1>监测规则</h1>{{template "nav" .}}</header><main><section><h2>列表搜索</h2><form class="inline" method="get"><input name="keyword" placeholder="搜索规则名、项目名、关键词、来源" value="{{.FilterKeyword}}"><button type="submit">搜索</button></form></section><section><h2>新建规则</h2><form method="post"><select name="project_id">{{range .Projects}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select><input name="name" placeholder="规则名称"><input name="include_keywords" placeholder="包含关键词"><input name="exclude_keywords" placeholder="排除关键词"><input name="channels" placeholder="来源，如 flash,headline"><select name="severity"><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select><button type="submit">创建规则</button></form></section><section><h2>规则列表</h2><table class="compact"><tr><th>ID</th><th>项目ID</th><th>项目</th><th>名称</th><th>包含</th><th>排除</th><th>来源</th><th>等级</th><th>状态</th><th>操作</th></tr>{{range .Rules}}<tr><td><a class="inline" href="/monitor-rules/{{.ID}}">{{.ID}}</a></td><td><form method="post"><input type="hidden" name="action" value="update"><input type="hidden" name="rule_id" value="{{.ID}}"><input name="project_id" value="{{.ProjectID}}"></td><td>{{.ProjectName}}</td><td><input name="name" value="{{.Name}}"></td><td><input name="include_keywords" value="{{.IncludeKeywords}}"></td><td><input name="exclude_keywords" value="{{.ExcludeKeywords}}"></td><td><input name="channels" value="{{.Channels}}"></td><td><select name="severity"><option value="low" {{if eq .Severity "low"}}selected{{end}}>low</option><option value="medium" {{if eq .Severity "medium"}}selected{{end}}>medium</option><option value="high" {{if eq .Severity "high"}}selected{{end}}>high</option></select></td><td><select name="status"><option value="active" {{if eq .Status "active"}}selected{{end}}>active</option><option value="paused" {{if eq .Status "paused"}}selected{{end}}>paused</option></select></td><td><button type="submit">保存</button></form><a class="inline" href="/monitor-rules/{{.ID}}">详情</a><form method="post"><input type="hidden" name="action" value="toggle"><input type="hidden" name="rule_id" value="{{.ID}}"><input type="hidden" name="project_id" value="{{.ProjectID}}"><input type="hidden" name="name" value="{{.Name}}"><input type="hidden" name="include_keywords" value="{{.IncludeKeywords}}"><input type="hidden" name="exclude_keywords" value="{{.ExcludeKeywords}}"><input type="hidden" name="channels" value="{{.Channels}}"><input type="hidden" name="severity" value="{{.Severity}}"><input type="hidden" name="status" value="{{.Status}}"><button type="submit">{{if eq .Status "active"}}停用{{else}}启用{{end}}</button></form><form method="post"><input type="hidden" name="action" value="delete"><input type="hidden" name="rule_id" value="{{.ID}}"><button type="submit">删除</button></form></td></tr>{{else}}<tr><td colspan="10">没有符合条件的规则</td></tr>{{end}}</table></section></main></body></html>{{end}}
+{{define "rules"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.compact td form{margin:0}.compact input,.compact textarea,.compact select,.compact button{margin:4px 0;padding:8px}.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}` + `</style></head><body><header><h1>监测规则</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><h2>列表搜索</h2><form class="inline" method="get"><input name="keyword" placeholder="搜索规则名、项目名、关键词、来源" value="{{.FilterKeyword}}"><button type="submit">搜索</button></form></section><section><h2>新建规则</h2><form method="post"><select name="project_id">{{range .Projects}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select><input name="name" placeholder="规则名称"><input name="include_keywords" placeholder="包含关键词"><input name="exclude_keywords" placeholder="排除关键词"><input name="channels" placeholder="来源，如 flash,headline"><select name="severity"><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select><button type="submit">创建规则</button></form></section><section><h2>规则列表</h2><table class="compact"><tr><th>ID</th><th>项目ID</th><th>项目</th><th>名称</th><th>包含</th><th>排除</th><th>来源</th><th>等级</th><th>状态</th><th>操作</th></tr>{{range .Rules}}<tr><td><a class="inline" href="/monitor-rules/{{.ID}}">{{.ID}}</a></td><td><form method="post"><input type="hidden" name="action" value="update"><input type="hidden" name="rule_id" value="{{.ID}}"><input name="project_id" value="{{.ProjectID}}"></td><td>{{.ProjectName}}</td><td><input name="name" value="{{.Name}}"></td><td><input name="include_keywords" value="{{.IncludeKeywords}}"></td><td><input name="exclude_keywords" value="{{.ExcludeKeywords}}"></td><td><input name="channels" value="{{.Channels}}"></td><td><select name="severity"><option value="low" {{if eq .Severity "low"}}selected{{end}}>low</option><option value="medium" {{if eq .Severity "medium"}}selected{{end}}>medium</option><option value="high" {{if eq .Severity "high"}}selected{{end}}>high</option></select></td><td><select name="status"><option value="active" {{if eq .Status "active"}}selected{{end}}>active</option><option value="paused" {{if eq .Status "paused"}}selected{{end}}>paused</option></select></td><td><button type="submit">保存</button></form><a class="inline" href="/monitor-rules/{{.ID}}">详情</a><form method="post"><input type="hidden" name="action" value="toggle"><input type="hidden" name="rule_id" value="{{.ID}}"><input type="hidden" name="project_id" value="{{.ProjectID}}"><input type="hidden" name="name" value="{{.Name}}"><input type="hidden" name="include_keywords" value="{{.IncludeKeywords}}"><input type="hidden" name="exclude_keywords" value="{{.ExcludeKeywords}}"><input type="hidden" name="channels" value="{{.Channels}}"><input type="hidden" name="severity" value="{{.Severity}}"><input type="hidden" name="status" value="{{.Status}}"><button type="submit">{{if eq .Status "active"}}停用{{else}}启用{{end}}</button></form><form method="post"><input type="hidden" name="action" value="delete"><input type="hidden" name="rule_id" value="{{.ID}}"><button type="submit">删除</button></form></td></tr>{{else}}<tr><td colspan="10">没有符合条件的规则</td></tr>{{end}}</table></section></main></body></html>{{end}}
 `
 
 const ruleTemplate = `
@@ -880,7 +956,7 @@ const articlesTemplate = `
 `
 
 const articleTemplate = `
-{{define "article"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.pill{display:inline-block;padding:4px 10px;border-radius:999px;background:#ece7dc;margin-right:8px}.toolbar{display:flex;gap:12px;flex-wrap:wrap}` + `</style></head><body><header><h1>文章详情</h1>{{template "nav" .}}</header><main><section><div class="toolbar"><a class="inline" href="{{.ReturnURL}}">返回筛选结果</a><a class="inline" href="/articles">返回文章中心</a></div><h2>{{.Article.Title}}</h2><p>来源：{{.Article.SourceType}} | 抓取时间：{{.Article.CapturedAt.Format "2006-01-02 15:04"}}</p><p>{{if .Article.Read}}<span class="pill">已读</span>{{else}}<span class="pill">未读</span>{{end}}{{if .Article.Favorited}}<span class="pill">已收藏</span>{{end}}</p><form method="post"><input type="hidden" name="action" value="read"><button type="submit">标记已读</button></form><form method="post"><input type="hidden" name="action" value="favorite"><button type="submit">{{if .Article.Favorited}}取消收藏{{else}}收藏{{end}}</button></form><pre>{{.Article.Content}}</pre></section><section><h2>相关文章</h2><table><tr><th>标题</th><th>来源</th><th>状态</th></tr>{{range .Related}}<tr><td><a class="inline" href="/articles/{{.ID}}?return_to={{$.ReturnTo}}">{{.Title}}</a></td><td>{{.SourceType}}</td><td>{{if .Read}}已读{{else}}未读{{end}}{{if .Favorited}} / 已收藏{{end}}</td></tr>{{end}}</table></section></main></body></html>{{end}}
+{{define "article"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.pill{display:inline-block;padding:4px 10px;border-radius:999px;background:#ece7dc;margin-right:8px}.toolbar{display:flex;gap:12px;flex-wrap:wrap}` + `</style></head><body><header><h1>文章详情</h1>{{template "nav" .}}</header><main><section><div class="toolbar"><a class="inline" href="{{.ReturnURL}}">返回筛选结果</a><a class="inline" href="/articles">返回文章中心</a></div><h2>{{.Article.Title}}</h2><p>来源：{{.Article.SourceType}} | 抓取时间：{{.Article.CapturedAt.Format "2006-01-02 15:04"}}</p><p>{{if .Article.Read}}<span class="pill">已读</span>{{else}}<span class="pill">未读</span>{{end}}{{if .Article.Favorited}}<span class="pill">已收藏</span>{{end}}</p><form method="post"><input type="hidden" name="action" value="read"><button type="submit">标记已读</button></form><form method="post"><input type="hidden" name="action" value="favorite"><button type="submit">{{if .Article.Favorited}}取消收藏{{else}}收藏{{end}}</button></form><pre>{{.Article.Content}}</pre></section>{{if .Projects}}<section><h2>关联项目</h2><table><tr><th>项目</th><th>项目组</th><th>状态</th><th>关键词</th></tr>{{range .Projects}}<tr><td><a class="inline" href="/projects/{{.ID}}">{{.Name}}</a></td><td>{{.GroupName}}</td><td>{{.Status}}</td><td>{{.Keywords}}</td></tr>{{end}}</table></section>{{end}}{{if .Reports}}<section><h2>关联项目最近报告</h2><table><tr><th>ID</th><th>项目ID</th><th>标题</th><th>状态</th><th>更新时间</th></tr>{{range .Reports}}<tr><td>{{.ID}}</td><td>{{.ProjectID}}</td><td><a class="inline" href="/reports/{{.ID}}?return_to=%2Freports%3Fproject_id%3D{{.ProjectID}}">{{.Title}}</a></td><td>{{.Status}}</td><td>{{.UpdatedAt.Format "2006-01-02 15:04"}}</td></tr>{{end}}</table></section>{{end}}<section><h2>相关文章</h2><table><tr><th>标题</th><th>来源</th><th>状态</th></tr>{{range .Related}}<tr><td><a class="inline" href="/articles/{{.ID}}?return_to={{$.ReturnTo}}">{{.Title}}</a></td><td>{{.SourceType}}</td><td>{{if .Read}}已读{{else}}未读{{end}}{{if .Favorited}} / 已收藏{{end}}</td></tr>{{else}}<tr><td colspan="3">暂无相关文章</td></tr>{{end}}</table></section></main></body></html>{{end}}
 `
 
 const reportsTemplate = `
