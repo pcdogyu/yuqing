@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/go-resty/resty/v2"
@@ -25,6 +26,8 @@ func NewWorker(cfg config.Config) *Worker {
 }
 
 func (w *Worker) Run(ctx context.Context) {
+	w.waitForDependencies(ctx)
+
 	go w.loop(ctx, "flash-crawl", w.cfg.FlashInterval, func() error {
 		_, err := w.client.R().
 			SetQueryParam("source_type", "flash").
@@ -43,6 +46,42 @@ func (w *Worker) Run(ctx context.Context) {
 		return err
 	})
 	<-ctx.Done()
+}
+
+func (w *Worker) waitForDependencies(ctx context.Context) {
+	dependencies := []struct {
+		name string
+		url  string
+	}{
+		{name: "crawler-service", url: w.cfg.CrawlerURL + "/healthz"},
+		{name: "analysis-service", url: w.cfg.AnalysisURL + "/healthz"},
+	}
+	for _, dependency := range dependencies {
+		if err := w.waitForHealthy(ctx, dependency.name, dependency.url, 15*time.Second); err != nil {
+			log.Warn().Err(err).Str("dependency", dependency.name).Msg("dependency was not ready before scheduler started")
+		}
+	}
+}
+
+func (w *Worker) waitForHealthy(ctx context.Context, name, url string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		resp, err := w.client.R().Get(url)
+		if err == nil && resp.IsSuccess() {
+			log.Info().Str("dependency", name).Str("url", url).Msg("dependency is ready")
+			return nil
+		}
+		if time.Now().After(deadline) {
+			if err != nil {
+				return fmt.Errorf("wait for %s readiness: %w", name, err)
+			}
+			return fmt.Errorf("wait for %s readiness: unexpected status %s", name, resp.Status())
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
 }
 
 func (w *Worker) loop(ctx context.Context, name string, interval time.Duration, fn func() error) {
