@@ -38,7 +38,11 @@ func (p *Provider) Fetch(ctx context.Context) ([]model.Item, error) {
 	if resp.IsError() {
 		return nil, fmt.Errorf("headline fetch failed: %s", resp.Status())
 	}
-	return ParseHTML(resp.String(), p.pageURL, time.Now().UTC())
+	items, err := ParseHTML(resp.String(), p.pageURL, time.Now().UTC())
+	if err != nil {
+		return nil, err
+	}
+	return p.enrichItems(ctx, items), nil
 }
 
 func ParseHTML(html, pageURL string, capturedAt time.Time) ([]model.Item, error) {
@@ -183,4 +187,68 @@ func contains(list []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func (p *Provider) enrichItems(ctx context.Context, items []model.Item) []model.Item {
+	for idx := range items {
+		if !shouldFetchDetail(items[idx]) {
+			continue
+		}
+		resp, err := p.client.R().
+			SetContext(ctx).
+			Get(items[idx].DetailURL)
+		if err != nil || resp.IsError() {
+			continue
+		}
+		content, summary, shareURL := parseDetailHTML(resp.String())
+		if strings.TrimSpace(content) != "" {
+			items[idx].Content = content
+		}
+		if strings.TrimSpace(items[idx].Summary) == "" && strings.TrimSpace(summary) != "" {
+			items[idx].Summary = summary
+		}
+		if strings.TrimSpace(shareURL) != "" {
+			items[idx].SourceURL = shareURL
+		}
+	}
+	return items
+}
+
+func shouldFetchDetail(item model.Item) bool {
+	if strings.TrimSpace(item.DetailURL) == "" {
+		return false
+	}
+	if !strings.Contains(item.DetailURL, "xnews.jin10.com/details/") {
+		return false
+	}
+	return strings.TrimSpace(item.Content) == ""
+}
+
+func parseDetailHTML(html string) (content string, summary string, shareURL string) {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
+	if err != nil {
+		return "", "", ""
+	}
+
+	summary = cleanText(doc.Find(".jin10-news-cdetails-introduction").First().Text())
+
+	parts := make([]string, 0, 8)
+	doc.Find(".jin10-news-cdetails-content p, .jin10-news-cdetails-content li, .jin10-news-cdetails-content blockquote").Each(func(_ int, s *goquery.Selection) {
+		text := cleanText(s.Text())
+		if text != "" {
+			parts = append(parts, text)
+		}
+	})
+	if len(parts) == 0 {
+		text := cleanText(doc.Find(".jin10-news-cdetails-content").First().Text())
+		if text != "" {
+			parts = append(parts, text)
+		}
+	}
+	content = strings.Join(parts, "\n")
+
+	if value, ok := doc.Find(".social-share").First().Attr("data-url"); ok {
+		shareURL = normalizeURL(value)
+	}
+	return content, summary, shareURL
 }

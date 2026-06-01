@@ -3,6 +3,7 @@ package jin10xnews
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -27,6 +28,22 @@ func TestParseHTML(t *testing.T) {
 	}
 	if items[1].ExternalSourceHost != "mp.weixin.qq.com" {
 		t.Fatalf("unexpected external host: %s", items[1].ExternalSourceHost)
+	}
+}
+
+func TestParseDetailHTML(t *testing.T) {
+	html := mustReadFixture(t, "headline_detail.html")
+
+	content, summary, shareURL := parseDetailHTML(html)
+
+	if summary == "" {
+		t.Fatal("expected summary from detail page")
+	}
+	if content == "" {
+		t.Fatal("expected content from detail page")
+	}
+	if shareURL == "" || !strings.Contains(shareURL, "webapp/details.html") {
+		t.Fatalf("expected share url, got %q", shareURL)
 	}
 }
 
