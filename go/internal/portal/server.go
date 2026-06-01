@@ -55,6 +55,14 @@ type pageData struct {
 	FilterStart   string
 	FilterEnd     string
 	SearchMode    string
+	Services      []serviceStatus
+}
+
+type serviceStatus struct {
+	Name    string
+	URL     string
+	Healthy bool
+	Message string
 }
 
 func NewServer(cfg config.Config) *Server {
@@ -804,9 +812,19 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) 
 	}
 	notices := []model.SystemNotice{}
 	taskRuns := []model.TaskRun{}
+	crawlRuns := []model.CrawlRun{}
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/system/notices", &notices)
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/system/task-runs?limit=20", &taskRuns)
-	_ = s.render(w, "system", pageData{Title: "系统设置", User: user, Notices: notices, TaskRuns: taskRuns, Message: r.URL.Query().Get("msg")})
+	_ = s.getJSON(s.cfg.CrawlerURL+"/api/v1/admin/tasks/crawl/runs?limit=20", &crawlRuns)
+	_ = s.render(w, "system", pageData{
+		Title:     "系统设置",
+		User:      user,
+		Notices:   notices,
+		TaskRuns:  taskRuns,
+		CrawlRuns: crawlRuns,
+		Services:  s.collectServiceStatuses(),
+		Message:   r.URL.Query().Get("msg"),
+	})
 }
 
 func (s *Server) requireSession(next func(http.ResponseWriter, *http.Request, any)) http.HandlerFunc {
@@ -921,6 +939,30 @@ func nonEmpty(values ...string) string {
 	return ""
 }
 
+func (s *Server) collectServiceStatuses() []serviceStatus {
+	services := []serviceStatus{
+		{Name: "auth-service", URL: s.cfg.AuthURL + "/healthz"},
+		{Name: "content-service", URL: s.cfg.ContentURL + "/healthz"},
+		{Name: "crawler-service", URL: s.cfg.CrawlerURL + "/healthz"},
+		{Name: "analysis-service", URL: s.cfg.AnalysisURL + "/healthz"},
+		{Name: "nlp-service", URL: s.cfg.NLPURL + "/healthz"},
+	}
+	for idx := range services {
+		resp, err := s.client.R().Get(services[idx].URL)
+		if err != nil {
+			services[idx].Message = err.Error()
+			continue
+		}
+		services[idx].Healthy = resp.IsSuccess()
+		if resp.IsSuccess() {
+			services[idx].Message = "ok"
+		} else {
+			services[idx].Message = resp.Status()
+		}
+	}
+	return services
+}
+
 const layoutTemplate = `
 {{define "nav"}}<nav><a href="/">总览</a><a href="/projects">项目</a><a href="/monitor-rules">规则</a><a href="/articles">文章</a><a href="/reports">报告</a><a href="/system">系统</a><a href="/logout">退出</a></nav>{{end}}
 `
@@ -968,5 +1010,5 @@ const reportTemplate = `
 `
 
 const systemTemplate = `
-{{define "system"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}` + `</style></head><body><header><h1>系统页</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><h2>手动任务</h2><form method="post"><input type="hidden" name="form_type" value="crawl"><select name="source_type"><option value="">全部来源</option><option value="flash">flash</option><option value="headline">headline</option></select><button type="submit">立即抓取</button></form><form method="post"><input type="hidden" name="form_type" value="analysis"><button type="submit">刷新分析快照</button></form></section><section><h2>提交反馈</h2><form method="post"><input type="hidden" name="form_type" value="feedback"><input name="title" placeholder="标题"><textarea name="content" placeholder="问题描述或需求"></textarea><button type="submit">提交</button></form></section><section><h2>公告</h2><table><tr><th>标题</th><th>时间</th></tr>{{range .Notices}}<tr><td>{{.Title}}</td><td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td></tr>{{end}}</table></section><section><h2>任务记录</h2><table><tr><th>任务</th><th>状态</th><th>说明</th></tr>{{range .TaskRuns}}<tr><td>{{.TaskName}}</td><td>{{.Status}}</td><td>{{.Message}}</td></tr>{{end}}</table></section></main></body></html>{{end}}
+{{define "system"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}.ok{color:#214e34;font-weight:700}.bad{color:#8f2d2d;font-weight:700}` + `</style></head><body><header><h1>系统页</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><h2>服务状态</h2><table><tr><th>服务</th><th>状态</th><th>健康检查</th></tr>{{range .Services}}<tr><td>{{.Name}}</td><td>{{if .Healthy}}<span class="ok">正常</span>{{else}}<span class="bad">异常</span>{{end}}</td><td>{{.Message}}</td></tr>{{else}}<tr><td colspan="3">暂无服务状态</td></tr>{{end}}</table></section><section><h2>手动任务</h2><form method="post"><input type="hidden" name="form_type" value="crawl"><select name="source_type"><option value="">全部来源</option><option value="flash">flash</option><option value="headline">headline</option></select><button type="submit">立即抓取</button></form><form method="post"><input type="hidden" name="form_type" value="analysis"><button type="submit">刷新分析快照</button></form></section><section><h2>提交反馈</h2><form method="post"><input type="hidden" name="form_type" value="feedback"><input name="title" placeholder="标题"><textarea name="content" placeholder="问题描述或需求"></textarea><button type="submit">提交</button></form></section><section><h2>最新抓取记录</h2><table><tr><th>来源</th><th>状态</th><th>抓取数</th><th>入库数</th><th>开始时间</th></tr>{{range .CrawlRuns}}<tr><td>{{.SourceType}}</td><td>{{.Status}}</td><td>{{.FetchedCount}}</td><td>{{.InsertedCount}}</td><td>{{.StartedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="5">暂无抓取记录</td></tr>{{end}}</table></section><section><h2>公告</h2><table><tr><th>标题</th><th>时间</th></tr>{{range .Notices}}<tr><td>{{.Title}}</td><td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="2">暂无公告</td></tr>{{end}}</table></section><section><h2>任务记录</h2><table><tr><th>任务</th><th>状态</th><th>说明</th></tr>{{range .TaskRuns}}<tr><td>{{.TaskName}}</td><td>{{.Status}}</td><td>{{.Message}}</td></tr>{{else}}<tr><td colspan="3">暂无任务记录</td></tr>{{end}}</table></section></main></body></html>{{end}}
 `
