@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-resty/resty/v2"
@@ -38,12 +39,24 @@ type Store interface {
 	SearchItemsFTS(rctx context.Context, filter model.ArticleFilter) (model.SearchResult, error)
 	MarkItemRead(rctx context.Context, userID, itemID int64) error
 	ToggleFavorite(rctx context.Context, userID, itemID int64) (bool, error)
+	RecordItemShare(rctx context.Context, share model.ShareRecord) error
 	ListReports(rctx context.Context, projectID int64) ([]model.Report, error)
 	GetReport(rctx context.Context, id int64) (model.Report, error)
 	CreateReport(rctx context.Context, report model.Report) (model.Report, error)
 	ListNotices(rctx context.Context) ([]model.SystemNotice, error)
 	CreateFeedback(rctx context.Context, feedback model.Feedback) (model.Feedback, error)
 	ListTaskRuns(rctx context.Context, limit int) ([]model.TaskRun, error)
+	GetUserPreference(rctx context.Context, userID int64) (model.UserPreference, error)
+	UpsertUserPreference(rctx context.Context, pref model.UserPreference) (model.UserPreference, error)
+	GetPopupState(rctx context.Context, userID int64, key string) (model.PopupState, error)
+	UpsertPopupState(rctx context.Context, state model.PopupState) (model.PopupState, error)
+	GetMailConfig(rctx context.Context) (model.MailConfig, error)
+	UpsertMailConfig(rctx context.Context, cfg model.MailConfig) (model.MailConfig, error)
+	GetWarningSetting(rctx context.Context, projectID int64) (model.WarningSetting, error)
+	UpsertWarningSetting(rctx context.Context, setting model.WarningSetting) (model.WarningSetting, error)
+	SearchItemsAdvanced(rctx context.Context, filter model.ArticleFilter) (model.SearchResult, error)
+	BuildSearchFacets(rctx context.Context, filter model.ArticleFilter) (model.SearchFacets, error)
+	ListSearchOptions(rctx context.Context) (model.SearchOptions, error)
 }
 
 type Service struct {
@@ -94,7 +107,13 @@ func (s *Service) Routes(r chi.Router) {
 	r.Get("/api/v1/articles/{id}/related", s.handleGetRelatedArticles)
 	r.Post("/api/v1/articles/{id}/read", s.handleMarkArticleRead)
 	r.Post("/api/v1/articles/{id}/favorite", s.handleToggleFavorite)
+	r.Post("/api/v1/articles/{id}/share", s.handleShareArticle)
 	r.Get("/api/v1/search/articles", s.handleSearchArticles)
+	r.Get("/api/v1/search/full", s.handleSearchFull)
+	r.Get("/api/v1/search/timely", s.handleSearchTimely)
+	r.Get("/api/v1/search/full/facets", s.handleSearchFacets)
+	r.Get("/api/v1/search/options", s.handleSearchOptions)
+	r.Get("/api/v1/search/options/{kind}", s.handleSearchOptionKind)
 
 	r.Get("/api/v1/reports", s.handleListReports)
 	r.Post("/api/v1/reports", s.handleCreateReport)
@@ -104,6 +123,14 @@ func (s *Service) Routes(r chi.Router) {
 	r.Get("/api/v1/system/notices", s.handleListNotices)
 	r.Post("/api/v1/system/feedback", s.handleCreateFeedback)
 	r.Get("/api/v1/system/task-runs", s.handleListTaskRuns)
+	r.Get("/api/v1/system/popup", s.handleGetPopupState)
+	r.Put("/api/v1/system/popup", s.handleUpdatePopupState)
+	r.Get("/api/v1/system/preferences", s.handleGetPreferences)
+	r.Put("/api/v1/system/preferences", s.handleUpdatePreferences)
+	r.Get("/api/v1/system/mail-config", s.handleGetMailConfig)
+	r.Put("/api/v1/system/mail-config", s.handleUpdateMailConfig)
+	r.Get("/api/v1/system/warning-settings/{project_id}", s.handleGetWarningSetting)
+	r.Put("/api/v1/system/warning-settings/{project_id}", s.handleUpdateWarningSetting)
 }
 
 func (s *Service) handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -396,6 +423,33 @@ func (s *Service) handleToggleFavorite(w http.ResponseWriter, r *http.Request) {
 	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]bool{"favorited": favorited})
 }
 
+func (s *Service) handleShareArticle(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	userID := filterUserID(r)
+	if userID <= 0 {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "user_id required", nil)
+		return
+	}
+	var req struct {
+		Channel string `json:"channel"`
+	}
+	if r.ContentLength > 0 && !decodeJSON(w, r, &req) {
+		return
+	}
+	if err := s.store.RecordItemShare(r.Context(), model.ShareRecord{
+		UserID:  userID,
+		ItemID:  id,
+		Channel: nonEmpty(req.Channel, "link"),
+	}); err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]any{"shared": true, "channel": nonEmpty(req.Channel, "link")})
+}
+
 func (s *Service) handleSearchArticles(w http.ResponseWriter, r *http.Request) {
 	filter := articleFilterFromRequest(r)
 	filter.Keyword = r.URL.Query().Get("q")
@@ -405,6 +459,73 @@ func (s *Service) handleSearchArticles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleSearchFull(w http.ResponseWriter, r *http.Request) {
+	filter := articleFilterFromRequest(r)
+	filter.Keyword = nonEmpty(strings.TrimSpace(r.URL.Query().Get("q")), filter.Keyword)
+	filter.Mode = "full"
+	filter.Sort = nonEmpty(strings.TrimSpace(r.URL.Query().Get("sort")), "captured_at_desc")
+	result, err := s.store.SearchItemsAdvanced(r.Context(), filter)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleSearchTimely(w http.ResponseWriter, r *http.Request) {
+	filter := articleFilterFromRequest(r)
+	filter.Keyword = nonEmpty(strings.TrimSpace(r.URL.Query().Get("q")), filter.Keyword)
+	filter.Mode = "timely"
+	filter.Sort = nonEmpty(strings.TrimSpace(r.URL.Query().Get("sort")), "captured_at_desc")
+	if filter.Start == "" {
+		filter.Start = time.Now().UTC().Add(-72 * time.Hour).Format("2006-01-02")
+	}
+	result, err := s.store.SearchItemsAdvanced(r.Context(), filter)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleSearchFacets(w http.ResponseWriter, r *http.Request) {
+	filter := articleFilterFromRequest(r)
+	filter.Keyword = nonEmpty(strings.TrimSpace(r.URL.Query().Get("q")), filter.Keyword)
+	facets, err := s.store.BuildSearchFacets(r.Context(), filter)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", facets)
+}
+
+func (s *Service) handleSearchOptions(w http.ResponseWriter, r *http.Request) {
+	options, err := s.store.ListSearchOptions(r.Context())
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", options)
+}
+
+func (s *Service) handleSearchOptionKind(w http.ResponseWriter, r *http.Request) {
+	options, err := s.store.ListSearchOptions(r.Context())
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	switch strings.TrimSpace(chi.URLParam(r, "kind")) {
+	case "industry":
+		apiutil.WriteJSON(w, http.StatusOK, "ok", options.Industries)
+	case "province":
+		apiutil.WriteJSON(w, http.StatusOK, "ok", options.Provinces)
+	case "city":
+		apiutil.WriteJSON(w, http.StatusOK, "ok", options.Cities)
+	default:
+		apiutil.WriteJSON(w, http.StatusBadRequest, "unsupported option kind", nil)
+	}
 }
 
 func (s *Service) handleListReports(w http.ResponseWriter, r *http.Request) {
@@ -524,6 +645,126 @@ func (s *Service) handleListTaskRuns(w http.ResponseWriter, r *http.Request) {
 	apiutil.WriteJSON(w, http.StatusOK, "ok", runs)
 }
 
+func (s *Service) handleGetPopupState(w http.ResponseWriter, r *http.Request) {
+	userID := filterUserID(r)
+	if userID <= 0 {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "user_id required", nil)
+		return
+	}
+	key := nonEmpty(strings.TrimSpace(r.URL.Query().Get("key")), "default")
+	state, err := s.store.GetPopupState(r.Context(), userID, key)
+	if err != nil {
+		state = model.PopupState{UserID: userID, Key: key}
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", state)
+}
+
+func (s *Service) handleUpdatePopupState(w http.ResponseWriter, r *http.Request) {
+	var state model.PopupState
+	if !decodeJSON(w, r, &state) {
+		return
+	}
+	if state.UserID <= 0 {
+		state.UserID = filterUserID(r)
+	}
+	if state.UserID <= 0 {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "user_id required", nil)
+		return
+	}
+	updated, err := s.store.UpsertPopupState(r.Context(), state)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", updated)
+}
+
+func (s *Service) handleGetPreferences(w http.ResponseWriter, r *http.Request) {
+	userID := filterUserID(r)
+	if userID <= 0 {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "user_id required", nil)
+		return
+	}
+	pref, err := s.store.GetUserPreference(r.Context(), userID)
+	if err != nil {
+		pref = model.UserPreference{UserID: userID, Language: "zh-CN", Theme: "light", DefaultSearchMode: "default", ArticlePageSize: 20, EmailNotifications: true}
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", pref)
+}
+
+func (s *Service) handleUpdatePreferences(w http.ResponseWriter, r *http.Request) {
+	var pref model.UserPreference
+	if !decodeJSON(w, r, &pref) {
+		return
+	}
+	if pref.UserID <= 0 {
+		pref.UserID = filterUserID(r)
+	}
+	if pref.UserID <= 0 {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "user_id required", nil)
+		return
+	}
+	updated, err := s.store.UpsertUserPreference(r.Context(), pref)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", updated)
+}
+
+func (s *Service) handleGetMailConfig(w http.ResponseWriter, r *http.Request) {
+	cfg, err := s.store.GetMailConfig(r.Context())
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", cfg)
+}
+
+func (s *Service) handleUpdateMailConfig(w http.ResponseWriter, r *http.Request) {
+	var cfg model.MailConfig
+	if !decodeJSON(w, r, &cfg) {
+		return
+	}
+	updated, err := s.store.UpsertMailConfig(r.Context(), cfg)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", updated)
+}
+
+func (s *Service) handleGetWarningSetting(w http.ResponseWriter, r *http.Request) {
+	projectID, ok := parseID(w, r, "project_id")
+	if !ok {
+		return
+	}
+	setting, err := s.store.GetWarningSetting(r.Context(), projectID)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", setting)
+}
+
+func (s *Service) handleUpdateWarningSetting(w http.ResponseWriter, r *http.Request) {
+	projectID, ok := parseID(w, r, "project_id")
+	if !ok {
+		return
+	}
+	var setting model.WarningSetting
+	if !decodeJSON(w, r, &setting) {
+		return
+	}
+	setting.ProjectID = projectID
+	updated, err := s.store.UpsertWarningSetting(r.Context(), setting)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", updated)
+}
+
 func articleFilterFromRequest(r *http.Request) model.ArticleFilter {
 	projectID, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("project_id")), 10, 64)
 	return model.ArticleFilter{
@@ -535,6 +776,12 @@ func articleFilterFromRequest(r *http.Request) model.ArticleFilter {
 		UserID:     filterUserID(r),
 		Start:      strings.TrimSpace(r.URL.Query().Get("start")),
 		End:        strings.TrimSpace(r.URL.Query().Get("end")),
+		Industry:   strings.TrimSpace(r.URL.Query().Get("industry")),
+		Province:   strings.TrimSpace(r.URL.Query().Get("province")),
+		City:       strings.TrimSpace(r.URL.Query().Get("city")),
+		Sort:       strings.TrimSpace(r.URL.Query().Get("sort")),
+		Read:       strings.TrimSpace(r.URL.Query().Get("read")),
+		Favorite:   strings.TrimSpace(r.URL.Query().Get("favorite")),
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -21,6 +22,12 @@ type Store interface {
 	ListTrendPoints(ctx context.Context) ([]model.TrendPoint, error)
 	ListSourceBreakdowns(ctx context.Context) ([]model.SourceBreakdown, error)
 	ListKeywordHotspots(ctx context.Context) ([]model.KeywordHotspot, error)
+	BuildEmotionAnalysis(ctx context.Context, projectID int64) (model.EmotionAnalysis, error)
+	BuildEventOverview(ctx context.Context, projectID int64) ([]model.EventOverview, error)
+	BuildPropagationAnalysis(ctx context.Context, projectID int64) (model.PropagationAnalysis, error)
+	BuildThemeInsights(ctx context.Context, projectID int64) ([]model.ThemeInsight, error)
+	BuildPublicOpinionEvents(ctx context.Context, projectID int64) ([]model.PublicOpinionEvent, error)
+	BuildPublicOpinionReports(ctx context.Context, projectID int64) ([]model.PublicOpinionReport, error)
 	RecordTaskRun(ctx context.Context, name, status, message string, startedAt time.Time, finishedAt *time.Time) error
 }
 
@@ -40,6 +47,12 @@ func (s *Service) Router() http.Handler {
 	r.Get("/api/v1/analysis/trends", s.handleTrends)
 	r.Get("/api/v1/analysis/sources", s.handleSources)
 	r.Get("/api/v1/analysis/keywords", s.handleKeywords)
+	r.Get("/api/v1/analysis/emotions", s.handleEmotions)
+	r.Get("/api/v1/analysis/event-overview", s.handleEventOverview)
+	r.Get("/api/v1/analysis/propagation", s.handlePropagation)
+	r.Get("/api/v1/analysis/themes", s.handleThemes)
+	r.Get("/api/v1/public-opinion/events", s.handlePublicOpinionEvents)
+	r.Get("/api/v1/public-opinion/reports", s.handlePublicOpinionReports)
 	r.Post("/api/v1/admin/tasks/analysis/refresh", s.handleRefresh)
 	return r
 }
@@ -91,6 +104,60 @@ func (s *Service) handleKeywords(w http.ResponseWriter, r *http.Request) {
 	apiutil.WriteJSON(w, http.StatusOK, "ok", data)
 }
 
+func (s *Service) handleEmotions(w http.ResponseWriter, r *http.Request) {
+	data, err := s.store.BuildEmotionAnalysis(r.Context(), queryProjectID(r))
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", data)
+}
+
+func (s *Service) handleEventOverview(w http.ResponseWriter, r *http.Request) {
+	data, err := s.store.BuildEventOverview(r.Context(), queryProjectID(r))
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", data)
+}
+
+func (s *Service) handlePropagation(w http.ResponseWriter, r *http.Request) {
+	data, err := s.store.BuildPropagationAnalysis(r.Context(), queryProjectID(r))
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", data)
+}
+
+func (s *Service) handleThemes(w http.ResponseWriter, r *http.Request) {
+	data, err := s.store.BuildThemeInsights(r.Context(), queryProjectID(r))
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", data)
+}
+
+func (s *Service) handlePublicOpinionEvents(w http.ResponseWriter, r *http.Request) {
+	data, err := s.store.BuildPublicOpinionEvents(r.Context(), queryProjectID(r))
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", data)
+}
+
+func (s *Service) handlePublicOpinionReports(w http.ResponseWriter, r *http.Request) {
+	data, err := s.store.BuildPublicOpinionReports(r.Context(), queryProjectID(r))
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", data)
+}
+
 func (s *Service) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("X-Service-Token") != s.cfg.ServiceToken {
 		apiutil.WriteJSON(w, http.StatusUnauthorized, "unauthorized", nil)
@@ -107,4 +174,13 @@ func (s *Service) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	finishedAt := time.Now().UTC()
 	_ = s.store.RecordTaskRun(r.Context(), "analysis:refresh", "success", "analysis refreshed", startedAt, &finishedAt)
 	apiutil.WriteJSON(w, http.StatusOK, "ok", data)
+}
+
+func queryProjectID(r *http.Request) int64 {
+	value := r.URL.Query().Get("project_id")
+	if value == "" {
+		return 0
+	}
+	projectID, _ := strconv.ParseInt(value, 10, 64)
+	return projectID
 }

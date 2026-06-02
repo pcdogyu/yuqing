@@ -28,6 +28,15 @@ func TestArticleFilterFromRequest(t *testing.T) {
 	if filter.Start != "2026-05-01" || filter.End != "2026-05-31" {
 		t.Fatalf("unexpected range filter: %+v", filter)
 	}
+
+	req = httptest.NewRequest(http.MethodGet, "/?industry=finance&province=guangdong&city=shenzhen&sort=captured_at_desc&read=read&favorite=favorited", nil)
+	filter = articleFilterFromRequest(req)
+	if filter.Industry != "finance" || filter.Province != "guangdong" || filter.City != "shenzhen" {
+		t.Fatalf("unexpected advanced filters: %+v", filter)
+	}
+	if filter.Sort != "captured_at_desc" || filter.Read != "read" || filter.Favorite != "favorited" {
+		t.Fatalf("unexpected sort/state filters: %+v", filter)
+	}
 }
 
 func TestDecodeJSON(t *testing.T) {

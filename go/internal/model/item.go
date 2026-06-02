@@ -65,4 +65,31 @@ type ArticleFilter struct {
 	UserID     int64  `json:"user_id"`
 	Start      string `json:"start"`
 	End        string `json:"end"`
+	Industry   string `json:"industry"`
+	Province   string `json:"province"`
+	City       string `json:"city"`
+	Mode       string `json:"mode"`
+	Sort       string `json:"sort"`
+	Read       string `json:"read"`
+	Favorite   string `json:"favorite"`
+	Limit      int    `json:"limit"`
+}
+
+type SearchFacetBucket struct {
+	Value string `json:"value"`
+	Count int    `json:"count"`
+}
+
+type SearchFacets struct {
+	Sources    []SearchFacetBucket `json:"sources"`
+	Projects   []SearchFacetBucket `json:"projects"`
+	Industries []SearchFacetBucket `json:"industries"`
+	Provinces  []SearchFacetBucket `json:"provinces"`
+	Cities     []SearchFacetBucket `json:"cities"`
+}
+
+type SearchOptions struct {
+	Industries []string `json:"industries"`
+	Provinces  []string `json:"provinces"`
+	Cities     []string `json:"cities"`
 }

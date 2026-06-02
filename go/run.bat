@@ -10,8 +10,13 @@ set "YUQING_RUN_VERSION=local"
 
 cd /d "%REPO_ROOT%"
 echo [1/5] Pull latest code from origin...
-git pull --ff-only
-if errorlevel 1 goto :fail
+git diff --quiet -- go/data/yuqing.db go/data/yuqing.db-shm go/data/yuqing.db-wal >nul 2>nul
+if errorlevel 1 (
+    echo Detected local database changes under go/data. Skipping git pull to preserve local data.
+) else (
+    git pull --ff-only
+    if errorlevel 1 goto :fail
+)
 
 cd /d "%GO_DIR%"
 echo [2/5] Resolve build metadata...

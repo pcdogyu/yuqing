@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,8 +25,11 @@ type Store interface {
 	GetSession(context.Context, string) (model.Session, error)
 	DeleteSession(context.Context, string) error
 	GetUserByID(context.Context, int64) (model.User, error)
+	UpdateUserProfile(context.Context, int64, model.UserProfileUpdate) (model.User, error)
 	CreateAPIToken(context.Context, int64, string) (model.APIToken, error)
 	ResolveAPIToken(context.Context, string) (model.User, error)
+	CreateCaptcha(context.Context, time.Duration) (model.Captcha, error)
+	VerifyCaptcha(context.Context, string, string) error
 }
 
 type Service struct {
@@ -56,9 +60,14 @@ func (s *Service) Routes(r chi.Router) {
 	})
 	r.Post("/api/v1/auth/login", s.handleLogin)
 	r.Post("/api/v1/auth/logout", s.handleLogout)
+	r.Get("/api/v1/auth/captcha", s.handleCaptcha)
+	r.Post("/api/v1/auth/captcha/verify", s.handleVerifyCaptcha)
 	r.Get("/api/v1/auth/me", s.handleMe)
 	r.Post("/api/v1/auth/tokens", s.handleCreateToken)
 	r.Get("/api/v1/auth/session", s.handleSession)
+	r.Get("/api/v1/users/me", s.handleGetCurrentUser)
+	r.Get("/api/v1/users/{id}", s.handleGetUser)
+	r.Put("/api/v1/users/{id}", s.handleUpdateUser)
 }
 
 func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -103,6 +112,33 @@ func (s *Service) handleLogout(w http.ResponseWriter, r *http.Request) {
 	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]bool{"logged_out": true})
 }
 
+func (s *Service) handleCaptcha(w http.ResponseWriter, r *http.Request) {
+	captcha, err := s.store.CreateCaptcha(r.Context(), 10*time.Minute)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	captcha.ImageSVG = renderCaptchaSVG(captcha.Code)
+	captcha.Code = ""
+	apiutil.WriteJSON(w, http.StatusOK, "ok", captcha)
+}
+
+func (s *Service) handleVerifyCaptcha(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID   string `json:"id"`
+		Code string `json:"code"`
+	}
+	if err := jsonNewDecoder(r).Decode(&req); err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid body", nil)
+		return
+	}
+	if err := s.store.VerifyCaptcha(r.Context(), req.ID, req.Code); err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid captcha", nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]bool{"valid": true})
+}
+
 func (s *Service) handleMe(w http.ResponseWriter, r *http.Request) {
 	user, err := s.userFromRequest(r)
 	if err != nil {
@@ -110,6 +146,61 @@ func (s *Service) handleMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	apiutil.WriteJSON(w, http.StatusOK, "ok", user)
+}
+
+func (s *Service) handleGetCurrentUser(w http.ResponseWriter, r *http.Request) {
+	s.handleMe(w, r)
+}
+
+func (s *Service) handleGetUser(w http.ResponseWriter, r *http.Request) {
+	current, err := s.userFromRequest(r)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusUnauthorized, "unauthorized", nil)
+		return
+	}
+	targetID, ok := parseID(r)
+	if !ok {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid id", nil)
+		return
+	}
+	if current.Role != "admin" && current.ID != targetID {
+		apiutil.WriteJSON(w, http.StatusForbidden, "forbidden", nil)
+		return
+	}
+	user, err := s.store.GetUserByID(r.Context(), targetID)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusNotFound, "not found", nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", user)
+}
+
+func (s *Service) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
+	current, err := s.userFromRequest(r)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusUnauthorized, "unauthorized", nil)
+		return
+	}
+	targetID, ok := parseID(r)
+	if !ok {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid id", nil)
+		return
+	}
+	if current.Role != "admin" && current.ID != targetID {
+		apiutil.WriteJSON(w, http.StatusForbidden, "forbidden", nil)
+		return
+	}
+	var req model.UserProfileUpdate
+	if err := jsonNewDecoder(r).Decode(&req); err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid body", nil)
+		return
+	}
+	updated, err := s.store.UpdateUserProfile(r.Context(), targetID, req)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", updated)
 }
 
 func (s *Service) handleCreateToken(w http.ResponseWriter, r *http.Request) {
@@ -170,4 +261,20 @@ func jsonNewDecoder(r *http.Request) *json.Decoder {
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	return decoder
+}
+
+func parseID(r *http.Request) (int64, bool) {
+	id := strings.TrimSpace(chi.URLParam(r, "id"))
+	if id == "" {
+		return 0, false
+	}
+	parsed, err := strconv.ParseInt(id, 10, 64)
+	if err != nil || parsed <= 0 {
+		return 0, false
+	}
+	return parsed, true
+}
+
+func renderCaptchaSVG(code string) string {
+	return `<svg xmlns="http://www.w3.org/2000/svg" width="160" height="48" viewBox="0 0 160 48"><rect width="160" height="48" rx="8" fill="#f4efe4"/><text x="80" y="31" text-anchor="middle" font-family="monospace" font-size="24" fill="#2f4858">` + code + `</text></svg>`
 }

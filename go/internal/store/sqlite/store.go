@@ -127,6 +127,13 @@ CREATE TABLE IF NOT EXISTS api_tokens (
 	last_used_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS captchas (
+	id TEXT PRIMARY KEY,
+	code TEXT NOT NULL,
+	expires_at TEXT NOT NULL,
+	created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS project_groups (
 	id INTEGER PRIMARY KEY,
 	name TEXT NOT NULL,
@@ -268,6 +275,55 @@ CREATE TABLE IF NOT EXISTS feedback (
 	created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS user_preferences (
+	user_id INTEGER PRIMARY KEY,
+	language TEXT NOT NULL DEFAULT 'zh-CN',
+	theme TEXT NOT NULL DEFAULT 'light',
+	default_search_mode TEXT NOT NULL DEFAULT 'default',
+	article_page_size INTEGER NOT NULL DEFAULT 20,
+	email_notifications INTEGER NOT NULL DEFAULT 1,
+	updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS popup_states (
+	user_id INTEGER NOT NULL,
+	popup_key TEXT NOT NULL,
+	dismissed INTEGER NOT NULL DEFAULT 0,
+	dismissed_at TEXT,
+	updated_at TEXT NOT NULL,
+	PRIMARY KEY (user_id, popup_key)
+);
+
+CREATE TABLE IF NOT EXISTS mail_configs (
+	id INTEGER PRIMARY KEY CHECK (id = 1),
+	enabled INTEGER NOT NULL DEFAULT 0,
+	smtp_host TEXT NOT NULL DEFAULT '',
+	smtp_port INTEGER NOT NULL DEFAULT 25,
+	username TEXT NOT NULL DEFAULT '',
+	password TEXT NOT NULL DEFAULT '',
+	sender_name TEXT NOT NULL DEFAULT '',
+	sender_email TEXT NOT NULL DEFAULT '',
+	updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS warning_settings (
+	project_id INTEGER PRIMARY KEY,
+	enabled INTEGER NOT NULL DEFAULT 1,
+	channels TEXT NOT NULL DEFAULT '',
+	threshold INTEGER NOT NULL DEFAULT 80,
+	recipients TEXT NOT NULL DEFAULT '',
+	description TEXT NOT NULL DEFAULT '',
+	updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS item_shares (
+	user_id INTEGER NOT NULL,
+	item_id INTEGER NOT NULL,
+	channel TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	PRIMARY KEY (user_id, item_id, channel)
+);
+
 CREATE TABLE IF NOT EXISTS task_runs (
 	id INTEGER PRIMARY KEY,
 	task_name TEXT NOT NULL,
@@ -284,10 +340,13 @@ CREATE INDEX IF NOT EXISTS idx_projects_group_id ON projects(group_id);
 CREATE INDEX IF NOT EXISTS idx_monitor_rules_project_id ON monitor_rules(project_id);
 CREATE INDEX IF NOT EXISTS idx_reports_project_id ON reports(project_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_captchas_expires_at ON captchas(expires_at);
 CREATE INDEX IF NOT EXISTS idx_item_relations_project_id ON item_relations(project_id, item_id DESC);
 CREATE INDEX IF NOT EXISTS idx_trend_points_scope ON trend_points(scope, scope_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_keyword_hotspots_scope ON keyword_hotspots(scope, scope_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_source_breakdowns_scope ON source_breakdowns(scope, scope_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_popup_states_user_id ON popup_states(user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_item_shares_item_id ON item_shares(item_id, created_at DESC);
 `
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return err
@@ -756,13 +815,6 @@ func mustParseRFC3339(value string) time.Time {
 		return time.Time{}
 	}
 	return parsed
-}
-
-func boolToInt(flag bool) int {
-	if flag {
-		return 1
-	}
-	return 0
 }
 
 func nonEmpty(values ...string) string {

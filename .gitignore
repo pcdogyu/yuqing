@@ -33,3 +33,4 @@ build/
 ### Go crawler ###
 go/data/
 go/bin/
+go/

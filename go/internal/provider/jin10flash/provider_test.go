@@ -44,7 +44,7 @@ func TestParseHTMLFallsBackToLinks(t *testing.T) {
 func TestParseDetailHTML(t *testing.T) {
 	html := mustReadFixture(t, "flash_detail.html")
 
-	title, content, publishTime := parseDetailHTML(html)
+	title, content, publishTime, sourceURL, fromText := parseDetailHTML(html)
 
 	if title == "" {
 		t.Fatal("expected title from detail page")
@@ -54,6 +54,15 @@ func TestParseDetailHTML(t *testing.T) {
 	}
 	if publishTime != "2026-06-01 14:21:41" {
 		t.Fatalf("unexpected publish time: %q", publishTime)
+	}
+	if sourceURL != "https://example.com/source" {
+		t.Fatalf("unexpected source url: %q", sourceURL)
+	}
+	if fromText != "来自：新华社" {
+		t.Fatalf("unexpected from text: %q", fromText)
+	}
+	if content != "金十数据6月1日讯，正文内容在这里。（新华社）" {
+		t.Fatalf("unexpected content: %q", content)
 	}
 }
 

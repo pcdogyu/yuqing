@@ -13,6 +13,11 @@ type User struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
+type UserProfileUpdate struct {
+	DisplayName string `json:"display_name"`
+	Email       string `json:"email"`
+}
+
 type Session struct {
 	Token     string    `json:"token"`
 	UserID    int64     `json:"user_id"`
@@ -109,6 +114,60 @@ type Feedback struct {
 	UserID    int64     `json:"user_id"`
 	Title     string    `json:"title"`
 	Content   string    `json:"content"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type Captcha struct {
+	ID        string    `json:"id"`
+	Code      string    `json:"code,omitempty"`
+	ImageSVG  string    `json:"image_svg,omitempty"`
+	ExpiresAt time.Time `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type UserPreference struct {
+	UserID             int64     `json:"user_id"`
+	Language           string    `json:"language"`
+	Theme              string    `json:"theme"`
+	DefaultSearchMode  string    `json:"default_search_mode"`
+	ArticlePageSize    int       `json:"article_page_size"`
+	EmailNotifications bool      `json:"email_notifications"`
+	UpdatedAt          time.Time `json:"updated_at"`
+}
+
+type PopupState struct {
+	UserID      int64      `json:"user_id"`
+	Key         string     `json:"key"`
+	Dismissed   bool       `json:"dismissed"`
+	DismissedAt *time.Time `json:"dismissed_at,omitempty"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+}
+
+type MailConfig struct {
+	Enabled     bool      `json:"enabled"`
+	SMTPHost    string    `json:"smtp_host"`
+	SMTPPort    int       `json:"smtp_port"`
+	Username    string    `json:"username"`
+	Password    string    `json:"password,omitempty"`
+	SenderName  string    `json:"sender_name"`
+	SenderEmail string    `json:"sender_email"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type WarningSetting struct {
+	ProjectID   int64     `json:"project_id"`
+	Enabled     bool      `json:"enabled"`
+	Channels    string    `json:"channels"`
+	Threshold   int       `json:"threshold"`
+	Recipients  string    `json:"recipients"`
+	Description string    `json:"description"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type ShareRecord struct {
+	UserID    int64     `json:"user_id"`
+	ItemID    int64     `json:"item_id"`
+	Channel   string    `json:"channel"`
 	CreatedAt time.Time `json:"created_at"`
 }
 

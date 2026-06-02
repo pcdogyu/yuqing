@@ -156,15 +156,25 @@ func (p *Provider) enrichItems(ctx context.Context, items []model.Item) []model.
 		if err != nil || resp.IsError() {
 			continue
 		}
-		title, content, publishTime := parseDetailHTML(resp.String())
+		title, content, publishTime, sourceURL, fromText := parseDetailHTML(resp.String())
 		if strings.TrimSpace(title) != "" {
 			items[idx].Title = title
 		}
 		if strings.TrimSpace(content) != "" {
 			items[idx].Content = content
+			if strings.TrimSpace(items[idx].Summary) == "" {
+				items[idx].Summary = content
+			}
 		}
 		if strings.TrimSpace(publishTime) != "" {
 			items[idx].PublishTime = publishTime
+		}
+		if strings.TrimSpace(sourceURL) != "" {
+			items[idx].SourceURL = sourceURL
+			items[idx].ExternalSourceHost = hostOf(sourceURL)
+		}
+		if strings.TrimSpace(fromText) != "" {
+			items[idx].FromText = fromText
 		}
 	}
 	return items
@@ -177,18 +187,40 @@ func shouldFetchDetail(item model.Item) bool {
 	return strings.Contains(item.DetailURL, "flash.jin10.com/detail/")
 }
 
-func parseDetailHTML(html string) (title string, content string, publishTime string) {
+func parseDetailHTML(html string) (title string, content string, publishTime string, sourceURL string, fromText string) {
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
 	if err != nil {
-		return "", "", ""
+		return "", "", "", "", ""
 	}
 
-	title = cleanText(doc.Find(".content-title div").First().Text())
+	title = cleanText(doc.Find(".content-title .flash-title").First().Text())
+	if title == "" {
+		title = cleanText(doc.Find(".content-title div").First().Text())
+	}
 	if title == "" {
 		title = cleanText(doc.Find("title").First().Text())
 		title = strings.TrimSuffix(title, " - 金十数据")
 	}
-	content = title
+
+	body := doc.Find(".content-title div").Eq(1)
+	content = cleanText(body.Text())
+	if content == "" {
+		content = title
+	}
+
+	if href, ok := body.Find("a[href]").Last().Attr("href"); ok {
+		sourceURL = normalizeDetailURL(href)
+	}
+	if sourceURL != "" {
+		linkText := cleanText(body.Find("a[href]").Last().Text())
+		linkText = strings.Trim(linkText, "()（）")
+		switch {
+		case linkText != "":
+			fromText = "来自：" + linkText
+		case hostOf(sourceURL) != "":
+			fromText = "来自：" + hostOf(sourceURL)
+		}
+	}
 
 	if node := doc.Find(".content-time").First(); node.Length() > 0 {
 		parts := make([]string, 0, 3)
@@ -201,7 +233,18 @@ func parseDetailHTML(html string) (title string, content string, publishTime str
 		publishTime = strings.Join(parts, " ")
 	}
 
-	return strings.TrimSpace(title), strings.TrimSpace(content), strings.TrimSpace(publishTime)
+	return strings.TrimSpace(title), strings.TrimSpace(content), strings.TrimSpace(publishTime), strings.TrimSpace(sourceURL), strings.TrimSpace(fromText)
+}
+
+func hostOf(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return parsed.Host
 }
 
 func dedupe(items []model.Item) []model.Item {

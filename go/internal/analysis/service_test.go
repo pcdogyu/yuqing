@@ -24,6 +24,18 @@ type stubStore struct {
 	sourcesErr     error
 	keywords       []model.KeywordHotspot
 	keywordsErr    error
+	emotions       model.EmotionAnalysis
+	emotionsErr    error
+	events         []model.EventOverview
+	eventsErr      error
+	propagation    model.PropagationAnalysis
+	propagationErr error
+	themes         []model.ThemeInsight
+	themesErr      error
+	opinionEvents  []model.PublicOpinionEvent
+	opinionEvtErr  error
+	opinionReports []model.PublicOpinionReport
+	opinionRptErr  error
 	refresh        model.DashboardSnapshot
 	refreshErr     error
 	recordTaskRuns []string
@@ -55,6 +67,30 @@ func (s *stubStore) ListSourceBreakdowns(context.Context) ([]model.SourceBreakdo
 
 func (s *stubStore) ListKeywordHotspots(context.Context) ([]model.KeywordHotspot, error) {
 	return s.keywords, s.keywordsErr
+}
+
+func (s *stubStore) BuildEmotionAnalysis(context.Context, int64) (model.EmotionAnalysis, error) {
+	return s.emotions, s.emotionsErr
+}
+
+func (s *stubStore) BuildEventOverview(context.Context, int64) ([]model.EventOverview, error) {
+	return s.events, s.eventsErr
+}
+
+func (s *stubStore) BuildPropagationAnalysis(context.Context, int64) (model.PropagationAnalysis, error) {
+	return s.propagation, s.propagationErr
+}
+
+func (s *stubStore) BuildThemeInsights(context.Context, int64) ([]model.ThemeInsight, error) {
+	return s.themes, s.themesErr
+}
+
+func (s *stubStore) BuildPublicOpinionEvents(context.Context, int64) ([]model.PublicOpinionEvent, error) {
+	return s.opinionEvents, s.opinionEvtErr
+}
+
+func (s *stubStore) BuildPublicOpinionReports(context.Context, int64) ([]model.PublicOpinionReport, error) {
+	return s.opinionReports, s.opinionRptErr
 }
 
 func (s *stubStore) RecordTaskRun(_ context.Context, name, status, _ string, _ time.Time, _ *time.Time) error {
