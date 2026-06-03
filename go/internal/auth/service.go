@@ -30,6 +30,14 @@ type Store interface {
 	ResolveAPIToken(context.Context, string) (model.User, error)
 	CreateCaptcha(context.Context, time.Duration) (model.Captcha, error)
 	VerifyCaptcha(context.Context, string, string) error
+	CreateWechatChallenge(context.Context, model.WechatChallenge) (model.WechatChallenge, error)
+	GetWechatChallenge(context.Context, string) (model.WechatChallenge, error)
+	UpdateWechatChallenge(context.Context, model.WechatChallenge) (model.WechatChallenge, error)
+	DeleteWechatChallenge(context.Context, string) error
+	UpsertWechatBinding(context.Context, model.WechatBinding) (model.WechatBinding, error)
+	GetWechatBindingByUserID(context.Context, int64) (model.WechatBinding, error)
+	GetWechatBindingByOpenID(context.Context, string) (model.WechatBinding, error)
+	GetUserByOpenID(context.Context, string) (model.User, error)
 }
 
 type Service struct {
@@ -68,6 +76,16 @@ func (s *Service) Routes(r chi.Router) {
 	r.Get("/api/v1/users/me", s.handleGetCurrentUser)
 	r.Get("/api/v1/users/{id}", s.handleGetUser)
 	r.Put("/api/v1/users/{id}", s.handleUpdateUser)
+	r.Get("/api/v1/wechat/getQrCode", s.handleWechatGetQRCode)
+	r.Get("/api/v1/wechat/getBindQrCode", s.handleWechatGetBindQRCode)
+	r.Get("/api/v1/wechat/checkBind", s.handleWechatCheckBind)
+	r.Get("/api/v1/wechat/wasBind", s.handleWechatWasBind)
+	r.Get("/api/v1/wechat/checkLogin", s.handleWechatCheckLogin)
+	r.Get("/api/v1/wechat/token", s.handleWechatToken)
+	r.Post("/api/v1/wechat/handleSubscribe", s.handleWechatHandleSubscribe)
+	r.Get("/api/v1/wechat/handleUnsubscribe", s.handleWechatHandleUnsubscribe)
+	r.Post("/api/v1/wechat/handleAuthorize", s.handleWechatHandleAuthorize)
+	r.Get("/api/v1/wechat/mock/scan", s.handleWechatMockScan)
 }
 
 func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {

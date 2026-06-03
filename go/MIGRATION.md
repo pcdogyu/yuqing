@@ -17,15 +17,15 @@
 - `TimelySearchController` -> `gateway-web /timelysearch` 兼容跳转 + `gateway-web /articles?mode=timely` + `content-service /api/v1/search/timely`
 - `LSearchController` -> `gateway-web` legacy compatibility endpoints `/industry` `/getevent` `/getProvinceList` `/getArticleCityList`
 - `PlatformController` -> 平台设置/通知/绑定能力已部分落到 `content-service /system-*` 与 `gateway-web /system`
-- `MailController` -> 邮件配置已落到 `content-service /system/mail-config` 与 `gateway-web /system`
-- `PopUpController` -> 弹窗状态已落到 `content-service /system/popup` 与 `gateway-web /system`
+- `MailController` -> `gateway-web /mail/saveMailConfig` `checkMailConfig` `getMailConfig` legacy 兼容 + `content-service /system/mail-config`
+- `PopUpController` -> `gateway-web /popUp/needPopUp` `close` `needContact` `closeContact` legacy 兼容 + `content-service /system/popup`
+- `WechatController` -> `gateway-web /wechat/*` legacy 兼容 + `auth-service /api/v1/wechat/*` 登录、绑定、token、webhook 兼容层
 - `PublicOptionContoller` -> 话题/偏好/系统配置的主要闭环已在 `content-service` 与 `gateway-web /system`
-- `DatafavoriteContoller` -> 已读/收藏/分享的文章态能力已落到 `content-service /articles`，但老接口未完全对齐
+- `DatafavoriteContoller` -> `gateway-web /datamonitor/*` legacy 兼容已补齐已读/收藏/拷贝/选择读取标记，`content-service /articles` 负责落库；`sending` / `updateemtion` / `deletedata` 仍是兼容返回
 - `UserController` -> 用户资料/偏好已落到 `content-service /system/preferences` 与 `gateway-web /system`
 
 ## 暂不承接
 
-- `WechatController`
 - `MobileController`
 - `DisplayBoardController`
 - `VolumeController`

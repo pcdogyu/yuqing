@@ -107,6 +107,8 @@ CREATE TABLE IF NOT EXISTS users (
 	display_name TEXT NOT NULL,
 	email TEXT NOT NULL DEFAULT '',
 	role TEXT NOT NULL DEFAULT 'admin',
+	status INTEGER NOT NULL DEFAULT 1,
+	term_of_validity TEXT NOT NULL DEFAULT '2099-01-19T00:00:00Z',
 	password_hash TEXT NOT NULL,
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL
@@ -289,6 +291,7 @@ CREATE TABLE IF NOT EXISTS popup_states (
 	user_id INTEGER NOT NULL,
 	popup_key TEXT NOT NULL,
 	dismissed INTEGER NOT NULL DEFAULT 0,
+	count INTEGER NOT NULL DEFAULT 0,
 	dismissed_at TEXT,
 	updated_at TEXT NOT NULL,
 	PRIMARY KEY (user_id, popup_key)
@@ -333,6 +336,26 @@ CREATE TABLE IF NOT EXISTS task_runs (
 	finished_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS wechat_challenges (
+	scene_str TEXT PRIMARY KEY,
+	purpose TEXT NOT NULL,
+	user_id INTEGER NOT NULL DEFAULT 0,
+	openid TEXT NOT NULL DEFAULT '',
+	session_token TEXT NOT NULL DEFAULT '',
+	status TEXT NOT NULL DEFAULT 'pending',
+	expires_at TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	completed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS wechat_bindings (
+	user_id INTEGER PRIMARY KEY,
+	openid TEXT NOT NULL DEFAULT '',
+	bound_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_items_source_type_captured_at ON items(source_type, captured_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_items_title ON items(title);
 CREATE INDEX IF NOT EXISTS idx_crawl_runs_source_type_started_at ON crawl_runs(source_type, started_at DESC, id DESC);
@@ -347,11 +370,16 @@ CREATE INDEX IF NOT EXISTS idx_keyword_hotspots_scope ON keyword_hotspots(scope,
 CREATE INDEX IF NOT EXISTS idx_source_breakdowns_scope ON source_breakdowns(scope, scope_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_popup_states_user_id ON popup_states(user_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_item_shares_item_id ON item_shares(item_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_wechat_challenges_expires_at ON wechat_challenges(expires_at);
+CREATE INDEX IF NOT EXISTS idx_wechat_bindings_openid ON wechat_bindings(openid);
 `
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return err
 	}
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE users ADD COLUMN status INTEGER NOT NULL DEFAULT 1`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE users ADD COLUMN term_of_validity TEXT NOT NULL DEFAULT '2099-01-19T00:00:00Z'`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE monitor_rules ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE popup_states ADD COLUMN count INTEGER NOT NULL DEFAULT 0`)
 	return nil
 }
 

@@ -3,14 +3,16 @@ package model
 import "time"
 
 type User struct {
-	ID           int64     `json:"id"`
-	Username     string    `json:"username"`
-	DisplayName  string    `json:"display_name"`
-	Email        string    `json:"email"`
-	Role         string    `json:"role"`
-	PasswordHash string    `json:"-"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID             int64     `json:"id"`
+	Username       string    `json:"username"`
+	DisplayName    string    `json:"display_name"`
+	Email          string    `json:"email"`
+	Role           string    `json:"role"`
+	Status         int       `json:"status"`
+	TermOfValidity time.Time `json:"term_of_validity"`
+	PasswordHash   string    `json:"-"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 type UserProfileUpdate struct {
@@ -23,6 +25,44 @@ type Session struct {
 	UserID    int64     `json:"user_id"`
 	ExpiresAt time.Time `json:"expires_at"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+type WechatQRCode struct {
+	QRCodeURL string `json:"qrcodeUrl"`
+	SceneStr  string `json:"sceneStr"`
+}
+
+type WechatBindQRCode struct {
+	QRCodeURL string `json:"qrcodeUrl"`
+	SceneStr  string `json:"sceneStr"`
+	Name      string `json:"name"`
+}
+
+type WechatEvent struct {
+	SceneStr string `json:"sceneStr"`
+	OpenID   string `json:"openid"`
+	UserID   int64  `json:"user_id"`
+	Nickname string `json:"nickname,omitempty"`
+}
+
+type WechatChallenge struct {
+	SceneStr     string     `json:"scene_str"`
+	Purpose      string     `json:"purpose"`
+	UserID       int64      `json:"user_id"`
+	OpenID       string     `json:"openid"`
+	SessionToken string     `json:"session_token"`
+	Status       string     `json:"status"`
+	ExpiresAt    time.Time  `json:"expires_at"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+	CompletedAt  *time.Time `json:"completed_at,omitempty"`
+}
+
+type WechatBinding struct {
+	UserID    int64     `json:"user_id"`
+	OpenID    string    `json:"openid"`
+	BoundAt   time.Time `json:"bound_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type APIToken struct {
@@ -139,6 +179,7 @@ type PopupState struct {
 	UserID      int64      `json:"user_id"`
 	Key         string     `json:"key"`
 	Dismissed   bool       `json:"dismissed"`
+	Count       int        `json:"count"`
 	DismissedAt *time.Time `json:"dismissed_at,omitempty"`
 	UpdatedAt   time.Time  `json:"updated_at"`
 }

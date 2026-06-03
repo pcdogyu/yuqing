@@ -27,8 +27,8 @@ func (s *Store) EnsureDefaultAdmin(ctx context.Context, username, password strin
 		return err
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err = s.db.ExecContext(ctx, `INSERT INTO users (username, display_name, email, role, password_hash, created_at, updated_at) VALUES (?, ?, '', 'admin', ?, ?, ?)`,
-		username, "管理员", string(hash), now, now,
+	_, err = s.db.ExecContext(ctx, `INSERT INTO users (username, display_name, email, role, status, term_of_validity, password_hash, created_at, updated_at) VALUES (?, ?, '', 'admin', 1, ?, ?, ?, ?)`,
+		username, "管理员", "2099-01-19T00:00:00Z", string(hash), now, now,
 	)
 	return err
 }
@@ -45,12 +45,12 @@ func (s *Store) AuthenticateUser(ctx context.Context, username, password string)
 }
 
 func (s *Store) GetUserByUsername(ctx context.Context, username string) (model.User, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, username, display_name, email, role, password_hash, created_at, updated_at FROM users WHERE username = ?`, username)
+	row := s.db.QueryRowContext(ctx, `SELECT id, username, display_name, email, role, status, term_of_validity, password_hash, created_at, updated_at FROM users WHERE username = ?`, username)
 	return scanUser(row)
 }
 
 func (s *Store) GetUserByID(ctx context.Context, id int64) (model.User, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, username, display_name, email, role, password_hash, created_at, updated_at FROM users WHERE id = ?`, id)
+	row := s.db.QueryRowContext(ctx, `SELECT id, username, display_name, email, role, status, term_of_validity, password_hash, created_at, updated_at FROM users WHERE id = ?`, id)
 	return scanUser(row)
 }
 
@@ -761,6 +761,11 @@ func (s *Store) MarkItemRead(ctx context.Context, userID, itemID int64) error {
 	return err
 }
 
+func (s *Store) DeleteItemRead(ctx context.Context, userID, itemID int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM item_reads WHERE user_id = ? AND item_id = ?`, userID, itemID)
+	return err
+}
+
 func (s *Store) ToggleFavorite(ctx context.Context, userID, itemID int64) (bool, error) {
 	var count int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM favorites WHERE user_id = ? AND item_id = ?`, userID, itemID).Scan(&count); err != nil {
@@ -841,9 +846,13 @@ type scanner interface {
 
 func scanUser(scanner scanner) (model.User, error) {
 	var user model.User
-	var createdAt, updatedAt string
-	if err := scanner.Scan(&user.ID, &user.Username, &user.DisplayName, &user.Email, &user.Role, &user.PasswordHash, &createdAt, &updatedAt); err != nil {
+	var createdAt, updatedAt, termOfValidity string
+	if err := scanner.Scan(&user.ID, &user.Username, &user.DisplayName, &user.Email, &user.Role, &user.Status, &termOfValidity, &user.PasswordHash, &createdAt, &updatedAt); err != nil {
 		return model.User{}, err
+	}
+	user.TermOfValidity = mustParseRFC3339(termOfValidity)
+	if user.TermOfValidity.IsZero() {
+		user.TermOfValidity = time.Date(2099, 1, 19, 0, 0, 0, 0, time.UTC)
 	}
 	user.CreatedAt = mustParseRFC3339(createdAt)
 	user.UpdatedAt = mustParseRFC3339(updatedAt)

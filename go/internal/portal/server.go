@@ -21,6 +21,8 @@ import (
 
 const sessionCookieName = "stonedt_portal_session"
 const legacySearchPageSize = 1000
+const legacyMobilePopupKey = "mobile-popup"
+const legacyContactPopupKeyPrefix = "contact-"
 
 type legacyFacetBucket struct {
 	Key      string `json:"key"`
@@ -209,6 +211,29 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/fullsearch/", s.requireSession(s.handleLegacySearchRedirect("full")))
 	mux.HandleFunc("/timelysearch", s.requireSession(s.handleLegacySearchRedirect("timely")))
 	mux.HandleFunc("/timelysearch/", s.requireSession(s.handleLegacySearchRedirect("timely")))
+	mux.HandleFunc("/mail/saveMailConfig", s.requireSessionJSON(s.handleLegacySaveMailConfig))
+	mux.HandleFunc("/mail/checkMailConfig", s.requireSessionJSON(s.handleLegacyCheckMailConfig))
+	mux.HandleFunc("/mail/getMailConfig", s.requireSessionJSON(s.handleLegacyGetMailConfig))
+	mux.HandleFunc("/wechat/getQrCode", s.handleWechatGetQrCode)
+	mux.HandleFunc("/wechat/getBindQrCode", s.handleWechatGetBindQRCode)
+	mux.HandleFunc("/wechat/checkBind", s.handleWechatCheckBind)
+	mux.HandleFunc("/wechat/wasBind", s.handleWechatWasBind)
+	mux.HandleFunc("/wechat/checkLogin", s.handleWechatCheckLogin)
+	mux.HandleFunc("/wechat/token", s.handleWechatToken)
+	mux.HandleFunc("/wechat/handleSubscribe", s.handleWechatHandleSubscribe)
+	mux.HandleFunc("/wechat/handleUnsubscribe", s.handleWechatHandleUnsubscribe)
+	mux.HandleFunc("/wechat/handleAuthorize", s.handleWechatHandleAuthorize)
+	mux.HandleFunc("/popUp/needPopUp", s.requireSessionBool(s.handleLegacyNeedPopUp))
+	mux.HandleFunc("/popUp/close", s.requireSessionBool(s.handleLegacyClosePopUp))
+	mux.HandleFunc("/popUp/needContact", s.handleLegacyNeedContact)
+	mux.HandleFunc("/popUp/closeContact", s.handleLegacyCloseContact)
+	mux.HandleFunc("/datamonitor/updateemtion", s.requireSessionJSON(s.handleLegacyUpdateEmotion))
+	mux.HandleFunc("/datamonitor/addfavoritedata", s.requireSessionJSON(s.handleLegacyAddFavorite))
+	mux.HandleFunc("/datamonitor/isread", s.requireSessionJSON(s.handleLegacyReadState))
+	mux.HandleFunc("/datamonitor/selectreadsign", s.requireSessionJSON(s.handleLegacySelectReadSign))
+	mux.HandleFunc("/datamonitor/deletedata", s.requireSessionJSON(s.handleLegacyDeleteData))
+	mux.HandleFunc("/datamonitor/copytext", s.requireSessionJSON(s.handleLegacyCopyText))
+	mux.HandleFunc("/datamonitor/sending", s.requireSessionJSON(s.handleLegacySending))
 	mux.HandleFunc("/projects/", s.requireSession(s.handleProjectDetail))
 	mux.HandleFunc("/projects", s.requireSession(s.handleProjects))
 	mux.HandleFunc("/monitor-rules/", s.requireSession(s.handleRuleDetail))
@@ -275,6 +300,22 @@ func (s *Server) requireSessionJSON(next func(http.ResponseWriter, *http.Request
 	}
 }
 
+func (s *Server) requireSessionBool(next func(http.ResponseWriter, *http.Request, any)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		cookie, err := r.Cookie(sessionCookieName)
+		if err != nil || strings.TrimSpace(cookie.Value) == "" {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		user, err := s.getSessionUser(cookie.Value)
+		if err != nil {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		next(w, r, user)
+	}
+}
+
 func (s *Server) handleLegacySearchRedirect(mode string) func(http.ResponseWriter, *http.Request, any) {
 	return func(w http.ResponseWriter, r *http.Request, _ any) {
 		http.Redirect(w, r, s.legacySearchTarget(mode, r), http.StatusSeeOther)
@@ -316,6 +357,290 @@ func (s *Server) handleLegacySearchBuckets(kind string) func(http.ResponseWriter
 	}
 }
 
+func (s *Server) handleLegacySaveMailConfig(w http.ResponseWriter, r *http.Request, user any) {
+	req, err := decodeLegacyMailConfigRequest(r)
+	if err != nil {
+		writeLegacyStatusJSON(w, http.StatusBadRequest, "invalid body", map[string]any{})
+		return
+	}
+	if strings.TrimSpace(req.Host) == "" || strings.TrimSpace(req.Username) == "" || strings.TrimSpace(req.Password) == "" {
+		writeLegacyStatusJSON(w, http.StatusBadRequest, "邮箱配置不完整", map[string]any{})
+		return
+	}
+	if req.Port <= 0 {
+		writeLegacyStatusJSON(w, http.StatusBadRequest, "SMTP端口无效", map[string]any{})
+		return
+	}
+
+	stored, err := s.putMailConfig(model.MailConfig{
+		Enabled:     true,
+		SMTPHost:    req.Host,
+		SMTPPort:    req.Port,
+		Username:    req.Username,
+		Password:    req.Password,
+		SenderName:  nonEmpty(req.SenderName, "思通舆情"),
+		SenderEmail: nonEmpty(req.To, req.Username),
+	})
+	if err != nil {
+		writeLegacyStatusJSON(w, http.StatusInternalServerError, err.Error(), map[string]any{})
+		return
+	}
+	writeLegacyStatusJSON(w, http.StatusOK, "OK", legacyMailConfigResponseFromStored(stored))
+}
+
+func (s *Server) handleLegacyCheckMailConfig(w http.ResponseWriter, r *http.Request, _ any) {
+	cfg, err := s.getMailConfig()
+	if err != nil {
+		writeLegacyStatusJSON(w, http.StatusInternalServerError, err.Error(), map[string]any{})
+		return
+	}
+	if !mailConfigConfigured(cfg) {
+		writeLegacyStatusJSON(w, http.StatusInternalServerError, "未配置邮件", map[string]any{})
+		return
+	}
+	writeLegacyStatusJSON(w, http.StatusOK, "OK", map[string]any{})
+}
+
+func (s *Server) handleLegacyGetMailConfig(w http.ResponseWriter, r *http.Request, _ any) {
+	cfg, err := s.getMailConfig()
+	if err != nil {
+		writeLegacyStatusJSON(w, http.StatusInternalServerError, err.Error(), map[string]any{})
+		return
+	}
+	if !mailConfigConfigured(cfg) {
+		writeLegacyStatusJSON(w, http.StatusInternalServerError, "未配置邮件", map[string]any{})
+		return
+	}
+	writeLegacyStatusJSON(w, http.StatusOK, "OK", legacyMailConfigResponseFromStored(cfg))
+}
+
+func (s *Server) handleLegacyNeedPopUp(w http.ResponseWriter, r *http.Request, user any) {
+	userID := userIDFromMap(user)
+	if userID <= 0 {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+	key := legacyMobilePopupKey
+	state, ok, err := s.getPopupState(userID, key)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	if !ok {
+		if _, err := s.putPopupState(model.PopupState{UserID: userID, Key: key, Count: 0}); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		writeJSONBool(w, true)
+		return
+	}
+	if state.Dismissed && state.DismissedAt != nil && time.Since(*state.DismissedAt) < 24*time.Hour {
+		writeJSONBool(w, false)
+		return
+	}
+	writeJSONBool(w, state.Count < 5)
+}
+
+func (s *Server) handleLegacyClosePopUp(w http.ResponseWriter, r *http.Request, user any) {
+	userID := userIDFromMap(user)
+	if userID <= 0 {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+	key := legacyMobilePopupKey
+	state, ok, err := s.getPopupState(userID, key)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	if !ok {
+		state = model.PopupState{UserID: userID, Key: key}
+	}
+	state.Count++
+	state.Dismissed = true
+	now := time.Now().UTC()
+	state.DismissedAt = &now
+	if _, err := s.putPopupState(state); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	writeLegacyStatusJSON(w, http.StatusOK, "OK", map[string]any{})
+}
+
+func (s *Server) handleLegacyNeedContact(w http.ResponseWriter, r *http.Request) {
+	projectID, err := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("projectId")), 10, 64)
+	if err != nil || projectID <= 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	total, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("total")))
+	if err != nil {
+		total = 0
+	}
+	if total > 50 {
+		now := time.Now().UTC()
+		_, _ = s.putPopupState(model.PopupState{UserID: 0, Key: legacyContactPopupKey(projectID), Dismissed: true, DismissedAt: &now, Count: 0})
+		writeJSONBool(w, false)
+		return
+	}
+	state, ok, err := s.getPopupState(0, legacyContactPopupKey(projectID))
+	if err != nil || !ok {
+		writeJSONBool(w, false)
+		return
+	}
+	writeJSONBool(w, !state.Dismissed)
+}
+
+func (s *Server) handleLegacyCloseContact(w http.ResponseWriter, r *http.Request) {
+	projectID, err := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("projectId")), 10, 64)
+	if err != nil || projectID <= 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	state, ok, err := s.getPopupState(0, legacyContactPopupKey(projectID))
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	if !ok {
+		state = model.PopupState{UserID: 0, Key: legacyContactPopupKey(projectID)}
+	}
+	state.Dismissed = true
+	now := time.Now().UTC()
+	state.DismissedAt = &now
+	if _, err := s.putPopupState(state); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	writeLegacyStatusJSON(w, http.StatusOK, "OK", map[string]any{})
+}
+
+func (s *Server) handleLegacyUpdateEmotion(w http.ResponseWriter, r *http.Request, user any) {
+	if _, err := legacyArticleIDFromRequest(r); err != nil {
+		writeDatamonitorJSON(w, http.StatusBadRequest, "fail")
+		return
+	}
+	writeDatamonitorJSON(w, http.StatusOK, "success")
+}
+
+func (s *Server) handleLegacyAddFavorite(w http.ResponseWriter, r *http.Request, user any) {
+	itemID, err := legacyArticleIDFromRequest(r)
+	if err != nil {
+		writeDatamonitorJSON(w, http.StatusBadRequest, "fail")
+		return
+	}
+	userID := userIDFromMap(user)
+	if userID <= 0 {
+		writeDatamonitorJSON(w, http.StatusForbidden, "fail")
+		return
+	}
+	item, err := s.fetchLegacyArticle(itemID, userID)
+	if err != nil {
+		writeDatamonitorJSON(w, http.StatusInternalServerError, "fail")
+		return
+	}
+	if !item.Favorited {
+		if err := s.ensureLegacyFavorite(itemID, userID); err != nil {
+			writeDatamonitorJSON(w, http.StatusInternalServerError, "fail")
+			return
+		}
+	}
+	writeDatamonitorJSON(w, http.StatusOK, "success")
+}
+
+func (s *Server) handleLegacyReadState(w http.ResponseWriter, r *http.Request, user any) {
+	itemID, err := legacyArticleIDFromRequest(r)
+	if err != nil {
+		writeDatamonitorJSON(w, http.StatusBadRequest, "fail")
+		return
+	}
+	userID := userIDFromMap(user)
+	if userID <= 0 {
+		writeDatamonitorJSON(w, http.StatusForbidden, "fail")
+		return
+	}
+	flag, _ := strconv.Atoi(strings.TrimSpace(r.FormValue("flag")))
+	item, err := s.fetchLegacyArticle(itemID, userID)
+	if err != nil {
+		writeDatamonitorJSON(w, http.StatusInternalServerError, "fail")
+		return
+	}
+	switch flag {
+	case 1:
+		if item.Read {
+			writeDatamonitorJSON(w, http.StatusInternalServerError, "fail")
+			return
+		}
+		if err := s.markLegacyRead(itemID, userID); err != nil {
+			writeDatamonitorJSON(w, http.StatusInternalServerError, "fail")
+			return
+		}
+		writeDatamonitorJSON(w, http.StatusOK, "success")
+	case 2:
+		if err := s.unmarkLegacyRead(itemID, userID); err != nil {
+			writeDatamonitorJSON(w, http.StatusInternalServerError, "fail")
+			return
+		}
+		writeDatamonitorJSON(w, http.StatusOK, "success")
+	default:
+		writeDatamonitorJSON(w, http.StatusBadRequest, "fail")
+	}
+}
+
+func (s *Server) handleLegacySelectReadSign(w http.ResponseWriter, r *http.Request, user any) {
+	itemID, err := legacyArticleIDFromRequest(r)
+	if err != nil {
+		writeDatamonitorJSON(w, http.StatusBadRequest, "err")
+		return
+	}
+	userID := userIDFromMap(user)
+	if userID <= 0 {
+		writeDatamonitorJSON(w, http.StatusForbidden, "err")
+		return
+	}
+	item, err := s.fetchLegacyArticle(itemID, userID)
+	if err != nil {
+		writeDatamonitorJSON(w, http.StatusInternalServerError, "err")
+		return
+	}
+	if item.Read {
+		writeDatamonitorJSON(w, http.StatusOK, "success")
+		return
+	}
+	writeDatamonitorJSON(w, http.StatusInternalServerError, "err")
+}
+
+func (s *Server) handleLegacyDeleteData(w http.ResponseWriter, r *http.Request, user any) {
+	if _, err := legacyArticleIDFromRequest(r); err != nil {
+		writeDatamonitorJSON(w, http.StatusBadRequest, "fail")
+		return
+	}
+	writeDatamonitorJSON(w, http.StatusOK, "success")
+}
+
+func (s *Server) handleLegacyCopyText(w http.ResponseWriter, r *http.Request, user any) {
+	itemID, err := legacyArticleIDFromRequest(r)
+	if err != nil {
+		writeDatamonitorJSON(w, http.StatusBadRequest, "")
+		return
+	}
+	userID := userIDFromMap(user)
+	item, err := s.fetchLegacyArticle(itemID, userID)
+	if err != nil {
+		writeDatamonitorJSON(w, http.StatusInternalServerError, "")
+		return
+	}
+	writeDatamonitorJSON(w, http.StatusOK, "标题："+item.Title+" 内容："+nonEmpty(item.Content, item.Summary))
+}
+
+func (s *Server) handleLegacySending(w http.ResponseWriter, r *http.Request, user any) {
+	if _, err := legacyArticleIDFromRequest(r); err != nil {
+		writeDatamonitorJSON(w, http.StatusBadRequest, "1")
+		return
+	}
+	writeDatamonitorJSON(w, http.StatusOK, "1")
+}
+
 func decodeLegacySearchRequest(r *http.Request) (legacySearchRequest, error) {
 	var req legacySearchRequest
 	if r.Body == nil {
@@ -327,6 +652,49 @@ func decodeLegacySearchRequest(r *http.Request) (legacySearchRequest, error) {
 		}
 		return legacySearchRequest{}, err
 	}
+	return req, nil
+}
+
+type legacyMailConfigRequest struct {
+	Host       string
+	Username   string
+	Password   string
+	Port       int
+	To         string
+	SenderName string
+}
+
+type legacyMailConfigResponse struct {
+	Host     string   `json:"host"`
+	Port     string   `json:"port"`
+	Username string   `json:"username"`
+	Password string   `json:"password"`
+	To       string   `json:"to"`
+	Cc       []string `json:"cc"`
+	ToList   []string `json:"toList"`
+}
+
+func decodeLegacyMailConfigRequest(r *http.Request) (legacyMailConfigRequest, error) {
+	var raw map[string]any
+	if r.Body == nil {
+		return legacyMailConfigRequest{}, nil
+	}
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+		if errors.Is(err, io.EOF) {
+			return legacyMailConfigRequest{}, nil
+		}
+		return legacyMailConfigRequest{}, err
+	}
+	req := legacyMailConfigRequest{
+		Host:     legacyStringFromAny(raw["host"]),
+		Username: legacyStringFromAny(raw["username"]),
+		Password: legacyStringFromAny(raw["password"]),
+		To:       legacyStringFromAny(raw["to"]),
+	}
+	if port, ok := legacyIntFromAny(raw["port"]); ok {
+		req.Port = port
+	}
+	req.SenderName = legacyStringFromAny(raw["sender_name"])
 	return req, nil
 }
 
@@ -582,6 +950,210 @@ func writeLegacyJSON(w http.ResponseWriter, status int, message string, data any
 		"msg":  message,
 		"data": data,
 	})
+}
+
+func writeLegacyStatusJSON(w http.ResponseWriter, status int, message string, data any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status": status,
+		"msg":    message,
+		"data":   data,
+	})
+}
+
+func writeDatamonitorJSON(w http.ResponseWriter, status int, result any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status": status,
+		"result": result,
+	})
+}
+
+func writeJSONBool(w http.ResponseWriter, value bool) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(value)
+}
+
+func legacyContactPopupKey(projectID int64) string {
+	return legacyContactPopupKeyPrefix + strconv.FormatInt(projectID, 10)
+}
+
+func legacyArticleIDFromRequest(r *http.Request) (int64, error) {
+	id := strings.TrimSpace(r.FormValue("id"))
+	if id == "" {
+		id = strings.TrimSpace(r.URL.Query().Get("id"))
+	}
+	if id == "" {
+		return 0, errors.New("id required")
+	}
+	return strconv.ParseInt(id, 10, 64)
+}
+
+func legacyStringFromAny(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case json.Number:
+		return strings.TrimSpace(typed.String())
+	case float64:
+		return strconv.FormatFloat(typed, 'f', -1, 64)
+	case int:
+		return strconv.Itoa(typed)
+	case int64:
+		return strconv.FormatInt(typed, 10)
+	default:
+		return ""
+	}
+}
+
+func legacyIntFromAny(value any) (int, bool) {
+	switch typed := value.(type) {
+	case string:
+		parsed, err := strconv.Atoi(strings.TrimSpace(typed))
+		return parsed, err == nil
+	case json.Number:
+		parsed, err := typed.Int64()
+		return int(parsed), err == nil
+	case float64:
+		return int(typed), true
+	case int:
+		return typed, true
+	case int64:
+		return int(typed), true
+	default:
+		return 0, false
+	}
+}
+
+func (s *Server) getPopupState(userID int64, key string) (model.PopupState, bool, error) {
+	var state model.PopupState
+	err := s.getJSON(s.cfg.ContentURL+"/api/v1/system/popup?user_id="+strconv.FormatInt(userID, 10)+"&key="+url.QueryEscape(key), &state)
+	if err != nil {
+		return model.PopupState{}, false, err
+	}
+	if state.UpdatedAt.IsZero() {
+		return state, false, nil
+	}
+	return state, true, nil
+}
+
+func (s *Server) putPopupState(state model.PopupState) (model.PopupState, error) {
+	var envelope struct {
+		Data model.PopupState `json:"data"`
+	}
+	resp, err := s.client.R().
+		SetBody(state).
+		SetResult(&envelope).
+		Put(s.cfg.ContentURL + "/api/v1/system/popup")
+	if err != nil {
+		return model.PopupState{}, err
+	}
+	if !resp.IsSuccess() {
+		return model.PopupState{}, errors.New(resp.Status())
+	}
+	return envelope.Data, nil
+}
+
+func (s *Server) getMailConfig() (model.MailConfig, error) {
+	var cfg model.MailConfig
+	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/system/mail-config", &cfg); err != nil {
+		return model.MailConfig{}, err
+	}
+	return cfg, nil
+}
+
+func (s *Server) putMailConfig(cfg model.MailConfig) (model.MailConfig, error) {
+	var envelope struct {
+		Data model.MailConfig `json:"data"`
+	}
+	resp, err := s.client.R().
+		SetBody(cfg).
+		SetResult(&envelope).
+		Put(s.cfg.ContentURL + "/api/v1/system/mail-config")
+	if err != nil {
+		return model.MailConfig{}, err
+	}
+	if !resp.IsSuccess() {
+		return model.MailConfig{}, errors.New(resp.Status())
+	}
+	return envelope.Data, nil
+}
+
+func mailConfigConfigured(cfg model.MailConfig) bool {
+	return cfg.Enabled || strings.TrimSpace(cfg.SMTPHost) != "" || strings.TrimSpace(cfg.Username) != "" || strings.TrimSpace(cfg.Password) != "" || strings.TrimSpace(cfg.SenderEmail) != "" || strings.TrimSpace(cfg.SenderName) != ""
+}
+
+func legacyMailConfigResponseFromStored(cfg model.MailConfig) legacyMailConfigResponse {
+	return legacyMailConfigResponse{
+		Host:     cfg.SMTPHost,
+		Port:     strconv.Itoa(cfg.SMTPPort),
+		Username: cfg.Username,
+		Password: cfg.Password,
+		To:       nonEmpty(cfg.SenderEmail, cfg.Username),
+		Cc:       nil,
+		ToList:   nil,
+	}
+}
+
+func (s *Server) fetchLegacyArticle(itemID, userID int64) (model.Item, error) {
+	var item model.Item
+	target := s.cfg.ContentURL + "/api/v1/articles/" + strconv.FormatInt(itemID, 10)
+	if userID > 0 {
+		target += "?user_id=" + strconv.FormatInt(userID, 10)
+	}
+	if err := s.getJSON(target, &item); err != nil {
+		return model.Item{}, err
+	}
+	return item, nil
+}
+
+func (s *Server) ensureLegacyFavorite(itemID, userID int64) error {
+	item, err := s.fetchLegacyArticle(itemID, userID)
+	if err != nil {
+		return err
+	}
+	if item.Favorited {
+		return nil
+	}
+	resp, err := s.client.R().
+		SetQueryParam("user_id", strconv.FormatInt(userID, 10)).
+		Post(s.cfg.ContentURL + "/api/v1/articles/" + strconv.FormatInt(itemID, 10) + "/favorite")
+	if err != nil {
+		return err
+	}
+	if !resp.IsSuccess() {
+		return errors.New(resp.Status())
+	}
+	return nil
+}
+
+func (s *Server) markLegacyRead(itemID, userID int64) error {
+	resp, err := s.client.R().
+		SetQueryParam("user_id", strconv.FormatInt(userID, 10)).
+		Post(s.cfg.ContentURL + "/api/v1/articles/" + strconv.FormatInt(itemID, 10) + "/read")
+	if err != nil {
+		return err
+	}
+	if !resp.IsSuccess() {
+		return errors.New(resp.Status())
+	}
+	return nil
+}
+
+func (s *Server) unmarkLegacyRead(itemID, userID int64) error {
+	resp, err := s.client.R().
+		SetQueryParam("user_id", strconv.FormatInt(userID, 10)).
+		Delete(s.cfg.ContentURL + "/api/v1/articles/" + strconv.FormatInt(itemID, 10) + "/read")
+	if err != nil {
+		return err
+	}
+	if !resp.IsSuccess() {
+		return errors.New(resp.Status())
+	}
+	return nil
 }
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request, user any) {
@@ -1809,6 +2381,8 @@ func userIDFromMap(user any) int64 {
 	}
 	switch value := mapped["id"].(type) {
 	case float64:
+		return int64(value)
+	case int:
 		return int64(value)
 	case int64:
 		return value
