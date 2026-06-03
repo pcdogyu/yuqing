@@ -20,6 +20,12 @@
 - `MailController` -> `gateway-web /mail/saveMailConfig` `checkMailConfig` `getMailConfig` legacy 兼容 + `content-service /system/mail-config`
 - `PopUpController` -> `gateway-web /popUp/needPopUp` `close` `needContact` `closeContact` legacy 兼容 + `content-service /system/popup`
 - `WechatController` -> `gateway-web /wechat/*` legacy 兼容 + `auth-service /api/v1/wechat/*` 登录、绑定、token、webhook 兼容层
+- `ImageController` -> `portal-web /img/code` 验证码兼容入口
+- `MobileController` -> `portal-web /mobile/*` 页面、分组、二维码、跳转兼容入口
+- `DisplayBoardController` -> `portal-web /displayboard` 看板页兼容入口
+- `VolumeController` -> `portal-web /volume` 页面与 `getproject` / `projectname` 兼容入口
+- `HotNewsController` -> `portal-web /hot/*` 热点页与热点列表兼容入口
+- `UserAuthController` -> `portal-web /dist/*` 申请/跳转兼容入口
 - `PublicOptionContoller` -> 话题/偏好/系统配置的主要闭环已在 `content-service` 与 `gateway-web /system`
 - `DatafavoriteContoller` -> `gateway-web /datamonitor/*` legacy 兼容已补齐已读/收藏/拷贝/选择读取标记，`content-service /articles` 负责落库；`sending` / `updateemtion` / `deletedata` 仍是兼容返回
 - `UserController` -> 用户资料/偏好已落到 `content-service /system/preferences` 与 `gateway-web /system`
@@ -36,6 +42,8 @@
 
 - `gateway-web`
   - 门户页面和会话跳转
+- `portal-web`
+  - 门户 SSR 页面、旧页面兼容入口、二维码和移动端/热点/看板页面
 - `auth-service`
   - 登录、登出、session、token
 - `content-service`

@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-resty/resty/v2"
@@ -111,6 +112,14 @@ type Server struct {
 	cfg       config.Config
 	client    *resty.Client
 	templates *template.Template
+	mu        sync.Mutex
+	captchas  map[string]string
+	mobileQRs map[string]mobileQRCodeState
+}
+
+type mobileQRCodeState struct {
+	Token     string
+	ExpiresAt time.Time
 }
 
 type pageData struct {
@@ -190,12 +199,39 @@ func NewServer(cfg config.Config) *Server {
 			SetTimeout(cfg.HTTPTimeout).
 			SetHeader("X-Service-Token", cfg.ServiceToken),
 		templates: tpl,
+		captchas:  map[string]string{},
+		mobileQRs: map[string]mobileQRCodeState{},
 	}
 }
 
 func (s *Server) Router() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/login", s.handleLoginPage)
+	mux.HandleFunc("/img/code", s.handleCaptchaCode)
+	mux.HandleFunc("/displayboard", s.requireSession(s.handleDisplayBoard))
+	mux.HandleFunc("/displayboard/", s.requireSession(s.handleDisplayBoard))
+	mux.HandleFunc("/displayboard/collection2", s.requireSessionJSON(s.handleDisplayBoardCollection2))
+	mux.HandleFunc("/mobile/monitor", s.requireSession(s.handleMobileMonitor))
+	mux.HandleFunc("/mobile/monitor/", s.requireSession(s.handleMobileMonitor))
+	mux.HandleFunc("/mobile/monitor/detail", s.requireSession(s.handleMobileMonitorDetail))
+	mux.HandleFunc("/mobile/warning", s.requireSession(s.handleMobileWarning))
+	mux.HandleFunc("/mobile/getGroupAndProject", s.requireSessionJSON(s.handleMobileGetGroupAndProject))
+	mux.HandleFunc("/mobile/mobileQRCode", s.requireSession(s.handleMobileQRCode))
+	mux.HandleFunc("/mobile/uuid/", s.handleMobileUUID)
+	mux.HandleFunc("/volume", s.requireSession(s.handleVolume))
+	mux.HandleFunc("/volume/", s.requireSession(s.handleVolume))
+	mux.HandleFunc("/volume/getproject", s.requireSessionJSON(s.handleVolumeGetProject))
+	mux.HandleFunc("/volume/projectname", s.requireSessionJSON(s.handleVolumeProjectName))
+	mux.HandleFunc("/hot/hotpage", s.requireSession(s.handleHotPage))
+	mux.HandleFunc("/hot/hotpage/", s.requireSession(s.handleHotPage))
+	mux.HandleFunc("/hot/hotlist", s.requireSession(s.handleHotList))
+	mux.HandleFunc("/dist/monitor", s.handleDistMonitor)
+	mux.HandleFunc("/dist/getdata", s.handleDistGetData)
+	mux.HandleFunc("/dist/apply", s.handleDistApply)
+	mux.HandleFunc("/dist/yqapply", s.handleDistYqApply)
+	mux.HandleFunc("/dist/applydatainfo", s.handleDistApplyDataInfo)
+	mux.HandleFunc("/dist/yqmontitor", s.handleDistYqMonitor)
+	mux.HandleFunc("/dist/hotdata", s.handleDistHotData)
 	mux.HandleFunc("/logout", s.handleLogout)
 	mux.HandleFunc("/industry", s.requireSessionJSON(s.handleLegacySearchBuckets("industry")))
 	mux.HandleFunc("/industry/", s.requireSessionJSON(s.handleLegacySearchBuckets("industry")))
