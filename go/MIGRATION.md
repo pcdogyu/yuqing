@@ -8,15 +8,24 @@
 - `ReportController` -> `content-service / reports`
 - `AnalysisController` -> `analysis-service`
 - `ApiController` 的基础文章查询能力 -> `content-service / articles + search`
-- `SystemController` 的公告/反馈/任务记录子集 -> `content-service / system-*`
+- `SearchController` -> `gateway-web /search` 兼容跳转 + `gateway-web /articles?mode=search`
+- `SystemController` 的公告/反馈/任务记录/偏好/弹窗/邮件/预警子集 -> `content-service / system-*` + `gateway-web /system`
+
+## 部分承接
+
+- `FullSearchController` -> `gateway-web /fullsearch` 兼容跳转 + `gateway-web /articles?mode=full` + `content-service /api/v1/search/full`
+- `TimelySearchController` -> `gateway-web /timelysearch` 兼容跳转 + `gateway-web /articles?mode=timely` + `content-service /api/v1/search/timely`
+- `LSearchController` -> `gateway-web` legacy compatibility endpoints `/industry` `/getevent` `/getProvinceList` `/getArticleCityList`
+- `PlatformController` -> 平台设置/通知/绑定能力已部分落到 `content-service /system-*` 与 `gateway-web /system`
+- `MailController` -> 邮件配置已落到 `content-service /system/mail-config` 与 `gateway-web /system`
+- `PopUpController` -> 弹窗状态已落到 `content-service /system/popup` 与 `gateway-web /system`
+- `PublicOptionContoller` -> 话题/偏好/系统配置的主要闭环已在 `content-service` 与 `gateway-web /system`
+- `DatafavoriteContoller` -> 已读/收藏/分享的文章态能力已落到 `content-service /articles`，但老接口未完全对齐
+- `UserController` -> 用户资料/偏好已落到 `content-service /system/preferences` 与 `gateway-web /system`
 
 ## 暂不承接
 
-- `FullSearchController`
-- `TimelySearchController`
 - `WechatController`
-- `PlatformController`
-- `MailController`
 - `MobileController`
 - `DisplayBoardController`
 - `VolumeController`

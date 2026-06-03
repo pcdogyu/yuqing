@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"html/template"
+	"io"
 	"net/http"
 	"net/url"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-resty/resty/v2"
 
@@ -18,6 +20,90 @@ import (
 )
 
 const sessionCookieName = "stonedt_portal_session"
+const legacySearchPageSize = 1000
+
+type legacyFacetBucket struct {
+	Key      string `json:"key"`
+	DocCount int    `json:"doc_count"`
+}
+
+type legacySearchRequest struct {
+	Searchword         string           `json:"searchword"`
+	SearchWord         string           `json:"searchWord"`
+	Keyword            string           `json:"keyword"`
+	Similar            int              `json:"similar"`
+	MatchingMode       int              `json:"matchingmode"`
+	SearchType         int              `json:"searchType"`
+	TimeType           int              `json:"timeType"`
+	Times              string           `json:"times"`
+	Timee              string           `json:"timee"`
+	Precise            int              `json:"precise"`
+	ProjectID          string           `json:"projectid"`
+	ProjectID2         string           `json:"projectId"`
+	ProjectID3         string           `json:"project_id"`
+	SourceType         string           `json:"source_type"`
+	IndustryIndex      legacyStringList `json:"industryIndex"`
+	EventIndex         legacyStringList `json:"eventIndex"`
+	Province           legacyStringList `json:"province"`
+	City               legacyStringList `json:"city"`
+	OrganizationType   legacyStringList `json:"organizationtype"`
+	CategoryLableData  legacyStringList `json:"categorylabledata"`
+	EnterpriseTypeList legacyStringList `json:"enterprisetypelist"`
+	HighTechTypeList   legacyStringList `json:"hightechtypelist"`
+	PolicyLableFlag    legacyStringList `json:"policylableflag"`
+	Classify           legacyStringList `json:"classify"`
+	Read               string           `json:"read"`
+	Favorite           string           `json:"favorite"`
+	Start              string           `json:"start"`
+	End                string           `json:"end"`
+}
+
+type legacyStringList []string
+
+func (l *legacyStringList) UnmarshalJSON(data []byte) error {
+	if len(data) == 0 || string(data) == "null" {
+		*l = nil
+		return nil
+	}
+	if data[0] == '"' {
+		var value string
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		value = strings.TrimSpace(value)
+		if value == "" {
+			*l = nil
+			return nil
+		}
+		*l = []string{value}
+		return nil
+	}
+	var values []string
+	if err := json.Unmarshal(data, &values); err == nil {
+		*l = values
+		return nil
+	}
+	var raw []any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil
+	}
+	values = values[:0]
+	for _, item := range raw {
+		switch typed := item.(type) {
+		case string:
+			typed = strings.TrimSpace(typed)
+			if typed != "" {
+				values = append(values, typed)
+			}
+		case float64:
+			values = append(values, strconv.FormatFloat(typed, 'f', -1, 64))
+		case int:
+			values = append(values, strconv.Itoa(typed))
+		}
+	}
+	*l = values
+	return nil
+}
 
 type Server struct {
 	cfg       config.Config
@@ -109,6 +195,20 @@ func (s *Server) Router() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/login", s.handleLoginPage)
 	mux.HandleFunc("/logout", s.handleLogout)
+	mux.HandleFunc("/industry", s.requireSessionJSON(s.handleLegacySearchBuckets("industry")))
+	mux.HandleFunc("/industry/", s.requireSessionJSON(s.handleLegacySearchBuckets("industry")))
+	mux.HandleFunc("/getevent", s.requireSessionJSON(s.handleLegacySearchBuckets("event")))
+	mux.HandleFunc("/getevent/", s.requireSessionJSON(s.handleLegacySearchBuckets("event")))
+	mux.HandleFunc("/getProvinceList", s.requireSessionJSON(s.handleLegacySearchBuckets("province")))
+	mux.HandleFunc("/getProvinceList/", s.requireSessionJSON(s.handleLegacySearchBuckets("province")))
+	mux.HandleFunc("/getArticleCityList", s.requireSessionJSON(s.handleLegacySearchBuckets("city")))
+	mux.HandleFunc("/getArticleCityList/", s.requireSessionJSON(s.handleLegacySearchBuckets("city")))
+	mux.HandleFunc("/search", s.requireSession(s.handleLegacySearchRedirect("search")))
+	mux.HandleFunc("/search/", s.requireSession(s.handleLegacySearchRedirect("search")))
+	mux.HandleFunc("/fullsearch", s.requireSession(s.handleLegacySearchRedirect("full")))
+	mux.HandleFunc("/fullsearch/", s.requireSession(s.handleLegacySearchRedirect("full")))
+	mux.HandleFunc("/timelysearch", s.requireSession(s.handleLegacySearchRedirect("timely")))
+	mux.HandleFunc("/timelysearch/", s.requireSession(s.handleLegacySearchRedirect("timely")))
 	mux.HandleFunc("/projects/", s.requireSession(s.handleProjectDetail))
 	mux.HandleFunc("/projects", s.requireSession(s.handleProjects))
 	mux.HandleFunc("/monitor-rules/", s.requireSession(s.handleRuleDetail))
@@ -157,6 +257,331 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/", MaxAge: -1})
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
+}
+
+func (s *Server) requireSessionJSON(next func(http.ResponseWriter, *http.Request, any)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		cookie, err := r.Cookie(sessionCookieName)
+		if err != nil || strings.TrimSpace(cookie.Value) == "" {
+			writeLegacyJSON(w, http.StatusForbidden, "未登录", map[string]any{})
+			return
+		}
+		user, err := s.getSessionUser(cookie.Value)
+		if err != nil {
+			writeLegacyJSON(w, http.StatusForbidden, "会话无效", map[string]any{})
+			return
+		}
+		next(w, r, user)
+	}
+}
+
+func (s *Server) handleLegacySearchRedirect(mode string) func(http.ResponseWriter, *http.Request, any) {
+	return func(w http.ResponseWriter, r *http.Request, _ any) {
+		http.Redirect(w, r, s.legacySearchTarget(mode, r), http.StatusSeeOther)
+	}
+}
+
+func (s *Server) legacySearchTarget(mode string, r *http.Request) string {
+	values := url.Values{}
+	values.Set("mode", mode)
+	if keyword := nonEmpty(r.URL.Query().Get("keyword"), r.URL.Query().Get("searchword"), r.URL.Query().Get("searchWord")); keyword != "" {
+		values.Set("keyword", keyword)
+	}
+	for _, key := range []string{"project_id", "source_type", "read", "favorite", "start", "end", "industry", "province", "city"} {
+		if value := strings.TrimSpace(r.URL.Query().Get(key)); value != "" {
+			values.Set(key, value)
+		}
+	}
+	return "/articles?" + values.Encode()
+}
+
+func (s *Server) handleLegacySearchBuckets(kind string) func(http.ResponseWriter, *http.Request, any) {
+	return func(w http.ResponseWriter, r *http.Request, _ any) {
+		req, err := decodeLegacySearchRequest(r)
+		if err != nil {
+			writeLegacyJSON(w, http.StatusBadRequest, "invalid body", map[string]any{})
+			return
+		}
+
+		items, err := s.fetchLegacySearchItems(r, req)
+		if err != nil {
+			writeLegacyJSON(w, http.StatusInternalServerError, err.Error(), map[string]any{})
+			return
+		}
+
+		buckets := bucketLegacySearchItems(items, kind)
+		buckets = append(buckets, legacyFacetBucket{Key: "total", DocCount: len(items)})
+
+		writeLegacyJSON(w, http.StatusOK, legacySearchSuccessMessage(kind), map[string]any{"data": buckets})
+	}
+}
+
+func decodeLegacySearchRequest(r *http.Request) (legacySearchRequest, error) {
+	var req legacySearchRequest
+	if r.Body == nil {
+		return req, nil
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if errors.Is(err, io.EOF) {
+			return req, nil
+		}
+		return legacySearchRequest{}, err
+	}
+	return req, nil
+}
+
+func (s *Server) fetchLegacySearchItems(r *http.Request, req legacySearchRequest) ([]model.Item, error) {
+	query := url.Values{}
+	query.Set("page", "1")
+	query.Set("page_size", strconv.Itoa(legacySearchPageSize))
+	if keyword := legacySearchKeyword(req); keyword != "" {
+		query.Set("q", keyword)
+	}
+	if projectID := legacySearchProjectID(req); projectID != "" {
+		query.Set("project_id", projectID)
+	}
+	if sourceType := strings.TrimSpace(req.SourceType); sourceType != "" {
+		query.Set("source_type", sourceType)
+	}
+	if start, end := legacySearchTimeRange(req); start != "" {
+		query.Set("start", start)
+		if end != "" {
+			query.Set("end", end)
+		}
+	}
+
+	items := make([]model.Item, 0, legacySearchPageSize)
+	total := 0
+	for page := 1; page <= 20; page++ {
+		query.Set("page", strconv.Itoa(page))
+		var result model.SearchResult
+		if err := s.getJSON(s.cfg.ContentURL+"/api/v1/search/full?"+query.Encode(), &result); err != nil {
+			return nil, err
+		}
+		if page == 1 {
+			total = result.Total
+		}
+		items = append(items, result.Items...)
+		if len(result.Items) == 0 || len(items) >= total {
+			break
+		}
+	}
+	return items, nil
+}
+
+func legacySearchKeyword(req legacySearchRequest) string {
+	keyword := nonEmpty(req.Keyword, req.Searchword, req.SearchWord)
+	keyword = strings.TrimSpace(keyword)
+	keyword = strings.ReplaceAll(keyword, "+", " AND ")
+	keyword = strings.ReplaceAll(keyword, " ", " OR ")
+	return keyword
+}
+
+func legacySearchProjectID(req legacySearchRequest) string {
+	return nonEmpty(req.ProjectID3, req.ProjectID2, req.ProjectID)
+}
+
+func legacySearchTimeRange(req legacySearchRequest) (string, string) {
+	if strings.TrimSpace(req.Start) != "" || strings.TrimSpace(req.End) != "" {
+		return strings.TrimSpace(req.Start), strings.TrimSpace(req.End)
+	}
+	if req.TimeType == 0 {
+		return "", ""
+	}
+	now := time.Now()
+	switch req.TimeType {
+	case 1:
+		end := now
+		start := now.Add(-24 * time.Hour)
+		return start.Format("2006-01-02 15:04:05"), end.Format("2006-01-02 15:04:05")
+	case 2:
+		start := now.AddDate(-1, 0, 0)
+		return start.Format("2006-01-02") + " 00:00:00", now.Format("2006-01-02") + " 23:59:59"
+	case 3:
+		start := now.AddDate(0, 0, -1)
+		return start.Format("2006-01-02") + " 00:00:00", start.Format("2006-01-02") + " 23:59:59"
+	case 4:
+		start := now.AddDate(0, 0, -3)
+		return start.Format("2006-01-02") + " 00:00:00", now.Format("2006-01-02") + " 23:59:59"
+	case 5:
+		start := now.AddDate(0, 0, -7)
+		return start.Format("2006-01-02") + " 00:00:00", now.Format("2006-01-02") + " 23:59:59"
+	case 6:
+		start := now.AddDate(0, 0, -15)
+		return start.Format("2006-01-02") + " 00:00:00", now.Format("2006-01-02") + " 23:59:59"
+	case 7:
+		start := now.AddDate(0, 0, -30)
+		return start.Format("2006-01-02") + " 00:00:00", now.Format("2006-01-02") + " 23:59:59"
+	case 8:
+		return strings.TrimSpace(req.Times), strings.TrimSpace(req.Timee)
+	default:
+		return "", ""
+	}
+}
+
+func bucketLegacySearchItems(items []model.Item, kind string) []legacyFacetBucket {
+	counts := map[string]int{}
+	for _, item := range items {
+		meta := legacySearchMetadata(item)
+		for _, value := range meta[kind] {
+			counts[value]++
+		}
+	}
+	buckets := make([]legacyFacetBucket, 0, len(counts))
+	for value, count := range counts {
+		buckets = append(buckets, legacyFacetBucket{Key: value, DocCount: count})
+	}
+	sort.Slice(buckets, func(i, j int) bool {
+		if buckets[i].DocCount == buckets[j].DocCount {
+			return buckets[i].Key < buckets[j].Key
+		}
+		return buckets[i].DocCount > buckets[j].DocCount
+	})
+	return buckets
+}
+
+func legacySearchMetadata(item model.Item) map[string][]string {
+	meta := map[string][]string{
+		"industry": {},
+		"province": {},
+		"city":     {},
+		"event":    {},
+	}
+	if strings.TrimSpace(item.RawPayload) != "" {
+		var payload any
+		if err := json.Unmarshal([]byte(item.RawPayload), &payload); err == nil {
+			collectLegacyMetadata(payload, meta)
+		}
+	}
+	if len(meta["event"]) == 0 && strings.TrimSpace(item.TagFlags) != "" {
+		meta["event"] = append(meta["event"], splitLegacyLabels(item.TagFlags)...)
+	}
+	for key, values := range meta {
+		meta[key] = uniqueLegacyStrings(values)
+	}
+	return meta
+}
+
+func collectLegacyMetadata(value any, meta map[string][]string) {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			normalized := strings.ToLower(strings.TrimSpace(key))
+			switch normalized {
+			case "industry", "industries", "province", "provinces", "city", "cities":
+				metaKey := normalized
+				switch normalized {
+				case "industries":
+					metaKey = "industry"
+				case "provinces":
+					metaKey = "province"
+				case "cities":
+					metaKey = "city"
+				}
+				meta[metaKey] = append(meta[metaKey], legacyValueStrings(child)...)
+			case "event", "events", "eventlable", "eventlabel", "eventindex", "tag_flags", "tagflags":
+				meta["event"] = append(meta["event"], legacyValueStrings(child)...)
+			}
+			collectLegacyMetadata(child, meta)
+		}
+	case []any:
+		for _, child := range typed {
+			collectLegacyMetadata(child, meta)
+		}
+	}
+}
+
+func legacyValueStrings(value any) []string {
+	switch typed := value.(type) {
+	case string:
+		return splitLegacyLabels(typed)
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, legacyValueStrings(item)...)
+		}
+		return out
+	case map[string]any:
+		out := make([]string, 0)
+		for _, child := range typed {
+			out = append(out, legacyValueStrings(child)...)
+		}
+		return out
+	case float64:
+		return []string{strconv.FormatFloat(typed, 'f', -1, 64)}
+	case int:
+		return []string{strconv.Itoa(typed)}
+	default:
+		return nil
+	}
+}
+
+func splitLegacyLabels(value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	parts := strings.FieldsFunc(value, func(r rune) bool {
+		switch r {
+		case ',', '，', ';', '；', '|', '/', '\n', '\t':
+			return true
+		default:
+			return false
+		}
+	})
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			result = append(result, part)
+		}
+	}
+	if len(result) == 0 {
+		return []string{value}
+	}
+	return result
+}
+
+func uniqueLegacyStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func legacySearchSuccessMessage(kind string) string {
+	switch kind {
+	case "industry":
+		return "行业标签列表成功"
+	case "event":
+		return "事件标签列表成功"
+	case "province":
+		return "省份列表成功"
+	case "city":
+		return "城市列表成功"
+	default:
+		return "查询成功"
+	}
+}
+
+func writeLegacyJSON(w http.ResponseWriter, status int, message string, data any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"code": status,
+		"msg":  message,
+		"data": data,
+	})
 }
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request, user any) {
