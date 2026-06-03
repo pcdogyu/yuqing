@@ -540,6 +540,64 @@ LIMIT ?`, userID, limit)
 	return result, rows.Err()
 }
 
+func (s *Store) ListSearchWordSuggestions(ctx context.Context, userID int64, prefix string, limit int) ([]model.SearchWordStat, error) {
+	if userID <= 0 {
+		return []model.SearchWordStat{}, nil
+	}
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return s.ListSearchWords(ctx, userID, limit)
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT search_word, user_id, COUNT(*) AS word_count
+FROM search_words
+WHERE user_id = ? AND search_word LIKE ? ESCAPE '\'
+GROUP BY user_id, search_word
+ORDER BY word_count DESC, MAX(created_at) DESC, search_word ASC
+LIMIT ?`, userID, escapeLike(prefix)+"%", limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]model.SearchWordStat, 0, limit)
+	for rows.Next() {
+		stat, scanErr := scanSearchWordStat(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		result = append(result, stat)
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) ListHotSearchWords(ctx context.Context, limit int) ([]model.SearchWordStat, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT search_word, 0 AS user_id, COUNT(*) AS word_count
+FROM search_words
+GROUP BY search_word
+ORDER BY word_count DESC, MAX(created_at) DESC, search_word ASC
+LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]model.SearchWordStat, 0, limit)
+	for rows.Next() {
+		stat, scanErr := scanSearchWordStat(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		result = append(result, stat)
+	}
+	return result, rows.Err()
+}
+
 func (s *Store) BuildEmotionAnalysis(ctx context.Context, projectID int64) (model.EmotionAnalysis, error) {
 	items, err := s.listItemsForAdvancedFilter(ctx, model.ArticleFilter{ProjectID: projectID, Page: 1, PageSize: 500, Limit: 500})
 	if err != nil {
@@ -797,6 +855,13 @@ func scanSearchWordStat(scanner scanner) (model.SearchWordStat, error) {
 		return model.SearchWordStat{}, err
 	}
 	return stat, nil
+}
+
+func escapeLike(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	value = strings.ReplaceAll(value, `%`, `\%`)
+	value = strings.ReplaceAll(value, `_`, `\_`)
+	return value
 }
 
 func collectMetadataValues(items []model.Item, key string) []string {

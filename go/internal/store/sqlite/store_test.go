@@ -246,6 +246,53 @@ func TestSearchWordHistory(t *testing.T) {
 	}
 }
 
+func TestSearchWordSuggestionsAndHotKeywords(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	seed := []struct {
+		userID int64
+		word   string
+	}{
+		{42, "钢铁"},
+		{42, "钢铁"},
+		{42, "钢材"},
+		{42, "能源"},
+		{7, "钢铁"},
+		{7, "科技"},
+	}
+	for _, item := range seed {
+		if err := store.SaveSearchWord(ctx, item.userID, item.word); err != nil {
+			t.Fatalf("SaveSearchWord error: %v", err)
+		}
+	}
+
+	suggestions, err := store.ListSearchWordSuggestions(ctx, 42, "钢", 10)
+	if err != nil {
+		t.Fatalf("ListSearchWordSuggestions error: %v", err)
+	}
+	if len(suggestions) != 2 {
+		t.Fatalf("expected 2 suggestions, got %+v", suggestions)
+	}
+	if suggestions[0].SearchWord != "钢铁" || suggestions[0].WordCount != 2 {
+		t.Fatalf("unexpected first suggestion: %+v", suggestions[0])
+	}
+	if suggestions[1].SearchWord != "钢材" || suggestions[1].WordCount != 1 {
+		t.Fatalf("unexpected second suggestion: %+v", suggestions[1])
+	}
+
+	hot, err := store.ListHotSearchWords(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListHotSearchWords error: %v", err)
+	}
+	if len(hot) < 2 {
+		t.Fatalf("expected hot keywords, got %+v", hot)
+	}
+	if hot[0].SearchWord != "钢铁" || hot[0].WordCount != 3 {
+		t.Fatalf("unexpected hot keyword ranking: %+v", hot[0])
+	}
+}
+
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "jin10.db")

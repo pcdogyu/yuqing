@@ -5,10 +5,15 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/stonedt-yuqing/go-jin10/internal/config"
+	"github.com/stonedt-yuqing/go-jin10/internal/model"
+	sqlitestore "github.com/stonedt-yuqing/go-jin10/internal/store/sqlite"
 )
 
 func TestArticleFilterFromRequest(t *testing.T) {
@@ -124,6 +129,81 @@ func TestSummarizeTextAndNonEmpty(t *testing.T) {
 	}
 }
 
+func TestSearchSuggestionAndHotKeywordHandlers(t *testing.T) {
+	store := newContentSearchTestStore(t)
+	svc := NewService(config.Config{}, store)
+
+	seed := []struct {
+		userID int64
+		word   string
+	}{
+		{42, "钢铁"},
+		{42, "钢铁"},
+		{42, "钢材"},
+		{42, "能源"},
+		{7, "钢铁"},
+		{7, "科技"},
+	}
+	for _, item := range seed {
+		if err := store.SaveSearchWord(context.Background(), item.userID, item.word); err != nil {
+			t.Fatalf("SaveSearchWord error: %v", err)
+		}
+	}
+
+	suggestionReq := httptest.NewRequest(http.MethodGet, "/api/v1/search/suggestions?user_id=42&q=%E9%92%A2&limit=5", nil)
+	suggestionRR := httptest.NewRecorder()
+	svc.handleSearchSuggestions(suggestionRR, suggestionReq)
+	if suggestionRR.Code != http.StatusOK {
+		t.Fatalf("expected suggestions 200, got %d", suggestionRR.Code)
+	}
+	var suggestionEnvelope struct {
+		Code int                    `json:"code"`
+		Data []model.SearchWordStat `json:"data"`
+	}
+	if err := json.Unmarshal(suggestionRR.Body.Bytes(), &suggestionEnvelope); err != nil {
+		t.Fatalf("unmarshal suggestions: %v", err)
+	}
+	if suggestionEnvelope.Code != http.StatusOK || len(suggestionEnvelope.Data) != 2 {
+		t.Fatalf("unexpected suggestions payload: %+v", suggestionEnvelope)
+	}
+	if suggestionEnvelope.Data[0].SearchWord != "钢铁" || suggestionEnvelope.Data[0].WordCount != 2 {
+		t.Fatalf("unexpected first suggestion: %+v", suggestionEnvelope.Data[0])
+	}
+
+	hotReq := httptest.NewRequest(http.MethodGet, "/api/v1/search/hot-keywords?limit=5", nil)
+	hotRR := httptest.NewRecorder()
+	svc.handleHotKeywords(hotRR, hotReq)
+	if hotRR.Code != http.StatusOK {
+		t.Fatalf("expected hot keywords 200, got %d", hotRR.Code)
+	}
+	var hotEnvelope struct {
+		Code int                    `json:"code"`
+		Data []model.SearchWordStat `json:"data"`
+	}
+	if err := json.Unmarshal(hotRR.Body.Bytes(), &hotEnvelope); err != nil {
+		t.Fatalf("unmarshal hot keywords: %v", err)
+	}
+	if hotEnvelope.Code != http.StatusOK || len(hotEnvelope.Data) < 2 {
+		t.Fatalf("unexpected hot keywords payload: %+v", hotEnvelope)
+	}
+	if hotEnvelope.Data[0].SearchWord != "钢铁" || hotEnvelope.Data[0].WordCount != 3 {
+		t.Fatalf("unexpected hot keyword ranking: %+v", hotEnvelope.Data[0])
+	}
+}
+
 func contextWithRoute(req *http.Request, rctx *chi.Context) context.Context {
 	return context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+}
+
+func newContentSearchTestStore(t *testing.T) *sqlitestore.Store {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "content-search.db")
+	store, err := sqlitestore.New(path)
+	if err != nil {
+		t.Fatalf("new sqlite store: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = store.Close()
+	})
+	return store
 }

@@ -70,6 +70,8 @@ type Store interface {
 	ListSearchOptions(rctx context.Context) (model.SearchOptions, error)
 	SaveSearchWord(rctx context.Context, userID int64, searchWord string) error
 	ListSearchWords(rctx context.Context, userID int64, limit int) ([]model.SearchWordStat, error)
+	ListSearchWordSuggestions(rctx context.Context, userID int64, prefix string, limit int) ([]model.SearchWordStat, error)
+	ListHotSearchWords(rctx context.Context, limit int) ([]model.SearchWordStat, error)
 	GetPlatformBinding(rctx context.Context, userID int64, kind string) (model.PlatformBinding, error)
 	UpsertPlatformBinding(rctx context.Context, binding model.PlatformBinding) (model.PlatformBinding, error)
 	ListPublicOptions(rctx context.Context, userID int64, keyword string) ([]model.PublicOption, error)
@@ -142,6 +144,8 @@ func (s *Service) Routes(r chi.Router) {
 	r.Get("/api/v1/search/options", s.handleSearchOptions)
 	r.Get("/api/v1/search/options/{kind}", s.handleSearchOptionKind)
 	r.Get("/api/v1/search/history", s.handleListSearchHistory)
+	r.Get("/api/v1/search/suggestions", s.handleSearchSuggestions)
+	r.Get("/api/v1/search/hot-keywords", s.handleHotKeywords)
 	r.Post("/api/v1/search/history", s.handleSaveSearchHistory)
 	r.Get("/api/v1/platform/bindings/{kind}", s.handleGetPlatformBinding)
 	r.Post("/api/v1/platform/bindings/{kind}", s.handleUpsertPlatformBinding)
@@ -671,6 +675,40 @@ func (s *Service) handleListSearchHistory(w http.ResponseWriter, r *http.Request
 	}
 	limit := apiutil.IntQuery(r, "limit", 6)
 	words, err := s.store.ListSearchWords(r.Context(), userID, limit)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", words)
+}
+
+func (s *Service) handleSearchSuggestions(w http.ResponseWriter, r *http.Request) {
+	userID := filterUserID(r)
+	if userID <= 0 {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "user_id required", nil)
+		return
+	}
+	limit := apiutil.IntQuery(r, "limit", 10)
+	prefix := strings.TrimSpace(r.URL.Query().Get("q"))
+	var (
+		words []model.SearchWordStat
+		err   error
+	)
+	if prefix == "" {
+		words, err = s.store.ListSearchWords(r.Context(), userID, limit)
+	} else {
+		words, err = s.store.ListSearchWordSuggestions(r.Context(), userID, prefix, limit)
+	}
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", words)
+}
+
+func (s *Service) handleHotKeywords(w http.ResponseWriter, r *http.Request) {
+	limit := apiutil.IntQuery(r, "limit", 10)
+	words, err := s.store.ListHotSearchWords(r.Context(), limit)
 	if err != nil {
 		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
 		return
