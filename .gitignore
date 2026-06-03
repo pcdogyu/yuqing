@@ -36,4 +36,5 @@ go/data/*.db
 go/data/*.db-shm
 go/data/*.db-wal
 go/bin/
-go/
+go/runtime-logs/
+go/go/
