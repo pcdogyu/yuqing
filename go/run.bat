@@ -3,8 +3,13 @@ setlocal EnableExtensions
 
 set "SKIP_PULL=0"
 if /I "%~1"=="--skip-pull" set "SKIP_PULL=1"
+set "AFTER_PULL=0"
+if /I "%~1"=="--after-pull" set "AFTER_PULL=1"
+set "SCRIPT_PATH=%~f0"
+if "%AFTER_PULL%"=="1" if not "%~2"=="" set "SCRIPT_PATH=%~f2"
 
-set "GO_DIR=%~dp0"
+for %%I in ("%SCRIPT_PATH%") do set "SCRIPT_DIR=%%~dpI"
+set "GO_DIR=%SCRIPT_DIR%"
 for %%I in ("%GO_DIR%.") do set "GO_DIR=%%~fI"
 for %%I in ("%GO_DIR%\..") do set "REPO_ROOT=%%~fI"
 set "BIN_DIR=%GO_DIR%\bin"
@@ -13,12 +18,25 @@ set "SERVICE_PORTS=80 8081 8082 8083 8084 8085"
 set "SERVICE_NAMES=auth-service content-service crawler-service analysis-service nlp-service gateway-web scheduler-service"
 set "YUQING_LOG_LEVEL=debug"
 set "YUQING_RUN_VERSION=local"
+set "TEMP_BOOTSTRAP=%TEMP%\yuqing-run-bootstrap-%RANDOM%-%RANDOM%.cmd"
+
+if "%SKIP_PULL%"=="0" if "%AFTER_PULL%"=="0" (
+    copy /Y "%~f0" "%TEMP_BOOTSTRAP%" >nul
+    if errorlevel 1 (
+        echo Failed to create bootstrap copy: %TEMP_BOOTSTRAP%
+        goto :fail
+    )
+    cmd /c ""%TEMP_BOOTSTRAP%" --after-pull "%~f0""
+    set "BOOTSTRAP_EXIT=%ERRORLEVEL%"
+    del /Q "%TEMP_BOOTSTRAP%" >nul 2>nul
+    exit /b %BOOTSTRAP_EXIT%
+)
 
 cd /d "%REPO_ROOT%"
 echo [1/6] Pull latest code from origin...
 if "%SKIP_PULL%"=="1" (
     echo Skip pull requested. Continue with current worktree.
-) else (
+) else if "%AFTER_PULL%"=="1" (
     for /f %%I in ('git rev-parse HEAD') do set "YUQING_HEAD_BEFORE=%%I"
     git diff --quiet -- go/data/yuqing.db go/data/yuqing.db-shm go/data/yuqing.db-wal >nul 2>nul
     if errorlevel 1 (
@@ -29,10 +47,13 @@ if "%SKIP_PULL%"=="1" (
         for /f %%I in ('git rev-parse HEAD') do set "YUQING_HEAD_AFTER=%%I"
         if not "%YUQING_HEAD_BEFORE%"=="%YUQING_HEAD_AFTER%" (
             echo Repository updated. Restarting run.bat with the refreshed worktree...
-            cmd /c ""%GO_DIR%\run.bat" --skip-pull"
-            exit /b %ERRORLEVEL%
         )
     )
+    cmd /c ""%GO_DIR%\run.bat" --skip-pull"
+    exit /b %ERRORLEVEL%
+) else (
+    echo Internal error: unexpected startup mode.
+    goto :fail
 )
 
 cd /d "%GO_DIR%"
