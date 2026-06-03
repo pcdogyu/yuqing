@@ -38,6 +38,10 @@ if "%SKIP_PULL%"=="1" (
     echo Skip pull requested. Continue with current worktree.
 ) else if "%AFTER_PULL%"=="1" (
     for /f %%I in ('git rev-parse HEAD') do set "YUQING_HEAD_BEFORE=%%I"
+    if not defined YUQING_HEAD_BEFORE (
+        echo Failed to resolve current git HEAD before pull.
+        goto :fail
+    )
     git diff --quiet -- go/data/yuqing.db go/data/yuqing.db-shm go/data/yuqing.db-wal >nul 2>nul
     if errorlevel 1 (
         echo Detected local database changes under go/data. Skipping git pull to preserve local data.
@@ -45,6 +49,10 @@ if "%SKIP_PULL%"=="1" (
         git pull --ff-only
         if errorlevel 1 goto :fail
         for /f %%I in ('git rev-parse HEAD') do set "YUQING_HEAD_AFTER=%%I"
+        if not defined YUQING_HEAD_AFTER (
+            echo Failed to resolve git HEAD after pull.
+            goto :fail
+        )
         if not "%YUQING_HEAD_BEFORE%"=="%YUQING_HEAD_AFTER%" (
             echo Repository updated. Restarting run.bat with the refreshed worktree...
         )
@@ -58,7 +66,9 @@ if "%SKIP_PULL%"=="1" (
 
 cd /d "%GO_DIR%"
 echo [2/6] Resolve build metadata...
-for /f %%I in ('git -C "%REPO_ROOT%" rev-parse --short HEAD') do set "YUQING_GIT_COMMIT=%%I"
+pushd "%REPO_ROOT%" >nul
+for /f %%I in ('git rev-parse --short HEAD') do set "YUQING_GIT_COMMIT=%%I"
+popd >nul
 for /f "usebackq delims=" %%I in (`powershell -NoProfile -Command "(Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')"`) do set "YUQING_BUILD_TIME=%%I"
 if not defined YUQING_GIT_COMMIT set "YUQING_GIT_COMMIT=unknown"
 if not defined YUQING_BUILD_TIME set "YUQING_BUILD_TIME=unknown"
