@@ -26,6 +26,7 @@ type Store interface {
 	DeleteSession(context.Context, string) error
 	GetUserByID(context.Context, int64) (model.User, error)
 	UpdateUserProfile(context.Context, int64, model.UserProfileUpdate) (model.User, error)
+	UpdateUserPassword(context.Context, int64, string) error
 	CreateAPIToken(context.Context, int64, string) (model.APIToken, error)
 	ResolveAPIToken(context.Context, string) (model.User, error)
 	CreateCaptcha(context.Context, time.Duration) (model.Captcha, error)
@@ -76,6 +77,7 @@ func (s *Service) Routes(r chi.Router) {
 	r.Get("/api/v1/users/me", s.handleGetCurrentUser)
 	r.Get("/api/v1/users/{id}", s.handleGetUser)
 	r.Put("/api/v1/users/{id}", s.handleUpdateUser)
+	r.Put("/api/v1/users/{id}/password", s.handleUpdateUserPassword)
 	r.Get("/api/v1/wechat/getQrCode", s.handleWechatGetQRCode)
 	r.Get("/api/v1/wechat/getBindQrCode", s.handleWechatGetBindQRCode)
 	r.Get("/api/v1/wechat/checkBind", s.handleWechatCheckBind)
@@ -219,6 +221,54 @@ func (s *Service) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	apiutil.WriteJSON(w, http.StatusOK, "ok", updated)
+}
+
+func (s *Service) handleUpdateUserPassword(w http.ResponseWriter, r *http.Request) {
+	current, err := s.userFromRequest(r)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusUnauthorized, "unauthorized", nil)
+		return
+	}
+	targetID, ok := parseID(r)
+	if !ok {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid id", nil)
+		return
+	}
+	var req struct {
+		OldPassword string `json:"old_password"`
+		NewPassword string `json:"new_password"`
+	}
+	if err := jsonNewDecoder(r).Decode(&req); err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid body", nil)
+		return
+	}
+	if strings.TrimSpace(req.NewPassword) == "" {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "new password required", nil)
+		return
+	}
+	if current.Role != "admin" && current.ID != targetID {
+		apiutil.WriteJSON(w, http.StatusForbidden, "forbidden", nil)
+		return
+	}
+	if current.ID == targetID {
+		if strings.TrimSpace(req.OldPassword) == "" {
+			apiutil.WriteJSON(w, http.StatusBadRequest, "old password required", nil)
+			return
+		}
+		if _, err := s.store.AuthenticateUser(r.Context(), current.Username, req.OldPassword); err != nil {
+			apiutil.WriteJSON(w, http.StatusBadRequest, "invalid old password", nil)
+			return
+		}
+	}
+	if err := s.store.UpdateUserPassword(r.Context(), targetID, req.NewPassword); err != nil {
+		if errors.Is(err, sqlitestore.ErrNotFound) {
+			apiutil.WriteJSON(w, http.StatusNotFound, "not found", nil)
+			return
+		}
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]bool{"updated": true})
 }
 
 func (s *Service) handleCreateToken(w http.ResponseWriter, r *http.Request) {

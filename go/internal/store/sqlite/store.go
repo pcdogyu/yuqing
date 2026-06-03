@@ -70,6 +70,9 @@ CREATE TABLE IF NOT EXISTS items (
 CREATE TABLE IF NOT EXISTS crawl_runs (
 	id INTEGER PRIMARY KEY,
 	source_type TEXT NOT NULL,
+	template_id INTEGER NOT NULL DEFAULT 0,
+	template_name TEXT NOT NULL DEFAULT '',
+	template_snapshot TEXT NOT NULL DEFAULT '',
 	started_at TEXT NOT NULL,
 	finished_at TEXT,
 	status TEXT NOT NULL,
@@ -134,6 +137,24 @@ CREATE TABLE IF NOT EXISTS captchas (
 	code TEXT NOT NULL,
 	expires_at TEXT NOT NULL,
 	created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS search_words (
+	id INTEGER PRIMARY KEY,
+	user_id INTEGER NOT NULL,
+	search_word TEXT NOT NULL,
+	created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS platform_bindings (
+	user_id INTEGER NOT NULL,
+	kind TEXT NOT NULL,
+	secret_id TEXT NOT NULL DEFAULT '',
+	secret_key TEXT NOT NULL DEFAULT '',
+	bound INTEGER NOT NULL DEFAULT 0,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	PRIMARY KEY (user_id, kind)
 );
 
 CREATE TABLE IF NOT EXISTS project_groups (
@@ -223,6 +244,31 @@ CREATE TABLE IF NOT EXISTS report_sections (
 	content TEXT NOT NULL,
 	sort_order INTEGER NOT NULL DEFAULT 0,
 	created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS public_options (
+	id INTEGER PRIMARY KEY,
+	user_id INTEGER NOT NULL,
+	eventname TEXT NOT NULL,
+	eventkeywords TEXT NOT NULL DEFAULT '',
+	eventstopwords TEXT NOT NULL DEFAULT '',
+	eventstarttime TEXT NOT NULL DEFAULT '',
+	eventendtime TEXT NOT NULL DEFAULT '',
+	createtime TEXT NOT NULL,
+	status INTEGER NOT NULL DEFAULT 3,
+	updatetime TEXT NOT NULL,
+	detail_status INTEGER NOT NULL DEFAULT 3,
+	emotional_index TEXT NOT NULL DEFAULT '',
+	back_analysis TEXT NOT NULL DEFAULT '{}',
+	event_context TEXT NOT NULL DEFAULT '[]',
+	event_trace TEXT NOT NULL DEFAULT '{}',
+	hot_analysis TEXT NOT NULL DEFAULT '[]',
+	netizens_analysis TEXT NOT NULL DEFAULT '{}',
+	statistics TEXT NOT NULL DEFAULT '{}',
+	propagation_analysis TEXT NOT NULL DEFAULT '{}',
+	thematic_analysis TEXT NOT NULL DEFAULT '{}',
+	unscramble_content TEXT NOT NULL DEFAULT '{}',
+	content_analysis TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS analysis_snapshots (
@@ -336,6 +382,16 @@ CREATE TABLE IF NOT EXISTS task_runs (
 	finished_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS crawl_templates (
+	id INTEGER PRIMARY KEY,
+	name TEXT NOT NULL UNIQUE,
+	source_type TEXT NOT NULL DEFAULT 'custom',
+	enabled INTEGER NOT NULL DEFAULT 1,
+	config_json TEXT NOT NULL DEFAULT '{}',
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS wechat_challenges (
 	scene_str TEXT PRIMARY KEY,
 	purpose TEXT NOT NULL,
@@ -359,11 +415,14 @@ CREATE TABLE IF NOT EXISTS wechat_bindings (
 CREATE INDEX IF NOT EXISTS idx_items_source_type_captured_at ON items(source_type, captured_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_items_title ON items(title);
 CREATE INDEX IF NOT EXISTS idx_crawl_runs_source_type_started_at ON crawl_runs(source_type, started_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_crawl_templates_enabled_updated ON crawl_templates(enabled, updated_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_projects_group_id ON projects(group_id);
 CREATE INDEX IF NOT EXISTS idx_monitor_rules_project_id ON monitor_rules(project_id);
 CREATE INDEX IF NOT EXISTS idx_reports_project_id ON reports(project_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_captchas_expires_at ON captchas(expires_at);
+CREATE INDEX IF NOT EXISTS idx_search_words_user_created ON search_words(user_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_platform_bindings_kind_updated ON platform_bindings(kind, updated_at DESC, user_id DESC);
 CREATE INDEX IF NOT EXISTS idx_item_relations_project_id ON item_relations(project_id, item_id DESC);
 CREATE INDEX IF NOT EXISTS idx_trend_points_scope ON trend_points(scope, scope_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_keyword_hotspots_scope ON keyword_hotspots(scope, scope_id, created_at DESC);
@@ -372,6 +431,7 @@ CREATE INDEX IF NOT EXISTS idx_popup_states_user_id ON popup_states(user_id, upd
 CREATE INDEX IF NOT EXISTS idx_item_shares_item_id ON item_shares(item_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_wechat_challenges_expires_at ON wechat_challenges(expires_at);
 CREATE INDEX IF NOT EXISTS idx_wechat_bindings_openid ON wechat_bindings(openid);
+CREATE INDEX IF NOT EXISTS idx_public_options_user_updated ON public_options(user_id, updatetime DESC, id DESC);
 `
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return err
@@ -380,13 +440,29 @@ CREATE INDEX IF NOT EXISTS idx_wechat_bindings_openid ON wechat_bindings(openid)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE users ADD COLUMN term_of_validity TEXT NOT NULL DEFAULT '2099-01-19T00:00:00Z'`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE monitor_rules ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE popup_states ADD COLUMN count INTEGER NOT NULL DEFAULT 0`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE crawl_runs ADD COLUMN template_id INTEGER NOT NULL DEFAULT 0`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE crawl_runs ADD COLUMN template_name TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE crawl_runs ADD COLUMN template_snapshot TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE platform_bindings ADD COLUMN bound INTEGER NOT NULL DEFAULT 0`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE public_options ADD COLUMN detail_status INTEGER NOT NULL DEFAULT 3`)
 	return nil
 }
 
 func (s *Store) StartCrawlRun(ctx context.Context, sourceType string, startedAt time.Time) (int64, error) {
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO crawl_runs (source_type, started_at, status, fetched_count, inserted_count, updated_count) VALUES (?, ?, 'running', 0, 0, 0)`,
+		`INSERT INTO crawl_runs (source_type, template_id, template_name, template_snapshot, started_at, status, fetched_count, inserted_count, updated_count) VALUES (?, 0, '', '', ?, 'running', 0, 0, 0)`,
 		sourceType, startedAt.Format(time.RFC3339),
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (s *Store) StartCrawlTemplateRun(ctx context.Context, sourceType string, templateID int64, templateName, templateSnapshot string, startedAt time.Time) (int64, error) {
+	res, err := s.db.ExecContext(ctx,
+		`INSERT INTO crawl_runs (source_type, template_id, template_name, template_snapshot, started_at, status, fetched_count, inserted_count, updated_count) VALUES (?, ?, ?, ?, ?, 'running', 0, 0, 0)`,
+		sourceType, templateID, templateName, templateSnapshot, startedAt.Format(time.RFC3339),
 	)
 	if err != nil {
 		return 0, err

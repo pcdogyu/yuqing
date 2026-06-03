@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type Item struct {
 	ID                 int64     `json:"id"`
@@ -49,6 +52,68 @@ type CrawlSummary struct {
 	ErrorText     string `json:"error_text,omitempty"`
 }
 
+type CrawlTemplate struct {
+	ID         int64     `json:"id"`
+	Name       string    `json:"name"`
+	SourceType string    `json:"source_type"`
+	Enabled    bool      `json:"enabled"`
+	ConfigJSON string    `json:"config_json"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+type CrawlTemplateConfig struct {
+	SourceType     string                  `json:"source_type"`
+	BaseURL        string                  `json:"base_url"`
+	Method         string                  `json:"method"`
+	Headers        map[string]string       `json:"headers,omitempty"`
+	Cookies        map[string]string       `json:"cookies,omitempty"`
+	Query          map[string]string       `json:"query,omitempty"`
+	Body           string                  `json:"body,omitempty"`
+	Pagination     CrawlTemplatePagination `json:"pagination,omitempty"`
+	ListSelector   string                  `json:"list_selector,omitempty"`
+	DetailSelector string                  `json:"detail_selector,omitempty"`
+	DetailURLField string                  `json:"detail_url_field,omitempty"`
+	Fields         []CrawlTemplateField    `json:"fields,omitempty"`
+}
+
+type CrawlTemplatePagination struct {
+	Enabled bool   `json:"enabled"`
+	Param   string `json:"param,omitempty"`
+	Start   int    `json:"start,omitempty"`
+	End     int    `json:"end,omitempty"`
+	Step    int    `json:"step,omitempty"`
+}
+
+type CrawlTemplateField struct {
+	Scope    string `json:"scope,omitempty"`
+	Name     string `json:"name"`
+	Selector string `json:"selector,omitempty"`
+	Attr     string `json:"attr,omitempty"`
+	From     string `json:"from,omitempty"`
+	Value    string `json:"value,omitempty"`
+	Prefix   string `json:"prefix,omitempty"`
+	Suffix   string `json:"suffix,omitempty"`
+	Join     string `json:"join,omitempty"`
+	Trim     bool   `json:"trim,omitempty"`
+	Required bool   `json:"required,omitempty"`
+}
+
+func (c CrawlTemplateConfig) MarshalJSON() ([]byte, error) {
+	type alias CrawlTemplateConfig
+	return json.Marshal(alias(c))
+}
+
+func (c *CrawlTemplateConfig) UnmarshalJSON(data []byte) error {
+	type alias CrawlTemplateConfig
+	var v alias
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	*c = CrawlTemplateConfig(v)
+	return nil
+}
+
 type ItemListResult struct {
 	Items    []Item `json:"items"`
 	Page     int    `json:"page"`
@@ -92,4 +157,10 @@ type SearchOptions struct {
 	Industries []string `json:"industries"`
 	Provinces  []string `json:"provinces"`
 	Cities     []string `json:"cities"`
+}
+
+type SearchWordStat struct {
+	SearchWord string `json:"search_word"`
+	UserID     int64  `json:"user_id"`
+	WordCount  int    `json:"wordCount"`
 }

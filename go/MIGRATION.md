@@ -13,9 +13,6 @@
 
 ## 部分承接
 
-- `FullSearchController` -> `gateway-web /fullsearch` 兼容跳转 + `gateway-web /articles?mode=full` + `content-service /api/v1/search/full`
-- `TimelySearchController` -> `gateway-web /timelysearch` 兼容跳转 + `gateway-web /articles?mode=timely` + `content-service /api/v1/search/timely`
-- `LSearchController` -> `gateway-web` legacy compatibility endpoints `/industry` `/getevent` `/getProvinceList` `/getArticleCityList`
 - `PlatformController` -> 平台设置/通知/绑定能力已部分落到 `content-service /system-*` 与 `gateway-web /system`
 - `MailController` -> `gateway-web /mail/saveMailConfig` `checkMailConfig` `getMailConfig` legacy 兼容 + `content-service /system/mail-config`
 - `PopUpController` -> `gateway-web /popUp/needPopUp` `close` `needContact` `closeContact` legacy 兼容 + `content-service /system/popup`
@@ -30,13 +27,11 @@
 - `DatafavoriteContoller` -> `gateway-web /datamonitor/*` legacy 兼容已补齐已读/收藏/拷贝/选择读取标记，`content-service /articles` 负责落库；`sending` / `updateemtion` / `deletedata` 仍是兼容返回
 - `UserController` -> 用户资料/偏好已落到 `content-service /system/preferences` 与 `gateway-web /system`
 
-## 暂不承接
+## 已承接/兼容
 
-- `MobileController`
-- `DisplayBoardController`
-- `VolumeController`
-- `HotNewsController`
-- `UserAuthController`
+- `FullSearchController` -> `gateway-web /fullsearch` 兼容跳转 + `gateway-web /articles?mode=full` + `content-service /api/v1/search/full` + 旧左侧筛选/历史词接口
+- `TimelySearchController` -> `gateway-web /timelysearch` 兼容跳转 + `gateway-web /articles?mode=timely` + `content-service /api/v1/search/timely` + `timelysearch/data` / `templete` 兼容
+- `LSearchController` -> `gateway-web` legacy compatibility endpoints `/industry` `/getevent` `/getProvinceList` `/getArticleCityList`
 
 ## 当前 Go 服务职责
 

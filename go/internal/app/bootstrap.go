@@ -48,7 +48,7 @@ func NewCrawler(cfg config.Config, store *sqlitestore.Store) *service.Crawler {
 	return service.NewCrawler(store, provider.Registry{
 		Flash:    jin10flash.NewProvider(httpClient, cfg.FlashURL),
 		Headline: jin10xnews.NewProvider(httpClient, cfg.HeadlineURL),
-	})
+	}, nil)
 }
 
 func LogStartup(serviceName, listenAddr string, cfg config.Config) {

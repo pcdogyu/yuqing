@@ -89,6 +89,34 @@ func TestPreferencesPopupAndMailConfig(t *testing.T) {
 	}
 }
 
+func TestUpdateUserPassword(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	if err := store.EnsureDefaultAdmin(ctx, "admin", "old-secret"); err != nil {
+		t.Fatalf("EnsureDefaultAdmin error: %v", err)
+	}
+
+	user, err := store.AuthenticateUser(ctx, "admin", "old-secret")
+	if err != nil {
+		t.Fatalf("AuthenticateUser old password error: %v", err)
+	}
+	if user.Username != "admin" {
+		t.Fatalf("unexpected user: %+v", user)
+	}
+
+	if err := store.UpdateUserPassword(ctx, user.ID, "new-secret"); err != nil {
+		t.Fatalf("UpdateUserPassword error: %v", err)
+	}
+
+	if _, err := store.AuthenticateUser(ctx, "admin", "old-secret"); err == nil {
+		t.Fatal("expected old password to stop working")
+	}
+	if _, err := store.AuthenticateUser(ctx, "admin", "new-secret"); err != nil {
+		t.Fatalf("AuthenticateUser new password error: %v", err)
+	}
+}
+
 func TestAdvancedSearchAndAnalysisHelpers(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
@@ -127,6 +155,32 @@ func TestAdvancedSearchAndAnalysisHelpers(t *testing.T) {
 	}
 	if emotions.Total != 2 {
 		t.Fatalf("expected 2 items in emotion analysis, got %+v", emotions)
+	}
+}
+
+func TestSearchWordHistory(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	words := []string{"钢铁", "能源", "钢铁"}
+	for _, word := range words {
+		if err := store.SaveSearchWord(ctx, 42, word); err != nil {
+			t.Fatalf("SaveSearchWord error: %v", err)
+		}
+	}
+
+	stats, err := store.ListSearchWords(ctx, 42, 10)
+	if err != nil {
+		t.Fatalf("ListSearchWords error: %v", err)
+	}
+	if len(stats) != 2 {
+		t.Fatalf("expected 2 unique search words, got %+v", stats)
+	}
+	if stats[0].SearchWord != "钢铁" || stats[0].WordCount != 2 {
+		t.Fatalf("unexpected first history item: %+v", stats[0])
+	}
+	if stats[1].SearchWord != "能源" || stats[1].WordCount != 1 {
+		t.Fatalf("unexpected second history item: %+v", stats[1])
 	}
 }
 

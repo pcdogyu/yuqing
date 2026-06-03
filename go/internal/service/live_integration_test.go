@@ -35,7 +35,7 @@ func TestLiveCrawlJin10Sources(t *testing.T) {
 	crawler := NewCrawler(store, provider.Registry{
 		Flash:    jin10flash.NewProvider(client, "https://www.jin10.com/"),
 		Headline: jin10xnews.NewProvider(client, "https://xnews.jin10.com/"),
-	})
+	}, nil)
 
 	ctx := context.Background()
 	flashSummary, err := crawler.Run(ctx, provider.SourceTypeFlash)

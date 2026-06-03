@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"html/template"
 	"io"
 	"net/http"
@@ -125,6 +126,7 @@ type mobileQRCodeState struct {
 type pageData struct {
 	Title          string
 	User           any
+	SectionKey     string
 	Dashboard      model.DashboardSnapshot
 	Groups         []model.ProjectGroup
 	Project        model.Project
@@ -160,8 +162,16 @@ type pageData struct {
 	FilterProvince string
 	FilterCity     string
 	SearchMode     string
+	Section        string
+	FavoriteItems  model.ItemListResult
+	FavoritePage   int
+	FavoritePagePrev int
+	FavoritePageNext int
+	FavoriteProjectID string
+	FavoriteTotalPages int
 	Services       []serviceStatus
 	ProjectNames   map[int64]string
+	GroupNames     map[int64]string
 	CountActive    int
 	CountPaused    int
 	CountRead      int
@@ -180,7 +190,11 @@ type serviceStatus struct {
 }
 
 func NewServer(cfg config.Config) *Server {
-	tpl := template.Must(template.New("layout").Parse(layoutTemplate))
+	funcMap := template.FuncMap{
+		"firstProjectGroupID": firstProjectGroupIDForTemplate,
+		"firstProjectIDForItem": firstProjectIDForItemTemplate,
+	}
+	tpl := template.Must(template.New("layout").Funcs(funcMap).Parse(layoutTemplate))
 	template.Must(tpl.New("login").Parse(loginTemplate))
 	template.Must(tpl.New("dashboard").Parse(dashboardTemplate))
 	template.Must(tpl.New("projects").Parse(projectsTemplate))
@@ -232,6 +246,9 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/dist/applydatainfo", s.handleDistApplyDataInfo)
 	mux.HandleFunc("/dist/yqmontitor", s.handleDistYqMonitor)
 	mux.HandleFunc("/dist/hotdata", s.handleDistHotData)
+	mux.HandleFunc("/platform/", s.requireSession(s.handlePlatformCompat))
+	mux.HandleFunc("/publicoption", s.requireSession(s.handlePublicOptionEntry))
+	mux.HandleFunc("/publicoption/", s.requireSession(s.handlePublicOptionCompat))
 	mux.HandleFunc("/logout", s.handleLogout)
 	mux.HandleFunc("/industry", s.requireSessionJSON(s.handleLegacySearchBuckets("industry")))
 	mux.HandleFunc("/industry/", s.requireSessionJSON(s.handleLegacySearchBuckets("industry")))
@@ -243,13 +260,28 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/getArticleCityList/", s.requireSessionJSON(s.handleLegacySearchBuckets("city")))
 	mux.HandleFunc("/search", s.requireSession(s.handleLegacySearchRedirect("search")))
 	mux.HandleFunc("/search/", s.requireSession(s.handleLegacySearchRedirect("search")))
-	mux.HandleFunc("/fullsearch", s.requireSession(s.handleLegacySearchRedirect("full")))
-	mux.HandleFunc("/fullsearch/", s.requireSession(s.handleLegacySearchRedirect("full")))
-	mux.HandleFunc("/timelysearch", s.requireSession(s.handleLegacySearchRedirect("timely")))
-	mux.HandleFunc("/timelysearch/", s.requireSession(s.handleLegacySearchRedirect("timely")))
+	mux.HandleFunc("/fullsearch", s.requireSession(s.handleFullSearchEntry))
+	mux.HandleFunc("/fullsearch/", s.requireSession(s.handleFullSearchCompat))
+	mux.HandleFunc("/timelysearch", s.requireSession(s.handleTimelySearchEntry))
+	mux.HandleFunc("/timelysearch/", s.requireSession(s.handleTimelySearchCompat))
 	mux.HandleFunc("/mail/saveMailConfig", s.requireSessionJSON(s.handleLegacySaveMailConfig))
 	mux.HandleFunc("/mail/checkMailConfig", s.requireSessionJSON(s.handleLegacyCheckMailConfig))
 	mux.HandleFunc("/mail/getMailConfig", s.requireSessionJSON(s.handleLegacyGetMailConfig))
+	mux.HandleFunc("/user/detail", s.requireSessionJSON(s.handleLegacyUserDetail))
+	mux.HandleFunc("/user/edit", s.requireSessionJSON(s.handleLegacyUserEdit))
+	mux.HandleFunc("/user/getwechatqrcode", s.requireSessionJSON(s.handleLegacyUserWechatQRCode))
+	mux.HandleFunc("/user/", s.requireSession(s.handleUserCompat))
+	mux.HandleFunc("/system/listSolutionGroupByUserId", s.requireSessionJSON(s.handleLegacyListSolutionGroupByUserID))
+	mux.HandleFunc("/system/listProjectByGroupId", s.requireSessionJSON(s.handleLegacyListProjectByGroupID))
+	mux.HandleFunc("/system/listProjectByUserId", s.requireSessionJSON(s.handleLegacyListProjectByUserID))
+	mux.HandleFunc("/system/getFavoriteList", s.requireSessionJSON(s.handleLegacyGetFavoriteList))
+	mux.HandleFunc("/system/warningSettingDetail", s.requireSessionJSON(s.handleLegacyWarningSettingDetail))
+	mux.HandleFunc("/system/updateWarning", s.requireSessionJSON(s.handleLegacyUpdateWarning))
+	mux.HandleFunc("/system/getSystemTitle", s.requireSessionJSON(s.handleLegacyGetSystemTitle))
+	mux.HandleFunc("/system/preference", s.requireSession(s.handleSystemSectionRedirect("preferences")))
+	mux.HandleFunc("/system/favorite", s.requireSession(s.handleSystemSectionRedirect("favorites")))
+	mux.HandleFunc("/system/feedback", s.requireSession(s.handleSystemSectionRedirect("feedback")))
+	mux.HandleFunc("/system/warningedit", s.requireSession(s.handleSystemWarningEdit))
 	mux.HandleFunc("/wechat/getQrCode", s.handleWechatGetQrCode)
 	mux.HandleFunc("/wechat/getBindQrCode", s.handleWechatGetBindQRCode)
 	mux.HandleFunc("/wechat/checkBind", s.handleWechatCheckBind)
@@ -364,7 +396,7 @@ func (s *Server) legacySearchTarget(mode string, r *http.Request) string {
 	if keyword := nonEmpty(r.URL.Query().Get("keyword"), r.URL.Query().Get("searchword"), r.URL.Query().Get("searchWord")); keyword != "" {
 		values.Set("keyword", keyword)
 	}
-	for _, key := range []string{"project_id", "source_type", "read", "favorite", "start", "end", "industry", "province", "city"} {
+	for _, key := range []string{"project_id", "source_type", "read", "favorite", "start", "end", "industry", "province", "city", "fulltype", "full_poly", "menuStyle", "page", "pageSize", "onlyid", "sourcename", "stype", "website_id", "pageNoData"} {
 		if value := strings.TrimSpace(r.URL.Query().Get(key)); value != "" {
 			values.Set(key, value)
 		}
@@ -675,6 +707,239 @@ func (s *Server) handleLegacySending(w http.ResponseWriter, r *http.Request, use
 		return
 	}
 	writeDatamonitorJSON(w, http.StatusOK, "1")
+}
+
+func (s *Server) handleUserCompat(w http.ResponseWriter, r *http.Request, user any) {
+	target := url.Values{}
+	target.Set("section", "account")
+	http.Redirect(w, r, "/system?"+target.Encode(), http.StatusSeeOther)
+}
+
+func (s *Server) handleSystemSectionRedirect(section string) func(http.ResponseWriter, *http.Request, any) {
+	return func(w http.ResponseWriter, r *http.Request, _ any) {
+		target := url.Values{}
+		target.Set("section", normalizeSystemSection(section))
+		if projectID := nonEmpty(r.URL.Query().Get("project_id"), r.URL.Query().Get("projectid")); projectID != "" {
+			target.Set("project_id", projectID)
+		}
+		if page := nonEmpty(r.URL.Query().Get("page"), r.URL.Query().Get("pageNum")); page != "" {
+			target.Set("page", page)
+		}
+		http.Redirect(w, r, "/system?"+target.Encode(), http.StatusSeeOther)
+	}
+}
+
+func (s *Server) handleSystemWarningEdit(w http.ResponseWriter, r *http.Request, _ any) {
+	target := url.Values{}
+	target.Set("section", "warning")
+	if projectID := nonEmpty(r.URL.Query().Get("project_id"), r.URL.Query().Get("projectid")); projectID != "" {
+		target.Set("project_id", projectID)
+	}
+	if page := nonEmpty(r.URL.Query().Get("page"), r.URL.Query().Get("pageNum")); page != "" {
+		target.Set("page", page)
+	}
+	http.Redirect(w, r, "/system?"+target.Encode(), http.StatusSeeOther)
+}
+
+func (s *Server) handleLegacyUserDetail(w http.ResponseWriter, r *http.Request, user any) {
+	mapped := legacyUserDetailPayload(user)
+	writeLegacyJSON(w, http.StatusOK, "OK", mapped)
+}
+
+func (s *Server) handleLegacyUserEdit(w http.ResponseWriter, r *http.Request, user any) {
+	if err := r.ParseForm(); err != nil {
+		writeLegacyStatusJSON(w, http.StatusBadRequest, "请求参数错误", nil)
+		return
+	}
+	oldPassword := strings.TrimSpace(r.FormValue("oldPassword"))
+	newPassword := strings.TrimSpace(r.FormValue("newPassword"))
+	if oldPassword == "" || newPassword == "" {
+		writeLegacyStatusJSON(w, http.StatusBadRequest, "密码不能为空", nil)
+		return
+	}
+	userID := userIDFromMap(user)
+	if userID <= 0 {
+		writeLegacyStatusJSON(w, http.StatusForbidden, "未登录", nil)
+		return
+	}
+	token, ok := s.sessionTokenFromRequest(r)
+	if !ok {
+		writeLegacyStatusJSON(w, http.StatusForbidden, "未登录", nil)
+		return
+	}
+	resp, err := s.client.R().
+		SetQueryParam("session_token", token).
+		SetBody(map[string]string{
+			"old_password": oldPassword,
+			"new_password": newPassword,
+		}).
+		Put(s.cfg.AuthURL + "/api/v1/users/" + strconv.FormatInt(userID, 10) + "/password")
+	if err != nil {
+		writeLegacyStatusJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	if resp.IsSuccess() {
+		writeLegacyStatusJSON(w, http.StatusOK, "OK", map[string]any{})
+		return
+	}
+	if resp.StatusCode() == http.StatusBadRequest && strings.Contains(strings.ToLower(resp.String()), "old password") {
+		writeLegacyStatusJSON(w, 203, "旧密码输入错误！", map[string]any{})
+		return
+	}
+	writeLegacyStatusJSON(w, 201, "密码修改失败！", map[string]any{})
+}
+
+func (s *Server) handleLegacyUserWechatQRCode(w http.ResponseWriter, r *http.Request, _ any) {
+	resp, err := s.client.R().Get(s.cfg.AuthURL + "/api/v1/wechat/getQrCode")
+	if err != nil {
+		writeLegacyStatusJSON(w, http.StatusBadGateway, err.Error(), nil)
+		return
+	}
+	if !resp.IsSuccess() {
+		writeLegacyStatusJSON(w, resp.StatusCode(), resp.Status(), nil)
+		return
+	}
+	var envelope struct {
+		Msg  string `json:"msg"`
+		Data struct {
+			QRCodeURL string `json:"qrcodeUrl"`
+			SceneStr  string `json:"sceneStr"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(resp.Body(), &envelope); err != nil {
+		writeLegacyStatusJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	writeLegacyStatusJSON(w, http.StatusOK, "OK", map[string]any{
+		"ticket":   envelope.Data.QRCodeURL,
+		"sceneStr": envelope.Data.SceneStr,
+	})
+}
+
+func (s *Server) handleLegacyListSolutionGroupByUserID(w http.ResponseWriter, r *http.Request, _ any) {
+	groups := s.fetchLegacyProjectGroups()
+	writeRawJSON(w, http.StatusOK, groups)
+}
+
+func (s *Server) handleLegacyListProjectByGroupID(w http.ResponseWriter, r *http.Request, _ any) {
+	if err := r.ParseForm(); err != nil {
+		writeRawJSON(w, http.StatusOK, []map[string]any{})
+		return
+	}
+	groupID := parseFormProjectGroupID(r)
+	projects := s.fetchLegacyProjects()
+	if groupID > 0 {
+		projects = filterLegacyProjectsByGroupID(projects, groupID)
+	}
+	writeRawJSON(w, http.StatusOK, projects)
+}
+
+func (s *Server) handleLegacyListProjectByUserID(w http.ResponseWriter, r *http.Request, _ any) {
+	_ = r.ParseForm()
+	writeRawJSON(w, http.StatusOK, s.fetchLegacyProjects())
+}
+
+func (s *Server) handleLegacyGetFavoriteList(w http.ResponseWriter, r *http.Request, user any) {
+	if err := r.ParseForm(); err != nil {
+		writeLegacyJSON(w, http.StatusBadRequest, "invalid body", map[string]any{})
+		return
+	}
+	userID := userIDFromMap(user)
+	if userID <= 0 {
+		writeLegacyJSON(w, http.StatusForbidden, "未登录", map[string]any{})
+		return
+	}
+	pageNum := parsePositiveInt(nonEmpty(r.FormValue("pageNum"), r.FormValue("page")), 1)
+	projectID := strings.TrimSpace(r.FormValue("project_id"))
+	var result model.ItemListResult
+	favoriteURL := s.cfg.ContentURL + "/api/v1/articles?favorite=favorited&page=" + strconv.Itoa(pageNum) + "&page_size=10&user_id=" + strconv.FormatInt(userID, 10)
+	if projectID != "" {
+		favoriteURL += "&project_id=" + url.QueryEscape(projectID)
+	}
+	if err := s.getJSON(favoriteURL, &result); err != nil {
+		writeLegacyJSON(w, http.StatusInternalServerError, err.Error(), map[string]any{})
+		return
+	}
+	items := make([]map[string]any, 0, len(result.Items))
+	projectMap := s.fetchLegacyProjectMap()
+	for _, item := range result.Items {
+		projectIDValue, groupIDValue := firstLegacyProjectAndGroup(item, projectMap)
+		items = append(items, map[string]any{
+			"article_public_id": legacyArticlePublicID(item),
+			"groupid":           groupIDValue,
+			"projectid":         projectIDValue,
+			"title":             item.Title,
+			"source_name":       nonEmpty(item.FromText, item.SourceType),
+			"emotionalIndex":    legacyEmotionalIndex(item),
+			"publish_time":      legacyPublishTime(item),
+		})
+	}
+	totalPages := 1
+	if result.PageSize > 0 && result.Total > 0 {
+		totalPages = (result.Total + result.PageSize - 1) / result.PageSize
+	}
+	writeLegacyJSON(w, http.StatusOK, "OK", map[string]any{
+		"favoriteList": items,
+		"pageInfo": map[string]any{
+			"pageNum": pageNum,
+			"pages":   totalPages,
+			"total":   result.Total,
+			"pageSize": result.PageSize,
+		},
+	})
+}
+
+func (s *Server) handleLegacyWarningSettingDetail(w http.ResponseWriter, r *http.Request, _ any) {
+	projectID := parseFormProjectID(r)
+	if projectID <= 0 {
+		projectID = parseProjectID(r.URL.Query().Get("projectId"))
+	}
+	if projectID <= 0 {
+		writeLegacyStatusJSON(w, http.StatusBadRequest, "projectId required", nil)
+		return
+	}
+	setting, projectName := s.fetchLegacyWarningSetting(projectID)
+	writeLegacyStatusJSON(w, http.StatusOK, "OK", legacyWarningSettingPayload(setting, projectID, projectName))
+}
+
+func (s *Server) handleLegacyUpdateWarning(w http.ResponseWriter, r *http.Request, _ any) {
+	if err := r.ParseForm(); err != nil {
+		writeLegacyStatusJSON(w, http.StatusBadRequest, "invalid body", nil)
+		return
+	}
+	projectID := parseFormProjectID(r)
+	if projectID <= 0 {
+		projectID = parseProjectID(r.FormValue("projectid"))
+	}
+	if projectID <= 0 {
+		writeLegacyStatusJSON(w, http.StatusBadRequest, "project_id required", nil)
+		return
+	}
+	setting := legacyWarningSettingFromForm(r)
+	resp, err := s.client.R().
+		SetBody(setting).
+		Put(s.cfg.ContentURL + "/api/v1/system/warning-settings/" + strconv.FormatInt(projectID, 10))
+	if err != nil {
+		writeLegacyStatusJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	if !resp.IsSuccess() {
+		writeLegacyStatusJSON(w, resp.StatusCode(), resp.Status(), nil)
+		return
+	}
+	writeLegacyStatusJSON(w, http.StatusOK, "OK", map[string]any{})
+}
+
+func (s *Server) handleLegacyGetSystemTitle(w http.ResponseWriter, r *http.Request, user any) {
+	payload := map[string]any{
+		"system_title": "网络情报分析系统",
+	}
+	if mapped, ok := user.(map[string]any); ok {
+		if displayName := nonEmpty(legacyStringFromAny(mapped["display_name"]), legacyStringFromAny(mapped["username"])); displayName != "" {
+			payload["user_name"] = displayName
+		}
+	}
+	writeLegacyJSON(w, http.StatusOK, "OK", payload)
 }
 
 func decodeLegacySearchRequest(r *http.Request) (legacySearchRequest, error) {
@@ -988,11 +1253,38 @@ func writeLegacyJSON(w http.ResponseWriter, status int, message string, data any
 	})
 }
 
-func writeLegacyStatusJSON(w http.ResponseWriter, status int, message string, data any) {
+func writeLegacyStatusJSON(w http.ResponseWriter, status int, args ...any) {
+	message := "OK"
+	data := any(nil)
+	responseStatus := status
+	switch len(args) {
+	case 0:
+	case 1:
+		message = fmt.Sprint(args[0])
+	case 2:
+		message = fmt.Sprint(args[0])
+		data = args[1]
+	case 3:
+		if parsed, ok := args[0].(int); ok {
+			responseStatus = parsed
+		}
+		message = fmt.Sprint(args[1])
+		data = args[2]
+	default:
+		if parsed, ok := args[0].(int); ok {
+			responseStatus = parsed
+		}
+		if len(args) > 1 {
+			message = fmt.Sprint(args[1])
+		}
+		if len(args) > 2 {
+			data = args[2]
+		}
+	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"status": status,
+		"status": responseStatus,
 		"msg":    message,
 		"data":   data,
 	})
@@ -1011,6 +1303,22 @@ func writeJSONBool(w http.ResponseWriter, value bool) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(value)
+}
+
+func writeRawJSON(w http.ResponseWriter, status int, data any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(data)
+}
+
+func writeResultUtilJSON(w http.ResponseWriter, status int, msg string, data any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status": status,
+		"msg":    msg,
+		"data":   data,
+	})
 }
 
 func legacyContactPopupKey(projectID int64) string {
@@ -2170,24 +2478,51 @@ func (s *Server) handleReportDetail(w http.ResponseWriter, r *http.Request, user
 }
 
 func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) {
+	sectionKey := normalizeSystemSection(strings.TrimSpace(r.URL.Query().Get("section")))
+	projectID := strings.TrimSpace(r.URL.Query().Get("project_id"))
+	favoritePage := parsePositiveInt(r.URL.Query().Get("page"), 1)
+
 	if r.Method == http.MethodPost {
 		_ = r.ParseForm()
+		sectionKey = normalizeSystemSection(nonEmpty(r.FormValue("section"), sectionKey))
+		projectID = nonEmpty(r.FormValue("project_id"), projectID)
+		favoritePage = parsePositiveInt(r.FormValue("page"), favoritePage)
 		message := "操作已提交"
-		switch r.FormValue("form_type") {
+		switch strings.TrimSpace(r.FormValue("form_type")) {
 		case "profile":
 			userID := userIDFromMap(user)
-			if token, ok := s.sessionTokenFromRequest(r); ok {
-				resp, err := s.client.R().
-					SetQueryParam("session_token", token).
-					SetBody(map[string]string{
-						"display_name": r.FormValue("display_name"),
-						"email":        r.FormValue("email"),
-					}).
-					Put(s.cfg.AuthURL + "/api/v1/users/" + strconv.FormatInt(userID, 10))
-				if err != nil || !resp.IsSuccess() {
-					message = "个人资料更新失败"
-				} else {
-					message = "个人资料已更新"
+			if userID > 0 {
+				if token, ok := s.sessionTokenFromRequest(r); ok {
+					resp, err := s.client.R().
+						SetQueryParam("session_token", token).
+						SetBody(map[string]string{
+							"display_name": r.FormValue("display_name"),
+							"email":        r.FormValue("email"),
+						}).
+						Put(s.cfg.AuthURL + "/api/v1/users/" + strconv.FormatInt(userID, 10))
+					if err != nil || !resp.IsSuccess() {
+						message = "个人资料更新失败"
+					} else {
+						message = "个人资料已更新"
+					}
+				}
+			}
+		case "password":
+			userID := userIDFromMap(user)
+			if userID > 0 {
+				if token, ok := s.sessionTokenFromRequest(r); ok {
+					resp, err := s.client.R().
+						SetQueryParam("session_token", token).
+						SetBody(map[string]string{
+							"old_password": r.FormValue("old_password"),
+							"new_password": r.FormValue("new_password"),
+						}).
+						Put(s.cfg.AuthURL + "/api/v1/users/" + strconv.FormatInt(userID, 10) + "/password")
+					if err != nil || !resp.IsSuccess() {
+						message = "密码修改失败"
+					} else {
+						message = "密码已修改"
+					}
 				}
 			}
 		case "preferences":
@@ -2235,19 +2570,27 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) 
 				message = "邮件配置已保存"
 			}
 		case "warning":
-			projectID, _ := strconv.ParseInt(r.FormValue("project_id"), 10, 64)
-			threshold, _ := strconv.Atoi(r.FormValue("threshold"))
-			resp, err := s.client.R().SetBody(map[string]any{
-				"enabled":     r.FormValue("enabled") == "on",
-				"channels":    r.FormValue("channels"),
-				"threshold":   threshold,
-				"recipients":  r.FormValue("recipients"),
-				"description": r.FormValue("description"),
-			}).Put(s.cfg.ContentURL + "/api/v1/system/warning-settings/" + strconv.FormatInt(projectID, 10))
-			if err != nil || !resp.IsSuccess() {
-				message = "预警设置保存失败"
+			selectedProjectID, _ := strconv.ParseInt(nonEmpty(r.FormValue("project_id"), projectID), 10, 64)
+			if selectedProjectID <= 0 {
+				selectedProjectID = firstProjectID(s.cfg.ContentURL, s.client)
+			}
+			if selectedProjectID > 0 {
+				threshold, _ := strconv.Atoi(r.FormValue("threshold"))
+				resp, err := s.client.R().SetBody(map[string]any{
+					"enabled":     r.FormValue("enabled") == "on",
+					"channels":    r.FormValue("channels"),
+					"threshold":   threshold,
+					"recipients":  r.FormValue("recipients"),
+					"description": r.FormValue("description"),
+				}).Put(s.cfg.ContentURL + "/api/v1/system/warning-settings/" + strconv.FormatInt(selectedProjectID, 10))
+				if err != nil || !resp.IsSuccess() {
+					message = "预警设置保存失败"
+				} else {
+					message = "预警设置已保存"
+					projectID = strconv.FormatInt(selectedProjectID, 10)
+				}
 			} else {
-				message = "预警设置已保存"
+				message = "预警设置保存失败"
 			}
 		case "feedback":
 			resp, err := s.client.R().SetBody(map[string]any{
@@ -2260,13 +2603,9 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) 
 				message = "反馈已提交"
 			}
 		case "crawl":
-			params := map[string]string{}
-			if sourceType := strings.TrimSpace(r.FormValue("source_type")); sourceType != "" {
-				params["source_type"] = sourceType
-			}
 			req := s.client.R()
-			for key, value := range params {
-				req.SetQueryParam(key, value)
+			if sourceType := strings.TrimSpace(r.FormValue("source_type")); sourceType != "" {
+				req.SetQueryParam("source_type", sourceType)
 			}
 			resp, err := req.Post(s.cfg.CrawlerURL + "/api/v1/admin/tasks/crawl")
 			if err != nil || !resp.IsSuccess() {
@@ -2282,9 +2621,19 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) 
 				message = "分析刷新已提交"
 			}
 		}
-		http.Redirect(w, r, "/system?msg="+message, http.StatusSeeOther)
+		target := url.Values{}
+		target.Set("section", sectionKey)
+		if projectID != "" {
+			target.Set("project_id", projectID)
+		}
+		if favoritePage > 1 {
+			target.Set("page", strconv.Itoa(favoritePage))
+		}
+		target.Set("msg", message)
+		http.Redirect(w, r, "/system?"+target.Encode(), http.StatusSeeOther)
 		return
 	}
+
 	notices := []model.SystemNotice{}
 	taskRuns := []model.TaskRun{}
 	crawlRuns := []model.CrawlRun{}
@@ -2292,28 +2641,99 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) 
 	popupState := model.PopupState{}
 	mailConfig := model.MailConfig{}
 	warningSetting := model.WarningSetting{}
+	projects := []model.Project{}
+	groups := []model.ProjectGroup{}
+	favoriteArticles := model.ItemListResult{}
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/system/notices", &notices)
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/system/task-runs?limit=20", &taskRuns)
 	_ = s.getJSON(s.cfg.CrawlerURL+"/api/v1/admin/tasks/crawl/runs?limit=20", &crawlRuns)
+	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/projects", &projects)
+	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/project-groups", &groups)
+	projectNames := make(map[int64]string, len(projects))
+	for _, project := range projects {
+		projectNames[project.ID] = project.Name
+	}
+	groupNames := make(map[int64]string, len(groups))
+	for _, group := range groups {
+		groupNames[group.ID] = group.Name
+	}
 	userID := userIDFromMap(user)
 	if userID > 0 {
 		_ = s.getJSON(s.cfg.ContentURL+"/api/v1/system/preferences?user_id="+strconv.FormatInt(userID, 10), &preferences)
 		_ = s.getJSON(s.cfg.ContentURL+"/api/v1/system/popup?user_id="+strconv.FormatInt(userID, 10)+"&key=system-announcement", &popupState)
+		favoriteProjectID := strings.TrimSpace(projectID)
+		if favoriteProjectID != "" || sectionKey == "favorites" {
+			favoriteURL := s.cfg.ContentURL + "/api/v1/articles?favorite=favorited&page=" + strconv.Itoa(maxInt(favoritePage, 1)) + "&page_size=10&user_id=" + strconv.FormatInt(userID, 10)
+			if favoriteProjectID != "" {
+				favoriteURL += "&project_id=" + url.QueryEscape(favoriteProjectID)
+			}
+			_ = s.getJSON(favoriteURL, &favoriteArticles)
+		}
 	}
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/system/mail-config", &mailConfig)
-	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/system/warning-settings/1", &warningSetting)
+	selectedProjectID := int64(0)
+	if parsedProjectID, err := strconv.ParseInt(projectID, 10, 64); err == nil {
+		selectedProjectID = parsedProjectID
+	}
+	if selectedProjectID <= 0 && len(projects) > 0 {
+		selectedProjectID = projects[0].ID
+	}
+	if selectedProjectID > 0 {
+		_ = s.getJSON(s.cfg.ContentURL+"/api/v1/system/warning-settings/"+strconv.FormatInt(selectedProjectID, 10), &warningSetting)
+	}
+	if warningSetting.ProjectID == 0 {
+		warningSetting.ProjectID = selectedProjectID
+	}
+	if favoriteArticles.Page <= 0 {
+		favoriteArticles.Page = maxInt(favoritePage, 1)
+	}
+	if favoriteArticles.PageSize <= 0 {
+		favoriteArticles.PageSize = 10
+	}
+	if favoriteArticles.Total < 0 {
+		favoriteArticles.Total = 0
+	}
+	totalPages := 1
+	if favoriteArticles.PageSize > 0 && favoriteArticles.Total > 0 {
+		totalPages = (favoriteArticles.Total + favoriteArticles.PageSize - 1) / favoriteArticles.PageSize
+	}
+	if totalPages < 1 {
+		totalPages = 1
+	}
+	currentPage := maxInt(favoriteArticles.Page, 1)
+	if currentPage > totalPages {
+		currentPage = totalPages
+	}
+	sectionLabel := map[string]string{
+		"account":     "账号安全",
+		"preferences": "偏好设置",
+		"favorites":   "收藏夹",
+		"warning":     "预警设置",
+		"feedback":    "反馈建议",
+	}[sectionKey]
 	_ = s.render(w, "system", pageData{
-		Title:          "系统设置",
-		User:           user,
-		Notices:        notices,
-		TaskRuns:       taskRuns,
-		CrawlRuns:      crawlRuns,
-		Services:       s.collectServiceStatuses(),
-		Preferences:    preferences,
-		PopupState:     popupState,
-		MailConfig:     mailConfig,
-		WarningSetting: warningSetting,
-		Message:        r.URL.Query().Get("msg"),
+		Title:              "系统设置",
+		User:               user,
+		SectionKey:         sectionKey,
+		Notices:            notices,
+		TaskRuns:           taskRuns,
+		CrawlRuns:          crawlRuns,
+		Projects:           projects,
+		ProjectNames:       projectNames,
+		GroupNames:         groupNames,
+		Services:           s.collectServiceStatuses(),
+		Preferences:        preferences,
+		PopupState:         popupState,
+		MailConfig:         mailConfig,
+		WarningSetting:     warningSetting,
+		FavoriteItems:      favoriteArticles,
+		FavoritePage:       currentPage,
+		FavoritePagePrev:   maxInt(currentPage-1, 1),
+		FavoritePageNext:   minInt(currentPage+1, totalPages),
+		FavoriteProjectID:  projectID,
+		FavoriteTotalPages: totalPages,
+		Section:            nonEmpty(sectionLabel, "系统工作台"),
+		Message:            r.URL.Query().Get("msg"),
 	})
 }
 
@@ -2439,6 +2859,416 @@ func nonEmpty(values ...string) string {
 	return ""
 }
 
+func normalizeSystemSection(section string) string {
+	switch strings.TrimSpace(section) {
+	case "preferences", "preference":
+		return "preferences"
+	case "favorites", "favorite":
+		return "favorites"
+	case "warning", "warningedit":
+		return "warning"
+	case "feedback":
+		return "feedback"
+	default:
+		return "account"
+	}
+}
+
+func parsePositiveInt(raw string, fallback int) int {
+	if parsed, err := strconv.Atoi(strings.TrimSpace(raw)); err == nil && parsed > 0 {
+		return parsed
+	}
+	return fallback
+}
+
+func maxInt(values ...int) int {
+	if len(values) == 0 {
+		return 0
+	}
+	max := values[0]
+	for _, value := range values[1:] {
+		if value > max {
+			max = value
+		}
+	}
+	return max
+}
+
+func minInt(values ...int) int {
+	if len(values) == 0 {
+		return 0
+	}
+	min := values[0]
+	for _, value := range values[1:] {
+		if value < min {
+			min = value
+		}
+	}
+	return min
+}
+
+func parseProjectID(raw string) int64 {
+	id, _ := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	return id
+}
+
+func parseFormProjectID(r *http.Request) int64 {
+	return parseProjectID(nonEmpty(r.FormValue("project_id"), r.FormValue("projectId"), r.FormValue("projectid")))
+}
+
+func parseFormProjectGroupID(r *http.Request) int64 {
+	return parseProjectID(nonEmpty(r.FormValue("group_id"), r.FormValue("groupId"), r.FormValue("groupid")))
+}
+
+func publicOptionIDs(raw string) []int64 {
+	parts := strings.Split(strings.TrimSpace(raw), ",")
+	ids := make([]int64, 0, len(parts))
+	seen := map[int64]struct{}{}
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		id, err := strconv.ParseInt(part, 10, 64)
+		if err != nil || id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+type legacyGroupCompat struct {
+	GroupID   int64  `json:"groupId"`
+	GroupName string `json:"groupName"`
+}
+
+type legacyProjectCompat struct {
+	GroupID     int64  `json:"groupId"`
+	GroupName   string `json:"groupName"`
+	ProjectID   int64  `json:"projectId"`
+	ProjectName string `json:"projectName"`
+}
+
+func (s *Server) fetchLegacyProjectGroups() []legacyGroupCompat {
+	var groups []model.ProjectGroup
+	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/project-groups", &groups); err != nil {
+		return []legacyGroupCompat{}
+	}
+	result := make([]legacyGroupCompat, 0, len(groups))
+	for _, group := range groups {
+		result = append(result, legacyGroupCompat{
+			GroupID:   group.ID,
+			GroupName: group.Name,
+		})
+	}
+	return result
+}
+
+func (s *Server) fetchLegacyProjects() []legacyProjectCompat {
+	var projects []model.Project
+	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/projects", &projects); err != nil {
+		return []legacyProjectCompat{}
+	}
+	result := make([]legacyProjectCompat, 0, len(projects))
+	for _, project := range projects {
+		result = append(result, legacyProjectCompat{
+			GroupID:     project.GroupID,
+			GroupName:   project.GroupName,
+			ProjectID:   project.ID,
+			ProjectName: project.Name,
+		})
+	}
+	return result
+}
+
+func (s *Server) fetchLegacyProjectMap() map[int64]model.Project {
+	var projects []model.Project
+	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/projects", &projects); err != nil {
+		return map[int64]model.Project{}
+	}
+	result := make(map[int64]model.Project, len(projects))
+	for _, project := range projects {
+		result[project.ID] = project
+	}
+	return result
+}
+
+func filterLegacyProjectsByGroupID(projects []legacyProjectCompat, groupID int64) []legacyProjectCompat {
+	if groupID <= 0 {
+		return projects
+	}
+	filtered := make([]legacyProjectCompat, 0, len(projects))
+	for _, project := range projects {
+		if project.GroupID == groupID {
+			filtered = append(filtered, project)
+		}
+	}
+	return filtered
+}
+
+func legacyProjectPublicID(item model.Item) string {
+	if strings.TrimSpace(item.SourceKey) != "" {
+		return item.SourceKey
+	}
+	return strconv.FormatInt(item.ID, 10)
+}
+
+func legacyArticlePublicID(item model.Item) string {
+	return legacyProjectPublicID(item)
+}
+
+func legacyEmotionalIndex(item model.Item) int {
+	raw := strings.TrimSpace(item.TagFlags)
+	switch {
+	case strings.Contains(raw, "负") || strings.Contains(raw, "3"):
+		return 3
+	case strings.Contains(raw, "正") || strings.Contains(raw, "1"):
+		return 1
+	default:
+		return 2
+	}
+}
+
+func legacyPublishTime(item model.Item) string {
+	if strings.TrimSpace(item.PublishTime) != "" {
+		return strings.TrimSpace(item.PublishTime)
+	}
+	if !item.CapturedAt.IsZero() {
+		return item.CapturedAt.UTC().Format(time.RFC3339)
+	}
+	return time.Now().UTC().Format(time.RFC3339)
+}
+
+func apiutilIntQuery(r *http.Request, key string, fallback int) int {
+	if r == nil {
+		return fallback
+	}
+	raw := strings.TrimSpace(r.URL.Query().Get(key))
+	if raw == "" {
+		return fallback
+	}
+	if parsed, err := strconv.Atoi(raw); err == nil {
+		return parsed
+	}
+	return fallback
+}
+
+func containsAny(text string, words []string) bool {
+	text = strings.ToLower(text)
+	for _, word := range words {
+		if word = strings.TrimSpace(strings.ToLower(word)); word != "" && strings.Contains(text, word) {
+			return true
+		}
+	}
+	return false
+}
+
+func summarizeText(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	runes := []rune(text)
+	if len(runes) <= 140 {
+		return text
+	}
+	return string(runes[:140]) + "..."
+}
+
+func firstLegacyProjectAndGroup(item model.Item, projectMap map[int64]model.Project) (int64, int64) {
+	for _, projectID := range item.ProjectIDs {
+		project, ok := projectMap[projectID]
+		if !ok {
+			continue
+		}
+		return project.ID, project.GroupID
+	}
+	return 0, 0
+}
+
+func firstProjectIDForItemTemplate(item model.Item, projects []model.Project) int64 {
+	projectMap := make(map[int64]model.Project, len(projects))
+	for _, project := range projects {
+		projectMap[project.ID] = project
+	}
+	projectID, _ := firstLegacyProjectAndGroup(item, projectMap)
+	return projectID
+}
+
+func firstProjectGroupIDForTemplate(item model.Item, projects []model.Project) int64 {
+	projectMap := make(map[int64]model.Project, len(projects))
+	for _, project := range projects {
+		projectMap[project.ID] = project
+	}
+	_, groupID := firstLegacyProjectAndGroup(item, projectMap)
+	return groupID
+}
+
+func legacyUserDetailPayload(user any) map[string]any {
+	mapped, _ := user.(map[string]any)
+	displayName := legacyStringFromAny(mapped["display_name"])
+	username := legacyStringFromAny(mapped["username"])
+	email := legacyStringFromAny(mapped["email"])
+	status := legacyIntFromAnyValue(mapped["status"])
+	if status == 0 {
+		status = 1
+	}
+	updatedAt := legacyStringFromAny(mapped["updated_at"])
+	if updatedAt == "" {
+		updatedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	return map[string]any{
+		"username":          username,
+		"display_name":      displayName,
+		"telephone":         nonEmpty(legacyStringFromAny(mapped["telephone"]), username),
+		"organization_name":  legacyStringFromAny(mapped["organization_name"]),
+		"email":             email,
+		"status":            status,
+		"login_count":       legacyIntFromAnyValue(mapped["login_count"]),
+		"end_login_time":    nonEmpty(legacyStringFromAny(mapped["end_login_time"]), updatedAt),
+		"role":              legacyStringFromAny(mapped["role"]),
+		"system_title":      "网络情报分析系统",
+		"updated_at":        updatedAt,
+	}
+}
+
+func legacyIntFromAnyValue(value any) int {
+	v, ok := legacyIntFromAny(value)
+	if !ok {
+		return 0
+	}
+	return v
+}
+
+func legacyWarningSettingPayload(setting model.WarningSetting, projectID int64, projectName string) map[string]any {
+	return map[string]any{
+		"project_id":          projectID,
+		"project_name":        projectName,
+		"warning_status":      boolToLegacyInt(setting.Enabled),
+		"warning_name":        nonEmpty(setting.Description, projectName),
+		"warning_word":        setting.Description,
+		"warning_classify":    setting.Channels,
+		"warning_content":     0,
+		"warning_similar":     0,
+		"warning_match":       1,
+		"warning_deduplication": 0,
+		"warning_source":      legacyJSONString(map[string]any{"type": 1, "email": setting.Recipients}),
+		"warning_receive_time": legacyJSONString(map[string]any{"start": "", "end": ""}),
+		"weekend_warning":     0,
+		"warning_interval":    legacyJSONString(map[string]any{"type": 1, "time": strconv.Itoa(setting.Threshold)}),
+	}
+}
+
+func legacyWarningSettingFromForm(r *http.Request) model.WarningSetting {
+	threshold := parseWarningThreshold(r.FormValue("threshold"), r.FormValue("warning_interval"))
+	channels := nonEmpty(r.FormValue("channels"), r.FormValue("warning_classify"))
+	recipients := nonEmpty(r.FormValue("recipients"), extractWarningEmail(r.FormValue("warning_source")))
+	description := nonEmpty(r.FormValue("description"), r.FormValue("warning_name"), r.FormValue("warning_word"))
+	return model.WarningSetting{
+		Enabled:     parseBoolLike(r.FormValue("enabled"), r.FormValue("warning_status")),
+		Channels:    channels,
+		Threshold:   threshold,
+		Recipients:  recipients,
+		Description: description,
+	}
+}
+
+func (s *Server) fetchLegacyWarningSetting(projectID int64) (model.WarningSetting, string) {
+	var setting model.WarningSetting
+	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/system/warning-settings/"+strconv.FormatInt(projectID, 10), &setting); err != nil {
+		setting.ProjectID = projectID
+	}
+	var project model.Project
+	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/projects/"+strconv.FormatInt(projectID, 10), &project)
+	return setting, nonEmpty(project.Name, setting.Description)
+}
+
+func legacyJSONString(value any) string {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return "{}"
+	}
+	return string(raw)
+}
+
+func boolToLegacyInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+func parseBoolLike(values ...string) bool {
+	for _, raw := range values {
+		switch strings.ToLower(strings.TrimSpace(raw)) {
+		case "1", "true", "yes", "on", "enabled", "open":
+			return true
+		case "0", "false", "no", "off", "disabled", "close":
+			return false
+		}
+	}
+	return false
+}
+
+func parseWarningThreshold(rawValues ...string) int {
+	for _, raw := range rawValues {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		if parsed, err := strconv.Atoi(raw); err == nil {
+			return parsed
+		}
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(raw), &payload); err == nil {
+			if value := strings.TrimSpace(legacyStringFromAny(payload["time"])); value != "" {
+				if parsed, err := strconv.Atoi(value); err == nil {
+					return parsed
+				}
+			}
+		}
+	}
+	return 0
+}
+
+func extractWarningEmail(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return ""
+	}
+	return legacyStringFromAny(payload["email"])
+}
+func firstProjectID(contentURL string, client *resty.Client) int64 {
+	var projects []model.Project
+	resp, err := client.R().SetResult(&struct {
+		Data json.RawMessage `json:"data"`
+	}{}).Get(contentURL + "/api/v1/projects")
+	if err != nil || resp == nil || !resp.IsSuccess() {
+		return 0
+	}
+	var envelope struct {
+		Code int             `json:"code"`
+		Msg  string          `json:"msg"`
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(resp.Body(), &envelope); err != nil || len(envelope.Data) == 0 {
+		return 0
+	}
+	if err := json.Unmarshal(envelope.Data, &projects); err != nil || len(projects) == 0 {
+		return 0
+	}
+	return projects[0].ID
+}
+
 func appendMessage(rawURL, message string) string {
 	if strings.TrimSpace(rawURL) == "" || strings.TrimSpace(message) == "" {
 		return rawURL
@@ -2543,5 +3373,5 @@ const reportTemplate = `
 `
 
 const systemTemplate = `
-{{define "system"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}.ok{color:#214e34;font-weight:700}.bad{color:#8f2d2d;font-weight:700}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}` + `</style></head><body><header><h1>系统页</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><h2>服务状态</h2><table><tr><th>服务</th><th>状态</th><th>健康检查</th></tr>{{range .Services}}<tr><td>{{.Name}}</td><td>{{if .Healthy}}<span class="ok">正常</span>{{else}}<span class="bad">异常</span>{{end}}</td><td>{{.Message}}</td></tr>{{else}}<tr><td colspan="3">暂无服务状态</td></tr>{{end}}</table></section><section class="grid"><div><h2>个人资料</h2><form method="post"><input type="hidden" name="form_type" value="profile"><input name="display_name" placeholder="显示名" value="{{index .User "display_name"}}"><input name="email" placeholder="邮箱" value="{{index .User "email"}}"><button type="submit">保存资料</button></form></div><div><h2>偏好设置</h2><form method="post"><input type="hidden" name="form_type" value="preferences"><input name="language" placeholder="语言" value="{{.Preferences.Language}}"><input name="theme" placeholder="主题" value="{{.Preferences.Theme}}"><input name="default_search_mode" placeholder="默认搜索模式" value="{{.Preferences.DefaultSearchMode}}"><input name="article_page_size" placeholder="文章分页大小" value="{{.Preferences.ArticlePageSize}}"><label><input type="checkbox" name="email_notifications" {{if .Preferences.EmailNotifications}}checked{{end}}> 邮件通知</label><button type="submit">保存偏好</button></form></div><div><h2>弹窗状态</h2><form method="post"><input type="hidden" name="form_type" value="popup"><input name="key" value="{{.PopupState.Key}}"><label><input type="checkbox" name="dismissed" {{if .PopupState.Dismissed}}checked{{end}}> 已关闭</label><button type="submit">保存弹窗状态</button></form></div><div><h2>邮件配置</h2><form method="post"><input type="hidden" name="form_type" value="mail"><label><input type="checkbox" name="enabled" {{if .MailConfig.Enabled}}checked{{end}}> 启用</label><input name="smtp_host" placeholder="SMTP Host" value="{{.MailConfig.SMTPHost}}"><input name="smtp_port" placeholder="SMTP Port" value="{{.MailConfig.SMTPPort}}"><input name="username" placeholder="用户名" value="{{.MailConfig.Username}}"><input name="password" placeholder="密码" value="{{.MailConfig.Password}}"><input name="sender_name" placeholder="发件人名称" value="{{.MailConfig.SenderName}}"><input name="sender_email" placeholder="发件人邮箱" value="{{.MailConfig.SenderEmail}}"><button type="submit">保存邮件配置</button></form></div><div><h2>预警设置</h2><form method="post"><input type="hidden" name="form_type" value="warning"><input type="hidden" name="project_id" value="{{.WarningSetting.ProjectID}}"><label><input type="checkbox" name="enabled" {{if .WarningSetting.Enabled}}checked{{end}}> 启用</label><input name="channels" placeholder="渠道，逗号分隔" value="{{.WarningSetting.Channels}}"><input name="threshold" placeholder="阈值" value="{{.WarningSetting.Threshold}}"><input name="recipients" placeholder="接收人" value="{{.WarningSetting.Recipients}}"><textarea name="description" placeholder="说明">{{.WarningSetting.Description}}</textarea><button type="submit">保存预警设置</button></form></div></section><section><h2>手动任务</h2><form method="post"><input type="hidden" name="form_type" value="crawl"><select name="source_type"><option value="">全部来源</option><option value="flash">flash</option><option value="headline">headline</option></select><button type="submit">立即抓取</button></form><form method="post"><input type="hidden" name="form_type" value="analysis"><button type="submit">刷新分析快照</button></form></section><section><h2>提交反馈</h2><form method="post"><input type="hidden" name="form_type" value="feedback"><input name="title" placeholder="标题"><textarea name="content" placeholder="问题描述或需求"></textarea><button type="submit">提交</button></form></section><section><h2>最新抓取记录</h2><table><tr><th>来源</th><th>状态</th><th>抓取数</th><th>入库数</th><th>开始时间</th></tr>{{range .CrawlRuns}}<tr><td>{{.SourceType}}</td><td>{{.Status}}</td><td>{{.FetchedCount}}</td><td>{{.InsertedCount}}</td><td>{{.StartedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="5">暂无抓取记录</td></tr>{{end}}</table></section><section><h2>公告</h2><table><tr><th>标题</th><th>时间</th></tr>{{range .Notices}}<tr><td>{{.Title}}</td><td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="2">暂无公告</td></tr>{{end}}</table></section><section><h2>任务记录</h2><table><tr><th>任务</th><th>状态</th><th>说明</th></tr>{{range .TaskRuns}}<tr><td>{{.TaskName}}</td><td>{{.Status}}</td><td>{{.Message}}</td></tr>{{else}}<tr><td colspan="3">暂无任务记录</td></tr>{{end}}</table></section></main></body></html>{{end}}
+{{define "system"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}.ok{color:#214e34;font-weight:700}.bad{color:#8f2d2d;font-weight:700}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}.tabs{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}.tabs a{padding:8px 12px;border-radius:999px;background:#efe9dc;color:#214e34;text-decoration:none}.tabs a.active{background:#214e34;color:#fff}.muted{color:#6a6257}.page-nav{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.page-nav a{padding:6px 10px;border:1px solid #d0c8b8;border-radius:8px;text-decoration:none;color:#214e34}.favorite-card{display:grid;grid-template-columns:2.2fr 1fr 1fr 1fr 1fr;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid #ece7dc}.section-block{margin-top:20px}` + `</style></head><body><header><h1>系统工作台</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><div class="tabs"><a class="{{if eq .SectionKey "account"}}active{{end}}" href="/system?section=account">账号安全</a><a class="{{if eq .SectionKey "preferences"}}active{{end}}" href="/system?section=preferences">偏好设置</a><a class="{{if eq .SectionKey "favorites"}}active{{end}}" href="/system?section=favorites{{if .FavoriteProjectID}}&project_id={{.FavoriteProjectID}}{{end}}">收藏夹</a><a class="{{if eq .SectionKey "warning"}}active{{end}}" href="/system?section=warning{{if .WarningSetting.ProjectID}}&project_id={{.WarningSetting.ProjectID}}{{end}}">预警设置</a><a class="{{if eq .SectionKey "feedback"}}active{{end}}" href="/system?section=feedback">反馈建议</a></div><div class="muted">当前视图：{{.Section}}</div></section><section><h2>服务状态</h2><table><tr><th>服务</th><th>状态</th><th>健康检查</th></tr>{{range .Services}}<tr><td>{{.Name}}</td><td>{{if .Healthy}}<span class="ok">正常</span>{{else}}<span class="bad">异常</span>{{end}}</td><td>{{.Message}}</td></tr>{{else}}<tr><td colspan="3">暂无服务状态</td></tr>{{end}}</table></section>{{if eq .SectionKey "account"}}<section class="section-block"><h2>账号安全</h2><div class="grid"><div><h3>个人资料</h3><form method="post"><input type="hidden" name="form_type" value="profile"><input type="hidden" name="section" value="account"><input name="display_name" placeholder="显示名" value="{{index .User "display_name"}}"><input name="email" placeholder="邮箱" value="{{index .User "email"}}"><button type="submit">保存资料</button></form></div><div><h3>修改密码</h3><form method="post"><input type="hidden" name="form_type" value="password"><input type="hidden" name="section" value="account"><input type="password" name="old_password" placeholder="旧密码"><input type="password" name="new_password" placeholder="新密码"><button type="submit">修改密码</button></form></div></div></section>{{end}}{{if eq .SectionKey "preferences"}}<section class="section-block"><h2>偏好设置</h2><div class="grid"><div><h3>用户偏好</h3><form method="post"><input type="hidden" name="form_type" value="preferences"><input type="hidden" name="section" value="preferences"><input name="language" placeholder="语言" value="{{.Preferences.Language}}"><input name="theme" placeholder="主题" value="{{.Preferences.Theme}}"><input name="default_search_mode" placeholder="默认搜索模式" value="{{.Preferences.DefaultSearchMode}}"><input name="article_page_size" placeholder="文章分页大小" value="{{.Preferences.ArticlePageSize}}"><label><input type="checkbox" name="email_notifications" {{if .Preferences.EmailNotifications}}checked{{end}}> 邮件通知</label><button type="submit">保存偏好</button></form></div><div><h3>弹窗状态</h3><form method="post"><input type="hidden" name="form_type" value="popup"><input type="hidden" name="section" value="preferences"><input name="key" value="{{.PopupState.Key}}"><label><input type="checkbox" name="dismissed" {{if .PopupState.Dismissed}}checked{{end}}> 已关闭</label><button type="submit">保存弹窗状态</button></form></div><div><h3>邮件配置</h3><form method="post"><input type="hidden" name="form_type" value="mail"><input type="hidden" name="section" value="preferences"><label><input type="checkbox" name="enabled" {{if .MailConfig.Enabled}}checked{{end}}> 启用</label><input name="smtp_host" placeholder="SMTP Host" value="{{.MailConfig.SMTPHost}}"><input name="smtp_port" placeholder="SMTP Port" value="{{.MailConfig.SMTPPort}}"><input name="username" placeholder="用户名" value="{{.MailConfig.Username}}"><input name="password" placeholder="密码" value="{{.MailConfig.Password}}"><input name="sender_name" placeholder="发件人名称" value="{{.MailConfig.SenderName}}"><input name="sender_email" placeholder="发件人邮箱" value="{{.MailConfig.SenderEmail}}"><button type="submit">保存邮件配置</button></form></div></div></section>{{end}}{{if eq .SectionKey "favorites"}}<section class="section-block"><h2>收藏夹</h2><form class="inline" method="get"><input type="hidden" name="section" value="favorites"><select name="project_id">{{if not .FavoriteProjectID}}<option value="">全部项目</option>{{end}}{{range .Projects}}<option value="{{.ID}}" {{if eq (printf "%d" .ID) $.FavoriteProjectID}}selected{{end}}>{{.Name}}</option>{{end}}</select><button type="submit">筛选</button></form><div class="page-nav">{{if gt .FavoriteTotalPages 1}}<a href="/system?section=favorites{{if .FavoriteProjectID}}&project_id={{.FavoriteProjectID}}{{end}}&page={{.FavoritePagePrev}}">上一页</a><span>第 {{.FavoritePage}} / {{.FavoriteTotalPages}} 页</span><a href="/system?section=favorites{{if .FavoriteProjectID}}&project_id={{.FavoriteProjectID}}{{end}}&page={{.FavoritePageNext}}">下一页</a>{{else}}<span>共 {{len .FavoriteItems.Items}} 条收藏</span>{{end}}</div><div>{{range .FavoriteItems.Items}}<div class="favorite-card"><div><a class="inline" href="/monitor/detail/{{if .SourceKey}}{{.SourceKey}}{{else}}{{.ID}}{{end}}?groupid={{index $.GroupNames (firstProjectGroupID . $.Projects)}}&projectid={{firstProjectIDForItem . $.Projects}}">{{.Title}}</a></div><div>{{or .FromText .SourceType}}</div><div>{{index $.GroupNames (firstProjectGroupID . $.Projects)}}</div><div>{{index $.ProjectNames (firstProjectIDForItem . $.Projects)}}</div><div>{{.CapturedAt.Format "2006-01-02 15:04"}}</div></div>{{else}}<p class="muted">暂无收藏文章</p>{{end}}</div></section>{{end}}{{if eq .SectionKey "warning"}}<section class="section-block"><h2>预警设置</h2><form method="post"><input type="hidden" name="form_type" value="warning"><input type="hidden" name="section" value="warning"><select name="project_id">{{range .Projects}}<option value="{{.ID}}" {{if eq .ID $.WarningSetting.ProjectID}}selected{{end}}>{{.Name}}</option>{{end}}</select><label><input type="checkbox" name="enabled" {{if .WarningSetting.Enabled}}checked{{end}}> 启用</label><input name="channels" placeholder="渠道，逗号分隔" value="{{.WarningSetting.Channels}}"><input name="threshold" placeholder="阈值" value="{{.WarningSetting.Threshold}}"><input name="recipients" placeholder="接收人" value="{{.WarningSetting.Recipients}}"><textarea name="description" placeholder="说明">{{.WarningSetting.Description}}</textarea><button type="submit">保存预警设置</button></form></section>{{end}}{{if eq .SectionKey "feedback"}}<section class="section-block"><h2>反馈建议</h2><form method="post"><input type="hidden" name="form_type" value="feedback"><input type="hidden" name="section" value="feedback"><input name="title" placeholder="标题"><textarea name="content" placeholder="问题描述或需求"></textarea><button type="submit">提交</button></form></section>{{end}}<section class="section-block"><h2>运营操作</h2><div class="grid"><div><h3>抓取任务</h3><form method="post"><input type="hidden" name="form_type" value="crawl"><input type="hidden" name="section" value="{{.SectionKey}}"><select name="source_type"><option value="">全部来源</option><option value="flash">flash</option><option value="headline">headline</option></select><button type="submit">立即抓取</button></form></div><div><h3>分析刷新</h3><form method="post"><input type="hidden" name="form_type" value="analysis"><input type="hidden" name="section" value="{{.SectionKey}}"><button type="submit">刷新分析快照</button></form></div></div></section><section class="section-block"><h2>公告与任务</h2><div class="grid"><div><h3>公告</h3><table><tr><th>标题</th><th>时间</th></tr>{{range .Notices}}<tr><td>{{.Title}}</td><td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="2">暂无公告</td></tr>{{end}}</table></div><div><h3>任务记录</h3><table><tr><th>任务</th><th>状态</th><th>说明</th></tr>{{range .TaskRuns}}<tr><td>{{.TaskName}}</td><td>{{.Status}}</td><td>{{.Message}}</td></tr>{{else}}<tr><td colspan="3">暂无任务记录</td></tr>{{end}}</table></div><div><h3>抓取记录</h3><table><tr><th>来源</th><th>状态</th><th>抓取数</th><th>入库数</th><th>开始时间</th></tr>{{range .CrawlRuns}}<tr><td>{{.SourceType}}</td><td>{{.Status}}</td><td>{{.FetchedCount}}</td><td>{{.InsertedCount}}</td><td>{{.StartedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="5">暂无抓取记录</td></tr>{{end}}</table></div></div></section></main></body></html>{{end}}
 `

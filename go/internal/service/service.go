@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-resty/resty/v2"
+
 	"github.com/stonedt-yuqing/go-jin10/internal/model"
 	"github.com/stonedt-yuqing/go-jin10/internal/provider"
 	sqlitestore "github.com/stonedt-yuqing/go-jin10/internal/store/sqlite"
@@ -15,6 +17,7 @@ import (
 
 type Store interface {
 	StartCrawlRun(context.Context, string, time.Time) (int64, error)
+	StartCrawlTemplateRun(context.Context, string, int64, string, string, time.Time) (int64, error)
 	FinishCrawlRun(context.Context, int64, string, int, int, int, string, time.Time) error
 	UpsertItems(context.Context, []model.Item) (int, int, error)
 	ListItems(context.Context, model.ArticleFilter) (model.ItemListResult, error)
@@ -23,6 +26,8 @@ type Store interface {
 	GetRelatedItems(context.Context, int64, int) ([]model.Item, error)
 	ListCrawlRuns(context.Context, int, string) ([]model.CrawlRun, error)
 	ListActiveMonitorRules(context.Context) ([]model.MonitorRule, error)
+	GetCrawlTemplate(context.Context, int64) (model.CrawlTemplate, error)
+	ListCrawlTemplates(context.Context) ([]model.CrawlTemplate, error)
 	LinkItemsToProjects(context.Context, []string, []int64, int64) error
 	RecordTaskRun(context.Context, string, string, string, time.Time, *time.Time) error
 }
@@ -30,10 +35,31 @@ type Store interface {
 type Crawler struct {
 	store     Store
 	providers provider.Registry
+	client    *resty.Client
 }
 
-func NewCrawler(store Store, providers provider.Registry) *Crawler {
-	return &Crawler{store: store, providers: providers}
+func NewCrawler(store Store, providers provider.Registry, client *resty.Client) *Crawler {
+	if client == nil {
+		client = resty.New()
+	}
+	return &Crawler{store: store, providers: providers, client: client}
+}
+
+func nonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func cleanText(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	return strings.Join(strings.Fields(text), " ")
 }
 
 func (c *Crawler) Run(ctx context.Context, sourceType string) (model.CrawlSummary, error) {

@@ -3,6 +3,7 @@ package content
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/stonedt-yuqing/go-jin10/internal/apiutil"
 	"github.com/stonedt-yuqing/go-jin10/internal/config"
 	"github.com/stonedt-yuqing/go-jin10/internal/model"
+	sqlitestore "github.com/stonedt-yuqing/go-jin10/internal/store/sqlite"
 )
 
 type Store interface {
@@ -32,12 +34,18 @@ type Store interface {
 	CreateMonitorRule(rctx context.Context, rule model.MonitorRule) (model.MonitorRule, error)
 	UpdateMonitorRule(rctx context.Context, rule model.MonitorRule) (model.MonitorRule, error)
 	DeleteMonitorRule(rctx context.Context, id int64) error
+	ListCrawlTemplates(rctx context.Context) ([]model.CrawlTemplate, error)
+	GetCrawlTemplate(rctx context.Context, id int64) (model.CrawlTemplate, error)
+	CreateCrawlTemplate(rctx context.Context, tpl model.CrawlTemplate) (model.CrawlTemplate, error)
+	UpdateCrawlTemplate(rctx context.Context, tpl model.CrawlTemplate) (model.CrawlTemplate, error)
+	DeleteCrawlTemplate(rctx context.Context, id int64) error
 	ListItems(rctx context.Context, filter model.ArticleFilter) (model.ItemListResult, error)
 	GetItem(rctx context.Context, id int64) (model.Item, error)
 	GetRelatedItems(rctx context.Context, id int64, limit int) ([]model.Item, error)
 	PopulateUserItemState(rctx context.Context, userID int64, items []model.Item) error
 	SearchItemsFTS(rctx context.Context, filter model.ArticleFilter) (model.SearchResult, error)
 	MarkItemRead(rctx context.Context, userID, itemID int64) error
+	DeleteItemRead(rctx context.Context, userID, itemID int64) error
 	ToggleFavorite(rctx context.Context, userID, itemID int64) (bool, error)
 	RecordItemShare(rctx context.Context, share model.ShareRecord) error
 	ListReports(rctx context.Context, projectID int64) ([]model.Report, error)
@@ -57,6 +65,15 @@ type Store interface {
 	SearchItemsAdvanced(rctx context.Context, filter model.ArticleFilter) (model.SearchResult, error)
 	BuildSearchFacets(rctx context.Context, filter model.ArticleFilter) (model.SearchFacets, error)
 	ListSearchOptions(rctx context.Context) (model.SearchOptions, error)
+	SaveSearchWord(rctx context.Context, userID int64, searchWord string) error
+	ListSearchWords(rctx context.Context, userID int64, limit int) ([]model.SearchWordStat, error)
+	GetPlatformBinding(rctx context.Context, userID int64, kind string) (model.PlatformBinding, error)
+	UpsertPlatformBinding(rctx context.Context, binding model.PlatformBinding) (model.PlatformBinding, error)
+	ListPublicOptions(rctx context.Context, userID int64, keyword string) ([]model.PublicOption, error)
+	GetPublicOption(rctx context.Context, id int64) (model.PublicOption, error)
+	CreatePublicOption(rctx context.Context, option model.PublicOption) (model.PublicOption, error)
+	UpdatePublicOption(rctx context.Context, option model.PublicOption) (model.PublicOption, error)
+	DeletePublicOption(rctx context.Context, id int64) error
 }
 
 type Service struct {
@@ -102,10 +119,17 @@ func (s *Service) Routes(r chi.Router) {
 	r.Put("/api/v1/monitor-rules/{id}", s.handleUpdateRule)
 	r.Delete("/api/v1/monitor-rules/{id}", s.handleDeleteRule)
 
+	r.Get("/api/v1/crawl-templates", s.handleListCrawlTemplates)
+	r.Post("/api/v1/crawl-templates", s.handleCreateCrawlTemplate)
+	r.Get("/api/v1/crawl-templates/{id}", s.handleGetCrawlTemplate)
+	r.Put("/api/v1/crawl-templates/{id}", s.handleUpdateCrawlTemplate)
+	r.Delete("/api/v1/crawl-templates/{id}", s.handleDeleteCrawlTemplate)
+
 	r.Get("/api/v1/articles", s.handleListArticles)
 	r.Get("/api/v1/articles/{id}", s.handleGetArticle)
 	r.Get("/api/v1/articles/{id}/related", s.handleGetRelatedArticles)
 	r.Post("/api/v1/articles/{id}/read", s.handleMarkArticleRead)
+	r.Delete("/api/v1/articles/{id}/read", s.handleUnmarkArticleRead)
 	r.Post("/api/v1/articles/{id}/favorite", s.handleToggleFavorite)
 	r.Post("/api/v1/articles/{id}/share", s.handleShareArticle)
 	r.Get("/api/v1/search/articles", s.handleSearchArticles)
@@ -114,6 +138,16 @@ func (s *Service) Routes(r chi.Router) {
 	r.Get("/api/v1/search/full/facets", s.handleSearchFacets)
 	r.Get("/api/v1/search/options", s.handleSearchOptions)
 	r.Get("/api/v1/search/options/{kind}", s.handleSearchOptionKind)
+	r.Get("/api/v1/search/history", s.handleListSearchHistory)
+	r.Post("/api/v1/search/history", s.handleSaveSearchHistory)
+	r.Get("/api/v1/platform/bindings/{kind}", s.handleGetPlatformBinding)
+	r.Post("/api/v1/platform/bindings/{kind}", s.handleUpsertPlatformBinding)
+	r.Put("/api/v1/platform/bindings/{kind}", s.handleUpsertPlatformBinding)
+	r.Get("/api/v1/public-options", s.handleListPublicOptions)
+	r.Post("/api/v1/public-options", s.handleCreatePublicOption)
+	r.Get("/api/v1/public-options/{id}", s.handleGetPublicOption)
+	r.Put("/api/v1/public-options/{id}", s.handleUpdatePublicOption)
+	r.Delete("/api/v1/public-options/{id}", s.handleDeletePublicOption)
 
 	r.Get("/api/v1/reports", s.handleListReports)
 	r.Post("/api/v1/reports", s.handleCreateReport)
@@ -242,6 +276,10 @@ func (s *Service) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
 		return
 	}
+	_, _ = s.store.UpsertPopupState(r.Context(), model.PopupState{
+		UserID: 0,
+		Key:    "contact-" + strconv.FormatInt(created.ID, 10),
+	})
 	apiutil.WriteJSON(w, http.StatusOK, "ok", created)
 }
 
@@ -344,6 +382,81 @@ func (s *Service) handleDeleteRule(w http.ResponseWriter, r *http.Request) {
 	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]bool{"deleted": true})
 }
 
+func (s *Service) handleListCrawlTemplates(w http.ResponseWriter, r *http.Request) {
+	templates, err := s.store.ListCrawlTemplates(r.Context())
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", templates)
+}
+
+func (s *Service) handleGetCrawlTemplate(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	tpl, err := s.store.GetCrawlTemplate(r.Context(), id)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusNotFound, "not found", nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", tpl)
+}
+
+func (s *Service) handleCreateCrawlTemplate(w http.ResponseWriter, r *http.Request) {
+	var tpl model.CrawlTemplate
+	if !decodeJSON(w, r, &tpl) {
+		return
+	}
+	if strings.TrimSpace(tpl.Name) == "" {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "template name required", nil)
+		return
+	}
+	if strings.TrimSpace(tpl.ConfigJSON) == "" {
+		tpl.ConfigJSON = "{}"
+	}
+	created, err := s.store.CreateCrawlTemplate(r.Context(), tpl)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", created)
+}
+
+func (s *Service) handleUpdateCrawlTemplate(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	var tpl model.CrawlTemplate
+	if !decodeJSON(w, r, &tpl) {
+		return
+	}
+	tpl.ID = id
+	if strings.TrimSpace(tpl.ConfigJSON) == "" {
+		tpl.ConfigJSON = "{}"
+	}
+	updated, err := s.store.UpdateCrawlTemplate(r.Context(), tpl)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", updated)
+}
+
+func (s *Service) handleDeleteCrawlTemplate(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	if err := s.store.DeleteCrawlTemplate(r.Context(), id); err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]bool{"deleted": true})
+}
+
 func (s *Service) handleListArticles(w http.ResponseWriter, r *http.Request) {
 	filter := articleFilterFromRequest(r)
 	result, err := s.store.ListItems(r.Context(), filter)
@@ -403,6 +516,23 @@ func (s *Service) handleMarkArticleRead(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]bool{"read": true})
+}
+
+func (s *Service) handleUnmarkArticleRead(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	userID := filterUserID(r)
+	if userID <= 0 {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "user_id required", nil)
+		return
+	}
+	if err := s.store.DeleteItemRead(r.Context(), userID, id); err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]bool{"read": false})
 }
 
 func (s *Service) handleToggleFavorite(w http.ResponseWriter, r *http.Request) {
@@ -526,6 +656,168 @@ func (s *Service) handleSearchOptionKind(w http.ResponseWriter, r *http.Request)
 	default:
 		apiutil.WriteJSON(w, http.StatusBadRequest, "unsupported option kind", nil)
 	}
+}
+
+func (s *Service) handleListSearchHistory(w http.ResponseWriter, r *http.Request) {
+	userID := filterUserID(r)
+	if userID <= 0 {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "user_id required", nil)
+		return
+	}
+	limit := apiutil.IntQuery(r, "limit", 6)
+	words, err := s.store.ListSearchWords(r.Context(), userID, limit)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", words)
+}
+
+func (s *Service) handleSaveSearchHistory(w http.ResponseWriter, r *http.Request) {
+	userID := filterUserID(r)
+	if userID <= 0 {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "user_id required", nil)
+		return
+	}
+	var req struct {
+		SearchWord string `json:"search_word"`
+		Searchword string `json:"searchword"`
+		Keyword    string `json:"keyword"`
+	}
+	if r.ContentLength > 0 && !decodeJSON(w, r, &req) {
+		return
+	}
+	searchWord := nonEmpty(req.SearchWord, req.Searchword, req.Keyword, r.URL.Query().Get("search_word"), r.URL.Query().Get("searchword"), r.URL.Query().Get("keyword"))
+	if err := s.store.SaveSearchWord(r.Context(), userID, searchWord); err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]bool{"saved": true})
+}
+
+func (s *Service) handleGetPlatformBinding(w http.ResponseWriter, r *http.Request) {
+	userID := filterUserID(r)
+	if userID <= 0 {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "user_id required", nil)
+		return
+	}
+	kind := strings.TrimSpace(chi.URLParam(r, "kind"))
+	if kind == "" {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "kind required", nil)
+		return
+	}
+	binding, err := s.store.GetPlatformBinding(r.Context(), userID, kind)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusNotFound, "not found", nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", binding)
+}
+
+func (s *Service) handleUpsertPlatformBinding(w http.ResponseWriter, r *http.Request) {
+	var binding model.PlatformBinding
+	if !decodeJSON(w, r, &binding) {
+		return
+	}
+	if binding.UserID <= 0 {
+		binding.UserID = filterUserID(r)
+	}
+	if binding.UserID <= 0 {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "user_id required", nil)
+		return
+	}
+	binding.Kind = nonEmpty(binding.Kind, strings.TrimSpace(chi.URLParam(r, "kind")))
+	if binding.Kind == "" {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "kind required", nil)
+		return
+	}
+	updated, err := s.store.UpsertPlatformBinding(r.Context(), binding)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", updated)
+}
+
+func (s *Service) handleListPublicOptions(w http.ResponseWriter, r *http.Request) {
+	userID := filterUserID(r)
+	keyword := strings.TrimSpace(r.URL.Query().Get("keyword"))
+	options, err := s.store.ListPublicOptions(r.Context(), userID, keyword)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", options)
+}
+
+func (s *Service) handleGetPublicOption(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	option, err := s.store.GetPublicOption(r.Context(), id)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusNotFound, "not found", nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", option)
+}
+
+func (s *Service) handleCreatePublicOption(w http.ResponseWriter, r *http.Request) {
+	var option model.PublicOption
+	if !decodeJSON(w, r, &option) {
+		return
+	}
+	if option.UserID <= 0 {
+		option.UserID = filterUserID(r)
+	}
+	if option.UserID <= 0 {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "user_id required", nil)
+		return
+	}
+	created, err := s.store.CreatePublicOption(r.Context(), option)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", created)
+}
+
+func (s *Service) handleUpdatePublicOption(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	var option model.PublicOption
+	if !decodeJSON(w, r, &option) {
+		return
+	}
+	option.ID = id
+	if option.UserID <= 0 {
+		option.UserID = filterUserID(r)
+	}
+	updated, err := s.store.UpdatePublicOption(r.Context(), option)
+	if err != nil {
+		if errors.Is(err, sqlitestore.ErrNotFound) {
+			apiutil.WriteJSON(w, http.StatusNotFound, "not found", nil)
+			return
+		}
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", updated)
+}
+
+func (s *Service) handleDeletePublicOption(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	if err := s.store.DeletePublicOption(r.Context(), id); err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]bool{"deleted": true})
 }
 
 func (s *Service) handleListReports(w http.ResponseWriter, r *http.Request) {

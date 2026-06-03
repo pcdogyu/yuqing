@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/stonedt-yuqing/go-jin10/internal/model"
 )
@@ -23,6 +24,23 @@ func (s *Store) UpdateUserProfile(ctx context.Context, userID int64, update mode
 		return model.User{}, err
 	}
 	return s.GetUserByID(ctx, userID)
+}
+
+func (s *Store) UpdateUserPassword(ctx context.Context, userID int64, password string) error {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?`,
+		string(hash), time.Now().UTC().Format(time.RFC3339), userID,
+	)
+	if err != nil {
+		return err
+	}
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *Store) CreateCaptcha(ctx context.Context, ttl time.Duration) (model.Captcha, error) {
@@ -94,7 +112,7 @@ ON CONFLICT(user_id) DO UPDATE SET
 }
 
 func (s *Store) GetPopupState(ctx context.Context, userID int64, key string) (model.PopupState, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT user_id, popup_key, dismissed, dismissed_at, updated_at FROM popup_states WHERE user_id = ? AND popup_key = ?`, userID, strings.TrimSpace(key))
+	row := s.db.QueryRowContext(ctx, `SELECT user_id, popup_key, dismissed, count, dismissed_at, updated_at FROM popup_states WHERE user_id = ? AND popup_key = ?`, userID, strings.TrimSpace(key))
 	return scanPopupState(row)
 }
 
@@ -109,13 +127,14 @@ func (s *Store) UpsertPopupState(ctx context.Context, state model.PopupState) (m
 		dismissedAt = value.Format(time.RFC3339)
 	}
 	_, err := s.db.ExecContext(ctx, `
-INSERT INTO popup_states (user_id, popup_key, dismissed, dismissed_at, updated_at)
-VALUES (?, ?, ?, ?, ?)
+INSERT INTO popup_states (user_id, popup_key, dismissed, count, dismissed_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?)
 ON CONFLICT(user_id, popup_key) DO UPDATE SET
 	dismissed = excluded.dismissed,
+	count = excluded.count,
 	dismissed_at = excluded.dismissed_at,
 	updated_at = excluded.updated_at`,
-		state.UserID, state.Key, boolToInt(state.Dismissed), dismissedAt, state.UpdatedAt.Format(time.RFC3339),
+		state.UserID, state.Key, boolToInt(state.Dismissed), max(state.Count, 0), dismissedAt, state.UpdatedAt.Format(time.RFC3339),
 	)
 	if err != nil {
 		return model.PopupState{}, err
@@ -291,6 +310,46 @@ func (s *Store) ListSearchOptions(ctx context.Context) (model.SearchOptions, err
 		Provinces:  uniqueSortedStrings(collectMetadataValues(items, "province")),
 		Cities:     uniqueSortedStrings(collectMetadataValues(items, "city")),
 	}, nil
+}
+
+func (s *Store) SaveSearchWord(ctx context.Context, userID int64, searchWord string) error {
+	searchWord = strings.TrimSpace(searchWord)
+	if userID <= 0 || searchWord == "" {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO search_words (user_id, search_word, created_at) VALUES (?, ?, ?)`,
+		userID, searchWord, time.Now().UTC().Format(time.RFC3339),
+	)
+	return err
+}
+
+func (s *Store) ListSearchWords(ctx context.Context, userID int64, limit int) ([]model.SearchWordStat, error) {
+	if userID <= 0 {
+		return []model.SearchWordStat{}, nil
+	}
+	if limit <= 0 {
+		limit = 6
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT search_word, user_id, COUNT(*) AS word_count
+FROM search_words
+WHERE user_id = ?
+GROUP BY user_id, search_word
+ORDER BY word_count DESC, MAX(created_at) DESC, search_word ASC
+LIMIT ?`, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]model.SearchWordStat, 0, limit)
+	for rows.Next() {
+		stat, scanErr := scanSearchWordStat(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		result = append(result, stat)
+	}
+	return result, rows.Err()
 }
 
 func (s *Store) BuildEmotionAnalysis(ctx context.Context, projectID int64) (model.EmotionAnalysis, error) {
@@ -528,18 +587,28 @@ func scanUserPreference(scanner scanner) (model.UserPreference, error) {
 func scanPopupState(scanner scanner) (model.PopupState, error) {
 	var state model.PopupState
 	var dismissed int
+	var count int
 	var dismissedAt sql.NullString
 	var updatedAt string
-	if err := scanner.Scan(&state.UserID, &state.Key, &dismissed, &dismissedAt, &updatedAt); err != nil {
+	if err := scanner.Scan(&state.UserID, &state.Key, &dismissed, &count, &dismissedAt, &updatedAt); err != nil {
 		return model.PopupState{}, err
 	}
 	state.Dismissed = dismissed == 1
+	state.Count = count
 	if dismissedAt.Valid {
 		value := mustParseRFC3339(dismissedAt.String)
 		state.DismissedAt = &value
 	}
 	state.UpdatedAt = mustParseRFC3339(updatedAt)
 	return state, nil
+}
+
+func scanSearchWordStat(scanner scanner) (model.SearchWordStat, error) {
+	var stat model.SearchWordStat
+	if err := scanner.Scan(&stat.SearchWord, &stat.UserID, &stat.WordCount); err != nil {
+		return model.SearchWordStat{}, err
+	}
+	return stat, nil
 }
 
 func collectMetadataValues(items []model.Item, key string) []string {

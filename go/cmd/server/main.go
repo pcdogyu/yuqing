@@ -41,7 +41,7 @@ func main() {
 	crawler := service.NewCrawler(store, provider.Registry{
 		Flash:    jin10flash.NewProvider(httpClient, cfg.FlashURL),
 		Headline: jin10xnews.NewProvider(httpClient, cfg.HeadlineURL),
-	})
+	}, nil)
 	api := httpapi.NewServer(cfg, crawler, store)
 
 	server := &http.Server{

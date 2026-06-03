@@ -38,7 +38,7 @@ func main() {
 	crawler := service.NewCrawler(store, provider.Registry{
 		Flash:    jin10flash.NewProvider(httpClient, cfg.FlashURL),
 		Headline: jin10xnews.NewProvider(httpClient, cfg.HeadlineURL),
-	})
+	}, nil)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
