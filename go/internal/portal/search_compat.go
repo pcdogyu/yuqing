@@ -143,6 +143,12 @@ func (s *Server) handleSearchCompat(w http.ResponseWriter, r *http.Request, user
 		apiutil.WriteJSON(w, http.StatusOK, "ok", legacySearchPolymerizations)
 	case "getBreadCrumbs":
 		apiutil.WriteJSON(w, http.StatusOK, "ok", legacySearchBreadcrumbs(r))
+	case "hotList":
+		if mode == "full" {
+			s.handleLegacyHotList(w, r, user)
+			return
+		}
+		http.NotFound(w, r)
 	case "informationList", "informationListpost":
 		s.handleLegacySearchInformationList(w, r, user, mode)
 	case "data":
@@ -250,6 +256,49 @@ func (s *Server) handleLegacySearchInformationList(w http.ResponseWriter, r *htt
 		"totalCount":            result.Total,
 		"currentPage":           max(result.Page, 1),
 		"article_public_idList": articleIDs,
+	})
+}
+
+func (s *Server) handleLegacyHotList(w http.ResponseWriter, r *http.Request, user any) {
+	_ = user
+	page := max(apiutil.IntQuery(r, "pageNum", 1), 1)
+	pageSize := apiutil.IntQuery(r, "pageSize", 25)
+	if pageSize <= 0 {
+		pageSize = 25
+	}
+	keyword := nonEmpty(
+		strings.TrimSpace(r.URL.Query().Get("searchWord")),
+		strings.TrimSpace(r.URL.Query().Get("searchword")),
+		strings.TrimSpace(r.URL.Query().Get("keyword")),
+	)
+	query := url.Values{}
+	query.Set("page", strconv.Itoa(page))
+	query.Set("page_size", strconv.Itoa(pageSize))
+	if keyword != "" {
+		query.Set("q", keyword)
+	}
+	var result model.SearchResult
+	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/search/full?"+query.Encode(), &result); err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	items := make([]map[string]any, 0, len(result.Items))
+	for _, item := range result.Items {
+		items = append(items, map[string]any{
+			"_source": legacyHotItemSource(item),
+		})
+	}
+	totalPages := 1
+	if result.PageSize > 0 && result.Total > 0 {
+		totalPages = (result.Total + result.PageSize - 1) / result.PageSize
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]any{
+		"code":       http.StatusOK,
+		"data":       items,
+		"page_count": totalPages,
+		"count":      result.Total,
+		"page":       max(result.Page, page),
+		"size":       max(result.PageSize, pageSize),
 	})
 }
 
@@ -393,6 +442,57 @@ func legacySearchArticleIDFromPath(path string) string {
 		return ""
 	}
 	return strings.TrimSpace(parts[1])
+}
+
+func legacyHotItemSource(item model.Item) map[string]any {
+	sentiment := 2
+	switch legacyHotSentiment(strings.TrimSpace(item.Title + " " + item.Summary + " " + item.Content)) {
+	case "positive":
+		sentiment = 1
+	case "negative":
+		sentiment = 3
+	}
+	classify := 1
+	if strings.Contains(strings.ToLower(item.SourceType), "video") {
+		classify = 2
+	}
+	return map[string]any{
+		"source_name":     nonEmpty(item.FromText, item.SourceType, "热点"),
+		"topic":           item.Title,
+		"spider_time":     nonEmpty(item.PublishTimeText, item.PublishTime, item.CapturedAt.Format("2006-01-02 15:04:05")),
+		"sentiment":       sentiment,
+		"classify":        classify,
+		"sales_volume":    0,
+		"original_weight": 0,
+		"source_url":      nonEmpty(item.SourceURL, item.DetailURL),
+		"article_id":      item.ID,
+	}
+}
+
+func legacyHotSentiment(text string) string {
+	normalized := strings.ToLower(text)
+	positiveWords := []string{"上涨", "利好", "增长", "突破", "新高", "improve", "beat", "surge", "gain"}
+	negativeWords := []string{"下跌", "利空", "风险", "暴跌", "回落", "loss", "drop", "fall", "miss"}
+	positive := 0
+	negative := 0
+	for _, word := range positiveWords {
+		if strings.Contains(normalized, strings.ToLower(word)) {
+			positive++
+		}
+	}
+	for _, word := range negativeWords {
+		if strings.Contains(normalized, strings.ToLower(word)) {
+			negative++
+		}
+	}
+	switch {
+	case positive > negative:
+		return "positive"
+	case negative > positive:
+		return "negative"
+	default:
+		return "neutral"
+	}
 }
 
 func legacySearchTypesForMode(mode string) []legacySearchFullType {

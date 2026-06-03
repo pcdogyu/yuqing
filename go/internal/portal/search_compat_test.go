@@ -165,3 +165,71 @@ func TestLegacySearchInformationList(t *testing.T) {
 		t.Fatalf("expected keyword in article keywords, got %+v", envelope.Data.Data[0])
 	}
 }
+
+func TestLegacyHotList(t *testing.T) {
+	var seenQuery url.Values
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/search/full" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 404, "message": "not found", "data": map[string]any{}})
+			return
+		}
+		seenQuery = r.URL.Query()
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    200,
+			"message": "ok",
+			"data": model.SearchResult{
+				Total:    1,
+				Page:     3,
+				PageSize: 25,
+				Items: []model.Item{{
+					ID:              88,
+					Title:           "热点文章上涨",
+					Content:         "热点文章上涨",
+					Summary:         "热点文章上涨",
+					SourceType:      "headline",
+					SourceURL:       "https://example.com/88",
+					PublishTime:     "2026-06-03 12:00:00",
+					PublishTimeText: "2分钟前",
+					FromText:        "新华网",
+				}},
+			},
+		})
+	}))
+	defer content.Close()
+
+	srv := &Server{cfg: config.Config{ContentURL: content.URL}, client: resty.New()}
+	req := httptest.NewRequest(http.MethodGet, "/fullsearch/hotList?pageNum=3&pageSize=25&searchWord=%E7%83%AD%E7%82%B9", nil)
+	rr := httptest.NewRecorder()
+
+	srv.handleLegacyHotList(rr, req, map[string]any{"id": int64(42)})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if seenQuery.Get("q") != "热点" || seenQuery.Get("page") != "3" || seenQuery.Get("page_size") != "25" {
+		t.Fatalf("unexpected forwarded hot list query: %+v", seenQuery)
+	}
+
+	var envelope struct {
+		Code int `json:"code"`
+		Data struct {
+			Code      int `json:"code"`
+			PageCount int `json:"page_count"`
+			Count     int `json:"count"`
+			Page      int `json:"page"`
+			Size      int `json:"size"`
+			Data      []struct {
+				Source map[string]any `json:"_source"`
+			} `json:"data"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal hot list response: %v", err)
+	}
+	if envelope.Code != http.StatusOK || envelope.Data.Code != http.StatusOK || envelope.Data.PageCount != 1 || envelope.Data.Count != 1 || envelope.Data.Page != 3 || envelope.Data.Size != 25 {
+		t.Fatalf("unexpected hot list metadata: %+v", envelope)
+	}
+	if len(envelope.Data.Data) != 1 || envelope.Data.Data[0].Source["topic"] != "热点文章上涨" || envelope.Data.Data[0].Source["source_name"] != "新华网" {
+		t.Fatalf("unexpected hot list payload: %+v", envelope.Data.Data)
+	}
+}
