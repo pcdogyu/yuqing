@@ -66,6 +66,22 @@ func TestParseDetailHTML(t *testing.T) {
 	}
 }
 
+func TestParseDetailHTMLFallsBackToNuxtContent(t *testing.T) {
+	html := `<html><body><div class="content-title"><div class="flash-title">中科创达：创通联达首发TurboX C7790开发套件 填补高通平台20+TOPS算力模组空白</div><div></div></div><script>window.__NUXT__=(function(){return {data:[{flash:{data:{title:"中科创达：创通联达首发TurboX C7790开发套件 填补高通平台20+TOPS算力模组空白",content:"\u003Cp\u003E中科创达表示，该套件面向边缘AI部署场景。\u003C\/p\u003E\u003Cp\u003E产品填补高通平台20+TOPS算力模组空白。\u003C\/p\u003E"}}}]}})();</script></body></html>`
+
+	title, content, publishTime, sourceURL, fromText := parseDetailHTML(html)
+
+	if title != "中科创达：创通联达首发TurboX C7790开发套件 填补高通平台20+TOPS算力模组空白" {
+		t.Fatalf("unexpected title: %q", title)
+	}
+	if content != "中科创达表示，该套件面向边缘AI部署场景。 产品填补高通平台20+TOPS算力模组空白。" {
+		t.Fatalf("unexpected content: %q", content)
+	}
+	if publishTime != "" || sourceURL != "" || fromText != "" {
+		t.Fatalf("expected empty metadata, got publishTime=%q sourceURL=%q fromText=%q", publishTime, sourceURL, fromText)
+	}
+}
+
 func mustReadFixture(t *testing.T, name string) string {
 	t.Helper()
 	path := filepath.Join("testdata", name)

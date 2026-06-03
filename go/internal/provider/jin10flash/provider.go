@@ -17,9 +17,11 @@ import (
 )
 
 var (
-	reFlashHref = regexp.MustCompile(`https?://flash\.jin10\.com/detail/[^\s"'<>]+|//flash\.jin10\.com/detail/[^\s"'<>]+`)
-	reDateTime  = regexp.MustCompile(`20\d{2}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}`)
-	reClock     = regexp.MustCompile(`\b\d{2}:\d{2}:\d{2}\b`)
+	reFlashHref   = regexp.MustCompile(`https?://flash\.jin10\.com/detail/[^\s"'<>]+|//flash\.jin10\.com/detail/[^\s"'<>]+`)
+	reDateTime    = regexp.MustCompile(`20\d{2}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}`)
+	reClock       = regexp.MustCompile(`\b\d{2}:\d{2}:\d{2}\b`)
+	reNuxtTitle   = regexp.MustCompile(`title:"((?:\\.|[^"])*)"`)
+	reNuxtContent = regexp.MustCompile(`content:"((?:\\.|[^"])*)"`)
 )
 
 type Provider struct {
@@ -208,6 +210,19 @@ func parseDetailHTML(html string) (title string, content string, publishTime str
 		content = title
 	}
 
+	nuxtTitle, nuxtContent := parseNuxtFlashContent(html)
+	switch {
+	case strings.TrimSpace(content) == "":
+		content = nuxtContent
+	case strings.TrimSpace(content) == strings.TrimSpace(title) && strings.TrimSpace(nuxtContent) != "":
+		content = nuxtContent
+	case len([]rune(nuxtContent)) > len([]rune(content)):
+		content = nuxtContent
+	}
+	if strings.TrimSpace(title) == "" && strings.TrimSpace(nuxtTitle) != "" {
+		title = nuxtTitle
+	}
+
 	if href, ok := body.Find("a[href]").Last().Attr("href"); ok {
 		sourceURL = normalizeDetailURL(href)
 	}
@@ -234,6 +249,34 @@ func parseDetailHTML(html string) (title string, content string, publishTime str
 	}
 
 	return strings.TrimSpace(title), strings.TrimSpace(content), strings.TrimSpace(publishTime), strings.TrimSpace(sourceURL), strings.TrimSpace(fromText)
+}
+
+func parseNuxtFlashContent(html string) (title string, content string) {
+	start := strings.Index(html, "flash:{")
+	if start < 0 {
+		return "", ""
+	}
+	segment := html[start:]
+	titleMatch := reNuxtTitle.FindStringSubmatch(segment)
+	contentMatch := reNuxtContent.FindStringSubmatch(segment)
+	if len(titleMatch) >= 2 {
+		title = decodeNuxtString(titleMatch[1])
+	}
+	if len(contentMatch) >= 2 {
+		content = cleanText(decodeNuxtString(contentMatch[1]))
+	}
+	return strings.TrimSpace(title), strings.TrimSpace(content)
+}
+
+func decodeNuxtString(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return ""
+	}
+	var decoded string
+	if err := json.Unmarshal([]byte(`"`+raw+`"`), &decoded); err == nil {
+		return decoded
+	}
+	return raw
 }
 
 func hostOf(raw string) string {
