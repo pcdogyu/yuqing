@@ -32,5 +32,8 @@ build/
 
 ### Go crawler ###
 go/data/
+go/data/*.db
+go/data/*.db-shm
+go/data/*.db-wal
 go/bin/
 go/
