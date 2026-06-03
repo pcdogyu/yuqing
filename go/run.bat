@@ -1,22 +1,37 @@
 @echo off
 setlocal EnableExtensions
 
+set "SKIP_PULL=0"
+if /I "%~1"=="--skip-pull" set "SKIP_PULL=1"
+
 set "GO_DIR=%~dp0"
 for %%I in ("%GO_DIR%.") do set "GO_DIR=%%~fI"
 for %%I in ("%GO_DIR%\..") do set "REPO_ROOT=%%~fI"
 set "BIN_DIR=%GO_DIR%\bin"
 set "SERVICE_PORTS=80 8081 8082 8083 8084 8085 8086"
+set "SERVICE_NAMES=auth-service content-service crawler-service analysis-service nlp-service gateway-web scheduler-service"
 set "YUQING_LOG_LEVEL=debug"
 set "YUQING_RUN_VERSION=local"
 
 cd /d "%REPO_ROOT%"
 echo [1/6] Pull latest code from origin...
-git diff --quiet -- go/data/yuqing.db go/data/yuqing.db-shm go/data/yuqing.db-wal >nul 2>nul
-if errorlevel 1 (
-    echo Detected local database changes under go/data. Skipping git pull to preserve local data.
+if "%SKIP_PULL%"=="1" (
+    echo Skip pull requested. Continue with current worktree.
 ) else (
-    git pull --ff-only
-    if errorlevel 1 goto :fail
+    for /f %%I in ('git rev-parse HEAD') do set "YUQING_HEAD_BEFORE=%%I"
+    git diff --quiet -- go/data/yuqing.db go/data/yuqing.db-shm go/data/yuqing.db-wal >nul 2>nul
+    if errorlevel 1 (
+        echo Detected local database changes under go/data. Skipping git pull to preserve local data.
+    ) else (
+        git pull --ff-only
+        if errorlevel 1 goto :fail
+        for /f %%I in ('git rev-parse HEAD') do set "YUQING_HEAD_AFTER=%%I"
+        if not "%YUQING_HEAD_BEFORE%"=="%YUQING_HEAD_AFTER%" (
+            echo Repository updated. Restarting run.bat with the refreshed worktree...
+            cmd /c ""%GO_DIR%\run.bat" --skip-pull"
+            exit /b %ERRORLEVEL%
+        )
+    )
 )
 
 cd /d "%GO_DIR%"
@@ -34,6 +49,10 @@ if errorlevel 1 goto :fail
 echo [4/6] Stop processes occupying service ports...
 for %%P in (%SERVICE_PORTS%) do (
     call :kill_port %%P
+    if errorlevel 1 goto :fail
+)
+for %%S in (%SERVICE_NAMES%) do (
+    call :kill_service %%S
     if errorlevel 1 goto :fail
 )
 
@@ -85,6 +104,21 @@ for /f "tokens=5" %%I in ('netstat -ano -p tcp ^| findstr /R /C:":%TARGET_PORT% 
 )
 if not defined FOUND_PORT_PID (
     echo Port %TARGET_PORT% is free.
+)
+exit /b 0
+
+:kill_service
+set "TARGET_SERVICE=%~1"
+tasklist /FI "IMAGENAME eq %TARGET_SERVICE%.exe" | find /I "%TARGET_SERVICE%.exe" >nul
+if errorlevel 1 (
+    echo Service %TARGET_SERVICE% is not running.
+    exit /b 0
+)
+echo Service %TARGET_SERVICE% is running. Stopping...
+taskkill /F /IM "%TARGET_SERVICE%.exe" >nul 2>nul
+if errorlevel 1 (
+    echo Failed to stop %TARGET_SERVICE%.exe.
+    exit /b 1
 )
 exit /b 0
 
