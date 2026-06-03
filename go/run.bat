@@ -8,7 +8,8 @@ set "GO_DIR=%~dp0"
 for %%I in ("%GO_DIR%.") do set "GO_DIR=%%~fI"
 for %%I in ("%GO_DIR%\..") do set "REPO_ROOT=%%~fI"
 set "BIN_DIR=%GO_DIR%\bin"
-set "SERVICE_PORTS=80 8081 8082 8083 8084 8085 8086"
+set "LOG_DIR=%GO_DIR%\runtime-logs"
+set "SERVICE_PORTS=80 8081 8082 8083 8084 8085"
 set "SERVICE_NAMES=auth-service content-service crawler-service analysis-service nlp-service gateway-web scheduler-service"
 set "YUQING_LOG_LEVEL=debug"
 set "YUQING_RUN_VERSION=local"
@@ -58,6 +59,7 @@ for %%S in (%SERVICE_NAMES%) do (
 
 echo [5/6] Build service binaries...
 if not exist "%BIN_DIR%" mkdir "%BIN_DIR%"
+if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
 for %%S in (
     auth-service
     content-service
@@ -68,18 +70,33 @@ for %%S in (
     scheduler-service
 ) do (
     echo Building %%S...
-    go build -ldflags "%LDFLAGS%" -o "%BIN_DIR%\%%S.exe" ".\cmd\%%S"
+    go build -ldflags "%LDFLAGS%" -o "%BIN_DIR%\%%S.exe" "./cmd/%%S"
     if errorlevel 1 goto :fail
 )
 
 echo [6/6] Start services with debug logging...
-start "auth-service" "%BIN_DIR%\auth-service.exe"
-start "content-service" "%BIN_DIR%\content-service.exe"
-start "crawler-service" "%BIN_DIR%\crawler-service.exe"
-start "analysis-service" "%BIN_DIR%\analysis-service.exe"
-start "nlp-service" "%BIN_DIR%\nlp-service.exe"
-start "gateway-web" "%BIN_DIR%\gateway-web.exe"
-start "scheduler-service" "%BIN_DIR%\scheduler-service.exe"
+call :start_service auth-service 8081
+if errorlevel 1 goto :fail
+call :start_service content-service 8082
+if errorlevel 1 goto :fail
+call :start_service crawler-service 8083
+if errorlevel 1 goto :fail
+call :start_service analysis-service 8084
+if errorlevel 1 goto :fail
+call :start_service nlp-service 8085
+if errorlevel 1 goto :fail
+call :start_service gateway-web 80
+if errorlevel 1 goto :fail
+call :start_process_service scheduler-service
+if errorlevel 1 goto :fail
+
+echo Final port checks:
+call :print_port_status gateway-web 80
+call :print_port_status auth-service 8081
+call :print_port_status content-service 8082
+call :print_port_status crawler-service 8083
+call :print_port_status analysis-service 8084
+call :print_port_status nlp-service 8085
 
 echo.
 echo Services started.
@@ -88,6 +105,37 @@ echo LogLevel: %YUQING_LOG_LEVEL%
 echo Version: %YUQING_RUN_VERSION%
 echo Commit: %YUQING_GIT_COMMIT%
 echo BuildTime: %YUQING_BUILD_TIME%
+exit /b 0
+
+:start_service
+set "TARGET_SERVICE=%~1"
+set "TARGET_PORT=%~2"
+call :start_process_core %TARGET_SERVICE%
+if errorlevel 1 exit /b 1
+call :wait_for_port_stable %TARGET_SERVICE% %TARGET_PORT%
+exit /b %ERRORLEVEL%
+
+:start_process_service
+set "TARGET_SERVICE=%~1"
+call :start_process_core %TARGET_SERVICE%
+if errorlevel 1 exit /b 1
+call :wait_for_process %TARGET_SERVICE%
+if errorlevel 1 exit /b 1
+call :print_service_logs %TARGET_SERVICE%
+exit /b 0
+
+:start_process_core
+set "TARGET_SERVICE=%~1"
+set "OUT_LOG=%LOG_DIR%\%TARGET_SERVICE%.out.log"
+set "ERR_LOG=%LOG_DIR%\%TARGET_SERVICE%.err.log"
+if exist "%OUT_LOG%" del /Q "%OUT_LOG%" >nul 2>nul
+if exist "%ERR_LOG%" del /Q "%ERR_LOG%" >nul 2>nul
+echo Starting %TARGET_SERVICE%...
+powershell -NoProfile -Command "$p = Start-Process -FilePath '%BIN_DIR%\%TARGET_SERVICE%.exe' -WorkingDirectory '%GO_DIR%' -RedirectStandardOutput '%OUT_LOG%' -RedirectStandardError '%ERR_LOG%' -PassThru; if ($null -eq $p) { exit 1 }"
+if errorlevel 1 (
+    echo Failed to start %TARGET_SERVICE%.
+    exit /b 1
+)
 exit /b 0
 
 :kill_port
@@ -120,6 +168,67 @@ if errorlevel 1 (
     echo Failed to stop %TARGET_SERVICE%.exe.
     exit /b 1
 )
+exit /b 0
+
+:wait_for_port_stable
+set "WAIT_SERVICE=%~1"
+set "WAIT_PORT=%~2"
+set "WAIT_COUNT=0"
+:wait_for_port_stable_loop
+set /a WAIT_COUNT+=1
+powershell -NoProfile -Command "Start-Sleep -Seconds 3" >nul
+netstat -ano -p tcp | findstr /R /C:":%WAIT_PORT% .*LISTENING" >nul
+if not errorlevel 1 (
+    echo [%WAIT_SERVICE%] check %WAIT_COUNT%/3: port %WAIT_PORT% is listening.
+) else (
+    echo [%WAIT_SERVICE%] check %WAIT_COUNT%/3: port %WAIT_PORT% is not listening.
+    exit /b 1
+)
+if %WAIT_COUNT% LSS 3 goto :wait_for_port_stable_loop
+echo PORT %WAIT_PORT% %WAIT_SERVICE% is up.
+call :print_service_logs %WAIT_SERVICE%
+exit /b 0
+
+:wait_for_process
+set "WAIT_SERVICE=%~1"
+set "WAIT_COUNT=0"
+:wait_for_process_loop
+powershell -NoProfile -Command "Start-Sleep -Seconds 3" >nul
+set /a WAIT_COUNT+=1
+tasklist /FI "IMAGENAME eq %WAIT_SERVICE%.exe" | find /I "%WAIT_SERVICE%.exe" >nul
+if not errorlevel 1 (
+    echo [%WAIT_SERVICE%] check %WAIT_COUNT%/3: process is running.
+) else (
+    echo [%WAIT_SERVICE%] check %WAIT_COUNT%/3: process is not running.
+    exit /b 1
+)
+if %WAIT_COUNT% LSS 3 goto :wait_for_process_loop
+echo PROCESS %WAIT_SERVICE% is up.
+exit /b 0
+
+:print_port_status
+set "STATUS_SERVICE=%~1"
+set "STATUS_PORT=%~2"
+netstat -ano -p tcp | findstr /R /C:":%STATUS_PORT% .*LISTENING" >nul
+if not errorlevel 1 (
+    echo PORT %STATUS_PORT% %STATUS_SERVICE% is up.
+    exit /b 0
+)
+echo PORT %STATUS_PORT% %STATUS_SERVICE% is down.
+exit /b 1
+
+:print_service_logs
+set "LOG_SERVICE=%~1"
+set "OUT_LOG=%LOG_DIR%\%LOG_SERVICE%.out.log"
+set "ERR_LOG=%LOG_DIR%\%LOG_SERVICE%.err.log"
+echo ---- %LOG_SERVICE% startup log ----
+if exist "%OUT_LOG%" (
+    type "%OUT_LOG%"
+)
+if exist "%ERR_LOG%" (
+    for %%I in ("%ERR_LOG%") do if %%~zI GTR 0 type "%ERR_LOG%"
+)
+echo ---- end %LOG_SERVICE% log ----
 exit /b 0
 
 :fail
