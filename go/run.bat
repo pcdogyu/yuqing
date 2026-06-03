@@ -16,6 +16,7 @@ set "BIN_DIR=%GO_DIR%\bin"
 set "LOG_DIR=%GO_DIR%\runtime-logs"
 set "SERVICE_PORTS=80 8081 8082 8083 8084 8085"
 set "SERVICE_NAMES=auth-service content-service crawler-service analysis-service nlp-service gateway-web scheduler-service"
+set "PORT_CHECKS=auth-service=8081 content-service=8082 crawler-service=8083 analysis-service=8084 nlp-service=8085 gateway-web=80"
 set "YUQING_LOG_LEVEL=debug"
 set "YUQING_RUN_VERSION=local"
 set "TEMP_BOOTSTRAP=%TEMP%\yuqing-run-bootstrap-%RANDOM%-%RANDOM%.cmd"
@@ -106,18 +107,26 @@ for %%S in (
 )
 
 echo [6/6] Start services with debug logging...
-call :start_service auth-service 8081
+call :start_process_core auth-service
 if errorlevel 1 goto :fail
-call :start_service content-service 8082
+call :start_process_core content-service
 if errorlevel 1 goto :fail
-call :start_service crawler-service 8083
+call :start_process_core crawler-service
 if errorlevel 1 goto :fail
-call :start_service analysis-service 8084
+call :start_process_core analysis-service
 if errorlevel 1 goto :fail
-call :start_service nlp-service 8085
+call :start_process_core nlp-service
 if errorlevel 1 goto :fail
-call :start_service gateway-web 80
+call :start_process_core gateway-web
 if errorlevel 1 goto :fail
+powershell -NoProfile -Command "$checks = @(@{Name='auth-service';Port=8081}, @{Name='content-service';Port=8082}, @{Name='crawler-service';Port=8083}, @{Name='analysis-service';Port=8084}, @{Name='nlp-service';Port=8085}, @{Name='gateway-web';Port=80}); $counts = @{}; foreach ($check in $checks) { $counts[$check.Name] = 0 }; while ($true) { Start-Sleep -Seconds 3; $allDone = $true; foreach ($check in $checks) { if ($counts[$check.Name] -ge 3) { Write-Host ('[{0}] check {1}/3: port {2} is listening.' -f $check.Name, $counts[$check.Name], $check.Port); continue }; $listening = Get-NetTCPConnection -LocalPort $check.Port -State Listen -ErrorAction SilentlyContinue; if ($listening) { $counts[$check.Name]++; Write-Host ('[{0}] check {1}/3: port {2} is listening.' -f $check.Name, $counts[$check.Name], $check.Port) } else { Write-Host ('[{0}] check {1}/3: port {2} is not listening.' -f $check.Name, $counts[$check.Name], $check.Port); exit 1 }; if ($counts[$check.Name] -lt 3) { $allDone = $false } }; if ($allDone) { break } }"
+if errorlevel 1 goto :fail
+for %%C in (%PORT_CHECKS%) do (
+    for /f "tokens=1,2 delims==" %%A in ("%%C") do (
+        echo PORT %%B %%A is up.
+        call :print_service_logs %%A
+    )
+)
 call :start_process_service scheduler-service
 if errorlevel 1 goto :fail
 
@@ -137,14 +146,6 @@ echo Version: %YUQING_RUN_VERSION%
 echo Commit: %YUQING_GIT_COMMIT%
 echo BuildTime: %YUQING_BUILD_TIME%
 exit /b 0
-
-:start_service
-set "TARGET_SERVICE=%~1"
-set "TARGET_PORT=%~2"
-call :start_process_core %TARGET_SERVICE%
-if errorlevel 1 exit /b 1
-call :wait_for_port_stable %TARGET_SERVICE% %TARGET_PORT%
-exit /b %ERRORLEVEL%
 
 :start_process_service
 set "TARGET_SERVICE=%~1"
@@ -199,25 +200,6 @@ if errorlevel 1 (
     echo Failed to stop %TARGET_SERVICE%.exe.
     exit /b 1
 )
-exit /b 0
-
-:wait_for_port_stable
-set "WAIT_SERVICE=%~1"
-set "WAIT_PORT=%~2"
-set "WAIT_COUNT=0"
-:wait_for_port_stable_loop
-set /a WAIT_COUNT+=1
-powershell -NoProfile -Command "Start-Sleep -Seconds 3" >nul
-netstat -ano -p tcp | findstr /R /C:":%WAIT_PORT% .*LISTENING" >nul
-if not errorlevel 1 (
-    echo [%WAIT_SERVICE%] check %WAIT_COUNT%/3: port %WAIT_PORT% is listening.
-) else (
-    echo [%WAIT_SERVICE%] check %WAIT_COUNT%/3: port %WAIT_PORT% is not listening.
-    exit /b 1
-)
-if %WAIT_COUNT% LSS 3 goto :wait_for_port_stable_loop
-echo PORT %WAIT_PORT% %WAIT_SERVICE% is up.
-call :print_service_logs %WAIT_SERVICE%
 exit /b 0
 
 :wait_for_process
