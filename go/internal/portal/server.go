@@ -124,62 +124,62 @@ type mobileQRCodeState struct {
 }
 
 type pageData struct {
-	Title          string
-	User           any
-	SectionKey     string
-	Dashboard      model.DashboardSnapshot
-	Groups         []model.ProjectGroup
-	Project        model.Project
-	Projects       []model.Project
-	Rule           model.MonitorRule
-	Rules          []model.MonitorRule
-	Articles       model.ItemListResult
-	Article        model.Item
-	Related        []model.Item
-	CrawlRuns      []model.CrawlRun
-	Reports        []model.Report
-	Report         model.Report
-	Notices        []model.SystemNotice
-	TaskRuns       []model.TaskRun
-	Preferences    model.UserPreference
-	PopupState     model.PopupState
-	MailConfig     model.MailConfig
-	WarningSetting model.WarningSetting
-	SearchOptions  model.SearchOptions
-	Error          string
-	Message        string
-	ReturnTo       string
-	ReturnURL      string
-	FilterKeyword  string
-	FilterProject  string
-	FilterStatus   string
-	FilterRead     string
-	FilterFlag     string
-	FilterSource   string
-	FilterStart    string
-	FilterEnd      string
-	FilterIndustry string
-	FilterProvince string
-	FilterCity     string
-	SearchMode     string
-	Section        string
-	FavoriteItems  model.ItemListResult
-	FavoritePage   int
-	FavoritePagePrev int
-	FavoritePageNext int
-	FavoriteProjectID string
+	Title              string
+	User               any
+	SectionKey         string
+	Dashboard          model.DashboardSnapshot
+	Groups             []model.ProjectGroup
+	Project            model.Project
+	Projects           []model.Project
+	Rule               model.MonitorRule
+	Rules              []model.MonitorRule
+	Articles           model.ItemListResult
+	Article            model.Item
+	Related            []model.Item
+	CrawlRuns          []model.CrawlRun
+	Reports            []model.Report
+	Report             model.Report
+	Notices            []model.SystemNotice
+	TaskRuns           []model.TaskRun
+	Preferences        model.UserPreference
+	PopupState         model.PopupState
+	MailConfig         model.MailConfig
+	WarningSetting     model.WarningSetting
+	SearchOptions      model.SearchOptions
+	Error              string
+	Message            string
+	ReturnTo           string
+	ReturnURL          string
+	FilterKeyword      string
+	FilterProject      string
+	FilterStatus       string
+	FilterRead         string
+	FilterFlag         string
+	FilterSource       string
+	FilterStart        string
+	FilterEnd          string
+	FilterIndustry     string
+	FilterProvince     string
+	FilterCity         string
+	SearchMode         string
+	Section            string
+	FavoriteItems      model.ItemListResult
+	FavoritePage       int
+	FavoritePagePrev   int
+	FavoritePageNext   int
+	FavoriteProjectID  string
 	FavoriteTotalPages int
-	Services       []serviceStatus
-	ProjectNames   map[int64]string
-	GroupNames     map[int64]string
-	CountActive    int
-	CountPaused    int
-	CountRead      int
-	CountUnread    int
-	CountFlagged   int
-	CountDraft     int
-	CountGenerated int
-	CountArchived  int
+	Services           []serviceStatus
+	ProjectNames       map[int64]string
+	GroupNames         map[int64]string
+	CountActive        int
+	CountPaused        int
+	CountRead          int
+	CountUnread        int
+	CountFlagged       int
+	CountDraft         int
+	CountGenerated     int
+	CountArchived      int
 }
 
 type serviceStatus struct {
@@ -191,7 +191,7 @@ type serviceStatus struct {
 
 func NewServer(cfg config.Config) *Server {
 	funcMap := template.FuncMap{
-		"firstProjectGroupID": firstProjectGroupIDForTemplate,
+		"firstProjectGroupID":   firstProjectGroupIDForTemplate,
 		"firstProjectIDForItem": firstProjectIDForItemTemplate,
 	}
 	tpl := template.Must(template.New("layout").Funcs(funcMap).Parse(layoutTemplate))
@@ -274,8 +274,14 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/system/listSolutionGroupByUserId", s.requireSessionJSON(s.handleLegacyListSolutionGroupByUserID))
 	mux.HandleFunc("/system/listProjectByGroupId", s.requireSessionJSON(s.handleLegacyListProjectByGroupID))
 	mux.HandleFunc("/system/listProjectByUserId", s.requireSessionJSON(s.handleLegacyListProjectByUserID))
+	mux.HandleFunc("/system/listWarning", s.requireSessionJSON(s.handleLegacyListWarning))
+	mux.HandleFunc("/system/updateWarningStatusById", s.requireSessionJSON(s.handleLegacyUpdateWarningStatusByID))
 	mux.HandleFunc("/system/getFavoriteList", s.requireSessionJSON(s.handleLegacyGetFavoriteList))
+	mux.HandleFunc("/system/getWarningArticle", s.requireSessionJSON(s.handleLegacyGetWarningArticle))
 	mux.HandleFunc("/system/warningSettingDetail", s.requireSessionJSON(s.handleLegacyWarningSettingDetail))
+	mux.HandleFunc("/system/getOpinionConditionByProjectId", s.requireSessionJSON(s.handleLegacyGetOpinionConditionByProjectID))
+	mux.HandleFunc("/system/updateOpinionCondition", s.requireSessionJSON(s.handleLegacyUpdateOpinionCondition))
+	mux.HandleFunc("/system/getwords", s.requireSessionJSON(s.handleLegacyGetWarningWords))
 	mux.HandleFunc("/system/updateWarning", s.requireSessionJSON(s.handleLegacyUpdateWarning))
 	mux.HandleFunc("/system/getSystemTitle", s.requireSessionJSON(s.handleLegacyGetSystemTitle))
 	mux.HandleFunc("/system/preference", s.requireSession(s.handleSystemSectionRedirect("preferences")))
@@ -839,6 +845,82 @@ func (s *Server) handleLegacyListProjectByUserID(w http.ResponseWriter, r *http.
 	writeRawJSON(w, http.StatusOK, s.fetchLegacyProjects())
 }
 
+func (s *Server) handleLegacyListWarning(w http.ResponseWriter, r *http.Request, _ any) {
+	if err := r.ParseForm(); err != nil {
+		writeLegacyJSON(w, http.StatusBadRequest, "invalid body", map[string]any{})
+		return
+	}
+	pageNum := parsePositiveInt(nonEmpty(r.FormValue("page"), r.FormValue("pageNum")), 1)
+	groupID := parseFormProjectGroupID(r)
+	projects := s.fetchLegacyProjects()
+	if groupID > 0 {
+		projects = filterLegacyProjectsByGroupID(projects, groupID)
+	}
+	sort.Slice(projects, func(i, j int) bool {
+		if projects[i].GroupID == projects[j].GroupID {
+			return projects[i].ProjectID < projects[j].ProjectID
+		}
+		return projects[i].GroupID < projects[j].GroupID
+	})
+	entries := make([]map[string]any, 0, len(projects))
+	for _, project := range projects {
+		setting, _ := s.fetchLegacyWarningSetting(project.ProjectID)
+		entries = append(entries, legacyWarningListEntry(project, setting))
+	}
+	pageSize := 10
+	total := len(entries)
+	totalPages := 1
+	if total > 0 {
+		totalPages = (total + pageSize - 1) / pageSize
+	}
+	start := (maxInt(pageNum, 1) - 1) * pageSize
+	if start > total {
+		start = total
+	}
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+	payload := map[string]any{
+		"list":      entries[start:end],
+		"pageCount": totalPages,
+		"dataCount": total,
+	}
+	writeLegacyJSON(w, http.StatusOK, "", legacyJSONString(payload))
+}
+
+func (s *Server) handleLegacyUpdateWarningStatusByID(w http.ResponseWriter, r *http.Request, _ any) {
+	if err := r.ParseForm(); err != nil {
+		writeLegacyStatusJSON(w, http.StatusBadRequest, "invalid body", nil)
+		return
+	}
+	projectID := parseFormProjectID(r)
+	if projectID <= 0 {
+		writeLegacyStatusJSON(w, http.StatusBadRequest, "project_id required", nil)
+		return
+	}
+	warningStatus := parsePositiveInt(nonEmpty(r.FormValue("warning_status"), r.FormValue("warningStatus")), 0)
+	setting, _ := s.fetchLegacyWarningSetting(projectID)
+	if warningStatus == 1 && strings.TrimSpace(setting.WarningWord) == "" {
+		writeLegacyStatusJSON(w, http.StatusBadRequest, "预警词为空不能打开预警开关！", nil)
+		return
+	}
+	setting.WarningStatus = warningStatus
+	setting.Enabled = warningStatus == 1
+	resp, err := s.client.R().
+		SetBody(setting).
+		Put(s.cfg.ContentURL + "/api/v1/system/warning-settings/" + strconv.FormatInt(projectID, 10))
+	if err != nil {
+		writeLegacyStatusJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	if !resp.IsSuccess() {
+		writeLegacyStatusJSON(w, resp.StatusCode(), resp.Status(), nil)
+		return
+	}
+	writeLegacyStatusJSON(w, http.StatusOK, "OK", map[string]any{})
+}
+
 func (s *Server) handleLegacyGetFavoriteList(w http.ResponseWriter, r *http.Request, user any) {
 	if err := r.ParseForm(); err != nil {
 		writeLegacyJSON(w, http.StatusBadRequest, "invalid body", map[string]any{})
@@ -881,9 +963,9 @@ func (s *Server) handleLegacyGetFavoriteList(w http.ResponseWriter, r *http.Requ
 	writeLegacyJSON(w, http.StatusOK, "OK", map[string]any{
 		"favoriteList": items,
 		"pageInfo": map[string]any{
-			"pageNum": pageNum,
-			"pages":   totalPages,
-			"total":   result.Total,
+			"pageNum":  pageNum,
+			"pages":    totalPages,
+			"total":    result.Total,
 			"pageSize": result.PageSize,
 		},
 	})
@@ -900,6 +982,148 @@ func (s *Server) handleLegacyWarningSettingDetail(w http.ResponseWriter, r *http
 	}
 	setting, projectName := s.fetchLegacyWarningSetting(projectID)
 	writeLegacyStatusJSON(w, http.StatusOK, "OK", legacyWarningSettingPayload(setting, projectID, projectName))
+}
+
+func (s *Server) handleLegacyGetWarningArticle(w http.ResponseWriter, r *http.Request, user any) {
+	if err := r.ParseForm(); err != nil {
+		writeLegacyJSON(w, http.StatusBadRequest, "invalid body", map[string]any{})
+		return
+	}
+	userID := userIDFromMap(user)
+	if userID <= 0 {
+		writeLegacyJSON(w, http.StatusForbidden, "未登录", map[string]any{})
+		return
+	}
+	pageNum := parsePositiveInt(nonEmpty(r.FormValue("pageNum"), r.FormValue("page")), 1)
+	openFlag, _ := strconv.Atoi(strings.TrimSpace(nonEmpty(r.FormValue("openFlag"), r.FormValue("open_flag"))))
+	keyword := strings.TrimSpace(r.FormValue("keyword"))
+	projectID := parseFormProjectID(r)
+
+	var result model.ItemListResult
+	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/articles?page=1&page_size=1000&user_id="+strconv.FormatInt(userID, 10)+"&read=unread", &result); err != nil {
+		writeLegacyJSON(w, http.StatusInternalServerError, err.Error(), map[string]any{})
+		return
+	}
+	projectMap := s.fetchLegacyProjectMap()
+	groupNames := s.fetchLegacyGroupNameMap()
+	articles := make([]map[string]any, 0, len(result.Items))
+	for _, item := range result.Items {
+		if keyword != "" && !strings.Contains(strings.ToLower(item.Title), strings.ToLower(keyword)) {
+			continue
+		}
+		projectIDs := item.ProjectIDs
+		if len(projectIDs) == 0 {
+			continue
+		}
+		for _, itemProjectID := range projectIDs {
+			if projectID > 0 && itemProjectID != projectID {
+				continue
+			}
+			project, ok := projectMap[itemProjectID]
+			if !ok {
+				continue
+			}
+			setting, _ := s.fetchLegacyWarningSetting(itemProjectID)
+			if openFlag == 1 && !setting.Enabled {
+				continue
+			}
+			groupName := groupNames[project.GroupID]
+			detail := map[string]any{
+				"sourcewebsitename": nonEmpty(item.FromText, item.ExternalSourceHost, item.SourceType),
+			}
+			articles = append(articles, map[string]any{
+				"article_id":     legacyArticlePublicID(item),
+				"article_title":  item.Title,
+				"article_time":   legacyPublishTime(item),
+				"article_detail": legacyJSONString(detail),
+				"group_id":       strconv.FormatInt(project.GroupID, 10),
+				"project_id":     strconv.FormatInt(project.ID, 10),
+				"groupName":      groupName,
+				"project_name":   project.Name,
+			})
+		}
+	}
+	sort.Slice(articles, func(i, j int) bool {
+		return legacyStringFromAny(articles[i]["article_time"]) > legacyStringFromAny(articles[j]["article_time"])
+	})
+	pageSize := 10
+	total := len(articles)
+	totalPages := 1
+	if total > 0 {
+		totalPages = (total + pageSize - 1) / pageSize
+	}
+	start := (pageNum - 1) * pageSize
+	if start > total {
+		start = total
+	}
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+	payload := map[string]any{
+		"warningArticle": articles[start:end],
+		"pageInfo": map[string]any{
+			"pageNum":  pageNum,
+			"pages":    totalPages,
+			"total":    total,
+			"pageSize": pageSize,
+		},
+	}
+	writeLegacyJSON(w, http.StatusOK, "", payload)
+}
+
+func (s *Server) handleLegacyGetOpinionConditionByProjectID(w http.ResponseWriter, r *http.Request, _ any) {
+	projectID := parseProjectID(nonEmpty(r.FormValue("projectId"), r.FormValue("project_id"), r.URL.Query().Get("projectId"), r.URL.Query().Get("project_id")))
+	if projectID <= 0 {
+		writeRawJSON(w, http.StatusBadRequest, map[string]any{})
+		return
+	}
+	var condition model.OpinionCondition
+	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/system/opinion-conditions/"+strconv.FormatInt(projectID, 10), &condition); err != nil {
+		condition = model.OpinionCondition{ProjectID: projectID, Time: 4, Emotion: "[1,2,3]", Sort: 1, Matchs: 1}
+	}
+	writeRawJSON(w, http.StatusOK, condition)
+}
+
+func (s *Server) handleLegacyUpdateOpinionCondition(w http.ResponseWriter, r *http.Request, _ any) {
+	condition, err := decodeLegacyOpinionCondition(r)
+	if err != nil {
+		writeRawJSON(w, http.StatusBadRequest, map[string]any{"status": false, "message": "偏好设置修改失败"})
+		return
+	}
+	if condition.ProjectID <= 0 {
+		writeRawJSON(w, http.StatusBadRequest, map[string]any{"status": false, "message": "project_id required"})
+		return
+	}
+	resp, err := s.client.R().
+		SetBody(condition).
+		Put(s.cfg.ContentURL + "/api/v1/system/opinion-conditions/" + strconv.FormatInt(condition.ProjectID, 10))
+	if err != nil {
+		writeRawJSON(w, http.StatusInternalServerError, map[string]any{"status": false, "message": err.Error()})
+		return
+	}
+	if !resp.IsSuccess() {
+		writeRawJSON(w, resp.StatusCode(), map[string]any{"status": false, "message": resp.Status()})
+		return
+	}
+	writeRawJSON(w, http.StatusOK, map[string]any{"status": true, "message": "偏好设置修改成功"})
+}
+
+func (s *Server) handleLegacyGetWarningWords(w http.ResponseWriter, r *http.Request, _ any) {
+	projectID := parseFormProjectID(r)
+	if projectID <= 0 {
+		projectID = parseProjectID(r.URL.Query().Get("projectId"))
+	}
+	if projectID <= 0 {
+		writeLegacyStatusJSON(w, http.StatusBadRequest, "project_id required", nil)
+		return
+	}
+	setting, _ := s.fetchLegacyWarningSetting(projectID)
+	if strings.TrimSpace(setting.WarningWord) == "" {
+		writeLegacyStatusJSON(w, http.StatusInternalServerError, "预警词为空不能打开预警开关！", nil)
+		return
+	}
+	writeLegacyStatusJSON(w, http.StatusOK, "OK", map[string]any{})
 }
 
 func (s *Server) handleLegacyUpdateWarning(w http.ResponseWriter, r *http.Request, _ any) {
@@ -2998,6 +3222,18 @@ func (s *Server) fetchLegacyProjectMap() map[int64]model.Project {
 	return result
 }
 
+func (s *Server) fetchLegacyGroupNameMap() map[int64]string {
+	var groups []model.ProjectGroup
+	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/project-groups", &groups); err != nil {
+		return map[int64]string{}
+	}
+	result := make(map[int64]string, len(groups))
+	for _, group := range groups {
+		result[group.ID] = group.Name
+	}
+	return result
+}
+
 func filterLegacyProjectsByGroupID(projects []legacyProjectCompat, groupID int64) []legacyProjectCompat {
 	if groupID <= 0 {
 		return projects
@@ -3009,6 +3245,43 @@ func filterLegacyProjectsByGroupID(projects []legacyProjectCompat, groupID int64
 		}
 	}
 	return filtered
+}
+
+func legacyWarningListEntry(project legacyProjectCompat, setting model.WarningSetting) map[string]any {
+	source := setting.WarningSource
+	if strings.TrimSpace(source) == "" {
+		source = legacyJSONString(map[string]any{"type": 1, "email": setting.Recipients})
+	}
+	interval := setting.WarningInterval
+	if strings.TrimSpace(interval) == "" {
+		interval = legacyJSONString(map[string]any{"type": 1, "time": strconv.Itoa(max(setting.Threshold, 1))})
+	}
+	warningStatus := setting.WarningStatus
+	if warningStatus == 0 && setting.Enabled {
+		warningStatus = 1
+	}
+	warningMatch := setting.WarningMatch
+	if warningMatch == 0 {
+		warningMatch = 1
+	}
+	return map[string]any{
+		"project_id":            project.ProjectID,
+		"project_name":          project.ProjectName,
+		"group_name":            project.GroupName,
+		"warning_setting_id":    setting.WarningSettingID,
+		"warning_status":        warningStatus,
+		"warning_name":          nonEmpty(setting.WarningName, setting.Description, project.ProjectName, "预警"),
+		"warning_word":          setting.WarningWord,
+		"warning_classify":      nonEmpty(setting.WarningClassify, setting.Channels),
+		"warning_content":       setting.WarningContent,
+		"warning_similar":       setting.WarningSimilar,
+		"warning_match":         warningMatch,
+		"warning_deduplication": setting.WarningDeduplication,
+		"warning_source":        source,
+		"warning_receive_time":  nonEmpty(setting.WarningReceiveTime, legacyJSONString(map[string]any{"start": "", "end": ""})),
+		"weekend_warning":       setting.WeekendWarning,
+		"warning_interval":      interval,
+	}
 }
 
 func legacyProjectPublicID(item model.Item) string {
@@ -3126,7 +3399,7 @@ func legacyUserDetailPayload(user any) map[string]any {
 		"username":          username,
 		"display_name":      displayName,
 		"telephone":         nonEmpty(legacyStringFromAny(mapped["telephone"]), username),
-		"organization_name":  legacyStringFromAny(mapped["organization_name"]),
+		"organization_name": legacyStringFromAny(mapped["organization_name"]),
 		"email":             email,
 		"status":            status,
 		"login_count":       legacyIntFromAnyValue(mapped["login_count"]),
@@ -3146,35 +3419,83 @@ func legacyIntFromAnyValue(value any) int {
 }
 
 func legacyWarningSettingPayload(setting model.WarningSetting, projectID int64, projectName string) map[string]any {
+	source := setting.WarningSource
+	if strings.TrimSpace(source) == "" {
+		source = legacyJSONString(map[string]any{"type": 1, "email": setting.Recipients})
+	}
+	interval := setting.WarningInterval
+	if strings.TrimSpace(interval) == "" {
+		interval = legacyJSONString(map[string]any{"type": 1, "time": strconv.Itoa(max(setting.Threshold, 1))})
+	}
+	receiveTime := setting.WarningReceiveTime
+	if strings.TrimSpace(receiveTime) == "" {
+		receiveTime = legacyJSONString(map[string]any{"start": "", "end": ""})
+	}
+	warningStatus := setting.WarningStatus
+	if warningStatus == 0 && setting.Enabled {
+		warningStatus = 1
+	}
+	warningMatch := setting.WarningMatch
+	if warningMatch == 0 {
+		warningMatch = 1
+	}
 	return map[string]any{
-		"project_id":          projectID,
-		"project_name":        projectName,
-		"warning_status":      boolToLegacyInt(setting.Enabled),
-		"warning_name":        nonEmpty(setting.Description, projectName),
-		"warning_word":        setting.Description,
-		"warning_classify":    setting.Channels,
-		"warning_content":     0,
-		"warning_similar":     0,
-		"warning_match":       1,
-		"warning_deduplication": 0,
-		"warning_source":      legacyJSONString(map[string]any{"type": 1, "email": setting.Recipients}),
-		"warning_receive_time": legacyJSONString(map[string]any{"start": "", "end": ""}),
-		"weekend_warning":     0,
-		"warning_interval":    legacyJSONString(map[string]any{"type": 1, "time": strconv.Itoa(setting.Threshold)}),
+		"project_id":            projectID,
+		"project_name":          projectName,
+		"warning_setting_id":    setting.WarningSettingID,
+		"warning_status":        warningStatus,
+		"warning_name":          nonEmpty(setting.WarningName, setting.Description, projectName),
+		"warning_word":          setting.WarningWord,
+		"warning_classify":      nonEmpty(setting.WarningClassify, setting.Channels),
+		"warning_content":       setting.WarningContent,
+		"warning_similar":       setting.WarningSimilar,
+		"warning_match":         warningMatch,
+		"warning_deduplication": setting.WarningDeduplication,
+		"warning_source":        source,
+		"warning_receive_time":  receiveTime,
+		"weekend_warning":       setting.WeekendWarning,
+		"warning_interval":      interval,
 	}
 }
 
 func legacyWarningSettingFromForm(r *http.Request) model.WarningSetting {
-	threshold := parseWarningThreshold(r.FormValue("threshold"), r.FormValue("warning_interval"))
+	warningSource := nonEmpty(r.FormValue("warning_source"))
+	warningInterval := nonEmpty(r.FormValue("warning_interval"))
+	if warningSource == "" {
+		warningSource = legacyJSONString(map[string]any{"type": 1, "email": r.FormValue("recipients")})
+	}
+	if warningInterval == "" {
+		warningInterval = legacyJSONString(map[string]any{"type": 1, "time": nonEmpty(r.FormValue("threshold"), "1")})
+	}
 	channels := nonEmpty(r.FormValue("channels"), r.FormValue("warning_classify"))
-	recipients := nonEmpty(r.FormValue("recipients"), extractWarningEmail(r.FormValue("warning_source")))
-	description := nonEmpty(r.FormValue("description"), r.FormValue("warning_name"), r.FormValue("warning_word"))
+	warningWord := nonEmpty(r.FormValue("warning_word"))
+	warningName := nonEmpty(r.FormValue("warning_name"), warningWord, "预警")
+	receiveTime := nonEmpty(r.FormValue("warning_receive_time"))
+	if receiveTime == "" {
+		receiveTime = legacyJSONString(map[string]any{"start": "", "end": ""})
+	}
+	threshold := parseWarningThreshold(r.FormValue("threshold"), warningInterval)
+	if threshold <= 0 {
+		threshold = 1
+	}
 	return model.WarningSetting{
-		Enabled:     parseBoolLike(r.FormValue("enabled"), r.FormValue("warning_status")),
-		Channels:    channels,
-		Threshold:   threshold,
-		Recipients:  recipients,
-		Description: description,
+		WarningStatus:        parseLegacyWarningStatus(r.FormValue("warning_status"), r.FormValue("enabled")),
+		WarningName:          warningName,
+		WarningWord:          warningWord,
+		WarningClassify:      channels,
+		WarningContent:       parseLegacyInt(r.FormValue("warning_content"), 0),
+		WarningSimilar:       parseLegacyInt(r.FormValue("warning_similar"), 0),
+		WarningMatch:         parseLegacyInt(r.FormValue("warning_match"), 1),
+		WarningDeduplication: parseLegacyInt(r.FormValue("warning_deduplication"), 0),
+		WarningSource:        warningSource,
+		WarningReceiveTime:   receiveTime,
+		WeekendWarning:       parseLegacyInt(r.FormValue("weekend_warning"), 0),
+		WarningInterval:      warningInterval,
+		Enabled:              parseBoolLike(r.FormValue("enabled"), r.FormValue("warning_status")),
+		Channels:             channels,
+		Threshold:            threshold,
+		Recipients:           extractWarningEmail(warningSource),
+		Description:          warningName,
 	}
 }
 
@@ -3185,7 +3506,7 @@ func (s *Server) fetchLegacyWarningSetting(projectID int64) (model.WarningSettin
 	}
 	var project model.Project
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/projects/"+strconv.FormatInt(projectID, 10), &project)
-	return setting, nonEmpty(project.Name, setting.Description)
+	return setting, nonEmpty(project.Name, setting.WarningName, setting.Description)
 }
 
 func legacyJSONString(value any) string {
@@ -3213,6 +3534,29 @@ func parseBoolLike(values ...string) bool {
 		}
 	}
 	return false
+}
+
+func parseLegacyWarningStatus(values ...string) int {
+	for _, raw := range values {
+		switch strings.ToLower(strings.TrimSpace(raw)) {
+		case "1", "true", "yes", "on", "enabled", "open":
+			return 1
+		case "0", "false", "no", "off", "disabled", "close":
+			return 0
+		}
+	}
+	return 0
+}
+
+func parseLegacyInt(raw string, fallback int) int {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return fallback
+	}
+	if parsed, err := strconv.Atoi(raw); err == nil {
+		return parsed
+	}
+	return fallback
 }
 
 func parseWarningThreshold(rawValues ...string) int {
@@ -3246,6 +3590,50 @@ func extractWarningEmail(raw string) string {
 		return ""
 	}
 	return legacyStringFromAny(payload["email"])
+}
+
+func decodeLegacyOpinionCondition(r *http.Request) (model.OpinionCondition, error) {
+	var raw map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+		return model.OpinionCondition{}, err
+	}
+	emotion := legacyJSONString(raw["emotion"])
+	if emotion == "null" || emotion == "\"\"" {
+		emotion = "[1,2,3]"
+	}
+	condition := model.OpinionCondition{
+		Time:            parseLegacyInt(legacyStringFromAny(raw["time"]), 4),
+		Precise:         parseLegacyInt(legacyStringFromAny(raw["precise"]), 0),
+		Emotion:         emotion,
+		Similar:         parseLegacyInt(legacyStringFromAny(raw["similar"]), 0),
+		Sort:            parseLegacyInt(legacyStringFromAny(raw["sort"]), 1),
+		Matchs:          parseLegacyInt(legacyStringFromAny(raw["matchs"]), 1),
+		Times:           legacyStringFromAny(raw["times"]),
+		Timee:           legacyStringFromAny(raw["timee"]),
+		Classify:        legacyStringFromAny(raw["classify"]),
+		Websitename:     legacyStringFromAny(raw["websitename"]),
+		Author:          legacyStringFromAny(raw["author"]),
+		Organization:    legacyStringFromAny(raw["organization"]),
+		Categorylable:   legacyStringFromAny(raw["categorylable"]),
+		Enterprisetype:  legacyStringFromAny(raw["enterprisetype"]),
+		Hightechtype:    legacyStringFromAny(raw["hightechtype"]),
+		Policylableflag: legacyStringFromAny(raw["policylableflag"]),
+		DatasourceType:  legacyStringFromAny(raw["datasource_type"]),
+		EventIndex:      legacyStringFromAny(raw["eventIndex"]),
+		IndustryIndex:   legacyStringFromAny(raw["industryIndex"]),
+		Province:        legacyStringFromAny(raw["province"]),
+		City:            legacyStringFromAny(raw["city"]),
+	}
+	if id, ok := legacyIntFromAny(raw["project_id"]); ok {
+		condition.ProjectID = int64(id)
+	}
+	if id, ok := legacyIntFromAny(raw["opinion_condition_id"]); ok {
+		condition.OpinionConditionID = int64(id)
+	}
+	if createTime := legacyStringFromAny(raw["create_time"]); createTime != "" {
+		condition.CreateTime = createTime
+	}
+	return condition, nil
 }
 func firstProjectID(contentURL string, client *resty.Client) int64 {
 	var projects []model.Project

@@ -196,13 +196,27 @@ type MailConfig struct {
 }
 
 type WarningSetting struct {
-	ProjectID   int64     `json:"project_id"`
-	Enabled     bool      `json:"enabled"`
-	Channels    string    `json:"channels"`
-	Threshold   int       `json:"threshold"`
-	Recipients  string    `json:"recipients"`
-	Description string    `json:"description"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	WarningSettingID     int64     `json:"warning_setting_id,omitempty"`
+	ProjectID            int64     `json:"project_id"`
+	WarningStatus        int       `json:"warning_status,omitempty"`
+	WarningName          string    `json:"warning_name,omitempty"`
+	WarningWord          string    `json:"warning_word,omitempty"`
+	WarningClassify      string    `json:"warning_classify,omitempty"`
+	WarningContent       int       `json:"warning_content,omitempty"`
+	WarningSimilar       int       `json:"warning_similar,omitempty"`
+	WarningMatch         int       `json:"warning_match,omitempty"`
+	WarningDeduplication int       `json:"warning_deduplication,omitempty"`
+	WarningSource        string    `json:"warning_source,omitempty"`
+	WarningReceiveTime   string    `json:"warning_receive_time,omitempty"`
+	WeekendWarning       int       `json:"weekend_warning,omitempty"`
+	WarningInterval      string    `json:"warning_interval,omitempty"`
+	UserID               int64     `json:"user_id,omitempty"`
+	Enabled              bool      `json:"enabled"`
+	Channels             string    `json:"channels"`
+	Threshold            int       `json:"threshold"`
+	Recipients           string    `json:"recipients"`
+	Description          string    `json:"description"`
+	UpdatedAt            time.Time `json:"updated_at"`
 }
 
 type ShareRecord struct {

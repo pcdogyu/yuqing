@@ -357,11 +357,52 @@ CREATE TABLE IF NOT EXISTS mail_configs (
 
 CREATE TABLE IF NOT EXISTS warning_settings (
 	project_id INTEGER PRIMARY KEY,
+	warning_setting_id INTEGER NOT NULL DEFAULT 0,
 	enabled INTEGER NOT NULL DEFAULT 1,
+	warning_status INTEGER NOT NULL DEFAULT 1,
+	warning_name TEXT NOT NULL DEFAULT '预警',
+	warning_word TEXT NOT NULL DEFAULT '',
+	warning_classify TEXT NOT NULL DEFAULT '',
+	warning_content INTEGER NOT NULL DEFAULT 0,
+	warning_similar INTEGER NOT NULL DEFAULT 0,
+	warning_match INTEGER NOT NULL DEFAULT 1,
+	warning_deduplication INTEGER NOT NULL DEFAULT 0,
+	warning_source TEXT NOT NULL DEFAULT '',
+	warning_receive_time TEXT NOT NULL DEFAULT '',
+	weekend_warning INTEGER NOT NULL DEFAULT 0,
+	warning_interval TEXT NOT NULL DEFAULT '',
 	channels TEXT NOT NULL DEFAULT '',
 	threshold INTEGER NOT NULL DEFAULT 80,
 	recipients TEXT NOT NULL DEFAULT '',
 	description TEXT NOT NULL DEFAULT '',
+	updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS opinion_conditions (
+	project_id INTEGER PRIMARY KEY,
+	opinion_condition_id INTEGER NOT NULL DEFAULT 0,
+	time INTEGER NOT NULL DEFAULT 4,
+	precise INTEGER NOT NULL DEFAULT 0,
+	emotion TEXT NOT NULL DEFAULT '[1,2,3]',
+	similar INTEGER NOT NULL DEFAULT 0,
+	sort INTEGER NOT NULL DEFAULT 1,
+	matchs INTEGER NOT NULL DEFAULT 1,
+	times TEXT NOT NULL DEFAULT '',
+	timee TEXT NOT NULL DEFAULT '',
+	classify TEXT NOT NULL DEFAULT '',
+	websitename TEXT NOT NULL DEFAULT '',
+	author TEXT NOT NULL DEFAULT '',
+	organization TEXT NOT NULL DEFAULT '',
+	categorylable TEXT NOT NULL DEFAULT '',
+	enterprisetype TEXT NOT NULL DEFAULT '',
+	hightechtype TEXT NOT NULL DEFAULT '',
+	policylableflag TEXT NOT NULL DEFAULT '',
+	datasource_type TEXT NOT NULL DEFAULT '',
+	event_index TEXT NOT NULL DEFAULT '',
+	industry_index TEXT NOT NULL DEFAULT '',
+	province TEXT NOT NULL DEFAULT '',
+	city TEXT NOT NULL DEFAULT '',
+	create_time TEXT NOT NULL DEFAULT '',
 	updated_at TEXT NOT NULL
 );
 
@@ -432,6 +473,7 @@ CREATE INDEX IF NOT EXISTS idx_item_shares_item_id ON item_shares(item_id, creat
 CREATE INDEX IF NOT EXISTS idx_wechat_challenges_expires_at ON wechat_challenges(expires_at);
 CREATE INDEX IF NOT EXISTS idx_wechat_bindings_openid ON wechat_bindings(openid);
 CREATE INDEX IF NOT EXISTS idx_public_options_user_updated ON public_options(user_id, updatetime DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_opinion_conditions_updated ON opinion_conditions(updated_at DESC, project_id DESC);
 `
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return err
@@ -445,6 +487,19 @@ CREATE INDEX IF NOT EXISTS idx_public_options_user_updated ON public_options(use
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE crawl_runs ADD COLUMN template_snapshot TEXT NOT NULL DEFAULT ''`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE platform_bindings ADD COLUMN bound INTEGER NOT NULL DEFAULT 0`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE public_options ADD COLUMN detail_status INTEGER NOT NULL DEFAULT 3`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE warning_settings ADD COLUMN warning_setting_id INTEGER NOT NULL DEFAULT 0`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE warning_settings ADD COLUMN warning_status INTEGER NOT NULL DEFAULT 1`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE warning_settings ADD COLUMN warning_name TEXT NOT NULL DEFAULT '预警'`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE warning_settings ADD COLUMN warning_word TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE warning_settings ADD COLUMN warning_classify TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE warning_settings ADD COLUMN warning_content INTEGER NOT NULL DEFAULT 0`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE warning_settings ADD COLUMN warning_similar INTEGER NOT NULL DEFAULT 0`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE warning_settings ADD COLUMN warning_match INTEGER NOT NULL DEFAULT 1`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE warning_settings ADD COLUMN warning_deduplication INTEGER NOT NULL DEFAULT 0`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE warning_settings ADD COLUMN warning_source TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE warning_settings ADD COLUMN warning_receive_time TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE warning_settings ADD COLUMN weekend_warning INTEGER NOT NULL DEFAULT 0`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE warning_settings ADD COLUMN warning_interval TEXT NOT NULL DEFAULT ''`)
 	return nil
 }
 

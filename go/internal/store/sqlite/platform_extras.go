@@ -188,15 +188,57 @@ ON CONFLICT(id) DO UPDATE SET
 }
 
 func (s *Store) GetWarningSetting(ctx context.Context, projectID int64) (model.WarningSetting, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT project_id, enabled, channels, threshold, recipients, description, updated_at FROM warning_settings WHERE project_id = ?`, projectID)
+	row := s.db.QueryRowContext(ctx, `SELECT project_id, warning_setting_id, enabled, warning_status, warning_name, warning_word, warning_classify, warning_content, warning_similar, warning_match, warning_deduplication, warning_source, warning_receive_time, weekend_warning, warning_interval, channels, threshold, recipients, description, updated_at FROM warning_settings WHERE project_id = ?`, projectID)
 	var setting model.WarningSetting
 	var enabled int
 	var updatedAt string
-	if err := row.Scan(&setting.ProjectID, &enabled, &setting.Channels, &setting.Threshold, &setting.Recipients, &setting.Description, &updatedAt); err != nil {
+	if err := row.Scan(
+		&setting.ProjectID,
+		&setting.WarningSettingID,
+		&enabled,
+		&setting.WarningStatus,
+		&setting.WarningName,
+		&setting.WarningWord,
+		&setting.WarningClassify,
+		&setting.WarningContent,
+		&setting.WarningSimilar,
+		&setting.WarningMatch,
+		&setting.WarningDeduplication,
+		&setting.WarningSource,
+		&setting.WarningReceiveTime,
+		&setting.WeekendWarning,
+		&setting.WarningInterval,
+		&setting.Channels,
+		&setting.Threshold,
+		&setting.Recipients,
+		&setting.Description,
+		&updatedAt,
+	); err != nil {
 		if err == sql.ErrNoRows {
-			return model.WarningSetting{ProjectID: projectID, Enabled: true, Threshold: 80}, nil
+			return model.WarningSetting{
+				ProjectID:            projectID,
+				WarningStatus:        0,
+				WarningName:          "预警",
+				WarningClassify:      "1,2,3,4,5,6,7,8,9,10,11",
+				WarningContent:       0,
+				WarningSimilar:       0,
+				WarningMatch:         2,
+				WarningDeduplication: 0,
+				WarningSource:        `{"type":"1","email":""}`,
+				WarningReceiveTime:   `{"start":"00:00","end":"23:00"}`,
+				WeekendWarning:       1,
+				WarningInterval:      `{"type":"1","time":"1"}`,
+				Enabled:              false,
+				Channels:             "1,2,3,4,5,6,7,8,9,10,11",
+				Threshold:            1,
+				Recipients:           "",
+				Description:          "预警",
+			}, nil
 		}
 		return model.WarningSetting{}, err
+	}
+	if setting.WarningStatus == 0 && enabled == 1 {
+		setting.WarningStatus = 1
 	}
 	setting.Enabled = enabled == 1
 	setting.UpdatedAt = mustParseRFC3339(updatedAt)
@@ -208,23 +250,169 @@ func (s *Store) UpsertWarningSetting(ctx context.Context, setting model.WarningS
 	if setting.Threshold <= 0 {
 		setting.Threshold = 80
 	}
+	if setting.WarningStatus == 0 && setting.Enabled {
+		setting.WarningStatus = 1
+	}
+	if setting.WarningName == "" {
+		setting.WarningName = nonEmpty(setting.Description, "预警")
+	}
+	if setting.WarningWord == "" && setting.Description != "" {
+		setting.WarningWord = setting.Description
+	}
+	if setting.WarningClassify == "" {
+		setting.WarningClassify = setting.Channels
+	}
+	if setting.WarningSource == "" {
+		setting.WarningSource = `{"type":"1","email":"` + strings.TrimSpace(setting.Recipients) + `"}`
+	}
+	if setting.WarningReceiveTime == "" {
+		setting.WarningReceiveTime = `{"start":"","end":""}`
+	}
+	if setting.WarningInterval == "" {
+		setting.WarningInterval = `{"type":"1","time":"` + strconv.Itoa(max(setting.Threshold, 1)) + `"}`
+	}
 	setting.UpdatedAt = now
 	_, err := s.db.ExecContext(ctx, `
-INSERT INTO warning_settings (project_id, enabled, channels, threshold, recipients, description, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+INSERT INTO warning_settings (project_id, warning_setting_id, enabled, warning_status, warning_name, warning_word, warning_classify, warning_content, warning_similar, warning_match, warning_deduplication, warning_source, warning_receive_time, weekend_warning, warning_interval, channels, threshold, recipients, description, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(project_id) DO UPDATE SET
+	warning_setting_id = excluded.warning_setting_id,
 	enabled = excluded.enabled,
+	warning_status = excluded.warning_status,
+	warning_name = excluded.warning_name,
+	warning_word = excluded.warning_word,
+	warning_classify = excluded.warning_classify,
+	warning_content = excluded.warning_content,
+	warning_similar = excluded.warning_similar,
+	warning_match = excluded.warning_match,
+	warning_deduplication = excluded.warning_deduplication,
+	warning_source = excluded.warning_source,
+	warning_receive_time = excluded.warning_receive_time,
+	weekend_warning = excluded.weekend_warning,
+	warning_interval = excluded.warning_interval,
 	channels = excluded.channels,
 	threshold = excluded.threshold,
 	recipients = excluded.recipients,
 	description = excluded.description,
 	updated_at = excluded.updated_at`,
-		setting.ProjectID, boolToInt(setting.Enabled), strings.TrimSpace(setting.Channels), setting.Threshold, strings.TrimSpace(setting.Recipients), strings.TrimSpace(setting.Description), setting.UpdatedAt.Format(time.RFC3339),
+		setting.ProjectID, setting.WarningSettingID, boolToInt(setting.Enabled), setting.WarningStatus, strings.TrimSpace(setting.WarningName), strings.TrimSpace(setting.WarningWord), strings.TrimSpace(setting.WarningClassify), setting.WarningContent, setting.WarningSimilar, setting.WarningMatch, setting.WarningDeduplication, strings.TrimSpace(setting.WarningSource), strings.TrimSpace(setting.WarningReceiveTime), setting.WeekendWarning, strings.TrimSpace(setting.WarningInterval), strings.TrimSpace(setting.Channels), setting.Threshold, strings.TrimSpace(setting.Recipients), strings.TrimSpace(setting.Description), setting.UpdatedAt.Format(time.RFC3339),
 	)
 	if err != nil {
 		return model.WarningSetting{}, err
 	}
 	return s.GetWarningSetting(ctx, setting.ProjectID)
+}
+
+func (s *Store) GetOpinionCondition(ctx context.Context, projectID int64) (model.OpinionCondition, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT project_id, opinion_condition_id, time, precise, emotion, similar, sort, matchs, times, timee, classify, websitename, author, organization, categorylable, enterprisetype, hightechtype, policylableflag, datasource_type, event_index, industry_index, province, city, create_time, updated_at FROM opinion_conditions WHERE project_id = ?`, projectID)
+	return scanOpinionCondition(row)
+}
+
+func (s *Store) UpsertOpinionCondition(ctx context.Context, condition model.OpinionCondition) (model.OpinionCondition, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	if condition.Time == 0 {
+		condition.Time = 4
+	}
+	if strings.TrimSpace(condition.Emotion) == "" {
+		condition.Emotion = "[1,2,3]"
+	}
+	if condition.Sort == 0 {
+		condition.Sort = 1
+	}
+	if condition.Matchs == 0 {
+		condition.Matchs = 1
+	}
+	if strings.TrimSpace(condition.CreateTime) == "" {
+		condition.CreateTime = time.Now().UTC().Format("2006-01-02 15:04:05")
+	}
+	condition.UpdatedAt = mustParseRFC3339(now)
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO opinion_conditions (
+	project_id, opinion_condition_id, time, precise, emotion, similar, sort, matchs, times, timee, classify, websitename, author, organization, categorylable, enterprisetype, hightechtype, policylableflag, datasource_type, event_index, industry_index, province, city, create_time, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(project_id) DO UPDATE SET
+	opinion_condition_id = excluded.opinion_condition_id,
+	time = excluded.time,
+	precise = excluded.precise,
+	emotion = excluded.emotion,
+	similar = excluded.similar,
+	sort = excluded.sort,
+	matchs = excluded.matchs,
+	times = excluded.times,
+	timee = excluded.timee,
+	classify = excluded.classify,
+	websitename = excluded.websitename,
+	author = excluded.author,
+	organization = excluded.organization,
+	categorylable = excluded.categorylable,
+	enterprisetype = excluded.enterprisetype,
+	hightechtype = excluded.hightechtype,
+	policylableflag = excluded.policylableflag,
+	datasource_type = excluded.datasource_type,
+	event_index = excluded.event_index,
+	industry_index = excluded.industry_index,
+	province = excluded.province,
+	city = excluded.city,
+	create_time = excluded.create_time,
+	updated_at = excluded.updated_at`,
+		condition.ProjectID, condition.OpinionConditionID, condition.Time, condition.Precise, condition.Emotion, condition.Similar, condition.Sort, condition.Matchs, condition.Times, condition.Timee, condition.Classify, condition.Websitename, condition.Author, condition.Organization, condition.Categorylable, condition.Enterprisetype, condition.Hightechtype, condition.Policylableflag, condition.DatasourceType, condition.EventIndex, condition.IndustryIndex, condition.Province, condition.City, condition.CreateTime, condition.UpdatedAt.Format(time.RFC3339),
+	)
+	if err != nil {
+		return model.OpinionCondition{}, err
+	}
+	return s.GetOpinionCondition(ctx, condition.ProjectID)
+}
+
+func scanOpinionCondition(row scanner) (model.OpinionCondition, error) {
+	var condition model.OpinionCondition
+	var updatedAt string
+	err := row.Scan(
+		&condition.ProjectID,
+		&condition.OpinionConditionID,
+		&condition.Time,
+		&condition.Precise,
+		&condition.Emotion,
+		&condition.Similar,
+		&condition.Sort,
+		&condition.Matchs,
+		&condition.Times,
+		&condition.Timee,
+		&condition.Classify,
+		&condition.Websitename,
+		&condition.Author,
+		&condition.Organization,
+		&condition.Categorylable,
+		&condition.Enterprisetype,
+		&condition.Hightechtype,
+		&condition.Policylableflag,
+		&condition.DatasourceType,
+		&condition.EventIndex,
+		&condition.IndustryIndex,
+		&condition.Province,
+		&condition.City,
+		&condition.CreateTime,
+		&updatedAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return model.OpinionCondition{Time: 4, Emotion: "[1,2,3]", Sort: 1, Matchs: 1}, nil
+		}
+		return model.OpinionCondition{}, err
+	}
+	condition.UpdatedAt = mustParseRFC3339(updatedAt)
+	if condition.Emotion == "" {
+		condition.Emotion = "[1,2,3]"
+	}
+	if condition.Time == 0 {
+		condition.Time = 4
+	}
+	if condition.Sort == 0 {
+		condition.Sort = 1
+	}
+	if condition.Matchs == 0 {
+		condition.Matchs = 1
+	}
+	return condition, nil
 }
 
 func (s *Store) RecordItemShare(ctx context.Context, share model.ShareRecord) error {

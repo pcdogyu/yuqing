@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -62,6 +63,8 @@ type Store interface {
 	UpsertMailConfig(rctx context.Context, cfg model.MailConfig) (model.MailConfig, error)
 	GetWarningSetting(rctx context.Context, projectID int64) (model.WarningSetting, error)
 	UpsertWarningSetting(rctx context.Context, setting model.WarningSetting) (model.WarningSetting, error)
+	GetOpinionCondition(rctx context.Context, projectID int64) (model.OpinionCondition, error)
+	UpsertOpinionCondition(rctx context.Context, condition model.OpinionCondition) (model.OpinionCondition, error)
 	SearchItemsAdvanced(rctx context.Context, filter model.ArticleFilter) (model.SearchResult, error)
 	BuildSearchFacets(rctx context.Context, filter model.ArticleFilter) (model.SearchFacets, error)
 	ListSearchOptions(rctx context.Context) (model.SearchOptions, error)
@@ -165,6 +168,8 @@ func (s *Service) Routes(r chi.Router) {
 	r.Put("/api/v1/system/mail-config", s.handleUpdateMailConfig)
 	r.Get("/api/v1/system/warning-settings/{project_id}", s.handleGetWarningSetting)
 	r.Put("/api/v1/system/warning-settings/{project_id}", s.handleUpdateWarningSetting)
+	r.Get("/api/v1/system/opinion-conditions/{project_id}", s.handleGetOpinionCondition)
+	r.Put("/api/v1/system/opinion-conditions/{project_id}", s.handleUpdateOpinionCondition)
 }
 
 func (s *Service) handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -1057,6 +1062,38 @@ func (s *Service) handleUpdateWarningSetting(w http.ResponseWriter, r *http.Requ
 	apiutil.WriteJSON(w, http.StatusOK, "ok", updated)
 }
 
+func (s *Service) handleGetOpinionCondition(w http.ResponseWriter, r *http.Request) {
+	projectID, ok := parseID(w, r, "project_id")
+	if !ok {
+		return
+	}
+	condition, err := s.store.GetOpinionCondition(r.Context(), projectID)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", condition)
+}
+
+func (s *Service) handleUpdateOpinionCondition(w http.ResponseWriter, r *http.Request) {
+	projectID, ok := parseID(w, r, "project_id")
+	if !ok {
+		return
+	}
+	condition, err := decodeOpinionConditionRequest(r)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid body", nil)
+		return
+	}
+	condition.ProjectID = projectID
+	updated, err := s.store.UpsertOpinionCondition(r.Context(), condition)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", updated)
+}
+
 func articleFilterFromRequest(r *http.Request) model.ArticleFilter {
 	projectID, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("project_id")), 10, 64)
 	return model.ArticleFilter{
@@ -1088,6 +1125,127 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
 		return false
 	}
 	return true
+}
+
+func decodeOpinionConditionRequest(r *http.Request) (model.OpinionCondition, error) {
+	var raw map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+		return model.OpinionCondition{}, err
+	}
+	condition := model.OpinionCondition{
+		Time:            intFromAny(raw["time"], 4),
+		Precise:         intFromAny(raw["precise"], 0),
+		Emotion:         stringOrJSON(raw["emotion"], "[1,2,3]"),
+		Similar:         intFromAny(raw["similar"], 0),
+		Sort:            intFromAny(raw["sort"], 1),
+		Matchs:          intFromAny(raw["matchs"], 1),
+		Times:           stringFromAny(raw["times"]),
+		Timee:           stringFromAny(raw["timee"]),
+		Classify:        stringFromAny(raw["classify"]),
+		Websitename:     stringFromAny(raw["websitename"]),
+		Author:          stringFromAny(raw["author"]),
+		Organization:    stringFromAny(raw["organization"]),
+		Categorylable:   stringFromAny(raw["categorylable"]),
+		Enterprisetype:  stringFromAny(raw["enterprisetype"]),
+		Hightechtype:    stringFromAny(raw["hightechtype"]),
+		Policylableflag: stringFromAny(raw["policylableflag"]),
+		DatasourceType:  stringFromAny(raw["datasource_type"]),
+		EventIndex:      stringFromAny(raw["eventIndex"]),
+		IndustryIndex:   stringFromAny(raw["industryIndex"]),
+		Province:        stringFromAny(raw["province"]),
+		City:            stringFromAny(raw["city"]),
+	}
+	if id, ok := int64FromAny(raw["opinion_condition_id"]); ok {
+		condition.OpinionConditionID = id
+	}
+	if createTime := strings.TrimSpace(stringFromAny(raw["create_time"])); createTime != "" {
+		condition.CreateTime = createTime
+	}
+	return condition, nil
+}
+
+func stringFromAny(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case []byte:
+		return strings.TrimSpace(string(typed))
+	case fmt.Stringer:
+		return strings.TrimSpace(typed.String())
+	default:
+		return strings.TrimSpace(fmt.Sprint(value))
+	}
+}
+
+func stringOrJSON(value any, fallback string) string {
+	switch typed := value.(type) {
+	case nil:
+		return fallback
+	case string:
+		trimmed := strings.TrimSpace(typed)
+		if trimmed == "" {
+			return fallback
+		}
+		if json.Valid([]byte(trimmed)) {
+			return trimmed
+		}
+		raw, err := json.Marshal(trimmed)
+		if err != nil {
+			return fallback
+		}
+		return string(raw)
+	default:
+		raw, err := json.Marshal(typed)
+		if err != nil {
+			return fallback
+		}
+		return string(raw)
+	}
+}
+
+func intFromAny(value any, fallback int) int {
+	switch typed := value.(type) {
+	case nil:
+		return fallback
+	case float64:
+		return int(typed)
+	case float32:
+		return int(typed)
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case json.Number:
+		if parsed, err := typed.Int64(); err == nil {
+			return int(parsed)
+		}
+	case string:
+		if parsed, err := strconv.Atoi(strings.TrimSpace(typed)); err == nil {
+			return parsed
+		}
+	}
+	return fallback
+}
+
+func int64FromAny(value any) (int64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		return int64(typed), true
+	case float32:
+		return int64(typed), true
+	case int:
+		return int64(typed), true
+	case int64:
+		return typed, true
+	case json.Number:
+		parsed, err := typed.Int64()
+		return parsed, err == nil
+	case string:
+		parsed, err := strconv.ParseInt(strings.TrimSpace(typed), 10, 64)
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
 }
 
 func parseID(w http.ResponseWriter, r *http.Request, key string) (int64, bool) {

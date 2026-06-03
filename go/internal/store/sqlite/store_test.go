@@ -89,6 +89,68 @@ func TestPreferencesPopupAndMailConfig(t *testing.T) {
 	}
 }
 
+func TestWarningAndOpinionConditions(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	warning, err := store.UpsertWarningSetting(ctx, model.WarningSetting{
+		ProjectID:            11,
+		WarningStatus:        1,
+		WarningName:          "预警",
+		WarningWord:          "钢铁,能源",
+		WarningClassify:      "1,2,3",
+		WarningContent:       1,
+		WarningSimilar:       1,
+		WarningMatch:         2,
+		WarningDeduplication: 1,
+		WarningSource:        `{"type":"2","email":"ops@example.com"}`,
+		WarningReceiveTime:   `{"start":"08:00","end":"18:00"}`,
+		WeekendWarning:       1,
+		WarningInterval:      `{"type":"2","time":"30"}`,
+		Enabled:              true,
+		Channels:             "1,2,3",
+		Threshold:            30,
+		Recipients:           "ops@example.com",
+		Description:          "预警",
+	})
+	if err != nil {
+		t.Fatalf("UpsertWarningSetting error: %v", err)
+	}
+	if warning.WarningWord != "钢铁,能源" || warning.WarningStatus != 1 || !warning.Enabled {
+		t.Fatalf("unexpected warning setting: %+v", warning)
+	}
+
+	condition, err := store.UpsertOpinionCondition(ctx, model.OpinionCondition{
+		ProjectID:          11,
+		OpinionConditionID: 101,
+		Time:               8,
+		Precise:            1,
+		Emotion:            `[1,3]`,
+		Similar:            1,
+		Sort:               2,
+		Matchs:             3,
+		Times:              "2026-06-01",
+		Timee:              "2026-06-03",
+		Province:           "上海",
+		City:               "上海",
+		CreateTime:         "2026-06-03 10:00:00",
+	})
+	if err != nil {
+		t.Fatalf("UpsertOpinionCondition error: %v", err)
+	}
+	if condition.ProjectID != 11 || condition.OpinionConditionID != 101 || condition.Time != 8 || condition.Emotion != `[1,3]` {
+		t.Fatalf("unexpected opinion condition: %+v", condition)
+	}
+
+	loaded, err := store.GetOpinionCondition(ctx, 11)
+	if err != nil {
+		t.Fatalf("GetOpinionCondition error: %v", err)
+	}
+	if loaded.Sort != 2 || loaded.Matchs != 3 || loaded.Province != "上海" {
+		t.Fatalf("unexpected loaded opinion condition: %+v", loaded)
+	}
+}
+
 func TestUpdateUserPassword(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
