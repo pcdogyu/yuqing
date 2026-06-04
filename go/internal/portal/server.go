@@ -275,6 +275,9 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/mail/saveMailConfig", s.requireSessionJSON(s.handleLegacySaveMailConfig))
 	mux.HandleFunc("/mail/checkMailConfig", s.requireSessionJSON(s.handleLegacyCheckMailConfig))
 	mux.HandleFunc("/mail/getMailConfig", s.requireSessionJSON(s.handleLegacyGetMailConfig))
+	mux.HandleFunc("/user/save", func(w http.ResponseWriter, r *http.Request) {
+		s.handleLegacyUserSave(w, r)
+	})
 	mux.HandleFunc("/user/detail", s.requireSessionJSON(s.handleLegacyUserDetail))
 	mux.HandleFunc("/user/edit", s.requireSessionJSON(s.handleLegacyUserEdit))
 	mux.HandleFunc("/user/getwechatqrcode", s.requireSessionJSON(s.handleLegacyUserWechatQRCode))
@@ -847,6 +850,85 @@ func (s *Server) handleLegacyUserEdit(w http.ResponseWriter, r *http.Request, us
 		return
 	}
 	writeLegacyStatusJSON(w, 201, "密码修改失败！", map[string]any{})
+}
+
+func (s *Server) handleLegacyUserSave(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		writeRawJSON(w, http.StatusOK, map[string]any{"state": false, "message": "请求参数错误"})
+		return
+	}
+	username := nonEmpty(r.FormValue("username"), r.FormValue("telephone"))
+	password := strings.TrimSpace(r.FormValue("password"))
+	if username == "" {
+		writeRawJSON(w, http.StatusOK, map[string]any{"state": false, "message": "用户名不能为空"})
+		return
+	}
+	if password == "" {
+		writeRawJSON(w, http.StatusOK, map[string]any{"state": false, "message": "密码不能为空"})
+		return
+	}
+	payload := map[string]any{
+		"username":         username,
+		"telephone":        strings.TrimSpace(r.FormValue("telephone")),
+		"password":         password,
+		"display_name":     nonEmpty(r.FormValue("display_name"), username),
+		"email":            strings.TrimSpace(r.FormValue("email")),
+		"role":             strings.TrimSpace(r.FormValue("role")),
+		"term_of_validity": strings.TrimSpace(r.FormValue("term_of_validity")),
+		"wechat_number":    strings.TrimSpace(r.FormValue("wechat_number")),
+		"openid":           strings.TrimSpace(r.FormValue("openid")),
+		"organization_id":  strings.TrimSpace(r.FormValue("organization_id")),
+	}
+	if raw := strings.TrimSpace(r.FormValue("status")); raw != "" {
+		if value, err := strconv.Atoi(raw); err == nil {
+			payload["status"] = value
+		}
+	}
+	if raw := strings.TrimSpace(r.FormValue("identity")); raw != "" {
+		if value, err := strconv.Atoi(raw); err == nil {
+			payload["identity"] = value
+		}
+	}
+	if raw := strings.TrimSpace(r.FormValue("user_level")); raw != "" {
+		if value, err := strconv.Atoi(raw); err == nil {
+			payload["user_level"] = value
+		}
+	}
+	if raw := strings.TrimSpace(r.FormValue("user_type")); raw != "" {
+		if value, err := strconv.Atoi(raw); err == nil {
+			payload["user_type"] = value
+		}
+	}
+	if raw := strings.TrimSpace(r.FormValue("wechatflag")); raw != "" {
+		if value, err := strconv.Atoi(raw); err == nil {
+			payload["wechatflag"] = value
+		}
+	}
+	resp, err := s.client.R().
+		SetBody(payload).
+		Post(s.cfg.AuthURL + "/api/v1/users")
+	if err != nil {
+		writeRawJSON(w, http.StatusOK, map[string]any{"state": false, "message": err.Error()})
+		return
+	}
+	if resp.IsSuccess() {
+		writeRawJSON(w, http.StatusOK, map[string]any{"state": true, "message": ""})
+		return
+	}
+	message := strings.TrimSpace(resp.String())
+	if message == "" {
+		message = resp.Status()
+	}
+	var envelope struct {
+		Message string `json:"message"`
+		Msg     string `json:"msg"`
+	}
+	if err := json.Unmarshal(resp.Body(), &envelope); err == nil {
+		if trimmed := strings.TrimSpace(nonEmpty(envelope.Message, envelope.Msg)); trimmed != "" {
+			message = trimmed
+		}
+	}
+	writeRawJSON(w, http.StatusOK, map[string]any{"state": false, "message": message})
 }
 
 func (s *Server) handleLegacyUserWechatQRCode(w http.ResponseWriter, r *http.Request, _ any) {

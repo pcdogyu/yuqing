@@ -21,6 +21,7 @@ type Store interface {
 	EnsureDefaultAdmin(context.Context, string, string) error
 	EnsureSeedData(context.Context) error
 	AuthenticateUser(context.Context, string, string) (model.User, error)
+	CreateUser(context.Context, model.User, string) (model.User, error)
 	CreateSession(context.Context, int64, time.Duration) (model.Session, error)
 	GetSession(context.Context, string) (model.Session, error)
 	DeleteSession(context.Context, string) error
@@ -74,6 +75,7 @@ func (s *Service) Routes(r chi.Router) {
 	r.Get("/api/v1/auth/me", s.handleMe)
 	r.Post("/api/v1/auth/tokens", s.handleCreateToken)
 	r.Get("/api/v1/auth/session", s.handleSession)
+	r.Post("/api/v1/users", s.handleCreateUser)
 	r.Get("/api/v1/users/me", s.handleGetCurrentUser)
 	r.Get("/api/v1/users/{id}", s.handleGetUser)
 	r.Put("/api/v1/users/{id}", s.handleUpdateUser)
@@ -271,6 +273,92 @@ func (s *Service) handleUpdateUserPassword(w http.ResponseWriter, r *http.Reques
 	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]bool{"updated": true})
 }
 
+type createUserRequest struct {
+	Username       string `json:"username"`
+	Telephone      string `json:"telephone"`
+	Password       string `json:"password"`
+	DisplayName    string `json:"display_name"`
+	Email          string `json:"email"`
+	Role           string `json:"role"`
+	Status         *int   `json:"status"`
+	TermOfValidity string `json:"term_of_validity"`
+	WechatNumber   string `json:"wechat_number"`
+	OpenID         string `json:"openid"`
+	OrganizationID string `json:"organization_id"`
+	Identity       *int   `json:"identity"`
+	UserLevel      *int   `json:"user_level"`
+	UserType       *int   `json:"user_type"`
+	WechatFlag     *int   `json:"wechatflag"`
+}
+
+func (s *Service) handleCreateUser(w http.ResponseWriter, r *http.Request) {
+	if strings.TrimSpace(r.Header.Get("X-Service-Token")) != strings.TrimSpace(s.cfg.ServiceToken) {
+		apiutil.WriteJSON(w, http.StatusUnauthorized, "unauthorized", nil)
+		return
+	}
+	req, err := decodeCreateUserRequest(r)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid body", nil)
+		return
+	}
+	username := strings.TrimSpace(req.Username)
+	if username == "" {
+		username = strings.TrimSpace(req.Telephone)
+	}
+	if username == "" {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "username required", nil)
+		return
+	}
+	if strings.TrimSpace(req.Password) == "" {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "password required", nil)
+		return
+	}
+	displayName := strings.TrimSpace(req.DisplayName)
+	if displayName == "" {
+		displayName = username
+	}
+	role := strings.TrimSpace(req.Role)
+	if role == "" {
+		switch {
+		case req.Identity != nil && *req.Identity == 3:
+			role = "admin"
+		case req.UserType != nil && *req.UserType == 3:
+			role = "admin"
+		default:
+			role = "user"
+		}
+	}
+	status := 1
+	if req.Status != nil {
+		status = *req.Status
+	}
+	user := model.User{
+		Username:    username,
+		DisplayName: displayName,
+		Email:       strings.TrimSpace(req.Email),
+		Role:        role,
+		Status:      status,
+	}
+	if req.TermOfValidity != "" {
+		term, err := parseLegacyUserValidity(req.TermOfValidity)
+		if err != nil {
+			apiutil.WriteJSON(w, http.StatusBadRequest, "invalid term_of_validity", nil)
+			return
+		}
+		user.TermOfValidity = term
+	}
+	created, err := s.store.CreateUser(r.Context(), user, req.Password)
+	if err != nil {
+		if errors.Is(err, sqlitestore.ErrConflict) {
+			apiutil.WriteJSON(w, http.StatusConflict, "user already exists", nil)
+			return
+		}
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusCreated, "ok", map[string]any{"user": created})
+}
+
 func (s *Service) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	user, err := s.userFromRequest(r)
 	if err != nil {
@@ -329,6 +417,62 @@ func jsonNewDecoder(r *http.Request) *json.Decoder {
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	return decoder
+}
+
+func decodeCreateUserRequest(r *http.Request) (createUserRequest, error) {
+	var req createUserRequest
+	contentType := strings.ToLower(r.Header.Get("Content-Type"))
+	if strings.Contains(contentType, "application/json") {
+		if err := jsonNewDecoder(r).Decode(&req); err != nil {
+			return createUserRequest{}, err
+		}
+		return req, nil
+	}
+	if err := r.ParseForm(); err != nil {
+		return createUserRequest{}, err
+	}
+	req.Username = strings.TrimSpace(r.FormValue("username"))
+	req.Telephone = strings.TrimSpace(r.FormValue("telephone"))
+	req.Password = strings.TrimSpace(r.FormValue("password"))
+	req.DisplayName = strings.TrimSpace(r.FormValue("display_name"))
+	req.Email = strings.TrimSpace(r.FormValue("email"))
+	req.Role = strings.TrimSpace(r.FormValue("role"))
+	req.TermOfValidity = strings.TrimSpace(r.FormValue("term_of_validity"))
+	req.WechatNumber = strings.TrimSpace(r.FormValue("wechat_number"))
+	req.OpenID = strings.TrimSpace(r.FormValue("openid"))
+	req.OrganizationID = strings.TrimSpace(r.FormValue("organization_id"))
+	req.Status = parseOptionalFormInt(r.FormValue("status"))
+	req.Identity = parseOptionalFormInt(r.FormValue("identity"))
+	req.UserLevel = parseOptionalFormInt(r.FormValue("user_level"))
+	req.UserType = parseOptionalFormInt(r.FormValue("user_type"))
+	req.WechatFlag = parseOptionalFormInt(r.FormValue("wechatflag"))
+	return req, nil
+}
+
+func parseOptionalFormInt(raw string) *int {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return nil
+	}
+	return &value
+}
+
+func parseLegacyUserValidity(raw string) (time.Time, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}, nil
+	}
+	if parsed, err := time.Parse(time.RFC3339, raw); err == nil {
+		return parsed.UTC(), nil
+	}
+	if parsed, err := time.Parse("2006-01-02", raw); err == nil {
+		return time.Date(parsed.Year(), parsed.Month(), parsed.Day(), 0, 0, 0, 0, time.UTC), nil
+	}
+	return time.Time{}, errors.New("invalid term_of_validity")
 }
 
 func parseID(r *http.Request) (int64, bool) {

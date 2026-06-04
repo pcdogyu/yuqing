@@ -547,15 +547,44 @@ func TestLegacyUserJSONCompat(t *testing.T) {
 	}
 }
 
+func TestLegacyUserSaveCompat(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+
+	body := strings.NewReader("telephone=13800000000&password=secret&display_name=运营账号&email=ops@example.com&status=1")
+	req := httptest.NewRequest(http.MethodPost, "/user/save", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+
+	srv.Router().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	var envelope struct {
+		State   bool   `json:"state"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode save response: %v", err)
+	}
+	if !envelope.State || envelope.Message != "" {
+		t.Fatalf("unexpected save response: %+v", envelope)
+	}
+}
+
 func newPortalCompatServer(t *testing.T) (*Server, func()) {
 	t.Helper()
 
 	var mu sync.Mutex
+	var authMu sync.Mutex
 	mailCfg := model.MailConfig{}
 	popupStates := map[string]model.PopupState{}
 	deletedArticles := map[int64]bool{}
 	emotions := map[int64]string{}
 	shareChannels := map[int64][]string{}
+	createdUsers := map[string]model.User{}
+	nextUserID := int64(3)
 	articles := map[int64]model.Item{
 		99: {
 			ID:         99,
@@ -687,8 +716,90 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 		}
 	}))
 
-	srv := &Server{cfg: config.Config{ContentURL: content.URL}, client: resty.New()}
-	return srv, content.Close
+	auth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Header.Get("X-Service-Token") != "test-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusUnauthorized, "message": "unauthorized", "data": nil})
+			return
+		}
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/users" {
+			var req struct {
+				Username       string `json:"username"`
+				Telephone      string `json:"telephone"`
+				Password       string `json:"password"`
+				DisplayName    string `json:"display_name"`
+				Email          string `json:"email"`
+				Role           string `json:"role"`
+				Status         *int   `json:"status"`
+				TermOfValidity string `json:"term_of_validity"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusBadRequest, "message": err.Error(), "data": nil})
+				return
+			}
+			username := nonEmpty(req.Username, req.Telephone)
+			if username == "" || strings.TrimSpace(req.Password) == "" {
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusBadRequest, "message": "invalid body", "data": nil})
+				return
+			}
+			authMu.Lock()
+			if _, ok := createdUsers[username]; ok {
+				authMu.Unlock()
+				w.WriteHeader(http.StatusConflict)
+				_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusConflict, "message": "user already exists", "data": nil})
+				return
+			}
+			id := nextUserID
+			nextUserID++
+			user := model.User{
+				ID:          id,
+				Username:    username,
+				DisplayName: nonEmpty(req.DisplayName, username),
+				Email:       req.Email,
+				Role:        nonEmpty(req.Role, "user"),
+				Status:      1,
+			}
+			if req.Status != nil {
+				user.Status = *req.Status
+			}
+			if req.TermOfValidity != "" {
+				if parsed, err := time.Parse(time.RFC3339, req.TermOfValidity); err == nil {
+					user.TermOfValidity = parsed
+				}
+			}
+			createdUsers[username] = user
+			authMu.Unlock()
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    http.StatusCreated,
+				"message": "ok",
+				"data":    map[string]any{"user": user},
+			})
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/wechat/getQrCode" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    http.StatusOK,
+				"message": "ok",
+				"data": map[string]any{
+					"qrcodeUrl": "https://example.com/qr",
+					"sceneStr":  "scene-1",
+				},
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusNotFound, "message": "not found", "data": nil})
+	}))
+
+	srv := &Server{cfg: config.Config{ContentURL: content.URL, AuthURL: auth.URL, ServiceToken: "test-token"}, client: resty.New().SetHeader("X-Service-Token", "test-token")}
+	return srv, func() {
+		auth.Close()
+		content.Close()
+	}
 }
 
 func seedPopupState(t *testing.T, srv *Server, state model.PopupState) {

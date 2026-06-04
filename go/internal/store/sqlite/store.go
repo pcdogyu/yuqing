@@ -785,6 +785,7 @@ func (s *Store) LinkItemsToProjects(ctx context.Context, sourceKeys []string, pr
 }
 
 var ErrNotFound = errors.New("not found")
+var ErrConflict = errors.New("conflict")
 
 func (s *Store) sourceKeyExistsTx(ctx context.Context, tx *sql.Tx, sourceKey string) (bool, error) {
 	var count int

@@ -12,6 +12,7 @@ import (
 
 	"github.com/stonedt-yuqing/go-jin10/internal/config"
 	"github.com/stonedt-yuqing/go-jin10/internal/model"
+	sqlitestore "github.com/stonedt-yuqing/go-jin10/internal/store/sqlite"
 )
 
 func TestJSONNewDecoderDisallowsUnknownFields(t *testing.T) {
@@ -82,12 +83,54 @@ func TestHandleUpdateUserPassword(t *testing.T) {
 	}
 }
 
+func TestHandleCreateUser(t *testing.T) {
+	store := newFakeAuthStore()
+	svc := NewService(config.Config{ServiceToken: "service-token"}, store)
+	router := svc.Router()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users", strings.NewReader(`{"username":"charlie","password":"secret","display_name":"Charlie","email":"charlie@example.com","status":1,"role":"user"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Service-Token", "service-token")
+	rr := httptest.NewRecorder()
+
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", rr.Code)
+	}
+	var envelope struct {
+		Code int `json:"code"`
+		Data struct {
+			User model.User `json:"user"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	if envelope.Code != http.StatusCreated || envelope.Data.User.Username != "charlie" || envelope.Data.User.DisplayName != "Charlie" {
+		t.Fatalf("unexpected create response: %+v", envelope)
+	}
+	if _, ok := store.users[envelope.Data.User.ID]; !ok {
+		t.Fatalf("expected user to be added to store: %+v", store.users)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/users", strings.NewReader(`{"username":"charlie","password":"secret2"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Service-Token", "service-token")
+	rr = httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("expected 409 for duplicate username, got %d", rr.Code)
+	}
+}
+
 type fakeAuthStore struct {
 	users      map[int64]model.User
 	sessions   map[string]model.Session
 	passwords  map[string]string
 	updateErr  error
 	lastUpdate int64
+	nextID     int64
 }
 
 func newFakeAuthStore() *fakeAuthStore {
@@ -104,11 +147,12 @@ func newFakeAuthStore() *fakeAuthStore {
 			"alice": "old-secret",
 			"bob":   "admin-secret",
 		},
+		nextID: 3,
 	}
 }
 
 func (f *fakeAuthStore) EnsureDefaultAdmin(context.Context, string, string) error { return nil }
-func (f *fakeAuthStore) EnsureSeedData(context.Context) error { return nil }
+func (f *fakeAuthStore) EnsureSeedData(context.Context) error                     { return nil }
 func (f *fakeAuthStore) AuthenticateUser(_ context.Context, username, password string) (model.User, error) {
 	if got := f.passwords[username]; got != password {
 		return model.User{}, errors.New("invalid credentials")
@@ -119,6 +163,30 @@ func (f *fakeAuthStore) AuthenticateUser(_ context.Context, username, password s
 		}
 	}
 	return model.User{}, errors.New("not found")
+}
+func (f *fakeAuthStore) CreateUser(_ context.Context, user model.User, password string) (model.User, error) {
+	for _, existing := range f.users {
+		if existing.Username == user.Username {
+			return model.User{}, sqlitestore.ErrConflict
+		}
+	}
+	if user.ID == 0 {
+		user.ID = f.nextID
+		f.nextID++
+	}
+	if user.Role == "" {
+		user.Role = "user"
+	}
+	if user.Status == 0 {
+		user.Status = 1
+	}
+	if user.DisplayName == "" {
+		user.DisplayName = user.Username
+	}
+	user.PasswordHash = password
+	f.users[user.ID] = user
+	f.passwords[user.Username] = password
+	return user, nil
 }
 func (f *fakeAuthStore) CreateSession(context.Context, int64, time.Duration) (model.Session, error) {
 	return model.Session{}, errors.New("unused")
@@ -159,7 +227,9 @@ func (f *fakeAuthStore) ResolveAPIToken(context.Context, string) (model.User, er
 func (f *fakeAuthStore) CreateCaptcha(context.Context, time.Duration) (model.Captcha, error) {
 	return model.Captcha{}, errors.New("unused")
 }
-func (f *fakeAuthStore) VerifyCaptcha(context.Context, string, string) error { return errors.New("unused") }
+func (f *fakeAuthStore) VerifyCaptcha(context.Context, string, string) error {
+	return errors.New("unused")
+}
 func (f *fakeAuthStore) CreateWechatChallenge(context.Context, model.WechatChallenge) (model.WechatChallenge, error) {
 	return model.WechatChallenge{}, errors.New("unused")
 }
@@ -169,7 +239,9 @@ func (f *fakeAuthStore) GetWechatChallenge(context.Context, string) (model.Wecha
 func (f *fakeAuthStore) UpdateWechatChallenge(context.Context, model.WechatChallenge) (model.WechatChallenge, error) {
 	return model.WechatChallenge{}, errors.New("unused")
 }
-func (f *fakeAuthStore) DeleteWechatChallenge(context.Context, string) error { return errors.New("unused") }
+func (f *fakeAuthStore) DeleteWechatChallenge(context.Context, string) error {
+	return errors.New("unused")
+}
 func (f *fakeAuthStore) UpsertWechatBinding(context.Context, model.WechatBinding) (model.WechatBinding, error) {
 	return model.WechatBinding{}, errors.New("unused")
 }

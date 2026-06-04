@@ -53,6 +53,35 @@ func TestAuthAndFTSFlow(t *testing.T) {
 	}
 }
 
+func TestCreateUser(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	created, err := store.CreateUser(ctx, model.User{
+		Username:    "charlie",
+		DisplayName: "Charlie",
+		Email:       "charlie@example.com",
+		Role:        "user",
+		Status:      1,
+	}, "secret")
+	if err != nil {
+		t.Fatalf("CreateUser error: %v", err)
+	}
+	if created.Username != "charlie" || created.DisplayName != "Charlie" || created.Email != "charlie@example.com" {
+		t.Fatalf("unexpected created user: %+v", created)
+	}
+	if created.PasswordHash == "" {
+		t.Fatal("expected password hash to be stored")
+	}
+	if _, err := store.AuthenticateUser(ctx, "charlie", "secret"); err != nil {
+		t.Fatalf("AuthenticateUser created user error: %v", err)
+	}
+
+	if _, err := store.CreateUser(ctx, model.User{Username: "charlie"}, "another"); err == nil {
+		t.Fatal("expected duplicate username to fail")
+	}
+}
+
 func TestFavoriteAndReadState(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()

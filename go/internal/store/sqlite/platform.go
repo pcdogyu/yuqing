@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"sort"
 	"strings"
 	"time"
@@ -47,6 +48,62 @@ func (s *Store) AuthenticateUser(ctx context.Context, username, password string)
 func (s *Store) GetUserByUsername(ctx context.Context, username string) (model.User, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT id, username, display_name, email, role, status, term_of_validity, password_hash, created_at, updated_at FROM users WHERE username = ?`, username)
 	return scanUser(row)
+}
+
+func (s *Store) CreateUser(ctx context.Context, user model.User, password string) (model.User, error) {
+	username := strings.TrimSpace(user.Username)
+	if username == "" {
+		return model.User{}, errors.New("username required")
+	}
+	if strings.TrimSpace(password) == "" {
+		return model.User{}, errors.New("password required")
+	}
+	var exists int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM users WHERE username = ?`, username).Scan(&exists); err != nil {
+		return model.User{}, err
+	}
+	if exists > 0 {
+		return model.User{}, ErrConflict
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return model.User{}, err
+	}
+	now := time.Now().UTC()
+	displayName := strings.TrimSpace(user.DisplayName)
+	if displayName == "" {
+		displayName = username
+	}
+	role := strings.TrimSpace(user.Role)
+	if role == "" {
+		role = "user"
+	}
+	if user.TermOfValidity.IsZero() {
+		user.TermOfValidity = time.Date(2099, 1, 19, 0, 0, 0, 0, time.UTC)
+	}
+	updatedAt := now.Format(time.RFC3339)
+	res, err := s.db.ExecContext(ctx, `INSERT INTO users (username, display_name, email, role, status, term_of_validity, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		username,
+		displayName,
+		strings.TrimSpace(user.Email),
+		role,
+		user.Status,
+		user.TermOfValidity.UTC().Format(time.RFC3339),
+		string(hash),
+		updatedAt,
+		updatedAt,
+	)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "unique") {
+			return model.User{}, ErrConflict
+		}
+		return model.User{}, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return model.User{}, err
+	}
+	return s.GetUserByID(ctx, id)
 }
 
 func (s *Store) GetUserByID(ctx context.Context, id int64) (model.User, error) {
