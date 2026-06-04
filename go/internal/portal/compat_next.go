@@ -1398,6 +1398,240 @@ func (s *Server) handleMobileWarning(w http.ResponseWriter, r *http.Request, use
 	_ = s.writeSimplePage(w, "mobile/warning", "移动端预警", b.String())
 }
 
+func (s *Server) handleMonitorEntry(w http.ResponseWriter, r *http.Request, _ any) {
+	target := "/mobile/monitor"
+	if groupID := strings.TrimSpace(r.URL.Query().Get("groupid")); groupID != "" {
+		target += "?groupid=" + url.QueryEscape(groupID)
+		if projectID := strings.TrimSpace(r.URL.Query().Get("projectid")); projectID != "" {
+			target += "&projectid=" + url.QueryEscape(projectID)
+		}
+	} else if projectID := strings.TrimSpace(r.URL.Query().Get("projectid")); projectID != "" {
+		target += "?projectid=" + url.QueryEscape(projectID)
+	}
+	http.Redirect(w, r, target, http.StatusSeeOther)
+}
+
+func (s *Server) handleMonitorCompat(w http.ResponseWriter, r *http.Request, user any) {
+	path := strings.TrimPrefix(r.URL.Path, "/monitor/")
+	switch {
+	case path == "":
+		s.handleMonitorEntry(w, r, user)
+	case path == "detail" || strings.HasPrefix(path, "detail/"):
+		s.handleMonitorDetail(w, r, user)
+	case path == "wxGroup":
+		s.handleMonitorWxGroup(w, r, user)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func (s *Server) handleMonitorDetail(w http.ResponseWriter, r *http.Request, user any) {
+	articleID := strings.TrimSpace(strings.TrimPrefix(r.URL.Path, "/monitor/detail/"))
+	if articleID == "" {
+		articleID = strings.TrimSpace(r.URL.Query().Get("articleid"))
+	}
+	if articleID == "" {
+		http.Redirect(w, r, "/mobile/monitor", http.StatusSeeOther)
+		return
+	}
+	groupID := strings.TrimSpace(r.URL.Query().Get("groupid"))
+	projectID := strings.TrimSpace(r.URL.Query().Get("projectid"))
+	returnURL := "/mobile/monitor"
+	query := url.Values{}
+	if groupID != "" {
+		query.Set("groupid", groupID)
+	}
+	if projectID != "" {
+		query.Set("projectid", projectID)
+	}
+	if len(query) > 0 {
+		returnURL += "?" + query.Encode()
+	}
+	returnTo := url.QueryEscape(returnURL)
+	userID := userIDFromMap(user)
+	if r.Method == http.MethodPost && userID > 0 {
+		_ = r.ParseForm()
+		action := r.FormValue("action")
+		message := "文章操作失败"
+		switch action {
+		case "favorite":
+			resp, err := s.client.R().SetQueryParam("user_id", strconv.FormatInt(userID, 10)).Post(s.cfg.ContentURL + "/api/v1/articles/" + articleID + "/favorite")
+			if err == nil && resp.IsSuccess() {
+				message = "收藏状态已更新"
+			}
+		case "read":
+			resp, err := s.client.R().SetQueryParam("user_id", strconv.FormatInt(userID, 10)).Post(s.cfg.ContentURL + "/api/v1/articles/" + articleID + "/read")
+			if err == nil && resp.IsSuccess() {
+				message = "文章已标记为已读"
+			}
+		case "share":
+			resp, err := s.client.R().
+				SetQueryParam("user_id", strconv.FormatInt(userID, 10)).
+				SetBody(map[string]string{"channel": "portal-detail"}).
+				Post(s.cfg.ContentURL + "/api/v1/articles/" + articleID + "/share")
+			if err == nil && resp.IsSuccess() {
+				message = "文章已登记分享"
+			}
+		}
+		monitorURL := "/monitor/detail/" + articleID
+		if len(query) > 0 {
+			monitorURL += "?" + query.Encode()
+		}
+		http.Redirect(w, r, appendMessage(monitorURL, message), http.StatusSeeOther)
+		return
+	}
+	article := model.Item{}
+	related := []model.Item{}
+	projects := make([]model.Project, 0)
+	reports := make([]model.Report, 0)
+	querySuffix := ""
+	if userID > 0 {
+		querySuffix = "?user_id=" + strconv.FormatInt(userID, 10)
+	}
+	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/articles/"+articleID+querySuffix, &article)
+	relatedURL := s.cfg.ContentURL + "/api/v1/articles/" + articleID + "/related"
+	if userID > 0 {
+		relatedURL += "?user_id=" + strconv.FormatInt(userID, 10)
+	}
+	_ = s.getJSON(relatedURL, &related)
+	reportSeen := make(map[int64]struct{})
+	readCount := 0
+	unreadCount := 0
+	flaggedCount := 0
+	for _, item := range related {
+		if item.Read {
+			readCount++
+		} else {
+			unreadCount++
+		}
+		if item.Favorited {
+			flaggedCount++
+		}
+	}
+	for _, projectIDValue := range article.ProjectIDs {
+		project := model.Project{}
+		if err := s.getJSON(s.cfg.ContentURL+"/api/v1/projects/"+strconv.FormatInt(projectIDValue, 10), &project); err == nil && project.ID > 0 {
+			projects = append(projects, project)
+		}
+		projectReports := []model.Report{}
+		if err := s.getJSON(s.cfg.ContentURL+"/api/v1/reports?project_id="+strconv.FormatInt(projectIDValue, 10), &projectReports); err == nil {
+			for _, report := range projectReports {
+				if _, ok := reportSeen[report.ID]; ok {
+					continue
+				}
+				reportSeen[report.ID] = struct{}{}
+				reports = append(reports, report)
+			}
+		}
+	}
+	sort.Slice(reports, func(i, j int) bool {
+		return reports[i].UpdatedAt.After(reports[j].UpdatedAt)
+	})
+	draftCount := 0
+	generatedCount := 0
+	archivedCount := 0
+	for _, report := range reports {
+		switch report.Status {
+		case "draft":
+			draftCount++
+		case "generated":
+			generatedCount++
+		case "archived":
+			archivedCount++
+		}
+	}
+	if len(reports) > 8 {
+		reports = reports[:8]
+	}
+	var b strings.Builder
+	b.WriteString(`<h1>监测详情</h1>`)
+	b.WriteString(`<p><a href="`)
+	b.WriteString(html.EscapeString(returnURL))
+	b.WriteString(`">返回监测页</a> | <a href="/articles/`)
+	b.WriteString(strconv.FormatInt(article.ID, 10))
+	b.WriteString(`?return_to=`)
+	b.WriteString(returnTo)
+	b.WriteString(`">文章详情页</a></p>`)
+	if msg := strings.TrimSpace(r.URL.Query().Get("msg")); msg != "" {
+		b.WriteString(`<section><div class="msg">`)
+		b.WriteString(html.EscapeString(msg))
+		b.WriteString(`</div></section>`)
+	}
+	b.WriteString(`<section><h2>`)
+	if article.ID > 0 {
+		b.WriteString(html.EscapeString(article.Title))
+	} else {
+		b.WriteString("未找到文章")
+	}
+	b.WriteString(`</h2><p>来源：`)
+	b.WriteString(html.EscapeString(nonEmpty(article.FromText, article.SourceType, article.ExternalSourceHost)))
+	b.WriteString(` | 时间：`)
+	b.WriteString(article.CapturedAt.Format("2006-01-02 15:04"))
+	b.WriteString(`</p><p>项目：`)
+	if len(projects) == 0 {
+		b.WriteString("暂无项目")
+	} else {
+		for idx, project := range projects {
+			if idx > 0 {
+				b.WriteString("，")
+			}
+			b.WriteString(html.EscapeString(project.Name))
+		}
+	}
+	b.WriteString(`</p><pre>`)
+	b.WriteString(html.EscapeString(nonEmpty(article.Summary, article.Content)))
+	b.WriteString(`</pre><div class="grid"><div class="section-card">已读`)
+	b.WriteString(strconv.Itoa(readCount))
+	b.WriteString(`</div><div class="section-card">未读`)
+	b.WriteString(strconv.Itoa(unreadCount))
+	b.WriteString(`</div><div class="section-card">收藏`)
+	b.WriteString(strconv.Itoa(flaggedCount))
+	b.WriteString(`</div></div></section>`)
+	b.WriteString(`<section><h2>操作</h2><form class="inline" method="post"><button name="action" value="read" type="submit">标记已读</button><button name="action" value="favorite" type="submit">收藏</button><button name="action" value="share" type="submit">分享</button></form></section>`)
+	b.WriteString(`<section><h2>相关文章</h2><table><tr><th>标题</th><th>来源</th><th>状态</th></tr>`)
+	for _, item := range related {
+		b.WriteString(`<tr><td><a class="inline" href="/monitor/detail/`)
+		b.WriteString(strconv.FormatInt(item.ID, 10))
+		b.WriteString(`?groupid=`)
+		b.WriteString(url.QueryEscape(groupID))
+		b.WriteString(`&projectid=`)
+		b.WriteString(url.QueryEscape(projectID))
+		b.WriteString(`">`)
+		b.WriteString(html.EscapeString(item.Title))
+		b.WriteString(`</a></td><td>`)
+		b.WriteString(html.EscapeString(nonEmpty(item.FromText, item.SourceType)))
+		b.WriteString(`</td><td>`)
+		if item.Read {
+			b.WriteString("已读")
+		} else {
+			b.WriteString("未读")
+		}
+		if item.Favorited {
+			b.WriteString(" / 已收藏")
+		}
+		b.WriteString(`</td></tr>`)
+	}
+	if len(related) == 0 {
+		b.WriteString(`<tr><td colspan="3">暂无相关文章</td></tr>`)
+	}
+	b.WriteString(`</table></section>`)
+	b.WriteString(`<section><h2>关联报告</h2><table><tr><th>标题</th><th>状态</th><th>更新时间</th></tr>`)
+	for _, report := range reports {
+		b.WriteString(`<tr><td>`)
+		b.WriteString(html.EscapeString(report.Title))
+		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(report.Status))
+		b.WriteString(`</td><td>`)
+		b.WriteString(report.UpdatedAt.Format("2006-01-02 15:04"))
+		b.WriteString(`</td></tr>`)
+	}
+	if len(reports) == 0 {
+		b.WriteString(`<tr><td colspan="3">暂无报告</td></tr>`)
+	}
+	b.WriteString(`</table></section>`)
+	_ = s.writeSimplePage(w, "monitor/detail", "监测详情", b.String())
+}
+
 func (s *Server) handleMobileGetGroupAndProject(w http.ResponseWriter, r *http.Request, user any) {
 	groups := s.groupProjectsForMobile()
 	writeLegacyStatusJSON(w, http.StatusOK, "用户方案和方案组返回成功", map[string]any{"data": groups})

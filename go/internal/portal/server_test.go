@@ -280,6 +280,26 @@ func TestDisplayBoardCollection2Compat(t *testing.T) {
 	}
 }
 
+func TestMonitorDetailCompat(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/monitor/detail/100?groupid=1&projectid=1", nil)
+	rr := httptest.NewRecorder()
+	srv.handleMonitorCompat(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "监测详情") || !strings.Contains(body, "AI 观察日报") {
+		t.Fatalf("expected monitor detail content, got %s", body)
+	}
+	if !strings.Contains(body, "/mobile/monitor?groupid=1&amp;projectid=1") {
+		t.Fatalf("expected return link to mobile monitor, got %s", body)
+	}
+}
+
 func TestProductManualCompat(t *testing.T) {
 	srv, cleanup := newPortalCompatServer(t)
 	defer cleanup()
@@ -1726,14 +1746,15 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 			popupStates[popupStateMapKey(state.UserID, state.Key)] = state
 			mu.Unlock()
 			writeEnvelope(http.StatusOK, "ok", state)
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/articles/99":
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/articles/") && !strings.Contains(strings.TrimPrefix(r.URL.Path, "/api/v1/articles/"), "/"):
+			id := parseTestInt64(strings.TrimPrefix(r.URL.Path, "/api/v1/articles/"))
 			mu.Lock()
-			item := articles[99]
-			deleted := deletedArticles[99]
-			emotion := emotions[99]
-			shares := append([]string(nil), shareChannels[99]...)
+			item, ok := articles[id]
+			deleted := deletedArticles[id]
+			emotion := emotions[id]
+			shares := append([]string(nil), shareChannels[id]...)
 			mu.Unlock()
-			if deleted {
+			if !ok || deleted {
 				writeEnvelope(http.StatusNotFound, "not found", nil)
 				return
 			}
@@ -1749,45 +1770,66 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 				item.FromText = strings.Join(shares, ",")
 			}
 			writeEnvelope(http.StatusOK, "ok", item)
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/articles/99/emotion":
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/articles/") && strings.HasSuffix(r.URL.Path, "/related"):
+			id := parseTestInt64(strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/articles/"), "/related"))
+			mu.Lock()
+			items := make([]model.Item, 0, len(articles))
+			for itemID, item := range articles {
+				if itemID == id || deletedArticles[itemID] {
+					continue
+				}
+				items = append(items, item)
+			}
+			mu.Unlock()
+			if len(items) > 3 {
+				items = items[:3]
+			}
+			writeEnvelope(http.StatusOK, "ok", items)
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/articles/") && strings.HasSuffix(r.URL.Path, "/emotion"):
+			id := parseTestInt64(strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/articles/"), "/emotion"))
 			emotion := nonEmpty(r.URL.Query().Get("emotion"), r.URL.Query().Get("flag"))
 			mu.Lock()
-			emotions[99] = emotion
+			emotions[id] = emotion
 			mu.Unlock()
 			writeEnvelope(http.StatusOK, "ok", map[string]any{"emotion": emotion})
-		case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/articles/99":
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/articles/") && !strings.Contains(strings.TrimPrefix(r.URL.Path, "/api/v1/articles/"), "/"):
+			id := parseTestInt64(strings.TrimPrefix(r.URL.Path, "/api/v1/articles/"))
 			mu.Lock()
-			deletedArticles[99] = true
+			deletedArticles[id] = true
 			mu.Unlock()
 			writeEnvelope(http.StatusOK, "ok", map[string]bool{"deleted": true})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/articles/99/favorite":
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/articles/") && strings.HasSuffix(r.URL.Path, "/favorite"):
+			id := parseTestInt64(strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/articles/"), "/favorite"))
 			mu.Lock()
-			item := articles[99]
+			item := articles[id]
 			item.Favorited = true
-			articles[99] = item
+			articles[id] = item
 			mu.Unlock()
 			writeEnvelope(http.StatusOK, "ok", map[string]bool{"favorited": true})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/articles/99/read":
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/articles/") && strings.HasSuffix(r.URL.Path, "/read"):
+			id := parseTestInt64(strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/articles/"), "/read"))
 			mu.Lock()
-			item := articles[99]
+			item := articles[id]
 			item.Read = true
-			articles[99] = item
+			articles[id] = item
 			mu.Unlock()
 			writeEnvelope(http.StatusOK, "ok", map[string]bool{"read": true})
-		case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/articles/99/read":
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/articles/") && strings.HasSuffix(r.URL.Path, "/read"):
+			id := parseTestInt64(strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/articles/"), "/read"))
 			mu.Lock()
-			item := articles[99]
+			item := articles[id]
 			item.Read = false
-			articles[99] = item
+			articles[id] = item
 			mu.Unlock()
 			writeEnvelope(http.StatusOK, "ok", map[string]bool{"read": false})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/articles/99/share":
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/articles/") && strings.HasSuffix(r.URL.Path, "/share"):
+			id := parseTestInt64(strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/articles/"), "/share"))
 			var payload struct {
 				Channel string `json:"channel"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&payload)
 			mu.Lock()
-			shareChannels[99] = append(shareChannels[99], payload.Channel)
+			shareChannels[id] = append(shareChannels[id], payload.Channel)
 			mu.Unlock()
 			writeEnvelope(http.StatusOK, "ok", map[string]any{"shared": true, "channel": payload.Channel})
 		case strings.HasPrefix(r.URL.Path, "/api/v1/platform/bindings/"):
