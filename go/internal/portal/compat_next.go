@@ -9,6 +9,8 @@ import (
 	"html"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -230,6 +232,40 @@ func displayBoardProjectID(item model.Item, projects []model.Project) int64 {
 		return item.ProjectIDs[0]
 	}
 	return projects[0].ID
+}
+
+func (s *Server) handleSystemProductManualOnline(w http.ResponseWriter, r *http.Request, _ any) {
+	manualURL := "/system/uploadProductManual"
+	body := `<h1>产品手册</h1><section><p>在线阅读入口直接复用仓库内的产品手册 PDF。</p><p><a class="inline" href="` + manualURL + `" target="_blank" rel="noreferrer">下载 / 打开产品手册</a></p><iframe src="` + manualURL + `" style="width:100%;height:80vh;border:1px solid #ece7dc;border-radius:12px"></iframe></section>`
+	_ = s.writeSimplePage(w, "productmanual", "产品手册", body)
+}
+
+func (s *Server) handleSystemUploadProductManual(w http.ResponseWriter, r *http.Request, _ any) {
+	manualPath, err := locateProductManualPath()
+	if err != nil {
+		writeLegacyStatusJSON(w, http.StatusNotFound, "产品手册文件未找到", nil)
+		return
+	}
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", `inline; filename="product-manual.pdf"`)
+	http.ServeFile(w, r, manualPath)
+}
+
+func locateProductManualPath() (string, error) {
+	candidates := []string{
+		filepath.Clean(filepath.Join("..", "..", "..", "src", "main", "resources", "static", "assets", "images", "新版本舆情产品手册V1.0.pdf")),
+		filepath.Clean(filepath.Join("..", "..", "..", "产品手册V1.0.pdf")),
+		filepath.Clean(filepath.Join("..", "..", "src", "main", "resources", "static", "assets", "images", "新版本舆情产品手册V1.0.pdf")),
+		filepath.Clean(filepath.Join("..", "..", "产品手册V1.0.pdf")),
+		filepath.Clean(filepath.Join("..", "src", "main", "resources", "static", "assets", "images", "新版本舆情产品手册V1.0.pdf")),
+		filepath.Clean(filepath.Join("..", "产品手册V1.0.pdf")),
+	}
+	for _, candidate := range candidates {
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate, nil
+		}
+	}
+	return "", os.ErrNotExist
 }
 
 func (s *Server) handleMobileMonitor(w http.ResponseWriter, r *http.Request, user any) {

@@ -277,6 +277,35 @@ func TestDisplayBoardCollection2Compat(t *testing.T) {
 	}
 }
 
+func TestProductManualCompat(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+
+	pageReq := httptest.NewRequest(http.MethodGet, "/system/productmanual/online", nil)
+	pageRR := httptest.NewRecorder()
+	srv.handleSystemProductManualOnline(pageRR, pageReq, map[string]any{"id": 1})
+	if pageRR.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", pageRR.Code)
+	}
+	body := pageRR.Body.String()
+	if !strings.Contains(body, "产品手册") || !strings.Contains(body, "/system/uploadProductManual") {
+		t.Fatalf("expected product manual page content, got %s", body)
+	}
+
+	downloadReq := httptest.NewRequest(http.MethodGet, "/system/uploadProductManual", nil)
+	downloadRR := httptest.NewRecorder()
+	srv.handleSystemUploadProductManual(downloadRR, downloadReq, map[string]any{"id": 1})
+	if downloadRR.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", downloadRR.Code)
+	}
+	if ct := downloadRR.Header().Get("Content-Type"); !strings.Contains(ct, "application/pdf") {
+		t.Fatalf("expected pdf content type, got %q", ct)
+	}
+	if downloadRR.Body.Len() == 0 {
+		t.Fatalf("expected pdf body, got empty response")
+	}
+}
+
 func TestVolumePageCompat(t *testing.T) {
 	srv, cleanup := newPortalCompatServer(t)
 	defer cleanup()

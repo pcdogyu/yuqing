@@ -297,6 +297,8 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/system/getwords", s.requireSessionJSON(s.handleLegacyGetWarningWords))
 	mux.HandleFunc("/system/updateWarning", s.requireSessionJSON(s.handleLegacyUpdateWarning))
 	mux.HandleFunc("/system/getSystemTitle", s.requireSessionJSON(s.handleLegacyGetSystemTitle))
+	mux.HandleFunc("/system/productmanual/online", s.requireSession(s.handleSystemProductManualOnline))
+	mux.HandleFunc("/system/uploadProductManual", s.requireSession(s.handleSystemUploadProductManual))
 	mux.HandleFunc("/system/preference", s.requireSession(s.handleSystemSectionRedirect("preferences")))
 	mux.HandleFunc("/system/favorite", s.requireSession(s.handleSystemSectionRedirect("favorites")))
 	mux.HandleFunc("/system/warningmsg", s.requireSession(s.handleSystemWarningMessage))
