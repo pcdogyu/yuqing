@@ -227,6 +227,56 @@ func TestHotPageCompat(t *testing.T) {
 	}
 }
 
+func TestDisplayBoardCompat(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/displayboard?groupid=1&projectid=1", nil)
+	rr := httptest.NewRecorder()
+	srv.handleDisplayBoard(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "综合看板") {
+		t.Fatalf("expected page title, got %s", body)
+	}
+	if !strings.Contains(body, "热点关键词") || !strings.Contains(body, "AI") {
+		t.Fatalf("expected hotspot keywords on board, got %s", body)
+	}
+	if !strings.Contains(body, "项目快捷入口") || !strings.Contains(body, "项目一") {
+		t.Fatalf("expected project links on board, got %s", body)
+	}
+	if !strings.Contains(body, "/fullsearch/result?searchword=AI&menuStyle=1&fulltype=8&page=1") {
+		t.Fatalf("expected hot keyword search entry, got %s", body)
+	}
+}
+
+func TestDisplayBoardCollection2Compat(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/displayboard/collection2", nil)
+	rr := httptest.NewRecorder()
+	srv.handleDisplayBoardCollection2(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	var envelope struct {
+		Data struct {
+			Data []model.Item `json:"data"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(envelope.Data.Data) == 0 {
+		t.Fatalf("expected collection data, got %+v", envelope)
+	}
+}
+
 func TestVolumePageCompat(t *testing.T) {
 	srv, cleanup := newPortalCompatServer(t)
 	defer cleanup()

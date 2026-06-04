@@ -35,16 +35,171 @@ func (s *Server) handleDisplayBoard(w http.ResponseWriter, r *http.Request, user
 	dashboard, notices, taskRuns, crawlRuns, services := s.loadDashboardContext(r)
 	groupID := strings.TrimSpace(r.URL.Query().Get("groupid"))
 	projectID := strings.TrimSpace(r.URL.Query().Get("projectid"))
-	_ = s.render(w, "dashboard", pageData{
-		Title:     "综合看板",
-		User:      user,
-		Dashboard: dashboard,
-		Notices:   notices,
-		TaskRuns:  taskRuns,
-		CrawlRuns: crawlRuns,
-		Services:  services,
-		Message:   "groupid=" + groupID + " projectid=" + projectID,
-	})
+	projects := []model.Project{}
+	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/projects", &projects)
+	articles := model.ItemListResult{}
+	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/articles?page=1&page_size=12", &articles)
+	hotspots := []model.KeywordHotspot{}
+	_ = s.getJSON(s.cfg.AnalysisURL+"/api/v1/analysis/keywords", &hotspots)
+	returnTo := "/displayboard"
+	if groupID != "" || projectID != "" {
+		values := url.Values{}
+		if groupID != "" {
+			values.Set("groupid", groupID)
+		}
+		if projectID != "" {
+			values.Set("projectid", projectID)
+		}
+		returnTo = "/displayboard?" + values.Encode()
+	}
+	var b strings.Builder
+	b.WriteString("<h1>综合看板</h1>")
+	b.WriteString(`<p><a href="/projects">项目中心</a> | <a href="/articles">文章中心</a> | <a href="/reports">报告中心</a> | <a href="/system">系统工作台</a></p>`)
+	b.WriteString(`<section><form class="inline" method="get"><select name="groupid"><option value="">全部项目组</option>`)
+	for _, project := range projects {
+		b.WriteString(`<option value="`)
+		b.WriteString(strconv.FormatInt(project.GroupID, 10))
+		b.WriteString(`"`)
+		if groupID == strconv.FormatInt(project.GroupID, 10) {
+			b.WriteString(` selected`)
+		}
+		b.WriteString(`>`)
+		b.WriteString(html.EscapeString(project.GroupName))
+		b.WriteString(`</option>`)
+	}
+	b.WriteString(`</select><select name="projectid"><option value="">全部项目</option>`)
+	for _, project := range projects {
+		b.WriteString(`<option value="`)
+		b.WriteString(strconv.FormatInt(project.ID, 10))
+		b.WriteString(`"`)
+		if projectID == strconv.FormatInt(project.ID, 10) {
+			b.WriteString(` selected`)
+		}
+		b.WriteString(`>`)
+		b.WriteString(html.EscapeString(project.Name))
+		b.WriteString(`</option>`)
+	}
+	b.WriteString(`</select><button type="submit">切换范围</button></form>`)
+	if projectID != "" {
+		b.WriteString(`<p class="muted">当前项目ID：`)
+		b.WriteString(html.EscapeString(projectID))
+		b.WriteString(` | <a class="inline" href="/projects/`)
+		b.WriteString(html.EscapeString(projectID))
+		b.WriteString(`">项目详情</a></p>`)
+	}
+	b.WriteString(`</section>`)
+	b.WriteString(`<section><h2>核心指标</h2><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px">`)
+	b.WriteString(metricCard("文章数", strconv.Itoa(dashboard.Overview.ArticleCount)))
+	b.WriteString(metricCard("项目数", strconv.Itoa(dashboard.Overview.ProjectCount)))
+	b.WriteString(metricCard("报告数", strconv.Itoa(dashboard.Overview.ReportCount)))
+	b.WriteString(metricCard("活跃规则", strconv.Itoa(dashboard.Overview.AlertRuleCount)))
+	b.WriteString(`</div></section>`)
+	b.WriteString(`<section><h2>热点关键词</h2><table><tr><th>关键词</th><th>次数</th><th>跳转</th></tr>`)
+	for _, item := range hotspots {
+		b.WriteString(`<tr><td>`)
+		b.WriteString(html.EscapeString(item.Keyword))
+		b.WriteString(`</td><td>`)
+		b.WriteString(strconv.Itoa(item.Count))
+		b.WriteString(`</td><td><a class="inline" href="/fullsearch/result?searchword=`)
+		b.WriteString(url.QueryEscape(item.Keyword))
+		b.WriteString(`&menuStyle=1&fulltype=8&page=1">全文检索</a></td></tr>`)
+	}
+	if len(hotspots) == 0 {
+		b.WriteString(`<tr><td colspan="3">暂无热点关键词</td></tr>`)
+	}
+	b.WriteString(`</table></section>`)
+	b.WriteString(`<section><h2>最新文章</h2><table><tr><th>标题</th><th>来源</th><th>时间</th><th>入口</th></tr>`)
+	for _, item := range articles.Items {
+		link := "/articles/" + strconv.FormatInt(item.ID, 10) + "?return_to=" + url.QueryEscape(returnTo)
+		b.WriteString(`<tr><td><a class="inline" href="`)
+		b.WriteString(link)
+		b.WriteString(`">`)
+		b.WriteString(html.EscapeString(item.Title))
+		b.WriteString(`</a></td><td>`)
+		b.WriteString(html.EscapeString(nonEmpty(item.FromText, item.SourceType)))
+		b.WriteString(`</td><td>`)
+		b.WriteString(item.CapturedAt.Format("2006-01-02 15:04"))
+		b.WriteString(`</td><td><a class="inline" href="/articles?project_id=`)
+		b.WriteString(strconv.FormatInt(displayBoardProjectID(item, projects), 10))
+		b.WriteString(`">项目文章</a></td></tr>`)
+	}
+	if len(articles.Items) == 0 {
+		b.WriteString(`<tr><td colspan="4">暂无文章</td></tr>`)
+	}
+	b.WriteString(`</table></section>`)
+	b.WriteString(`<section><h2>项目快捷入口</h2><table><tr><th>项目</th><th>项目组</th><th>关键词</th><th>入口</th></tr>`)
+	for _, project := range projects {
+		b.WriteString(`<tr><td><a class="inline" href="/projects/`)
+		b.WriteString(strconv.FormatInt(project.ID, 10))
+		b.WriteString(`">`)
+		b.WriteString(html.EscapeString(project.Name))
+		b.WriteString(`</a></td><td>`)
+		b.WriteString(html.EscapeString(project.GroupName))
+		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(project.Keywords))
+		b.WriteString(`</td><td><a class="inline" href="/monitor/detail/`)
+		b.WriteString(strconv.FormatInt(project.ID, 10))
+		b.WriteString(`?groupid=`)
+		b.WriteString(strconv.FormatInt(project.GroupID, 10))
+		b.WriteString(`&projectid=`)
+		b.WriteString(strconv.FormatInt(project.ID, 10))
+		b.WriteString(`">监测详情</a> <a class="inline" href="/volume?groupid=`)
+		b.WriteString(strconv.FormatInt(project.GroupID, 10))
+		b.WriteString(`&projectid=`)
+		b.WriteString(strconv.FormatInt(project.ID, 10))
+		b.WriteString(`">声量页</a></td></tr>`)
+	}
+	if len(projects) == 0 {
+		b.WriteString(`<tr><td colspan="4">暂无项目</td></tr>`)
+	}
+	b.WriteString(`</table></section>`)
+	b.WriteString(`<section><h2>服务状态</h2><table><tr><th>服务</th><th>状态</th><th>健康检查</th></tr>`)
+	for _, service := range services {
+		b.WriteString(`<tr><td>`)
+		b.WriteString(html.EscapeString(service.Name))
+		b.WriteString(`</td><td>`)
+		if service.Healthy {
+			b.WriteString(`<span class="ok">正常</span>`)
+		} else {
+			b.WriteString(`<span class="bad">异常</span>`)
+		}
+		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(service.Message))
+		b.WriteString(`</td></tr>`)
+	}
+	b.WriteString(`</table></section>`)
+	b.WriteString(`<section><h2>公告与任务</h2><div class="grid"><div><h3>公告</h3><table><tr><th>标题</th><th>时间</th></tr>`)
+	for _, notice := range notices {
+		b.WriteString(`<tr><td>`)
+		b.WriteString(html.EscapeString(notice.Title))
+		b.WriteString(`</td><td>`)
+		b.WriteString(notice.CreatedAt.Format("2006-01-02 15:04"))
+		b.WriteString(`</td></tr>`)
+	}
+	b.WriteString(`</table></div><div><h3>任务记录</h3><table><tr><th>任务</th><th>状态</th><th>说明</th></tr>`)
+	for _, run := range taskRuns {
+		b.WriteString(`<tr><td>`)
+		b.WriteString(html.EscapeString(run.TaskName))
+		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(run.Status))
+		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(run.Message))
+		b.WriteString(`</td></tr>`)
+	}
+	b.WriteString(`</table></div><div><h3>抓取记录</h3><table><tr><th>来源</th><th>状态</th><th>抓取数</th><th>入库数</th></tr>`)
+	for _, run := range crawlRuns {
+		b.WriteString(`<tr><td>`)
+		b.WriteString(html.EscapeString(run.SourceType))
+		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(run.Status))
+		b.WriteString(`</td><td>`)
+		b.WriteString(strconv.Itoa(run.FetchedCount))
+		b.WriteString(`</td><td>`)
+		b.WriteString(strconv.Itoa(run.InsertedCount))
+		b.WriteString(`</td></tr>`)
+	}
+	b.WriteString(`</table></div></div></section>`)
+	_ = s.writeSimplePage(w, "dashboard", "综合看板", b.String())
 }
 
 func (s *Server) handleDisplayBoardCollection2(w http.ResponseWriter, r *http.Request, user any) {
@@ -55,6 +210,26 @@ func (s *Server) handleDisplayBoardCollection2(w http.ResponseWriter, r *http.Re
 		return
 	}
 	writeLegacyStatusJSON(w, http.StatusOK, "ok", map[string]any{"data": items.Items})
+}
+
+func metricCard(label, value string) string {
+	var b strings.Builder
+	b.WriteString(`<div style="padding:14px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2"><span class="muted">`)
+	b.WriteString(html.EscapeString(label))
+	b.WriteString(`</span><strong style="display:block;font-size:28px;margin-top:6px">`)
+	b.WriteString(html.EscapeString(value))
+	b.WriteString(`</strong></div>`)
+	return b.String()
+}
+
+func displayBoardProjectID(item model.Item, projects []model.Project) int64 {
+	if len(projects) == 0 {
+		return 0
+	}
+	if len(item.ProjectIDs) > 0 {
+		return item.ProjectIDs[0]
+	}
+	return projects[0].ID
 }
 
 func (s *Server) handleMobileMonitor(w http.ResponseWriter, r *http.Request, user any) {
