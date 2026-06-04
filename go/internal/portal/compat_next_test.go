@@ -126,12 +126,44 @@ func TestNextCompatRoutes(t *testing.T) {
 		t.Fatalf("expected dist monitor redirect, got %d", distRR.Code)
 	}
 
+	applyPageReq := httptest.NewRequest(http.MethodGet, "/dist/yqapply?openid=o1", nil)
+	applyPageRR := httptest.NewRecorder()
+	srv.handleDistYqApply(applyPageRR, applyPageReq)
+	if applyPageRR.Code != http.StatusOK {
+		t.Fatalf("expected yqapply 200, got %d", applyPageRR.Code)
+	}
+	if !strings.Contains(applyPageRR.Body.String(), `name="openid"`) || !strings.Contains(applyPageRR.Body.String(), `action="/dist/applydatainfo"`) {
+		t.Fatalf("expected yqapply form, got %s", applyPageRR.Body.String())
+	}
+
 	applyReq := httptest.NewRequest(http.MethodPost, "/dist/applydatainfo", strings.NewReader("openid=o1&name=n1"))
 	applyReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	applyRR := httptest.NewRecorder()
 	srv.handleDistApplyDataInfo(applyRR, applyReq)
 	if applyRR.Code != http.StatusOK {
 		t.Fatalf("expected applydatainfo 200, got %d", applyRR.Code)
+	}
+	var applyEnvelope struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+		Data struct {
+			OpenID  string `json:"openid"`
+			Name    string `json:"name"`
+			NextURL string `json:"next_url"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(applyRR.Body.Bytes(), &applyEnvelope); err != nil {
+		t.Fatalf("unmarshal applydatainfo: %v", err)
+	}
+	if applyEnvelope.Code != 200 || applyEnvelope.Data.OpenID != "o1" || applyEnvelope.Data.Name != "n1" || !strings.Contains(applyEnvelope.Data.NextURL, "/dist/getdata?openid=o1") {
+		t.Fatalf("unexpected applydatainfo payload: %+v", applyEnvelope)
+	}
+
+	approvedReq := httptest.NewRequest(http.MethodGet, "/dist/getdata?openid=o1&approved=true", nil)
+	approvedRR := httptest.NewRecorder()
+	srv.handleDistGetData(approvedRR, approvedReq)
+	if approvedRR.Code != http.StatusSeeOther {
+		t.Fatalf("expected approved getdata redirect, got %d", approvedRR.Code)
 	}
 }
 

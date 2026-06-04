@@ -1897,26 +1897,51 @@ func (s *Server) handleDistMonitor(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDistGetData(w http.ResponseWriter, r *http.Request) {
 	openid := strings.TrimSpace(r.URL.Query().Get("openid"))
 	if openid == "" {
-		s.writeSimplePage(w, "userapply", "申请试用", `<h1>申请试用</h1><p>请通过表单提交申请。</p>`)
+		_ = s.writeSimplePage(w, "userapply", "申请试用", `<section><h1>申请试用</h1><p>先填写申请信息，再等待审核开通。</p><p><a href="/dist/yqapply">去填写申请表单</a></p></section>`)
 		return
 	}
 	if strings.EqualFold(r.URL.Query().Get("approved"), "true") {
 		http.Redirect(w, r, "/dist/yqmontitor", http.StatusSeeOther)
 		return
 	}
-	_ = s.writeSimplePage(w, "userapply", "申请试用", `<h1>申请试用</h1><p>openid=`+html.EscapeString(openid)+`</p><p>申请流程已迁移为 Go 兼容页。</p>`)
+	body := `<section><h1>申请试用</h1><p>openid=` + html.EscapeString(openid) + `</p><p>申请信息已收到，等待审核后可跳转监测页。</p><p><a href="/dist/yqapply?openid=` + url.QueryEscape(openid) + `">继续完善申请信息</a></p></section>`
+	_ = s.writeSimplePage(w, "userapply", "申请试用", body)
 }
 
 func (s *Server) handleDistApply(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/dist/yqapply", http.StatusSeeOther)
+	target := "/dist/yqapply"
+	if raw := strings.TrimSpace(r.URL.RawQuery); raw != "" {
+		target += "?" + raw
+	}
+	http.Redirect(w, r, target, http.StatusSeeOther)
 }
 
 func (s *Server) handleDistYqApply(w http.ResponseWriter, r *http.Request) {
-	_ = s.writeSimplePage(w, "userapply", "申请试用", `<h1>申请试用</h1><p>Go 兼容版申请页。</p>`)
+	openid := html.EscapeString(strings.TrimSpace(r.URL.Query().Get("openid")))
+	body := `<section><h1>申请试用</h1><p>Go 兼容版申请页，提交后仍返回 JSON 结果，便于旧前端继续使用。</p><form method="post" action="/dist/applydatainfo"><input name="openid" placeholder="openid" value="` + openid + `"><input name="name" placeholder="姓名"><input name="telephone" placeholder="电话"><input name="industry" placeholder="行业"><input name="company" placeholder="公司"><button type="submit">提交申请</button></form></section>`
+	_ = s.writeSimplePage(w, "userapply", "申请试用", body)
 }
 
 func (s *Server) handleDistApplyDataInfo(w http.ResponseWriter, r *http.Request) {
-	writeJSONText(w, map[string]any{"code": 200})
+	if err := r.ParseForm(); err != nil {
+		writeJSONText(w, map[string]any{"code": 400, "msg": "参数解析失败"})
+		return
+	}
+	openid := strings.TrimSpace(firstNonEmpty(r.FormValue("openid"), r.URL.Query().Get("openid")))
+	name := strings.TrimSpace(r.FormValue("name"))
+	if openid == "" || name == "" {
+		writeJSONText(w, map[string]any{"code": 400, "msg": "openid和姓名不能为空"})
+		return
+	}
+	writeJSONText(w, map[string]any{
+		"code": 200,
+		"msg":  "ok",
+		"data": map[string]any{
+			"openid":   openid,
+			"name":     name,
+			"next_url": "/dist/getdata?openid=" + url.QueryEscape(openid) + "&approved=true",
+		},
+	})
 }
 
 func (s *Server) handleDistYqMonitor(w http.ResponseWriter, r *http.Request) {
