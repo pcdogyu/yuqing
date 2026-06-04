@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -730,6 +731,48 @@ func TestLegacyDataMonitorCompatibility(t *testing.T) {
 	}
 }
 
+func TestPublicOptionCompatPages(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+	user := map[string]any{"id": 1}
+
+	listRR := httptest.NewRecorder()
+	listReq := httptest.NewRequest(http.MethodGet, "/publicoption", nil)
+	srv.handlePublicOptionEntry(listRR, listReq, user)
+	if listRR.Code != http.StatusOK {
+		t.Fatalf("expected publicoption list 200, got %d", listRR.Code)
+	}
+	listBody := listRR.Body.String()
+	if !strings.Contains(listBody, "事件分析任务") || !strings.Contains(listBody, "AI 舆情研判") {
+		t.Fatalf("expected publicoption list content, got %s", listBody)
+	}
+	if !strings.Contains(listBody, "/publicoption/reportdetail/1") {
+		t.Fatalf("expected detail link on publicoption list, got %s", listBody)
+	}
+
+	detailRR := httptest.NewRecorder()
+	detailReq := httptest.NewRequest(http.MethodGet, "/publicoption/reportdetail/1", nil)
+	srv.handlePublicOptionCompat(detailRR, detailReq, user)
+	if detailRR.Code != http.StatusOK {
+		t.Fatalf("expected publicoption detail 200, got %d", detailRR.Code)
+	}
+	detailBody := detailRR.Body.String()
+	if !strings.Contains(detailBody, "事件分析详情") || !strings.Contains(detailBody, "事件脉络内容") {
+		t.Fatalf("expected publicoption detail content, got %s", detailBody)
+	}
+
+	analysisRR := httptest.NewRecorder()
+	analysisReq := httptest.NewRequest(http.MethodGet, "/publicoption/backanalysis", nil)
+	srv.handlePublicOptionCompat(analysisRR, analysisReq, user)
+	if analysisRR.Code != http.StatusOK {
+		t.Fatalf("expected publicoption analysis 200, got %d", analysisRR.Code)
+	}
+	analysisBody := analysisRR.Body.String()
+	if !strings.Contains(analysisBody, "事件分析 - backanalysis") || !strings.Contains(analysisBody, "回溯分析内容") {
+		t.Fatalf("expected publicoption analysis content, got %s", analysisBody)
+	}
+}
+
 func TestLegacySystemAndUserCompat(t *testing.T) {
 	srv := &Server{}
 
@@ -1321,6 +1364,32 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 	opinionConditions := map[int64]model.OpinionCondition{}
 	warningSettings := map[int64]model.WarningSetting{}
 	createdUsers := map[string]model.User{}
+	publicOptions := map[int64]model.PublicOption{
+		1: {
+			ID:                  1,
+			UserID:              1,
+			EventName:           "AI 舆情研判",
+			EventKeywords:       "AI,大模型",
+			EventStopWords:      "无关词",
+			EventStartTime:      "2026-06-01 00:00:00",
+			EventEndTime:        "2026-06-04 23:59:59",
+			CreateTime:          time.Now().UTC().Add(-48 * time.Hour),
+			Updatetime:          time.Now().UTC().Add(-12 * time.Hour),
+			Status:              1,
+			DetailStatus:        1,
+			EmotionalIndex:      "0.76",
+			BackAnalysis:        "回溯分析内容",
+			EventContext:        "事件脉络内容",
+			EventTrace:          "事件跟踪内容",
+			HotAnalysis:         "热点分析内容",
+			NetizensAnalysis:    "网民分析内容",
+			Statistics:          "统计内容",
+			PropagationAnalysis: "传播分析内容",
+			ThematicAnalysis:    "专题分析内容",
+			UnscrambleContent:   "解读内容",
+			ContentAnalysis:     "内容分析内容",
+		},
+	}
 	projectGroups := []model.ProjectGroup{
 		{ID: 1, Name: "组一", Description: "测试项目组", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()},
 	}
@@ -1689,6 +1758,76 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 			warningSettings[id] = setting
 			projectMu.Unlock()
 			writeEnvelope(http.StatusOK, "ok", setting)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/public-options":
+			userID := parseTestInt64(r.URL.Query().Get("user_id"))
+			keyword := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("keyword")))
+			items := make([]model.PublicOption, 0, len(publicOptions))
+			for _, option := range publicOptions {
+				if userID > 0 && option.UserID != userID {
+					continue
+				}
+				if keyword != "" && !strings.Contains(strings.ToLower(option.EventName+" "+option.EventKeywords), keyword) {
+					continue
+				}
+				items = append(items, option)
+			}
+			sort.Slice(items, func(i, j int) bool { return items[i].ID < items[j].ID })
+			writeEnvelope(http.StatusOK, "ok", items)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/public-options":
+			var option model.PublicOption
+			if err := json.NewDecoder(r.Body).Decode(&option); err != nil {
+				writeEnvelope(http.StatusBadRequest, err.Error(), nil)
+				return
+			}
+			projectMu.Lock()
+			option.ID = int64(len(publicOptions) + 1)
+			option.CreateTime = time.Now().UTC()
+			option.Updatetime = option.CreateTime
+			publicOptions[option.ID] = option
+			projectMu.Unlock()
+			writeEnvelope(http.StatusOK, "ok", option)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/public-options/"):
+			id := parseTestInt64(strings.TrimPrefix(r.URL.Path, "/api/v1/public-options/"))
+			projectMu.Lock()
+			option, ok := publicOptions[id]
+			projectMu.Unlock()
+			if !ok {
+				writeEnvelope(http.StatusNotFound, "not found", nil)
+				return
+			}
+			writeEnvelope(http.StatusOK, "ok", option)
+		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/api/v1/public-options/"):
+			id := parseTestInt64(strings.TrimPrefix(r.URL.Path, "/api/v1/public-options/"))
+			var option model.PublicOption
+			if err := json.NewDecoder(r.Body).Decode(&option); err != nil {
+				writeEnvelope(http.StatusBadRequest, err.Error(), nil)
+				return
+			}
+			projectMu.Lock()
+			if _, ok := publicOptions[id]; !ok {
+				projectMu.Unlock()
+				writeEnvelope(http.StatusNotFound, "not found", nil)
+				return
+			}
+			option.ID = id
+			option.CreateTime = publicOptions[id].CreateTime
+			option.Updatetime = time.Now().UTC()
+			publicOptions[id] = option
+			projectMu.Unlock()
+			writeEnvelope(http.StatusOK, "ok", option)
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/public-options/"):
+			id := parseTestInt64(strings.TrimPrefix(r.URL.Path, "/api/v1/public-options/"))
+			projectMu.Lock()
+			_, ok := publicOptions[id]
+			if ok {
+				delete(publicOptions, id)
+			}
+			projectMu.Unlock()
+			if !ok {
+				writeEnvelope(http.StatusNotFound, "not found", nil)
+				return
+			}
+			writeEnvelope(http.StatusOK, "ok", map[string]bool{"deleted": true})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/articles":
 			projectID := parseTestInt64(r.URL.Query().Get("project_id"))
 			items := make([]model.Item, 0, len(articles))
