@@ -47,7 +47,7 @@ func (s *Server) handleCryptoPage(w http.ResponseWriter, r *http.Request, user a
 	}
 
 	var b strings.Builder
-	b.WriteString(`<section><h1>Crypto Insights</h1><p>欢迎，用户 `)
+	b.WriteString(`<section><p>欢迎，用户 `)
 	b.WriteString(fmt.Sprintf("%d", userIDFromMap(user)))
 	b.WriteString(`</p><form method="get" style="display:grid;grid-template-columns:2fr 1fr;gap:12px;align-items:end"><div><label>币对</label><input name="pair" value="`)
 	b.WriteString(html.EscapeString(pair))

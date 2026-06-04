@@ -32,8 +32,6 @@ func (s *Server) handleCrawlTemplatesPage(w http.ResponseWriter, r *http.Request
 	body.WriteString(`<style>
 		input,select,textarea,button{width:100%;padding:12px;margin:8px 0;border-radius:10px;border:1px solid #d0c8b8;box-sizing:border-box}
 		button{background:#214e34;color:#fff;border:none;cursor:pointer}
-		.toolbar{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
-		.toolbar a{display:inline-block;padding:8px 12px;border-radius:999px;background:#efe9dc;color:#214e34;text-decoration:none}
 		.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}
 		.subtle{color:#6a6257}
 		.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
@@ -47,7 +45,7 @@ func (s *Server) handleCrawlTemplatesPage(w http.ResponseWriter, r *http.Request
 		.template-actions button{width:auto;min-width:120px}
 		.template-actions .danger{background:#8f2d2d}
 	</style>`)
-	body.WriteString(`<section><h1>抓取模板管理</h1><p class="subtle">欢迎，用户 `)
+	body.WriteString(`<section><p class="subtle">欢迎，用户 `)
 	body.WriteString(strconv.FormatInt(userIDFromMap(user), 10))
 	body.WriteString(`。这里可以集中维护 X / Telegram / 资讯抓取模板。</p></section>`)
 
