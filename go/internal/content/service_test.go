@@ -255,6 +255,127 @@ func TestArticleEmotionDeleteAndShareHandlers(t *testing.T) {
 	}
 }
 
+func TestHandleCryptoPairResolve(t *testing.T) {
+	svc := NewService(config.Config{}, newContentSearchTestStore(t))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/crypto/pairs/resolve?q=btc/usdt", nil)
+	rr := httptest.NewRecorder()
+
+	svc.handleCryptoPairResolve(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	var envelope struct {
+		Data model.CryptoPairResolution `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal resolve response: %v", err)
+	}
+	if envelope.Data.Pair != "BTCUSDT" || envelope.Data.BaseAsset != "BTC" || envelope.Data.QuoteAsset != "USDT" {
+		t.Fatalf("unexpected resolution: %+v", envelope.Data)
+	}
+}
+
+func TestHandleCryptoNews(t *testing.T) {
+	store := newContentSearchTestStore(t)
+	svc := NewService(config.Config{}, store)
+	now := time.Now().UTC()
+	_, _, err := store.UpsertItems(context.Background(), []model.Item{
+		{
+			SourceType: "headline", SourceKey: "btc-news-1", Title: "Bitcoin ETF approval boosts BTC",
+			Summary: "比特币走强，市场情绪偏多", SourceURL: "https://example.com/1",
+			CapturedAt: now.Add(-2 * time.Hour), CreatedAt: now.Add(-2 * time.Hour), UpdatedAt: now.Add(-2 * time.Hour),
+		},
+		{
+			SourceType: "flash", SourceKey: "btc-news-2", Title: "比特币短线回落，市场担忧监管风险",
+			Summary: "BTC 出现回调", SourceURL: "https://example.com/2",
+			CapturedAt: now.Add(-4 * time.Hour), CreatedAt: now.Add(-4 * time.Hour), UpdatedAt: now.Add(-4 * time.Hour),
+		},
+		{
+			SourceType: "headline", SourceKey: "eth-news-1", Title: "Ethereum ecosystem update",
+			Summary: "ETH 相关新闻", SourceURL: "https://example.com/3",
+			CapturedAt: now.Add(-1 * time.Hour), CreatedAt: now.Add(-1 * time.Hour), UpdatedAt: now.Add(-1 * time.Hour),
+		},
+	})
+	if err != nil {
+		t.Fatalf("UpsertItems error: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/crypto/news?pair=BTCUSDT&page=1&page_size=10", nil)
+	rr := httptest.NewRecorder()
+	svc.handleCryptoNews(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	var envelope struct {
+		Data model.CryptoNewsResult `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal crypto news response: %v", err)
+	}
+	if envelope.Data.Resolution.Pair != "BTCUSDT" {
+		t.Fatalf("unexpected pair resolution: %+v", envelope.Data.Resolution)
+	}
+	if envelope.Data.Total < 2 {
+		t.Fatalf("expected BTC items, got %+v", envelope.Data)
+	}
+	if envelope.Data.Items[0].RelevanceScore < envelope.Data.Items[1].RelevanceScore {
+		t.Fatalf("expected items sorted by score: %+v", envelope.Data.Items)
+	}
+}
+
+func TestHandleCryptoSocial(t *testing.T) {
+	store := newContentSearchTestStore(t)
+	svc := NewService(config.Config{}, store)
+	now := time.Now().UTC()
+	_, _, err := store.UpsertItems(context.Background(), []model.Item{
+		{
+			SourceType: "crypto_x", SourceKey: "btc-social-1", Title: "BTC whale transfer sparks bullish chatter",
+			Content: "X.com traders expect breakout after whale inflow", SourceURL: "https://x.com/example/1",
+			ExternalSourceHost: "x.com", FromText: "@cryptoalpha",
+			CapturedAt: now.Add(-30 * time.Minute), CreatedAt: now.Add(-30 * time.Minute), UpdatedAt: now.Add(-30 * time.Minute),
+		},
+		{
+			SourceType: "crypto_telegram", SourceKey: "btc-social-2", Title: "社区担忧监管风险，BTC 短线承压",
+			Content: "Telegram 社群讨论监管与清算风险", SourceURL: "https://t.me/example/1",
+			ExternalSourceHost: "t.me", FromText: "链上观察员",
+			CapturedAt: now.Add(-90 * time.Minute), CreatedAt: now.Add(-90 * time.Minute), UpdatedAt: now.Add(-90 * time.Minute),
+		},
+		{
+			SourceType: "headline", SourceKey: "btc-news-ignore", Title: "Bitcoin ETF update",
+			Content: "This should not appear in social evidence", SourceURL: "https://example.com/news",
+			CapturedAt: now.Add(-45 * time.Minute), CreatedAt: now.Add(-45 * time.Minute), UpdatedAt: now.Add(-45 * time.Minute),
+		},
+	})
+	if err != nil {
+		t.Fatalf("UpsertItems error: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/crypto/social?pair=BTCUSDT&page=1&page_size=10", nil)
+	rr := httptest.NewRecorder()
+	svc.handleCryptoSocial(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	var envelope struct {
+		Data model.CryptoSocialResult `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal crypto social response: %v", err)
+	}
+	if envelope.Data.Total != 2 {
+		t.Fatalf("expected 2 social items, got %+v", envelope.Data)
+	}
+	if envelope.Data.Items[0].Platform != "X" {
+		t.Fatalf("expected first platform X, got %+v", envelope.Data.Items[0])
+	}
+	if envelope.Data.Items[1].Platform != "Telegram" {
+		t.Fatalf("expected second platform Telegram, got %+v", envelope.Data.Items[1])
+	}
+}
+
 func contextWithRoute(req *http.Request, rctx *chi.Context) context.Context {
 	return context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
 }

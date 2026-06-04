@@ -14,8 +14,14 @@ func TestLoadUsesDefaults(t *testing.T) {
 	t.Setenv("JIN10_FLASH_URL", "")
 	t.Setenv("YUQING_HEADLINE_URL", "")
 	t.Setenv("JIN10_HEADLINE_URL", "")
+	t.Setenv("YUQING_CRYPTO_X_URL", "")
+	t.Setenv("YUQING_CRYPTO_X_TOKEN", "")
+	t.Setenv("YUQING_CRYPTO_TELEGRAM_URL", "")
+	t.Setenv("YUQING_CRYPTO_TELEGRAM_TOKEN", "")
 	t.Setenv("YUQING_HTTP_TIMEOUT_SEC", "")
 	t.Setenv("JIN10_HTTP_TIMEOUT_SEC", "")
+	t.Setenv("YUQING_CRYPTO_X_INTERVAL_SEC", "")
+	t.Setenv("YUQING_CRYPTO_TELEGRAM_INTERVAL_SEC", "")
 	t.Setenv("YUQING_LOG_LEVEL", "")
 	t.Setenv("JIN10_LOG_LEVEL", "")
 
@@ -36,8 +42,14 @@ func TestLoadUsesDefaults(t *testing.T) {
 	if cfg.HeadlineURL != "https://xnews.jin10.com/" {
 		t.Fatalf("expected default headline url, got %q", cfg.HeadlineURL)
 	}
+	if cfg.CryptoXURL != "" || cfg.CryptoTelegramURL != "" {
+		t.Fatalf("expected empty crypto social urls by default, got x=%q tg=%q", cfg.CryptoXURL, cfg.CryptoTelegramURL)
+	}
 	if cfg.HTTPTimeout != 20*time.Second {
 		t.Fatalf("expected default http timeout, got %s", cfg.HTTPTimeout)
+	}
+	if cfg.CryptoXInterval != 90*time.Second || cfg.CryptoTelegramInterval != 90*time.Second {
+		t.Fatalf("expected default social intervals, got x=%s tg=%s", cfg.CryptoXInterval, cfg.CryptoTelegramInterval)
 	}
 	if cfg.LogLevel != "info" {
 		t.Fatalf("expected default log level, got %q", cfg.LogLevel)
@@ -54,10 +66,16 @@ func TestLoadPrefersPrimaryAndAliasEnv(t *testing.T) {
 	t.Setenv("JIN10_FLASH_URL", "https://flash.example.com")
 	t.Setenv("YUQING_HEADLINE_URL", "https://headline.example.com")
 	t.Setenv("JIN10_HEADLINE_URL", "https://ignored.example.com")
+	t.Setenv("YUQING_CRYPTO_X_URL", "https://social.example.com/x")
+	t.Setenv("YUQING_CRYPTO_X_TOKEN", "x-token")
+	t.Setenv("YUQING_CRYPTO_TELEGRAM_URL", "https://social.example.com/tg")
+	t.Setenv("YUQING_CRYPTO_TELEGRAM_TOKEN", "tg-token")
 	t.Setenv("YUQING_HTTP_TIMEOUT_SEC", "45")
 	t.Setenv("JIN10_HTTP_TIMEOUT_SEC", "99")
 	t.Setenv("YUQING_FLASH_INTERVAL_SEC", "")
 	t.Setenv("JIN10_FLASH_INTERVAL_SEC", "33")
+	t.Setenv("YUQING_CRYPTO_X_INTERVAL_SEC", "77")
+	t.Setenv("YUQING_CRYPTO_TELEGRAM_INTERVAL_SEC", "88")
 
 	cfg := Load()
 
@@ -75,6 +93,15 @@ func TestLoadPrefersPrimaryAndAliasEnv(t *testing.T) {
 	}
 	if cfg.FlashInterval != 33*time.Second {
 		t.Fatalf("expected alias flash interval, got %s", cfg.FlashInterval)
+	}
+	if cfg.CryptoXURL != "https://social.example.com/x" || cfg.CryptoXToken != "x-token" {
+		t.Fatalf("expected x config loaded, got url=%q token=%q", cfg.CryptoXURL, cfg.CryptoXToken)
+	}
+	if cfg.CryptoTelegramURL != "https://social.example.com/tg" || cfg.CryptoTelegramToken != "tg-token" {
+		t.Fatalf("expected telegram config loaded, got url=%q token=%q", cfg.CryptoTelegramURL, cfg.CryptoTelegramToken)
+	}
+	if cfg.CryptoXInterval != 77*time.Second || cfg.CryptoTelegramInterval != 88*time.Second {
+		t.Fatalf("expected social intervals loaded, got x=%s tg=%s", cfg.CryptoXInterval, cfg.CryptoTelegramInterval)
 	}
 }
 

@@ -16,6 +16,8 @@ import (
 type stubStore struct {
 	snapshot       model.AnalysisSnapshot
 	snapshotErr    error
+	cryptoSnapshot model.CryptoInsightSnapshot
+	cryptoSnapErr  error
 	dashboard      model.DashboardSnapshot
 	dashboardErr   error
 	trends         []model.TrendPoint
@@ -91,6 +93,22 @@ func (s *stubStore) BuildPublicOpinionEvents(context.Context, int64) ([]model.Pu
 
 func (s *stubStore) BuildPublicOpinionReports(context.Context, int64) ([]model.PublicOpinionReport, error) {
 	return s.opinionReports, s.opinionRptErr
+}
+
+func (s *stubStore) UpsertCryptoCandles(context.Context, string, string, []model.CryptoPriceCandle) error {
+	return nil
+}
+
+func (s *stubStore) ListCryptoCandles(context.Context, string, string, int) ([]model.CryptoPriceCandle, error) {
+	return nil, nil
+}
+
+func (s *stubStore) GetCryptoInsightSnapshot(context.Context, string, string) (model.CryptoInsightSnapshot, error) {
+	return s.cryptoSnapshot, s.cryptoSnapErr
+}
+
+func (s *stubStore) UpsertCryptoInsightSnapshot(context.Context, model.CryptoInsightSnapshot) error {
+	return nil
 }
 
 func (s *stubStore) RecordTaskRun(_ context.Context, name, status, _ string, _ time.Time, _ *time.Time) error {

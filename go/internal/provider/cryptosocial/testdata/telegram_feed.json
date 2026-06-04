@@ -1,0 +1,19 @@
+{
+  "messages": [
+    {
+      "url": "https://t.me/cryptodesk/5001",
+      "message": "Community discusses BTC short-term pullback after regulation headlines.",
+      "channel": "cryptodesk",
+      "created_at": "2026-06-04 10:08:00",
+      "tickers": ["BTC", "USDT"]
+    },
+    {
+      "url": "https://t.me/alpha_alerts/5002",
+      "message": "ETF inflow watch remains strong and dip buyers are active on BTC.",
+      "channel": "alpha_alerts",
+      "created_at": "2026-06-04 10:12:00",
+      "tags": ["BTC", "ETF", "FLOW"],
+      "photo": true
+    }
+  ]
+}

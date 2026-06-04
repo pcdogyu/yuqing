@@ -55,7 +55,45 @@ func TestValidSourceType(t *testing.T) {
 	if got := validSourceType(provider.SourceTypeHeadline); got != provider.SourceTypeHeadline {
 		t.Fatalf("expected headline source type, got %q", got)
 	}
+	if got := validSourceType(provider.SourceTypeCryptoX); got != provider.SourceTypeCryptoX {
+		t.Fatalf("expected crypto x source type, got %q", got)
+	}
+	if got := validSourceType(provider.SourceTypeCryptoTelegram); got != provider.SourceTypeCryptoTelegram {
+		t.Fatalf("expected crypto telegram source type, got %q", got)
+	}
 	if got := validSourceType("other"); got != "" {
 		t.Fatalf("expected empty string for invalid source type, got %q", got)
+	}
+}
+
+func TestHandleRunCrawlRejectsInvalidSourceType(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/crawl/run?source_type=other", nil)
+
+	(&Server{}).handleRunCrawl(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", recorder.Code)
+	}
+
+	var payload struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode response body: %v", err)
+	}
+	if payload.Message != "invalid source_type" {
+		t.Fatalf("expected invalid source_type message, got %q", payload.Message)
+	}
+}
+
+func TestHandleRunCrawlRejectsInvalidTemplateID(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/crawl/run?template_id=abc", nil)
+
+	(&Server{}).handleRunCrawl(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", recorder.Code)
 	}
 }

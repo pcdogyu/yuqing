@@ -24,6 +24,12 @@ func TestValidSourceType(t *testing.T) {
 	if got := validSourceType("headline"); got != "headline" {
 		t.Fatalf("expected headline, got %q", got)
 	}
+	if got := validSourceType("crypto_x"); got != "crypto_x" {
+		t.Fatalf("expected crypto_x, got %q", got)
+	}
+	if got := validSourceType("crypto_telegram"); got != "crypto_telegram" {
+		t.Fatalf("expected crypto_telegram, got %q", got)
+	}
 	if got := validSourceType("other"); got != "" {
 		t.Fatalf("expected empty source type, got %q", got)
 	}
@@ -102,6 +108,52 @@ func TestTemplateEndpoints(t *testing.T) {
 	}
 	if !bytes.Contains(runsRR.Body.Bytes(), []byte("模板一")) || bytes.Contains(runsRR.Body.Bytes(), []byte("模板二")) {
 		t.Fatalf("expected filtered template runs, got %s", runsRR.Body.String())
+	}
+}
+
+func TestHandleRunCrawlRejectsInvalidSourceType(t *testing.T) {
+	svc := &Service{cfg: config.Config{ServiceToken: "test-token"}}
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/tasks/crawl?source_type=other", nil)
+	req.Header.Set("X-Service-Token", "test-token")
+
+	svc.handleRunCrawl(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", recorder.Code)
+	}
+
+	var payload struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode response body: %v", err)
+	}
+	if payload.Message != "invalid source_type" {
+		t.Fatalf("expected invalid source_type message, got %q", payload.Message)
+	}
+}
+
+func TestHandleRunCrawlRejectsInvalidTemplateID(t *testing.T) {
+	svc := &Service{cfg: config.Config{ServiceToken: "test-token"}}
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/tasks/crawl?template_id=abc", nil)
+	req.Header.Set("X-Service-Token", "test-token")
+
+	svc.handleRunCrawl(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", recorder.Code)
+	}
+
+	var payload struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode response body: %v", err)
+	}
+	if payload.Message != "invalid template_id" {
+		t.Fatalf("expected invalid template_id message, got %q", payload.Message)
 	}
 }
 

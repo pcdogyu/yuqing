@@ -139,8 +139,19 @@ func (c *Crawler) Run(ctx context.Context, sourceType string) (model.CrawlSummar
 	return summary, nil
 }
 
+func (c *Crawler) RunTemplateByID(ctx context.Context, templateID int64, keyword string) (model.CrawlSummary, error) {
+	tpl, err := c.store.GetCrawlTemplate(ctx, templateID)
+	if err != nil {
+		return model.CrawlSummary{}, err
+	}
+	if !tpl.Enabled {
+		return model.CrawlSummary{}, errors.New("crawl template disabled")
+	}
+	return c.RunTemplate(ctx, tpl, keyword)
+}
+
 func (c *Crawler) RunAll(ctx context.Context) ([]model.CrawlSummary, error) {
-	summaries := make([]model.CrawlSummary, 0, 2)
+	summaries := make([]model.CrawlSummary, 0, 4)
 	for _, prov := range c.providers.All() {
 		if prov == nil {
 			continue

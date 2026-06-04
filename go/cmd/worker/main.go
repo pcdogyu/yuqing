@@ -13,6 +13,7 @@ import (
 	"github.com/stonedt-yuqing/go-jin10/internal/config"
 	"github.com/stonedt-yuqing/go-jin10/internal/logging"
 	"github.com/stonedt-yuqing/go-jin10/internal/provider"
+	"github.com/stonedt-yuqing/go-jin10/internal/provider/cryptosocial"
 	"github.com/stonedt-yuqing/go-jin10/internal/provider/jin10flash"
 	"github.com/stonedt-yuqing/go-jin10/internal/provider/jin10xnews"
 	"github.com/stonedt-yuqing/go-jin10/internal/service"
@@ -35,16 +36,29 @@ func main() {
 		SetRetryCount(2).
 		SetHeader("User-Agent", cfg.UserAgent)
 
-	crawler := service.NewCrawler(store, provider.Registry{
+	registry := provider.Registry{
 		Flash:    jin10flash.NewProvider(httpClient, cfg.FlashURL),
 		Headline: jin10xnews.NewProvider(httpClient, cfg.HeadlineURL),
-	}, nil)
+	}
+	if cfg.CryptoXURL != "" {
+		registry.CryptoX = cryptosocial.NewXProvider(httpClient, cfg.CryptoXURL, cfg.CryptoXToken)
+	}
+	if cfg.CryptoTelegramURL != "" {
+		registry.CryptoTelegram = cryptosocial.NewTelegramProvider(httpClient, cfg.CryptoTelegramURL, cfg.CryptoTelegramToken)
+	}
+	crawler := service.NewCrawler(store, registry, nil)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
 	go runLoop(ctx, crawler, provider.SourceTypeFlash, cfg.FlashInterval)
 	go runLoop(ctx, crawler, provider.SourceTypeHeadline, cfg.HeadlineInterval)
+	if cfg.CryptoXURL != "" {
+		go runLoop(ctx, crawler, provider.SourceTypeCryptoX, cfg.CryptoXInterval)
+	}
+	if cfg.CryptoTelegramURL != "" {
+		go runLoop(ctx, crawler, provider.SourceTypeCryptoTelegram, cfg.CryptoTelegramInterval)
+	}
 
 	<-ctx.Done()
 	log.Info().Msg("worker stopped")

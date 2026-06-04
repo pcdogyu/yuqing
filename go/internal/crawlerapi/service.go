@@ -3,6 +3,8 @@ package crawlerapi
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -51,7 +53,27 @@ func (s *Service) handleRunCrawl(w http.ResponseWriter, r *http.Request) {
 		apiutil.WriteJSON(w, http.StatusUnauthorized, "unauthorized", nil)
 		return
 	}
-	sourceType := validSourceType(r.URL.Query().Get("source_type"))
+	templateID, templateIDProvided, templateIDInvalid := int64Query(r, "template_id")
+	if templateIDInvalid {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid template_id", nil)
+		return
+	}
+	rawSourceType := strings.TrimSpace(r.URL.Query().Get("source_type"))
+	sourceType := validSourceType(rawSourceType)
+	if rawSourceType != "" && sourceType == "" {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid source_type", nil)
+		return
+	}
+	if templateIDProvided {
+		keyword := strings.TrimSpace(r.URL.Query().Get("keyword"))
+		summary, err := s.crawler.RunTemplateByID(r.Context(), templateID, keyword)
+		if err != nil {
+			apiutil.WriteJSON(w, http.StatusBadGateway, err.Error(), summary)
+			return
+		}
+		apiutil.WriteJSON(w, http.StatusOK, "ok", summary)
+		return
+	}
 	if sourceType == "" {
 		summaries, err := s.crawler.RunAll(r.Context())
 		if err != nil {
@@ -127,10 +149,17 @@ func (s *Service) handlePreviewTemplate(w http.ResponseWriter, r *http.Request) 
 }
 
 func validSourceType(value string) string {
-	switch value {
-	case provider.SourceTypeFlash, provider.SourceTypeHeadline:
-		return value
-	default:
-		return ""
+	return provider.ValidSourceType(value)
+}
+
+func int64Query(r *http.Request, key string) (int64, bool, bool) {
+	raw := strings.TrimSpace(r.URL.Query().Get(key))
+	if raw == "" {
+		return 0, false, false
 	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || value <= 0 {
+		return 0, true, true
+	}
+	return value, true, false
 }

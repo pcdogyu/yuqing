@@ -10,6 +10,35 @@ Go 版已经从早期 `jin10` 采集骨架收敛为一套可运行的一期多�
 - `scheduler-service`：定时触发抓取和分析刷新
 - `nlp-service`：轻量标题/摘要/关键词生成
 
+## Crypto 社媒接入
+
+系统已支持 `crypto_x` 和 `crypto_telegram` 两个外部社媒抓取源。你可以接自己的代理层，也可以先用仓库内 mock 服务联调。
+
+快速联调：
+
+```powershell
+cd D:\yuqing\go
+powershell -ExecutionPolicy Bypass -File .\scripts\mock-crypto-social.ps1
+```
+
+另开一个终端配置：
+
+```powershell
+$env:YUQING_CRYPTO_X_URL = "http://127.0.0.1:19090/mock/x"
+$env:YUQING_CRYPTO_TELEGRAM_URL = "http://127.0.0.1:19090/mock/telegram"
+$env:YUQING_CRYPTO_X_INTERVAL_SEC = "90"
+$env:YUQING_CRYPTO_TELEGRAM_INTERVAL_SEC = "90"
+```
+
+然后启动 `worker` 或直接调用：
+
+```powershell
+Invoke-WebRequest -Method Post "http://127.0.0.1:8083/api/v1/admin/tasks/crawl?source_type=crypto_x" -Headers @{"X-Service-Token"="stonedt-internal-token"}
+Invoke-WebRequest -Method Post "http://127.0.0.1:8083/api/v1/admin/tasks/crawl?source_type=crypto_telegram" -Headers @{"X-Service-Token"="stonedt-internal-token"}
+```
+
+对接字段和返回格式说明见 [docs/crypto-social-proxy.md](docs/crypto-social-proxy.md)。
+
 ## 默认端口
 
 - `gateway-web`: `80`
@@ -74,6 +103,8 @@ http://127.0.0.1
 - `POST /api/v1/admin/tasks/crawl`
 - `GET /api/v1/admin/tasks/crawl/runs`
 - `POST /api/v1/admin/tasks/analysis/refresh`
+- `GET /api/v1/crypto/social`
+- `GET /api/v1/crypto/insights`
 
 ## 已完成的一期范围
 

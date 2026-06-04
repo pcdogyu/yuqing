@@ -371,6 +371,87 @@ func TestVolumePageCompat(t *testing.T) {
 	}
 }
 
+func TestCrawlTemplatesPage(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/crawl-templates", nil)
+	rr := httptest.NewRecorder()
+	srv.handleCrawlTemplatesPage(rr, req, map[string]any{"id": 7})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "抓取模板管理") || !strings.Contains(body, "X BTC 热门账号模板") {
+		t.Fatalf("expected template management page content, got %s", body)
+	}
+	if !strings.Contains(body, "/crawl-templates") {
+		t.Fatalf("expected crawl-templates nav link, got %s", body)
+	}
+
+	createForm := url.Values{
+		"action":      {"create"},
+		"name":        {"BTC 资讯模板"},
+		"source_type": {"crypto_x"},
+		"config_json": {`{"source_type":"crypto_x","base_url":"https://example.com"}`},
+	}
+	createReq := httptest.NewRequest(http.MethodPost, "/crawl-templates", strings.NewReader(createForm.Encode()))
+	createReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	createRR := httptest.NewRecorder()
+	srv.handleCrawlTemplatesPage(createRR, createReq, map[string]any{"id": 7})
+	if createRR.Code != http.StatusSeeOther {
+		t.Fatalf("expected create redirect, got %d", createRR.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/crawl-templates", nil)
+	rr = httptest.NewRecorder()
+	srv.handleCrawlTemplatesPage(rr, req, map[string]any{"id": 7})
+	if !strings.Contains(rr.Body.String(), "BTC 资讯模板") {
+		t.Fatalf("expected created template to render, got %s", rr.Body.String())
+	}
+
+	updateForm := url.Values{
+		"action":      {"update"},
+		"template_id": {"1"},
+		"name":        {"X BTC 热门账号模板 - 停用"},
+		"source_type": {"crypto_x"},
+		"config_json": {`{"source_type":"crypto_x","base_url":"https://example.com/updated"}`},
+	}
+	updateReq := httptest.NewRequest(http.MethodPost, "/crawl-templates", strings.NewReader(updateForm.Encode()))
+	updateReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	updateRR := httptest.NewRecorder()
+	srv.handleCrawlTemplatesPage(updateRR, updateReq, map[string]any{"id": 7})
+	if updateRR.Code != http.StatusSeeOther {
+		t.Fatalf("expected update redirect, got %d", updateRR.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/crawl-templates", nil)
+	rr = httptest.NewRecorder()
+	srv.handleCrawlTemplatesPage(rr, req, map[string]any{"id": 7})
+	if !strings.Contains(rr.Body.String(), "X BTC 热门账号模板 - 停用") {
+		t.Fatalf("expected updated template name to render, got %s", rr.Body.String())
+	}
+
+	deleteForm := url.Values{
+		"action":      {"delete"},
+		"template_id": {"3"},
+	}
+	deleteReq := httptest.NewRequest(http.MethodPost, "/crawl-templates", strings.NewReader(deleteForm.Encode()))
+	deleteReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	deleteRR := httptest.NewRecorder()
+	srv.handleCrawlTemplatesPage(deleteRR, deleteReq, map[string]any{"id": 7})
+	if deleteRR.Code != http.StatusSeeOther {
+		t.Fatalf("expected delete redirect, got %d", deleteRR.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/crawl-templates", nil)
+	rr = httptest.NewRecorder()
+	srv.handleCrawlTemplatesPage(rr, req, map[string]any{"id": 7})
+	if strings.Contains(rr.Body.String(), "Telegram 交易所公告模板") {
+		t.Fatalf("expected deleted template to disappear, got %s", rr.Body.String())
+	}
+}
+
 func TestMobileMonitorCompat(t *testing.T) {
 	srv, cleanup := newPortalCompatServer(t)
 	defer cleanup()
@@ -1604,8 +1685,26 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 			CreatedAt:  time.Now().UTC().Add(-72 * time.Hour),
 			UpdatedAt:  time.Now().UTC().Add(-6 * time.Hour),
 		},
+		{
+			ID:         2,
+			Name:       "X BTC 热门账号模板",
+			SourceType: "crypto_x",
+			Enabled:    true,
+			ConfigJSON: `{"source_type":"crypto_x"}`,
+			CreatedAt:  time.Now().UTC().Add(-48 * time.Hour),
+			UpdatedAt:  time.Now().UTC().Add(-12 * time.Hour),
+		},
+		{
+			ID:         3,
+			Name:       "Telegram 交易所公告模板",
+			SourceType: "crypto_telegram",
+			Enabled:    true,
+			ConfigJSON: `{"source_type":"crypto_telegram"}`,
+			CreatedAt:  time.Now().UTC().Add(-24 * time.Hour),
+			UpdatedAt:  time.Now().UTC().Add(-2 * time.Hour),
+		},
 	}
-	nextTemplateID := int64(2)
+	nextCrawlTemplateID := int64(4)
 	projectGroups := []model.ProjectGroup{
 		{ID: 1, Name: "组一", Description: "测试项目组", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()},
 	}
@@ -1825,6 +1924,70 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 			items := append([]model.Project(nil), projects...)
 			projectMu.Unlock()
 			writeEnvelope(http.StatusOK, "ok", items)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/crawl-templates":
+			writeEnvelope(http.StatusOK, "ok", crawlTemplates)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/crawl-templates/1":
+			writeEnvelope(http.StatusOK, "ok", crawlTemplates[0])
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/crawl-templates/2":
+			writeEnvelope(http.StatusOK, "ok", crawlTemplates[1])
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/crawl-templates":
+			var tpl model.CrawlTemplate
+			if err := json.NewDecoder(r.Body).Decode(&tpl); err != nil {
+				writeEnvelope(http.StatusBadRequest, err.Error(), nil)
+				return
+			}
+			if tpl.ConfigJSON == "" {
+				tpl.ConfigJSON = "{}"
+			}
+			now := time.Now().UTC()
+			tpl.ID = nextCrawlTemplateID
+			nextCrawlTemplateID++
+			tpl.Enabled = true
+			tpl.CreatedAt = now
+			tpl.UpdatedAt = now
+			crawlTemplates = append([]model.CrawlTemplate{tpl}, crawlTemplates...)
+			writeEnvelope(http.StatusOK, "ok", tpl)
+		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/api/v1/crawl-templates/"):
+			id := parseTestInt64(strings.TrimPrefix(r.URL.Path, "/api/v1/crawl-templates/"))
+			var tpl model.CrawlTemplate
+			if err := json.NewDecoder(r.Body).Decode(&tpl); err != nil {
+				writeEnvelope(http.StatusBadRequest, err.Error(), nil)
+				return
+			}
+			updated := false
+			for idx := range crawlTemplates {
+				if crawlTemplates[idx].ID != id {
+					continue
+				}
+				tpl.ID = id
+				tpl.CreatedAt = crawlTemplates[idx].CreatedAt
+				tpl.UpdatedAt = time.Now().UTC()
+				crawlTemplates[idx] = tpl
+				updated = true
+				break
+			}
+			if !updated {
+				writeEnvelope(http.StatusNotFound, "not found", nil)
+				return
+			}
+			writeEnvelope(http.StatusOK, "ok", tpl)
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/crawl-templates/"):
+			id := parseTestInt64(strings.TrimPrefix(r.URL.Path, "/api/v1/crawl-templates/"))
+			kept := crawlTemplates[:0]
+			removed := false
+			for _, tpl := range crawlTemplates {
+				if tpl.ID == id {
+					removed = true
+					continue
+				}
+				kept = append(kept, tpl)
+			}
+			crawlTemplates = kept
+			if !removed {
+				writeEnvelope(http.StatusNotFound, "not found", nil)
+				return
+			}
+			writeEnvelope(http.StatusOK, "ok", map[string]bool{"deleted": true})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/projects":
 			var project model.Project
 			if err := json.NewDecoder(r.Body).Decode(&project); err != nil {
@@ -2059,8 +2222,8 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 				tpl.ConfigJSON = "{}"
 			}
 			crawlTemplatesMu.Lock()
-			tpl.ID = nextTemplateID
-			nextTemplateID++
+			tpl.ID = nextCrawlTemplateID
+			nextCrawlTemplateID++
 			tpl.CreatedAt = time.Now().UTC()
 			tpl.UpdatedAt = tpl.CreatedAt
 			crawlTemplates = append(crawlTemplates, tpl)

@@ -414,6 +414,29 @@ CREATE TABLE IF NOT EXISTS item_shares (
 	PRIMARY KEY (user_id, item_id, channel)
 );
 
+CREATE TABLE IF NOT EXISTS crypto_price_candles (
+	symbol TEXT NOT NULL,
+	interval TEXT NOT NULL,
+	open_time TEXT NOT NULL,
+	open REAL NOT NULL DEFAULT 0,
+	high REAL NOT NULL DEFAULT 0,
+	low REAL NOT NULL DEFAULT 0,
+	close REAL NOT NULL DEFAULT 0,
+	volume REAL NOT NULL DEFAULT 0,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	PRIMARY KEY (symbol, interval, open_time)
+);
+
+CREATE TABLE IF NOT EXISTS crypto_insight_snapshots (
+	pair TEXT NOT NULL,
+	horizon_set TEXT NOT NULL,
+	payload TEXT NOT NULL,
+	computed_at TEXT NOT NULL,
+	expires_at TEXT NOT NULL,
+	PRIMARY KEY (pair, horizon_set)
+);
+
 CREATE TABLE IF NOT EXISTS task_runs (
 	id INTEGER PRIMARY KEY,
 	task_name TEXT NOT NULL,
@@ -470,6 +493,8 @@ CREATE INDEX IF NOT EXISTS idx_keyword_hotspots_scope ON keyword_hotspots(scope,
 CREATE INDEX IF NOT EXISTS idx_source_breakdowns_scope ON source_breakdowns(scope, scope_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_popup_states_user_id ON popup_states(user_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_item_shares_item_id ON item_shares(item_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_crypto_price_candles_lookup ON crypto_price_candles(symbol, interval, open_time DESC);
+CREATE INDEX IF NOT EXISTS idx_crypto_insight_snapshots_expiry ON crypto_insight_snapshots(expires_at, pair);
 CREATE INDEX IF NOT EXISTS idx_wechat_challenges_expires_at ON wechat_challenges(expires_at);
 CREATE INDEX IF NOT EXISTS idx_wechat_bindings_openid ON wechat_bindings(openid);
 CREATE INDEX IF NOT EXISTS idx_public_options_user_updated ON public_options(user_id, updatetime DESC, id DESC);

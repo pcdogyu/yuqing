@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-resty/resty/v2"
 
 	"github.com/stonedt-yuqing/go-jin10/internal/apiutil"
 	"github.com/stonedt-yuqing/go-jin10/internal/config"
@@ -28,16 +29,28 @@ type Store interface {
 	BuildThemeInsights(ctx context.Context, projectID int64) ([]model.ThemeInsight, error)
 	BuildPublicOpinionEvents(ctx context.Context, projectID int64) ([]model.PublicOpinionEvent, error)
 	BuildPublicOpinionReports(ctx context.Context, projectID int64) ([]model.PublicOpinionReport, error)
+	UpsertCryptoCandles(ctx context.Context, symbol, interval string, candles []model.CryptoPriceCandle) error
+	ListCryptoCandles(ctx context.Context, symbol, interval string, limit int) ([]model.CryptoPriceCandle, error)
+	GetCryptoInsightSnapshot(ctx context.Context, pair, horizonSet string) (model.CryptoInsightSnapshot, error)
+	UpsertCryptoInsightSnapshot(ctx context.Context, snapshot model.CryptoInsightSnapshot) error
 	RecordTaskRun(ctx context.Context, name, status, message string, startedAt time.Time, finishedAt *time.Time) error
 }
 
 type Service struct {
-	cfg   config.Config
-	store Store
+	cfg    config.Config
+	store  Store
+	client *resty.Client
 }
 
 func NewService(cfg config.Config, store Store) *Service {
-	return &Service{cfg: cfg, store: store}
+	return &Service{
+		cfg:   cfg,
+		store: store,
+		client: resty.New().
+			SetTimeout(cfg.HTTPTimeout).
+			SetHeader("X-Service-Token", cfg.ServiceToken).
+			SetHeader("User-Agent", cfg.UserAgent),
+	}
 }
 
 func (s *Service) Router() http.Handler {
@@ -53,6 +66,7 @@ func (s *Service) Router() http.Handler {
 	r.Get("/api/v1/analysis/themes", s.handleThemes)
 	r.Get("/api/v1/public-opinion/events", s.handlePublicOpinionEvents)
 	r.Get("/api/v1/public-opinion/reports", s.handlePublicOpinionReports)
+	r.Get("/api/v1/crypto/insights", s.handleCryptoInsights)
 	r.Post("/api/v1/admin/tasks/analysis/refresh", s.handleRefresh)
 	return r
 }

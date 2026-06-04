@@ -12,6 +12,7 @@ import (
 
 	"github.com/stonedt-yuqing/go-jin10/internal/config"
 	"github.com/stonedt-yuqing/go-jin10/internal/provider"
+	"github.com/stonedt-yuqing/go-jin10/internal/provider/cryptosocial"
 	"github.com/stonedt-yuqing/go-jin10/internal/provider/jin10flash"
 	"github.com/stonedt-yuqing/go-jin10/internal/provider/jin10xnews"
 	"github.com/stonedt-yuqing/go-jin10/internal/service"
@@ -45,10 +46,17 @@ func NewCrawler(cfg config.Config, store *sqlitestore.Store) *service.Crawler {
 		SetTimeout(cfg.HTTPTimeout).
 		SetRetryCount(2).
 		SetHeader("User-Agent", cfg.UserAgent)
-	return service.NewCrawler(store, provider.Registry{
+	registry := provider.Registry{
 		Flash:    jin10flash.NewProvider(httpClient, cfg.FlashURL),
 		Headline: jin10xnews.NewProvider(httpClient, cfg.HeadlineURL),
-	}, nil)
+	}
+	if cfg.CryptoXURL != "" {
+		registry.CryptoX = cryptosocial.NewXProvider(httpClient, cfg.CryptoXURL, cfg.CryptoXToken)
+	}
+	if cfg.CryptoTelegramURL != "" {
+		registry.CryptoTelegram = cryptosocial.NewTelegramProvider(httpClient, cfg.CryptoTelegramURL, cfg.CryptoTelegramToken)
+	}
+	return service.NewCrawler(store, registry, nil)
 }
 
 func LogStartup(serviceName, listenAddr string, cfg config.Config) {
@@ -65,6 +73,8 @@ func LogStartup(serviceName, listenAddr string, cfg config.Config) {
 		Dur("http_timeout", cfg.HTTPTimeout).
 		Dur("flash_interval", cfg.FlashInterval).
 		Dur("headline_interval", cfg.HeadlineInterval).
+		Dur("crypto_x_interval", cfg.CryptoXInterval).
+		Dur("crypto_telegram_interval", cfg.CryptoTelegramInterval).
 		Dur("analysis_interval", cfg.AnalysisInterval).
 		Dur("session_ttl", cfg.SessionTTL).
 		Str("database_path", cfg.DatabasePath).
@@ -73,12 +83,17 @@ func LogStartup(serviceName, listenAddr string, cfg config.Config) {
 		Bool("database_file_exists", fileExists(cfg.DatabasePath)).
 		Str("flash_url", cfg.FlashURL).
 		Str("headline_url", cfg.HeadlineURL).
+		Str("binance_base_url", cfg.BinanceBaseURL).
+		Str("crypto_x_url", cfg.CryptoXURL).
+		Str("crypto_telegram_url", cfg.CryptoTelegramURL).
 		Str("gateway_web_url", cfg.GatewayWebURL).
 		Str("auth_url", cfg.AuthURL).
 		Str("content_url", cfg.ContentURL).
 		Str("crawler_url", cfg.CrawlerURL).
 		Str("analysis_url", cfg.AnalysisURL).
 		Str("nlp_url", cfg.NLPURL).
+		Str("llm_base_url", cfg.LLMBaseURL).
+		Str("llm_model", cfg.LLMModel).
 		Str("generated_at", time.Now().UTC().Format(time.RFC3339))
 	event.Msg("startup debug info")
 }

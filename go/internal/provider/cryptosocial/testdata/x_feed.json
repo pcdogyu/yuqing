@@ -1,0 +1,20 @@
+{
+  "items": [
+    {
+      "url": "https://x.com/cryptoalpha/status/1001",
+      "content": "BTC ETF approval chatter grows and traders expect breakout toward 110k.",
+      "author": "@cryptoalpha",
+      "created_at": "2026-06-04T10:00:00Z",
+      "tags": ["BTC", "USDT", "ETF"],
+      "has_image": true
+    },
+    {
+      "url": "https://x.com/onchainwatch/status/1002",
+      "content": "Large BTC whale inflow detected on Binance, market sentiment turns bullish.",
+      "author": "@onchainwatch",
+      "created_at": "2026-06-04T10:06:00Z",
+      "symbols": ["BTCUSDT", "BTC"],
+      "summary": "Whale inflow alert"
+    }
+  ]
+}
