@@ -375,7 +375,7 @@ func TestCrawlTemplatesPage(t *testing.T) {
 	srv, cleanup := newPortalCompatServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/crawl-templates", nil)
+	req := httptest.NewRequest(http.MethodGet, "/crawl-templates/manage", nil)
 	rr := httptest.NewRecorder()
 	srv.handleCrawlTemplatesPage(rr, req, map[string]any{"id": 7})
 	if rr.Code != http.StatusOK {
@@ -385,8 +385,8 @@ func TestCrawlTemplatesPage(t *testing.T) {
 	if !strings.Contains(body, "抓取模板管理") || !strings.Contains(body, "X BTC 热门账号模板") {
 		t.Fatalf("expected template management page content, got %s", body)
 	}
-	if !strings.Contains(body, "/crawl-templates") {
-		t.Fatalf("expected crawl-templates nav link, got %s", body)
+	if !strings.Contains(body, "/crawl-templates/manage") {
+		t.Fatalf("expected crawl-templates manage nav link, got %s", body)
 	}
 
 	createForm := url.Values{
@@ -395,7 +395,7 @@ func TestCrawlTemplatesPage(t *testing.T) {
 		"source_type": {"crypto_x"},
 		"config_json": {`{"source_type":"crypto_x","base_url":"https://example.com"}`},
 	}
-	createReq := httptest.NewRequest(http.MethodPost, "/crawl-templates", strings.NewReader(createForm.Encode()))
+	createReq := httptest.NewRequest(http.MethodPost, "/crawl-templates/manage", strings.NewReader(createForm.Encode()))
 	createReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	createRR := httptest.NewRecorder()
 	srv.handleCrawlTemplatesPage(createRR, createReq, map[string]any{"id": 7})
@@ -403,7 +403,7 @@ func TestCrawlTemplatesPage(t *testing.T) {
 		t.Fatalf("expected create redirect, got %d", createRR.Code)
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/crawl-templates", nil)
+	req = httptest.NewRequest(http.MethodGet, "/crawl-templates/manage", nil)
 	rr = httptest.NewRecorder()
 	srv.handleCrawlTemplatesPage(rr, req, map[string]any{"id": 7})
 	if !strings.Contains(rr.Body.String(), "BTC 资讯模板") {
@@ -417,7 +417,7 @@ func TestCrawlTemplatesPage(t *testing.T) {
 		"source_type": {"crypto_x"},
 		"config_json": {`{"source_type":"crypto_x","base_url":"https://example.com/updated"}`},
 	}
-	updateReq := httptest.NewRequest(http.MethodPost, "/crawl-templates", strings.NewReader(updateForm.Encode()))
+	updateReq := httptest.NewRequest(http.MethodPost, "/crawl-templates/manage", strings.NewReader(updateForm.Encode()))
 	updateReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	updateRR := httptest.NewRecorder()
 	srv.handleCrawlTemplatesPage(updateRR, updateReq, map[string]any{"id": 7})
@@ -425,7 +425,7 @@ func TestCrawlTemplatesPage(t *testing.T) {
 		t.Fatalf("expected update redirect, got %d", updateRR.Code)
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/crawl-templates", nil)
+	req = httptest.NewRequest(http.MethodGet, "/crawl-templates/manage", nil)
 	rr = httptest.NewRecorder()
 	srv.handleCrawlTemplatesPage(rr, req, map[string]any{"id": 7})
 	if !strings.Contains(rr.Body.String(), "X BTC 热门账号模板 - 停用") {
@@ -436,7 +436,7 @@ func TestCrawlTemplatesPage(t *testing.T) {
 		"action":      {"delete"},
 		"template_id": {"3"},
 	}
-	deleteReq := httptest.NewRequest(http.MethodPost, "/crawl-templates", strings.NewReader(deleteForm.Encode()))
+	deleteReq := httptest.NewRequest(http.MethodPost, "/crawl-templates/manage", strings.NewReader(deleteForm.Encode()))
 	deleteReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	deleteRR := httptest.NewRecorder()
 	srv.handleCrawlTemplatesPage(deleteRR, deleteReq, map[string]any{"id": 7})
@@ -444,7 +444,7 @@ func TestCrawlTemplatesPage(t *testing.T) {
 		t.Fatalf("expected delete redirect, got %d", deleteRR.Code)
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/crawl-templates", nil)
+	req = httptest.NewRequest(http.MethodGet, "/crawl-templates/manage", nil)
 	rr = httptest.NewRecorder()
 	srv.handleCrawlTemplatesPage(rr, req, map[string]any{"id": 7})
 	if strings.Contains(rr.Body.String(), "Telegram 交易所公告模板") {
