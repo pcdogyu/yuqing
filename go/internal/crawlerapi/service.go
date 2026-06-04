@@ -72,10 +72,20 @@ func (s *Service) handleRunCrawl(w http.ResponseWriter, r *http.Request) {
 func (s *Service) handleRuns(w http.ResponseWriter, r *http.Request) {
 	limit := apiutil.IntQuery(r, "limit", 20)
 	sourceType := validSourceType(r.URL.Query().Get("source_type"))
+	templateID := apiutil.IntQuery(r, "template_id", 0)
 	runs, err := s.crawler.ListCrawlRuns(r.Context(), limit, sourceType)
 	if err != nil {
 		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
 		return
+	}
+	if templateID > 0 {
+		filtered := runs[:0]
+		for _, run := range runs {
+			if run.TemplateID == int64(templateID) {
+				filtered = append(filtered, run)
+			}
+		}
+		runs = filtered
 	}
 	apiutil.WriteJSON(w, http.StatusOK, "ok", runs)
 }

@@ -31,15 +31,18 @@ type Item struct {
 }
 
 type CrawlRun struct {
-	ID            int64      `json:"id"`
-	SourceType    string     `json:"source_type"`
-	StartedAt     time.Time  `json:"started_at"`
-	FinishedAt    *time.Time `json:"finished_at,omitempty"`
-	Status        string     `json:"status"`
-	FetchedCount  int        `json:"fetched_count"`
-	InsertedCount int        `json:"inserted_count"`
-	UpdatedCount  int        `json:"updated_count"`
-	ErrorText     string     `json:"error_text,omitempty"`
+	ID               int64      `json:"id"`
+	SourceType       string     `json:"source_type"`
+	TemplateID       int64      `json:"template_id,omitempty"`
+	TemplateName     string     `json:"template_name,omitempty"`
+	TemplateSnapshot string     `json:"template_snapshot,omitempty"`
+	StartedAt        time.Time  `json:"started_at"`
+	FinishedAt       *time.Time `json:"finished_at,omitempty"`
+	Status           string     `json:"status"`
+	FetchedCount     int        `json:"fetched_count"`
+	InsertedCount    int        `json:"inserted_count"`
+	UpdatedCount     int        `json:"updated_count"`
+	ErrorText        string     `json:"error_text,omitempty"`
 }
 
 type CrawlSummary struct {

@@ -49,6 +49,10 @@ func TestTemplateEndpoints(t *testing.T) {
 
 	st := &templateCrawlerStore{
 		activeRules: []model.MonitorRule{},
+		runs: []model.CrawlRun{
+			{ID: 1, TemplateID: 1, TemplateName: "模板一", SourceType: "flash", Status: "success", StartedAt: time.Now().UTC()},
+			{ID: 2, TemplateID: 2, TemplateName: "模板二", SourceType: "headline", Status: "success", StartedAt: time.Now().UTC()},
+		},
 	}
 	crawler := service.NewCrawler(st, provider.Registry{}, resty.New())
 	svc := NewService(config.Config{ServiceToken: "token"}, crawler)
@@ -89,10 +93,21 @@ func TestTemplateEndpoints(t *testing.T) {
 	if previewRR.Code != http.StatusOK {
 		t.Fatalf("expected preview success, got %d: %s", previewRR.Code, previewRR.Body.String())
 	}
+
+	runsReq := httptest.NewRequest(http.MethodGet, "/api/v1/admin/tasks/crawl/runs?template_id=1", nil)
+	runsRR := httptest.NewRecorder()
+	svc.Router().ServeHTTP(runsRR, runsReq)
+	if runsRR.Code != http.StatusOK {
+		t.Fatalf("expected runs success, got %d: %s", runsRR.Code, runsRR.Body.String())
+	}
+	if !bytes.Contains(runsRR.Body.Bytes(), []byte("模板一")) || bytes.Contains(runsRR.Body.Bytes(), []byte("模板二")) {
+		t.Fatalf("expected filtered template runs, got %s", runsRR.Body.String())
+	}
 }
 
 type templateCrawlerStore struct {
 	activeRules []model.MonitorRule
+	runs        []model.CrawlRun
 	items       []model.Item
 }
 
@@ -129,7 +144,7 @@ func (s *templateCrawlerStore) GetRelatedItems(context.Context, int64, int) ([]m
 }
 
 func (s *templateCrawlerStore) ListCrawlRuns(context.Context, int, string) ([]model.CrawlRun, error) {
-	return nil, nil
+	return s.runs, nil
 }
 
 func (s *templateCrawlerStore) ListActiveMonitorRules(context.Context) ([]model.MonitorRule, error) {

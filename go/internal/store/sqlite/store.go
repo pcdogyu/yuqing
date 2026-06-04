@@ -727,7 +727,7 @@ func (s *Store) ListCrawlRuns(ctx context.Context, limit int, sourceType string)
 		where = "WHERE source_type = ?"
 		args = append(args, sourceType)
 	}
-	query := `SELECT id, source_type, started_at, finished_at, status, fetched_count, inserted_count, updated_count, error_text FROM crawl_runs ` + where + ` ORDER BY started_at DESC, id DESC LIMIT ?`
+	query := `SELECT id, source_type, template_id, template_name, template_snapshot, started_at, finished_at, status, fetched_count, inserted_count, updated_count, error_text FROM crawl_runs ` + where + ` ORDER BY started_at DESC, id DESC LIMIT ?`
 	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -740,7 +740,7 @@ func (s *Store) ListCrawlRuns(ctx context.Context, limit int, sourceType string)
 		var run model.CrawlRun
 		var startedAt string
 		var finishedAt sql.NullString
-		if err := rows.Scan(&run.ID, &run.SourceType, &startedAt, &finishedAt, &run.Status, &run.FetchedCount, &run.InsertedCount, &run.UpdatedCount, &run.ErrorText); err != nil {
+		if err := rows.Scan(&run.ID, &run.SourceType, &run.TemplateID, &run.TemplateName, &run.TemplateSnapshot, &startedAt, &finishedAt, &run.Status, &run.FetchedCount, &run.InsertedCount, &run.UpdatedCount, &run.ErrorText); err != nil {
 			return nil, err
 		}
 		run.StartedAt = mustParseRFC3339(startedAt)

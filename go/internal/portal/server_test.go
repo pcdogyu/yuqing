@@ -878,8 +878,8 @@ func TestCrawlTemplateCompatPage(t *testing.T) {
 	if !strings.Contains(body, "模板中心") || !strings.Contains(body, "示例模板") {
 		t.Fatalf("expected crawl templates page content, got %s", body)
 	}
-	if !strings.Contains(body, "flash") {
-		t.Fatalf("expected crawl templates source type in page, got %s", body)
+	if !strings.Contains(body, "最近执行记录") || !strings.Contains(body, "success") {
+		t.Fatalf("expected crawl template run history, got %s", body)
 	}
 }
 
@@ -2345,7 +2345,7 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 			})
 			return
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/admin/tasks/crawl/runs":
-			_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusOK, "message": "ok", "data": []model.CrawlRun{}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusOK, "message": "ok", "data": []model.CrawlRun{{ID: 8, TemplateID: 1, TemplateName: "示例模板", SourceType: "flash", Status: "success", FetchedCount: 1, InsertedCount: 1, StartedAt: time.Now().UTC().Add(-time.Hour)}}})
 			return
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/admin/tasks/crawl":
 			_ = json.NewEncoder(w).Encode(map[string]any{
