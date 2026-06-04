@@ -878,6 +878,42 @@ func TestLegacyProjectCompat(t *testing.T) {
 	}
 
 	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/project/mkdirgroup", strings.NewReader("group_name=组二"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	srv.handleLegacyProjectMkdirGroup(rr, req, user)
+	if rr.Code != http.StatusOK || strings.TrimSpace(rr.Body.String()) != "success" {
+		t.Fatalf("unexpected mkdirgroup response: code=%d body=%q", rr.Code, rr.Body.String())
+	}
+
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/project/getProjectCountByGroupId?groupId=2", nil)
+	srv.handleLegacyProjectGetProjectCountByGroupID(rr, req, user)
+	var countEnvelope struct {
+		Count int `json:"count"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &countEnvelope); err != nil {
+		t.Fatalf("decode count response: %v", err)
+	}
+	if countEnvelope.Count != 0 {
+		t.Fatalf("unexpected new group count: %+v", countEnvelope)
+	}
+
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/project/editgroup", strings.NewReader("group_id=2&group_name=组二改"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	srv.handleLegacyProjectEditGroup(rr, req, user)
+	var editGroupEnvelope struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &editGroupEnvelope); err != nil {
+		t.Fatalf("decode editgroup response: %v", err)
+	}
+	if editGroupEnvelope.Code != 200 {
+		t.Fatalf("unexpected editgroup response: %+v", editGroupEnvelope)
+	}
+
+	rr = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPost, "/project/listproject", strings.NewReader("groupid=1&page=1"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	srv.handleLegacyProjectListProject(rr, req, user)
@@ -1019,6 +1055,44 @@ func TestLegacyProjectCompat(t *testing.T) {
 	if detailEnvelope.ProjectName != "新方案改" || detailEnvelope.Precise != "0" {
 		t.Fatalf("unexpected updated detail response: %+v", detailEnvelope)
 	}
+
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/project/delProject?groupid=1&projectid=1,2", nil)
+	srv.handleLegacyProjectDelProject(rr, req, user)
+	var deleteEnvelope struct {
+		DelStatus int    `json:"delstatus"`
+		Msg       string `json:"msg"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &deleteEnvelope); err != nil {
+		t.Fatalf("decode delProject response: %v", err)
+	}
+	if deleteEnvelope.DelStatus != 200 {
+		t.Fatalf("unexpected delProject response: %+v", deleteEnvelope)
+	}
+
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/project/getProjectCountByGroupId?groupId=1", nil)
+	srv.handleLegacyProjectGetProjectCountByGroupID(rr, req, user)
+	if err := json.Unmarshal(rr.Body.Bytes(), &countEnvelope); err != nil {
+		t.Fatalf("decode count response after delete: %v", err)
+	}
+	if countEnvelope.Count != 0 {
+		t.Fatalf("unexpected deleted group count: %+v", countEnvelope)
+	}
+
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/project/updateSolutionGroupStatus?groupId=2", nil)
+	srv.handleLegacyProjectUpdateSolutionGroupStatus(rr, req, user)
+	var deleteGroupEnvelope struct {
+		State   bool   `json:"state"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &deleteGroupEnvelope); err != nil {
+		t.Fatalf("decode updateSolutionGroupStatus response: %v", err)
+	}
+	if !deleteGroupEnvelope.State {
+		t.Fatalf("unexpected group delete response: %+v", deleteGroupEnvelope)
+	}
 }
 
 func TestPlatformNLPCompat(t *testing.T) {
@@ -1143,6 +1217,7 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 	projects := []model.Project{
 		{ID: 1, GroupID: 1, GroupName: "组一", Name: "项目一", Keywords: "AI,新能源", Description: "测试项目", Status: "active", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()},
 	}
+	nextGroupID := int64(2)
 	nextProjectID := int64(2)
 	platformBindings := map[string]model.PlatformBinding{
 		"nlp:1": {
@@ -1240,6 +1315,64 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/project-groups":
 			writeEnvelope(http.StatusOK, "ok", projectGroups)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/project-groups":
+			var group model.ProjectGroup
+			if err := json.NewDecoder(r.Body).Decode(&group); err != nil {
+				writeEnvelope(http.StatusBadRequest, err.Error(), nil)
+				return
+			}
+			projectMu.Lock()
+			group.ID = nextGroupID
+			nextGroupID++
+			group.CreatedAt = time.Now().UTC()
+			group.UpdatedAt = group.CreatedAt
+			projectGroups = append(projectGroups, group)
+			projectMu.Unlock()
+			writeEnvelope(http.StatusOK, "ok", group)
+		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/api/v1/project-groups/"):
+			id := parseTestInt64(strings.TrimPrefix(r.URL.Path, "/api/v1/project-groups/"))
+			var group model.ProjectGroup
+			if err := json.NewDecoder(r.Body).Decode(&group); err != nil {
+				writeEnvelope(http.StatusBadRequest, err.Error(), nil)
+				return
+			}
+			projectMu.Lock()
+			updated := false
+			for idx, candidate := range projectGroups {
+				if candidate.ID == id {
+					group.ID = id
+					group.CreatedAt = candidate.CreatedAt
+					group.UpdatedAt = time.Now().UTC()
+					projectGroups[idx] = group
+					updated = true
+					break
+				}
+			}
+			projectMu.Unlock()
+			if !updated {
+				writeEnvelope(http.StatusNotFound, "not found", nil)
+				return
+			}
+			writeEnvelope(http.StatusOK, "ok", group)
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/project-groups/"):
+			id := parseTestInt64(strings.TrimPrefix(r.URL.Path, "/api/v1/project-groups/"))
+			projectMu.Lock()
+			kept := projectGroups[:0]
+			removed := false
+			for _, candidate := range projectGroups {
+				if candidate.ID == id {
+					removed = true
+					continue
+				}
+				kept = append(kept, candidate)
+			}
+			projectGroups = kept
+			projectMu.Unlock()
+			if !removed {
+				writeEnvelope(http.StatusNotFound, "not found", nil)
+				return
+			}
+			writeEnvelope(http.StatusOK, "ok", map[string]bool{"deleted": true})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects":
 			projectMu.Lock()
 			items := append([]model.Project(nil), projects...)

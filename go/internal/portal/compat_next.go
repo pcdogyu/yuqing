@@ -296,6 +296,15 @@ func (s *Server) loadLegacyProjectCatalog() ([]model.ProjectGroup, []model.Proje
 		}
 		return projects[i].UpdatedAt.After(projects[j].UpdatedAt)
 	})
+	groupNames := make(map[int64]string, len(groups))
+	for _, group := range groups {
+		groupNames[group.ID] = group.Name
+	}
+	for idx := range projects {
+		if groupName := groupNames[projects[idx].GroupID]; groupName != "" {
+			projects[idx].GroupName = groupName
+		}
+	}
 	return groups, projects, nil
 }
 
@@ -439,6 +448,7 @@ func (s *Server) getLegacyProjectByID(projectID int64) (model.Project, string, i
 	for _, group := range groups {
 		if group.ID == project.GroupID {
 			groupName = group.Name
+			project.GroupName = group.Name
 			break
 		}
 	}
@@ -492,6 +502,135 @@ func (s *Server) handleLegacyProjectLanding(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	http.Redirect(w, r, "/projects?"+target.Encode(), http.StatusSeeOther)
+}
+
+func (s *Server) handleLegacyProjectGetProjectCountByGroupID(w http.ResponseWriter, r *http.Request, _ any) {
+	groupID := parseProjectID(nonEmpty(r.FormValue("groupId"), r.FormValue("group_id"), r.FormValue("groupid"), r.URL.Query().Get("groupId"), r.URL.Query().Get("group_id"), r.URL.Query().Get("groupid")))
+	_, projects, err := s.loadLegacyProjectCatalog()
+	if err != nil {
+		writeRawJSON(w, http.StatusOK, map[string]any{"count": 0})
+		return
+	}
+	count := 0
+	for _, project := range projects {
+		if project.GroupID == groupID {
+			count++
+		}
+	}
+	writeRawJSON(w, http.StatusOK, map[string]any{"count": count})
+}
+
+func (s *Server) handleLegacyProjectMkdirGroup(w http.ResponseWriter, r *http.Request, _ any) {
+	groupName := nonEmpty(r.FormValue("group_name"), r.FormValue("groupName"))
+	if groupName == "" {
+		writeLegacyJSONString(w, http.StatusOK, "fail")
+		return
+	}
+	body := map[string]any{
+		"name":        groupName,
+		"description": r.FormValue("description"),
+	}
+	resp, err := s.client.R().SetBody(body).Post(s.cfg.ContentURL + "/api/v1/project-groups")
+	if err != nil || !resp.IsSuccess() {
+		writeLegacyJSONString(w, http.StatusOK, "fail")
+		return
+	}
+	writeLegacyJSONString(w, http.StatusOK, "success")
+}
+
+func (s *Server) handleLegacyProjectEditGroup(w http.ResponseWriter, r *http.Request, _ any) {
+	groupName := nonEmpty(r.FormValue("group_name"), r.FormValue("groupName"))
+	groupID := parseProjectID(nonEmpty(r.FormValue("group_id"), r.FormValue("groupId"), r.FormValue("groupid")))
+	if groupName == "" || groupID <= 0 {
+		writeRawJSON(w, http.StatusOK, map[string]any{"code": 500, "msg": "方案组修改失败"})
+		return
+	}
+	body := map[string]any{
+		"name":        groupName,
+		"description": r.FormValue("description"),
+	}
+	resp, err := s.client.R().SetBody(body).Put(s.cfg.ContentURL + "/api/v1/project-groups/" + strconv.FormatInt(groupID, 10))
+	if err != nil || !resp.IsSuccess() {
+		writeRawJSON(w, http.StatusOK, map[string]any{"code": 500, "msg": "方案组修改失败"})
+		return
+	}
+	writeRawJSON(w, http.StatusOK, map[string]any{"code": 200, "msg": "方案组修改成功"})
+}
+
+func (s *Server) handleLegacyProjectUpdateSolutionGroupStatus(w http.ResponseWriter, r *http.Request, _ any) {
+	groupID := parseProjectID(nonEmpty(r.FormValue("groupId"), r.FormValue("group_id"), r.FormValue("groupid"), r.URL.Query().Get("groupId"), r.URL.Query().Get("group_id"), r.URL.Query().Get("groupid")))
+	if groupID <= 0 {
+		writeRawJSON(w, http.StatusOK, map[string]any{"state": false, "message": "方案组不存在"})
+		return
+	}
+	_, projects, err := s.loadLegacyProjectCatalog()
+	if err != nil {
+		writeRawJSON(w, http.StatusOK, map[string]any{"state": false, "message": "删除方案组失败"})
+		return
+	}
+	for _, project := range projects {
+		if project.GroupID == groupID {
+			writeRawJSON(w, http.StatusOK, map[string]any{"state": false, "message": "该方案组下拥有方案，不可删除！"})
+			return
+		}
+	}
+	resp, err := s.client.R().Delete(s.cfg.ContentURL + "/api/v1/project-groups/" + strconv.FormatInt(groupID, 10))
+	if err != nil || !resp.IsSuccess() {
+		writeRawJSON(w, http.StatusOK, map[string]any{"state": false, "message": "删除方案组失败"})
+		return
+	}
+	writeRawJSON(w, http.StatusOK, map[string]any{"state": true, "message": "删除方案组成功"})
+}
+
+func (s *Server) handleLegacyProjectDelProject(w http.ResponseWriter, r *http.Request, _ any) {
+	s.handleLegacyProjectDelete(r, w, false)
+}
+
+func (s *Server) handleLegacyProjectDelProjectDetail(w http.ResponseWriter, r *http.Request, _ any) {
+	s.handleLegacyProjectDelete(r, w, true)
+}
+
+func (s *Server) handleLegacyProjectDelete(r *http.Request, w http.ResponseWriter, detail bool) {
+	_ = detail
+	rawIDs := nonEmpty(r.FormValue("projectid"), r.FormValue("project_id"), r.FormValue("projectId"))
+	if rawIDs == "" {
+		writeRawJSON(w, http.StatusOK, map[string]any{"delstatus": 500, "msg": "删除失败"})
+		return
+	}
+	ids := parseLegacyProjectIDList(rawIDs)
+	if len(ids) == 0 {
+		writeRawJSON(w, http.StatusOK, map[string]any{"delstatus": 500, "msg": "删除失败"})
+		return
+	}
+	for _, id := range ids {
+		resp, err := s.client.R().Delete(s.cfg.ContentURL + "/api/v1/projects/" + strconv.FormatInt(id, 10))
+		if err != nil || !resp.IsSuccess() {
+			writeRawJSON(w, http.StatusOK, map[string]any{"delstatus": 500, "msg": "删除失败"})
+			return
+		}
+		clearLegacyProjectMeta(id)
+	}
+	writeRawJSON(w, http.StatusOK, map[string]any{"delstatus": 200, "msg": "删除成功"})
+}
+
+func parseLegacyProjectIDList(raw string) []int64 {
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == '，'
+	})
+	ids := make([]int64, 0, len(parts))
+	seen := map[int64]struct{}{}
+	for _, part := range parts {
+		id := parseProjectID(part)
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 func (s *Server) handleLegacyProjectAddProject(w http.ResponseWriter, r *http.Request, _ any) {
