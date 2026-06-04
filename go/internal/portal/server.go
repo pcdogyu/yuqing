@@ -133,6 +133,7 @@ type pageData struct {
 	Projects                 []model.Project
 	Rule                     model.MonitorRule
 	Rules                    []model.MonitorRule
+	CrawlTemplates           []model.CrawlTemplate
 	Articles                 model.ItemListResult
 	Article                  model.Item
 	Related                  []model.Item
@@ -201,6 +202,7 @@ func NewServer(cfg config.Config) *Server {
 	funcMap := template.FuncMap{
 		"firstProjectGroupID":   firstProjectGroupIDForTemplate,
 		"firstProjectIDForItem": firstProjectIDForItemTemplate,
+		"subInt":                func(a, b int) int { return a - b },
 	}
 	tpl := template.Must(template.New("layout").Funcs(funcMap).Parse(layoutTemplate))
 	template.Must(tpl.New("login").Parse(loginTemplate))
@@ -209,6 +211,7 @@ func NewServer(cfg config.Config) *Server {
 	template.Must(tpl.New("project").Parse(projectTemplate))
 	template.Must(tpl.New("rules").Parse(rulesTemplate))
 	template.Must(tpl.New("rule").Parse(ruleTemplate))
+	template.Must(tpl.New("crawl_templates").Parse(crawlTemplatesTemplate))
 	template.Must(tpl.New("articles").Parse(articlesTemplate))
 	template.Must(tpl.New("article").Parse(articleTemplate))
 	template.Must(tpl.New("reports").Parse(reportsTemplate))
@@ -350,6 +353,8 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/datamonitor/sending", s.requireSessionJSON(s.handleLegacySending))
 	mux.HandleFunc("/projects/", s.requireSession(s.handleProjectDetail))
 	mux.HandleFunc("/projects", s.requireSession(s.handleProjects))
+	mux.HandleFunc("/crawl-templates/", s.requireSession(s.handleCrawlTemplates))
+	mux.HandleFunc("/crawl-templates", s.requireSession(s.handleCrawlTemplates))
 	mux.HandleFunc("/monitor-rules/", s.requireSession(s.handleRuleDetail))
 	mux.HandleFunc("/monitor-rules", s.requireSession(s.handleRules))
 	mux.HandleFunc("/articles/", s.requireSession(s.handleArticleDetail))
@@ -2123,6 +2128,67 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request, user any
 		}
 	}
 	_ = s.render(w, "projects", pageData{Title: "项目中心", User: user, Groups: groups, Projects: projects, FilterKeyword: keyword, FilterStatus: status, CountActive: activeCount, CountPaused: pausedCount, Message: r.URL.Query().Get("msg")})
+}
+
+func (s *Server) handleCrawlTemplates(w http.ResponseWriter, r *http.Request, user any) {
+	if r.Method == http.MethodPost {
+		_ = r.ParseForm()
+		message := "模板操作已提交"
+		formType := r.FormValue("form_type")
+		if formType == "" || formType == "template" {
+			action := strings.TrimSpace(r.FormValue("action"))
+			templateID := strings.TrimSpace(nonEmpty(r.FormValue("template_id"), strings.TrimPrefix(r.URL.Path, "/crawl-templates/")))
+			body := map[string]any{
+				"name":        strings.TrimSpace(r.FormValue("name")),
+				"source_type": strings.TrimSpace(r.FormValue("source_type")),
+				"enabled":     r.FormValue("enabled") == "on" || strings.EqualFold(r.FormValue("enabled"), "true"),
+				"config_json": strings.TrimSpace(r.FormValue("config_json")),
+			}
+			if body["config_json"] == "" {
+				body["config_json"] = "{}"
+			}
+			switch action {
+			case "delete":
+				resp, err := s.client.R().Delete(s.cfg.ContentURL + "/api/v1/crawl-templates/" + templateID)
+				if err != nil || !resp.IsSuccess() {
+					message = "模板删除失败"
+				} else {
+					message = "模板已删除"
+				}
+			case "update":
+				resp, err := s.client.R().SetBody(body).Put(s.cfg.ContentURL + "/api/v1/crawl-templates/" + templateID)
+				if err != nil || !resp.IsSuccess() {
+					message = "模板更新失败"
+				} else {
+					message = "模板更新成功"
+				}
+			default:
+				resp, err := s.client.R().SetBody(body).Post(s.cfg.ContentURL + "/api/v1/crawl-templates")
+				if err != nil || !resp.IsSuccess() {
+					message = "模板创建失败"
+				} else {
+					message = "模板创建成功"
+				}
+			}
+		}
+		http.Redirect(w, r, "/crawl-templates?msg="+url.QueryEscape(message), http.StatusSeeOther)
+		return
+	}
+	var templates []model.CrawlTemplate
+	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/crawl-templates", &templates)
+	enabledCount := 0
+	for _, tpl := range templates {
+		if tpl.Enabled {
+			enabledCount++
+		}
+	}
+	_ = s.render(w, "crawl_templates", pageData{
+		Title:          "模板中心",
+		User:           user,
+		CrawlTemplates: templates,
+		CountActive:    enabledCount,
+		Message:        r.URL.Query().Get("msg"),
+	})
 }
 
 func (s *Server) handleProjectDetail(w http.ResponseWriter, r *http.Request, user any) {
@@ -3983,7 +4049,7 @@ func (s *Server) collectServiceStatuses() []serviceStatus {
 }
 
 const layoutTemplate = `
-{{define "nav"}}<nav><a href="/">总览</a><a href="/projects">项目</a><a href="/monitor-rules">规则</a><a href="/articles">文章</a><a href="/reports">报告</a><a href="/system">系统</a><a href="/logout">退出</a></nav>{{end}}
+{{define "nav"}}<nav><a href="/">总览</a><a href="/projects">项目</a><a href="/monitor-rules">规则</a><a href="/crawl-templates">模板</a><a href="/articles">文章</a><a href="/reports">报告</a><a href="/system">系统</a><a href="/logout">退出</a></nav>{{end}}
 `
 
 const baseStyles = `body{font-family:Segoe UI,system-ui;background:#f7f3eb;margin:0;color:#222}header,main{max-width:1180px;margin:0 auto;padding:24px}nav a{margin-right:16px;color:#214e34;text-decoration:none;font-weight:600}section{background:#fff;border-radius:16px;padding:20px;margin-top:20px;box-shadow:0 8px 24px rgba(0,0,0,.06)}input,select,textarea,button{width:100%;padding:12px;margin:8px 0;border-radius:10px;border:1px solid #d0c8b8;box-sizing:border-box}button{background:#214e34;color:#fff;border:none;cursor:pointer}table{width:100%;border-collapse:collapse}th,td{padding:10px;border-bottom:1px solid #ece7dc;text-align:left}pre{white-space:pre-wrap;line-height:1.6}a.inline{margin-right:0;color:#214e34}.muted{color:#6a6257}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}.section-card{border:1px solid #ece7dc;border-radius:14px;background:#faf8f2;padding:16px}.topic-list{list-style:none;padding:0;margin:0}.topic-list li{padding:10px 0;border-bottom:1px solid #ece7dc}.topic-list li:last-child{border-bottom:none}form.inline{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;align-items:end}`
@@ -3994,6 +4060,10 @@ const loginTemplate = `
 
 const dashboardTemplate = `
 {{define "dashboard"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.metric{padding:16px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.metric strong{display:block;font-size:28px;margin-top:6px}.toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}.ok{color:#214e34;font-weight:700}.bad{color:#8f2d2d;font-weight:700}` + `</style></head><body><header><h1>总览</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><div class="toolbar"><h2>核心指标</h2><form method="post"><button type="submit">手动刷新分析</button></form></div><div class="metric-grid"><div class="metric">文章数<strong>{{.Dashboard.Overview.ArticleCount}}</strong></div><div class="metric">项目数<strong>{{.Dashboard.Overview.ProjectCount}}</strong></div><div class="metric">报告数<strong>{{.Dashboard.Overview.ReportCount}}</strong></div><div class="metric">活跃规则<strong>{{.Dashboard.Overview.AlertRuleCount}}</strong></div></div></section><section><h2>服务状态</h2><table><tr><th>服务</th><th>状态</th><th>健康检查</th></tr>{{range .Services}}<tr><td>{{.Name}}</td><td>{{if .Healthy}}<span class="ok">正常</span>{{else}}<span class="bad">异常</span>{{end}}</td><td>{{.Message}}</td></tr>{{else}}<tr><td colspan="3">暂无服务状态</td></tr>{{end}}</table></section><section><h2>近 7 日趋势</h2><table><tr><th>日期</th><th>文章数</th></tr>{{range .Dashboard.Trends}}<tr><td>{{.Label}}</td><td>{{.Count}}</td></tr>{{end}}</table></section><section><h2>来源分布</h2><table><tr><th>来源</th><th>数量</th></tr>{{range .Dashboard.Sources}}<tr><td>{{.SourceType}}</td><td>{{.Count}}</td></tr>{{end}}</table></section><section><h2>关键词热点</h2><table><tr><th>关键词</th><th>次数</th></tr>{{range .Dashboard.Keywords}}<tr><td>{{.Keyword}}</td><td>{{.Count}}</td></tr>{{end}}</table></section><section><h2>最近抓取</h2><table><tr><th>来源</th><th>状态</th><th>抓取数</th><th>入库数</th><th>开始时间</th></tr>{{range .CrawlRuns}}<tr><td>{{.SourceType}}</td><td>{{.Status}}</td><td>{{.FetchedCount}}</td><td>{{.InsertedCount}}</td><td>{{.StartedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="5">暂无抓取记录</td></tr>{{end}}</table></section><section><h2>系统公告</h2><table><tr><th>标题</th><th>时间</th></tr>{{range .Notices}}<tr><td>{{.Title}}</td><td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="2">暂无公告</td></tr>{{end}}</table></section><section><h2>最近任务</h2><table><tr><th>任务</th><th>状态</th><th>开始时间</th></tr>{{range .TaskRuns}}<tr><td>{{.TaskName}}</td><td>{{.Status}}</td><td>{{.StartedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="3">暂无任务记录</td></tr>{{end}}</table></section></main></body></html>{{end}}
+`
+
+const crawlTemplatesTemplate = `
+{{define "crawl_templates"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.summary-card{padding:14px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.summary-card strong{display:block;font-size:24px;margin-top:6px}.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}.compact td form{margin:0}.compact textarea,.compact input,.compact select,.compact button{margin:4px 0;padding:8px}` + `</style></head><body><header><h1>模板中心</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><div class="summary-grid"><div class="summary-card">模板总数<strong>{{len .CrawlTemplates}}</strong></div><div class="summary-card">已启用<strong>{{.CountActive}}</strong></div><div class="summary-card">已停用<strong>{{subInt (len .CrawlTemplates) .CountActive}}</strong></div></div></section><section><h2>新建模板</h2><form method="post"><input type="hidden" name="form_type" value="template"><input name="name" placeholder="模板名称"><input name="source_type" placeholder="来源类型，如 flash/headline"><label><input type="checkbox" name="enabled" checked> 启用</label><textarea name="config_json" placeholder="模板配置 JSON">{"source_type":"flash","method":"GET","base_url":"https://example.com","list_selector":".list-item","detail_url_field":"href","fields":[{"name":"title","selector":"a","scope":"list","required":true}]}</textarea><button type="submit">创建模板</button></form></section><section><h2>模板列表</h2><table class="compact"><tr><th>ID</th><th>名称</th><th>来源</th><th>启用</th><th>配置 JSON</th><th>操作</th></tr>{{range .CrawlTemplates}}<tr><td>{{.ID}}</td><td><form method="post"><input type="hidden" name="form_type" value="template"><input type="hidden" name="template_id" value="{{.ID}}"><input type="hidden" name="action" value="update"><input name="name" value="{{.Name}}"></td><td><input name="source_type" value="{{.SourceType}}"></td><td><label><input type="checkbox" name="enabled" {{if .Enabled}}checked{{end}}> 启用</label></td><td><textarea name="config_json">{{.ConfigJSON}}</textarea></td><td><button type="submit">保存</button></form><form method="post"><input type="hidden" name="form_type" value="template"><input type="hidden" name="template_id" value="{{.ID}}"><input type="hidden" name="action" value="delete"><button type="submit">删除</button></form></td></tr>{{else}}<tr><td colspan="6">暂无模板</td></tr>{{end}}</table></section></main></body></html>{{end}}
 `
 
 const projectsTemplate = `
