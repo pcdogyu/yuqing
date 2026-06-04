@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/stonedt-yuqing/go-jin10/internal/model"
@@ -268,9 +269,567 @@ func locateProductManualPath() (string, error) {
 	return "", os.ErrNotExist
 }
 
+func writeLegacyObjectJSON(w http.ResponseWriter, status int, payload map[string]any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func (s *Server) loadLegacyProjectCatalog() ([]model.ProjectGroup, []model.Project, error) {
+	var groups []model.ProjectGroup
+	var projects []model.Project
+	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/project-groups", &groups); err != nil {
+		return nil, nil, err
+	}
+	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/projects", &projects); err != nil {
+		return nil, nil, err
+	}
+	sort.SliceStable(groups, func(i, j int) bool {
+		if groups[i].UpdatedAt.Equal(groups[j].UpdatedAt) {
+			return groups[i].ID < groups[j].ID
+		}
+		return groups[i].UpdatedAt.After(groups[j].UpdatedAt)
+	})
+	sort.SliceStable(projects, func(i, j int) bool {
+		if projects[i].UpdatedAt.Equal(projects[j].UpdatedAt) {
+			return projects[i].ID > projects[j].ID
+		}
+		return projects[i].UpdatedAt.After(projects[j].UpdatedAt)
+	})
+	return groups, projects, nil
+}
+
+func legacyProjectTypeFromKeywords(keywords string) int {
+	if strings.ContainsAny(keywords, "+|()") {
+		return 2
+	}
+	return 1
+}
+
+type legacyProjectMeta struct {
+	ProjectType        int
+	StopWord           string
+	RegionalWord       string
+	CharacterWord      string
+	EventWord          string
+	ProjectDescription string
+}
+
+var (
+	legacyProjectMetaMu   sync.RWMutex
+	legacyProjectMetaByID = map[int64]legacyProjectMeta{}
+)
+
+func storeLegacyProjectMeta(projectID int64, meta legacyProjectMeta) {
+	legacyProjectMetaMu.Lock()
+	legacyProjectMetaByID[projectID] = meta
+	legacyProjectMetaMu.Unlock()
+}
+
+func loadLegacyProjectMeta(projectID int64) (legacyProjectMeta, bool) {
+	legacyProjectMetaMu.RLock()
+	meta, ok := legacyProjectMetaByID[projectID]
+	legacyProjectMetaMu.RUnlock()
+	return meta, ok
+}
+
+func clearLegacyProjectMeta(projectID int64) {
+	legacyProjectMetaMu.Lock()
+	delete(legacyProjectMetaByID, projectID)
+	legacyProjectMetaMu.Unlock()
+}
+
+func legacyProjectSummaryMap(project model.Project, groupName string) map[string]any {
+	meta, _ := loadLegacyProjectMeta(project.ID)
+	projectType := meta.ProjectType
+	if projectType == 0 {
+		projectType = legacyProjectTypeFromKeywords(project.Keywords)
+	}
+	return map[string]any{
+		"project_id":     strconv.FormatInt(project.ID, 10),
+		"group_id":       strconv.FormatInt(project.GroupID, 10),
+		"group_name":     nonEmpty(project.GroupName, groupName),
+		"groupName":      nonEmpty(project.GroupName, groupName),
+		"project_name":   project.Name,
+		"projectName":    project.Name,
+		"subject_word":   project.Keywords,
+		"keywords":       project.Keywords,
+		"project_type":   projectType,
+		"update_time":    project.UpdatedAt.Format("2006-01-02 15:04:05"),
+		"project_status": project.Status,
+		"status":         project.Status,
+	}
+}
+
+func legacyProjectDetailMap(project model.Project, groupName string, precise int, warningOpen bool) map[string]any {
+	result := legacyProjectSummaryMap(project, groupName)
+	meta, ok := loadLegacyProjectMeta(project.ID)
+	if !ok {
+		meta = legacyProjectMeta{ProjectType: legacyProjectTypeFromKeywords(project.Keywords)}
+	}
+	result["project_description"] = nonEmpty(meta.ProjectDescription, project.Description)
+	result["projectDescription"] = nonEmpty(meta.ProjectDescription, project.Description)
+	result["stop_word"] = meta.StopWord
+	result["regional_word"] = meta.RegionalWord
+	result["event_word"] = meta.EventWord
+	result["character_word"] = meta.CharacterWord
+	result["precise"] = strconv.Itoa(precise)
+	result["isOpenWarning"] = warningOpen
+	return result
+}
+
+func legacyProjectGroupMap(group model.ProjectGroup) map[string]any {
+	return map[string]any{
+		"group_id":    strconv.FormatInt(group.ID, 10),
+		"groupId":     strconv.FormatInt(group.ID, 10),
+		"group_name":  group.Name,
+		"groupName":   group.Name,
+		"description": group.Description,
+	}
+}
+
+func legacyProjectWarningDefaults(projectID int64) map[string]any {
+	return map[string]any{
+		"warning_status":        0,
+		"warning_name":          "预警",
+		"warning_word":          "",
+		"warning_classify":      "1,2,3,4,5,6,7,8,9,10,11",
+		"warning_content":       0,
+		"warning_similar":       0,
+		"warning_match":         2,
+		"warning_deduplication": 0,
+		"weekend_warning":       1,
+		"warning_interval":      `{"type":"1","time":"1"}`,
+		"warning_source":        `{"type":"1","email":""}`,
+		"warning_receive_time":  `{"start":"00:00","end":"23:00"}`,
+		"project_id":            projectID,
+	}
+}
+
+func legacyProjectOpinionDefaults(precise int) map[string]any {
+	return map[string]any{
+		"time":        4,
+		"precise":     precise,
+		"emotion":     "[1,2,3]",
+		"similar":     0,
+		"sort":        1,
+		"matchs":      1,
+		"create_time": time.Now().UTC().Format("2006-01-02 15:04:05"),
+	}
+}
+
+func (s *Server) getLegacyProjectByID(projectID int64) (model.Project, string, int, bool, error) {
+	var projects []model.Project
+	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/projects", &projects); err != nil {
+		return model.Project{}, "", 0, false, err
+	}
+	var groups []model.ProjectGroup
+	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/project-groups", &groups)
+	var project model.Project
+	for _, item := range projects {
+		if item.ID == projectID {
+			project = item
+			break
+		}
+	}
+	if project.ID == 0 {
+		return model.Project{}, "", 0, false, nil
+	}
+	groupName := ""
+	for _, group := range groups {
+		if group.ID == project.GroupID {
+			groupName = group.Name
+			break
+		}
+	}
+	var condition model.OpinionCondition
+	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/system/opinion-conditions/"+strconv.FormatInt(projectID, 10), &condition)
+	precise := condition.Precise
+	warningOpen := false
+	var warningSetting model.WarningSetting
+	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/system/warning-settings/"+strconv.FormatInt(projectID, 10), &warningSetting); err == nil {
+		warningOpen = warningSetting.Enabled || warningSetting.WarningStatus == 1
+	}
+	return project, groupName, precise, warningOpen, nil
+}
+
+func writeLegacyJSONString(w http.ResponseWriter, status int, payload string) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(status)
+	_, _ = fmt.Fprint(w, payload)
+}
+
+func (s *Server) upsertLegacyProjectState(projectID int64, precise int, warningDefaults bool) error {
+	opinionBody := legacyProjectOpinionDefaults(precise)
+	resp, err := s.client.R().SetBody(opinionBody).Put(s.cfg.ContentURL + "/api/v1/system/opinion-conditions/" + strconv.FormatInt(projectID, 10))
+	if err != nil || !resp.IsSuccess() {
+		return fmt.Errorf("opinion condition update failed")
+	}
+	if warningDefaults {
+		resp, err = s.client.R().SetBody(legacyProjectWarningDefaults(projectID)).Put(s.cfg.ContentURL + "/api/v1/system/warning-settings/" + strconv.FormatInt(projectID, 10))
+		if err != nil || !resp.IsSuccess() {
+			return fmt.Errorf("warning setting update failed")
+		}
+	}
+	return nil
+}
+
 func (s *Server) handleMonitorWxGroup(w http.ResponseWriter, r *http.Request, _ any) {
 	body := `<section style="display:grid;gap:20px"><div><h2>联系我们</h2><p class="muted">系统使用中有任何问题，可以通过以下方式联系支持团队。</p></div><div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:20px"><div style="text-align:center;padding:18px;border:1px solid #ece7dc;border-radius:14px;background:#faf8f2"><h3>微信公众号</h3><img src="/assets/images/users/wxOfficialAccount.jpg" alt="微信公众号" style="max-width:180px;width:100%;border-radius:10px"><p class="muted">关注公众号获取产品动态</p></div><div style="text-align:center;padding:18px;border:1px solid #ece7dc;border-radius:14px;background:#faf8f2"><h3>微信交流群</h3><img src="/assets/images/users/wxGroup.jpg" alt="微信交流群" style="max-width:180px;width:100%;border-radius:10px"><p class="muted">扫码加入交流群</p></div><div style="text-align:center;padding:18px;border:1px solid #ece7dc;border-radius:14px;background:#faf8f2"><h3>产品经理微信</h3><img src="/assets/images/expireCode.jpg" alt="产品经理微信" style="max-width:180px;width:100%;border-radius:10px"><p class="muted">添加产品经理微信</p></div><div style="text-align:center;padding:18px;border:1px solid #ece7dc;border-radius:14px;background:#faf8f2"><h3>官方网站</h3><p><a class="inline" href="https://www.stonedt.com/" target="_blank" rel="noreferrer">www.stonedt.com</a></p><img src="/assets/images/bt.jpg" alt="合作伙伴" style="max-width:180px;width:100%;border-radius:10px"><p class="muted">合作伙伴与更多信息</p></div></div></section>`
 	_ = s.writeSimplePage(w, "monitor/wxGroup", "联系我们", body)
+}
+
+func (s *Server) handleLegacyProjectLanding(w http.ResponseWriter, r *http.Request, _ any) {
+	target := url.Values{}
+	if groupID := nonEmpty(r.URL.Query().Get("groupid"), r.URL.Query().Get("group_id")); groupID != "" {
+		target.Set("groupid", groupID)
+	}
+	if projectID := nonEmpty(r.URL.Query().Get("projectid"), r.URL.Query().Get("project_id")); projectID != "" {
+		target.Set("projectid", projectID)
+	}
+	if len(target) == 0 {
+		http.Redirect(w, r, "/projects", http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/projects?"+target.Encode(), http.StatusSeeOther)
+}
+
+func (s *Server) handleLegacyProjectAddProject(w http.ResponseWriter, r *http.Request, _ any) {
+	target := url.Values{}
+	if groupID := nonEmpty(r.URL.Query().Get("groupid"), r.URL.Query().Get("group_id")); groupID != "" {
+		target.Set("groupid", groupID)
+	}
+	if len(target) == 0 {
+		http.Redirect(w, r, "/projects", http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/projects?"+target.Encode(), http.StatusSeeOther)
+}
+
+func (s *Server) handleLegacyProjectEditProject(w http.ResponseWriter, r *http.Request, _ any) {
+	projectID := nonEmpty(r.URL.Query().Get("projectid"), r.URL.Query().Get("project_id"))
+	if projectID == "" {
+		http.Redirect(w, r, "/projects", http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/projects/"+projectID, http.StatusSeeOther)
+}
+
+func (s *Server) handleLegacyProjectDetail(w http.ResponseWriter, r *http.Request, _ any) {
+	projectID := parseProjectID(nonEmpty(r.FormValue("projectid"), r.FormValue("project_id"), r.URL.Query().Get("projectid"), r.URL.Query().Get("project_id")))
+	if r.Method == http.MethodGet {
+		if projectID <= 0 {
+			http.Redirect(w, r, "/projects", http.StatusSeeOther)
+			return
+		}
+		http.Redirect(w, r, "/projects/"+strconv.FormatInt(projectID, 10), http.StatusSeeOther)
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeLegacyStatusJSON(w, http.StatusMethodNotAllowed, "method not allowed", nil)
+		return
+	}
+	project, groupName, precise, warningOpen, err := s.getLegacyProjectByID(projectID)
+	if err != nil {
+		writeLegacyJSON(w, http.StatusInternalServerError, "获取方案详情失败", map[string]any{})
+		return
+	}
+	if project.ID == 0 {
+		writeLegacyJSON(w, http.StatusNotFound, "未找到方案", map[string]any{})
+		return
+	}
+	writeRawJSON(w, http.StatusOK, legacyProjectDetailMap(project, groupName, precise, warningOpen))
+}
+
+func (s *Server) handleLegacyProjectNames(w http.ResponseWriter, r *http.Request, _ any) {
+	projectID := parseProjectID(nonEmpty(r.FormValue("projectId"), r.FormValue("project_id"), r.FormValue("projectid"), r.URL.Query().Get("projectId"), r.URL.Query().Get("project_id"), r.URL.Query().Get("projectid")))
+	groupID := parseProjectID(nonEmpty(r.FormValue("groupId"), r.FormValue("group_id"), r.FormValue("groupid"), r.URL.Query().Get("groupId"), r.URL.Query().Get("group_id"), r.URL.Query().Get("groupid")))
+	response := map[string]string{}
+	if projectID > 0 {
+		if project, _, _, _, err := s.getLegacyProjectByID(projectID); err == nil && project.ID > 0 {
+			response["projectName"] = project.Name
+		}
+	}
+	if groupID > 0 {
+		var groups []model.ProjectGroup
+		if err := s.getJSON(s.cfg.ContentURL+"/api/v1/project-groups", &groups); err == nil {
+			for _, group := range groups {
+				if group.ID == groupID {
+					response["groupName"] = group.Name
+					break
+				}
+			}
+		}
+	}
+	writeRawJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) handleLegacyProjectGroupAndProject(w http.ResponseWriter, r *http.Request, _ any) {
+	groups, _, err := s.loadLegacyProjectCatalog()
+	if err != nil {
+		writeLegacyJSON(w, http.StatusInternalServerError, "方案组数据返回失败", []any{})
+		return
+	}
+	response := make([]map[string]any, 0, len(groups))
+	for _, group := range groups {
+		response = append(response, legacyProjectGroupMap(group))
+	}
+	writeLegacyJSON(w, http.StatusOK, "方案组数据返回成功", response)
+}
+
+func (s *Server) handleLegacyProjectGetGroupAndProject(w http.ResponseWriter, r *http.Request, _ any) {
+	groups, projects, err := s.loadLegacyProjectCatalog()
+	if err != nil {
+		writeRawJSON(w, http.StatusInternalServerError, map[string]any{"code": 500, "msg": "获取用户方案和方案组失败", "data": []any{}, "flag": true})
+		return
+	}
+	data := make([]map[string]any, 0, len(groups))
+	projectFlag := len(projects) == 0
+	for _, group := range groups {
+		key := strconv.FormatInt(group.ID, 10) + "-" + group.Name
+		groupProjects := make([]map[string]any, 0)
+		for _, project := range projects {
+			if project.GroupID == group.ID {
+				groupProjects = append(groupProjects, legacyProjectSummaryMap(project, group.Name))
+			}
+		}
+		data = append(data, map[string]any{key: groupProjects})
+	}
+	writeRawJSON(w, http.StatusOK, map[string]any{"code": 200, "msg": "用户方案和方案组返回成功", "data": data, "flag": projectFlag})
+}
+
+func (s *Server) handleLegacyProjectVerifyGroup(w http.ResponseWriter, r *http.Request, _ any) {
+	groups, _, err := s.loadLegacyProjectCatalog()
+	if err != nil {
+		writeRawJSON(w, http.StatusOK, map[string]any{"code": 500})
+		return
+	}
+	if len(groups) == 0 {
+		writeRawJSON(w, http.StatusOK, map[string]any{"code": 500})
+		return
+	}
+	writeRawJSON(w, http.StatusOK, map[string]any{"code": 200})
+}
+
+func (s *Server) handleLegacyProjectListProject(w http.ResponseWriter, r *http.Request, _ any) {
+	groupID := parseProjectID(nonEmpty(r.FormValue("groupid"), r.FormValue("group_id"), r.URL.Query().Get("groupid"), r.URL.Query().Get("group_id")))
+	projectSearch := strings.TrimSpace(nonEmpty(r.FormValue("projectsearch"), r.FormValue("projectSearch"), r.URL.Query().Get("projectsearch"), r.URL.Query().Get("projectSearch")))
+	page := parsePositiveInt(nonEmpty(r.FormValue("page"), r.URL.Query().Get("page")), 1)
+	if page <= 0 {
+		page = 1
+	}
+	_, projects, err := s.loadLegacyProjectCatalog()
+	if err != nil {
+		writeRawJSON(w, http.StatusInternalServerError, map[string]any{"code": 500, "msg": "获取方案列表失败", "totalPage": 1, "totalData": 0, "page": page, "data": []any{}})
+		return
+	}
+	filtered := make([]model.Project, 0, len(projects))
+	for _, project := range projects {
+		if groupID > 0 && project.GroupID != groupID {
+			continue
+		}
+		if projectSearch != "" {
+			text := strings.ToLower(project.Name + " " + project.Keywords + " " + project.Description)
+			if !strings.Contains(text, strings.ToLower(projectSearch)) {
+				continue
+			}
+		}
+		filtered = append(filtered, project)
+	}
+	const pageSize = 10
+	totalData := len(filtered)
+	totalPage := 1
+	if totalData > 0 {
+		totalPage = (totalData + pageSize - 1) / pageSize
+	}
+	start := (page - 1) * pageSize
+	if start > totalData {
+		start = totalData
+	}
+	end := start + pageSize
+	if end > totalData {
+		end = totalData
+	}
+	items := make([]map[string]any, 0, end-start)
+	for _, project := range filtered[start:end] {
+		items = append(items, legacyProjectSummaryMap(project, project.GroupName))
+	}
+	writeRawJSON(w, http.StatusOK, map[string]any{
+		"code":      200,
+		"msg":       "方案列表返回成功",
+		"totalPage": totalPage,
+		"totalData": totalData,
+		"page":      page,
+		"data":      items,
+	})
+}
+
+func (s *Server) handleLegacyProjectGetEdit(w http.ResponseWriter, r *http.Request, _ any) {
+	projectID := parseProjectID(nonEmpty(r.FormValue("projectid"), r.FormValue("project_id"), r.URL.Query().Get("projectid"), r.URL.Query().Get("project_id")))
+	project, groupName, precise, _, err := s.getLegacyProjectByID(projectID)
+	if err != nil {
+		writeLegacyJSONString(w, http.StatusInternalServerError, legacyJSONString(map[string]any{"code": 500, "msg": "获取方案信息失败", "data": map[string]any{}}))
+		return
+	}
+	if project.ID == 0 {
+		writeLegacyJSONString(w, http.StatusNotFound, legacyJSONString(map[string]any{"code": 500, "msg": "获取方案信息失败", "data": map[string]any{}}))
+		return
+	}
+	payload := legacyProjectDetailMap(project, groupName, precise, false)
+	writeLegacyJSONString(w, http.StatusOK, legacyJSONString(map[string]any{"code": 200, "msg": "获取方案信息成功", "data": payload}))
+}
+
+func (s *Server) handleLegacyProjectCommitProject(w http.ResponseWriter, r *http.Request, _ any) {
+	var raw map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+		writeLegacyJSON(w, http.StatusBadRequest, "invalid body", map[string]any{})
+		return
+	}
+	projectName := nonEmpty(legacyStringFromAny(raw["project_name"]), legacyStringFromAny(raw["projectName"]))
+	groupID := parseProjectID(nonEmpty(legacyStringFromAny(raw["group_id"]), legacyStringFromAny(raw["groupId"])))
+	subjectWord := nonEmpty(legacyStringFromAny(raw["subject_word"]), legacyStringFromAny(raw["subjectWord"]))
+	stopWord := nonEmpty(legacyStringFromAny(raw["stop_word"]), legacyStringFromAny(raw["stopWord"]))
+	description := nonEmpty(legacyStringFromAny(raw["project_description"]), legacyStringFromAny(raw["projectDescription"]))
+	projectType := legacyIntFromAnyValue(raw["project_type"])
+	if projectType == 0 {
+		projectType = 1
+	}
+	if projectName == "" || groupID <= 0 || subjectWord == "" {
+		writeLegacyJSON(w, http.StatusBadRequest, "方案信息不完整", map[string]any{})
+		return
+	}
+	var existing []model.Project
+	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/projects", &existing); err == nil {
+		for _, item := range existing {
+			if item.GroupID == groupID && strings.EqualFold(item.Name, projectName) {
+				writeLegacyJSON(w, http.StatusOK, "方案已存在", map[string]any{})
+				return
+			}
+		}
+	}
+	createdResp := struct {
+		Code    int           `json:"code"`
+		Message string        `json:"message"`
+		Data    model.Project `json:"data"`
+	}{}
+	reqBody := model.Project{GroupID: groupID, Name: projectName, Keywords: subjectWord, Description: description, Status: "active"}
+	resp, err := s.client.R().SetBody(reqBody).SetResult(&createdResp).Post(s.cfg.ContentURL + "/api/v1/projects")
+	if err != nil || !resp.IsSuccess() {
+		writeLegacyJSON(w, http.StatusInternalServerError, "方案新增失败", map[string]any{})
+		return
+	}
+	created := createdResp.Data
+	if created.ID == 0 {
+		writeLegacyJSON(w, http.StatusInternalServerError, "方案新增失败", map[string]any{})
+		return
+	}
+	precise := legacyIntFromAnyValue(raw["precise"])
+	if raw["precise"] == nil {
+		if stopWord != "" {
+			precise = 1
+		}
+	}
+	if err := s.upsertLegacyProjectState(created.ID, precise, true); err != nil {
+		_, _ = s.client.R().Delete(s.cfg.ContentURL + "/api/v1/projects/" + strconv.FormatInt(created.ID, 10))
+		clearLegacyProjectMeta(created.ID)
+		writeLegacyJSON(w, http.StatusInternalServerError, "方案新增失败", map[string]any{})
+		return
+	}
+	storeLegacyProjectMeta(created.ID, legacyProjectMeta{
+		ProjectType:        projectType,
+		StopWord:           stopWord,
+		RegionalWord:       nonEmpty(legacyStringFromAny(raw["regional_word"]), legacyStringFromAny(raw["regionalWord"])),
+		CharacterWord:      nonEmpty(legacyStringFromAny(raw["character_word"]), legacyStringFromAny(raw["characterWord"])),
+		EventWord:          nonEmpty(legacyStringFromAny(raw["event_word"]), legacyStringFromAny(raw["eventWord"])),
+		ProjectDescription: description,
+	})
+	writeLegacyJSON(w, http.StatusOK, "方案新增成功！", map[string]any{
+		"group_id":       strconv.FormatInt(groupID, 10),
+		"project_id":     strconv.FormatInt(created.ID, 10),
+		"project_name":   projectName,
+		"project_type":   projectType,
+		"subject_word":   subjectWord,
+		"stop_word":      stopWord,
+		"precise":        precise,
+		"project_status": created.Status,
+	})
+}
+
+func (s *Server) handleLegacyProjectCommitEditProject(w http.ResponseWriter, r *http.Request, _ any) {
+	var raw map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+		writeLegacyJSON(w, http.StatusBadRequest, "invalid body", map[string]any{})
+		return
+	}
+	projectID := parseProjectID(nonEmpty(legacyStringFromAny(raw["project_id"]), legacyStringFromAny(raw["projectId"])))
+	groupID := parseProjectID(nonEmpty(legacyStringFromAny(raw["group_id"]), legacyStringFromAny(raw["groupId"])))
+	projectName := nonEmpty(legacyStringFromAny(raw["project_name"]), legacyStringFromAny(raw["projectName"]))
+	subjectWord := nonEmpty(legacyStringFromAny(raw["subject_word"]), legacyStringFromAny(raw["subjectWord"]))
+	stopWord := nonEmpty(legacyStringFromAny(raw["stop_word"]), legacyStringFromAny(raw["stopWord"]))
+	description := nonEmpty(legacyStringFromAny(raw["project_description"]), legacyStringFromAny(raw["projectDescription"]))
+	projectType := legacyIntFromAnyValue(raw["project_type"])
+	if projectType == 0 {
+		projectType = 1
+	}
+	if projectID <= 0 || groupID <= 0 || projectName == "" || subjectWord == "" {
+		writeLegacyJSON(w, http.StatusBadRequest, "方案信息不完整", map[string]any{})
+		return
+	}
+	var existing model.Project
+	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/projects/"+strconv.FormatInt(projectID, 10), &existing); err != nil {
+		writeLegacyJSON(w, http.StatusNotFound, "方案不存在", map[string]any{})
+		return
+	}
+	oldMeta, hasOldMeta := loadLegacyProjectMeta(projectID)
+	_, _, currentPrecise, _, _ := s.getLegacyProjectByID(projectID)
+	updatedResp := struct {
+		Code    int           `json:"code"`
+		Message string        `json:"message"`
+		Data    model.Project `json:"data"`
+	}{}
+	reqBody := model.Project{ID: projectID, GroupID: groupID, Name: projectName, Keywords: subjectWord, Description: description, Status: nonEmpty(existing.Status, "active")}
+	resp, err := s.client.R().SetBody(reqBody).SetResult(&updatedResp).Put(s.cfg.ContentURL + "/api/v1/projects/" + strconv.FormatInt(projectID, 10))
+	if err != nil || !resp.IsSuccess() {
+		writeLegacyJSON(w, http.StatusInternalServerError, "方案信息修改失败！", map[string]any{})
+		return
+	}
+	precise := legacyIntFromAnyValue(raw["precise"])
+	if raw["precise"] == nil {
+		if stopWord != "" {
+			precise = 1
+		}
+	}
+	if err := s.upsertLegacyProjectState(projectID, precise, false); err != nil {
+		_, _ = s.client.R().SetBody(existing).Put(s.cfg.ContentURL + "/api/v1/projects/" + strconv.FormatInt(projectID, 10))
+		if currentPrecise >= 0 {
+			_, _ = s.client.R().SetBody(legacyProjectOpinionDefaults(currentPrecise)).Put(s.cfg.ContentURL + "/api/v1/system/opinion-conditions/" + strconv.FormatInt(projectID, 10))
+		}
+		if hasOldMeta {
+			storeLegacyProjectMeta(projectID, oldMeta)
+		} else {
+			clearLegacyProjectMeta(projectID)
+		}
+		writeLegacyJSON(w, http.StatusInternalServerError, "方案信息修改失败！", map[string]any{})
+		return
+	}
+	storeLegacyProjectMeta(projectID, legacyProjectMeta{
+		ProjectType:        projectType,
+		StopWord:           stopWord,
+		RegionalWord:       nonEmpty(legacyStringFromAny(raw["regional_word"]), legacyStringFromAny(raw["regionalWord"])),
+		CharacterWord:      nonEmpty(legacyStringFromAny(raw["character_word"]), legacyStringFromAny(raw["characterWord"])),
+		EventWord:          nonEmpty(legacyStringFromAny(raw["event_word"]), legacyStringFromAny(raw["eventWord"])),
+		ProjectDescription: description,
+	})
+	writeLegacyJSON(w, http.StatusOK, "方案信息修改成功！", map[string]any{
+		"group_id":       strconv.FormatInt(groupID, 10),
+		"project_id":     strconv.FormatInt(projectID, 10),
+		"project_name":   projectName,
+		"project_type":   projectType,
+		"subject_word":   subjectWord,
+		"stop_word":      stopWord,
+		"precise":        precise,
+		"project_status": updatedResp.Data.Status,
+	})
 }
 
 func (s *Server) handleMobileMonitor(w http.ResponseWriter, r *http.Request, user any) {

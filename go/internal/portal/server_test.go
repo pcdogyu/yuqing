@@ -838,6 +838,189 @@ func TestLegacyUserSaveCompat(t *testing.T) {
 	}
 }
 
+func TestLegacyProjectCompat(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+	user := map[string]any{"id": 1}
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/project/names?groupId=1", nil)
+	srv.handleLegacyProjectNames(rr, req, user)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected names 200, got %d", rr.Code)
+	}
+	var names struct {
+		GroupName   string `json:"groupName"`
+		ProjectName string `json:"projectName"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &names); err != nil {
+		t.Fatalf("decode names: %v", err)
+	}
+	if names.GroupName != "组一" {
+		t.Fatalf("unexpected group name: %+v", names)
+	}
+
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/project/groupandproject", nil)
+	srv.handleLegacyProjectGroupAndProject(rr, req, user)
+	var groupsEnvelope struct {
+		Code int `json:"code"`
+		Data []struct {
+			GroupID   string `json:"group_id"`
+			GroupName string `json:"group_name"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &groupsEnvelope); err != nil {
+		t.Fatalf("decode group list: %v", err)
+	}
+	if groupsEnvelope.Code != 200 || len(groupsEnvelope.Data) == 0 || groupsEnvelope.Data[0].GroupName != "组一" {
+		t.Fatalf("unexpected group list: %+v", groupsEnvelope)
+	}
+
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/project/listproject", strings.NewReader("groupid=1&page=1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	srv.handleLegacyProjectListProject(rr, req, user)
+	var listEnvelope struct {
+		Code      int              `json:"code"`
+		TotalPage int              `json:"totalPage"`
+		TotalData int              `json:"totalData"`
+		Page      int              `json:"page"`
+		Data      []map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &listEnvelope); err != nil {
+		t.Fatalf("decode project list: %v", err)
+	}
+	if listEnvelope.Code != 200 || listEnvelope.TotalData != 1 || len(listEnvelope.Data) != 1 {
+		t.Fatalf("unexpected project list: %+v", listEnvelope)
+	}
+
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/project/getGroupAndProject", nil)
+	srv.handleLegacyProjectGetGroupAndProject(rr, req, user)
+	var treeEnvelope struct {
+		Code int                           `json:"code"`
+		Flag bool                          `json:"flag"`
+		Data []map[string][]map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &treeEnvelope); err != nil {
+		t.Fatalf("decode group tree: %v", err)
+	}
+	if treeEnvelope.Code != 200 || len(treeEnvelope.Data) == 0 {
+		t.Fatalf("unexpected group tree: %+v", treeEnvelope)
+	}
+
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/project/verifygroup", nil)
+	srv.handleLegacyProjectVerifyGroup(rr, req, user)
+	var verifyEnvelope struct {
+		Code int `json:"code"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &verifyEnvelope); err != nil {
+		t.Fatalf("decode verify response: %v", err)
+	}
+	if verifyEnvelope.Code != 200 {
+		t.Fatalf("unexpected verify response: %+v", verifyEnvelope)
+	}
+
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/project/getedit?projectid=1", nil)
+	srv.handleLegacyProjectGetEdit(rr, req, user)
+	var editEnvelope struct {
+		Code int            `json:"code"`
+		Data map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &editEnvelope); err != nil {
+		t.Fatalf("decode getedit response: %v", err)
+	}
+	if editEnvelope.Code != 200 || editEnvelope.Data["project_name"] != "项目一" {
+		t.Fatalf("unexpected getedit response: %+v", editEnvelope)
+	}
+
+	createBody := strings.NewReader(`{"project_name":"新方案","group_id":1,"project_type":2,"subject_word":"AI,金融","stop_word":"stop","regional_word":"北京","character_word":"张三","event_word":"事件","project_description":"新建方案"}`)
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/project/commitproject", createBody)
+	req.Header.Set("Content-Type", "application/json")
+	srv.handleLegacyProjectCommitProject(rr, req, user)
+	var createEnvelope struct {
+		Code int `json:"code"`
+		Data struct {
+			GroupID   string `json:"group_id"`
+			ProjectID string `json:"project_id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &createEnvelope); err != nil {
+		t.Fatalf("decode commitproject response: %v", err)
+	}
+	if createEnvelope.Code != 200 || createEnvelope.Data.ProjectID != "2" {
+		t.Fatalf("unexpected commitproject response: %+v", createEnvelope)
+	}
+
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/project/detail", strings.NewReader("projectid=2"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	srv.handleLegacyProjectDetail(rr, req, user)
+	var detailEnvelope struct {
+		ProjectName   string `json:"project_name"`
+		ProjectType   int    `json:"project_type"`
+		SubjectWord   string `json:"subject_word"`
+		StopWord      string `json:"stop_word"`
+		RegionalWord  string `json:"regional_word"`
+		CharacterWord string `json:"character_word"`
+		EventWord     string `json:"event_word"`
+		Precise       string `json:"precise"`
+		IsOpenWarning bool   `json:"isOpenWarning"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &detailEnvelope); err != nil {
+		t.Fatalf("decode project detail: %v", err)
+	}
+	if detailEnvelope.ProjectName != "新方案" || detailEnvelope.SubjectWord != "AI,金融" || detailEnvelope.ProjectType != 2 {
+		t.Fatalf("unexpected detail response: %+v", detailEnvelope)
+	}
+	if detailEnvelope.Precise != "1" {
+		t.Fatalf("expected precise 1 after create, got %+v", detailEnvelope)
+	}
+
+	editBody := strings.NewReader(`{"project_id":2,"group_id":1,"project_name":"新方案改","project_type":1,"subject_word":"AI,金融,科技","stop_word":"","project_description":"更新方案"}`)
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/project/commiteditproject", editBody)
+	req.Header.Set("Content-Type", "application/json")
+	srv.handleLegacyProjectCommitEditProject(rr, req, user)
+	var updateEnvelope struct {
+		Code int `json:"code"`
+		Data struct {
+			ProjectID string `json:"project_id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &updateEnvelope); err != nil {
+		t.Fatalf("decode commitedit response: %v", err)
+	}
+	if updateEnvelope.Code != 200 || updateEnvelope.Data.ProjectID != "2" {
+		t.Fatalf("unexpected commitedit response: %+v", updateEnvelope)
+	}
+
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/project/getedit?projectid=2", nil)
+	srv.handleLegacyProjectGetEdit(rr, req, user)
+	if err := json.Unmarshal(rr.Body.Bytes(), &editEnvelope); err != nil {
+		t.Fatalf("decode getedit after update: %v", err)
+	}
+	if editEnvelope.Code != 200 || editEnvelope.Data["project_name"] != "新方案改" {
+		t.Fatalf("unexpected updated getedit response: %+v", editEnvelope)
+	}
+
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/project/detail", strings.NewReader("projectid=2"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	srv.handleLegacyProjectDetail(rr, req, user)
+	if err := json.Unmarshal(rr.Body.Bytes(), &detailEnvelope); err != nil {
+		t.Fatalf("decode project detail after update: %v", err)
+	}
+	if detailEnvelope.ProjectName != "新方案改" || detailEnvelope.Precise != "0" {
+		t.Fatalf("unexpected updated detail response: %+v", detailEnvelope)
+	}
+}
+
 func TestPlatformNLPCompat(t *testing.T) {
 	srv, cleanup := newPortalCompatServer(t)
 	defer cleanup()
@@ -938,8 +1121,12 @@ func TestPlatformNLPCompat(t *testing.T) {
 
 func newPortalCompatServer(t *testing.T) (*Server, func()) {
 	t.Helper()
+	legacyProjectMetaMu.Lock()
+	legacyProjectMetaByID = map[int64]legacyProjectMeta{}
+	legacyProjectMetaMu.Unlock()
 
 	var mu sync.Mutex
+	var projectMu sync.Mutex
 	var authMu sync.Mutex
 	var bindingMu sync.Mutex
 	mailCfg := model.MailConfig{}
@@ -947,6 +1134,8 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 	deletedArticles := map[int64]bool{}
 	emotions := map[int64]string{}
 	shareChannels := map[int64][]string{}
+	opinionConditions := map[int64]model.OpinionCondition{}
+	warningSettings := map[int64]model.WarningSetting{}
 	createdUsers := map[string]model.User{}
 	projectGroups := []model.ProjectGroup{
 		{ID: 1, Name: "组一", Description: "测试项目组", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()},
@@ -954,6 +1143,7 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 	projects := []model.Project{
 		{ID: 1, GroupID: 1, GroupName: "组一", Name: "项目一", Keywords: "AI,新能源", Description: "测试项目", Status: "active", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()},
 	}
+	nextProjectID := int64(2)
 	platformBindings := map[string]model.PlatformBinding{
 		"nlp:1": {
 			UserID:    1,
@@ -1051,7 +1241,159 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/project-groups":
 			writeEnvelope(http.StatusOK, "ok", projectGroups)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects":
-			writeEnvelope(http.StatusOK, "ok", projects)
+			projectMu.Lock()
+			items := append([]model.Project(nil), projects...)
+			projectMu.Unlock()
+			writeEnvelope(http.StatusOK, "ok", items)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/projects":
+			var project model.Project
+			if err := json.NewDecoder(r.Body).Decode(&project); err != nil {
+				writeEnvelope(http.StatusBadRequest, err.Error(), nil)
+				return
+			}
+			projectMu.Lock()
+			project.ID = nextProjectID
+			nextProjectID++
+			project.CreatedAt = time.Now().UTC()
+			project.UpdatedAt = project.CreatedAt
+			if project.Status == "" {
+				project.Status = "active"
+			}
+			for _, group := range projectGroups {
+				if group.ID == project.GroupID {
+					project.GroupName = group.Name
+					break
+				}
+			}
+			projects = append(projects, project)
+			projectMu.Unlock()
+			writeEnvelope(http.StatusOK, "ok", project)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/projects/"):
+			id := parseTestInt64(strings.TrimPrefix(r.URL.Path, "/api/v1/projects/"))
+			projectMu.Lock()
+			var item model.Project
+			for _, candidate := range projects {
+				if candidate.ID == id {
+					item = candidate
+					break
+				}
+			}
+			projectMu.Unlock()
+			if item.ID == 0 {
+				writeEnvelope(http.StatusNotFound, "not found", nil)
+				return
+			}
+			writeEnvelope(http.StatusOK, "ok", item)
+		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/api/v1/projects/"):
+			id := parseTestInt64(strings.TrimPrefix(r.URL.Path, "/api/v1/projects/"))
+			var project model.Project
+			if err := json.NewDecoder(r.Body).Decode(&project); err != nil {
+				writeEnvelope(http.StatusBadRequest, err.Error(), nil)
+				return
+			}
+			projectMu.Lock()
+			updated := false
+			for idx, candidate := range projects {
+				if candidate.ID == id {
+					project.ID = id
+					project.CreatedAt = candidate.CreatedAt
+					project.UpdatedAt = time.Now().UTC()
+					if project.Status == "" {
+						project.Status = candidate.Status
+					}
+					for _, group := range projectGroups {
+						if group.ID == project.GroupID {
+							project.GroupName = group.Name
+							break
+						}
+					}
+					projects[idx] = project
+					updated = true
+					break
+				}
+			}
+			projectMu.Unlock()
+			if !updated {
+				writeEnvelope(http.StatusNotFound, "not found", nil)
+				return
+			}
+			writeEnvelope(http.StatusOK, "ok", project)
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/projects/"):
+			id := parseTestInt64(strings.TrimPrefix(r.URL.Path, "/api/v1/projects/"))
+			projectMu.Lock()
+			kept := projects[:0]
+			removed := false
+			for _, candidate := range projects {
+				if candidate.ID == id {
+					removed = true
+					continue
+				}
+				kept = append(kept, candidate)
+			}
+			projects = kept
+			projectMu.Unlock()
+			if !removed {
+				writeEnvelope(http.StatusNotFound, "not found", nil)
+				return
+			}
+			writeEnvelope(http.StatusOK, "ok", map[string]bool{"deleted": true})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/system/opinion-conditions/"):
+			id := parseTestInt64(strings.TrimPrefix(r.URL.Path, "/api/v1/system/opinion-conditions/"))
+			projectMu.Lock()
+			item, ok := opinionConditions[id]
+			projectMu.Unlock()
+			if !ok {
+				writeEnvelope(http.StatusNotFound, "not found", nil)
+				return
+			}
+			writeEnvelope(http.StatusOK, "ok", item)
+		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/api/v1/system/opinion-conditions/"):
+			id := parseTestInt64(strings.TrimPrefix(r.URL.Path, "/api/v1/system/opinion-conditions/"))
+			var condition model.OpinionCondition
+			if err := json.NewDecoder(r.Body).Decode(&condition); err != nil {
+				writeEnvelope(http.StatusBadRequest, err.Error(), nil)
+				return
+			}
+			condition.ProjectID = id
+			if condition.Time == 0 {
+				condition.Time = 4
+			}
+			if condition.Emotion == "" {
+				condition.Emotion = "[1,2,3]"
+			}
+			if condition.Sort == 0 {
+				condition.Sort = 1
+			}
+			if condition.Matchs == 0 {
+				condition.Matchs = 1
+			}
+			projectMu.Lock()
+			opinionConditions[id] = condition
+			projectMu.Unlock()
+			writeEnvelope(http.StatusOK, "ok", condition)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/system/warning-settings/"):
+			id := parseTestInt64(strings.TrimPrefix(r.URL.Path, "/api/v1/system/warning-settings/"))
+			projectMu.Lock()
+			item, ok := warningSettings[id]
+			projectMu.Unlock()
+			if !ok {
+				writeEnvelope(http.StatusNotFound, "not found", nil)
+				return
+			}
+			writeEnvelope(http.StatusOK, "ok", item)
+		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/api/v1/system/warning-settings/"):
+			id := parseTestInt64(strings.TrimPrefix(r.URL.Path, "/api/v1/system/warning-settings/"))
+			var setting model.WarningSetting
+			if err := json.NewDecoder(r.Body).Decode(&setting); err != nil {
+				writeEnvelope(http.StatusBadRequest, err.Error(), nil)
+				return
+			}
+			setting.ProjectID = id
+			setting.Enabled = setting.Enabled || setting.WarningStatus == 1
+			projectMu.Lock()
+			warningSettings[id] = setting
+			projectMu.Unlock()
+			writeEnvelope(http.StatusOK, "ok", setting)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/articles":
 			projectID := parseTestInt64(r.URL.Query().Get("project_id"))
 			items := make([]model.Item, 0, len(articles))
