@@ -250,6 +250,49 @@ func TestVolumePageCompat(t *testing.T) {
 	}
 }
 
+func TestMobileMonitorCompat(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/mobile/monitor", nil)
+	rr := httptest.NewRecorder()
+	srv.handleMobileMonitor(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "移动端监测") {
+		t.Fatalf("expected page title, got %s", body)
+	}
+	if !strings.Contains(body, "项目分组") || !strings.Contains(body, "项目一") {
+		t.Fatalf("expected project group content, got %s", body)
+	}
+	if !strings.Contains(body, "/mobile/monitor/detail?groupid=1&projectid=1") {
+		t.Fatalf("expected detail link, got %s", body)
+	}
+}
+
+func TestMobileMonitorDetailCompat(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/mobile/monitor/detail?groupid=1&projectid=1", nil)
+	rr := httptest.NewRecorder()
+	srv.handleMobileMonitorDetail(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "移动端详情") {
+		t.Fatalf("expected page title, got %s", body)
+	}
+	if !strings.Contains(body, "项目一") || !strings.Contains(body, "AI") {
+		t.Fatalf("expected project details and articles, got %s", body)
+	}
+}
+
 func TestLegacyMailCompatibility(t *testing.T) {
 	srv, cleanup := newPortalCompatServer(t)
 	defer cleanup()

@@ -63,15 +63,219 @@ func (s *Server) handleMobileMonitor(w http.ResponseWriter, r *http.Request, use
 		http.Redirect(w, r, "/mobile/monitor", http.StatusSeeOther)
 		return
 	}
-	s.writeSimplePage(w, "mobile/monitor", "移动端监测", s.mobileShell(user, "monitor", r.URL.Query()))
+	dashboard, notices, taskRuns, crawlRuns, services := s.loadDashboardContext(r)
+	groups := s.groupProjectsForMobile()
+	var b strings.Builder
+	b.WriteString("<h1>移动端监测</h1>")
+	b.WriteString(`<p><a href="/system">系统页</a> | <a href="/mobile/mobileQRCode">二维码</a> | <a href="/hot/hotpage">热点页</a></p>`)
+	b.WriteString(`<section><h2>核心指标</h2><ul>`)
+	b.WriteString("<li>文章数：")
+	b.WriteString(strconv.Itoa(dashboard.Overview.ArticleCount))
+	b.WriteString("</li><li>项目数：")
+	b.WriteString(strconv.Itoa(dashboard.Overview.ProjectCount))
+	b.WriteString("</li><li>报告数：")
+	b.WriteString(strconv.Itoa(dashboard.Overview.ReportCount))
+	b.WriteString("</li><li>活跃规则：")
+	b.WriteString(strconv.Itoa(dashboard.Overview.AlertRuleCount))
+	b.WriteString("</li></ul></section>")
+	b.WriteString(`<section><h2>项目分组</h2>`)
+	for _, group := range groups {
+		for key, list := range group {
+			parts := strings.SplitN(key, "-", 2)
+			groupID := ""
+			groupName := key
+			if len(parts) == 2 {
+				groupID = parts[0]
+				groupName = parts[1]
+			}
+			b.WriteString("<section><h3>")
+			b.WriteString(html.EscapeString(groupName))
+			b.WriteString("</h3><p>groupid=")
+			b.WriteString(html.EscapeString(groupID))
+			b.WriteString("</p><table><tr><th>项目</th><th>关键词</th><th>状态</th><th>操作</th></tr>")
+			for _, item := range list {
+				groupIDValue := legacyStringFromAny(item["group_id"])
+				projectIDValue := legacyStringFromAny(item["project_id"])
+				b.WriteString("<tr><td>")
+				b.WriteString(html.EscapeString(legacyStringFromAny(item["project_name"])))
+				b.WriteString("</td><td>")
+				b.WriteString(html.EscapeString(legacyStringFromAny(item["keywords"])))
+				b.WriteString("</td><td>")
+				b.WriteString(html.EscapeString(legacyStringFromAny(item["status"])))
+				b.WriteString("</td><td><a href=\"/mobile/monitor/detail?groupid=")
+				b.WriteString(url.QueryEscape(groupIDValue))
+				b.WriteString("&projectid=")
+				b.WriteString(url.QueryEscape(projectIDValue))
+				b.WriteString("\">查看详情</a></td></tr>")
+			}
+			b.WriteString("</table></section>")
+		}
+	}
+	b.WriteString(`<section><h2>服务状态</h2><table><tr><th>服务</th><th>状态</th></tr>`)
+	for _, service := range services {
+		b.WriteString("<tr><td>")
+		b.WriteString(html.EscapeString(service.Name))
+		b.WriteString("</td><td>")
+		if service.Healthy {
+			b.WriteString("正常")
+		} else {
+			b.WriteString("异常")
+		}
+		b.WriteString("</td></tr>")
+	}
+	b.WriteString("</table></section>")
+	b.WriteString(`<section><h2>最近公告</h2><table><tr><th>标题</th><th>时间</th></tr>`)
+	for _, notice := range notices {
+		b.WriteString("<tr><td>")
+		b.WriteString(html.EscapeString(notice.Title))
+		b.WriteString("</td><td>")
+		b.WriteString(notice.CreatedAt.Format("2006-01-02 15:04"))
+		b.WriteString("</td></tr>")
+	}
+	b.WriteString("</table></section>")
+	b.WriteString(`<section><h2>最近任务</h2><table><tr><th>任务</th><th>状态</th><th>说明</th></tr>`)
+	for _, run := range taskRuns {
+		b.WriteString("<tr><td>")
+		b.WriteString(html.EscapeString(run.TaskName))
+		b.WriteString("</td><td>")
+		b.WriteString(html.EscapeString(run.Status))
+		b.WriteString("</td><td>")
+		b.WriteString(html.EscapeString(run.Message))
+		b.WriteString("</td></tr>")
+	}
+	b.WriteString("</table></section>")
+	b.WriteString(`<section><h2>最近抓取</h2><table><tr><th>来源</th><th>状态</th><th>抓取数</th><th>入库数</th></tr>`)
+	for _, run := range crawlRuns {
+		b.WriteString("<tr><td>")
+		b.WriteString(html.EscapeString(run.SourceType))
+		b.WriteString("</td><td>")
+		b.WriteString(html.EscapeString(run.Status))
+		b.WriteString("</td><td>")
+		b.WriteString(strconv.Itoa(run.FetchedCount))
+		b.WriteString("</td><td>")
+		b.WriteString(strconv.Itoa(run.InsertedCount))
+		b.WriteString("</td></tr>")
+	}
+	b.WriteString("</table></section>")
+	_ = s.writeSimplePage(w, "mobile/monitor", "移动端监测", b.String())
 }
 
 func (s *Server) handleMobileMonitorDetail(w http.ResponseWriter, r *http.Request, user any) {
-	s.writeSimplePage(w, "mobile/detail", "移动端详情", s.mobileShell(user, "detail", r.URL.Query()))
+	groupID := strings.TrimSpace(r.URL.Query().Get("groupid"))
+	projectID := strings.TrimSpace(r.URL.Query().Get("projectid"))
+	if projectID == "" {
+		http.Redirect(w, r, "/mobile/monitor", http.StatusSeeOther)
+		return
+	}
+	var projects []model.Project
+	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/projects", &projects)
+	var project model.Project
+	for _, item := range projects {
+		if strconv.FormatInt(item.ID, 10) == projectID {
+			project = item
+			break
+		}
+	}
+	articles := model.ItemListResult{}
+	reports := []model.Report{}
+	rules := []model.MonitorRule{}
+	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/articles?page=1&page_size=10&project_id="+url.QueryEscape(projectID), &articles)
+	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/reports?project_id="+url.QueryEscape(projectID), &reports)
+	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/monitor-rules", &rules)
+	filteredRules := make([]model.MonitorRule, 0, len(rules))
+	for _, rule := range rules {
+		if strconv.FormatInt(rule.ProjectID, 10) == projectID {
+			filteredRules = append(filteredRules, rule)
+		}
+	}
+	var b strings.Builder
+	b.WriteString("<h1>移动端详情</h1>")
+	b.WriteString(`<p><a href="/mobile/monitor">返回监测页</a> | <a href="/volume?groupid=`)
+	b.WriteString(url.QueryEscape(groupID))
+	b.WriteString(`&projectid=`)
+	b.WriteString(url.QueryEscape(projectID))
+	b.WriteString(`">声量页</a> | <a href="/articles?project_id=`)
+	b.WriteString(url.QueryEscape(projectID))
+	b.WriteString(`">文章中心</a></p>`)
+	b.WriteString("<section><h2>")
+	b.WriteString(html.EscapeString(project.Name))
+	b.WriteString("</h2><p>项目组：")
+	b.WriteString(html.EscapeString(project.GroupName))
+	b.WriteString(" | 状态：")
+	b.WriteString(html.EscapeString(project.Status))
+	b.WriteString("</p><p>关键词：")
+	b.WriteString(html.EscapeString(project.Keywords))
+	b.WriteString("</p><pre>")
+	b.WriteString(html.EscapeString(project.Description))
+	b.WriteString("</pre></section>")
+	b.WriteString(`<section><h2>最近文章</h2><table><tr><th>标题</th><th>来源</th><th>时间</th></tr>`)
+	for _, item := range articles.Items {
+		b.WriteString("<tr><td>")
+		b.WriteString(html.EscapeString(item.Title))
+		b.WriteString("</td><td>")
+		b.WriteString(html.EscapeString(item.SourceType))
+		b.WriteString("</td><td>")
+		b.WriteString(item.CapturedAt.Format("2006-01-02 15:04"))
+		b.WriteString("</td></tr>")
+	}
+	b.WriteString("</table></section>")
+	b.WriteString(`<section><h2>关联规则</h2><table><tr><th>名称</th><th>等级</th><th>状态</th></tr>`)
+	for _, rule := range filteredRules {
+		b.WriteString("<tr><td>")
+		b.WriteString(html.EscapeString(rule.Name))
+		b.WriteString("</td><td>")
+		b.WriteString(html.EscapeString(rule.Severity))
+		b.WriteString("</td><td>")
+		b.WriteString(html.EscapeString(rule.Status))
+		b.WriteString("</td></tr>")
+	}
+	b.WriteString("</table></section>")
+	b.WriteString(`<section><h2>关联报告</h2><table><tr><th>标题</th><th>状态</th><th>更新时间</th></tr>`)
+	for _, report := range reports {
+		b.WriteString("<tr><td>")
+		b.WriteString(html.EscapeString(report.Title))
+		b.WriteString("</td><td>")
+		b.WriteString(html.EscapeString(report.Status))
+		b.WriteString("</td><td>")
+		b.WriteString(report.UpdatedAt.Format("2006-01-02 15:04"))
+		b.WriteString("</td></tr>")
+	}
+	b.WriteString("</table></section>")
+	_ = s.writeSimplePage(w, "mobile/detail", "移动端详情", b.String())
 }
 
 func (s *Server) handleMobileWarning(w http.ResponseWriter, r *http.Request, user any) {
-	s.writeSimplePage(w, "mobile/warning", "移动端预警", s.mobileShell(user, "warning", r.URL.Query()))
+	projectID := strings.TrimSpace(r.URL.Query().Get("projectid"))
+	if projectID == "" {
+		projectID = strings.TrimSpace(r.URL.Query().Get("project_id"))
+	}
+	articles := []legacyWarningArticleCompat{}
+	if userID := userIDFromMap(user); userID > 0 {
+		page, err := s.collectLegacyWarningArticles(userID, parseProjectID(projectID), 1, "", 1)
+		if err == nil {
+			articles = page.Articles
+		}
+	}
+	var b strings.Builder
+	b.WriteString("<h1>移动端预警</h1>")
+	b.WriteString(`<p><a href="/system?section=warningmsg`)
+	if projectID != "" {
+		b.WriteString(`&project_id=`)
+		b.WriteString(url.QueryEscape(projectID))
+	}
+	b.WriteString(`">系统预警消息</a></p>`)
+	b.WriteString(`<section><h2>预警文章</h2><table><tr><th>标题</th><th>项目</th><th>时间</th></tr>`)
+	for _, item := range articles {
+		b.WriteString("<tr><td>")
+		b.WriteString(html.EscapeString(item.ArticleTitle))
+		b.WriteString("</td><td>")
+		b.WriteString(html.EscapeString(item.ProjectName))
+		b.WriteString("</td><td>")
+		b.WriteString(html.EscapeString(item.ArticleTime))
+		b.WriteString("</td></tr>")
+	}
+	b.WriteString("</table></section>")
+	_ = s.writeSimplePage(w, "mobile/warning", "移动端预警", b.String())
 }
 
 func (s *Server) handleMobileGetGroupAndProject(w http.ResponseWriter, r *http.Request, user any) {
