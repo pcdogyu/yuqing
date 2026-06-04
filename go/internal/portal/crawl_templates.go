@@ -47,7 +47,7 @@ func (s *Server) handleCrawlTemplatesPage(w http.ResponseWriter, r *http.Request
 		.template-actions button{width:auto;min-width:120px}
 		.template-actions .danger{background:#8f2d2d}
 	</style>`)
-	body.WriteString(`<section><div class="toolbar"><a href="/">总览</a><a href="/projects">项目</a><a href="/monitor-rules">规则</a><a href="/reports">报告</a><a href="/crawl-templates">模板中心</a><a href="/crawl-templates/manage">模板管理</a><a href="/system">系统</a><a href="/crypto">Crypto</a></div><h1>抓取模板管理</h1><p class="subtle">欢迎，用户 `)
+	body.WriteString(`<section><h1>抓取模板管理</h1><p class="subtle">欢迎，用户 `)
 	body.WriteString(strconv.FormatInt(userIDFromMap(user), 10))
 	body.WriteString(`。这里可以集中维护 X / Telegram / 资讯抓取模板。</p></section>`)
 
