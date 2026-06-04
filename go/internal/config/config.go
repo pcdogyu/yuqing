@@ -4,33 +4,40 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 )
 
 const defaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
 
 type Config struct {
-	ListenAddr             string
-	DatabasePath           string
-	FlashURL               string
-	HeadlineURL            string
-	BinanceBaseURL         string
-	CryptoXURL             string
-	CryptoXToken           string
-	CryptoTelegramURL      string
-	CryptoTelegramToken    string
-	HTTPTimeout            time.Duration
-	FlashInterval          time.Duration
-	HeadlineInterval       time.Duration
-	CryptoXInterval        time.Duration
-	CryptoTelegramInterval time.Duration
-	AnalysisInterval       time.Duration
-	UserAgent              string
-	LogLevel               string
-	ServiceToken           string
-	SessionTTL             time.Duration
-	WechatPrivateKey       string
-	WechatAccountName      string
+	ListenAddr              string
+	DatabasePath            string
+	FlashURL                string
+	HeadlineURL             string
+	BinanceBaseURL          string
+	Jin10FullBackfillDays   int
+	Jin10FullMaxPages       int
+	Jin10FullRateLimit      time.Duration
+	Jin10FullIncludeSitemap bool
+	Jin10FullEnabled        bool
+	Jin10FullInterval       time.Duration
+	CryptoXURL              string
+	CryptoXToken            string
+	CryptoTelegramURL       string
+	CryptoTelegramToken     string
+	HTTPTimeout             time.Duration
+	FlashInterval           time.Duration
+	HeadlineInterval        time.Duration
+	CryptoXInterval         time.Duration
+	CryptoTelegramInterval  time.Duration
+	AnalysisInterval        time.Duration
+	UserAgent               string
+	LogLevel                string
+	ServiceToken            string
+	SessionTTL              time.Duration
+	WechatPrivateKey        string
+	WechatAccountName       string
 
 	GatewayWebAddr string
 	AuthAddr       string
@@ -62,27 +69,33 @@ func Load() Config {
 	}
 
 	return Config{
-		ListenAddr:             envOrDefault("YUQING_LISTEN_ADDR", ":8090"),
-		DatabasePath:           dbPath,
-		FlashURL:               envOrDefaultWithAliases("YUQING_FLASH_URL", "https://www.jin10.com/", "JIN10_FLASH_URL"),
-		HeadlineURL:            envOrDefaultWithAliases("YUQING_HEADLINE_URL", "https://xnews.jin10.com/", "JIN10_HEADLINE_URL"),
-		BinanceBaseURL:         envOrDefault("YUQING_BINANCE_BASE_URL", "https://api.binance.com"),
-		CryptoXURL:             envOrDefault("YUQING_CRYPTO_X_URL", ""),
-		CryptoXToken:           envOrDefault("YUQING_CRYPTO_X_TOKEN", ""),
-		CryptoTelegramURL:      envOrDefault("YUQING_CRYPTO_TELEGRAM_URL", ""),
-		CryptoTelegramToken:    envOrDefault("YUQING_CRYPTO_TELEGRAM_TOKEN", ""),
-		HTTPTimeout:            envDurationSeconds(20, "YUQING_HTTP_TIMEOUT_SEC", "JIN10_HTTP_TIMEOUT_SEC"),
-		FlashInterval:          envDurationSeconds(15, "YUQING_FLASH_INTERVAL_SEC", "JIN10_FLASH_INTERVAL_SEC"),
-		HeadlineInterval:       envDurationSeconds(60, "YUQING_HEADLINE_INTERVAL_SEC", "JIN10_HEADLINE_INTERVAL_SEC"),
-		CryptoXInterval:        envDurationSeconds(90, "YUQING_CRYPTO_X_INTERVAL_SEC"),
-		CryptoTelegramInterval: envDurationSeconds(90, "YUQING_CRYPTO_TELEGRAM_INTERVAL_SEC"),
-		AnalysisInterval:       envDurationSeconds(120, "YUQING_ANALYSIS_INTERVAL_SEC"),
-		UserAgent:              envOrDefaultWithAliases("YUQING_USER_AGENT", defaultUserAgent, "JIN10_USER_AGENT"),
-		LogLevel:               envOrDefaultWithAliases("YUQING_LOG_LEVEL", "info", "JIN10_LOG_LEVEL"),
-		ServiceToken:           envOrDefaultWithAliases("YUQING_SERVICE_TOKEN", "stonedt-internal-token", "JIN10_SERVICE_TOKEN"),
-		SessionTTL:             envDurationSeconds(86400, "YUQING_SESSION_TTL_SEC", "JIN10_SESSION_TTL_SEC"),
-		WechatPrivateKey:       envOrDefaultWithAliases("YUQING_WECHAT_PRIVATE_KEY", "yuqing-wechat-private-key", "JIN10_TOKEN_PRIVATE_KEY"),
-		WechatAccountName:      envOrDefaultWithAliases("YUQING_WECHAT_NAME", "Go 舆情系统", "JIN10_WECHAT_NAME"),
+		ListenAddr:              envOrDefault("YUQING_LISTEN_ADDR", ":8090"),
+		DatabasePath:            dbPath,
+		FlashURL:                envOrDefaultWithAliases("YUQING_FLASH_URL", "https://www.jin10.com/", "JIN10_FLASH_URL"),
+		HeadlineURL:             envOrDefaultWithAliases("YUQING_HEADLINE_URL", "https://xnews.jin10.com/", "JIN10_HEADLINE_URL"),
+		BinanceBaseURL:          envOrDefault("YUQING_BINANCE_BASE_URL", "https://api.binance.com"),
+		Jin10FullBackfillDays:   envInt(30, "YUQING_JIN10_FULL_BACKFILL_DAYS"),
+		Jin10FullMaxPages:       envInt(20, "YUQING_JIN10_FULL_MAX_PAGES_PER_RUN"),
+		Jin10FullRateLimit:      envDurationMillis(800, "YUQING_JIN10_FULL_RATE_LIMIT_MS"),
+		Jin10FullIncludeSitemap: envBool(true, "YUQING_JIN10_FULL_INCLUDE_SITEMAP"),
+		Jin10FullEnabled:        envBool(false, "YUQING_JIN10_FULL_ENABLED"),
+		Jin10FullInterval:       envDurationSeconds(300, "YUQING_JIN10_FULL_INTERVAL_SEC"),
+		CryptoXURL:              envOrDefault("YUQING_CRYPTO_X_URL", ""),
+		CryptoXToken:            envOrDefault("YUQING_CRYPTO_X_TOKEN", ""),
+		CryptoTelegramURL:       envOrDefault("YUQING_CRYPTO_TELEGRAM_URL", ""),
+		CryptoTelegramToken:     envOrDefault("YUQING_CRYPTO_TELEGRAM_TOKEN", ""),
+		HTTPTimeout:             envDurationSeconds(20, "YUQING_HTTP_TIMEOUT_SEC", "JIN10_HTTP_TIMEOUT_SEC"),
+		FlashInterval:           envDurationSeconds(15, "YUQING_FLASH_INTERVAL_SEC", "JIN10_FLASH_INTERVAL_SEC"),
+		HeadlineInterval:        envDurationSeconds(60, "YUQING_HEADLINE_INTERVAL_SEC", "JIN10_HEADLINE_INTERVAL_SEC"),
+		CryptoXInterval:         envDurationSeconds(90, "YUQING_CRYPTO_X_INTERVAL_SEC"),
+		CryptoTelegramInterval:  envDurationSeconds(90, "YUQING_CRYPTO_TELEGRAM_INTERVAL_SEC"),
+		AnalysisInterval:        envDurationSeconds(120, "YUQING_ANALYSIS_INTERVAL_SEC"),
+		UserAgent:               envOrDefaultWithAliases("YUQING_USER_AGENT", defaultUserAgent, "JIN10_USER_AGENT"),
+		LogLevel:                envOrDefaultWithAliases("YUQING_LOG_LEVEL", "info", "JIN10_LOG_LEVEL"),
+		ServiceToken:            envOrDefaultWithAliases("YUQING_SERVICE_TOKEN", "stonedt-internal-token", "JIN10_SERVICE_TOKEN"),
+		SessionTTL:              envDurationSeconds(86400, "YUQING_SESSION_TTL_SEC", "JIN10_SESSION_TTL_SEC"),
+		WechatPrivateKey:        envOrDefaultWithAliases("YUQING_WECHAT_PRIVATE_KEY", "yuqing-wechat-private-key", "JIN10_TOKEN_PRIVATE_KEY"),
+		WechatAccountName:       envOrDefaultWithAliases("YUQING_WECHAT_NAME", "Go 舆情系统", "JIN10_WECHAT_NAME"),
 
 		GatewayWebAddr: envOrDefaultWithAliases("YUQING_GATEWAY_ADDR", ":80", "JIN10_PORTAL_WEB_ADDR"),
 		AuthAddr:       envOrDefault("YUQING_AUTH_ADDR", ":8081"),
@@ -105,6 +118,37 @@ func Load() Config {
 		DefaultAdminUser: envOrDefaultWithAliases("YUQING_DEFAULT_ADMIN_USER", "admin", "JIN10_DEFAULT_ADMIN_USER"),
 		DefaultAdminPass: envOrDefaultWithAliases("YUQING_DEFAULT_ADMIN_PASS", "admin123", "JIN10_DEFAULT_ADMIN_PASS"),
 	}
+}
+
+func envInt(fallback int, keys ...string) int {
+	raw := strconv.Itoa(fallback)
+	for _, key := range keys {
+		if value := os.Getenv(key); value != "" {
+			raw = value
+			break
+		}
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
+}
+
+func envBool(fallback bool, keys ...string) bool {
+	for _, key := range keys {
+		value := strings.TrimSpace(os.Getenv(key))
+		if value == "" {
+			continue
+		}
+		switch strings.ToLower(value) {
+		case "1", "true", "yes", "on":
+			return true
+		case "0", "false", "no", "off":
+			return false
+		}
+	}
+	return fallback
 }
 
 func firstEnv(keys ...string) string {
@@ -148,4 +192,9 @@ func envDurationSeconds(fallback int, keys ...string) time.Duration {
 		seconds = fallback
 	}
 	return time.Duration(seconds) * time.Second
+}
+
+func envDurationMillis(fallback int, keys ...string) time.Duration {
+	ms := envInt(fallback, keys...)
+	return time.Duration(ms) * time.Millisecond
 }

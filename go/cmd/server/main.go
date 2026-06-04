@@ -18,6 +18,7 @@ import (
 	"github.com/stonedt-yuqing/go-jin10/internal/provider"
 	"github.com/stonedt-yuqing/go-jin10/internal/provider/cryptosocial"
 	"github.com/stonedt-yuqing/go-jin10/internal/provider/jin10flash"
+	"github.com/stonedt-yuqing/go-jin10/internal/provider/jin10full"
 	"github.com/stonedt-yuqing/go-jin10/internal/provider/jin10xnews"
 	"github.com/stonedt-yuqing/go-jin10/internal/service"
 	sqlitestore "github.com/stonedt-yuqing/go-jin10/internal/store/sqlite"
@@ -42,6 +43,14 @@ func main() {
 	registry := provider.Registry{
 		Flash:    jin10flash.NewProvider(httpClient, cfg.FlashURL),
 		Headline: jin10xnews.NewProvider(httpClient, cfg.HeadlineURL),
+		Jin10Full: jin10full.NewProvider(httpClient, store, jin10full.Options{
+			FlashURL:       cfg.FlashURL,
+			HeadlineURL:    cfg.HeadlineURL,
+			BackfillDays:   cfg.Jin10FullBackfillDays,
+			MaxPagesPerRun: cfg.Jin10FullMaxPages,
+			RateLimit:      cfg.Jin10FullRateLimit,
+			IncludeSitemap: cfg.Jin10FullIncludeSitemap,
+		}),
 	}
 	if cfg.CryptoXURL != "" {
 		registry.CryptoX = cryptosocial.NewXProvider(httpClient, cfg.CryptoXURL, cfg.CryptoXToken)

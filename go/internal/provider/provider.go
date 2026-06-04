@@ -10,6 +10,7 @@ import (
 const (
 	SourceTypeFlash          = "flash"
 	SourceTypeHeadline       = "headline"
+	SourceTypeJin10Full      = "jin10_full"
 	SourceTypeCryptoX        = "crypto_x"
 	SourceTypeCryptoTelegram = "crypto_telegram"
 )
@@ -20,6 +21,8 @@ func ValidSourceType(value string) string {
 		return SourceTypeFlash
 	case SourceTypeHeadline:
 		return SourceTypeHeadline
+	case SourceTypeJin10Full:
+		return SourceTypeJin10Full
 	case SourceTypeCryptoX:
 		return SourceTypeCryptoX
 	case SourceTypeCryptoTelegram:
@@ -37,6 +40,7 @@ type Provider interface {
 type Registry struct {
 	Flash          Provider
 	Headline       Provider
+	Jin10Full      Provider
 	CryptoX        Provider
 	CryptoTelegram Provider
 }
@@ -47,6 +51,8 @@ func (r Registry) Resolve(sourceType string) Provider {
 		return r.Flash
 	case SourceTypeHeadline:
 		return r.Headline
+	case SourceTypeJin10Full:
+		return r.Jin10Full
 	case SourceTypeCryptoX:
 		return r.CryptoX
 	case SourceTypeCryptoTelegram:
@@ -57,5 +63,5 @@ func (r Registry) Resolve(sourceType string) Provider {
 }
 
 func (r Registry) All() []Provider {
-	return []Provider{r.Flash, r.Headline, r.CryptoX, r.CryptoTelegram}
+	return []Provider{r.Flash, r.Headline, r.Jin10Full, r.CryptoX, r.CryptoTelegram}
 }

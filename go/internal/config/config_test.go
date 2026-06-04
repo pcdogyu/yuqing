@@ -18,6 +18,12 @@ func TestLoadUsesDefaults(t *testing.T) {
 	t.Setenv("YUQING_CRYPTO_X_TOKEN", "")
 	t.Setenv("YUQING_CRYPTO_TELEGRAM_URL", "")
 	t.Setenv("YUQING_CRYPTO_TELEGRAM_TOKEN", "")
+	t.Setenv("YUQING_JIN10_FULL_BACKFILL_DAYS", "")
+	t.Setenv("YUQING_JIN10_FULL_MAX_PAGES_PER_RUN", "")
+	t.Setenv("YUQING_JIN10_FULL_RATE_LIMIT_MS", "")
+	t.Setenv("YUQING_JIN10_FULL_INCLUDE_SITEMAP", "")
+	t.Setenv("YUQING_JIN10_FULL_ENABLED", "")
+	t.Setenv("YUQING_JIN10_FULL_INTERVAL_SEC", "")
 	t.Setenv("YUQING_HTTP_TIMEOUT_SEC", "")
 	t.Setenv("JIN10_HTTP_TIMEOUT_SEC", "")
 	t.Setenv("YUQING_CRYPTO_X_INTERVAL_SEC", "")
@@ -44,6 +50,12 @@ func TestLoadUsesDefaults(t *testing.T) {
 	}
 	if cfg.CryptoXURL != "" || cfg.CryptoTelegramURL != "" {
 		t.Fatalf("expected empty crypto social urls by default, got x=%q tg=%q", cfg.CryptoXURL, cfg.CryptoTelegramURL)
+	}
+	if cfg.Jin10FullBackfillDays != 30 || cfg.Jin10FullMaxPages != 20 {
+		t.Fatalf("expected default jin10 full backfill/pages, got days=%d pages=%d", cfg.Jin10FullBackfillDays, cfg.Jin10FullMaxPages)
+	}
+	if cfg.Jin10FullRateLimit != 800*time.Millisecond || !cfg.Jin10FullIncludeSitemap || cfg.Jin10FullEnabled {
+		t.Fatalf("unexpected jin10 full defaults: rate=%s sitemap=%v enabled=%v", cfg.Jin10FullRateLimit, cfg.Jin10FullIncludeSitemap, cfg.Jin10FullEnabled)
 	}
 	if cfg.HTTPTimeout != 20*time.Second {
 		t.Fatalf("expected default http timeout, got %s", cfg.HTTPTimeout)
@@ -74,6 +86,12 @@ func TestLoadPrefersPrimaryAndAliasEnv(t *testing.T) {
 	t.Setenv("JIN10_HTTP_TIMEOUT_SEC", "99")
 	t.Setenv("YUQING_FLASH_INTERVAL_SEC", "")
 	t.Setenv("JIN10_FLASH_INTERVAL_SEC", "33")
+	t.Setenv("YUQING_JIN10_FULL_BACKFILL_DAYS", "90")
+	t.Setenv("YUQING_JIN10_FULL_MAX_PAGES_PER_RUN", "12")
+	t.Setenv("YUQING_JIN10_FULL_RATE_LIMIT_MS", "250")
+	t.Setenv("YUQING_JIN10_FULL_INCLUDE_SITEMAP", "false")
+	t.Setenv("YUQING_JIN10_FULL_ENABLED", "true")
+	t.Setenv("YUQING_JIN10_FULL_INTERVAL_SEC", "600")
 	t.Setenv("YUQING_CRYPTO_X_INTERVAL_SEC", "77")
 	t.Setenv("YUQING_CRYPTO_TELEGRAM_INTERVAL_SEC", "88")
 
@@ -93,6 +111,12 @@ func TestLoadPrefersPrimaryAndAliasEnv(t *testing.T) {
 	}
 	if cfg.FlashInterval != 33*time.Second {
 		t.Fatalf("expected alias flash interval, got %s", cfg.FlashInterval)
+	}
+	if cfg.Jin10FullBackfillDays != 90 || cfg.Jin10FullMaxPages != 12 || cfg.Jin10FullRateLimit != 250*time.Millisecond {
+		t.Fatalf("expected jin10 full config loaded, got days=%d pages=%d rate=%s", cfg.Jin10FullBackfillDays, cfg.Jin10FullMaxPages, cfg.Jin10FullRateLimit)
+	}
+	if cfg.Jin10FullIncludeSitemap || !cfg.Jin10FullEnabled || cfg.Jin10FullInterval != 600*time.Second {
+		t.Fatalf("expected jin10 full flags loaded, got sitemap=%v enabled=%v interval=%s", cfg.Jin10FullIncludeSitemap, cfg.Jin10FullEnabled, cfg.Jin10FullInterval)
 	}
 	if cfg.CryptoXURL != "https://social.example.com/x" || cfg.CryptoXToken != "x-token" {
 		t.Fatalf("expected x config loaded, got url=%q token=%q", cfg.CryptoXURL, cfg.CryptoXToken)

@@ -179,6 +179,7 @@ func crawlTemplateSourceOptions(selected string) string {
 	}{
 		{provider.SourceTypeFlash, provider.SourceTypeFlash},
 		{provider.SourceTypeHeadline, provider.SourceTypeHeadline},
+		{provider.SourceTypeJin10Full, "金十公开资讯全量"},
 		{provider.SourceTypeCryptoX, provider.SourceTypeCryptoX},
 		{provider.SourceTypeCryptoTelegram, provider.SourceTypeCryptoTelegram},
 		{"custom", "custom"},

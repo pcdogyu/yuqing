@@ -82,6 +82,14 @@ CREATE TABLE IF NOT EXISTS crawl_runs (
 	error_text TEXT
 );
 
+CREATE TABLE IF NOT EXISTS crawl_states (
+	source_type TEXT NOT NULL,
+	cursor_key TEXT NOT NULL,
+	cursor_value TEXT NOT NULL DEFAULT '',
+	updated_at TEXT NOT NULL,
+	PRIMARY KEY (source_type, cursor_key)
+);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
 	title,
 	content,
@@ -479,6 +487,7 @@ CREATE TABLE IF NOT EXISTS wechat_bindings (
 CREATE INDEX IF NOT EXISTS idx_items_source_type_captured_at ON items(source_type, captured_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_items_title ON items(title);
 CREATE INDEX IF NOT EXISTS idx_crawl_runs_source_type_started_at ON crawl_runs(source_type, started_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_crawl_states_updated ON crawl_states(source_type, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_crawl_templates_enabled_updated ON crawl_templates(enabled, updated_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_projects_group_id ON projects(group_id);
 CREATE INDEX IF NOT EXISTS idx_monitor_rules_project_id ON monitor_rules(project_id);

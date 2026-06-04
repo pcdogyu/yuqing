@@ -55,6 +55,9 @@ func TestValidSourceType(t *testing.T) {
 	if got := validSourceType(provider.SourceTypeHeadline); got != provider.SourceTypeHeadline {
 		t.Fatalf("expected headline source type, got %q", got)
 	}
+	if got := validSourceType(provider.SourceTypeJin10Full); got != provider.SourceTypeJin10Full {
+		t.Fatalf("expected jin10 full source type, got %q", got)
+	}
 	if got := validSourceType(provider.SourceTypeCryptoX); got != provider.SourceTypeCryptoX {
 		t.Fatalf("expected crypto x source type, got %q", got)
 	}

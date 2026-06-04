@@ -14,6 +14,7 @@ import (
 	"github.com/stonedt-yuqing/go-jin10/internal/provider"
 	"github.com/stonedt-yuqing/go-jin10/internal/provider/cryptosocial"
 	"github.com/stonedt-yuqing/go-jin10/internal/provider/jin10flash"
+	"github.com/stonedt-yuqing/go-jin10/internal/provider/jin10full"
 	"github.com/stonedt-yuqing/go-jin10/internal/provider/jin10xnews"
 	"github.com/stonedt-yuqing/go-jin10/internal/service"
 	sqlitestore "github.com/stonedt-yuqing/go-jin10/internal/store/sqlite"
@@ -47,8 +48,9 @@ func NewCrawler(cfg config.Config, store *sqlitestore.Store) *service.Crawler {
 		SetRetryCount(2).
 		SetHeader("User-Agent", cfg.UserAgent)
 	registry := provider.Registry{
-		Flash:    jin10flash.NewProvider(httpClient, cfg.FlashURL),
-		Headline: jin10xnews.NewProvider(httpClient, cfg.HeadlineURL),
+		Flash:     jin10flash.NewProvider(httpClient, cfg.FlashURL),
+		Headline:  jin10xnews.NewProvider(httpClient, cfg.HeadlineURL),
+		Jin10Full: jin10full.NewProvider(httpClient, store, jin10FullOptions(cfg)),
 	}
 	if cfg.CryptoXURL != "" {
 		registry.CryptoX = cryptosocial.NewXProvider(httpClient, cfg.CryptoXURL, cfg.CryptoXToken)
@@ -73,6 +75,12 @@ func LogStartup(serviceName, listenAddr string, cfg config.Config) {
 		Dur("http_timeout", cfg.HTTPTimeout).
 		Dur("flash_interval", cfg.FlashInterval).
 		Dur("headline_interval", cfg.HeadlineInterval).
+		Dur("jin10_full_interval", cfg.Jin10FullInterval).
+		Bool("jin10_full_enabled", cfg.Jin10FullEnabled).
+		Int("jin10_full_backfill_days", cfg.Jin10FullBackfillDays).
+		Int("jin10_full_max_pages", cfg.Jin10FullMaxPages).
+		Dur("jin10_full_rate_limit", cfg.Jin10FullRateLimit).
+		Bool("jin10_full_include_sitemap", cfg.Jin10FullIncludeSitemap).
 		Dur("crypto_x_interval", cfg.CryptoXInterval).
 		Dur("crypto_telegram_interval", cfg.CryptoTelegramInterval).
 		Dur("analysis_interval", cfg.AnalysisInterval).
@@ -96,6 +104,17 @@ func LogStartup(serviceName, listenAddr string, cfg config.Config) {
 		Str("llm_model", cfg.LLMModel).
 		Str("generated_at", time.Now().UTC().Format(time.RFC3339))
 	event.Msg("startup debug info")
+}
+
+func jin10FullOptions(cfg config.Config) jin10full.Options {
+	return jin10full.Options{
+		FlashURL:       cfg.FlashURL,
+		HeadlineURL:    cfg.HeadlineURL,
+		BackfillDays:   cfg.Jin10FullBackfillDays,
+		MaxPagesPerRun: cfg.Jin10FullMaxPages,
+		RateLimit:      cfg.Jin10FullRateLimit,
+		IncludeSitemap: cfg.Jin10FullIncludeSitemap,
+	}
 }
 
 func fileExists(path string) bool {
