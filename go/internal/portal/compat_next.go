@@ -9,6 +9,7 @@ import (
 	"html"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -124,7 +125,60 @@ func (s *Server) handleMobileUUID(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleVolume(w http.ResponseWriter, r *http.Request, user any) {
 	groupID := strings.TrimSpace(r.URL.Query().Get("groupid"))
 	projectID := strings.TrimSpace(r.URL.Query().Get("projectid"))
-	_ = s.writeSimplePage(w, "volume", "声量监测", fmt.Sprintf(`<h1>声量监测</h1><p>groupid=%s projectid=%s</p><p><a href="/system">系统页</a></p>`, html.EscapeString(groupID), html.EscapeString(projectID)))
+	var projects []model.Project
+	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/projects", &projects)
+	sort.Slice(projects, func(i, j int) bool {
+		if projects[i].GroupName == projects[j].GroupName {
+			return projects[i].Name < projects[j].Name
+		}
+		return projects[i].GroupName < projects[j].GroupName
+	})
+	var hotspots []model.KeywordHotspot
+	_ = s.getJSON(s.cfg.AnalysisURL+"/api/v1/analysis/keywords", &hotspots)
+	if len(hotspots) == 0 {
+		hotspots = []model.KeywordHotspot{{Keyword: "暂无数据", Count: 0}}
+	}
+	var b strings.Builder
+	b.WriteString("<h1>声量监测</h1>")
+	b.WriteString("<p>groupid=")
+	b.WriteString(html.EscapeString(groupID))
+	b.WriteString(" projectid=")
+	b.WriteString(html.EscapeString(projectID))
+	b.WriteString(`</p><p><a href="/system">系统页</a> | <a href="/hot/hotpage">热点页</a></p>`)
+	b.WriteString(`<section><h2>项目入口</h2><table><tr><th>项目组</th><th>项目</th><th>关键词</th><th>操作</th></tr>`)
+	for _, project := range projects {
+		if groupID != "" && strconv.FormatInt(project.GroupID, 10) != groupID {
+			continue
+		}
+		b.WriteString("<tr><td>")
+		b.WriteString(html.EscapeString(project.GroupName))
+		b.WriteString("</td><td>")
+		b.WriteString(html.EscapeString(project.Name))
+		b.WriteString("</td><td>")
+		b.WriteString(html.EscapeString(project.Keywords))
+		b.WriteString("</td><td><a href=\"/volume/getproject?groupid=")
+		b.WriteString(strconv.FormatInt(project.GroupID, 10))
+		b.WriteString("&projectid=")
+		b.WriteString(strconv.FormatInt(project.ID, 10))
+		b.WriteString("\">查看声量</a> <a href=\"/volume/projectname?groupId=")
+		b.WriteString(strconv.FormatInt(project.GroupID, 10))
+		b.WriteString("&projectid=")
+		b.WriteString(strconv.FormatInt(project.ID, 10))
+		b.WriteString("\">项目名</a></td></tr>")
+	}
+	b.WriteString("</table></section>")
+	b.WriteString(`<section><h2>热点关键词</h2><table><tr><th>关键词</th><th>热度</th><th>跳转</th></tr>`)
+	for _, item := range hotspots {
+		b.WriteString("<tr><td>")
+		b.WriteString(html.EscapeString(item.Keyword))
+		b.WriteString("</td><td>")
+		b.WriteString(strconv.Itoa(item.Count))
+		b.WriteString("</td><td><a href=\"/articles?mode=full&keyword=")
+		b.WriteString(url.QueryEscape(item.Keyword))
+		b.WriteString("\">全文检索</a></td></tr>")
+	}
+	b.WriteString("</table></section>")
+	_ = s.writeSimplePage(w, "volume", "声量监测", b.String())
 }
 
 func (s *Server) handleVolumeGetProject(w http.ResponseWriter, r *http.Request, user any) {

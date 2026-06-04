@@ -227,6 +227,29 @@ func TestHotPageCompat(t *testing.T) {
 	}
 }
 
+func TestVolumePageCompat(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/volume?groupid=1&projectid=1", nil)
+	rr := httptest.NewRecorder()
+	srv.handleVolume(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "声量监测") {
+		t.Fatalf("expected page title, got %s", body)
+	}
+	if !strings.Contains(body, "AI") {
+		t.Fatalf("expected volume page to include hot keyword, got %s", body)
+	}
+	if !strings.Contains(body, "/volume/getproject?groupid=1&projectid=1") {
+		t.Fatalf("expected project link, got %s", body)
+	}
+}
+
 func TestLegacyMailCompatibility(t *testing.T) {
 	srv, cleanup := newPortalCompatServer(t)
 	defer cleanup()
@@ -712,6 +735,12 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 	emotions := map[int64]string{}
 	shareChannels := map[int64][]string{}
 	createdUsers := map[string]model.User{}
+	projectGroups := []model.ProjectGroup{
+		{ID: 1, Name: "组一", Description: "测试项目组", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()},
+	}
+	projects := []model.Project{
+		{ID: 1, GroupID: 1, GroupName: "组一", Name: "项目一", Keywords: "AI,新能源", Description: "测试项目", Status: "active", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()},
+	}
 	platformBindings := map[string]model.PlatformBinding{
 		"nlp:1": {
 			UserID:    1,
@@ -783,6 +812,10 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 		}
 
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/project-groups":
+			writeEnvelope(http.StatusOK, "ok", projectGroups)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects":
+			writeEnvelope(http.StatusOK, "ok", projects)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/system/mail-config":
 			mu.Lock()
 			cfg := mailCfg
