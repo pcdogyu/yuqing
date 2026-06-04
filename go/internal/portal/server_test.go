@@ -24,6 +24,13 @@ import (
 	"github.com/stonedt-yuqing/go-jin10/internal/nlp"
 )
 
+var testLastCrawlRequest struct {
+	sync.Mutex
+	templateID string
+	sourceType string
+	keyword    string
+}
+
 func TestUserIDFromMap(t *testing.T) {
 	tests := []struct {
 		name string
@@ -1666,6 +1673,77 @@ func TestPlatformBindingsPage(t *testing.T) {
 	}
 }
 
+func TestTemplateCrawlActionsAcrossPages(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+	user := map[string]any{"id": 1}
+
+	t.Run("project", func(t *testing.T) {
+		form := url.Values{}
+		form.Set("form_type", "crawl")
+		form.Set("template_id", "1")
+		form.Set("keyword", "AI")
+		req := httptest.NewRequest(http.MethodPost, "/projects/1", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rr := httptest.NewRecorder()
+		srv.handleProjectDetail(rr, req, user)
+		if rr.Code != http.StatusSeeOther {
+			t.Fatalf("expected redirect, got %d", rr.Code)
+		}
+		if loc := rr.Header().Get("Location"); !strings.Contains(loc, "/projects/1") {
+			t.Fatalf("expected project redirect, got %s", loc)
+		}
+		assertLastCrawlRequest(t, srv, "1", "", "AI")
+	})
+
+	t.Run("rule", func(t *testing.T) {
+		form := url.Values{}
+		form.Set("form_type", "crawl")
+		form.Set("project_id", "1")
+		form.Set("template_id", "1")
+		form.Set("keyword", "AI")
+		req := httptest.NewRequest(http.MethodPost, "/monitor-rules/1", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rr := httptest.NewRecorder()
+		srv.handleRuleDetail(rr, req, user)
+		if rr.Code != http.StatusSeeOther {
+			t.Fatalf("expected redirect, got %d", rr.Code)
+		}
+		if loc := rr.Header().Get("Location"); !strings.Contains(loc, "/monitor-rules/1") {
+			t.Fatalf("expected rule redirect, got %s", loc)
+		}
+		assertLastCrawlRequest(t, srv, "1", "", "AI")
+	})
+
+	t.Run("report", func(t *testing.T) {
+		form := url.Values{}
+		form.Set("form_type", "crawl")
+		form.Set("template_id", "1")
+		form.Set("keyword", "AI")
+		req := httptest.NewRequest(http.MethodPost, "/reports/1?return_to=/reports", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rr := httptest.NewRecorder()
+		srv.handleReportDetail(rr, req, user)
+		if rr.Code != http.StatusSeeOther {
+			t.Fatalf("expected redirect, got %d", rr.Code)
+		}
+		if loc := rr.Header().Get("Location"); !strings.Contains(loc, "/reports/1") {
+			t.Fatalf("expected report redirect, got %s", loc)
+		}
+		assertLastCrawlRequest(t, srv, "1", "", "AI")
+	})
+}
+
+func assertLastCrawlRequest(t *testing.T, srv *Server, wantTemplateID, wantSourceType, wantKeyword string) {
+	t.Helper()
+	_ = srv
+	testLastCrawlRequest.Lock()
+	defer testLastCrawlRequest.Unlock()
+	if testLastCrawlRequest.templateID != wantTemplateID || testLastCrawlRequest.sourceType != wantSourceType || testLastCrawlRequest.keyword != wantKeyword {
+		t.Fatalf("unexpected crawl request: template_id=%q source_type=%q keyword=%q", testLastCrawlRequest.templateID, testLastCrawlRequest.sourceType, testLastCrawlRequest.keyword)
+	}
+}
+
 func newPortalCompatServer(t *testing.T) (*Server, func()) {
 	t.Helper()
 	legacyProjectMetaMu.Lock()
@@ -2547,6 +2625,11 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusOK, "message": "ok", "data": []model.CrawlRun{{ID: 8, TemplateID: 1, TemplateName: "示例模板", SourceType: "flash", Status: "success", FetchedCount: 1, InsertedCount: 1, StartedAt: time.Now().UTC().Add(-time.Hour)}}})
 			return
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/admin/tasks/crawl":
+			testLastCrawlRequest.Lock()
+			testLastCrawlRequest.templateID = r.URL.Query().Get("template_id")
+			testLastCrawlRequest.sourceType = r.URL.Query().Get("source_type")
+			testLastCrawlRequest.keyword = r.URL.Query().Get("keyword")
+			testLastCrawlRequest.Unlock()
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"code":    http.StatusOK,
 				"message": "ok",
