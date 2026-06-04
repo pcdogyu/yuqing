@@ -92,6 +92,8 @@ func LogStartup(serviceName, listenAddr string, cfg config.Config) {
 		Str("flash_url", cfg.FlashURL).
 		Str("headline_url", cfg.HeadlineURL).
 		Str("binance_base_url", cfg.BinanceBaseURL).
+		Str("coinlore_url", cfg.CoinLoreURL).
+		Str("coingecko_url", cfg.CoinGeckoURL).
 		Str("crypto_x_url", cfg.CryptoXURL).
 		Str("crypto_telegram_url", cfg.CryptoTelegramURL).
 		Str("gateway_web_url", cfg.GatewayWebURL).

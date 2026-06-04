@@ -16,6 +16,8 @@ type Config struct {
 	FlashURL                string
 	HeadlineURL             string
 	BinanceBaseURL          string
+	CoinLoreURL             string
+	CoinGeckoURL            string
 	Jin10FullBackfillDays   int
 	Jin10FullMaxPages       int
 	Jin10FullRateLimit      time.Duration
@@ -74,6 +76,8 @@ func Load() Config {
 		FlashURL:                envOrDefaultWithAliases("YUQING_FLASH_URL", "https://www.jin10.com/", "JIN10_FLASH_URL"),
 		HeadlineURL:             envOrDefaultWithAliases("YUQING_HEADLINE_URL", "https://xnews.jin10.com/", "JIN10_HEADLINE_URL"),
 		BinanceBaseURL:          envOrDefault("YUQING_BINANCE_BASE_URL", "https://api.binance.com"),
+		CoinLoreURL:             envOrDefault("YUQING_COINLORE_URL", "https://api.coinlore.net"),
+		CoinGeckoURL:            envOrDefault("YUQING_COINGECKO_URL", "https://api.coingecko.com/api/v3"),
 		Jin10FullBackfillDays:   envInt(30, "YUQING_JIN10_FULL_BACKFILL_DAYS"),
 		Jin10FullMaxPages:       envInt(20, "YUQING_JIN10_FULL_MAX_PAGES_PER_RUN"),
 		Jin10FullRateLimit:      envDurationMillis(800, "YUQING_JIN10_FULL_RATE_LIMIT_MS"),

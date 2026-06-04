@@ -9,7 +9,6 @@ import (
 	"math"
 	"net/http"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +18,48 @@ import (
 )
 
 const cryptoInsightTTL = 5 * time.Minute
+
+var stableUSDQuotes = map[string]float64{
+	"USD":   1,
+	"USDT":  1,
+	"USDC":  1,
+	"BUSD":  1,
+	"FDUSD": 1,
+}
+
+var coinLoreAssetIDs = map[string]string{
+	"BTC":  "90",
+	"ETH":  "80",
+	"SOL":  "48543",
+	"BNB":  "2710",
+	"XRP":  "58",
+	"DOGE": "2",
+	"USDT": "518",
+	"USDC": "33285",
+}
+
+var coinGeckoAssetIDs = map[string]string{
+	"BTC":   "bitcoin",
+	"ETH":   "ethereum",
+	"SOL":   "solana",
+	"BNB":   "binancecoin",
+	"XRP":   "ripple",
+	"DOGE":  "dogecoin",
+	"USDT":  "tether",
+	"USDC":  "usd-coin",
+	"BUSD":  "binance-usd",
+	"FDUSD": "first-digital-usd",
+}
+
+type assetPriceQuote struct {
+	Symbol      string
+	PriceUSD    float64
+	Change1H    float64
+	Change24H   float64
+	Source      string
+	UpdatedAt   time.Time
+	Has1HChange bool
+}
 
 func (s *Service) handleCryptoInsights(w http.ResponseWriter, r *http.Request) {
 	response, err := s.buildCryptoInsights(r.Context(), strings.TrimSpace(r.URL.Query().Get("pair")))
@@ -58,9 +99,9 @@ func (s *Service) buildCryptoInsights(ctx context.Context, rawPair string) (mode
 		social = model.CryptoSocialResult{Resolution: resolution, Page: 1, PageSize: 20}
 	}
 
-	price := model.CryptoPriceSnapshot{Symbol: resolution.BinanceSymbol, UpdatedAt: now}
-	if candles, candleErr := s.fetchCandles(ctx, resolution.BinanceSymbol); candleErr == nil {
-		price = buildPriceSnapshot(resolution.BinanceSymbol, candles, now)
+	price := model.CryptoPriceSnapshot{Symbol: resolution.Pair, UpdatedAt: now}
+	if snapshot, priceErr := s.fetchPriceSnapshot(ctx, resolution, now); priceErr == nil {
+		price = snapshot
 	}
 	reasons := aggregateCryptoReasons(news.Items, social.Items)
 	socialSentiment := buildSocialSentiment(social.Items)
@@ -136,75 +177,226 @@ func (s *Service) fetchCryptoSocial(ctx context.Context, pair string) (model.Cry
 	return envelope.Data, nil
 }
 
-func (s *Service) fetchCandles(ctx context.Context, symbol string) ([]model.CryptoPriceCandle, error) {
-	resp, err := s.client.R().
-		SetContext(ctx).
-		SetQueryParam("symbol", symbol).
-		SetQueryParam("interval", "1h").
-		SetQueryParam("limit", "25").
-		Get(strings.TrimRight(s.cfg.BinanceBaseURL, "/") + "/api/v3/klines")
-	if err == nil && resp.IsSuccess() {
-		var rows [][]any
-		if unmarshalErr := json.Unmarshal(resp.Body(), &rows); unmarshalErr == nil {
-			candles := make([]model.CryptoPriceCandle, 0, len(rows))
-			now := time.Now().UTC()
-			for _, row := range rows {
-				if len(row) < 6 {
-					continue
-				}
-				candles = append(candles, model.CryptoPriceCandle{
-					Symbol:    symbol,
-					Interval:  "1h",
-					OpenTime:  parseBinanceMillis(row[0]),
-					Open:      parseBinanceFloat(row[1]),
-					High:      parseBinanceFloat(row[2]),
-					Low:       parseBinanceFloat(row[3]),
-					Close:     parseBinanceFloat(row[4]),
-					Volume:    parseBinanceFloat(row[5]),
-					CreatedAt: now,
-					UpdatedAt: now,
-				})
-			}
-			if len(candles) >= 24 {
-				_ = s.store.UpsertCryptoCandles(ctx, symbol, "1h", candles)
-				return candles, nil
-			}
+func (s *Service) fetchPriceSnapshot(ctx context.Context, resolution model.CryptoPairResolution, now time.Time) (model.CryptoPriceSnapshot, error) {
+	base, err := s.fetchAssetPriceQuote(ctx, resolution.BaseAsset, now)
+	if err != nil {
+		return model.CryptoPriceSnapshot{}, err
+	}
+
+	quotePrice := 1.0
+	quoteChange1H := 0.0
+	quoteChange24H := 0.0
+	updatedAt := base.UpdatedAt
+	if stablePrice, ok := stableUSDQuotes[resolution.QuoteAsset]; ok {
+		quotePrice = stablePrice
+	} else {
+		quote, quoteErr := s.fetchAssetPriceQuote(ctx, resolution.QuoteAsset, now)
+		if quoteErr != nil {
+			return model.CryptoPriceSnapshot{}, quoteErr
+		}
+		quotePrice = quote.PriceUSD
+		quoteChange1H = normalized1HChange(quote)
+		quoteChange24H = quote.Change24H
+		if quote.UpdatedAt.After(updatedAt) {
+			updatedAt = quote.UpdatedAt
 		}
 	}
 
-	stored, storedErr := s.store.ListCryptoCandles(ctx, symbol, "1h", 25)
-	if storedErr != nil {
-		if err != nil {
-			return nil, err
-		}
-		return nil, storedErr
+	if base.PriceUSD <= 0 || quotePrice <= 0 {
+		return model.CryptoPriceSnapshot{}, errors.New("price source unavailable")
 	}
-	if len(stored) == 0 {
-		if err != nil {
-			return nil, err
-		}
-		return nil, errors.New("no candle data")
-	}
-	sort.Slice(stored, func(i, j int) bool { return stored[i].OpenTime.Before(stored[j].OpenTime) })
-	return stored, nil
+
+	currentPrice := base.PriceUSD / quotePrice
+	change1H := derivePairChange(currentPrice, base.PriceUSD, normalized1HChange(base), quotePrice, quoteChange1H)
+	change24H := derivePairChange(currentPrice, base.PriceUSD, base.Change24H, quotePrice, quoteChange24H)
+	change4H := estimate4HChange(currentPrice, change1H, change24H)
+
+	return model.CryptoPriceSnapshot{
+		Symbol:     resolution.Pair,
+		Price:      cryptoutil.Round2(currentPrice),
+		Change1H:   cryptoutil.Round2(change1H),
+		Change4H:   cryptoutil.Round2(change4H),
+		Change24H:  cryptoutil.Round2(change24H),
+		Volatility: cryptoutil.Round2(estimateVolatility(change1H, change4H, change24H)),
+		VolumeBias: 0,
+		UpdatedAt:  updatedAt,
+	}, nil
 }
 
-func buildPriceSnapshot(symbol string, candles []model.CryptoPriceCandle, now time.Time) model.CryptoPriceSnapshot {
-	if len(candles) == 0 {
-		return model.CryptoPriceSnapshot{Symbol: symbol, UpdatedAt: now}
+func (s *Service) fetchAssetPriceQuote(ctx context.Context, symbol string, now time.Time) (assetPriceQuote, error) {
+	if quote, err := s.fetchCoinLorePrice(ctx, symbol, now); err == nil {
+		return quote, nil
 	}
-	sort.Slice(candles, func(i, j int) bool { return candles[i].OpenTime.Before(candles[j].OpenTime) })
-	latest := candles[len(candles)-1]
-	return model.CryptoPriceSnapshot{
-		Symbol:     symbol,
-		Price:      cryptoutil.Round2(latest.Close),
-		Change1H:   cryptoutil.Round2(priceChange(candles, 1)),
-		Change4H:   cryptoutil.Round2(priceChange(candles, 4)),
-		Change24H:  cryptoutil.Round2(priceChange(candles, 24)),
-		Volatility: cryptoutil.Round2(candleVolatility(candles)),
-		VolumeBias: cryptoutil.Round2(volumeBias(candles)),
-		UpdatedAt:  now,
+	return s.fetchCoinGeckoPrice(ctx, symbol, now)
+}
+
+func (s *Service) fetchCoinLorePrice(ctx context.Context, symbol string, now time.Time) (assetPriceQuote, error) {
+	id, ok := coinLoreAssetIDs[symbol]
+	if !ok {
+		return assetPriceQuote{}, errors.New("coinlore asset id not found")
 	}
+	var payload []struct {
+		Symbol           string  `json:"symbol"`
+		PriceUSD         string  `json:"price_usd"`
+		PercentChange1H  string  `json:"percent_change_1h"`
+		PercentChange24H string  `json:"percent_change_24h"`
+		LastUpdated      int64   `json:"last_updated"`
+		Volume24         float64 `json:"volume24"`
+		MarketCapUSD     string  `json:"market_cap_usd"`
+	}
+	resp, err := s.client.R().
+		SetContext(ctx).
+		SetResult(&payload).
+		Get(strings.TrimRight(s.cfg.CoinLoreURL, "/") + "/api/ticker/?id=" + id)
+	if err != nil {
+		return assetPriceQuote{}, err
+	}
+	if !resp.IsSuccess() || len(payload) == 0 {
+		return assetPriceQuote{}, errors.New("coinlore price unavailable")
+	}
+
+	updatedAt := now
+	if payload[0].LastUpdated > 0 {
+		updatedAt = time.Unix(payload[0].LastUpdated, 0).UTC()
+	}
+	resolvedSymbol := strings.TrimSpace(payload[0].Symbol)
+	if resolvedSymbol == "" {
+		resolvedSymbol = symbol
+	}
+	return assetPriceQuote{
+		Symbol:      resolvedSymbol,
+		PriceUSD:    parseLooseFloat(payload[0].PriceUSD),
+		Change1H:    parseLooseFloat(payload[0].PercentChange1H),
+		Change24H:   parseLooseFloat(payload[0].PercentChange24H),
+		Source:      "coinlore",
+		UpdatedAt:   updatedAt,
+		Has1HChange: true,
+	}, nil
+}
+
+func (s *Service) fetchCoinGeckoPrice(ctx context.Context, symbol string, now time.Time) (assetPriceQuote, error) {
+	id, ok := coinGeckoAssetIDs[symbol]
+	if !ok {
+		return assetPriceQuote{}, errors.New("coingecko asset id not found")
+	}
+	var payload map[string]struct {
+		USD           float64 `json:"usd"`
+		USD24HChange  float64 `json:"usd_24h_change"`
+		LastUpdatedAt int64   `json:"last_updated_at"`
+	}
+	resp, err := s.client.R().
+		SetContext(ctx).
+		SetResult(&payload).
+		SetQueryParam("ids", id).
+		SetQueryParam("vs_currencies", "usd").
+		SetQueryParam("include_24hr_change", "true").
+		SetQueryParam("include_last_updated_at", "true").
+		Get(strings.TrimRight(s.cfg.CoinGeckoURL, "/") + "/simple/price")
+	if err != nil {
+		return assetPriceQuote{}, err
+	}
+	if !resp.IsSuccess() {
+		return assetPriceQuote{}, errors.New("coingecko price unavailable")
+	}
+	entry, ok := payload[id]
+	if !ok || entry.USD <= 0 {
+		return assetPriceQuote{}, errors.New("coingecko payload missing asset")
+	}
+	updatedAt := now
+	if entry.LastUpdatedAt > 0 {
+		updatedAt = time.Unix(entry.LastUpdatedAt, 0).UTC()
+	}
+	return assetPriceQuote{
+		Symbol:      symbol,
+		PriceUSD:    entry.USD,
+		Change1H:    0,
+		Change24H:   entry.USD24HChange,
+		Source:      "coingecko",
+		UpdatedAt:   updatedAt,
+		Has1HChange: false,
+	}, nil
+}
+
+func normalized1HChange(quote assetPriceQuote) float64 {
+	if quote.Has1HChange {
+		return quote.Change1H
+	}
+	return estimate1HFrom24H(quote.Change24H)
+}
+
+func estimate1HFrom24H(change24H float64) float64 {
+	base := 1 + change24H/100
+	if base <= 0 {
+		return 0
+	}
+	return (math.Pow(base, 1.0/24.0) - 1) * 100
+}
+
+func derivePairChange(currentPairPrice, basePrice, baseChange, quotePrice, quoteChange float64) float64 {
+	if currentPairPrice <= 0 {
+		return 0
+	}
+	pastBase := historicalPrice(basePrice, baseChange)
+	pastQuote := historicalPrice(quotePrice, quoteChange)
+	if pastBase <= 0 || pastQuote <= 0 {
+		return 0
+	}
+	pastPairPrice := pastBase / pastQuote
+	if pastPairPrice <= 0 {
+		return 0
+	}
+	return (currentPairPrice/pastPairPrice - 1) * 100
+}
+
+func historicalPrice(currentPrice, changePct float64) float64 {
+	denominator := 1 + changePct/100
+	if currentPrice <= 0 || denominator <= 0 {
+		return 0
+	}
+	return currentPrice / denominator
+}
+
+func estimate4HChange(currentPrice, change1H, change24H float64) float64 {
+	price1H := historicalPrice(currentPrice, change1H)
+	price24H := historicalPrice(currentPrice, change24H)
+	if price1H <= 0 || price24H <= 0 {
+		return 0
+	}
+	ratio := price1H / price24H
+	if ratio <= 0 {
+		return 0
+	}
+	hourlyRate := math.Pow(ratio, 1.0/23.0) - 1
+	if 1+hourlyRate <= 0 {
+		return 0
+	}
+	price4H := price1H / math.Pow(1+hourlyRate, 3)
+	if price4H <= 0 {
+		return 0
+	}
+	return (currentPrice/price4H - 1) * 100
+}
+
+func estimateVolatility(change1H, change4H, change24H float64) float64 {
+	hourly := []float64{change1H, change4H / 4, change24H / 24}
+	mean := 0.0
+	for _, value := range hourly {
+		mean += value
+	}
+	mean /= float64(len(hourly))
+	variance := 0.0
+	for _, value := range hourly {
+		variance += math.Pow(value-mean, 2)
+	}
+	return math.Sqrt(variance / float64(len(hourly)))
+}
+
+func parseLooseFloat(raw string) float64 {
+	value, err := json.Number(strings.TrimSpace(raw)).Float64()
+	if err != nil {
+		return 0
+	}
+	return value
 }
 
 func aggregateCryptoReasons(items []model.CryptoEvidenceArticle, posts []model.CryptoSocialPost) []model.CryptoReason {
@@ -584,101 +776,6 @@ func socialSummary(direction string, count int, volumeScore float64) string {
 		heat = "中等"
 	}
 	return fmt.Sprintf("近 48 小时社媒证据 %d 条，情绪偏%s，热度%s。", count, direction, heat)
-}
-
-func parseBinanceMillis(value any) time.Time {
-	switch typed := value.(type) {
-	case float64:
-		return time.UnixMilli(int64(typed)).UTC()
-	case int64:
-		return time.UnixMilli(typed).UTC()
-	case json.Number:
-		if parsed, err := typed.Int64(); err == nil {
-			return time.UnixMilli(parsed).UTC()
-		}
-	case string:
-		if parsed, err := strconv.ParseInt(strings.TrimSpace(typed), 10, 64); err == nil {
-			return time.UnixMilli(parsed).UTC()
-		}
-	}
-	return time.Time{}
-}
-
-func parseBinanceFloat(value any) float64 {
-	switch typed := value.(type) {
-	case float64:
-		return typed
-	case int64:
-		return float64(typed)
-	case json.Number:
-		parsed, _ := typed.Float64()
-		return parsed
-	case string:
-		parsed, _ := strconv.ParseFloat(strings.TrimSpace(typed), 64)
-		return parsed
-	default:
-		return 0
-	}
-}
-
-func priceChange(candles []model.CryptoPriceCandle, hours int) float64 {
-	if len(candles) <= hours {
-		return 0
-	}
-	latest := candles[len(candles)-1].Close
-	prev := candles[len(candles)-1-hours].Close
-	if prev == 0 {
-		return 0
-	}
-	return (latest - prev) / prev * 100
-}
-
-func candleVolatility(candles []model.CryptoPriceCandle) float64 {
-	if len(candles) < 2 {
-		return 0
-	}
-	returns := make([]float64, 0, len(candles)-1)
-	for i := 1; i < len(candles); i++ {
-		prev := candles[i-1].Close
-		if prev == 0 {
-			continue
-		}
-		returns = append(returns, (candles[i].Close-prev)/prev*100)
-	}
-	if len(returns) == 0 {
-		return 0
-	}
-	mean := 0.0
-	for _, ret := range returns {
-		mean += ret
-	}
-	mean /= float64(len(returns))
-	variance := 0.0
-	for _, ret := range returns {
-		variance += math.Pow(ret-mean, 2)
-	}
-	return math.Sqrt(variance / float64(len(returns)))
-}
-
-func volumeBias(candles []model.CryptoPriceCandle) float64 {
-	if len(candles) < 7 {
-		return 0
-	}
-	latest := candles[len(candles)-1].Volume
-	base := 0.0
-	count := 0.0
-	for _, candle := range candles[len(candles)-7 : len(candles)-1] {
-		base += candle.Volume
-		count++
-	}
-	if count == 0 {
-		return 0
-	}
-	avg := base / count
-	if avg == 0 {
-		return 0
-	}
-	return latest/avg - 1
 }
 
 func maxFloat(a, b float64) float64 {

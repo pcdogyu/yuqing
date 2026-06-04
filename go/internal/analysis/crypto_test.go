@@ -3,7 +3,6 @@ package analysis
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -86,35 +85,28 @@ func TestHandleCryptoInsightsBuildsLiveResponse(t *testing.T) {
 	}))
 	defer content.Close()
 
-	now := time.Date(2026, 6, 4, 10, 0, 0, 0, time.UTC)
-	binance := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v3/klines" {
-			t.Fatalf("unexpected binance path: %s", r.URL.Path)
+	coinLore := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("id") != "90" {
+			t.Fatalf("unexpected coinlore id: %s", r.URL.RawQuery)
 		}
-		rows := make([][]any, 0, 25)
-		price := 100000.0
-		for i := 0; i < 25; i++ {
-			price += 120
-			rows = append(rows, []any{
-				float64(now.Add(time.Duration(i-24) * time.Hour).UnixMilli()),
-				"100000.0",
-				"101000.0",
-				"99500.0",
-				strconvFormat(price),
-				strconvFormat(1000 + float64(i)*10),
-			})
-		}
-		_ = json.NewEncoder(w).Encode(rows)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]map[string]any{{
+			"id":                 "90",
+			"symbol":             "BTC",
+			"price_usd":          "62751.68",
+			"percent_change_1h":  "-0.11",
+			"percent_change_24h": "-6.76",
+		}})
 	}))
-	defer binance.Close()
+	defer coinLore.Close()
 
 	store := &stubStore{cryptoSnapErr: errors.New("not found")}
 	svc := NewService(config.Config{
-		ContentURL:     content.URL,
-		BinanceBaseURL: binance.URL,
-		HTTPTimeout:    5 * time.Second,
-		ServiceToken:   "test-token",
-		UserAgent:      "test-agent",
+		ContentURL:   content.URL,
+		CoinLoreURL:  coinLore.URL,
+		HTTPTimeout:  5 * time.Second,
+		ServiceToken: "test-token",
+		UserAgent:    "test-agent",
 	}, store)
 	recorder := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/crypto/insights?pair=BTCUSDT", nil)
@@ -127,11 +119,95 @@ func TestHandleCryptoInsightsBuildsLiveResponse(t *testing.T) {
 	if !strings.Contains(recorder.Body.String(), `"signals"`) {
 		t.Fatalf("expected signals in response, got %s", recorder.Body.String())
 	}
+	if !strings.Contains(recorder.Body.String(), `"price":62751.68`) {
+		t.Fatalf("expected live price in response, got %s", recorder.Body.String())
+	}
 	if !strings.Contains(recorder.Body.String(), `"evidence_articles"`) {
 		t.Fatalf("expected evidence articles in response, got %s", recorder.Body.String())
 	}
 	if !strings.Contains(recorder.Body.String(), `"social_posts"`) || !strings.Contains(recorder.Body.String(), `"social_sentiment"`) {
 		t.Fatalf("expected social insight fields in response, got %s", recorder.Body.String())
+	}
+}
+
+func TestHandleCryptoInsightsFallsBackToCoinGecko(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/crypto/news":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    200,
+				"message": "ok",
+				"data": model.CryptoNewsResult{
+					Resolution: model.CryptoPairResolution{Pair: "BTCUSDT", BaseAsset: "BTC", QuoteAsset: "USDT", BinanceSymbol: "BTCUSDT", DisplayPair: "BTC/USDT"},
+					Items: []model.CryptoEvidenceArticle{
+						{ID: 1, Title: "Bitcoin ETF approval lifts BTC", Direction: "bullish", ReasonCategory: "institution_etf", ReasonLabel: "机构与 ETF", RelevanceScore: 8.6, CapturedAt: time.Now().UTC()},
+					},
+					Total:    1,
+					Page:     1,
+					PageSize: 20,
+				},
+			})
+		case "/api/v1/crypto/social":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    200,
+				"message": "ok",
+				"data": model.CryptoSocialResult{
+					Resolution: model.CryptoPairResolution{Pair: "BTCUSDT", BaseAsset: "BTC", QuoteAsset: "USDT", BinanceSymbol: "BTCUSDT", DisplayPair: "BTC/USDT"},
+					Items:      nil,
+					Total:      0,
+					Page:       1,
+					PageSize:   20,
+				},
+			})
+		default:
+			t.Fatalf("unexpected content path: %s", r.URL.Path)
+		}
+	}))
+	defer content.Close()
+
+	coinLore := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 500, "message": "coinlore unavailable", "data": nil})
+	}))
+	defer coinLore.Close()
+
+	coinGecko := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/simple/price" {
+			t.Fatalf("unexpected coingecko path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"bitcoin": map[string]any{
+				"usd":             62553,
+				"usd_24h_change":  -6.901906697026034,
+				"last_updated_at": 1780569821,
+			},
+		})
+	}))
+	defer coinGecko.Close()
+
+	store := &stubStore{cryptoSnapErr: errors.New("not found")}
+	svc := NewService(config.Config{
+		ContentURL:   content.URL,
+		CoinLoreURL:  coinLore.URL,
+		CoinGeckoURL: coinGecko.URL,
+		HTTPTimeout:  5 * time.Second,
+		ServiceToken: "test-token",
+		UserAgent:    "test-agent",
+	}, store)
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/crypto/insights?pair=BTCUSDT", nil)
+
+	svc.handleCryptoInsights(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200 coingecko fallback response, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if strings.Contains(recorder.Body.String(), "当前实时价格暂不可用") {
+		t.Fatalf("expected coingecko fallback to keep price available, got %s", recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"price":62553`) {
+		t.Fatalf("expected coingecko price in response, got %s", recorder.Body.String())
 	}
 }
 
@@ -170,19 +246,19 @@ func TestHandleCryptoInsightsDegradesWhenPriceFetchFails(t *testing.T) {
 	}))
 	defer content.Close()
 
-	binance := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	failServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]any{"code": 500, "message": "binance unavailable", "data": nil})
 	}))
-	defer binance.Close()
+	defer failServer.Close()
 
 	store := &stubStore{cryptoSnapErr: errors.New("not found")}
 	svc := NewService(config.Config{
-		ContentURL:     content.URL,
-		BinanceBaseURL: binance.URL,
-		HTTPTimeout:    5 * time.Second,
-		ServiceToken:   "test-token",
-		UserAgent:      "test-agent",
+		ContentURL:   content.URL,
+		CoinLoreURL:  failServer.URL,
+		CoinGeckoURL: failServer.URL,
+		HTTPTimeout:  5 * time.Second,
+		ServiceToken: "test-token",
+		UserAgent:    "test-agent",
 	}, store)
 	recorder := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/crypto/insights?pair=BTCUSDT", nil)
@@ -197,6 +273,64 @@ func TestHandleCryptoInsightsDegradesWhenPriceFetchFails(t *testing.T) {
 	}
 }
 
-func strconvFormat(v float64) string {
-	return strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.2f", v), "0"), ".")
+func TestHandleCryptoInsightsSupportsCrossPairQuote(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/crypto/news":
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "message": "ok", "data": model.CryptoNewsResult{Resolution: model.CryptoPairResolution{Pair: "ETHBTC", BaseAsset: "ETH", QuoteAsset: "BTC"}, Page: 1, PageSize: 20}})
+		case "/api/v1/crypto/social":
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "message": "ok", "data": model.CryptoSocialResult{Resolution: model.CryptoPairResolution{Pair: "ETHBTC", BaseAsset: "ETH", QuoteAsset: "BTC"}, Page: 1, PageSize: 20}})
+		default:
+			t.Fatalf("unexpected content path: %s", r.URL.Path)
+		}
+	}))
+	defer content.Close()
+
+	coinLore := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Query().Get("id") {
+		case "80":
+			_ = json.NewEncoder(w).Encode([]map[string]any{{
+				"id":                 "80",
+				"symbol":             "ETH",
+				"price_usd":          "1760.42",
+				"percent_change_1h":  "0.63",
+				"percent_change_24h": "-6.62",
+			}})
+		case "90":
+			_ = json.NewEncoder(w).Encode([]map[string]any{{
+				"id":                 "90",
+				"symbol":             "BTC",
+				"price_usd":          "62751.68",
+				"percent_change_1h":  "-0.11",
+				"percent_change_24h": "-6.76",
+			}})
+		default:
+			t.Fatalf("unexpected coinlore id: %s", r.URL.RawQuery)
+		}
+	}))
+	defer coinLore.Close()
+
+	store := &stubStore{cryptoSnapErr: errors.New("not found")}
+	svc := NewService(config.Config{
+		ContentURL:   content.URL,
+		CoinLoreURL:  coinLore.URL,
+		HTTPTimeout:  5 * time.Second,
+		ServiceToken: "test-token",
+		UserAgent:    "test-agent",
+	}, store)
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/crypto/insights?pair=ETHBTC", nil)
+
+	svc.handleCryptoInsights(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200 cross-pair response, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"pair":"ETHBTC"`) {
+		t.Fatalf("expected ETHBTC payload, got %s", recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"price":0.03`) {
+		t.Fatalf("expected cross pair price near ETH/BTC ratio, got %s", recorder.Body.String())
+	}
 }

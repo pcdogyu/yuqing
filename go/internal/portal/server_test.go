@@ -91,6 +91,114 @@ func TestCryptoPageUsesSharedNavAndFriendlyFallback(t *testing.T) {
 	}
 }
 
+func TestCryptoPageDefaultsToBTCAndETHCards(t *testing.T) {
+	var requested []string
+	analysis := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pair := r.URL.Query().Get("pair")
+		requested = append(requested, pair)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    200,
+			"message": "ok",
+			"data": model.CryptoInsightResponse{
+				Pair:       pair,
+				BaseAsset:  strings.TrimSuffix(pair, "USDT"),
+				QuoteAsset: "USDT",
+				PriceSnapshot: model.CryptoPriceSnapshot{
+					Symbol:    pair,
+					Price:     123.45,
+					Change1H:  1.23,
+					Change4H:  2.34,
+					Change24H: 3.45,
+					UpdatedAt: time.Date(2026, 6, 4, 10, 0, 0, 0, time.UTC),
+				},
+				UpdatedAt: time.Date(2026, 6, 4, 10, 0, 0, 0, time.UTC),
+			},
+		})
+	}))
+	defer analysis.Close()
+
+	srv := &Server{
+		cfg:       config.Config{AnalysisURL: analysis.URL},
+		client:    resty.New(),
+		templates: NewServer(config.Config{}).templates,
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/crypto", nil)
+	rr := httptest.NewRecorder()
+	srv.handleCryptoPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"默认价格看板", "BTCUSDT", "ETHUSDT"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected default crypto page to contain %q, got %s", want, body)
+		}
+	}
+	if len(requested) != 2 || requested[0] != "BTCUSDT" || requested[1] != "ETHUSDT" {
+		t.Fatalf("expected default requests for BTCUSDT/ETHUSDT, got %+v", requested)
+	}
+}
+
+func TestCryptoPageQueriesRequestedPairOnly(t *testing.T) {
+	var requested []string
+	analysis := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pair := r.URL.Query().Get("pair")
+		requested = append(requested, pair)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    200,
+			"message": "ok",
+			"data": model.CryptoInsightResponse{
+				Pair:       pair,
+				BaseAsset:  "SOL",
+				QuoteAsset: "USDT",
+				PriceSnapshot: model.CryptoPriceSnapshot{
+					Symbol:    pair,
+					Price:     150.12,
+					Change1H:  0.8,
+					Change4H:  1.5,
+					Change24H: 6.2,
+					UpdatedAt: time.Date(2026, 6, 4, 10, 0, 0, 0, time.UTC),
+				},
+				Signals: model.CryptoSignalSet{
+					H4:  model.CryptoSignal{Horizon: "4h", Direction: "bullish", Confidence: 0.62},
+					H24: model.CryptoSignal{Horizon: "24h", Direction: "bullish", Confidence: 0.58},
+				},
+				SocialSentiment: model.CryptoSocialSentiment{Direction: "bullish", Confidence: 0.41},
+				AIExplanation:   "SOL/USDT 价格维持走强。",
+				UpdatedAt:       time.Date(2026, 6, 4, 10, 0, 0, 0, time.UTC),
+				CacheTTLSeconds: 300,
+			},
+		})
+	}))
+	defer analysis.Close()
+
+	srv := &Server{
+		cfg:       config.Config{AnalysisURL: analysis.URL},
+		client:    resty.New(),
+		templates: NewServer(config.Config{}).templates,
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/crypto?pair=SOLUSDT", nil)
+	rr := httptest.NewRecorder()
+	srv.handleCryptoPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if strings.Contains(body, "默认价格看板") {
+		t.Fatalf("expected queried page not to render default cards, got %s", body)
+	}
+	if !strings.Contains(body, "SOLUSDT") || !strings.Contains(body, "SOL/USDT 价格维持走强。") {
+		t.Fatalf("expected queried page content, got %s", body)
+	}
+	if len(requested) != 1 || requested[0] != "SOLUSDT" {
+		t.Fatalf("expected single request for SOLUSDT, got %+v", requested)
+	}
+}
+
 func TestLegacySearchTarget(t *testing.T) {
 	s := &Server{}
 	req := httptest.NewRequest(http.MethodGet, "/fullsearch/result?searchword=钢铁&project_id=7&source_type=headline&industry=能源&province=上海&city=浦东&read=read&favorite=favorited&start=2026-01-01&end=2026-01-31", nil)

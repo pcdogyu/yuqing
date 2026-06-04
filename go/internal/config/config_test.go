@@ -48,6 +48,9 @@ func TestLoadUsesDefaults(t *testing.T) {
 	if cfg.HeadlineURL != "https://xnews.jin10.com/" {
 		t.Fatalf("expected default headline url, got %q", cfg.HeadlineURL)
 	}
+	if cfg.CoinLoreURL != "https://api.coinlore.net" || cfg.CoinGeckoURL != "https://api.coingecko.com/api/v3" {
+		t.Fatalf("expected default price source urls, got coinlore=%q coingecko=%q", cfg.CoinLoreURL, cfg.CoinGeckoURL)
+	}
 	if cfg.CryptoXURL != "" || cfg.CryptoTelegramURL != "" {
 		t.Fatalf("expected empty crypto social urls by default, got x=%q tg=%q", cfg.CryptoXURL, cfg.CryptoTelegramURL)
 	}
@@ -78,6 +81,8 @@ func TestLoadPrefersPrimaryAndAliasEnv(t *testing.T) {
 	t.Setenv("JIN10_FLASH_URL", "https://flash.example.com")
 	t.Setenv("YUQING_HEADLINE_URL", "https://headline.example.com")
 	t.Setenv("JIN10_HEADLINE_URL", "https://ignored.example.com")
+	t.Setenv("YUQING_COINLORE_URL", "https://coinlore.example.com")
+	t.Setenv("YUQING_COINGECKO_URL", "https://coingecko.example.com/api/v3")
 	t.Setenv("YUQING_CRYPTO_X_URL", "https://social.example.com/x")
 	t.Setenv("YUQING_CRYPTO_X_TOKEN", "x-token")
 	t.Setenv("YUQING_CRYPTO_TELEGRAM_URL", "https://social.example.com/tg")
@@ -105,6 +110,9 @@ func TestLoadPrefersPrimaryAndAliasEnv(t *testing.T) {
 	}
 	if cfg.HeadlineURL != "https://headline.example.com" {
 		t.Fatalf("expected primary headline url, got %q", cfg.HeadlineURL)
+	}
+	if cfg.CoinLoreURL != "https://coinlore.example.com" || cfg.CoinGeckoURL != "https://coingecko.example.com/api/v3" {
+		t.Fatalf("expected price source urls loaded, got coinlore=%q coingecko=%q", cfg.CoinLoreURL, cfg.CoinGeckoURL)
 	}
 	if cfg.HTTPTimeout != 45*time.Second {
 		t.Fatalf("expected primary http timeout, got %s", cfg.HTTPTimeout)
