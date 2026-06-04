@@ -38,3 +38,7 @@ go/data/*.db-wal
 go/bin/
 go/runtime-logs/
 go/go/
+# Local Git pack/index artifacts are handled by the run script; keep them out of the tree if they surface during maintenance.
+.git/objects/pack/*.idx
+.git/objects/pack/*.pack
+.git/objects/pack/*.rev

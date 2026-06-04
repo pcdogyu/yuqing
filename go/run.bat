@@ -34,10 +34,12 @@ if "%SKIP_PULL%"=="0" if "%AFTER_PULL%"=="0" (
 )
 
 cd /d "%REPO_ROOT%"
-echo [1/6] Pull latest code from origin...
+echo [1/6] Stop git fsmonitor daemon and prepare pull...
+git fsmonitor--daemon stop >nul 2>nul
 if "%SKIP_PULL%"=="1" (
     echo Skip pull requested. Continue with current worktree.
 ) else if "%AFTER_PULL%"=="1" (
+    echo [1/6] Pull latest code from origin...
     for /f %%I in ('git rev-parse HEAD') do set "YUQING_HEAD_BEFORE=%%I"
     if not defined YUQING_HEAD_BEFORE (
         echo Failed to resolve current git HEAD before pull.
