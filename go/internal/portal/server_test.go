@@ -242,6 +242,9 @@ func TestDisplayBoardCompat(t *testing.T) {
 	if !strings.Contains(body, "综合看板") {
 		t.Fatalf("expected page title, got %s", body)
 	}
+	if !strings.Contains(body, "综合热点") || !strings.Contains(body, "微博热点") || !strings.Contains(body, "政策热点") {
+		t.Fatalf("expected synthesize sections on board, got %s", body)
+	}
 	if !strings.Contains(body, "热点关键词") || !strings.Contains(body, "AI") {
 		t.Fatalf("expected hotspot keywords on board, got %s", body)
 	}
@@ -1332,6 +1335,58 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 			CapturedAt:         time.Now().UTC().Add(-2 * time.Hour),
 			ProjectIDs:         []int64{1},
 			ExternalSourceHost: "news.example.com",
+		},
+		102: {
+			ID:              102,
+			Title:           "微博热点追踪",
+			Content:         "微博 热点 内容",
+			Summary:         "微博 摘要",
+			SourceType:      "weibo",
+			FromText:        "微博",
+			PublishTimeText: "2026-06-04 08:30:00",
+			CapturedAt:      time.Now().UTC().Add(-90 * time.Minute),
+		},
+		103: {
+			ID:              103,
+			Title:           "抖音热评速览",
+			Content:         "抖音 热点 内容",
+			Summary:         "抖音 摘要",
+			SourceType:      "douyin",
+			FromText:        "抖音",
+			PublishTimeText: "2026-06-04 08:20:00",
+			CapturedAt:      time.Now().UTC().Add(-80 * time.Minute),
+		},
+		104: {
+			ID:              104,
+			Title:           "B站财经解读",
+			Content:         "B站 热点 内容",
+			Summary:         "B站 摘要",
+			SourceType:      "bilibili",
+			FromText:        "B站",
+			PublishTimeText: "2026-06-04 08:10:00",
+			CapturedAt:      time.Now().UTC().Add(-70 * time.Minute),
+		},
+		105: {
+			ID:                 105,
+			Title:              "36氪创业观察",
+			Content:            "36kr 热点 内容",
+			Summary:            "36kr 摘要",
+			SourceType:         "36kr",
+			FromText:           "36氪",
+			PublishTimeText:    "2026-06-04 08:00:00",
+			CapturedAt:         time.Now().UTC().Add(-60 * time.Minute),
+			ExternalSourceHost: "36kr.com",
+		},
+		106: {
+			ID:                 106,
+			Title:              "国务院政策解读",
+			Content:            "政策 热点 内容",
+			Summary:            "政策 摘要",
+			SourceType:         "gov",
+			FromText:           "政策",
+			PublishTimeText:    "2026-06-04 07:50:00",
+			CapturedAt:         time.Now().UTC().Add(-50 * time.Minute),
+			ExternalSourceHost: "gov.cn",
 		},
 		101: {
 			ID:              101,

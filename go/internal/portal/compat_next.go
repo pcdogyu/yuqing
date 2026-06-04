@@ -42,6 +42,8 @@ func (s *Server) handleDisplayBoard(w http.ResponseWriter, r *http.Request, user
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/projects", &projects)
 	articles := model.ItemListResult{}
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/articles?page=1&page_size=12", &articles)
+	boardArticles := model.ItemListResult{}
+	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/articles?page=1&page_size=50", &boardArticles)
 	hotspots := []model.KeywordHotspot{}
 	_ = s.getJSON(s.cfg.AnalysisURL+"/api/v1/analysis/keywords", &hotspots)
 	returnTo := "/displayboard"
@@ -96,6 +98,33 @@ func (s *Server) handleDisplayBoard(w http.ResponseWriter, r *http.Request, user
 	b.WriteString(metricCard("项目数", strconv.Itoa(dashboard.Overview.ProjectCount)))
 	b.WriteString(metricCard("报告数", strconv.Itoa(dashboard.Overview.ReportCount)))
 	b.WriteString(metricCard("活跃规则", strconv.Itoa(dashboard.Overview.AlertRuleCount)))
+	b.WriteString(`</div></section>`)
+	synthesizeSections := buildDisplayBoardSynthSections(boardArticles.Items)
+	b.WriteString(`<section><h2>综合热点</h2><div class="grid">`)
+	for _, section := range synthesizeSections {
+		b.WriteString(`<div class="section-card"><h3>`)
+		b.WriteString(html.EscapeString(section.Title))
+		b.WriteString(`</h3><ul class="topic-list">`)
+		for _, item := range section.Items {
+			link := "/articles/" + strconv.FormatInt(item.ID, 10) + "?return_to=" + url.QueryEscape(returnTo)
+			b.WriteString(`<li><a class="inline" href="`)
+			b.WriteString(link)
+			b.WriteString(`">`)
+			b.WriteString(html.EscapeString(item.Title))
+			b.WriteString(`</a><div class="muted">`)
+			b.WriteString(html.EscapeString(item.SourceName))
+			b.WriteString(` · `)
+			b.WriteString(item.CapturedAt.Format("2006-01-02 15:04"))
+			b.WriteString(`</div></li>`)
+		}
+		if len(section.Items) == 0 {
+			b.WriteString(`<li class="muted">暂无数据</li>`)
+		}
+		b.WriteString(`</ul></div>`)
+	}
+	if len(synthesizeSections) == 0 {
+		b.WriteString(`<div class="section-card"><p class="muted">暂无综合热点数据</p></div>`)
+	}
 	b.WriteString(`</div></section>`)
 	b.WriteString(`<section><h2>热点关键词</h2><table><tr><th>关键词</th><th>次数</th><th>跳转</th></tr>`)
 	for _, item := range hotspots {
@@ -233,6 +262,118 @@ func displayBoardProjectID(item model.Item, projects []model.Project) int64 {
 		return item.ProjectIDs[0]
 	}
 	return projects[0].ID
+}
+
+type displayBoardTopicItem struct {
+	ID           int64
+	Title        string
+	SourceName   string
+	CapturedAt   time.Time
+	Category     string
+	SourceType   string
+	FromText     string
+	ExternalHost string
+}
+
+type displayBoardTopicSection struct {
+	Title string
+	Items []displayBoardTopicItem
+}
+
+func buildDisplayBoardSynthSections(items []model.Item) []displayBoardTopicSection {
+	if len(items) == 0 {
+		return nil
+	}
+	sorted := append([]model.Item(nil), items...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		if sorted[i].CapturedAt.Equal(sorted[j].CapturedAt) {
+			return sorted[i].ID > sorted[j].ID
+		}
+		return sorted[i].CapturedAt.After(sorted[j].CapturedAt)
+	})
+
+	categories := []string{"头条热点", "微博热点", "微信热点", "抖音热点", "B站热点", "腾讯热门", "36氪", "财经热点", "政策热点"}
+	buckets := make(map[string][]displayBoardTopicItem, len(categories))
+	for _, item := range sorted {
+		category := displayBoardItemCategory(item)
+		if category == "" {
+			continue
+		}
+		buckets[category] = append(buckets[category], displayBoardTopicItem{
+			ID:           item.ID,
+			Title:        nonEmpty(item.Title, "未命名文章"),
+			SourceName:   displayBoardItemSourceName(item),
+			CapturedAt:   item.CapturedAt,
+			Category:     category,
+			SourceType:   item.SourceType,
+			FromText:     item.FromText,
+			ExternalHost: item.ExternalSourceHost,
+		})
+	}
+
+	sections := make([]displayBoardTopicSection, 0, len(categories))
+	for _, category := range categories {
+		items := buckets[category]
+		if len(items) > 3 {
+			items = items[:3]
+		}
+		if len(items) == 0 && category == "头条热点" {
+			for idx, item := range sorted {
+				if idx >= 3 {
+					break
+				}
+				items = append(items, displayBoardTopicItem{
+					ID:         item.ID,
+					Title:      nonEmpty(item.Title, "未命名文章"),
+					SourceName: displayBoardItemSourceName(item),
+					CapturedAt: item.CapturedAt,
+					Category:   category,
+				})
+			}
+		}
+		if len(items) == 0 {
+			continue
+		}
+		sections = append(sections, displayBoardTopicSection{Title: category, Items: items})
+	}
+	return sections
+}
+
+func displayBoardItemCategory(item model.Item) string {
+	kind := strings.ToLower(strings.TrimSpace(strings.Join([]string{item.SourceType, item.FromText, item.ExternalSourceHost}, " ")))
+	switch {
+	case strings.Contains(kind, "weibo") || strings.Contains(item.FromText, "微博"):
+		return "微博热点"
+	case strings.Contains(kind, "wechat") || strings.Contains(item.FromText, "微信"):
+		return "微信热点"
+	case strings.Contains(kind, "douyin") || strings.Contains(item.FromText, "抖音"):
+		return "抖音热点"
+	case strings.Contains(kind, "bilibili") || strings.Contains(item.FromText, "B站") || strings.Contains(item.FromText, "哔哩哔哩"):
+		return "B站热点"
+	case strings.Contains(kind, "tencent") || strings.Contains(item.FromText, "腾讯"):
+		return "腾讯热门"
+	case strings.Contains(kind, "36kr"):
+		return "36氪"
+	case strings.Contains(kind, "eastmoney") || strings.Contains(kind, "finance") || strings.Contains(item.FromText, "东方财富"):
+		return "财经热点"
+	case strings.Contains(kind, "gov") || strings.Contains(item.ExternalSourceHost, "gov.cn") || strings.Contains(item.Title, "国务院"):
+		return "政策热点"
+	default:
+		return "头条热点"
+	}
+}
+
+func displayBoardItemSourceName(item model.Item) string {
+	if name := strings.TrimSpace(item.FromText); name != "" {
+		return name
+	}
+	if name := strings.TrimSpace(item.SourceType); name != "" {
+		return name
+	}
+	if host := strings.TrimSpace(item.ExternalSourceHost); host != "" {
+		return host
+	}
+	return "综合"
 }
 
 func (s *Server) handleSystemProductManualOnline(w http.ResponseWriter, r *http.Request, _ any) {
