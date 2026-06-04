@@ -773,6 +773,96 @@ func TestPublicOptionCompatPages(t *testing.T) {
 	}
 }
 
+func TestPublicOptionCompatMutations(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+	user := map[string]any{"id": 1}
+
+	createReq := httptest.NewRequest(http.MethodPost, "/publicoption/addpublicoptiondata", strings.NewReader("eventname=AI%E6%96%B0%E5%AE%9E%E9%AA%8C&eventkeywords=AI&eventstarttime=2026-06-01%2000:00:00&eventendtime=2026-06-04%2023:59:59&eventstopwords=%E5%9C%A8%E7%BA%BF"))
+	createReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	createRR := httptest.NewRecorder()
+	srv.handlePublicOptionCompat(createRR, createReq, user)
+	if createRR.Code != http.StatusOK {
+		t.Fatalf("expected create 200, got %d", createRR.Code)
+	}
+	var createEnvelope struct {
+		Code int                `json:"code"`
+		Msg  string             `json:"msg"`
+		Data model.PublicOption `json:"data"`
+	}
+	if err := json.Unmarshal(createRR.Body.Bytes(), &createEnvelope); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	if createEnvelope.Code != http.StatusOK || createEnvelope.Data.ID == 0 || createEnvelope.Data.EventName != "AI新实验" {
+		t.Fatalf("unexpected create response: %+v", createEnvelope)
+	}
+
+	updateReq := httptest.NewRequest(http.MethodPost, "/publicoption/updatedatabyid", strings.NewReader("id=1&eventname=AI%E8%88%86%E6%83%85%E7%A0%94%E5%88%A4%E6%9B%B4%E6%96%B0&eventkeywords=AI&eventstarttime=2026-06-01%2000:00:00&eventendtime=2026-06-05%2023:59:59&eventstopwords=%E6%97%A0%E5%85%B3%E8%AF%8D"))
+	updateReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	updateRR := httptest.NewRecorder()
+	srv.handlePublicOptionCompat(updateRR, updateReq, user)
+	if updateRR.Code != http.StatusOK {
+		t.Fatalf("expected update 200, got %d", updateRR.Code)
+	}
+	var updateEnvelope struct {
+		Code int                `json:"code"`
+		Msg  string             `json:"msg"`
+		Data model.PublicOption `json:"data"`
+	}
+	if err := json.Unmarshal(updateRR.Body.Bytes(), &updateEnvelope); err != nil {
+		t.Fatalf("decode update response: %v", err)
+	}
+	if updateEnvelope.Data.ID != 1 || updateEnvelope.Data.EventName != "AI舆情研判更新" {
+		t.Fatalf("unexpected update response: %+v", updateEnvelope)
+	}
+	if updateEnvelope.Data.BackAnalysis == "" || updateEnvelope.Data.EventContext == "" {
+		t.Fatalf("expected enriched analyses on update, got %+v", updateEnvelope.Data)
+	}
+
+	loadReq := httptest.NewRequest(http.MethodPost, "/publicoption/loadInformation?page=1", strings.NewReader("eventname=AI%E8%88%86%E6%83%85%E7%A0%94%E5%88%A4%E6%9B%B4%E6%96%B0&eventkeywords=AI&eventstarttime=2026-06-01%2000:00:00&eventendtime=2026-06-05%2023:59:59&eventstopwords=%E6%97%A0%E5%85%B3%E8%AF%8D"))
+	loadReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	loadRR := httptest.NewRecorder()
+	srv.handlePublicOptionCompat(loadRR, loadReq, user)
+	if loadRR.Code != http.StatusOK {
+		t.Fatalf("expected loadInformation 200, got %d", loadRR.Code)
+	}
+	var loadEnvelope struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+		Data struct {
+			Data      []any `json:"data"`
+			DataCount int   `json:"dataCount"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(loadRR.Body.Bytes(), &loadEnvelope); err != nil {
+		t.Fatalf("decode loadInformation response: %v", err)
+	}
+	if loadEnvelope.Code != http.StatusOK || loadEnvelope.Data.DataCount == 0 || len(loadEnvelope.Data.Data) == 0 {
+		t.Fatalf("unexpected loadInformation response: %+v", loadEnvelope)
+	}
+
+	deleteReq := httptest.NewRequest(http.MethodPost, "/publicoption/deletepublicoptioninfo", strings.NewReader("Ids=1"))
+	deleteReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	deleteRR := httptest.NewRecorder()
+	srv.handlePublicOptionCompat(deleteRR, deleteReq, user)
+	if deleteRR.Code != http.StatusOK {
+		t.Fatalf("expected delete 200, got %d", deleteRR.Code)
+	}
+	var deleteEnvelope struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+		Data struct {
+			Deleted bool `json:"deleted"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(deleteRR.Body.Bytes(), &deleteEnvelope); err != nil {
+		t.Fatalf("decode delete response: %v", err)
+	}
+	if deleteEnvelope.Code != http.StatusOK || !deleteEnvelope.Data.Deleted {
+		t.Fatalf("unexpected delete response: %+v", deleteEnvelope)
+	}
+}
+
 func TestLegacySystemAndUserCompat(t *testing.T) {
 	srv := &Server{}
 
@@ -1828,6 +1918,18 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 				return
 			}
 			writeEnvelope(http.StatusOK, "ok", map[string]bool{"deleted": true})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/search/full":
+			query := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+			items := make([]model.Item, 0, len(articles))
+			for _, item := range articles {
+				blob := strings.ToLower(item.Title + " " + item.Content + " " + item.Summary + " " + item.FromText + " " + item.SourceType)
+				if query != "" && !strings.Contains(blob, query) {
+					continue
+				}
+				items = append(items, item)
+			}
+			sort.Slice(items, func(i, j int) bool { return items[i].ID < items[j].ID })
+			writeEnvelope(http.StatusOK, "ok", model.SearchResult{Total: len(items), PageSize: 10, Page: 1, Items: items})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/articles":
 			projectID := parseTestInt64(r.URL.Query().Get("project_id"))
 			items := make([]model.Item, 0, len(articles))
