@@ -252,6 +252,8 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/project/editgroup", s.requireSessionJSON(s.handleLegacyProjectEditGroup))
 	mux.HandleFunc("/project/updateSolutionGroupStatus", s.requireSessionJSON(s.handleLegacyProjectUpdateSolutionGroupStatus))
 	mux.HandleFunc("/project/names", s.requireSessionJSON(s.handleLegacyProjectNames))
+	mux.HandleFunc("/project/batchUpdateProject", s.requireSessionJSON(s.handleLegacyProjectBatchUpdateProject))
+	mux.HandleFunc("/project/keywords", s.requireSessionJSON(s.handleLegacyProjectKeywords))
 	mux.HandleFunc("/project/groupandproject", s.requireSessionJSON(s.handleLegacyProjectGroupAndProject))
 	mux.HandleFunc("/project/getGroupAndProject", s.requireSessionJSON(s.handleLegacyProjectGetGroupAndProject))
 	mux.HandleFunc("/project/listproject", s.requireSessionJSON(s.handleLegacyProjectListProject))

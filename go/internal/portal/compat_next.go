@@ -614,9 +614,27 @@ func (s *Server) handleLegacyProjectDelete(r *http.Request, w http.ResponseWrite
 }
 
 func parseLegacyProjectIDList(raw string) []int64 {
-	parts := strings.FieldsFunc(raw, func(r rune) bool {
-		return r == ',' || r == '，'
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	if strings.HasPrefix(raw, "[") && strings.HasSuffix(raw, "]") {
+		var values []any
+		if err := json.Unmarshal([]byte(raw), &values); err == nil {
+			parts := make([]string, 0, len(values))
+			for _, value := range values {
+				parts = append(parts, fmt.Sprint(value))
+			}
+			return parseLegacyProjectIDTokens(parts)
+		}
+	}
+	parts := strings.FieldsFunc(strings.NewReplacer("[", "", "]", "", "\"", "", "'", "", "，", ",").Replace(raw), func(r rune) bool {
+		return r == ',' || r == ';' || r == ' ' || r == '\t' || r == '\n' || r == '\r'
 	})
+	return parseLegacyProjectIDTokens(parts)
+}
+
+func parseLegacyProjectIDTokens(parts []string) []int64 {
 	ids := make([]int64, 0, len(parts))
 	seen := map[int64]struct{}{}
 	for _, part := range parts {
@@ -701,6 +719,53 @@ func (s *Server) handleLegacyProjectNames(w http.ResponseWriter, r *http.Request
 		}
 	}
 	writeRawJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) handleLegacyProjectBatchUpdateProject(w http.ResponseWriter, r *http.Request, _ any) {
+	rawIDs := nonEmpty(r.FormValue("projectIds"), r.FormValue("projectids"), r.FormValue("project_id"), r.FormValue("projectid"), r.URL.Query().Get("projectIds"), r.URL.Query().Get("projectids"))
+	ids := parseLegacyProjectIDList(rawIDs)
+	if len(ids) == 0 {
+		writeRawJSON(w, http.StatusOK, map[string]any{"state": true, "message": "删除方案成功！"})
+		return
+	}
+	deletedAny := false
+	for _, id := range ids {
+		resp, err := s.client.R().Delete(s.cfg.ContentURL + "/api/v1/projects/" + strconv.FormatInt(id, 10))
+		if err != nil {
+			writeRawJSON(w, http.StatusOK, map[string]any{"state": false, "message": "删除方案失败！"})
+			return
+		}
+		if resp.StatusCode() == http.StatusNotFound {
+			clearLegacyProjectMeta(id)
+			continue
+		}
+		if !resp.IsSuccess() {
+			writeRawJSON(w, http.StatusOK, map[string]any{"state": false, "message": "删除方案失败！"})
+			return
+		}
+		clearLegacyProjectMeta(id)
+		deletedAny = true
+	}
+	writeRawJSON(w, http.StatusOK, map[string]any{"state": deletedAny, "message": map[bool]string{true: "删除方案成功！", false: "删除方案失败！"}[deletedAny]})
+}
+
+func (s *Server) handleLegacyProjectKeywords(w http.ResponseWriter, r *http.Request, _ any) {
+	var projects []model.Project
+	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/projects", &projects); err != nil {
+		writeRawJSON(w, http.StatusOK, map[string]any{"code": 500, "data": "", "msg": err.Error()})
+		return
+	}
+	keywords := make([]string, 0)
+	for _, project := range projects {
+		for _, keyword := range strings.Split(strings.ReplaceAll(project.Keywords, "，", ","), ",") {
+			keyword = strings.TrimSpace(keyword)
+			if keyword == "" {
+				continue
+			}
+			keywords = append(keywords, keyword)
+		}
+	}
+	writeRawJSON(w, http.StatusOK, map[string]any{"code": 200, "data": strings.Join(keywords, ","), "msg": "获取关键词成功！"})
 }
 
 func (s *Server) handleLegacyProjectGroupAndProject(w http.ResponseWriter, r *http.Request, _ any) {

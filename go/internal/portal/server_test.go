@@ -1095,6 +1095,90 @@ func TestLegacyProjectCompat(t *testing.T) {
 	}
 }
 
+func TestLegacyProjectBatchUpdateCompat(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+	user := map[string]any{"id": 1}
+
+	createBody := strings.NewReader(`{"project_name":"批量删除方案","group_id":1,"project_type":1,"subject_word":"港股,AI","stop_word":"","project_description":"批量删除测试"}`)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/project/commitproject", createBody)
+	req.Header.Set("Content-Type", "application/json")
+	srv.handleLegacyProjectCommitProject(rr, req, user)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected create 200, got %d", rr.Code)
+	}
+
+	form := url.Values{}
+	form.Set("projectIds", "[1,2]")
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/project/batchUpdateProject", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	srv.handleLegacyProjectBatchUpdateProject(rr, req, user)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected batch delete 200, got %d", rr.Code)
+	}
+	var envelope struct {
+		State   bool   `json:"state"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode batch delete response: %v", err)
+	}
+	if !envelope.State || envelope.Message != "删除方案成功！" {
+		t.Fatalf("unexpected batch delete response: %+v", envelope)
+	}
+
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/project/getProjectCountByGroupId?groupId=1", nil)
+	srv.handleLegacyProjectGetProjectCountByGroupID(rr, req, user)
+	var countEnvelope struct {
+		Count int `json:"count"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &countEnvelope); err != nil {
+		t.Fatalf("decode count response: %v", err)
+	}
+	if countEnvelope.Count != 0 {
+		t.Fatalf("expected empty group after batch delete, got %+v", countEnvelope)
+	}
+}
+
+func TestLegacyProjectKeywordsCompat(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+	user := map[string]any{"id": 1}
+
+	createBody := strings.NewReader(`{"project_name":"关键词方案","group_id":1,"project_type":1,"subject_word":"港股,AI","stop_word":"","project_description":"关键词测试"}`)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/project/commitproject", createBody)
+	req.Header.Set("Content-Type", "application/json")
+	srv.handleLegacyProjectCommitProject(rr, req, user)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected create 200, got %d", rr.Code)
+	}
+
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/project/keywords?page=1&size=20", nil)
+	srv.handleLegacyProjectKeywords(rr, req, user)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected keywords 200, got %d", rr.Code)
+	}
+	var envelope struct {
+		Code int    `json:"code"`
+		Data string `json:"data"`
+		Msg  string `json:"msg"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode keywords response: %v", err)
+	}
+	if envelope.Code != 200 || envelope.Msg != "获取关键词成功！" {
+		t.Fatalf("unexpected keywords response: %+v", envelope)
+	}
+	if envelope.Data != "AI,新能源,港股,AI" {
+		t.Fatalf("unexpected keywords data: %+v", envelope)
+	}
+}
+
 func TestPlatformNLPCompat(t *testing.T) {
 	srv, cleanup := newPortalCompatServer(t)
 	defer cleanup()
