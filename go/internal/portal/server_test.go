@@ -950,6 +950,32 @@ func TestCrawlTemplateCompatMutations(t *testing.T) {
 	}
 }
 
+func TestCrawlTemplateCompatExecution(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+	user := map[string]any{"id": 1}
+
+	previewReq := httptest.NewRequest(http.MethodPost, "/crawl-templates/1?action=preview", nil)
+	previewRR := httptest.NewRecorder()
+	srv.handleCrawlTemplates(previewRR, previewReq, user)
+	if previewRR.Code != http.StatusSeeOther {
+		t.Fatalf("expected preview redirect, got %d", previewRR.Code)
+	}
+	if loc := previewRR.Header().Get("Location"); !strings.Contains(loc, "msg=") {
+		t.Fatalf("expected preview redirect message, got %s", loc)
+	}
+
+	runReq := httptest.NewRequest(http.MethodPost, "/crawl-templates/1?action=run", nil)
+	runRR := httptest.NewRecorder()
+	srv.handleCrawlTemplates(runRR, runReq, user)
+	if runRR.Code != http.StatusSeeOther {
+		t.Fatalf("expected run redirect, got %d", runRR.Code)
+	}
+	if loc := runRR.Header().Get("Location"); !strings.Contains(loc, "msg=") {
+		t.Fatalf("expected run redirect message, got %s", loc)
+	}
+}
+
 func TestLegacySystemAndUserCompat(t *testing.T) {
 	srv := &Server{}
 
@@ -2281,6 +2307,64 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 
 	ocrImage := createTestImageServer(t)
 	nlpServer := httptest.NewServer(nlp.NewService().Router())
+	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Header.Get("X-Service-Token") != "test-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusUnauthorized, "message": "unauthorized", "data": nil})
+			return
+		}
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/admin/tasks/crawl/templates/preview":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    http.StatusOK,
+				"message": "ok",
+				"data": map[string]any{
+					"source_type":   "flash",
+					"fetched_count": 1,
+					"run_id":        0,
+					"items": []model.Item{
+						{Title: "预览文章", Summary: "预览摘要", Content: "预览内容"},
+					},
+				},
+			})
+			return
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/admin/tasks/crawl/templates/run":
+			var tpl model.CrawlTemplate
+			_ = json.NewDecoder(r.Body).Decode(&tpl)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    http.StatusOK,
+				"message": "ok",
+				"data": map[string]any{
+					"source_type":    "flash",
+					"fetched_count":  1,
+					"inserted_count": 1,
+					"updated_count":  0,
+					"run_id":         9,
+				},
+			})
+			return
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/admin/tasks/crawl/runs":
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusOK, "message": "ok", "data": []model.CrawlRun{}})
+			return
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/admin/tasks/crawl":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    http.StatusOK,
+				"message": "ok",
+				"data": map[string]any{
+					"source_type":    "flash",
+					"fetched_count":  1,
+					"inserted_count": 1,
+					"updated_count":  0,
+					"run_id":         8,
+				},
+			})
+			return
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusNotFound, "message": "not found", "data": nil})
+		}
+	}))
 
 	auth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -2361,12 +2445,13 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusNotFound, "message": "not found", "data": nil})
 	}))
 
-	srv := &Server{cfg: config.Config{ContentURL: content.URL, AuthURL: auth.URL, NLPURL: nlpServer.URL, GatewayWebURL: ocrImage.URL, AnalysisURL: analysis.URL, ServiceToken: "test-token"}, client: resty.New().SetHeader("X-Service-Token", "test-token"), templates: NewServer(config.Config{}).templates}
+	srv := &Server{cfg: config.Config{ContentURL: content.URL, AuthURL: auth.URL, NLPURL: nlpServer.URL, GatewayWebURL: ocrImage.URL, AnalysisURL: analysis.URL, CrawlerURL: crawler.URL, ServiceToken: "test-token"}, client: resty.New().SetHeader("X-Service-Token", "test-token"), templates: NewServer(config.Config{}).templates}
 	return srv, func() {
 		ocrImage.Close()
 		nlpServer.Close()
 		analysis.Close()
 		auth.Close()
+		crawler.Close()
 		content.Close()
 	}
 }

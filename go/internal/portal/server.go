@@ -2,6 +2,7 @@ package portal
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -2131,6 +2132,41 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request, user any
 }
 
 func (s *Server) handleCrawlTemplates(w http.ResponseWriter, r *http.Request, user any) {
+	if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/crawl-templates/") {
+		templateID := strings.Trim(strings.TrimPrefix(r.URL.Path, "/crawl-templates/"), "/")
+		action := strings.TrimSpace(r.URL.Query().Get("action"))
+		if action == "" {
+			action = strings.TrimSpace(r.FormValue("action"))
+		}
+		if templateID == "" {
+			http.Redirect(w, r, "/crawl-templates?msg="+url.QueryEscape("模板编号缺失"), http.StatusSeeOther)
+			return
+		}
+		tpl, err := s.fetchCrawlTemplate(r.Context(), templateID)
+		if err != nil {
+			http.Redirect(w, r, "/crawl-templates?msg="+url.QueryEscape("模板获取失败"), http.StatusSeeOther)
+			return
+		}
+		payload, _ := json.Marshal(tpl)
+		target := s.cfg.CrawlerURL + "/api/v1/admin/tasks/crawl/templates/"
+		switch action {
+		case "preview":
+			target += "preview"
+		default:
+			target += "run"
+		}
+		resp, err := s.client.R().
+			SetHeader("Content-Type", "application/json").
+			SetBody(payload).
+			SetQueryParam("keyword", strings.TrimSpace(r.URL.Query().Get("keyword"))).
+			Post(target)
+		msg := "模板执行失败"
+		if err == nil && resp != nil && resp.IsSuccess() {
+			msg = "模板执行已触发"
+		}
+		http.Redirect(w, r, "/crawl-templates?msg="+url.QueryEscape(msg), http.StatusSeeOther)
+		return
+	}
 	if r.Method == http.MethodPost {
 		_ = r.ParseForm()
 		message := "模板操作已提交"
@@ -2189,6 +2225,14 @@ func (s *Server) handleCrawlTemplates(w http.ResponseWriter, r *http.Request, us
 		CountActive:    enabledCount,
 		Message:        r.URL.Query().Get("msg"),
 	})
+}
+
+func (s *Server) fetchCrawlTemplate(ctx context.Context, id string) (model.CrawlTemplate, error) {
+	var tpl model.CrawlTemplate
+	if err := s.getJSONWithContext(ctx, s.cfg.ContentURL+"/api/v1/crawl-templates/"+url.PathEscape(id), &tpl); err != nil {
+		return model.CrawlTemplate{}, err
+	}
+	return tpl, nil
 }
 
 func (s *Server) handleProjectDetail(w http.ResponseWriter, r *http.Request, user any) {
@@ -3370,6 +3414,23 @@ func (s *Server) getJSON(url string, target any) error {
 	return json.NewDecoder(bytes.NewReader(envelope.Data)).Decode(target)
 }
 
+func (s *Server) getJSONWithContext(ctx context.Context, url string, target any) error {
+	var envelope struct {
+		Data json.RawMessage `json:"data"`
+	}
+	resp, err := s.client.R().SetContext(ctx).SetResult(&envelope).Get(url)
+	if err != nil {
+		return err
+	}
+	if !resp.IsSuccess() {
+		return errors.New(resp.Status())
+	}
+	if len(envelope.Data) == 0 {
+		return nil
+	}
+	return json.NewDecoder(bytes.NewReader(envelope.Data)).Decode(target)
+}
+
 func (s *Server) render(w http.ResponseWriter, name string, data pageData) error {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	return s.templates.ExecuteTemplate(w, name, data)
@@ -4063,7 +4124,7 @@ const dashboardTemplate = `
 `
 
 const crawlTemplatesTemplate = `
-{{define "crawl_templates"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.summary-card{padding:14px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.summary-card strong{display:block;font-size:24px;margin-top:6px}.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}.compact td form{margin:0}.compact textarea,.compact input,.compact select,.compact button{margin:4px 0;padding:8px}` + `</style></head><body><header><h1>模板中心</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><div class="summary-grid"><div class="summary-card">模板总数<strong>{{len .CrawlTemplates}}</strong></div><div class="summary-card">已启用<strong>{{.CountActive}}</strong></div><div class="summary-card">已停用<strong>{{subInt (len .CrawlTemplates) .CountActive}}</strong></div></div></section><section><h2>新建模板</h2><form method="post"><input type="hidden" name="form_type" value="template"><input name="name" placeholder="模板名称"><input name="source_type" placeholder="来源类型，如 flash/headline"><label><input type="checkbox" name="enabled" checked> 启用</label><textarea name="config_json" placeholder="模板配置 JSON">{"source_type":"flash","method":"GET","base_url":"https://example.com","list_selector":".list-item","detail_url_field":"href","fields":[{"name":"title","selector":"a","scope":"list","required":true}]}</textarea><button type="submit">创建模板</button></form></section><section><h2>模板列表</h2><table class="compact"><tr><th>ID</th><th>名称</th><th>来源</th><th>启用</th><th>配置 JSON</th><th>操作</th></tr>{{range .CrawlTemplates}}<tr><td>{{.ID}}</td><td><form method="post"><input type="hidden" name="form_type" value="template"><input type="hidden" name="template_id" value="{{.ID}}"><input type="hidden" name="action" value="update"><input name="name" value="{{.Name}}"></td><td><input name="source_type" value="{{.SourceType}}"></td><td><label><input type="checkbox" name="enabled" {{if .Enabled}}checked{{end}}> 启用</label></td><td><textarea name="config_json">{{.ConfigJSON}}</textarea></td><td><button type="submit">保存</button></form><form method="post"><input type="hidden" name="form_type" value="template"><input type="hidden" name="template_id" value="{{.ID}}"><input type="hidden" name="action" value="delete"><button type="submit">删除</button></form></td></tr>{{else}}<tr><td colspan="6">暂无模板</td></tr>{{end}}</table></section></main></body></html>{{end}}
+{{define "crawl_templates"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.summary-card{padding:14px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.summary-card strong{display:block;font-size:24px;margin-top:6px}.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}.compact td form{margin:0}.compact textarea,.compact input,.compact select,.compact button{margin:4px 0;padding:8px}.inline-form{display:inline-block;width:auto;margin-right:6px}` + `</style></head><body><header><h1>模板中心</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><div class="summary-grid"><div class="summary-card">模板总数<strong>{{len .CrawlTemplates}}</strong></div><div class="summary-card">已启用<strong>{{.CountActive}}</strong></div><div class="summary-card">已停用<strong>{{subInt (len .CrawlTemplates) .CountActive}}</strong></div></div></section><section><h2>新建模板</h2><form method="post"><input type="hidden" name="form_type" value="template"><input name="name" placeholder="模板名称"><input name="source_type" placeholder="来源类型，如 flash/headline"><label><input type="checkbox" name="enabled" checked> 启用</label><textarea name="config_json" placeholder="模板配置 JSON">{"source_type":"flash","method":"GET","base_url":"https://example.com","list_selector":".list-item","detail_url_field":"href","fields":[{"name":"title","selector":"a","scope":"list","required":true}]}</textarea><button type="submit">创建模板</button></form></section><section><h2>模板列表</h2><table class="compact"><tr><th>ID</th><th>名称</th><th>来源</th><th>启用</th><th>配置 JSON</th><th>操作</th></tr>{{range .CrawlTemplates}}<tr><td>{{.ID}}</td><td><form method="post"><input type="hidden" name="form_type" value="template"><input type="hidden" name="template_id" value="{{.ID}}"><input type="hidden" name="action" value="update"><input name="name" value="{{.Name}}"></td><td><input name="source_type" value="{{.SourceType}}"></td><td><label><input type="checkbox" name="enabled" {{if .Enabled}}checked{{end}}> 启用</label></td><td><textarea name="config_json">{{.ConfigJSON}}</textarea></td><td><button type="submit">保存</button></form><form class="inline-form" method="post" action="/crawl-templates/{{.ID}}?action=preview"><input type="hidden" name="form_type" value="template"><button type="submit">预览执行</button></form><form class="inline-form" method="post" action="/crawl-templates/{{.ID}}?action=run"><input type="hidden" name="form_type" value="template"><button type="submit">立即执行</button></form><form class="inline-form" method="post"><input type="hidden" name="form_type" value="template"><input type="hidden" name="template_id" value="{{.ID}}"><input type="hidden" name="action" value="delete"><button type="submit">删除</button></form></td></tr>{{else}}<tr><td colspan="6">暂无模板</td></tr>{{end}}</table></section></main></body></html>{{end}}
 `
 
 const projectsTemplate = `

@@ -1,12 +1,14 @@
 package crawlerapi
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/stonedt-yuqing/go-jin10/internal/apiutil"
 	"github.com/stonedt-yuqing/go-jin10/internal/config"
+	"github.com/stonedt-yuqing/go-jin10/internal/model"
 	"github.com/stonedt-yuqing/go-jin10/internal/provider"
 	"github.com/stonedt-yuqing/go-jin10/internal/service"
 )
@@ -28,6 +30,8 @@ func (s *Service) Router() http.Handler {
 	r.Get("/api/v1/articles/latest", s.handleLatest)
 	r.Post("/api/v1/admin/tasks/crawl", s.handleRunCrawl)
 	r.Get("/api/v1/admin/tasks/crawl/runs", s.handleRuns)
+	r.Post("/api/v1/admin/tasks/crawl/templates/run", s.handleRunTemplate)
+	r.Post("/api/v1/admin/tasks/crawl/templates/preview", s.handlePreviewTemplate)
 	return r
 }
 
@@ -74,6 +78,42 @@ func (s *Service) handleRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	apiutil.WriteJSON(w, http.StatusOK, "ok", runs)
+}
+
+func (s *Service) handleRunTemplate(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("X-Service-Token") != s.cfg.ServiceToken {
+		apiutil.WriteJSON(w, http.StatusUnauthorized, "unauthorized", nil)
+		return
+	}
+	var tpl model.CrawlTemplate
+	if err := json.NewDecoder(r.Body).Decode(&tpl); err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+	summary, err := s.crawler.RunTemplate(r.Context(), tpl, r.URL.Query().Get("keyword"))
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusBadGateway, err.Error(), summary)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", summary)
+}
+
+func (s *Service) handlePreviewTemplate(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("X-Service-Token") != s.cfg.ServiceToken {
+		apiutil.WriteJSON(w, http.StatusUnauthorized, "unauthorized", nil)
+		return
+	}
+	var tpl model.CrawlTemplate
+	if err := json.NewDecoder(r.Body).Decode(&tpl); err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+	summary, err := s.crawler.PreviewTemplate(r.Context(), tpl, r.URL.Query().Get("keyword"))
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusBadGateway, err.Error(), summary)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", summary)
 }
 
 func validSourceType(value string) string {
