@@ -293,6 +293,61 @@ func TestMobileMonitorDetailCompat(t *testing.T) {
 	}
 }
 
+func TestAnalysisCompatPage(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/analysis?projectid=1&timePeriod=7", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAnalysisEntry(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "监测分析") {
+		t.Fatalf("expected analysis page title, got %s", body)
+	}
+	if !strings.Contains(body, "AI 观察日报") || !strings.Contains(body, "新能源 研判") {
+		t.Fatalf("expected analysis page to include latest news, got %s", body)
+	}
+	if !strings.Contains(body, "AI") {
+		t.Fatalf("expected analysis page to include analysis keyword, got %s", body)
+	}
+}
+
+func TestAnalysisCompatJSON(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+
+	latestReq := httptest.NewRequest(http.MethodPost, "/analysis/latestnews", strings.NewReader("projectid=1&timePeriod=7"))
+	latestReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	latestRR := httptest.NewRecorder()
+	srv.handleAnalysisCompatJSON(latestRR, latestReq, map[string]any{"id": 1})
+	if latestRR.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", latestRR.Code)
+	}
+	var latestEnvelope struct {
+		Data []map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(latestRR.Body.Bytes(), &latestEnvelope); err != nil {
+		t.Fatalf("unmarshal latestnews response: %v", err)
+	}
+	if len(latestEnvelope.Data) == 0 || latestEnvelope.Data[0]["title"] == "" {
+		t.Fatalf("unexpected latestnews response: %+v", latestEnvelope)
+	}
+
+	refreshReq := httptest.NewRequest(http.MethodGet, "/analysis/updateanalysisdata?projectid=1", nil)
+	refreshRR := httptest.NewRecorder()
+	srv.handleAnalysisCompatJSON(refreshRR, refreshReq, map[string]any{"id": 1})
+	if refreshRR.Code != http.StatusOK {
+		t.Fatalf("expected 200 refresh, got %d", refreshRR.Code)
+	}
+	if !strings.Contains(refreshRR.Body.String(), "success") {
+		t.Fatalf("unexpected refresh response: %s", refreshRR.Body.String())
+	}
+}
+
 func TestLegacyMailCompatibility(t *testing.T) {
 	srv, cleanup := newPortalCompatServer(t)
 	defer cleanup()
@@ -802,6 +857,29 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 			Summary:    "测试摘要",
 			SourceType: "flash",
 		},
+		100: {
+			ID:                 100,
+			Title:              "AI 观察日报",
+			Content:            "AI 相关内容",
+			Summary:            "AI 摘要",
+			SourceType:         "headline",
+			FromText:           "新闻",
+			PublishTimeText:    "2026-06-04 10:00:00",
+			CapturedAt:         time.Now().UTC().Add(-2 * time.Hour),
+			ProjectIDs:         []int64{1},
+			ExternalSourceHost: "news.example.com",
+		},
+		101: {
+			ID:              101,
+			Title:           "新能源 研判",
+			Content:         "新能源 观察",
+			Summary:         "新能源 摘要",
+			SourceType:      "wechat",
+			FromText:        "微信",
+			PublishTimeText: "2026-06-04 09:30:00",
+			CapturedAt:      time.Now().UTC().Add(-time.Hour),
+			ProjectIDs:      []int64{1},
+		},
 	}
 	analysis := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -859,6 +937,25 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 			writeEnvelope(http.StatusOK, "ok", projectGroups)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects":
 			writeEnvelope(http.StatusOK, "ok", projects)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/articles":
+			projectID := parseTestInt64(r.URL.Query().Get("project_id"))
+			items := make([]model.Item, 0, len(articles))
+			for _, item := range articles {
+				if projectID > 0 && len(item.ProjectIDs) > 0 {
+					matched := false
+					for _, pid := range item.ProjectIDs {
+						if pid == projectID {
+							matched = true
+							break
+						}
+					}
+					if !matched {
+						continue
+					}
+				}
+				items = append(items, item)
+			}
+			writeEnvelope(http.StatusOK, "ok", model.ItemListResult{Items: items, Page: 1, PageSize: 20, Total: len(items)})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/system/mail-config":
 			mu.Lock()
 			cfg := mailCfg

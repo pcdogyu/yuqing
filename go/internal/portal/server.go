@@ -233,6 +233,8 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/displayboard", s.requireSession(s.handleDisplayBoard))
 	mux.HandleFunc("/displayboard/", s.requireSession(s.handleDisplayBoard))
 	mux.HandleFunc("/displayboard/collection2", s.requireSessionJSON(s.handleDisplayBoardCollection2))
+	mux.HandleFunc("/analysis", s.requireSession(s.handleAnalysisEntry))
+	mux.HandleFunc("/analysis/", s.requireSessionJSON(s.handleAnalysisCompatJSON))
 	mux.HandleFunc("/mobile/monitor", s.requireSession(s.handleMobileMonitor))
 	mux.HandleFunc("/mobile/monitor/", s.requireSession(s.handleMobileMonitor))
 	mux.HandleFunc("/mobile/monitor/detail", s.requireSession(s.handleMobileMonitorDetail))
