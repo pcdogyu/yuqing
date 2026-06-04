@@ -1,12 +1,15 @@
 package portal
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"html"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,10 +28,10 @@ type legacyResultUtil struct {
 }
 
 type legacyCopyWriting struct {
-	PromptID       int               `json:"promptId"`
-	Temperature    float64           `json:"temperature"`
-	KnowledgeBaseID string           `json:"knowledgeBaseId"`
-	Params         map[string]string `json:"params"`
+	PromptID        int               `json:"promptId"`
+	Temperature     float64           `json:"temperature"`
+	KnowledgeBaseID string            `json:"knowledgeBaseId"`
+	Params          map[string]string `json:"params"`
 }
 
 type publicOptionPageData struct {
@@ -106,7 +109,8 @@ func (s *Server) handlePlatformNLPImageCompat(w http.ResponseWriter, r *http.Req
 		writeLegacyStatusJSON(w, http.StatusForbidden, "未登录", nil)
 		return
 	}
-	if _, err := s.getPlatformBinding(userID, "nlp"); err != nil {
+	binding, err := s.getPlatformBinding(userID, "nlp")
+	if err != nil {
 		writeLegacyStatusJSON(w, http.StatusOK, 424, "未绑定nlp服务", nil)
 		return
 	}
@@ -115,7 +119,21 @@ func (s *Server) handlePlatformNLPImageCompat(w http.ResponseWriter, r *http.Req
 		writeLegacyStatusJSON(w, http.StatusBadRequest, "imageUrl required", nil)
 		return
 	}
-	writeLegacyStatusJSON(w, http.StatusOK, http.StatusInternalServerError, "Go 版本暂未接入 "+kind+" 识别", map[string]any{"imageUrl": imageURL})
+	filename, _, imageData, err := s.fetchLegacyImage(imageURL)
+	if err != nil {
+		writeResultUtilJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	results, code, msg, err := s.postLegacyNLPImage(kind, filename, imageData, binding.SecretID, binding.SecretKey)
+	if err != nil {
+		writeResultUtilJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	if code != http.StatusOK {
+		writeResultUtilJSON(w, code, nonEmpty(msg, "识别失败"), nil)
+		return
+	}
+	writeResultUtilJSON(w, http.StatusOK, "OK", results)
 }
 
 func (s *Server) handlePlatformXieBind(w http.ResponseWriter, r *http.Request, user any) {
@@ -235,13 +253,13 @@ func (s *Server) handlePlatformXieReportQuery(w http.ResponseWriter, r *http.Req
 	publishTime := strings.TrimSpace(r.URL.Query().Get("publishTime"))
 	title := strings.TrimSpace(r.URL.Query().Get("title"))
 	text := s.articleTextForXie(articleID, map[string]string{
-		"articleId":    articleID,
-		"projectId":    strconv.FormatInt(projectID, 10),
-		"relatedword":  relatedWord,
-		"publishTime":  publishTime,
-		"title":        title,
-		"content":      "",
-		"summary":      "",
+		"articleId":   articleID,
+		"projectId":   strconv.FormatInt(projectID, 10),
+		"relatedword": relatedWord,
+		"publishTime": publishTime,
+		"title":       title,
+		"content":     "",
+		"summary":     "",
 	})
 	if text == "" {
 		text = nonEmpty(title, relatedWord, publishTime)
@@ -255,6 +273,93 @@ func (s *Server) handlePlatformXieReportQuery(w http.ResponseWriter, r *http.Req
 		"publishTime": publishTime,
 		"title":       title,
 	})
+}
+
+func (s *Server) fetchLegacyImage(imageURL string) (string, string, []byte, error) {
+	resp, err := http.Get(imageURL)
+	if err != nil {
+		return "", "", nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= http.StatusBadRequest {
+		return "", "", nil, fmt.Errorf("image fetch failed")
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", "", nil, err
+	}
+	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
+	if contentType == "" {
+		contentType = http.DetectContentType(data)
+	}
+	filename := filepath.Base(mustParseURL(imageURL).Path)
+	if filename == "" || filename == "." || filename == string(filepath.Separator) {
+		filename = "image"
+	}
+	return filename, contentType, data, nil
+}
+
+func (s *Server) postLegacyNLPImage(kind, filename string, data []byte, secretID, secretKey string) (any, int, string, error) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("images", filename)
+	if err != nil {
+		return nil, 0, "", err
+	}
+	if _, err := part.Write(data); err != nil {
+		return nil, 0, "", err
+	}
+	if err := writer.Close(); err != nil {
+		return nil, 0, "", err
+	}
+	endpoint := s.cfg.NLPURL + "/api/v1/nlp/" + kind
+	resp, err := s.client.R().
+		SetHeader("Content-Type", writer.FormDataContentType()).
+		SetHeader("secret-id", secretID).
+		SetHeader("secret-key", secretKey).
+		SetBody(body.Bytes()).
+		Post(endpoint)
+	if err != nil {
+		return nil, 0, "", err
+	}
+	var envelope struct {
+		Code    int             `json:"code"`
+		Msg     string          `json:"msg"`
+		Results json.RawMessage `json:"results"`
+	}
+	if err := json.Unmarshal(resp.Body(), &envelope); err != nil {
+		return nil, resp.StatusCode(), "", err
+	}
+	if envelope.Code != http.StatusOK {
+		return nil, envelope.Code, envelope.Msg, nil
+	}
+	if kind == "ocr" {
+		var results []map[string]any
+		if len(envelope.Results) > 0 {
+			if err := json.Unmarshal(envelope.Results, &results); err != nil {
+				return nil, envelope.Code, envelope.Msg, err
+			}
+		}
+		return results, envelope.Code, envelope.Msg, nil
+	}
+	var results map[string]any
+	if len(envelope.Results) > 0 {
+		if err := json.Unmarshal(envelope.Results, &results); err != nil {
+			return nil, envelope.Code, envelope.Msg, err
+		}
+	}
+	if results == nil {
+		results = map[string]any{}
+	}
+	return results, envelope.Code, envelope.Msg, nil
+}
+
+func mustParseURL(raw string) *url.URL {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return &url.URL{}
+	}
+	return parsed
 }
 
 func (s *Server) handlePublicOptionEntry(w http.ResponseWriter, r *http.Request, user any) {
@@ -321,7 +426,7 @@ func (s *Server) handlePublicOptionListJSON(w http.ResponseWriter, r *http.Reque
 	writeLegacyJSON(w, http.StatusOK, "ok", map[string]any{
 		"list":      options,
 		"pageCount": 1,
-		"dataCount":  len(options),
+		"dataCount": len(options),
 	})
 }
 
@@ -347,7 +452,7 @@ func (s *Server) handlePublicOptionReportListJSON(w http.ResponseWriter, r *http
 	writeLegacyJSON(w, http.StatusOK, "ok", map[string]any{
 		"list":      options,
 		"pageCount": 1,
-		"dataCount":  len(options),
+		"dataCount": len(options),
 	})
 }
 
@@ -589,8 +694,8 @@ func (s *Server) putPlatformBinding(binding model.PlatformBinding) (model.Platfo
 	resp, err := s.client.R().
 		SetBody(binding).
 		SetResult(&struct {
-			Code int                 `json:"code"`
-			Msg  string              `json:"message"`
+			Code int                   `json:"code"`
+			Msg  string                `json:"message"`
 			Data model.PlatformBinding `json:"data"`
 		}{}).
 		Post(s.cfg.ContentURL + "/api/v1/platform/bindings/" + url.PathEscape(binding.Kind))
@@ -601,9 +706,9 @@ func (s *Server) putPlatformBinding(binding model.PlatformBinding) (model.Platfo
 		return model.PlatformBinding{}, fmt.Errorf(resp.Status())
 	}
 	var envelope struct {
-		Code int                 `json:"code"`
-		Message string           `json:"message"`
-		Data model.PlatformBinding `json:"data"`
+		Code    int                   `json:"code"`
+		Message string                `json:"message"`
+		Data    model.PlatformBinding `json:"data"`
 	}
 	if err := json.Unmarshal(resp.Body(), &envelope); err != nil {
 		return model.PlatformBinding{}, err
@@ -640,8 +745,8 @@ func (s *Server) putPublicOptionCreate(option model.PublicOption) (model.PublicO
 	resp, err := s.client.R().
 		SetBody(option).
 		SetResult(&struct {
-			Code    int               `json:"code"`
-			Message string            `json:"message"`
+			Code    int                `json:"code"`
+			Message string             `json:"message"`
 			Data    model.PublicOption `json:"data"`
 		}{}).
 		Post(s.cfg.ContentURL + "/api/v1/public-options")
@@ -652,8 +757,8 @@ func (s *Server) putPublicOptionCreate(option model.PublicOption) (model.PublicO
 		return model.PublicOption{}, fmt.Errorf(resp.Status())
 	}
 	var envelope struct {
-		Code    int               `json:"code"`
-		Message string            `json:"message"`
+		Code    int                `json:"code"`
+		Message string             `json:"message"`
 		Data    model.PublicOption `json:"data"`
 	}
 	if err := json.Unmarshal(resp.Body(), &envelope); err != nil {
@@ -668,8 +773,8 @@ func (s *Server) putPublicOptionUpdate(option model.PublicOption) (model.PublicO
 	resp, err := s.client.R().
 		SetBody(option).
 		SetResult(&struct {
-			Code    int               `json:"code"`
-			Message string            `json:"message"`
+			Code    int                `json:"code"`
+			Message string             `json:"message"`
 			Data    model.PublicOption `json:"data"`
 		}{}).
 		Put(s.cfg.ContentURL + "/api/v1/public-options/" + strconv.FormatInt(option.ID, 10))
@@ -680,8 +785,8 @@ func (s *Server) putPublicOptionUpdate(option model.PublicOption) (model.PublicO
 		return model.PublicOption{}, fmt.Errorf(resp.Status())
 	}
 	var envelope struct {
-		Code    int               `json:"code"`
-		Message string            `json:"message"`
+		Code    int                `json:"code"`
+		Message string             `json:"message"`
 		Data    model.PublicOption `json:"data"`
 	}
 	if err := json.Unmarshal(resp.Body(), &envelope); err != nil {
@@ -730,9 +835,9 @@ func (s *Server) buildLoadInformation(option model.PublicOption) (map[string]any
 	for _, article := range articles {
 		items = append(items, map[string]any{
 			"_source": map[string]any{
-				"title":         article.Title,
-				"source_name":   nonEmpty(article.FromText, article.SourceType),
-				"source_url":    nonEmpty(article.SourceURL, article.DetailURL),
+				"title":          article.Title,
+				"source_name":    nonEmpty(article.FromText, article.SourceType),
+				"source_url":     nonEmpty(article.SourceURL, article.DetailURL),
 				"publish_time":   nonEmpty(article.PublishTimeText, article.PublishTime),
 				"emotionalIndex": articleEmotionIndex(article),
 			},
@@ -789,10 +894,10 @@ func (s *Server) buildPublicOptionAnalyses(option model.PublicOption) map[string
 		})
 		if i < 8 {
 			hot = append(hot, map[string]any{
-				"topic":          item.Title,
-				"publish_time":   nonEmpty(item.PublishTimeText, item.PublishTime),
-				"source_name":    nonEmpty(item.FromText, item.SourceType),
-				"source_url":     nonEmpty(item.SourceURL, item.DetailURL),
+				"topic":           item.Title,
+				"publish_time":    nonEmpty(item.PublishTimeText, item.PublishTime),
+				"source_name":     nonEmpty(item.FromText, item.SourceType),
+				"source_url":      nonEmpty(item.SourceURL, item.DetailURL),
 				"original_weight": len(item.Title) + len(item.Content),
 			})
 		}
@@ -826,12 +931,12 @@ func (s *Server) buildPublicOptionAnalyses(option model.PublicOption) map[string
 	propagation := map[string]any{
 		"media": media,
 		"source": map[string]any{
-			"all":    sourceAnalysisBuckets(items),
-			"clinet": sourceAnalysisBuckets(items),
+			"all":     sourceAnalysisBuckets(items),
+			"clinet":  sourceAnalysisBuckets(items),
 			"website": sourceAnalysisBuckets(items),
-			"BBS":    sourceAnalysisBuckets(items),
-			"wechat": sourceAnalysisBuckets(items),
-			"weibo":  sourceAnalysisBuckets(items),
+			"BBS":     sourceAnalysisBuckets(items),
+			"wechat":  sourceAnalysisBuckets(items),
+			"weibo":   sourceAnalysisBuckets(items),
 		},
 	}
 	netizens := map[string]any{
@@ -852,8 +957,8 @@ func (s *Server) buildPublicOptionAnalyses(option model.PublicOption) map[string
 		"eventContext": events,
 	}
 	thematic := map[string]any{
-		"view":   hot[:minInt(len(hot), 5)],
-		"media":  media[:minInt(len(media), 5)],
+		"view":    hot[:minInt(len(hot), 5)],
+		"media":   media[:minInt(len(media), 5)],
 		"netizen": figures[:minInt(len(figures), 5)],
 	}
 	return map[string]string{
@@ -886,8 +991,8 @@ func (s *Server) generateXieTitle(text string) string {
 		return "自动生成标题"
 	}
 	var resp struct {
-		Code    int             `json:"code"`
-		Message string          `json:"message"`
+		Code    int               `json:"code"`
+		Message string            `json:"message"`
 		Data    model.NLPResponse `json:"data"`
 	}
 	if err := s.getJSONWithResult(s.cfg.NLPURL+"/api/v1/nlp/title", map[string]string{"text": text}, &resp); err == nil {

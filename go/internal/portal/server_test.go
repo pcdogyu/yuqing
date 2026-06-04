@@ -1,7 +1,11 @@
 package portal
 
 import (
+	"bytes"
 	"encoding/json"
+	"image"
+	"image/color"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -15,6 +19,7 @@ import (
 
 	"github.com/stonedt-yuqing/go-jin10/internal/config"
 	"github.com/stonedt-yuqing/go-jin10/internal/model"
+	"github.com/stonedt-yuqing/go-jin10/internal/nlp"
 )
 
 func TestUserIDFromMap(t *testing.T) {
@@ -573,17 +578,81 @@ func TestLegacyUserSaveCompat(t *testing.T) {
 	}
 }
 
+func TestPlatformNLPCompat(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+
+	ocrReq := httptest.NewRequest(http.MethodPost, "/platform/nlp/ocr", strings.NewReader("imageUrl="+url.QueryEscape(srv.cfg.GatewayWebURL+"/image/screenshot.png")))
+	ocrReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	ocrRR := httptest.NewRecorder()
+	srv.handlePlatformCompat(ocrRR, ocrReq, map[string]any{"id": 1})
+	if ocrRR.Code != http.StatusOK {
+		t.Fatalf("expected OCR 200, got %d", ocrRR.Code)
+	}
+	var ocrEnvelope struct {
+		Status int    `json:"status"`
+		Msg    string `json:"msg"`
+		Data   []struct {
+			Data []struct {
+				Text string `json:"text"`
+			} `json:"data"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(ocrRR.Body.Bytes(), &ocrEnvelope); err != nil {
+		t.Fatalf("decode OCR response: %v", err)
+	}
+	if ocrEnvelope.Status != http.StatusOK || len(ocrEnvelope.Data) != 1 || len(ocrEnvelope.Data[0].Data) != 1 {
+		t.Fatalf("unexpected OCR payload: %+v", ocrEnvelope)
+	}
+	if got := ocrEnvelope.Data[0].Data[0].Text; !strings.Contains(got, "screenshot") {
+		t.Fatalf("expected OCR text to mention screenshot, got %q", got)
+	}
+
+	imageReq := httptest.NewRequest(http.MethodPost, "/platform/nlp/image", strings.NewReader("imageUrl="+url.QueryEscape(srv.cfg.GatewayWebURL+"/image/screenshot.png")))
+	imageReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	imageRR := httptest.NewRecorder()
+	srv.handlePlatformCompat(imageRR, imageReq, map[string]any{"id": 1})
+	if imageRR.Code != http.StatusOK {
+		t.Fatalf("expected image 200, got %d", imageRR.Code)
+	}
+	var imageEnvelope struct {
+		Status int    `json:"status"`
+		Msg    string `json:"msg"`
+		Data   struct {
+			Result []struct {
+				Keyword string `json:"keyword"`
+			} `json:"result"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(imageRR.Body.Bytes(), &imageEnvelope); err != nil {
+		t.Fatalf("decode image response: %v", err)
+	}
+	if imageEnvelope.Status != http.StatusOK || len(imageEnvelope.Data.Result) == 0 {
+		t.Fatalf("unexpected image payload: %+v", imageEnvelope)
+	}
+}
+
 func newPortalCompatServer(t *testing.T) (*Server, func()) {
 	t.Helper()
 
 	var mu sync.Mutex
 	var authMu sync.Mutex
+	var bindingMu sync.Mutex
 	mailCfg := model.MailConfig{}
 	popupStates := map[string]model.PopupState{}
 	deletedArticles := map[int64]bool{}
 	emotions := map[int64]string{}
 	shareChannels := map[int64][]string{}
 	createdUsers := map[string]model.User{}
+	platformBindings := map[string]model.PlatformBinding{
+		"nlp:1": {
+			UserID:    1,
+			Kind:      "nlp",
+			SecretID:  "secret-id",
+			SecretKey: "secret-key",
+			Bound:     true,
+		},
+	}
 	nextUserID := int64(3)
 	articles := map[int64]model.Item{
 		99: {
@@ -711,10 +780,42 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 			shareChannels[99] = append(shareChannels[99], payload.Channel)
 			mu.Unlock()
 			writeEnvelope(http.StatusOK, "ok", map[string]any{"shared": true, "channel": payload.Channel})
+		case strings.HasPrefix(r.URL.Path, "/api/v1/platform/bindings/"):
+			kind := strings.TrimPrefix(r.URL.Path, "/api/v1/platform/bindings/")
+			key := kind + ":" + strconv.FormatInt(parseTestInt64(r.URL.Query().Get("user_id")), 10)
+			if r.Method == http.MethodGet {
+				bindingMu.Lock()
+				binding, ok := platformBindings[key]
+				bindingMu.Unlock()
+				if !ok {
+					writeEnvelope(http.StatusNotFound, "not found", nil)
+					return
+				}
+				writeEnvelope(http.StatusOK, "ok", binding)
+				return
+			}
+			if r.Method == http.MethodPost {
+				var binding model.PlatformBinding
+				if err := json.NewDecoder(r.Body).Decode(&binding); err != nil {
+					writeEnvelope(http.StatusBadRequest, err.Error(), nil)
+					return
+				}
+				binding.Kind = kind
+				binding.Bound = true
+				bindingMu.Lock()
+				platformBindings[key] = binding
+				bindingMu.Unlock()
+				writeEnvelope(http.StatusOK, "ok", binding)
+				return
+			}
+			writeEnvelope(http.StatusMethodNotAllowed, "method not allowed", nil)
 		default:
 			writeEnvelope(http.StatusNotFound, "not found", nil)
 		}
 	}))
+
+	ocrImage := createTestImageServer(t)
+	nlpServer := httptest.NewServer(nlp.NewService().Router())
 
 	auth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -795,11 +896,30 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusNotFound, "message": "not found", "data": nil})
 	}))
 
-	srv := &Server{cfg: config.Config{ContentURL: content.URL, AuthURL: auth.URL, ServiceToken: "test-token"}, client: resty.New().SetHeader("X-Service-Token", "test-token")}
+	srv := &Server{cfg: config.Config{ContentURL: content.URL, AuthURL: auth.URL, NLPURL: nlpServer.URL, GatewayWebURL: ocrImage.URL, ServiceToken: "test-token"}, client: resty.New().SetHeader("X-Service-Token", "test-token")}
 	return srv, func() {
+		ocrImage.Close()
+		nlpServer.Close()
 		auth.Close()
 		content.Close()
 	}
+}
+
+func createTestImageServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	var buf bytes.Buffer
+	img := image.NewRGBA(image.Rect(0, 0, 2, 1))
+	img.Set(0, 0, color.RGBA{R: 255, G: 0, B: 0, A: 255})
+	img.Set(1, 0, color.RGBA{R: 0, G: 0, B: 255, A: 255})
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("encode test image: %v", err)
+	}
+	body := append([]byte(nil), buf.Bytes()...)
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(body)
+	}))
 }
 
 func seedPopupState(t *testing.T, srv *Server, state model.PopupState) {

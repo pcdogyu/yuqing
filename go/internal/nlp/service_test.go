@@ -1,7 +1,12 @@
 package nlp
 
 import (
+	"bytes"
 	"encoding/json"
+	"image"
+	"image/color"
+	"image/png"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -60,4 +65,84 @@ func TestHandleSummarize(t *testing.T) {
 	if payload.Data.Title == "" || payload.Data.Summary == "" || len(payload.Data.Keywords) == 0 {
 		t.Fatalf("expected populated response, got %+v", payload.Data)
 	}
+}
+
+func TestHandleOCRAndImageClassify(t *testing.T) {
+	imgData := testPNG(t)
+
+	ocrReq := multipartRequest(t, "/api/v1/nlp/ocr", "screenshot.png", imgData)
+	ocrRR := httptest.NewRecorder()
+	NewService().handleOCR(ocrRR, ocrReq)
+	if ocrRR.Code != http.StatusOK {
+		t.Fatalf("expected OCR 200, got %d", ocrRR.Code)
+	}
+	var ocrEnvelope struct {
+		Code    int `json:"code"`
+		Results []struct {
+			Data []struct {
+				Text string `json:"text"`
+			} `json:"data"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(ocrRR.Body.Bytes(), &ocrEnvelope); err != nil {
+		t.Fatalf("decode OCR response: %v", err)
+	}
+	if ocrEnvelope.Code != http.StatusOK || len(ocrEnvelope.Results) != 1 || len(ocrEnvelope.Results[0].Data) != 1 {
+		t.Fatalf("unexpected OCR response: %+v", ocrEnvelope)
+	}
+	if got := ocrEnvelope.Results[0].Data[0].Text; !strings.Contains(got, "screenshot") {
+		t.Fatalf("expected OCR text to mention source, got %q", got)
+	}
+
+	imgReq := multipartRequest(t, "/api/v1/nlp/image", "screenshot.png", imgData)
+	imgRR := httptest.NewRecorder()
+	NewService().handleImageClassify(imgRR, imgReq)
+	if imgRR.Code != http.StatusOK {
+		t.Fatalf("expected image 200, got %d", imgRR.Code)
+	}
+	var imgEnvelope struct {
+		Code    int `json:"code"`
+		Results struct {
+			Result []struct {
+				Keyword string `json:"keyword"`
+			} `json:"result"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(imgRR.Body.Bytes(), &imgEnvelope); err != nil {
+		t.Fatalf("decode image response: %v", err)
+	}
+	if imgEnvelope.Code != http.StatusOK || len(imgEnvelope.Results.Result) == 0 {
+		t.Fatalf("unexpected image response: %+v", imgEnvelope)
+	}
+}
+
+func testPNG(t *testing.T) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 2, 1))
+	img.Set(0, 0, color.RGBA{R: 255, G: 0, B: 0, A: 255})
+	img.Set(1, 0, color.RGBA{R: 0, G: 0, B: 255, A: 255})
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("encode png: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func multipartRequest(t *testing.T, path, filename string, data []byte) *http.Request {
+	t.Helper()
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	part, err := writer.CreateFormFile("images", filename)
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := part.Write(data); err != nil {
+		t.Fatalf("write form file: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, path, &buf)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	return req
 }

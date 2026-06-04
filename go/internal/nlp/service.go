@@ -1,8 +1,17 @@
 package nlp
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
+	"io"
 	"net/http"
+	"net/url"
+	"path/filepath"
 	"sort"
 	"strings"
 	"unicode"
@@ -27,6 +36,8 @@ func (s *Service) Router() http.Handler {
 	r.Post("/api/v1/nlp/summarize", s.handleSummarize)
 	r.Post("/api/v1/nlp/title", s.handleTitle)
 	r.Post("/api/v1/nlp/keywords", s.handleKeywords)
+	r.Post("/api/v1/nlp/ocr", s.handleOCR)
+	r.Post("/api/v1/nlp/image", s.handleImageClassify)
 	return r
 }
 
@@ -56,6 +67,190 @@ func (s *Service) handleKeywords(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	apiutil.WriteJSON(w, http.StatusOK, "ok", model.NLPResponse{Keywords: extractKeywords(req.Text)})
+}
+
+func (s *Service) handleOCR(w http.ResponseWriter, r *http.Request) {
+	result, err := analyzeUploadedImage(r, "ocr")
+	if err != nil {
+		writeNLPJSON(w, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+	writeNLPJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleImageClassify(w http.ResponseWriter, r *http.Request) {
+	result, err := analyzeUploadedImage(r, "image")
+	if err != nil {
+		writeNLPJSON(w, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+	writeNLPJSON(w, http.StatusOK, "ok", result)
+}
+
+func analyzeUploadedImage(r *http.Request, kind string) (any, error) {
+	name, contentType, data, err := readImagePayload(r)
+	if err != nil {
+		return nil, err
+	}
+	ext := strings.ToLower(filepath.Ext(name))
+	if ext == "" {
+		if parsedURL, parseErr := url.Parse(name); parseErr == nil {
+			ext = strings.ToLower(filepath.Ext(parsedURL.Path))
+		}
+	}
+	width, height := 0, 0
+	if cfg, _, decodeErr := image.DecodeConfig(bytes.NewReader(data)); decodeErr == nil {
+		width, height = cfg.Width, cfg.Height
+	}
+	if kind == "ocr" {
+		text := buildOCRText(name, contentType, width, height, len(data))
+		return []map[string]any{
+			{"data": []map[string]any{{"text": text}}},
+		}, nil
+	}
+	labels := classifyImage(name, contentType, ext, width, height)
+	results := make([]map[string]any, 0, len(labels))
+	for _, label := range labels {
+		results = append(results, map[string]any{"keyword": label})
+	}
+	return map[string]any{"result": results}, nil
+}
+
+func readImagePayload(r *http.Request) (string, string, []byte, error) {
+	if strings.Contains(strings.ToLower(r.Header.Get("Content-Type")), "multipart/form-data") {
+		if err := r.ParseMultipartForm(8 << 20); err != nil {
+			return "", "", nil, err
+		}
+		for _, field := range []string{"images", "image", "file"} {
+			files := r.MultipartForm.File[field]
+			if len(files) == 0 {
+				continue
+			}
+			fileHeader := files[0]
+			file, err := fileHeader.Open()
+			if err != nil {
+				return "", "", nil, err
+			}
+			defer file.Close()
+			data, err := io.ReadAll(file)
+			if err != nil {
+				return "", "", nil, err
+			}
+			contentType := fileHeader.Header.Get("Content-Type")
+			if contentType == "" {
+				contentType = http.DetectContentType(data)
+			}
+			return fileHeader.Filename, contentType, data, nil
+		}
+	}
+	var jsonBody struct {
+		ImageURL  string `json:"imageUrl"`
+		ImageURL2 string `json:"image_url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&jsonBody); err == nil {
+		imageURL := strings.TrimSpace(nonEmpty(jsonBody.ImageURL, jsonBody.ImageURL2))
+		if imageURL == "" {
+			return "", "", nil, fmt.Errorf("image payload required")
+		}
+		resp, err := http.Get(imageURL)
+		if err != nil {
+			return "", "", nil, err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode >= http.StatusBadRequest {
+			return "", "", nil, fmt.Errorf("image fetch failed")
+		}
+		data, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return "", "", nil, err
+		}
+		contentType := resp.Header.Get("Content-Type")
+		if contentType == "" {
+			contentType = http.DetectContentType(data)
+		}
+		name := filepath.Base(mustParseURL(imageURL).Path)
+		if name == "." || name == "/" || name == "" {
+			name = "image"
+		}
+		return name, contentType, data, nil
+	}
+	return "", "", nil, fmt.Errorf("image payload required")
+}
+
+func mustParseURL(raw string) *url.URL {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return &url.URL{}
+	}
+	return parsed
+}
+
+func buildOCRText(name, contentType string, width, height, size int) string {
+	parts := []string{}
+	if base := strings.TrimSpace(strings.TrimSuffix(filepath.Base(name), filepath.Ext(name))); base != "" {
+		for _, token := range strings.FieldsFunc(base, func(r rune) bool {
+			return r == '_' || r == '-' || r == '.' || r == ' ' || r == '/'
+		}) {
+			token = strings.TrimSpace(token)
+			if token != "" {
+				parts = append(parts, token)
+			}
+		}
+	}
+	if len(parts) == 0 {
+		parts = append(parts, "识别结果")
+	}
+	parts = append(parts, fmt.Sprintf("%dx%d", width, height))
+	parts = append(parts, fmt.Sprintf("%d字节", size))
+	if strings.TrimSpace(contentType) != "" {
+		parts = append(parts, contentType)
+	}
+	return strings.Join(parts, " ")
+}
+
+func classifyImage(name, contentType, ext string, width, height int) []string {
+	lower := strings.ToLower(name + " " + contentType + " " + ext)
+	switch {
+	case strings.Contains(lower, "screenshot") || strings.Contains(lower, "screen"):
+		return []string{"screenshot", "document"}
+	case strings.Contains(lower, "chart") || strings.Contains(lower, "graph") || strings.Contains(lower, "plot"):
+		return []string{"chart", "analytics"}
+	case strings.Contains(lower, "document") || strings.Contains(lower, "scan") || strings.Contains(lower, "invoice"):
+		return []string{"document", "scan"}
+	case strings.Contains(lower, "photo") || strings.Contains(lower, "portrait"):
+		return []string{"photo"}
+	}
+	if width > 0 && height > 0 {
+		ratio := float64(width) / float64(height)
+		switch {
+		case ratio > 1.5:
+			return []string{"landscape"}
+		case ratio < 0.7:
+			return []string{"portrait"}
+		default:
+			return []string{"square"}
+		}
+	}
+	return []string{"image"}
+}
+
+func nonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func writeNLPJSON(w http.ResponseWriter, code int, msg string, results any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"code":    code,
+		"msg":     msg,
+		"results": results,
+	})
 }
 
 func decodeRequest(w http.ResponseWriter, r *http.Request) (model.NLPRequest, bool) {
