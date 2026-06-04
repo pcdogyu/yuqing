@@ -46,6 +46,8 @@ type publicOptionPageData struct {
 func (s *Server) handlePlatformCompat(w http.ResponseWriter, r *http.Request, user any) {
 	path := strings.TrimPrefix(r.URL.Path, "/platform/")
 	switch {
+	case path == "bindings":
+		s.handlePlatformBindingsPage(w, r, user)
 	case path == "notice":
 		s.handlePlatformNotice(w, r)
 	case path == "nlp/bind":
@@ -67,6 +69,44 @@ func (s *Server) handlePlatformCompat(w http.ResponseWriter, r *http.Request, us
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func (s *Server) handlePlatformBindingsPage(w http.ResponseWriter, r *http.Request, user any) {
+	userID := userIDFromMap(user)
+	if userID <= 0 {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	if r.Method == http.MethodPost {
+		_ = r.ParseForm()
+		kind := strings.TrimSpace(r.FormValue("kind"))
+		if kind != "nlp" && kind != "xie" {
+			http.Redirect(w, r, "/platform/bindings?msg="+url.QueryEscape("未知绑定类型"), http.StatusSeeOther)
+			return
+		}
+		binding := model.PlatformBinding{
+			UserID:    userID,
+			Kind:      kind,
+			SecretID:  strings.TrimSpace(firstNonEmpty(r.FormValue("secret_id"), r.FormValue("secretId"))),
+			SecretKey: strings.TrimSpace(firstNonEmpty(r.FormValue("secret_key"), r.FormValue("secretKey"))),
+			Bound:     r.FormValue("bound") == "on" || strings.EqualFold(r.FormValue("bound"), "true"),
+		}
+		if _, err := s.putPlatformBinding(binding); err != nil {
+			http.Redirect(w, r, "/platform/bindings?msg="+url.QueryEscape("绑定保存失败"), http.StatusSeeOther)
+			return
+		}
+		http.Redirect(w, r, "/platform/bindings?msg="+url.QueryEscape("绑定已保存"), http.StatusSeeOther)
+		return
+	}
+	nlpBinding, _ := s.getPlatformBinding(userID, "nlp")
+	xieBinding, _ := s.getPlatformBinding(userID, "xie")
+	_ = s.render(w, "platform_bindings", pageData{
+		Title:              "平台绑定",
+		User:               user,
+		Message:            r.URL.Query().Get("msg"),
+		PlatformNLPBinding: nlpBinding,
+		PlatformXieBinding: xieBinding,
+	})
 }
 
 func (s *Server) handlePlatformNotice(w http.ResponseWriter, r *http.Request) {

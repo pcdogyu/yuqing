@@ -1630,6 +1630,42 @@ func TestPlatformNLPCompat(t *testing.T) {
 	}
 }
 
+func TestPlatformBindingsPage(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+	user := map[string]any{"id": 1}
+
+	pageRR := httptest.NewRecorder()
+	pageReq := httptest.NewRequest(http.MethodGet, "/platform/bindings", nil)
+	srv.handlePlatformCompat(pageRR, pageReq, user)
+	if pageRR.Code != http.StatusOK {
+		t.Fatalf("expected bindings page 200, got %d", pageRR.Code)
+	}
+	body := pageRR.Body.String()
+	if !strings.Contains(body, "平台绑定") || !strings.Contains(body, "NLP 绑定") || !strings.Contains(body, "写作绑定") {
+		t.Fatalf("expected bindings page content, got %s", body)
+	}
+	if !strings.Contains(body, "已绑定") {
+		t.Fatalf("expected binding status, got %s", body)
+	}
+
+	form := url.Values{}
+	form.Set("kind", "xie")
+	form.Set("secret_id", "new-secret")
+	form.Set("secret_key", "new-key")
+	form.Set("bound", "on")
+	postRR := httptest.NewRecorder()
+	postReq := httptest.NewRequest(http.MethodPost, "/platform/bindings", strings.NewReader(form.Encode()))
+	postReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	srv.handlePlatformCompat(postRR, postReq, user)
+	if postRR.Code != http.StatusSeeOther {
+		t.Fatalf("expected bindings save redirect, got %d", postRR.Code)
+	}
+	if loc := postRR.Header().Get("Location"); !strings.Contains(loc, "msg=") {
+		t.Fatalf("expected redirect message, got %s", loc)
+	}
+}
+
 func newPortalCompatServer(t *testing.T) (*Server, func()) {
 	t.Helper()
 	legacyProjectMetaMu.Lock()
