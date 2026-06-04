@@ -114,12 +114,7 @@ func (s *Server) handlePlatformNLPImageCompat(w http.ResponseWriter, r *http.Req
 		writeLegacyStatusJSON(w, http.StatusOK, 424, "未绑定nlp服务", nil)
 		return
 	}
-	imageURL := firstNonEmpty(r.FormValue("imageUrl"), r.URL.Query().Get("imageUrl"))
-	if imageURL == "" {
-		writeLegacyStatusJSON(w, http.StatusBadRequest, "imageUrl required", nil)
-		return
-	}
-	filename, _, imageData, err := s.fetchLegacyImage(imageURL)
+	filename, imageData, err := s.readLegacyNLPImagePayload(r)
 	if err != nil {
 		writeResultUtilJSON(w, http.StatusInternalServerError, err.Error(), nil)
 		return
@@ -134,6 +129,75 @@ func (s *Server) handlePlatformNLPImageCompat(w http.ResponseWriter, r *http.Req
 		return
 	}
 	writeResultUtilJSON(w, http.StatusOK, "OK", results)
+}
+
+func (s *Server) readLegacyNLPImagePayload(r *http.Request) (string, []byte, error) {
+	if filename, data, ok, err := s.readMultipartLegacyNLPImage(r); err != nil {
+		return "", nil, err
+	} else if ok {
+		return filename, data, nil
+	}
+	if imageURL := firstNonEmpty(r.FormValue("imageUrl"), r.FormValue("image_url"), r.URL.Query().Get("imageUrl"), r.URL.Query().Get("image_url")); imageURL != "" {
+		filename, _, data, err := s.fetchLegacyImage(imageURL)
+		if err != nil {
+			return "", nil, err
+		}
+		return filename, data, nil
+	}
+	if strings.Contains(strings.ToLower(r.Header.Get("Content-Type")), "application/json") {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err == nil {
+			imageURL := firstNonEmpty(legacyStringFromAny(payload["imageUrl"]), legacyStringFromAny(payload["image_url"]), legacyStringFromAny(payload["url"]))
+			if imageURL != "" {
+				filename, _, data, err := s.fetchLegacyImage(imageURL)
+				if err != nil {
+					return "", nil, err
+				}
+				return filename, data, nil
+			}
+		}
+	}
+	return "", nil, fmt.Errorf("imageUrl or image upload required")
+}
+
+func (s *Server) readMultipartLegacyNLPImage(r *http.Request) (string, []byte, bool, error) {
+	for _, field := range []string{"images", "image", "file"} {
+		file, header, err := r.FormFile(field)
+		if err != nil {
+			continue
+		}
+		defer file.Close()
+		data, err := io.ReadAll(file)
+		if err != nil {
+			return "", nil, false, err
+		}
+		filename := strings.TrimSpace(header.Filename)
+		if filename == "" {
+			filename = field
+		}
+		return filename, data, true, nil
+	}
+	if r.MultipartForm != nil {
+		for _, headers := range r.MultipartForm.File {
+			for _, header := range headers {
+				file, err := header.Open()
+				if err != nil {
+					continue
+				}
+				defer file.Close()
+				data, err := io.ReadAll(file)
+				if err != nil {
+					return "", nil, false, err
+				}
+				filename := strings.TrimSpace(header.Filename)
+				if filename == "" {
+					filename = "image"
+				}
+				return filename, data, true, nil
+			}
+		}
+	}
+	return "", nil, false, nil
 }
 
 func (s *Server) handlePlatformXieBind(w http.ResponseWriter, r *http.Request, user any) {

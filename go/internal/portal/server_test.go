@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -581,6 +582,7 @@ func TestLegacyUserSaveCompat(t *testing.T) {
 func TestPlatformNLPCompat(t *testing.T) {
 	srv, cleanup := newPortalCompatServer(t)
 	defer cleanup()
+	imageBytes := buildTestPNGBytes(t)
 
 	ocrReq := httptest.NewRequest(http.MethodPost, "/platform/nlp/ocr", strings.NewReader("imageUrl="+url.QueryEscape(srv.cfg.GatewayWebURL+"/image/screenshot.png")))
 	ocrReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -629,6 +631,49 @@ func TestPlatformNLPCompat(t *testing.T) {
 	}
 	if imageEnvelope.Status != http.StatusOK || len(imageEnvelope.Data.Result) == 0 {
 		t.Fatalf("unexpected image payload: %+v", imageEnvelope)
+	}
+
+	multipartOCRReq := newMultipartNLPRequest(t, "/platform/nlp/ocr", "images", "screenshot.png", imageBytes)
+	multipartOCRRR := httptest.NewRecorder()
+	srv.handlePlatformCompat(multipartOCRRR, multipartOCRReq, map[string]any{"id": 1})
+	if multipartOCRRR.Code != http.StatusOK {
+		t.Fatalf("expected multipart OCR 200, got %d", multipartOCRRR.Code)
+	}
+	var multipartOCREnvelope struct {
+		Data []struct {
+			Data []struct {
+				Text string `json:"text"`
+			} `json:"data"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(multipartOCRRR.Body.Bytes(), &multipartOCREnvelope); err != nil {
+		t.Fatalf("decode multipart OCR response: %v", err)
+	}
+	if len(multipartOCREnvelope.Data) != 1 || len(multipartOCREnvelope.Data[0].Data) != 1 {
+		t.Fatalf("unexpected multipart OCR payload: %+v", multipartOCREnvelope)
+	}
+	if got := multipartOCREnvelope.Data[0].Data[0].Text; !strings.Contains(got, "screenshot") {
+		t.Fatalf("expected multipart OCR text to mention screenshot, got %q", got)
+	}
+
+	multipartImageReq := newMultipartNLPRequest(t, "/platform/nlp/image", "file", "chart.png", imageBytes)
+	multipartImageRR := httptest.NewRecorder()
+	srv.handlePlatformCompat(multipartImageRR, multipartImageReq, map[string]any{"id": 1})
+	if multipartImageRR.Code != http.StatusOK {
+		t.Fatalf("expected multipart image 200, got %d", multipartImageRR.Code)
+	}
+	var multipartImageEnvelope struct {
+		Data struct {
+			Result []struct {
+				Keyword string `json:"keyword"`
+			} `json:"result"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(multipartImageRR.Body.Bytes(), &multipartImageEnvelope); err != nil {
+		t.Fatalf("decode multipart image response: %v", err)
+	}
+	if len(multipartImageEnvelope.Data.Result) == 0 {
+		t.Fatalf("unexpected multipart image payload: %+v", multipartImageEnvelope)
 	}
 }
 
@@ -907,6 +952,16 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 
 func createTestImageServer(t *testing.T) *httptest.Server {
 	t.Helper()
+	body := buildTestPNGBytes(t)
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(body)
+	}))
+}
+
+func buildTestPNGBytes(t *testing.T) []byte {
+	t.Helper()
 	var buf bytes.Buffer
 	img := image.NewRGBA(image.Rect(0, 0, 2, 1))
 	img.Set(0, 0, color.RGBA{R: 255, G: 0, B: 0, A: 255})
@@ -914,12 +969,26 @@ func createTestImageServer(t *testing.T) *httptest.Server {
 	if err := png.Encode(&buf, img); err != nil {
 		t.Fatalf("encode test image: %v", err)
 	}
-	body := append([]byte(nil), buf.Bytes()...)
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "image/png")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(body)
-	}))
+	return append([]byte(nil), buf.Bytes()...)
+}
+
+func newMultipartNLPRequest(t *testing.T, path, field, filename string, data []byte) *http.Request {
+	t.Helper()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile(field, filename)
+	if err != nil {
+		t.Fatalf("create multipart form file: %v", err)
+	}
+	if _, err := part.Write(data); err != nil {
+		t.Fatalf("write multipart form file: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, path, &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	return req
 }
 
 func seedPopupState(t *testing.T, srv *Server, state model.PopupState) {
