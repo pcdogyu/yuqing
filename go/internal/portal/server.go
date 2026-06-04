@@ -242,6 +242,7 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/mobile/getGroupAndProject", s.requireSessionJSON(s.handleMobileGetGroupAndProject))
 	mux.HandleFunc("/mobile/mobileQRCode", s.requireSession(s.handleMobileQRCode))
 	mux.HandleFunc("/mobile/uuid/", s.handleMobileUUID)
+	mux.HandleFunc("/monitor/wxGroup", s.requireSession(s.handleMonitorWxGroup))
 	mux.HandleFunc("/volume", s.requireSession(s.handleVolume))
 	mux.HandleFunc("/volume/", s.requireSession(s.handleVolume))
 	mux.HandleFunc("/volume/getproject", s.requireSessionJSON(s.handleVolumeGetProject))

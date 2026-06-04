@@ -268,6 +268,11 @@ func locateProductManualPath() (string, error) {
 	return "", os.ErrNotExist
 }
 
+func (s *Server) handleMonitorWxGroup(w http.ResponseWriter, r *http.Request, _ any) {
+	body := `<section style="display:grid;gap:20px"><div><h2>联系我们</h2><p class="muted">系统使用中有任何问题，可以通过以下方式联系支持团队。</p></div><div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:20px"><div style="text-align:center;padding:18px;border:1px solid #ece7dc;border-radius:14px;background:#faf8f2"><h3>微信公众号</h3><img src="/assets/images/users/wxOfficialAccount.jpg" alt="微信公众号" style="max-width:180px;width:100%;border-radius:10px"><p class="muted">关注公众号获取产品动态</p></div><div style="text-align:center;padding:18px;border:1px solid #ece7dc;border-radius:14px;background:#faf8f2"><h3>微信交流群</h3><img src="/assets/images/users/wxGroup.jpg" alt="微信交流群" style="max-width:180px;width:100%;border-radius:10px"><p class="muted">扫码加入交流群</p></div><div style="text-align:center;padding:18px;border:1px solid #ece7dc;border-radius:14px;background:#faf8f2"><h3>产品经理微信</h3><img src="/assets/images/expireCode.jpg" alt="产品经理微信" style="max-width:180px;width:100%;border-radius:10px"><p class="muted">添加产品经理微信</p></div><div style="text-align:center;padding:18px;border:1px solid #ece7dc;border-radius:14px;background:#faf8f2"><h3>官方网站</h3><p><a class="inline" href="https://www.stonedt.com/" target="_blank" rel="noreferrer">www.stonedt.com</a></p><img src="/assets/images/bt.jpg" alt="合作伙伴" style="max-width:180px;width:100%;border-radius:10px"><p class="muted">合作伙伴与更多信息</p></div></div></section>`
+	_ = s.writeSimplePage(w, "monitor/wxGroup", "联系我们", body)
+}
+
 func (s *Server) handleMobileMonitor(w http.ResponseWriter, r *http.Request, user any) {
 	if token := strings.TrimSpace(r.URL.Query().Get("token")); token != "" {
 		http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode})

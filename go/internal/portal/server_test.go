@@ -306,6 +306,24 @@ func TestProductManualCompat(t *testing.T) {
 	}
 }
 
+func TestMonitorWxGroupCompat(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/monitor/wxGroup", nil)
+	rr := httptest.NewRecorder()
+	srv.handleMonitorWxGroup(rr, req, map[string]any{"id": 1})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"联系我们", "/assets/images/users/wxOfficialAccount.jpg", "/assets/images/users/wxGroup.jpg", "/assets/images/expireCode.jpg", "www.stonedt.com"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected body to contain %q, got %s", want, body)
+		}
+	}
+}
+
 func TestVolumePageCompat(t *testing.T) {
 	srv, cleanup := newPortalCompatServer(t)
 	defer cleanup()
