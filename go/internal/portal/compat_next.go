@@ -1308,6 +1308,12 @@ func (s *Server) handleMobileMonitorDetail(w http.ResponseWriter, r *http.Reques
 			filteredRules = append(filteredRules, rule)
 		}
 	}
+	warningArticles := []legacyWarningArticleCompat{}
+	if userID := userIDFromMap(user); userID > 0 {
+		if page, err := s.collectLegacyWarningArticles(userID, parseProjectID(projectID), 0, "", 1); err == nil {
+			warningArticles = page.Articles
+		}
+	}
 	var b strings.Builder
 	b.WriteString("<h1>移动端详情</h1>")
 	b.WriteString(`<p><a href="/mobile/monitor">返回监测页</a> | <a href="/volume?groupid=`)
@@ -1348,6 +1354,22 @@ func (s *Server) handleMobileMonitorDetail(w http.ResponseWriter, r *http.Reques
 		b.WriteString("</td><td>")
 		b.WriteString(html.EscapeString(rule.Status))
 		b.WriteString("</td></tr>")
+	}
+	b.WriteString("</table></section>")
+	b.WriteString(`<section><h2>预警消息</h2><p><a href="/system?section=warningmsg&project_id=`)
+	b.WriteString(url.QueryEscape(projectID))
+	b.WriteString(`">查看系统预警列表</a></p><table><tr><th>标题</th><th>项目</th><th>时间</th></tr>`)
+	for _, item := range warningArticles {
+		b.WriteString("<tr><td>")
+		b.WriteString(html.EscapeString(item.ArticleTitle))
+		b.WriteString("</td><td>")
+		b.WriteString(html.EscapeString(item.ProjectName))
+		b.WriteString("</td><td>")
+		b.WriteString(html.EscapeString(item.ArticleTime))
+		b.WriteString("</td></tr>")
+	}
+	if len(warningArticles) == 0 {
+		b.WriteString(`<tr><td colspan="3">暂无预警消息</td></tr>`)
 	}
 	b.WriteString("</table></section>")
 	b.WriteString(`<section><h2>关联报告</h2><table><tr><th>标题</th><th>状态</th><th>更新时间</th></tr>`)
@@ -1543,6 +1565,12 @@ func (s *Server) handleMonitorDetail(w http.ResponseWriter, r *http.Request, use
 	if len(reports) > 8 {
 		reports = reports[:8]
 	}
+	warningArticles := []legacyWarningArticleCompat{}
+	if userID > 0 {
+		if page, err := s.collectLegacyWarningArticles(userID, parseProjectID(projectID), 0, "", 1); err == nil {
+			warningArticles = page.Articles
+		}
+	}
 	var b strings.Builder
 	b.WriteString(`<h1>监测详情</h1>`)
 	b.WriteString(`<p><a href="`)
@@ -1613,6 +1641,25 @@ func (s *Server) handleMonitorDetail(w http.ResponseWriter, r *http.Request, use
 	}
 	if len(related) == 0 {
 		b.WriteString(`<tr><td colspan="3">暂无相关文章</td></tr>`)
+	}
+	b.WriteString(`</table></section>`)
+	b.WriteString(`<section><h2>预警消息</h2><p><a href="/system?section=warningmsg`)
+	if projectID != "" {
+		b.WriteString(`&project_id=`)
+		b.WriteString(url.QueryEscape(projectID))
+	}
+	b.WriteString(`">查看系统预警列表</a></p><table><tr><th>标题</th><th>项目</th><th>时间</th></tr>`)
+	for _, item := range warningArticles {
+		b.WriteString(`<tr><td>`)
+		b.WriteString(html.EscapeString(item.ArticleTitle))
+		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(item.ProjectName))
+		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(item.ArticleTime))
+		b.WriteString(`</td></tr>`)
+	}
+	if len(warningArticles) == 0 {
+		b.WriteString(`<tr><td colspan="3">暂无预警消息</td></tr>`)
 	}
 	b.WriteString(`</table></section>`)
 	b.WriteString(`<section><h2>关联报告</h2><table><tr><th>标题</th><th>状态</th><th>更新时间</th></tr>`)

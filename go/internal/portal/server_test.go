@@ -411,6 +411,9 @@ func TestMobileMonitorDetailCompat(t *testing.T) {
 	if !strings.Contains(body, "项目一") || !strings.Contains(body, "AI") {
 		t.Fatalf("expected project details and articles, got %s", body)
 	}
+	if !strings.Contains(body, "预警消息") || !strings.Contains(body, "新能源 研判") {
+		t.Fatalf("expected warning summary on mobile detail, got %s", body)
+	}
 }
 
 func TestAnalysisCompatPage(t *testing.T) {
