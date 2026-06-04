@@ -135,6 +135,68 @@ func TestHandleCryptoInsightsBuildsLiveResponse(t *testing.T) {
 	}
 }
 
+func TestHandleCryptoInsightsDegradesWhenPriceFetchFails(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/crypto/news":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    200,
+				"message": "ok",
+				"data": model.CryptoNewsResult{
+					Resolution: model.CryptoPairResolution{Pair: "BTCUSDT", BaseAsset: "BTC", QuoteAsset: "USDT", BinanceSymbol: "BTCUSDT", DisplayPair: "BTC/USDT"},
+					Items: []model.CryptoEvidenceArticle{
+						{ID: 1, Title: "Bitcoin ETF approval lifts BTC", Direction: "bullish", ReasonCategory: "institution_etf", ReasonLabel: "机构与 ETF", RelevanceScore: 8.6, CapturedAt: time.Now().UTC()},
+					},
+					Total:    1,
+					Page:     1,
+					PageSize: 20,
+				},
+			})
+		case "/api/v1/crypto/social":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    200,
+				"message": "ok",
+				"data": model.CryptoSocialResult{
+					Resolution: model.CryptoPairResolution{Pair: "BTCUSDT", BaseAsset: "BTC", QuoteAsset: "USDT", BinanceSymbol: "BTCUSDT", DisplayPair: "BTC/USDT"},
+					Items:      nil,
+					Total:      0,
+					Page:       1,
+					PageSize:   20,
+				},
+			})
+		default:
+			t.Fatalf("unexpected content path: %s", r.URL.Path)
+		}
+	}))
+	defer content.Close()
+
+	binance := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 500, "message": "binance unavailable", "data": nil})
+	}))
+	defer binance.Close()
+
+	store := &stubStore{cryptoSnapErr: errors.New("not found")}
+	svc := NewService(config.Config{
+		ContentURL:     content.URL,
+		BinanceBaseURL: binance.URL,
+		HTTPTimeout:    5 * time.Second,
+		ServiceToken:   "test-token",
+		UserAgent:      "test-agent",
+	}, store)
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/crypto/insights?pair=BTCUSDT", nil)
+
+	svc.handleCryptoInsights(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200 degrade response, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "当前实时价格暂不可用") {
+		t.Fatalf("expected fallback explanation, got %s", recorder.Body.String())
+	}
+}
+
 func strconvFormat(v float64) string {
 	return strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.2f", v), "0"), ".")
 }

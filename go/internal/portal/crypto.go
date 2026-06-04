@@ -25,9 +25,15 @@ func (s *Server) handleCryptoPage(w http.ResponseWriter, r *http.Request, user a
 	resp, err := s.client.R().SetResult(&envelope).Get(s.cfg.AnalysisURL + "/api/v1/crypto/insights?pair=" + url.QueryEscape(pair))
 	switch {
 	case err != nil:
-		message = err.Error()
+		message = "行情服务暂时不可用，请稍后重试"
 	case !resp.IsSuccess():
-		message = resp.Status()
+		message = "行情服务暂时不可用，请稍后重试"
+		var errEnvelope struct {
+			Message string `json:"message"`
+		}
+		if json.Unmarshal(resp.Body(), &errEnvelope) == nil && strings.TrimSpace(errEnvelope.Message) != "" {
+			message = errEnvelope.Message
+		}
 	default:
 		insight = envelope.Data
 		if insight.Pair == "" {
@@ -41,7 +47,6 @@ func (s *Server) handleCryptoPage(w http.ResponseWriter, r *http.Request, user a
 	}
 
 	var b strings.Builder
-	b.WriteString(`<header style="max-width:1100px;margin:0 auto;padding:24px 24px 0"><nav style="display:flex;gap:16px;flex-wrap:wrap"><a href="/">总览</a><a href="/projects">项目</a><a href="/articles">文章</a><a href="/reports">报告</a><a href="/system">系统</a><a href="/logout">退出</a></nav></header>`)
 	b.WriteString(`<section><h1>Crypto Insights</h1><p>欢迎，用户 `)
 	b.WriteString(fmt.Sprintf("%d", userIDFromMap(user)))
 	b.WriteString(`</p><form method="get" style="display:grid;grid-template-columns:2fr 1fr;gap:12px;align-items:end"><div><label>币对</label><input name="pair" value="`)
@@ -57,11 +62,12 @@ func (s *Server) handleCryptoPage(w http.ResponseWriter, r *http.Request, user a
 	b.WriteString(`</section>`)
 
 	if message == "" {
+		hasPrice := insight.PriceSnapshot.Price > 0
 		b.WriteString(`<section><h2>信号总览</h2><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px">`)
-		writeMetricCard(&b, "当前价格", fmt.Sprintf("%.2f", insight.PriceSnapshot.Price))
-		writeMetricCard(&b, "1h", fmt.Sprintf("%.2f%%", insight.PriceSnapshot.Change1H))
-		writeMetricCard(&b, "4h", fmt.Sprintf("%.2f%%", insight.PriceSnapshot.Change4H))
-		writeMetricCard(&b, "24h", fmt.Sprintf("%.2f%%", insight.PriceSnapshot.Change24H))
+		writeMetricCard(&b, "当前价格", cryptoMetricValue(insight.PriceSnapshot.Price, hasPrice, ""))
+		writeMetricCard(&b, "1h", cryptoMetricValue(insight.PriceSnapshot.Change1H, hasPrice, "%"))
+		writeMetricCard(&b, "4h", cryptoMetricValue(insight.PriceSnapshot.Change4H, hasPrice, "%"))
+		writeMetricCard(&b, "24h", cryptoMetricValue(insight.PriceSnapshot.Change24H, hasPrice, "%"))
 		writeMetricCard(&b, "社媒热度", fmt.Sprintf("%d 条", insight.SocialSentiment.EvidenceCount))
 		b.WriteString(`</div></section>`)
 
@@ -182,6 +188,16 @@ func writeMetricCard(b *strings.Builder, label, value string) {
 	b.WriteString(`</div><strong style="display:block;font-size:26px;margin-top:6px">`)
 	b.WriteString(html.EscapeString(value))
 	b.WriteString(`</strong></div>`)
+}
+
+func cryptoMetricValue(value float64, available bool, suffix string) string {
+	if !available {
+		return "N/A"
+	}
+	if suffix == "" {
+		return fmt.Sprintf("%.2f", value)
+	}
+	return fmt.Sprintf("%.2f%s", value, suffix)
 }
 
 func writeSignalCard(b *strings.Builder, signal model.CryptoSignal) {

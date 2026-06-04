@@ -62,6 +62,35 @@ func TestNonEmpty(t *testing.T) {
 	}
 }
 
+func TestCryptoPageUsesSharedNavAndFriendlyFallback(t *testing.T) {
+	analysis := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 500, "message": "binance unavailable", "data": nil})
+	}))
+	defer analysis.Close()
+
+	srv := &Server{
+		cfg:       config.Config{AnalysisURL: analysis.URL},
+		client:    resty.New(),
+		templates: NewServer(config.Config{}).templates,
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/crypto?pair=BTCUSDT", nil)
+	rr := httptest.NewRecorder()
+	srv.handleCryptoPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if strings.Contains(body, "500 Internal Server Error") {
+		t.Fatalf("expected friendly fallback, got %s", body)
+	}
+	if !strings.Contains(body, "/crawl-templates/manage") || !strings.Contains(body, "/crypto") {
+		t.Fatalf("expected shared nav links in crypto page, got %s", body)
+	}
+}
+
 func TestLegacySearchTarget(t *testing.T) {
 	s := &Server{}
 	req := httptest.NewRequest(http.MethodGet, "/fullsearch/result?searchword=钢铁&project_id=7&source_type=headline&industry=能源&province=上海&city=浦东&read=read&favorite=favorited&start=2026-01-01&end=2026-01-31", nil)

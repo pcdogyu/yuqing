@@ -49,30 +49,19 @@ func (s *Service) buildCryptoInsights(ctx context.Context, rawPair string) (mode
 		}
 	}
 
-	news, err := s.fetchCryptoNews(ctx, resolution.Pair)
-	if err != nil && snapshotErr == nil {
-		var cached model.CryptoInsightResponse
-		if json.Unmarshal([]byte(snapshot.Payload), &cached) == nil {
-			return cached, nil
-		}
+	news, newsErr := s.fetchCryptoNews(ctx, resolution.Pair)
+	if newsErr != nil {
+		news = model.CryptoNewsResult{Resolution: resolution, Page: 1, PageSize: 20}
 	}
-	if err != nil {
-		return model.CryptoInsightResponse{}, err
-	}
-	social, _ := s.fetchCryptoSocial(ctx, resolution.Pair)
-
-	candles, err := s.fetchCandles(ctx, resolution.BinanceSymbol)
-	if err != nil && snapshotErr == nil {
-		var cached model.CryptoInsightResponse
-		if json.Unmarshal([]byte(snapshot.Payload), &cached) == nil {
-			return cached, nil
-		}
-	}
-	if err != nil {
-		return model.CryptoInsightResponse{}, err
+	social, socialErr := s.fetchCryptoSocial(ctx, resolution.Pair)
+	if socialErr != nil {
+		social = model.CryptoSocialResult{Resolution: resolution, Page: 1, PageSize: 20}
 	}
 
-	price := buildPriceSnapshot(resolution.BinanceSymbol, candles, now)
+	price := model.CryptoPriceSnapshot{Symbol: resolution.BinanceSymbol, UpdatedAt: now}
+	if candles, candleErr := s.fetchCandles(ctx, resolution.BinanceSymbol); candleErr == nil {
+		price = buildPriceSnapshot(resolution.BinanceSymbol, candles, now)
+	}
 	reasons := aggregateCryptoReasons(news.Items, social.Items)
 	socialSentiment := buildSocialSentiment(social.Items)
 	signals := buildCryptoSignals(news.Items, social.Items, price)
@@ -422,7 +411,11 @@ func (s *Service) buildAIExplanation(ctx context.Context, resolution model.Crypt
 
 func fallbackExplanation(resolution model.CryptoPairResolution, price model.CryptoPriceSnapshot, signals model.CryptoSignalSet, reasons []model.CryptoReason, items []model.CryptoEvidenceArticle, socialSentiment model.CryptoSocialSentiment, posts []model.CryptoSocialPost) string {
 	var buf bytes.Buffer
-	buf.WriteString(fmt.Sprintf("%s 当前价格 %.2f，1h %.2f%%，4h %.2f%%，24h %.2f%%。", resolution.DisplayPair, price.Price, price.Change1H, price.Change4H, price.Change24H))
+	if price.Price > 0 {
+		buf.WriteString(fmt.Sprintf("%s 当前价格 %.2f，1h %.2f%%，4h %.2f%%，24h %.2f%%。", resolution.DisplayPair, price.Price, price.Change1H, price.Change4H, price.Change24H))
+	} else {
+		buf.WriteString(fmt.Sprintf("%s 当前实时价格暂不可用。", resolution.DisplayPair))
+	}
 	buf.WriteString(fmt.Sprintf(" 4h 信号偏%s，24h 信号偏%s。", signals.H4.Direction, signals.H24.Direction))
 	if len(reasons) > 0 {
 		buf.WriteString(" 主要驱动：")
@@ -445,6 +438,9 @@ func fallbackExplanation(resolution model.CryptoPairResolution, price model.Cryp
 	}
 	if len(items) == 0 {
 		buf.WriteString(" 近 48 小时未发现足够相关新闻。")
+	}
+	if len(items) == 0 && len(posts) == 0 && price.Price <= 0 {
+		buf.WriteString(" 当前数据源暂时都不完整，已返回降级结果。")
 	}
 	buf.WriteString(" 仅供信息参考，不构成投资建议。")
 	return buf.String()

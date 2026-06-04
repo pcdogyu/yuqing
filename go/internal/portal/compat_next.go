@@ -1967,7 +1967,7 @@ func (s *Server) mobileShell(user any, page string, query url.Values) string {
 
 func (s *Server) writeSimplePage(w http.ResponseWriter, _ string, title string, body string) error {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, err := fmt.Fprintf(w, "<!doctype html><html><head><meta charset='utf-8'><title>%s</title><style>body{font-family:Segoe UI,system-ui;background:#f7f3eb;margin:0;color:#222}main{max-width:1100px;margin:0 auto;padding:24px}section{background:#fff;border-radius:16px;padding:20px;margin-top:20px;box-shadow:0 8px 24px rgba(0,0,0,.06)}a{color:#214e34;text-decoration:none}</style></head><body><main>%s</main></body></html>", html.EscapeString(title), body)
+	_, err := fmt.Fprintf(w, "<!doctype html><html><head><meta charset='utf-8'><title>%s</title><style>body{font-family:Segoe UI,system-ui;background:#f7f3eb;margin:0;color:#222}header,main{max-width:1100px;margin:0 auto;padding:24px}header{padding-bottom:0}nav a{margin-right:16px;color:#214e34;text-decoration:none;font-weight:600}section{background:#fff;border-radius:16px;padding:20px;margin-top:20px;box-shadow:0 8px 24px rgba(0,0,0,.06)}a{color:#214e34;text-decoration:none}</style></head><body><header>%s</header><main>%s</main></body></html>", html.EscapeString(title), portalNavHTML, body)
 	return err
 }
 
