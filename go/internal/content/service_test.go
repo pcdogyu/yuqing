@@ -6,8 +6,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -191,8 +193,76 @@ func TestSearchSuggestionAndHotKeywordHandlers(t *testing.T) {
 	}
 }
 
+func TestArticleEmotionDeleteAndShareHandlers(t *testing.T) {
+	store := newContentSearchTestStore(t)
+	svc := NewService(config.Config{}, store)
+	ctx := context.Background()
+
+	now := time.Date(2026, 5, 29, 3, 0, 0, 0, time.UTC)
+	_, _, err := store.UpsertItems(ctx, []model.Item{{
+		SourceType:  "headline",
+		SourceKey:   "handler-key-1",
+		Title:       "handler article",
+		Content:     "handler content",
+		Summary:     "handler summary",
+		SourceURL:   "https://www.jin10.com/",
+		CapturedAt:  now,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		PublishTime: "2026-05-29 11:00:00",
+	}})
+	if err != nil {
+		t.Fatalf("UpsertItems error: %v", err)
+	}
+	list, err := store.ListItems(ctx, model.ArticleFilter{Page: 1, PageSize: 10})
+	if err != nil || len(list.Items) != 1 {
+		t.Fatalf("ListItems error: %v %+v", err, list)
+	}
+	itemID := list.Items[0].ID
+
+	emotionReq := httptest.NewRequest(http.MethodPost, "/api/v1/articles/1/emotion?flag=2", strings.NewReader("flag=2"))
+	emotionReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	emotionReq = emotionReq.WithContext(contextWithRoute(emotionReq, routeContextWithID(itemID)))
+	emotionRR := httptest.NewRecorder()
+	svc.handleSetArticleEmotion(emotionRR, emotionReq)
+	if emotionRR.Code != http.StatusOK {
+		t.Fatalf("expected emotion handler success, got %d", emotionRR.Code)
+	}
+
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/v1/articles/1", nil)
+	deleteReq = deleteReq.WithContext(contextWithRoute(deleteReq, routeContextWithID(itemID)))
+	deleteRR := httptest.NewRecorder()
+	svc.handleDeleteArticle(deleteRR, deleteReq)
+	if deleteRR.Code != http.StatusOK {
+		t.Fatalf("expected delete handler success, got %d", deleteRR.Code)
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/articles/1", nil)
+	getReq = getReq.WithContext(contextWithRoute(getReq, routeContextWithID(itemID)))
+	getRR := httptest.NewRecorder()
+	svc.handleGetArticle(getRR, getReq)
+	if getRR.Code != http.StatusNotFound {
+		t.Fatalf("expected deleted article to return 404, got %d", getRR.Code)
+	}
+
+	shareReq := httptest.NewRequest(http.MethodPost, "/api/v1/articles/1/share?user_id=42", strings.NewReader(`{"channel":"project:7"}`))
+	shareReq.Header.Set("Content-Type", "application/json")
+	shareReq = shareReq.WithContext(contextWithRoute(shareReq, routeContextWithID(itemID)))
+	shareRR := httptest.NewRecorder()
+	svc.handleShareArticle(shareRR, shareReq)
+	if shareRR.Code != http.StatusOK {
+		t.Fatalf("expected share handler success, got %d", shareRR.Code)
+	}
+}
+
 func contextWithRoute(req *http.Request, rctx *chi.Context) context.Context {
 	return context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+}
+
+func routeContextWithID(id int64) *chi.Context {
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", strconv.FormatInt(id, 10))
+	return rctx
 }
 
 func newContentSearchTestStore(t *testing.T) *sqlitestore.Store {

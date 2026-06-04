@@ -599,8 +599,14 @@ func (s *Server) handleLegacyCloseContact(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleLegacyUpdateEmotion(w http.ResponseWriter, r *http.Request, user any) {
-	if _, err := legacyArticleIDFromRequest(r); err != nil {
+	itemID, err := legacyArticleIDFromRequest(r)
+	if err != nil {
 		writeDatamonitorJSON(w, http.StatusBadRequest, "fail")
+		return
+	}
+	emotion := nonEmpty(strings.TrimSpace(r.FormValue("flag")), strings.TrimSpace(r.FormValue("emotion")))
+	if err := s.updateLegacyEmotion(itemID, emotion); err != nil {
+		writeDatamonitorJSON(w, http.StatusInternalServerError, "fail")
 		return
 	}
 	writeDatamonitorJSON(w, http.StatusOK, "success")
@@ -694,8 +700,13 @@ func (s *Server) handleLegacySelectReadSign(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) handleLegacyDeleteData(w http.ResponseWriter, r *http.Request, user any) {
-	if _, err := legacyArticleIDFromRequest(r); err != nil {
+	itemID, err := legacyArticleIDFromRequest(r)
+	if err != nil {
 		writeDatamonitorJSON(w, http.StatusBadRequest, "fail")
+		return
+	}
+	if err := s.deleteLegacyArticle(itemID); err != nil {
+		writeDatamonitorJSON(w, http.StatusInternalServerError, "fail")
 		return
 	}
 	writeDatamonitorJSON(w, http.StatusOK, "success")
@@ -717,8 +728,24 @@ func (s *Server) handleLegacyCopyText(w http.ResponseWriter, r *http.Request, us
 }
 
 func (s *Server) handleLegacySending(w http.ResponseWriter, r *http.Request, user any) {
-	if _, err := legacyArticleIDFromRequest(r); err != nil {
+	itemID, err := legacyArticleIDFromRequest(r)
+	if err != nil {
 		writeDatamonitorJSON(w, http.StatusBadRequest, "1")
+		return
+	}
+	userID := userIDFromMap(user)
+	if userID <= 0 {
+		writeDatamonitorJSON(w, http.StatusForbidden, "0")
+		return
+	}
+	channel := "legacy-sending"
+	if projectID := strings.TrimSpace(r.FormValue("projectid")); projectID != "" {
+		channel = "project:" + projectID
+	} else if groupID := strings.TrimSpace(r.FormValue("groupid")); groupID != "" {
+		channel = "group:" + groupID
+	}
+	if err := s.shareLegacyArticle(itemID, userID, channel); err != nil {
+		writeDatamonitorJSON(w, http.StatusInternalServerError, "0")
 		return
 	}
 	writeDatamonitorJSON(w, http.StatusOK, "1")
@@ -1763,6 +1790,45 @@ func (s *Server) unmarkLegacyRead(itemID, userID int64) error {
 	resp, err := s.client.R().
 		SetQueryParam("user_id", strconv.FormatInt(userID, 10)).
 		Delete(s.cfg.ContentURL + "/api/v1/articles/" + strconv.FormatInt(itemID, 10) + "/read")
+	if err != nil {
+		return err
+	}
+	if !resp.IsSuccess() {
+		return errors.New(resp.Status())
+	}
+	return nil
+}
+
+func (s *Server) updateLegacyEmotion(itemID int64, emotion string) error {
+	resp, err := s.client.R().
+		SetQueryParam("emotion", emotion).
+		Post(s.cfg.ContentURL + "/api/v1/articles/" + strconv.FormatInt(itemID, 10) + "/emotion")
+	if err != nil {
+		return err
+	}
+	if !resp.IsSuccess() {
+		return errors.New(resp.Status())
+	}
+	return nil
+}
+
+func (s *Server) deleteLegacyArticle(itemID int64) error {
+	resp, err := s.client.R().
+		Delete(s.cfg.ContentURL + "/api/v1/articles/" + strconv.FormatInt(itemID, 10))
+	if err != nil {
+		return err
+	}
+	if !resp.IsSuccess() {
+		return errors.New(resp.Status())
+	}
+	return nil
+}
+
+func (s *Server) shareLegacyArticle(itemID, userID int64, channel string) error {
+	resp, err := s.client.R().
+		SetQueryParam("user_id", strconv.FormatInt(userID, 10)).
+		SetBody(map[string]any{"channel": channel}).
+		Post(s.cfg.ContentURL + "/api/v1/articles/" + strconv.FormatInt(itemID, 10) + "/share")
 	if err != nil {
 		return err
 	}

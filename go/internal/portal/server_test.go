@@ -412,24 +412,48 @@ func TestLegacyDataMonitorCompatibility(t *testing.T) {
 		t.Fatalf("unexpected copy response: %+v", envelope)
 	}
 
-	for _, tc := range []struct {
-		name string
-		req  *http.Request
-		fn   func(http.ResponseWriter, *http.Request, any)
-	}{
-		{name: "update", req: httptest.NewRequest(http.MethodPost, "/datamonitor/updateemtion", strings.NewReader("id=99&flag=1")), fn: srv.handleLegacyUpdateEmotion},
-		{name: "delete", req: httptest.NewRequest(http.MethodPost, "/datamonitor/deletedata", strings.NewReader("id=99&flag=1")), fn: srv.handleLegacyDeleteData},
-		{name: "send", req: httptest.NewRequest(http.MethodPost, "/datamonitor/sending", strings.NewReader("id=99&projectid=7&groupid=8")), fn: srv.handleLegacySending},
-	} {
-		tc.req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		rr := httptest.NewRecorder()
-		tc.fn(rr, tc.req, map[string]any{"id": 1})
-		if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
-			t.Fatalf("unmarshal %s response: %v", tc.name, err)
-		}
-		if envelope.Status != http.StatusOK {
-			t.Fatalf("unexpected %s response: %+v", tc.name, envelope)
-		}
+	emotionReq := httptest.NewRequest(http.MethodPost, "/datamonitor/updateemtion", strings.NewReader("id=99&flag=3"))
+	emotionReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	emotionRR := httptest.NewRecorder()
+	srv.handleLegacyUpdateEmotion(emotionRR, emotionReq, map[string]any{"id": 1})
+	if err := json.Unmarshal(emotionRR.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal emotion response: %v", err)
+	}
+	if envelope.Status != http.StatusOK {
+		t.Fatalf("unexpected emotion response: %+v", envelope)
+	}
+
+	if item, err := srv.fetchLegacyArticle(99, 1); err != nil || item.TagFlags != "3" {
+		t.Fatalf("expected emotion to be reflected in article payload, got item=%+v err=%v", item, err)
+	}
+
+	sendReq := httptest.NewRequest(http.MethodPost, "/datamonitor/sending", strings.NewReader("id=99&projectid=7&groupid=8"))
+	sendReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	sendRR := httptest.NewRecorder()
+	srv.handleLegacySending(sendRR, sendReq, map[string]any{"id": 1})
+	if err := json.Unmarshal(sendRR.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal send response: %v", err)
+	}
+	if envelope.Status != http.StatusOK {
+		t.Fatalf("unexpected send response: %+v", envelope)
+	}
+
+	if item, err := srv.fetchLegacyArticle(99, 1); err != nil || item.FromText != "project:7" {
+		t.Fatalf("expected share channel to be reflected in article payload, got item=%+v err=%v", item, err)
+	}
+
+	deleteReq := httptest.NewRequest(http.MethodPost, "/datamonitor/deletedata", strings.NewReader("id=99&flag=1"))
+	deleteReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	deleteRR := httptest.NewRecorder()
+	srv.handleLegacyDeleteData(deleteRR, deleteReq, map[string]any{"id": 1})
+	if err := json.Unmarshal(deleteRR.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal delete response: %v", err)
+	}
+	if envelope.Status != http.StatusOK {
+		t.Fatalf("unexpected delete response: %+v", envelope)
+	}
+	if _, err := srv.fetchLegacyArticle(99, 1); err == nil {
+		t.Fatal("expected deleted article to become inaccessible")
 	}
 }
 
@@ -529,6 +553,9 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 	var mu sync.Mutex
 	mailCfg := model.MailConfig{}
 	popupStates := map[string]model.PopupState{}
+	deletedArticles := map[int64]bool{}
+	emotions := map[int64]string{}
+	shareChannels := map[int64][]string{}
 	articles := map[int64]model.Item{
 		99: {
 			ID:         99,
@@ -594,13 +621,37 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/articles/99":
 			mu.Lock()
 			item := articles[99]
+			deleted := deletedArticles[99]
+			emotion := emotions[99]
+			shares := append([]string(nil), shareChannels[99]...)
 			mu.Unlock()
+			if deleted {
+				writeEnvelope(http.StatusNotFound, "not found", nil)
+				return
+			}
 			userID := parseTestInt64(r.URL.Query().Get("user_id"))
 			if userID > 0 {
 				item.Favorited = item.Favorited
 				item.Read = item.Read
 			}
+			if emotion != "" {
+				item.TagFlags = emotion
+			}
+			if len(shares) > 0 {
+				item.FromText = strings.Join(shares, ",")
+			}
 			writeEnvelope(http.StatusOK, "ok", item)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/articles/99/emotion":
+			emotion := nonEmpty(r.URL.Query().Get("emotion"), r.URL.Query().Get("flag"))
+			mu.Lock()
+			emotions[99] = emotion
+			mu.Unlock()
+			writeEnvelope(http.StatusOK, "ok", map[string]any{"emotion": emotion})
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/articles/99":
+			mu.Lock()
+			deletedArticles[99] = true
+			mu.Unlock()
+			writeEnvelope(http.StatusOK, "ok", map[string]bool{"deleted": true})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/articles/99/favorite":
 			mu.Lock()
 			item := articles[99]
@@ -622,6 +673,15 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 			articles[99] = item
 			mu.Unlock()
 			writeEnvelope(http.StatusOK, "ok", map[string]bool{"read": false})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/articles/99/share":
+			var payload struct {
+				Channel string `json:"channel"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			mu.Lock()
+			shareChannels[99] = append(shareChannels[99], payload.Channel)
+			mu.Unlock()
+			writeEnvelope(http.StatusOK, "ok", map[string]any{"shared": true, "channel": payload.Channel})
 		default:
 			writeEnvelope(http.StatusNotFound, "not found", nil)
 		}

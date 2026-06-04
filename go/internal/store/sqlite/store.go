@@ -675,7 +675,7 @@ func (s *Store) LatestItems(ctx context.Context, limit int, sourceType string) (
 }
 
 func (s *Store) GetItem(ctx context.Context, id int64) (model.Item, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, source_type, source_key, title, content, summary, publish_time, publish_time_text, detail_url, source_url, tag_flags, from_text, external_source_host, is_vip, has_image, raw_payload, captured_at, created_at, updated_at FROM items WHERE id = ?`, id)
+	row := s.db.QueryRowContext(ctx, `SELECT id, source_type, source_key, title, content, summary, publish_time, publish_time_text, detail_url, source_url, tag_flags, from_text, external_source_host, is_vip, has_image, raw_payload, captured_at, created_at, updated_at FROM items WHERE id = ? AND NOT EXISTS (SELECT 1 FROM item_tags WHERE item_tags.item_id = items.id AND item_tags.tag = 'deleted')`, id)
 	item, err := scanItem(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -702,6 +702,7 @@ func (s *Store) GetRelatedItems(ctx context.Context, id int64, limit int) ([]mod
 SELECT id, source_type, source_key, title, content, summary, publish_time, publish_time_text, detail_url, source_url, tag_flags, from_text, external_source_host, is_vip, has_image, raw_payload, captured_at, created_at, updated_at
 FROM items
 WHERE id <> ? AND source_type = ? AND (title LIKE ? OR content LIKE ?)
+AND NOT EXISTS (SELECT 1 FROM item_tags WHERE item_tags.item_id = items.id AND item_tags.tag = 'deleted')
 ORDER BY captured_at DESC, id DESC
 LIMIT ?`, id, item.SourceType, "%"+needle+"%", "%"+needle+"%", limit)
 	if err != nil {
@@ -804,6 +805,7 @@ func (s *Store) itemIDBySourceKeyTx(ctx context.Context, tx *sql.Tx, sourceKey s
 func buildItemFilter(filter model.ArticleFilter) (where string, args []any, joins string) {
 	filters := make([]string, 0, 6)
 	args = make([]any, 0, 6)
+	filters = append(filters, "NOT EXISTS (SELECT 1 FROM item_tags WHERE item_tags.item_id = items.id AND item_tags.tag = 'deleted')")
 	if filter.ProjectID > 0 {
 		joins = "JOIN item_relations ir ON ir.item_id = items.id"
 		filters = append(filters, "ir.project_id = ?")

@@ -342,7 +342,7 @@ func (s *Store) SearchItemsFTS(ctx context.Context, filter model.ArticleFilter) 
 		return model.SearchResult{Items: list.Items, Keyword: "", Total: list.Total, Page: filter.Page, PageSize: filter.PageSize}, nil
 	}
 
-	whereParts := []string{"items_fts MATCH ?"}
+	whereParts := []string{"items_fts MATCH ?", "NOT EXISTS (SELECT 1 FROM item_tags WHERE item_tags.item_id = i.id AND item_tags.tag = 'deleted')"}
 	args := []any{filter.Keyword}
 	joins := "JOIN items i ON i.id = f.rowid"
 	if filter.ProjectID > 0 {
@@ -395,7 +395,7 @@ LIMIT ? OFFSET ?`
 
 func (s *Store) Overview(ctx context.Context) (model.Overview, error) {
 	var overview model.Overview
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM items`).Scan(&overview.ArticleCount); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM items WHERE NOT EXISTS (SELECT 1 FROM item_tags WHERE item_tags.item_id = items.id AND item_tags.tag = 'deleted')`).Scan(&overview.ArticleCount); err != nil {
 		return overview, err
 	}
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM projects`).Scan(&overview.ProjectCount); err != nil {

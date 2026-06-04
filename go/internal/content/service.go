@@ -45,6 +45,8 @@ type Store interface {
 	GetRelatedItems(rctx context.Context, id int64, limit int) ([]model.Item, error)
 	PopulateUserItemState(rctx context.Context, userID int64, items []model.Item) error
 	SearchItemsFTS(rctx context.Context, filter model.ArticleFilter) (model.SearchResult, error)
+	SetItemEmotion(rctx context.Context, itemID int64, emotion string) error
+	MarkItemDeleted(rctx context.Context, itemID int64) error
 	MarkItemRead(rctx context.Context, userID, itemID int64) error
 	DeleteItemRead(rctx context.Context, userID, itemID int64) error
 	ToggleFavorite(rctx context.Context, userID, itemID int64) (bool, error)
@@ -133,6 +135,8 @@ func (s *Service) Routes(r chi.Router) {
 	r.Get("/api/v1/articles", s.handleListArticles)
 	r.Get("/api/v1/articles/{id}", s.handleGetArticle)
 	r.Get("/api/v1/articles/{id}/related", s.handleGetRelatedArticles)
+	r.Post("/api/v1/articles/{id}/emotion", s.handleSetArticleEmotion)
+	r.Delete("/api/v1/articles/{id}", s.handleDeleteArticle)
 	r.Post("/api/v1/articles/{id}/read", s.handleMarkArticleRead)
 	r.Delete("/api/v1/articles/{id}/read", s.handleUnmarkArticleRead)
 	r.Post("/api/v1/articles/{id}/favorite", s.handleToggleFavorite)
@@ -492,6 +496,35 @@ func (s *Service) handleGetArticle(w http.ResponseWriter, r *http.Request) {
 		item = items[0]
 	}
 	apiutil.WriteJSON(w, http.StatusOK, "ok", item)
+}
+
+func (s *Service) handleSetArticleEmotion(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+	emotion := nonEmpty(r.FormValue("emotion"), r.FormValue("flag"))
+	if err := s.store.SetItemEmotion(r.Context(), id, emotion); err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]any{"emotion": emotion})
+}
+
+func (s *Service) handleDeleteArticle(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	if err := s.store.MarkItemDeleted(r.Context(), id); err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]bool{"deleted": true})
 }
 
 func (s *Service) handleGetRelatedArticles(w http.ResponseWriter, r *http.Request) {

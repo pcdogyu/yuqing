@@ -423,6 +423,49 @@ func (s *Store) RecordItemShare(ctx context.Context, share model.ShareRecord) er
 	return err
 }
 
+func (s *Store) SetItemEmotion(ctx context.Context, itemID int64, emotion string) error {
+	tag := normalizeLegacyEmotionTag(emotion)
+	if tag == "" {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err = tx.ExecContext(ctx, `DELETE FROM item_tags WHERE item_id = ? AND tag LIKE 'emotion:%'`, itemID); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO item_tags (item_id, tag, created_at) VALUES (?, ?, ?)`, itemID, tag, now); err != nil {
+		return err
+	}
+	err = tx.Commit()
+	return err
+}
+
+func (s *Store) MarkItemDeleted(ctx context.Context, itemID int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO item_tags (item_id, tag, created_at) VALUES (?, 'deleted', ?)`, itemID, now); err != nil {
+		return err
+	}
+	err = tx.Commit()
+	return err
+}
+
 func (s *Store) SearchItemsAdvanced(ctx context.Context, filter model.ArticleFilter) (model.SearchResult, error) {
 	items, err := s.listItemsForAdvancedFilter(ctx, filter)
 	if err != nil {
@@ -446,6 +489,24 @@ func (s *Store) SearchItemsAdvanced(ctx context.Context, filter model.ArticleFil
 		Page:     page,
 		PageSize: pageSize,
 	}, nil
+}
+
+func normalizeLegacyEmotionTag(emotion string) string {
+	switch strings.TrimSpace(emotion) {
+	case "1", "positive", "pos", "positive-emotion":
+		return "emotion:1"
+	case "2", "neutral", "mid", "neutral-emotion":
+		return "emotion:2"
+	case "3", "negative", "neg", "negative-emotion":
+		return "emotion:3"
+	case "":
+		return ""
+	default:
+		if strings.HasPrefix(emotion, "emotion:") {
+			return emotion
+		}
+		return "emotion:" + strings.TrimSpace(emotion)
+	}
 }
 
 func (s *Store) BuildSearchFacets(ctx context.Context, filter model.ArticleFilter) (model.SearchFacets, error) {

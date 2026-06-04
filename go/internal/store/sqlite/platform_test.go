@@ -109,3 +109,58 @@ func TestFavoriteAndReadState(t *testing.T) {
 		t.Fatalf("ToggleFavorite second error: %v favorited=%v", err, favorited)
 	}
 }
+
+func TestItemEmotionAndDeletion(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	now := time.Date(2026, 5, 29, 3, 0, 0, 0, time.UTC)
+	_, _, err := store.UpsertItems(ctx, []model.Item{{
+		SourceType:  "headline",
+		SourceKey:   "state-key-2",
+		Title:       "emotion delete state",
+		Content:     "emotion delete content",
+		Summary:     "emotion delete summary",
+		SourceURL:   "https://www.jin10.com/",
+		CapturedAt:  now,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		PublishTime: "2026-05-29 11:00:00",
+	}})
+	if err != nil {
+		t.Fatalf("UpsertItems error: %v", err)
+	}
+
+	list, err := store.ListItems(ctx, model.ArticleFilter{Page: 1, PageSize: 10})
+	if err != nil || len(list.Items) != 1 {
+		t.Fatalf("ListItems error: %v %+v", err, list)
+	}
+	itemID := list.Items[0].ID
+
+	if err := store.SetItemEmotion(ctx, itemID, "3"); err != nil {
+		t.Fatalf("SetItemEmotion error: %v", err)
+	}
+	var emotionTag string
+	if err := store.db.QueryRowContext(ctx, `SELECT tag FROM item_tags WHERE item_id = ? AND tag LIKE 'emotion:%'`, itemID).Scan(&emotionTag); err != nil {
+		t.Fatalf("query emotion tag: %v", err)
+	}
+	if emotionTag != "emotion:3" {
+		t.Fatalf("unexpected emotion tag: %s", emotionTag)
+	}
+
+	if err := store.MarkItemDeleted(ctx, itemID); err != nil {
+		t.Fatalf("MarkItemDeleted error: %v", err)
+	}
+
+	if _, err := store.GetItem(ctx, itemID); err == nil {
+		t.Fatal("expected deleted item to be hidden from GetItem")
+	}
+
+	list, err = store.ListItems(ctx, model.ArticleFilter{Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListItems after deletion error: %v", err)
+	}
+	if list.Total != 0 || len(list.Items) != 0 {
+		t.Fatalf("expected deleted item to disappear from list, got %+v", list)
+	}
+}
