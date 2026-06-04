@@ -189,7 +189,37 @@ func (s *Server) handleVolumeProjectName(w http.ResponseWriter, r *http.Request,
 }
 
 func (s *Server) handleHotPage(w http.ResponseWriter, r *http.Request, user any) {
-	_ = s.writeSimplePage(w, "hot", "热点数据", `<h1>热点数据</h1><p>Go 迁移版热点页已启用。</p>`)
+	limit := parsePositiveInt(firstNonEmpty(r.URL.Query().Get("limit"), "20"), 20)
+	if limit > 50 {
+		limit = 50
+	}
+	var hotspots []model.KeywordHotspot
+	_ = s.getJSON(s.cfg.AnalysisURL+"/api/v1/analysis/keywords", &hotspots)
+	if len(hotspots) == 0 {
+		hotspots = []model.KeywordHotspot{{Keyword: "暂无数据", Count: 0}}
+	}
+	if len(hotspots) > limit {
+		hotspots = hotspots[:limit]
+	}
+	var b strings.Builder
+	b.WriteString("<h1>热点数据</h1>")
+	b.WriteString("<p>来源：analysis-service 的关键词聚合结果。</p>")
+	b.WriteString(`<form class="inline" method="get"><input name="limit" type="number" min="1" max="50" value="`)
+	b.WriteString(strconv.Itoa(limit))
+	b.WriteString(`"><button type="submit">刷新</button></form>`)
+	b.WriteString(`<table><tr><th>关键词</th><th>热度</th><th>跳转</th></tr>`)
+	for _, item := range hotspots {
+		b.WriteString("<tr><td>")
+		b.WriteString(html.EscapeString(item.Keyword))
+		b.WriteString("</td><td>")
+		b.WriteString(strconv.Itoa(item.Count))
+		b.WriteString("</td><td><a href=\"/articles?mode=full&keyword=")
+		b.WriteString(url.QueryEscape(item.Keyword))
+		b.WriteString("\">查看相关文章</a></td></tr>")
+	}
+	b.WriteString("</table>")
+	b.WriteString(`<p><a href="/hot/hotlist">JSON 接口</a> | <a href="/articles?mode=full">全文检索</a></p>`)
+	_ = s.writeSimplePage(w, "hot", "热点数据", b.String())
 }
 
 func (s *Server) handleHotList(w http.ResponseWriter, r *http.Request, user any) {

@@ -204,6 +204,29 @@ func TestLegacySearchBucketsEvent(t *testing.T) {
 	}
 }
 
+func TestHotPageCompat(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/hot/hotpage?limit=2", nil)
+	rr := httptest.NewRecorder()
+	srv.handleHotPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "AI") {
+		t.Fatalf("expected hot page to include analysis keyword, got %s", body)
+	}
+	if !strings.Contains(body, "/articles?mode=full&keyword=AI") {
+		t.Fatalf("expected hot page to link to article search, got %s", body)
+	}
+	if !strings.Contains(body, "热点数据") {
+		t.Fatalf("expected page title, got %s", body)
+	}
+}
+
 func TestLegacyMailCompatibility(t *testing.T) {
 	srv, cleanup := newPortalCompatServer(t)
 	defer cleanup()
@@ -708,6 +731,46 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 			SourceType: "flash",
 		},
 	}
+	analysis := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		writeEnvelope := func(code int, message string, data any) {
+			w.WriteHeader(code)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    code,
+				"message": message,
+				"data":    data,
+			})
+		}
+
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/analysis/keywords":
+			writeEnvelope(http.StatusOK, "ok", []model.KeywordHotspot{
+				{Keyword: "AI", Count: 12},
+				{Keyword: "新能源", Count: 8},
+				{Keyword: "港股", Count: 5},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/analysis/overview":
+			writeEnvelope(http.StatusOK, "ok", model.DashboardSnapshot{
+				Overview: model.Overview{ArticleCount: 3, ProjectCount: 1, ReportCount: 1, AlertRuleCount: 1},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/analysis/emotions":
+			writeEnvelope(http.StatusOK, "ok", model.EmotionAnalysis{ProjectID: 1, Total: 3, Buckets: []model.EmotionBucket{{Name: "positive", Count: 2, Ratio: 0.66}, {Name: "neutral", Count: 1, Ratio: 0.33}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/analysis/event-overview":
+			writeEnvelope(http.StatusOK, "ok", []model.EventOverview{{Keyword: "AI", Count: 2}})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/analysis/propagation":
+			writeEnvelope(http.StatusOK, "ok", model.PropagationAnalysis{ProjectID: 1, SourceFlow: []model.PropagationNode{{Label: "flash", Count: 2}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/analysis/themes":
+			writeEnvelope(http.StatusOK, "ok", []model.ThemeInsight{{Name: "AI", Count: 2}})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/public-opinion/events":
+			writeEnvelope(http.StatusOK, "ok", []model.PublicOpinionEvent{{Title: "AI 舆情", Keyword: "AI", Count: 2}})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/public-opinion/reports":
+			writeEnvelope(http.StatusOK, "ok", []model.PublicOpinionReport{{Title: "AI 报告"}})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/admin/tasks/analysis/refresh":
+			writeEnvelope(http.StatusOK, "ok", model.DashboardSnapshot{})
+		default:
+			writeEnvelope(http.StatusNotFound, "not found", nil)
+		}
+	}))
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		writeEnvelope := func(code int, message string, data any) {
@@ -941,10 +1004,11 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusNotFound, "message": "not found", "data": nil})
 	}))
 
-	srv := &Server{cfg: config.Config{ContentURL: content.URL, AuthURL: auth.URL, NLPURL: nlpServer.URL, GatewayWebURL: ocrImage.URL, ServiceToken: "test-token"}, client: resty.New().SetHeader("X-Service-Token", "test-token")}
+	srv := &Server{cfg: config.Config{ContentURL: content.URL, AuthURL: auth.URL, NLPURL: nlpServer.URL, GatewayWebURL: ocrImage.URL, AnalysisURL: analysis.URL, ServiceToken: "test-token"}, client: resty.New().SetHeader("X-Service-Token", "test-token")}
 	return srv, func() {
 		ocrImage.Close()
 		nlpServer.Close()
+		analysis.Close()
 		auth.Close()
 		content.Close()
 	}
