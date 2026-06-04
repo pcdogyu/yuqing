@@ -233,3 +233,131 @@ func TestLegacyHotList(t *testing.T) {
 		t.Fatalf("unexpected hot list payload: %+v", envelope.Data.Data)
 	}
 }
+
+func TestLegacySearchCategoryLists(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/search/full" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 404, "message": "not found", "data": map[string]any{}})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    200,
+			"message": "ok",
+			"data": model.SearchResult{
+				Total:    1,
+				Page:     2,
+				PageSize: 25,
+				Items: []model.Item{{
+					ID:              88,
+					Title:           "公告/研报标题",
+					Content:         "公告/研报正文",
+					Summary:         "摘要",
+					SourceType:      "headline",
+					SourceURL:       "https://example.com/88",
+					PublishTime:     "2026-06-03 12:00:00",
+					PublishTimeText: "2分钟前",
+					FromText:        "新华网",
+				}},
+			},
+		})
+	}))
+	defer content.Close()
+
+	srv := &Server{cfg: config.Config{ContentURL: content.URL}, client: resty.New()}
+	user := map[string]any{"id": int64(42)}
+
+	complaintReq := httptest.NewRequest(http.MethodGet, "/fullsearch/complaintList?page=2&pageSize=25&searchword=%E7%83%AD%E7%82%B9", nil)
+	complaintRR := httptest.NewRecorder()
+	srv.handleLegacyComplaintList(complaintRR, complaintReq, user)
+	if complaintRR.Code != http.StatusOK {
+		t.Fatalf("expected complaint 200, got %d", complaintRR.Code)
+	}
+	var complaintEnvelope struct {
+		Code int `json:"code"`
+		Data struct {
+			News []struct {
+				Source map[string]any `json:"_source"`
+			} `json:"news"`
+			Count     int    `json:"count"`
+			PageCount int    `json:"page_count"`
+			Page      int    `json:"page"`
+			Size      int    `json:"size"`
+			Classify  string `json:"classify"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(complaintRR.Body.Bytes(), &complaintEnvelope); err != nil {
+		t.Fatalf("unmarshal complaint response: %v", err)
+	}
+	if complaintEnvelope.Code != http.StatusOK || complaintEnvelope.Data.Count != 1 || complaintEnvelope.Data.PageCount != 1 || complaintEnvelope.Data.Page != 2 || complaintEnvelope.Data.Size != 25 {
+		t.Fatalf("unexpected complaint metadata: %+v", complaintEnvelope)
+	}
+	if len(complaintEnvelope.Data.News) != 1 || complaintEnvelope.Data.News[0].Source["problem"] != "公告/研报标题" {
+		t.Fatalf("unexpected complaint payload: %+v", complaintEnvelope.Data.News)
+	}
+
+	announcementReq := httptest.NewRequest(http.MethodGet, "/fullsearch/announcementList?page=2&pageSize=25&searchword=%E7%83%AD%E7%82%B9", nil)
+	announcementRR := httptest.NewRecorder()
+	srv.handleLegacyAnnouncementList(announcementRR, announcementReq, user)
+	if announcementRR.Code != http.StatusOK {
+		t.Fatalf("expected announcement 200, got %d", announcementRR.Code)
+	}
+	var announcementEnvelope struct {
+		Code int `json:"code"`
+		Data struct {
+			List      []map[string]any `json:"list"`
+			TotalPage int              `json:"totalPage"`
+			TotalData int              `json:"totalData"`
+			Page      int              `json:"page"`
+			Size      int              `json:"size"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(announcementRR.Body.Bytes(), &announcementEnvelope); err != nil {
+		t.Fatalf("unmarshal announcement response: %v", err)
+	}
+	if announcementEnvelope.Code != http.StatusOK || announcementEnvelope.Data.TotalData != 1 || announcementEnvelope.Data.TotalPage != 1 || announcementEnvelope.Data.Page != 2 || announcementEnvelope.Data.Size != 25 {
+		t.Fatalf("unexpected announcement metadata: %+v", announcementEnvelope)
+	}
+	if len(announcementEnvelope.Data.List) != 1 || announcementEnvelope.Data.List[0]["title"] != "公告/研报标题" {
+		t.Fatalf("unexpected announcement payload: %+v", announcementEnvelope.Data.List)
+	}
+
+	reportReq := httptest.NewRequest(http.MethodGet, "/fullsearch/reportList?page=2&pageSize=25&searchword=%E7%83%AD%E7%82%B9", nil)
+	reportRR := httptest.NewRecorder()
+	srv.handleLegacyReportList(reportRR, reportReq, user)
+	if reportRR.Code != http.StatusOK {
+		t.Fatalf("expected report 200, got %d", reportRR.Code)
+	}
+	var reportEnvelope struct {
+		Code int `json:"code"`
+		Data struct {
+			List      []map[string]any `json:"list"`
+			TotalPage int              `json:"totalPage"`
+			TotalData int              `json:"totalData"`
+			Page      int              `json:"page"`
+			Size      int              `json:"size"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(reportRR.Body.Bytes(), &reportEnvelope); err != nil {
+		t.Fatalf("unmarshal report response: %v", err)
+	}
+	if reportEnvelope.Code != http.StatusOK || reportEnvelope.Data.TotalData != 1 || reportEnvelope.Data.TotalPage != 1 || reportEnvelope.Data.Page != 2 || reportEnvelope.Data.Size != 25 {
+		t.Fatalf("unexpected report metadata: %+v", reportEnvelope)
+	}
+	if len(reportEnvelope.Data.List) != 1 || reportEnvelope.Data.List[0]["title"] != "公告/研报标题" {
+		t.Fatalf("unexpected report payload: %+v", reportEnvelope.Data.List)
+	}
+
+	announceTypeReq := httptest.NewRequest(http.MethodGet, "/fullsearch/announcementrtype", nil)
+	announceTypeRR := httptest.NewRecorder()
+	srv.handleSearchCompat(announceTypeRR, announceTypeReq, user, "full")
+	if announceTypeRR.Code != http.StatusOK {
+		t.Fatalf("expected announcementrtype 200, got %d", announceTypeRR.Code)
+	}
+	reportTypeReq := httptest.NewRequest(http.MethodGet, "/fullsearch/reportIndustry", nil)
+	reportTypeRR := httptest.NewRecorder()
+	srv.handleSearchCompat(reportTypeRR, reportTypeReq, user, "full")
+	if reportTypeRR.Code != http.StatusOK {
+		t.Fatalf("expected reportIndustry 200, got %d", reportTypeRR.Code)
+	}
+}

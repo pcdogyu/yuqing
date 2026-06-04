@@ -149,6 +149,36 @@ func (s *Server) handleSearchCompat(w http.ResponseWriter, r *http.Request, user
 			return
 		}
 		http.NotFound(w, r)
+	case "complaintList":
+		if mode == "full" {
+			s.handleLegacyComplaintList(w, r, user)
+			return
+		}
+		http.NotFound(w, r)
+	case "announcementList":
+		if mode == "full" {
+			s.handleLegacyAnnouncementList(w, r, user)
+			return
+		}
+		http.NotFound(w, r)
+	case "reportList":
+		if mode == "full" {
+			s.handleLegacyReportList(w, r, user)
+			return
+		}
+		http.NotFound(w, r)
+	case "announcementrtype":
+		if mode == "full" {
+			apiutil.WriteJSON(w, http.StatusOK, "ok", legacySearchCategoryOptions(r, "announcement"))
+			return
+		}
+		http.NotFound(w, r)
+	case "reportIndustry":
+		if mode == "full" {
+			apiutil.WriteJSON(w, http.StatusOK, "ok", legacySearchCategoryOptions(r, "report"))
+			return
+		}
+		http.NotFound(w, r)
 	case "informationList", "informationListpost":
 		s.handleLegacySearchInformationList(w, r, user, mode)
 	case "data":
@@ -299,6 +329,86 @@ func (s *Server) handleLegacyHotList(w http.ResponseWriter, r *http.Request, use
 		"count":      result.Total,
 		"page":       max(result.Page, page),
 		"size":       max(result.PageSize, pageSize),
+	})
+}
+
+func (s *Server) handleLegacyComplaintList(w http.ResponseWriter, r *http.Request, user any) {
+	_ = user
+	filter, pageSize := legacySearchFilterFromRequest(r, "full")
+	query := url.Values{}
+	query.Set("page", strconv.Itoa(max(filter.Page, 1)))
+	query.Set("page_size", strconv.Itoa(max(filter.PageSize, pageSize)))
+	if filter.Keyword != "" {
+		query.Set("q", filter.Keyword)
+	}
+	if filter.SourceType != "" {
+		query.Set("source_type", filter.SourceType)
+	}
+	if filter.Start != "" {
+		query.Set("start", filter.Start)
+	}
+	if filter.End != "" {
+		query.Set("end", filter.End)
+	}
+	var result model.SearchResult
+	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/search/full?"+query.Encode(), &result); err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	entries := make([]map[string]any, 0, len(result.Items))
+	for _, item := range result.Items {
+		entries = append(entries, map[string]any{
+			"_source": legacyComplaintSource(item),
+		})
+	}
+	totalPages := 1
+	if result.PageSize > 0 && result.Total > 0 {
+		totalPages = (result.Total + result.PageSize - 1) / result.PageSize
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]any{
+		"code":       http.StatusOK,
+		"news":       entries,
+		"count":      result.Total,
+		"page_count": totalPages,
+		"page":       max(result.Page, filter.Page),
+		"size":       max(result.PageSize, max(filter.PageSize, pageSize)),
+		"classify":   nonEmpty(r.URL.Query().Get("classify"), "x"),
+	})
+}
+
+func (s *Server) handleLegacyAnnouncementList(w http.ResponseWriter, r *http.Request, user any) {
+	_ = user
+	filter, pageSize := legacySearchFilterFromRequest(r, "full")
+	entries, total, page, size := s.legacyPublicationEntries(r, filter, pageSize)
+	totalPages := 1
+	if size > 0 && total > 0 {
+		totalPages = (total + size - 1) / size
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]any{
+		"code":      http.StatusOK,
+		"list":      entries,
+		"totalPage": totalPages,
+		"totalData": total,
+		"page":      page,
+		"size":      size,
+	})
+}
+
+func (s *Server) handleLegacyReportList(w http.ResponseWriter, r *http.Request, user any) {
+	_ = user
+	filter, pageSize := legacySearchFilterFromRequest(r, "full")
+	entries, total, page, size := s.legacyReportEntries(r, filter, pageSize)
+	totalPages := 1
+	if size > 0 && total > 0 {
+		totalPages = (total + size - 1) / size
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]any{
+		"code":      http.StatusOK,
+		"list":      entries,
+		"totalPage": totalPages,
+		"totalData": total,
+		"page":      page,
+		"size":      size,
 	})
 }
 
@@ -466,6 +576,129 @@ func legacyHotItemSource(item model.Item) map[string]any {
 		"original_weight": 0,
 		"source_url":      nonEmpty(item.SourceURL, item.DetailURL),
 		"article_id":      item.ID,
+	}
+}
+
+func legacyComplaintSource(item model.Item) map[string]any {
+	return map[string]any{
+		"letter_content": nonEmpty(item.Content, item.Summary, item.Title),
+		"reply_content":  nonEmpty(item.Summary, item.Content),
+		"writer":         nonEmpty(item.FromText, "匿名"),
+		"release_time":   nonEmpty(item.PublishTime, item.PublishTimeText, item.CapturedAt.Format("2006-01-02 15:04:05")),
+		"detailUrl":      nonEmpty(item.SourceURL, item.DetailURL, "/articles/"+strconv.FormatInt(item.ID, 10)),
+		"reply_source":   nonEmpty(item.SourceType, "Go 兼容版"),
+		"reply_time":     nonEmpty(item.PublishTime, item.PublishTimeText),
+		"sourceName":     nonEmpty(item.FromText, item.SourceType, "来源"),
+		"content":        nonEmpty(item.Content, item.Summary, item.Title),
+		"process":        "[]",
+		"problem":        item.Title,
+		"detail":         nonEmpty(item.Content, item.Summary),
+		"object":         nonEmpty(item.FromText, item.SourceType),
+		"money":          "",
+		"appeal":         "",
+		"progress":       "已迁移",
+		"sourceUrl":      nonEmpty(item.SourceURL, item.DetailURL),
+	}
+}
+
+func (s *Server) legacyPublicationEntries(r *http.Request, filter model.ArticleFilter, pageSize int) ([]map[string]any, int, int, int) {
+	query := url.Values{}
+	query.Set("page", strconv.Itoa(max(filter.Page, 1)))
+	query.Set("page_size", strconv.Itoa(max(filter.PageSize, pageSize)))
+	if filter.Keyword != "" {
+		query.Set("q", filter.Keyword)
+	}
+	if filter.SourceType != "" {
+		query.Set("source_type", filter.SourceType)
+	}
+	if filter.Start != "" {
+		query.Set("start", filter.Start)
+	}
+	if filter.End != "" {
+		query.Set("end", filter.End)
+	}
+	var result model.SearchResult
+	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/search/full?"+query.Encode(), &result); err != nil {
+		return []map[string]any{}, 0, filter.Page, max(filter.PageSize, pageSize)
+	}
+	entries := make([]map[string]any, 0, len(result.Items))
+	for _, item := range result.Items {
+		entries = append(entries, legacyAnnouncementSource(item))
+	}
+	page := max(result.Page, filter.Page)
+	size := max(result.PageSize, max(filter.PageSize, pageSize))
+	return entries, result.Total, page, size
+}
+
+func (s *Server) legacyReportEntries(r *http.Request, filter model.ArticleFilter, pageSize int) ([]map[string]any, int, int, int) {
+	query := url.Values{}
+	query.Set("page", strconv.Itoa(max(filter.Page, 1)))
+	query.Set("page_size", strconv.Itoa(max(filter.PageSize, pageSize)))
+	if filter.Keyword != "" {
+		query.Set("q", filter.Keyword)
+	}
+	if filter.SourceType != "" {
+		query.Set("source_type", filter.SourceType)
+	}
+	if filter.Start != "" {
+		query.Set("start", filter.Start)
+	}
+	if filter.End != "" {
+		query.Set("end", filter.End)
+	}
+	var result model.SearchResult
+	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/search/full?"+query.Encode(), &result); err != nil {
+		return []map[string]any{}, 0, filter.Page, max(filter.PageSize, pageSize)
+	}
+	entries := make([]map[string]any, 0, len(result.Items))
+	for _, item := range result.Items {
+		entries = append(entries, legacyReportSource(item))
+	}
+	page := max(result.Page, filter.Page)
+	size := max(result.PageSize, max(filter.PageSize, pageSize))
+	return entries, result.Total, page, size
+}
+
+func legacyAnnouncementSource(item model.Item) map[string]any {
+	return map[string]any{
+		"article_public_id": strconv.FormatInt(item.ID, 10),
+		"codename":          nonEmpty(item.FromText, item.SourceType, "来源"),
+		"title":             item.Title,
+		"rtype":             nonEmpty(item.SourceType, "公告"),
+		"reportDate":        nonEmpty(item.PublishTime, item.PublishTimeText, item.CapturedAt.Format("2006-01-02 15:04:05")),
+	}
+}
+
+func legacyReportSource(item model.Item) map[string]any {
+	code := strconv.FormatInt(item.ID, 10)
+	authors := []map[string]any{}
+	return map[string]any{
+		"article_public_id": strconv.FormatInt(item.ID, 10),
+		"codename":          nonEmpty(item.FromText, item.SourceType, "机构"),
+		"title":             item.Title,
+		"code":              code,
+		"authorList":        legacyJSONString(authors),
+		"reportDate":        nonEmpty(item.PublishTime, item.PublishTimeText, item.CapturedAt.Format("2006-01-02 15:04:05")),
+	}
+}
+
+func legacySearchCategoryOptions(r *http.Request, kind string) []map[string]any {
+	_ = r
+	switch kind {
+	case "announcement":
+		return []map[string]any{
+			{"value": "", "name": "全部"},
+			{"value": "公告", "name": "公告"},
+			{"value": "新闻", "name": "新闻"},
+		}
+	case "report":
+		return []map[string]any{
+			{"value": "", "name": "全部"},
+			{"value": "研报", "name": "研报"},
+			{"value": "公告", "name": "公告"},
+		}
+	default:
+		return []map[string]any{{"value": "", "name": "全部"}}
 	}
 }
 
