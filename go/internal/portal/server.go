@@ -301,6 +301,7 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/system/uploadProductManual", s.requireSession(s.handleSystemUploadProductManual))
 	mux.HandleFunc("/system/preference", s.requireSession(s.handleSystemSectionRedirect("preferences")))
 	mux.HandleFunc("/system/favorite", s.requireSession(s.handleSystemSectionRedirect("favorites")))
+	mux.HandleFunc("/system/warning", s.requireSession(s.handleSystemWarningEdit))
 	mux.HandleFunc("/system/warningmsg", s.requireSession(s.handleSystemWarningMessage))
 	mux.HandleFunc("/system/feedback", s.requireSession(s.handleSystemSectionRedirect("feedback")))
 	mux.HandleFunc("/system/warningedit", s.requireSession(s.handleSystemWarningEdit))

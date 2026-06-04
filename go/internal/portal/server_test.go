@@ -718,6 +718,24 @@ func TestLegacySystemAndUserCompat(t *testing.T) {
 	}
 
 	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/system/warning?projectid=7&page=2", nil)
+	srv.handleSystemWarningEdit(rr, req, nil)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected warning redirect, got %d", rr.Code)
+	}
+	loc, err = url.Parse(rr.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("parse warning redirect: %v", err)
+	}
+	if loc.Path != "/system" {
+		t.Fatalf("unexpected warning redirect path: %s", loc.Path)
+	}
+	query = loc.Query()
+	if query.Get("section") != "warning" || query.Get("project_id") != "7" || query.Get("page") != "2" {
+		t.Fatalf("unexpected warning redirect query: %s", loc.RawQuery)
+	}
+
+	rr = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/user/123", nil)
 	srv.handleUserCompat(rr, req, nil)
 	if rr.Code != http.StatusSeeOther {
