@@ -240,13 +240,13 @@ func (s *Server) handleSearchCompat(w http.ResponseWriter, r *http.Request, user
 		}
 		http.NotFound(w, r)
 	case "companyDetails":
-		if mode == "full" {
+		if mode == "full" || mode == "timely" {
 			s.handleLegacyCompanyDetailData(w, r)
 			return
 		}
 		http.NotFound(w, r)
 	case "getresearch-report-detail":
-		if mode == "full" {
+		if mode == "full" || mode == "timely" {
 			s.handleLegacyReportDetailData(w, r)
 			return
 		}

@@ -577,6 +577,20 @@ func TestLegacySpecializedFullSearchEndpoints(t *testing.T) {
 		t.Fatalf("expected company alias fields, got %+v", companyDetail)
 	}
 
+	timelyCompanyReq := httptest.NewRequest(http.MethodGet, "/timelysearch/companyDetails?article_public_id=202", nil)
+	timelyCompanyRR := httptest.NewRecorder()
+	srv.handleSearchCompat(timelyCompanyRR, timelyCompanyReq, user, "timely")
+	if timelyCompanyRR.Code != http.StatusOK {
+		t.Fatalf("expected timely companyDetails 200, got %d", timelyCompanyRR.Code)
+	}
+	var timelyCompanyDetail map[string]interface{}
+	if err := json.Unmarshal(timelyCompanyRR.Body.Bytes(), &timelyCompanyDetail); err != nil {
+		t.Fatalf("unmarshal timely company detail: %v", err)
+	}
+	if timelyCompanyDetail["name"] != "星云科技有限公司" {
+		t.Fatalf("unexpected timely company detail payload: %+v", timelyCompanyDetail)
+	}
+
 	investmentPageReq := httptest.NewRequest(http.MethodGet, "/fullsearch/investmentDetail/303", nil)
 	investmentPageRR := httptest.NewRecorder()
 	srv.handleSearchCompat(investmentPageRR, investmentPageReq, user, "full")
@@ -779,6 +793,20 @@ func TestTimelySearchPageExecuteAndDataFlow(t *testing.T) {
 	detailBody := detailRR.Body.String()
 	if !strings.Contains(detailBody, "公告研报详情") || !strings.Contains(detailBody, "返回搜索结果") || !strings.Contains(detailBody, "/timelysearch/result?keyword=AI") {
 		t.Fatalf("unexpected timely detail page: %s", detailBody)
+	}
+
+	reportDataReq := httptest.NewRequest(http.MethodGet, "/timelysearch/getresearch-report-detail?article_public_id=301&type=report", nil)
+	reportDataRR := httptest.NewRecorder()
+	srv.handleSearchCompat(reportDataRR, reportDataReq, nil, "timely")
+	if reportDataRR.Code != http.StatusOK {
+		t.Fatalf("expected timely report detail data 200, got %d", reportDataRR.Code)
+	}
+	var timelyReportDetail map[string]interface{}
+	if err := json.Unmarshal(reportDataRR.Body.Bytes(), &timelyReportDetail); err != nil {
+		t.Fatalf("unmarshal timely report detail: %v", err)
+	}
+	if timelyReportDetail["title"] != "AI 行业快报" {
+		t.Fatalf("unexpected timely report detail payload: %+v", timelyReportDetail)
 	}
 
 	infoReq := httptest.NewRequest(http.MethodGet, "/timelysearch/informationList?keyword=AI&page=2&pageSize=20&website_id=1", nil)
