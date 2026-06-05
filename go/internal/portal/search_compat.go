@@ -210,7 +210,7 @@ func (s *Server) handleSearchCompat(w http.ResponseWriter, r *http.Request, user
 		}
 		http.NotFound(w, r)
 	case "lawyerDetailData", "executionPersonDetailData", "professorDetailData", "doctorDetailData":
-		if mode == "full" {
+		if mode == "full" || mode == "timely" {
 			s.handleLegacySpecialDetailData(w, r, path)
 			return
 		}

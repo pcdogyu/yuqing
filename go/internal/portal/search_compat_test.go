@@ -700,6 +700,22 @@ func TestTimelySearchPageExecuteAndDataFlow(t *testing.T) {
 					RawPayload:      `{"reportDate":"2026-06-05","url":"https://example.com/report/301","sourcewebsitename":"Flash Source","ner":{"org":{"OpenAI":1}}}`,
 				},
 			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/articles/101":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    200,
+				"message": "ok",
+				"data": model.Item{
+					ID:         101,
+					Title:      "张三律师",
+					Summary:    "擅长知识产权与资本市场业务",
+					Content:    "张三律师详细介绍",
+					SourceType: "lawyer",
+					FromText:   "律师库",
+					SourceURL:  "https://example.com/lawyer/101",
+					RawPayload: `{"name":"张三","lawfirm":"金陵律师事务所","goods":"知识产权,资本市场","telephone":"13800000000","detailurl":"https://example.com/lawyer/101"}`,
+					TagFlags:   "律师,知识产权",
+				},
+			})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/articles/301/related":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"code":    200,
@@ -823,6 +839,22 @@ func TestTimelySearchPageExecuteAndDataFlow(t *testing.T) {
 	}
 	if timelyReportDetail["title"] != "AI 行业快报" {
 		t.Fatalf("unexpected timely report detail payload: %+v", timelyReportDetail)
+	}
+
+	lawyerDetailReq := httptest.NewRequest(http.MethodGet, "/timelysearch/lawyerDetailData?article_public_id=101", nil)
+	lawyerDetailRR := httptest.NewRecorder()
+	srv.handleSearchCompat(lawyerDetailRR, lawyerDetailReq, nil, "timely")
+	if lawyerDetailRR.Code != http.StatusOK {
+		t.Fatalf("expected timelysearch lawyerDetailData 200, got %d", lawyerDetailRR.Code)
+	}
+	var timelyLawyerDetail struct {
+		List []map[string]any `json:"list"`
+	}
+	if err := json.Unmarshal(lawyerDetailRR.Body.Bytes(), &timelyLawyerDetail); err != nil {
+		t.Fatalf("unmarshal timely lawyerDetailData: %v", err)
+	}
+	if len(timelyLawyerDetail.List) != 1 || timelyLawyerDetail.List[0]["lawfirm"] != "金陵律师事务所" {
+		t.Fatalf("unexpected timely lawyerDetailData payload: %+v", timelyLawyerDetail)
 	}
 
 	articleDetailReq := httptest.NewRequest(http.MethodPost, "/timelysearch/articleDetail", strings.NewReader(url.Values{"articleId": {"301"}}.Encode()))
