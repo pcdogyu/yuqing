@@ -558,6 +558,9 @@ func (s *Server) handleTimelySearchData(w http.ResponseWriter, r *http.Request, 
 	filter, _ := legacySearchFilterFromRequest(r, "timely")
 	filter.Page = max(apiutil.IntQuery(r, "pageNoData", 1), 1)
 	filter.PageSize = 30
+	if strings.TrimSpace(filter.SourceType) == "" {
+		filter.SourceType = legacyTimelySourceType(r)
+	}
 	if tpl, ok := s.legacyTimelyTemplate(r.Context(), r); ok && strings.TrimSpace(filter.SourceType) == "" {
 		filter.SourceType = tpl.SourceType
 	}
@@ -623,6 +626,8 @@ func (s *Server) handleTimelySearchPage(w http.ResponseWriter, r *http.Request) 
 	}
 	if hasSelectedTemplate && strings.TrimSpace(selectedTemplate.SourceType) != "" {
 		query.Set("source_type", selectedTemplate.SourceType)
+	} else if sourceType := legacyTimelySourceType(r); sourceType != "" {
+		query.Set("source_type", sourceType)
 	} else if sourceType := strings.TrimSpace(r.URL.Query().Get("source_type")); sourceType != "" {
 		query.Set("source_type", sourceType)
 	}
@@ -886,6 +891,10 @@ func (s *Server) legacyTimelyTemplate(ctx context.Context, r *http.Request) (mod
 		return model.CrawlTemplate{}, false
 	}
 	return tpl, true
+}
+
+func legacyTimelySourceType(r *http.Request) string {
+	return strings.TrimSpace(firstNonEmpty(r.URL.Query().Get("source_type"), r.URL.Query().Get("stype"), r.FormValue("source_type"), r.FormValue("stype")))
 }
 
 func legacyTimelyTemplateID(r *http.Request) string {

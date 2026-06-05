@@ -806,6 +806,16 @@ func TestTimelySearchPageExecuteAndDataFlow(t *testing.T) {
 		t.Fatalf("unexpected timely search forwarding: %+v", searchQuery)
 	}
 
+	stypeOnlyPageReq := httptest.NewRequest(http.MethodGet, "/timelysearch/result?keyword=AI&stype=flash&pageNoData=2", nil)
+	stypeOnlyPageRR := httptest.NewRecorder()
+	srv.handleSearchCompat(stypeOnlyPageRR, stypeOnlyPageReq, nil, "timely")
+	if stypeOnlyPageRR.Code != http.StatusOK {
+		t.Fatalf("expected timelysearch stype-only result page 200, got %d", stypeOnlyPageRR.Code)
+	}
+	if searchQuery.Get("source_type") != "flash" {
+		t.Fatalf("expected stype-only timelysearch page to forward source_type=flash, got %+v", searchQuery)
+	}
+
 	dataReq := httptest.NewRequest(http.MethodGet, "/timelysearch/data?keyword=AI&website_id=1&pageNoData=2", nil)
 	dataRR := httptest.NewRecorder()
 	srv.handleSearchCompat(dataRR, dataReq, nil, "timely")
@@ -817,6 +827,16 @@ func TestTimelySearchPageExecuteAndDataFlow(t *testing.T) {
 	}
 	if !strings.Contains(dataRR.Body.String(), `/timelysearch/reportdetail/301`) {
 		t.Fatalf("expected timelysearch data body to contain timely detail route, got %s", dataRR.Body.String())
+	}
+
+	stypeOnlyDataReq := httptest.NewRequest(http.MethodGet, "/timelysearch/data?keyword=AI&stype=flash&pageNoData=2", nil)
+	stypeOnlyDataRR := httptest.NewRecorder()
+	srv.handleSearchCompat(stypeOnlyDataRR, stypeOnlyDataReq, nil, "timely")
+	if stypeOnlyDataRR.Code != http.StatusOK {
+		t.Fatalf("expected timelysearch stype-only data 200, got %d", stypeOnlyDataRR.Code)
+	}
+	if searchQuery.Get("source_type") != "flash" {
+		t.Fatalf("expected stype-only timelysearch data to forward source_type=flash, got %+v", searchQuery)
 	}
 
 	form := url.Values{}
