@@ -76,6 +76,24 @@ function timelyDetailHref(path, query) {
 	return ctx + path + query + '&return_to=' + returnTo;
 }
 
+function timelyInternalDetailHref(rawUrl) {
+	if (!rawUrl) {
+		return rawUrl;
+	}
+	var detailUrl = rawUrl;
+	var isInternal = detailUrl.indexOf('/timelysearch/') >= 0
+		|| detailUrl.indexOf('/fullsearch/') >= 0
+		|| detailUrl.indexOf('/articles/') >= 0;
+	if (!isInternal) {
+		return detailUrl;
+	}
+	var returnTo = encodeURIComponent(window.location.pathname + window.location.search);
+	if (detailUrl.indexOf('return_to=') === -1) {
+		return detailUrl + (detailUrl.indexOf('?') === -1 ? '?' : '&') + 'return_to=' + returnTo;
+	}
+	return detailUrl.replace(/return_to=[^&]*/, 'return_to=' + returnTo);
+}
+
 function timelyResultHref(query) {
 	var params = {};
 	if (typeof menuStyle !== 'undefined' && menuStyle !== null && menuStyle !== '') {
@@ -875,13 +893,14 @@ function installComplaint(res) {
 					if (writer == "") {
 						writer = '匿名';
 					}
+					var detailUrl = timelyInternalDetailHref(data[i]._source.detailUrl);
 					var reply = '<div class="reply" style="width:100%">'
 							+ '<p>'
 							+ '<span style="margin-right: 10px;">'
 							+ '<img src="http://www.beijing.gov.cn/hudong/hdjl/web/base/bootstrap/images/icon3.png" width="41" height="41">'
 							+ '</span>'
 							+ '<a target="_Blank" class="link font-bold" href="'
-							+ data[i]._source.detailUrl + '">[官方回答]:'
+							+ detailUrl + '">[官方回答]:'
 							+ data[i]._source.reply_source + '</a>'
 							+ '<span style="margin-left: 30px;">答复时间:'
 							+ data[i]._source.reply_time + '</span>' + '</p>'
@@ -896,7 +915,7 @@ function installComplaint(res) {
 							+ '<img src="http://www.beijing.gov.cn/hudong/hdjl/web/base/bootstrap/images/icon2.png" width="41" height="41">'
 							+ '</span>'
 							+ '<a target="_Blank" class="link font-bold" href="'
-							+ data[i]._source.detailUrl
+							+ detailUrl
 							+ '">'
 							+ data[i]._source.title
 							+ '</a>'
@@ -950,6 +969,7 @@ function installComplaint(res) {
 							answerHtml = '<div class="search-answer">暂无回复！</div>'
 						}
 					}
+					var detailUrl = timelyInternalDetailHref(data[i]._source.detailUrl);
 					var s = "";
 					if (i == 0) {
 						s = '<div class="feed-element" style="padding-bottom:0px;margin-bottom:5px">'
@@ -968,7 +988,7 @@ function installComplaint(res) {
 							+ data[i]._source.release_date
 							+ '</span></span>'
 							+ '<div style="margin:10px 0px 10px 0px;"><span><a target="_blank" class="link font-bold" href="'
-							+ data[i]._source.detailUrl + '">' + '问题:'
+							+ detailUrl + '">' + '问题:'
 							+ data[i]._source.problem + '</a></span></div>'
 							+ '<p><div class="monitor-content-con font-13">'
 							+ '内容:' + data[i]._source.detail + '</div></p>'
@@ -1890,9 +1910,10 @@ function installBaiduKnows(res) {
 								+ '</div>' + '    </div>'
 					}
 				}
+				var detailUrl = timelyInternalDetailHref(data[i].detailUrl);
 				var html = '<div class="baidu-info b-b">'
 						+ '    <div class="bd-title"><a target="_blank" class="link font-bold" href="'
-						+ data[i].detailUrl + '">提问：' + data[i].title + ' </a>'
+						+ detailUrl + '">提问：' + data[i].title + ' </a>'
 						+ '    <div class="bd-tips mb-10">' + '    <span>悬赏：'
 						+ data[i].reward + '</span>' + '    <span>时间：'
 						+ data[i].spider_time + '</span>' + '    </div>'
