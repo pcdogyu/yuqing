@@ -171,10 +171,15 @@ $(document).ready(function() {
 
 
 function loadContent(stype, keywords, sexdata, pageNum) {
+	let query = "/timelysearch/data" + "?keyword=" + encodeURIComponent(keywords || "") +
+		"&website_id=" + encodeURIComponent(sexdata || "") +
+		"&pageNoData=" + encodeURIComponent(pageNum);
+	if (stype) {
+		query += "&stype=" + encodeURIComponent(stype);
+	}
 
 	$.ajax({
-		url: "/timelysearch/data" + "?keyword=" + keywords + "&website_id=" + sexdata + "&pageNoData=" +
-			pageNum,
+		url: query,
 		type: "get",
 		beforeSend: function() {
 			$("#contentdata").html('');
