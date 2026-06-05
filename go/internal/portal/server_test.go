@@ -162,8 +162,14 @@ func TestCryptoPageQueriesRequestedPairOnly(t *testing.T) {
 					UpdatedAt: time.Date(2026, 6, 4, 10, 0, 0, 0, time.UTC),
 				},
 				Signals: model.CryptoSignalSet{
-					H4:  model.CryptoSignal{Horizon: "4h", Direction: "bullish", Confidence: 0.62},
-					H24: model.CryptoSignal{Horizon: "24h", Direction: "bullish", Confidence: 0.58},
+					H4:  model.CryptoSignal{Horizon: "4h", Direction: "bullish", Confidence: 0.62, Bullish: 0.55, Neutral: 0.28, Bearish: 0.17},
+					H24: model.CryptoSignal{Horizon: "24h", Direction: "bullish", Confidence: 0.58, Bullish: 0.52, Neutral: 0.31, Bearish: 0.17},
+				},
+				TopReasons: []model.CryptoReason{
+					{Label: "机构/ETF", Direction: "bullish", Score: 1.2, EvidenceCount: 2, Summary: "ETF 资金流入"},
+				},
+				EvidenceArticles: []model.CryptoEvidenceArticle{
+					{Title: "SOL ETF 预期升温", Summary: "市场关注资金流入", SourceType: "headline", Direction: "bullish", ReasonLabel: "机构/ETF", RelevanceScore: 8.8, PublishTime: "2026-06-04 10:00"},
 				},
 				SocialSentiment: model.CryptoSocialSentiment{Direction: "bullish", Confidence: 0.41},
 				AIExplanation:   "SOL/USDT 价格维持走强。",
@@ -191,7 +197,12 @@ func TestCryptoPageQueriesRequestedPairOnly(t *testing.T) {
 	if strings.Contains(body, "默认价格看板") {
 		t.Fatalf("expected queried page not to render default cards, got %s", body)
 	}
-	if !strings.Contains(body, "SOLUSDT") || !strings.Contains(body, "SOL/USDT 价格维持走强。") {
+	for _, want := range []string{"SOLUSDT", "SOL/USDT 价格维持走强。", "相关新闻搜索", "相似 / 相关线索", "后市价格预判与置信度", "62%"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected queried page to contain %q, got %s", want, body)
+		}
+	}
+	if !strings.Contains(body, "SOL ETF 预期升温") {
 		t.Fatalf("expected queried page content, got %s", body)
 	}
 	if len(requested) != 1 || requested[0] != "SOLUSDT" {

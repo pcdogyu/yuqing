@@ -26,7 +26,24 @@ func (s *Server) handleCryptoPage(w http.ResponseWriter, r *http.Request, user a
 	var b strings.Builder
 	b.WriteString(`<section><p>欢迎，用户 `)
 	b.WriteString(fmt.Sprintf("%d", userIDFromMap(user)))
-	b.WriteString(`</p><form method="get" style="display:grid;grid-template-columns:2fr 1fr;gap:12px;align-items:end"><div><label>币对</label><input name="pair" value="`)
+	b.WriteString(`</p><style>
+		.crypto-hero{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(280px,.75fr);gap:16px;align-items:stretch}
+		.crypto-search{display:grid;grid-template-columns:2fr 1fr;gap:12px;align-items:end}
+		.crypto-card{padding:18px;border:1px solid #ece7dc;border-radius:14px;background:#fff}
+		.crypto-soft{background:#faf8f2}
+		.crypto-warm{background:#fff7ea}
+		.crypto-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+		.crypto-signal-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
+		.crypto-pill{display:inline-block;padding:6px 10px;margin:4px 6px 4px 0;border-radius:999px;background:#eef4ec;color:#214e34;font-size:13px}
+		.crypto-news-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+		.crypto-muted{color:#6a6257}
+		.crypto-bullish{color:#176b3a}
+		.crypto-bearish{color:#9b2d2d}
+		.crypto-neutral{color:#7a5a20}
+		.crypto-bar{height:8px;border-radius:999px;background:#ece7dc;overflow:hidden;margin-top:8px}
+		.crypto-bar span{display:block;height:100%;background:#214e34}
+		@media (max-width: 760px){.crypto-hero,.crypto-search{grid-template-columns:1fr}}
+	</style><form method="get" class="crypto-search"><div><label>币对</label><input name="pair" value="`)
 	b.WriteString(html.EscapeString(pair))
 	b.WriteString(`" placeholder="BTCUSDT / BTC-USDT / ETH-USD"></div><div><button type="submit">查询</button></div></form><p style="color:#6a6257">默认展示 BTC 和 ETH 价格信息；输入其他币对后点击查询。</p></section>`)
 
@@ -46,17 +63,19 @@ func (s *Server) handleCryptoPage(w http.ResponseWriter, r *http.Request, user a
 	}
 
 	b.WriteString(`<section><p style="color:#6a6257">仅供信息参考，不构成投资建议。</p></section>`)
+	renderForecastSummary(&b, insight)
 
 	hasPrice := insight.PriceSnapshot.Price > 0
-	b.WriteString(`<section><h2>信号总览</h2><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px">`)
+	b.WriteString(`<section><h2>信号总览</h2><div class="crypto-grid">`)
 	writeMetricCard(&b, "当前价格", cryptoMetricValue(insight.PriceSnapshot.Price, hasPrice, ""))
 	writeMetricCard(&b, "1h", cryptoMetricValue(insight.PriceSnapshot.Change1H, hasPrice, "%"))
 	writeMetricCard(&b, "4h", cryptoMetricValue(insight.PriceSnapshot.Change4H, hasPrice, "%"))
 	writeMetricCard(&b, "24h", cryptoMetricValue(insight.PriceSnapshot.Change24H, hasPrice, "%"))
+	writeMetricCard(&b, "波动率", cryptoMetricValue(insight.PriceSnapshot.Volatility, hasPrice, "%"))
 	writeMetricCard(&b, "社媒热度", fmt.Sprintf("%d 条", insight.SocialSentiment.EvidenceCount))
 	b.WriteString(`</div></section>`)
 
-	b.WriteString(`<section><h2>走势预判</h2><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px">`)
+	b.WriteString(`<section><h2>后市价格预判与置信度</h2><div class="crypto-signal-grid">`)
 	writeSignalCard(&b, insight.Signals.H4)
 	writeSignalCard(&b, insight.Signals.H24)
 	b.WriteString(`</div></section>`)
@@ -77,6 +96,9 @@ func (s *Server) handleCryptoPage(w http.ResponseWriter, r *http.Request, user a
 	b.WriteString(`</p><p>`)
 	b.WriteString(html.EscapeString(insight.SocialSentiment.Summary))
 	b.WriteString(`</p></div></section>`)
+
+	renderRelatedSearch(&b, insight)
+	renderSimilarClues(&b, insight)
 
 	b.WriteString(`<section><h2>Top Reasons</h2><table><tr><th>分类</th><th>方向</th><th>分数</th><th>证据数</th><th>摘要</th></tr>`)
 	for _, reason := range insight.TopReasons {
@@ -255,6 +277,136 @@ func renderDefaultCryptoCards(b *strings.Builder, cards []cryptoDefaultCard) {
 	b.WriteString(`</div></section>`)
 }
 
+func renderForecastSummary(b *strings.Builder, insight model.CryptoInsightResponse) {
+	short := insight.Signals.H4
+	day := insight.Signals.H24
+	main := strongerSignal(short, day)
+	priceText := "价格暂不可用"
+	if insight.PriceSnapshot.Price > 0 {
+		priceText = fmt.Sprintf("当前 %.4f，1h %.2f%% / 4h %.2f%% / 24h %.2f%%", insight.PriceSnapshot.Price, insight.PriceSnapshot.Change1H, insight.PriceSnapshot.Change4H, insight.PriceSnapshot.Change24H)
+	}
+
+	b.WriteString(`<section><h2>后市摘要</h2><div class="crypto-hero">`)
+	b.WriteString(`<div class="crypto-card crypto-warm"><h3 style="margin-top:0">主结论：<span class="`)
+	b.WriteString(directionClass(main.Direction))
+	b.WriteString(`">`)
+	b.WriteString(html.EscapeString(directionCN(main.Direction)))
+	b.WriteString(`</span></h3><p>`)
+	b.WriteString(html.EscapeString(priceText))
+	b.WriteString(`</p><p>短线 4h 偏 `)
+	b.WriteString(html.EscapeString(directionCN(short.Direction)))
+	b.WriteString(`，置信度 `)
+	b.WriteString(fmt.Sprintf("%.0f%%", short.Confidence*100))
+	b.WriteString(`；24h 偏 `)
+	b.WriteString(html.EscapeString(directionCN(day.Direction)))
+	b.WriteString(`，置信度 `)
+	b.WriteString(fmt.Sprintf("%.0f%%", day.Confidence*100))
+	b.WriteString(`。</p><p class="crypto-muted">预测来自相关新闻、社媒热度与价格动量的规则评分，LLM 只增强解释，不直接决定概率。</p></div>`)
+
+	b.WriteString(`<div class="crypto-card crypto-soft"><h3 style="margin-top:0">证据强度</h3>`)
+	writeEvidenceLine(b, "相关新闻", len(insight.EvidenceArticles), 12)
+	writeEvidenceLine(b, "社媒讨论", len(insight.SocialPosts), 10)
+	writeEvidenceLine(b, "原因归纳", len(insight.TopReasons), 6)
+	b.WriteString(`<p class="crypto-muted">证据越多且方向越一致，置信度越高；证据冲突时 neutral 会抬升。</p></div>`)
+	b.WriteString(`</div></section>`)
+}
+
+func renderRelatedSearch(b *strings.Builder, insight model.CryptoInsightResponse) {
+	b.WriteString(`<section><h2>相关新闻搜索</h2><p class="crypto-muted">按币对别名、资产名称、中文名、方向词和近 48 小时新近度匹配。</p>`)
+	if len(insight.EvidenceArticles) == 0 {
+		b.WriteString(`<div class="crypto-card crypto-soft">暂无相关新闻命中。可以先运行金十或社媒抓取任务，再回来搜索该币对。</div></section>`)
+		return
+	}
+	b.WriteString(`<div class="crypto-news-grid">`)
+	for idx, item := range insight.EvidenceArticles {
+		if idx >= 8 {
+			break
+		}
+		target := firstNonEmpty(item.SourceURL, item.DetailURL)
+		b.WriteString(`<article class="crypto-card"><div><span class="crypto-pill">`)
+		b.WriteString(html.EscapeString(item.SourceType))
+		b.WriteString(`</span><span class="crypto-pill `)
+		b.WriteString(directionClass(item.Direction))
+		b.WriteString(`">`)
+		b.WriteString(html.EscapeString(directionCN(item.Direction)))
+		b.WriteString(`</span><span class="crypto-pill">相关度 `)
+		b.WriteString(fmt.Sprintf("%.2f", item.RelevanceScore))
+		b.WriteString(`</span></div><h3>`)
+		if target != "" {
+			b.WriteString(`<a href="`)
+			b.WriteString(html.EscapeString(target))
+			b.WriteString(`" target="_blank" rel="noreferrer">`)
+		}
+		b.WriteString(html.EscapeString(firstNonEmpty(item.Title, "(untitled)")))
+		if target != "" {
+			b.WriteString(`</a>`)
+		}
+		b.WriteString(`</h3><p>`)
+		b.WriteString(html.EscapeString(firstNonEmpty(item.Summary, item.ReasonLabel, "暂无摘要")))
+		b.WriteString(`</p><p class="crypto-muted">`)
+		b.WriteString(html.EscapeString(item.PublishTime))
+		b.WriteString(` · `)
+		b.WriteString(html.EscapeString(item.ReasonLabel))
+		b.WriteString(`</p></article>`)
+	}
+	b.WriteString(`</div></section>`)
+}
+
+func renderSimilarClues(b *strings.Builder, insight model.CryptoInsightResponse) {
+	b.WriteString(`<section><h2>相似 / 相关线索</h2><div class="crypto-news-grid">`)
+	if len(insight.TopReasons) == 0 && len(insight.EvidenceArticles) == 0 {
+		b.WriteString(`<div class="crypto-card crypto-soft">暂无可归纳的相似线索。</div>`)
+		b.WriteString(`</div></section>`)
+		return
+	}
+	for idx, reason := range insight.TopReasons {
+		if idx >= 4 {
+			break
+		}
+		b.WriteString(`<div class="crypto-card crypto-soft"><h3 style="margin-top:0">`)
+		b.WriteString(html.EscapeString(reason.Label))
+		b.WriteString(`</h3><p>方向：<span class="`)
+		b.WriteString(directionClass(reason.Direction))
+		b.WriteString(`">`)
+		b.WriteString(html.EscapeString(directionCN(reason.Direction)))
+		b.WriteString(`</span>，证据 `)
+		b.WriteString(fmt.Sprintf("%d", reason.EvidenceCount))
+		b.WriteString(` 条，强度 `)
+		b.WriteString(fmt.Sprintf("%.2f", reason.Score))
+		b.WriteString(`。</p><p class="crypto-muted">`)
+		b.WriteString(html.EscapeString(reason.Summary))
+		b.WriteString(`</p></div>`)
+	}
+	if len(insight.EvidenceArticles) > 0 {
+		first := insight.EvidenceArticles[0]
+		b.WriteString(`<div class="crypto-card crypto-soft"><h3 style="margin-top:0">相似搜索建议</h3>`)
+		for _, chip := range relatedChips(insight, first) {
+			b.WriteString(`<span class="crypto-pill">`)
+			b.WriteString(html.EscapeString(chip))
+			b.WriteString(`</span>`)
+		}
+		b.WriteString(`<p class="crypto-muted">可用这些线索继续在文章页或规则里扩大检索。</p></div>`)
+	}
+	b.WriteString(`</div></section>`)
+}
+
+func writeEvidenceLine(b *strings.Builder, label string, value, maxValue int) {
+	if maxValue <= 0 {
+		maxValue = 1
+	}
+	width := value * 100 / maxValue
+	if width > 100 {
+		width = 100
+	}
+	b.WriteString(`<p style="margin-bottom:4px">`)
+	b.WriteString(html.EscapeString(label))
+	b.WriteString(`：`)
+	b.WriteString(fmt.Sprintf("%d", value))
+	b.WriteString(` 条</p><div class="crypto-bar"><span style="width:`)
+	b.WriteString(fmt.Sprintf("%d", width))
+	b.WriteString(`%"></span></div>`)
+}
+
 func writeMetricCard(b *strings.Builder, label, value string) {
 	b.WriteString(`<div style="padding:16px;border:1px solid #ece7dc;border-radius:12px;background:#fff"><div style="color:#6a6257">`)
 	b.WriteString(html.EscapeString(label))
@@ -277,9 +429,13 @@ func writeSignalCard(b *strings.Builder, signal model.CryptoSignal) {
 	b.WriteString(`<div style="padding:18px;border:1px solid #ece7dc;border-radius:14px;background:#fff7ea"><h3 style="margin-top:0">`)
 	b.WriteString(html.EscapeString(signal.Horizon))
 	b.WriteString(` 预测</h3><p>方向：`)
-	b.WriteString(html.EscapeString(signal.Direction))
+	b.WriteString(`<span class="`)
+	b.WriteString(directionClass(signal.Direction))
+	b.WriteString(`">`)
+	b.WriteString(html.EscapeString(directionCN(signal.Direction)))
+	b.WriteString(`</span>`)
 	b.WriteString(` | 置信度：`)
-	b.WriteString(fmt.Sprintf("%.2f", signal.Confidence))
+	b.WriteString(fmt.Sprintf("%.0f%%", signal.Confidence*100))
 	b.WriteString(`</p><p>bullish `)
 	b.WriteString(fmt.Sprintf("%.2f", signal.Bullish))
 	b.WriteString(` / neutral `)
@@ -295,4 +451,51 @@ func writeSignalCard(b *strings.Builder, signal model.CryptoSignal) {
 	b.WriteString(`</p><p>`)
 	b.WriteString(html.EscapeString(signal.Explanation))
 	b.WriteString(`</p></div>`)
+}
+
+func strongerSignal(a, b model.CryptoSignal) model.CryptoSignal {
+	if b.Confidence > a.Confidence {
+		return b
+	}
+	return a
+}
+
+func directionCN(direction string) string {
+	switch strings.ToLower(strings.TrimSpace(direction)) {
+	case "bullish":
+		return "看涨"
+	case "bearish":
+		return "看跌"
+	default:
+		return "震荡"
+	}
+}
+
+func directionClass(direction string) string {
+	switch strings.ToLower(strings.TrimSpace(direction)) {
+	case "bullish":
+		return "crypto-bullish"
+	case "bearish":
+		return "crypto-bearish"
+	default:
+		return "crypto-neutral"
+	}
+}
+
+func relatedChips(insight model.CryptoInsightResponse, first model.CryptoEvidenceArticle) []string {
+	chips := []string{insight.Pair, insight.BaseAsset, insight.QuoteAsset, first.ReasonLabel, directionCN(first.Direction)}
+	out := make([]string, 0, len(chips))
+	seen := map[string]struct{}{}
+	for _, chip := range chips {
+		chip = strings.TrimSpace(chip)
+		if chip == "" {
+			continue
+		}
+		if _, ok := seen[chip]; ok {
+			continue
+		}
+		seen[chip] = struct{}{}
+		out = append(out, chip)
+	}
+	return out
 }
