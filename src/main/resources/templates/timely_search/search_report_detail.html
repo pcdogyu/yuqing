@@ -201,9 +201,16 @@ $("#currentyear").text((new Date()).getFullYear());
         jumpNavLocation($(this).data('type'), groupId, projectId);
     })
 
+    function timelyReturnTarget() {
+        var target = new URLSearchParams(window.location.search).get("return_to");
+        if (target) {
+            return target;
+        }
+        return ctxPath + "timelysearch/result";
+    }
 
-    $("#goback1").click(function (param) {
-//        window.location.href = ctxPath + "monitor?projectId="+projectId+"&groupid="+groupId+"&page=6";
+    $("#goback, #goback1").click(function (param) {
+        window.location.href = timelyReturnTarget();
     });
 
 </script>

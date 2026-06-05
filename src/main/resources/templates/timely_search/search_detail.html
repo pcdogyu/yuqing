@@ -839,6 +839,14 @@ $("#currentyear").text((new Date()).getFullYear());
         window.location.href = ctxPath + 'timelysearch?groupid=' + groupId + '&projectid=' + projectId;
     }
 
+    function timelyReturnTarget() {
+        var target = new URLSearchParams(window.location.search).get("return_to");
+        if (target) {
+            return target;
+        }
+        return ctxPath + "timelysearch/result";
+    }
+
     // 情感分析
     function emotionChart(data) {
         var o = c3.generate({
@@ -865,8 +873,8 @@ $("#currentyear").text((new Date()).getFullYear());
     })
 
 
-    $("#goback1").click(function (param) {
-//        window.location.href = ctxPath + "monitor?projectId="+projectId+"&groupid="+groupId+"&page=6";
+    $("#goback, #goback1").click(function (param) {
+        window.location.href = timelyReturnTarget();
     });
 
 </script>
