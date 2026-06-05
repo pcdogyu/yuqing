@@ -559,6 +559,9 @@ func TestLegacySpecializedFullSearchEndpoints(t *testing.T) {
 	if !strings.Contains(companyPageRR.Body.String(), "主要人员") || !strings.Contains(companyPageRR.Body.String(), "董事长") || !strings.Contains(companyPageRR.Body.String(), "人工智能软件开发") {
 		t.Fatalf("unexpected company detail page: %s", companyPageRR.Body.String())
 	}
+	if !strings.Contains(companyPageRR.Body.String(), "data-page='fullsearch/company'") {
+		t.Fatalf("expected fullsearch company page marker, got %s", companyPageRR.Body.String())
+	}
 
 	companyDetailReq := httptest.NewRequest(http.MethodGet, "/fullsearch/companyDetails?article_public_id=202", nil)
 	companyDetailRR := httptest.NewRecorder()
@@ -589,6 +592,16 @@ func TestLegacySpecializedFullSearchEndpoints(t *testing.T) {
 	}
 	if timelyCompanyDetail["name"] != "星云科技有限公司" {
 		t.Fatalf("unexpected timely company detail payload: %+v", timelyCompanyDetail)
+	}
+
+	timelyCompanyPageReq := httptest.NewRequest(http.MethodGet, "/timelysearch/companyDetail/202?return_to=%2Ftimelysearch%2Fresult%3Fkeyword%3DAI", nil)
+	timelyCompanyPageRR := httptest.NewRecorder()
+	srv.handleSearchCompat(timelyCompanyPageRR, timelyCompanyPageReq, user, "timely")
+	if timelyCompanyPageRR.Code != http.StatusOK {
+		t.Fatalf("expected timely company detail page 200, got %d", timelyCompanyPageRR.Code)
+	}
+	if !strings.Contains(timelyCompanyPageRR.Body.String(), "data-page='timelysearch/company'") || !strings.Contains(timelyCompanyPageRR.Body.String(), "/timelysearch/result?keyword=AI") {
+		t.Fatalf("unexpected timely company detail page: %s", timelyCompanyPageRR.Body.String())
 	}
 
 	investmentPageReq := httptest.NewRequest(http.MethodGet, "/fullsearch/investmentDetail/303", nil)

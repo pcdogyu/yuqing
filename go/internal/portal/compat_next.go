@@ -1990,9 +1990,13 @@ func (s *Server) mobileShell(user any, page string, query url.Values) string {
 	return fmt.Sprintf(`<h1>%s</h1><p>欢迎，%v</p><p><a href="/mobile/getGroupAndProject">分组项目</a></p><p><a href="/mobile/mobileQRCode">二维码</a></p>`, html.EscapeString(page), userIDFromMap(user))
 }
 
-func (s *Server) writeSimplePage(w http.ResponseWriter, _ string, title string, body string) error {
+func (s *Server) writeSimplePage(w http.ResponseWriter, page string, title string, body string) error {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, err := fmt.Fprintf(w, "<!doctype html><html><head><meta charset='utf-8'><title>%s</title><style>%s a{color:#214e34;text-decoration:none}</style></head><body><header><h1>%s</h1>%s</header><main>%s</main></body></html>", html.EscapeString(title), baseStyles, html.EscapeString(title), portalNavHTML, body)
+	bodyAttr := ""
+	if strings.TrimSpace(page) != "" {
+		bodyAttr = " data-page='" + html.EscapeString(strings.TrimSpace(page)) + "'"
+	}
+	_, err := fmt.Fprintf(w, "<!doctype html><html><head><meta charset='utf-8'><title>%s</title><style>%s a{color:#214e34;text-decoration:none}</style></head><body%s><header><h1>%s</h1>%s</header><main>%s</main></body></html>", html.EscapeString(title), baseStyles, bodyAttr, html.EscapeString(title), portalNavHTML, body)
 	return err
 }
 

@@ -1066,7 +1066,7 @@ func (s *Server) handleLegacySpecialDetailPage(w http.ResponseWriter, r *http.Re
 	}
 	detail := legacySpecialDetailEntry(kind, item)
 	body := legacySpecialDetailPageBody(kind, detail, mode, returnPath)
-	_ = s.writeSimplePage(w, "fullsearch/"+kind, legacySpecialTitle(kind), body)
+	_ = s.writeSimplePage(w, mode+"search/"+kind, legacySpecialTitle(kind), body)
 }
 
 func (s *Server) fetchLegacyCompatSearchItems(filter model.ArticleFilter, mode string, limit int) ([]model.Item, error) {
