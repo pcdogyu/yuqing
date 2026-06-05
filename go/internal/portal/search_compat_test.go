@@ -203,7 +203,7 @@ func TestLegacyHotList(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/fullsearch/hotList?pageNum=3&pageSize=25&searchWord=%E7%83%AD%E7%82%B9", nil)
 	rr := httptest.NewRecorder()
 
-	srv.handleLegacyHotList(rr, req, map[string]any{"id": int64(42)})
+	srv.handleLegacyHotList(rr, req, map[string]any{"id": int64(42)}, "full")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
@@ -270,7 +270,7 @@ func TestLegacySearchCategoryLists(t *testing.T) {
 
 	complaintReq := httptest.NewRequest(http.MethodGet, "/fullsearch/complaintList?page=2&pageSize=25&searchword=%E7%83%AD%E7%82%B9", nil)
 	complaintRR := httptest.NewRecorder()
-	srv.handleLegacyComplaintList(complaintRR, complaintReq, user)
+	srv.handleLegacyComplaintList(complaintRR, complaintReq, user, "full")
 	if complaintRR.Code != http.StatusOK {
 		t.Fatalf("expected complaint 200, got %d", complaintRR.Code)
 	}
@@ -299,7 +299,7 @@ func TestLegacySearchCategoryLists(t *testing.T) {
 
 	announcementReq := httptest.NewRequest(http.MethodGet, "/fullsearch/announcementList?page=2&pageSize=25&searchword=%E7%83%AD%E7%82%B9", nil)
 	announcementRR := httptest.NewRecorder()
-	srv.handleLegacyAnnouncementList(announcementRR, announcementReq, user)
+	srv.handleLegacyAnnouncementList(announcementRR, announcementReq, user, "full")
 	if announcementRR.Code != http.StatusOK {
 		t.Fatalf("expected announcement 200, got %d", announcementRR.Code)
 	}
@@ -325,7 +325,7 @@ func TestLegacySearchCategoryLists(t *testing.T) {
 
 	reportReq := httptest.NewRequest(http.MethodGet, "/fullsearch/reportList?page=2&pageSize=25&searchword=%E7%83%AD%E7%82%B9", nil)
 	reportRR := httptest.NewRecorder()
-	srv.handleLegacyReportList(reportRR, reportReq, user)
+	srv.handleLegacyReportList(reportRR, reportReq, user, "full")
 	if reportRR.Code != http.StatusOK {
 		t.Fatalf("expected report 200, got %d", reportRR.Code)
 	}
@@ -663,6 +663,29 @@ func TestTimelySearchPageExecuteAndDataFlow(t *testing.T) {
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/search/timely":
 			searchQuery = r.URL.Query()
+			if r.URL.Query().Get("q") == "张三" {
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"code":    200,
+					"message": "ok",
+					"data": model.SearchResult{
+						Total:    1,
+						Page:     1,
+						PageSize: 10,
+						Items: []model.Item{{
+							ID:         101,
+							Title:      "张三律师",
+							Summary:    "擅长知识产权与资本市场业务",
+							Content:    "张三律师详细介绍",
+							SourceType: "lawyer",
+							FromText:   "律师库",
+							SourceURL:  "https://example.com/lawyer/101",
+							RawPayload: `{"name":"张三","lawfirm":"金陵律师事务所","goods":"知识产权,资本市场","telephone":"13800000000","detailurl":"https://example.com/lawyer/101"}`,
+							TagFlags:   "律师,知识产权",
+						}},
+					},
+				})
+				return
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"code":    200,
 				"message": "ok",
@@ -839,6 +862,36 @@ func TestTimelySearchPageExecuteAndDataFlow(t *testing.T) {
 	}
 	if timelyReportDetail["title"] != "AI 行业快报" {
 		t.Fatalf("unexpected timely report detail payload: %+v", timelyReportDetail)
+	}
+
+	timelyLawyerListReq := httptest.NewRequest(http.MethodGet, "/timelysearch/lawyerList?searchWord=张三&pageNum=1&pageSize=10", nil)
+	timelyLawyerListRR := httptest.NewRecorder()
+	srv.handleSearchCompat(timelyLawyerListRR, timelyLawyerListReq, nil, "timely")
+	if timelyLawyerListRR.Code != http.StatusOK {
+		t.Fatalf("expected timelysearch lawyerList 200, got %d", timelyLawyerListRR.Code)
+	}
+	var timelyLawyerList struct {
+		List []map[string]any `json:"list"`
+	}
+	if err := json.Unmarshal(timelyLawyerListRR.Body.Bytes(), &timelyLawyerList); err != nil {
+		t.Fatalf("unmarshal timely lawyerList: %v", err)
+	}
+	if len(timelyLawyerList.List) != 1 || timelyLawyerList.List[0]["lawfirm"] != "金陵律师事务所" {
+		t.Fatalf("unexpected timely lawyerList payload: %+v", timelyLawyerList)
+	}
+
+	timelyReportTypeReq := httptest.NewRequest(http.MethodGet, "/timelysearch/reportIndustry?searchWord=AI", nil)
+	timelyReportTypeRR := httptest.NewRecorder()
+	srv.handleSearchCompat(timelyReportTypeRR, timelyReportTypeReq, nil, "timely")
+	if timelyReportTypeRR.Code != http.StatusOK {
+		t.Fatalf("expected timelysearch reportIndustry 200, got %d", timelyReportTypeRR.Code)
+	}
+	var timelyReportTypes []map[string]any
+	if err := json.Unmarshal(timelyReportTypeRR.Body.Bytes(), &timelyReportTypes); err != nil {
+		t.Fatalf("unmarshal timely reportIndustry: %v", err)
+	}
+	if len(timelyReportTypes) == 0 {
+		t.Fatalf("expected timely reportIndustry options, got %+v", timelyReportTypes)
 	}
 
 	lawyerDetailReq := httptest.NewRequest(http.MethodGet, "/timelysearch/lawyerDetailData?article_public_id=101", nil)

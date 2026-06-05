@@ -168,44 +168,44 @@ func (s *Server) handleSearchCompat(w http.ResponseWriter, r *http.Request, user
 	case "getBreadCrumbs":
 		writeJSONText(w, legacySearchBreadcrumbs(r))
 	case "hotList":
-		if mode == "full" {
-			s.handleLegacyHotList(w, r, user)
+		if mode == "full" || mode == "timely" {
+			s.handleLegacyHotList(w, r, user, mode)
 			return
 		}
 		http.NotFound(w, r)
 	case "complaintList":
-		if mode == "full" {
-			s.handleLegacyComplaintList(w, r, user)
+		if mode == "full" || mode == "timely" {
+			s.handleLegacyComplaintList(w, r, user, mode)
 			return
 		}
 		http.NotFound(w, r)
 	case "announcementList":
-		if mode == "full" {
-			s.handleLegacyAnnouncementList(w, r, user)
+		if mode == "full" || mode == "timely" {
+			s.handleLegacyAnnouncementList(w, r, user, mode)
 			return
 		}
 		http.NotFound(w, r)
 	case "reportList":
-		if mode == "full" {
-			s.handleLegacyReportList(w, r, user)
+		if mode == "full" || mode == "timely" {
+			s.handleLegacyReportList(w, r, user, mode)
 			return
 		}
 		http.NotFound(w, r)
 	case "announcementrtype":
-		if mode == "full" {
-			writeJSONText(w, legacySearchCategoryOptions(r, "announcement"))
+		if mode == "full" || mode == "timely" {
+			s.handleLegacySpecialCategoryOptions(w, r, "announcement", mode)
 			return
 		}
 		http.NotFound(w, r)
 	case "reportIndustry":
-		if mode == "full" {
-			writeJSONText(w, legacySearchCategoryOptions(r, "report"))
+		if mode == "full" || mode == "timely" {
+			s.handleLegacySpecialCategoryOptions(w, r, "report", mode)
 			return
 		}
 		http.NotFound(w, r)
 	case "lawyerList", "executionPersonList", "professorList", "doctorList", "biddingList", "inviteList", "companyList", "judgmentList", "knowLedgeList", "investmentList", "baiduKnowsList", "thesisnList":
-		if mode == "full" {
-			s.handleLegacySpecialList(w, r, user, path)
+		if mode == "full" || mode == "timely" {
+			s.handleLegacySpecialList(w, r, user, path, mode)
 			return
 		}
 		http.NotFound(w, r)
@@ -216,26 +216,26 @@ func (s *Server) handleSearchCompat(w http.ResponseWriter, r *http.Request, user
 		}
 		http.NotFound(w, r)
 	case "companyIndustry":
-		if mode == "full" {
-			s.handleLegacySpecialCategoryOptions(w, r, "company")
+		if mode == "full" || mode == "timely" {
+			s.handleLegacySpecialCategoryOptions(w, r, "company", mode)
 			return
 		}
 		http.NotFound(w, r)
 	case "judgmentCaseType":
-		if mode == "full" {
-			s.handleLegacySpecialCategoryOptions(w, r, "judgment")
+		if mode == "full" || mode == "timely" {
+			s.handleLegacySpecialCategoryOptions(w, r, "judgment", mode)
 			return
 		}
 		http.NotFound(w, r)
 	case "knowLedgeCaseType":
-		if mode == "full" {
-			s.handleLegacySpecialCategoryOptions(w, r, "knowledge")
+		if mode == "full" || mode == "timely" {
+			s.handleLegacySpecialCategoryOptions(w, r, "knowledge", mode)
 			return
 		}
 		http.NotFound(w, r)
 	case "investmentType":
-		if mode == "full" {
-			s.handleLegacySpecialCategoryOptions(w, r, "investment")
+		if mode == "full" || mode == "timely" {
+			s.handleLegacySpecialCategoryOptions(w, r, "investment", mode)
 			return
 		}
 		http.NotFound(w, r)
@@ -412,7 +412,7 @@ func (s *Server) handleLegacySearchInformationList(w http.ResponseWriter, r *htt
 	})
 }
 
-func (s *Server) handleLegacyHotList(w http.ResponseWriter, r *http.Request, user any) {
+func (s *Server) handleLegacyHotList(w http.ResponseWriter, r *http.Request, user any, mode string) {
 	_ = user
 	page := max(apiutil.IntQuery(r, "pageNum", 1), 1)
 	pageSize := apiutil.IntQuery(r, "pageSize", 25)
@@ -431,7 +431,11 @@ func (s *Server) handleLegacyHotList(w http.ResponseWriter, r *http.Request, use
 		query.Set("q", keyword)
 	}
 	var result model.SearchResult
-	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/search/full?"+query.Encode(), &result); err != nil {
+	searchPath := "/api/v1/search/full"
+	if mode == "timely" {
+		searchPath = "/api/v1/search/timely"
+	}
+	if err := s.getJSON(s.cfg.ContentURL+searchPath+"?"+query.Encode(), &result); err != nil {
 		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
 		return
 	}
@@ -455,7 +459,7 @@ func (s *Server) handleLegacyHotList(w http.ResponseWriter, r *http.Request, use
 	})
 }
 
-func (s *Server) handleLegacyComplaintList(w http.ResponseWriter, r *http.Request, user any) {
+func (s *Server) handleLegacyComplaintList(w http.ResponseWriter, r *http.Request, user any, mode string) {
 	_ = user
 	filter, pageSize := legacySearchFilterFromRequest(r, "full")
 	query := url.Values{}
@@ -474,7 +478,11 @@ func (s *Server) handleLegacyComplaintList(w http.ResponseWriter, r *http.Reques
 		query.Set("end", filter.End)
 	}
 	var result model.SearchResult
-	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/search/full?"+query.Encode(), &result); err != nil {
+	searchPath := "/api/v1/search/full"
+	if mode == "timely" {
+		searchPath = "/api/v1/search/timely"
+	}
+	if err := s.getJSON(s.cfg.ContentURL+searchPath+"?"+query.Encode(), &result); err != nil {
 		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
 		return
 	}
@@ -499,10 +507,10 @@ func (s *Server) handleLegacyComplaintList(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-func (s *Server) handleLegacyAnnouncementList(w http.ResponseWriter, r *http.Request, user any) {
+func (s *Server) handleLegacyAnnouncementList(w http.ResponseWriter, r *http.Request, user any, mode string) {
 	_ = user
 	filter, pageSize := legacySearchFilterFromRequest(r, "full")
-	entries, total, page, size := s.legacyPublicationEntries(r, filter, pageSize)
+	entries, total, page, size := s.legacyPublicationEntries(r, filter, pageSize, mode)
 	totalPages := 1
 	if size > 0 && total > 0 {
 		totalPages = (total + size - 1) / size
@@ -517,10 +525,10 @@ func (s *Server) handleLegacyAnnouncementList(w http.ResponseWriter, r *http.Req
 	})
 }
 
-func (s *Server) handleLegacyReportList(w http.ResponseWriter, r *http.Request, user any) {
+func (s *Server) handleLegacyReportList(w http.ResponseWriter, r *http.Request, user any, mode string) {
 	_ = user
 	filter, pageSize := legacySearchFilterFromRequest(r, "full")
-	entries, total, page, size := s.legacyReportEntries(r, filter, pageSize)
+	entries, total, page, size := s.legacyReportEntries(r, filter, pageSize, mode)
 	totalPages := 1
 	if size > 0 && total > 0 {
 		totalPages = (total + size - 1) / size
@@ -909,8 +917,8 @@ func (s *Server) handleTimelySearchTemplate(w http.ResponseWriter, r *http.Reque
 	writeJSONText(w, result)
 }
 
-func (s *Server) handleLegacySpecialList(w http.ResponseWriter, r *http.Request, _ any, kind string) {
-	filter, pageSize := legacySearchFilterFromRequest(r, "full")
+func (s *Server) handleLegacySpecialList(w http.ResponseWriter, r *http.Request, _ any, kind string, mode string) {
+	filter, pageSize := legacySearchFilterFromRequest(r, mode)
 	if page := apiutil.IntQuery(r, "pageNum", 0); page > 0 {
 		filter.Page = page
 	}
@@ -924,7 +932,7 @@ func (s *Server) handleLegacySpecialList(w http.ResponseWriter, r *http.Request,
 		strings.TrimSpace(r.URL.Query().Get("keyword")),
 		filter.Keyword,
 	)
-	items, err := s.fetchLegacyCompatSearchItems(filter, "full", 200)
+	items, err := s.fetchLegacyCompatSearchItems(filter, mode, 200)
 	if err != nil {
 		writeJSONText(w, map[string]any{"code": "500", "msg": err.Error(), "list": []map[string]any{}})
 		return
@@ -1012,15 +1020,15 @@ func (s *Server) handleLegacyReportDetailData(w http.ResponseWriter, r *http.Req
 	writeJSONText(w, legacySpecialDetailEntry("report", item))
 }
 
-func (s *Server) handleLegacySpecialCategoryOptions(w http.ResponseWriter, r *http.Request, kind string) {
-	filter, _ := legacySearchFilterFromRequest(r, "full")
+func (s *Server) handleLegacySpecialCategoryOptions(w http.ResponseWriter, r *http.Request, kind string, mode string) {
+	filter, _ := legacySearchFilterFromRequest(r, mode)
 	filter.Keyword = nonEmpty(
 		strings.TrimSpace(r.URL.Query().Get("searchWord")),
 		strings.TrimSpace(r.URL.Query().Get("searchword")),
 		strings.TrimSpace(r.URL.Query().Get("keyword")),
 		filter.Keyword,
 	)
-	items, err := s.fetchLegacyCompatSearchItems(filter, "full", 200)
+	items, err := s.fetchLegacyCompatSearchItems(filter, mode, 200)
 	if err != nil {
 		writeJSONText(w, legacySearchCategoryOptions(r, kind))
 		return
@@ -1229,7 +1237,7 @@ func legacyComplaintSource(item model.Item) map[string]any {
 	}
 }
 
-func (s *Server) legacyPublicationEntries(r *http.Request, filter model.ArticleFilter, pageSize int) ([]map[string]any, int, int, int) {
+func (s *Server) legacyPublicationEntries(r *http.Request, filter model.ArticleFilter, pageSize int, mode string) ([]map[string]any, int, int, int) {
 	query := url.Values{}
 	query.Set("page", strconv.Itoa(max(filter.Page, 1)))
 	query.Set("page_size", strconv.Itoa(max(filter.PageSize, pageSize)))
@@ -1246,7 +1254,11 @@ func (s *Server) legacyPublicationEntries(r *http.Request, filter model.ArticleF
 		query.Set("end", filter.End)
 	}
 	var result model.SearchResult
-	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/search/full?"+query.Encode(), &result); err != nil {
+	searchPath := "/api/v1/search/full"
+	if mode == "timely" {
+		searchPath = "/api/v1/search/timely"
+	}
+	if err := s.getJSON(s.cfg.ContentURL+searchPath+"?"+query.Encode(), &result); err != nil {
 		return []map[string]any{}, 0, filter.Page, max(filter.PageSize, pageSize)
 	}
 	entries := make([]map[string]any, 0, len(result.Items))
@@ -1258,7 +1270,7 @@ func (s *Server) legacyPublicationEntries(r *http.Request, filter model.ArticleF
 	return entries, result.Total, page, size
 }
 
-func (s *Server) legacyReportEntries(r *http.Request, filter model.ArticleFilter, pageSize int) ([]map[string]any, int, int, int) {
+func (s *Server) legacyReportEntries(r *http.Request, filter model.ArticleFilter, pageSize int, mode string) ([]map[string]any, int, int, int) {
 	query := url.Values{}
 	query.Set("page", strconv.Itoa(max(filter.Page, 1)))
 	query.Set("page_size", strconv.Itoa(max(filter.PageSize, pageSize)))
@@ -1275,7 +1287,11 @@ func (s *Server) legacyReportEntries(r *http.Request, filter model.ArticleFilter
 		query.Set("end", filter.End)
 	}
 	var result model.SearchResult
-	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/search/full?"+query.Encode(), &result); err != nil {
+	searchPath := "/api/v1/search/full"
+	if mode == "timely" {
+		searchPath = "/api/v1/search/timely"
+	}
+	if err := s.getJSON(s.cfg.ContentURL+searchPath+"?"+query.Encode(), &result); err != nil {
 		return []map[string]any{}, 0, filter.Page, max(filter.PageSize, pageSize)
 	}
 	entries := make([]map[string]any, 0, len(result.Items))

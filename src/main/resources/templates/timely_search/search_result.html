@@ -364,6 +364,7 @@ $("#currentyear").text((new Date()).getFullYear());
 	var menuStyle = [[${menuStyle}]];
 	var pageSize = [[${pageSize}]];
 	if(!pageSize) pageSize = 25;
+	var full_type = [[${fulltype}]];
 	var fulltype = [[${fulltype}]];
 	var stype = [[${stype}]];
 	
@@ -394,11 +395,7 @@ $("#currentyear").text((new Date()).getFullYear());
 	    	object.siblings().addClass(normal);
 	    	object.removeClass(normal);
 	    	object.addClass(active);
-	    	if(full_type == 100){
-	    		lawyerList(1)
-	    	}else if(full_type == 101){
-	    		executionPersonList(1)
-	    	}
+	    	initdata(full_type)
 	    }
 	}
 	
@@ -408,16 +405,12 @@ $("#currentyear").text((new Date()).getFullYear());
     
     function search() {
     	console.log(full_type)
-    	if(full_type==100){
-    		lawyerList(1)
-    	}else if(full_type==101){
-    		executionPersonList(1)
-    	}
+    	initdata(full_type)
     }
 </script>
+	<script th:src="@{/dist/timelysearch/search_result.js?unixtemp=1234567}"></script>
 	<script
 		th:src="@{/dist/timelysearch/search_result_data.js?unixtemp=1234567}"></script>
-	<script th:src="@{/dist/timelysearch/search_result.js?unixtemp=1234567}"></script>
 	<script th:src="@{/dist/timelysearch/monitorsearch.js?unixtemp=1234567}"></script>
 </body>
 </html>
