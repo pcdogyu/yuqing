@@ -227,7 +227,7 @@ function searchSetting(params) {
 							+ "&menuStyle=" + menuStyle + "&fulltype="
 							+ full_type + "&pageSize=" + pageSize + "&page=1";
 				}
-				window.location.href = ctx + 'fullsearch/result' + params;
+				window.location.href = ctx + 'timelysearch/result' + params;
 			})
 }
 
@@ -300,7 +300,7 @@ function installLawyer(res){
 				  //获取主机地址，如： http://localhost:8083
 
 				  var localhostPaht=curWwwPath.substring(0,pos);
-				let detailUrl = localhostPaht+'/fullsearch/lawyerDetail/'
+				let detailUrl = localhostPaht+'/timelysearch/lawyerDetail/'
 					+ list1.article_public_id + '?fulltype=' + full_type
 					+ '&menuStyle=' + menuStyle + '&fullpoly=' + full_poly
 					+ '&onlyid=' + onlyid + '&searchWord='
@@ -381,7 +381,7 @@ function installExecutionPerson(res){
 				  //获取主机地址，如： http://localhost:8083
 
 				  var localhostPaht=curWwwPath.substring(0,pos);
-				let detailUrl = localhostPaht+'/fullsearch/executionPersonDetail/'
+				let detailUrl = localhostPaht+'/timelysearch/executionPersonDetail/'
 					+ list1.article_public_id + '?fulltype=' + full_type
 					+ '&menuStyle=' + menuStyle + '&fullpoly=' + full_poly
 					+ '&onlyid=' + onlyid + '&searchWord='
@@ -454,7 +454,7 @@ function installProfessor(res){
 				  //获取主机地址，如： http://localhost:8083
 
 				  var localhostPaht=curWwwPath.substring(0,pos);
-				let detailUrl = localhostPaht+'/fullsearch/professorDetail/'
+				let detailUrl = localhostPaht+'/timelysearch/professorDetail/'
 					+ list1.article_public_id + '?fulltype=' + full_type
 					+ '&menuStyle=' + menuStyle + '&fullpoly=' + full_poly
 					+ '&onlyid=' + onlyid + '&searchWord='
@@ -529,7 +529,7 @@ function installDoctor(res){
 				  //获取主机地址，如： http://localhost:8083
 
 				  var localhostPaht=curWwwPath.substring(0,pos);
-				let detailUrl = localhostPaht+'/fullsearch/doctorDetail/'
+				let detailUrl = localhostPaht+'/timelysearch/doctorDetail/'
 					+ list1.article_public_id + '?fulltype=' + full_type
 					+ '&menuStyle=' + menuStyle + '&fullpoly=' + full_poly
 					+ '&onlyid=' + onlyid + '&searchWord='
@@ -999,7 +999,7 @@ function installAnnouncement(res) {
 						+ '</div>'
 						+ '       <div class="text-over" style="width: 50%"><a target="_blank" href="'
 						+ ctx
-						+ 'fullsearch/reportdetail/'
+						+ 'timelysearch/reportdetail/'
 						+ data[i].article_public_id
 						+ '/announcement?fulltype=28'
 						+ '&menuStyle='
@@ -1091,7 +1091,7 @@ function installReport(res) {
 						+ '</div>'
 						+ '       <div class="text-over" style="width: 50%;min-width: 300px;"><a target="_blank" href="'
 						+ ctx
-						+ 'fullsearch/reportdetail/'
+						+ 'timelysearch/reportdetail/'
 						+ data[i].article_public_id
 						+ '/report?fulltype=35'
 						+ '&menuStyle='
@@ -1170,7 +1170,7 @@ function installBidding(res) {
 						+ '">'
 						+ '       <div class="text-over" style="width: 50%;min-width: 100px;"><a target="_blank" href="'
 						+ ctx
-						+ 'fullsearch/biddingdetail/'
+						+ 'timelysearch/biddingdetail/'
 						+ article_public_id
 						+ '?fulltype=37'
 						+ '&menuStyle='
@@ -1275,7 +1275,7 @@ function installInvite(res) {
 						+ '">'
 						+ '       <div class="text-over" style="width: 200px;min-width: 200px;"><a target="_blank" href="'
 						+ ctx
-						+ 'fullsearch/inviteDetails/'
+						+ 'timelysearch/inviteDetails/'
 						+ record_id
 						+ '?fulltype=36'
 						+ '&menuStyle='
@@ -1353,7 +1353,7 @@ function installCompany(res) {
 						+ '">'
 						+ '       <div class="text-over" style="width: 50%;min-width: 200px;"><a target="_blank" href="'
 						+ ctx
-						+ 'fullsearch/companyDetail/'
+						+ 'timelysearch/companyDetail/'
 						+ data[i].article_public_id
 						+ '?fulltype=39'
 						+ '&menuStyle='
@@ -1541,7 +1541,7 @@ function installJudgment(res) {
 						+ '<div class="search-result">'
 						+ '<a target="_blank" class="link font-bold" href="'
 						+ ctx
-						+ 'fullsearch/judgmentDetail/'
+						+ 'timelysearch/judgmentDetail/'
 						+ data[i].article_public_id
 						+ '?fulltype=42'
 						+ '&menuStyle='
@@ -1646,7 +1646,7 @@ function installKnowLedge(res) {
 				if (openNumber == undefined || openNumber == "") {
 					openNumber = "暂无数据";
 				}
-				let detailUrl = ctx + 'fullsearch/knowLedgeDetail/'
+				let detailUrl = ctx + 'timelysearch/knowLedgeDetail/'
 						+ article_public_id + '?fulltype=' + full_type
 						+ '&menuStyle=' + menuStyle + '&fullpoly=' + full_poly
 						+ '&onlyid=' + onlyid + '&searchWord='
@@ -1755,7 +1755,7 @@ function installInvestment(res) {
 						+ '"></div>'
 						+ '       <div class="text-over" style="width: 20%;min-width: 150px;"><a target="_blank" href="'
 						+ ctx
-						+ 'fullsearch/investmentDetail/'
+						+ 'timelysearch/investmentDetail/'
 						+ data[i].article_public_id
 						+ '?fulltype=40'
 						+ '&menuStyle='
@@ -1909,7 +1909,7 @@ function installThesisn(res) {
 						+ ' <div class="search-result">'
 						+ '<a target="_blank" class="link font-bold" href="'
 						+ ctx
-						+ 'fullsearch/thesisnDetail/'
+						+ 'timelysearch/thesisnDetail/'
 						+ data[i].article_public_id
 						+ '?fulltype=45'
 						+ '&menuStyle='
@@ -2027,7 +2027,7 @@ function installArticle3(res) {
 					let strContentStart = '<div class="monitor-right">';
 					let strTitle = '<div class="monitor-content-title"><a target="_blank" href="'
 							+ ctx
-							+ 'fullsearch/detail/'
+							+ 'timelysearch/detail/'
 							+ article_public_id
 							+ '?fulltype='
 							+ full_type
@@ -2183,7 +2183,7 @@ function installArticle3(res) {
 							}
 							let strTitle = '<div class="monitor-content-title"><a target="_blank" href="'
 									+ ctx
-									+ 'fullsearch/detail/'
+									+ 'timelysearch/detail/'
 									+ article_public_id
 									+ '?fulltype='
 									+ full_type
@@ -2357,7 +2357,7 @@ function installArticle3(res) {
 							}
 							let strTitle = '<div class="monitor-content-title"><a target="_blank" href="'
 									+ ctx
-									+ 'fullsearch/detail/'
+									+ 'timelysearch/detail/'
 									+ article_public_id
 									+ '?fulltype='
 									+ full_type
@@ -2516,7 +2516,7 @@ function installArticle3(res) {
 						}
 						let strTitle = '<div class="monitor-content-title"><a target="_blank" href="'
 								+ ctx
-								+ 'fullsearch/detail/'
+								+ 'timelysearch/detail/'
 								+ article_public_id
 								+ '?fulltype='
 								+ full_type
