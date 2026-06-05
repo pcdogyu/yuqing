@@ -1927,31 +1927,346 @@ func legacySpecialTitle(kind string) string {
 }
 
 func legacySpecialDetailPageBody(kind string, detail map[string]any) string {
-	title := nonEmpty(legacyAnyString(detail["name"]), legacyAnyString(detail["title"]), "未命名")
-	source := nonEmpty(legacyAnyString(detail["source_name"]), legacyAnyString(detail["source"]), "未知来源")
-	publishTime := legacyAnyString(detail["publish_time"])
-	link := nonEmpty(legacyAnyString(detail["detailUrl"]), legacyAnyString(detail["url"]), legacyAnyString(detail["source_url"]))
-	summary := nonEmpty(legacyAnyString(detail["summary"]), legacyAnyString(detail["content"]))
-	rows := make([]string, 0, len(detail))
-	for _, key := range []string{"phone_number", "telephone", "email", "address", "city", "hospital", "department", "lawfirm", "court", "caseType", "round", "industry_involved"} {
-		if value := strings.TrimSpace(legacyAnyString(detail[key])); value != "" {
-			rows = append(rows, "<tr><th>"+key+"</th><td>"+value+"</td></tr>")
+	title := nonEmpty(legacyDetailValue(detail, "name", "title", "caseTitle", "companyName"), "未命名")
+	source := nonEmpty(legacyDetailValue(detail, "source_name", "source"), "未知来源")
+	publishTime := legacyDetailValue(detail, "publish_time", "reportDate", "spider_time", "push_time")
+	link := nonEmpty(legacyDetailValue(detail, "detailUrl", "detail_url", "detailurl", "url", "source_url"), "")
+	summary := nonEmpty(legacyDetailValue(detail, "summary", "content"), "")
+
+	var body strings.Builder
+	body.WriteString(`<section><style>
+	.detail-hero{padding:20px;border:1px solid #ece7dc;border-radius:16px;background:linear-gradient(135deg,#faf8f2,#f3efe4);margin-bottom:18px}
+	.detail-kicker{color:#6a6257;font-size:13px;text-transform:uppercase;letter-spacing:.08em}
+	.detail-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:16px}
+	.detail-card{padding:14px;border:1px solid #e5dece;border-radius:12px;background:#fffdf8}
+	.detail-card strong{display:block;font-size:20px;margin-top:6px;color:#214e34}
+	.detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px;margin-bottom:18px}
+	.detail-panel{padding:16px;border:1px solid #ece7dc;border-radius:14px;background:#fff}
+	.detail-panel h3{margin-top:0}
+	.detail-prose{white-space:pre-wrap;line-height:1.75}
+	.detail-content-html{line-height:1.75}
+	.detail-actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px}
+	.detail-figure{max-width:160px;max-height:160px;border-radius:14px;display:block;background:#f5f2ea;object-fit:cover}
+	@media (max-width: 760px){.detail-grid{grid-template-columns:1fr}}
+	</style>`)
+	body.WriteString(`<div class="detail-hero"><div class="detail-kicker">`)
+	body.WriteString(html.EscapeString(legacySpecialTitle(kind)))
+	body.WriteString(`</div><h2>`)
+	body.WriteString(html.EscapeString(title))
+	body.WriteString(`</h2><div class="detail-actions">`)
+	if link != "" {
+		body.WriteString(`<a class="inline" href="`)
+		body.WriteString(html.EscapeString(link))
+		body.WriteString(`" target="_blank" rel="noreferrer">查看原文</a>`)
+	}
+	body.WriteString(`<a class="inline" href="/fullsearch/result">返回搜索结果</a></div><div class="detail-meta">`)
+	body.WriteString(legacyDetailCard("来源", source))
+	body.WriteString(legacyDetailCard("时间", publishTime))
+	body.WriteString(legacyDetailCard("类型", legacySpecialTitle(kind)))
+	body.WriteString(legacyDetailCard("编号", legacyDetailValue(detail, "article_public_id", "numberid", "caseCode")))
+	body.WriteString(`</div></div></section>`)
+
+	if image := nonEmpty(legacyDetailValue(detail, "img", "photo", "profile", "avatar", "companyLogo"), ""); image != "" {
+		body.WriteString(`<section><div class="detail-panel"><h3>图片</h3><img class="detail-figure" src="`)
+		body.WriteString(html.EscapeString(image))
+		body.WriteString(`" alt="detail image"></div></section>`)
+	}
+
+	overviewFields := legacyDetailOverviewFields(kind)
+	if len(overviewFields) > 0 {
+		body.WriteString(`<section><div class="detail-panel"><h3>基础信息</h3><table><tbody>`)
+		for _, field := range overviewFields {
+			value := nonEmpty(legacyDetailValue(detail, field.Keys...), "")
+			if value == "" {
+				continue
+			}
+			body.WriteString(`<tr><th>`)
+			body.WriteString(html.EscapeString(field.Label))
+			body.WriteString(`</th><td>`)
+			body.WriteString(html.EscapeString(value))
+			body.WriteString(`</td></tr>`)
+		}
+		body.WriteString(`</tbody></table></div></section>`)
+	}
+
+	switch kind {
+	case "company":
+		if scope := legacyDetailValue(detail, "business_scope"); scope != "" {
+			body.WriteString(legacyDetailTextPanel("经营范围", scope))
+		}
+		body.WriteString(legacyDetailJSONArraySection("主要人员", legacyDetailJSONRows(detail, "key_person"), []legacyDetailColumn{
+			{Header: "序号", Keys: []string{"id"}},
+			{Header: "姓名", Keys: []string{"name"}},
+			{Header: "职务", Keys: []string{"position"}},
+		}))
+		body.WriteString(legacyDetailJSONArraySection("股东信息", legacyDetailJSONRows(detail, "shareholder"), []legacyDetailColumn{
+			{Header: "序号", Keys: []string{"id"}},
+			{Header: "股东", Keys: []string{"name"}},
+			{Header: "认缴出资额", Keys: []string{"capital_contribution"}},
+			{Header: "实际出资额", Keys: []string{"actual_contribution"}},
+		}))
+		body.WriteString(legacyDetailJSONArraySection("变更记录", legacyDetailJSONRows(detail, "change_record"), []legacyDetailColumn{
+			{Header: "序号", Keys: []string{"id"}},
+			{Header: "变更日期", Keys: []string{"alterDate"}},
+			{Header: "变更项目", Keys: []string{"alterItem"}},
+			{Header: "变更前", Keys: []string{"alterBefore"}},
+			{Header: "变更后", Keys: []string{"alterAfter"}},
+		}))
+	case "investment":
+		if intro := legacyDetailValue(detail, "infoIntro", "summary", "content"); intro != "" {
+			body.WriteString(legacyDetailTextPanel("项目简介", intro))
+		}
+		body.WriteString(legacyDetailJSONArraySection("投资方", legacyDetailJSONRows(detail, "investorArray"), []legacyDetailColumn{
+			{Header: "投资方", Keys: []string{"investorName", "name"}},
+			{Header: "机构类型", Keys: []string{"investorType", "type"}},
+		}))
+		body.WriteString(legacyDetailJSONArraySection("融资历史", legacyDetailJSONRows(detail, "historyArray"), []legacyDetailColumn{
+			{Header: "轮次", Keys: []string{"history_rounds"}},
+			{Header: "投资方", Keys: []string{"history_investors"}},
+			{Header: "时间", Keys: []string{"history_time"}},
+			{Header: "金额", Keys: []string{"history_money"}},
+		}))
+	case "thesisn":
+		body.WriteString(legacyDetailJSONArraySection("作者信息", legacyDetailJSONRows(detail, "co_author"), []legacyDetailColumn{
+			{Header: "作者", Keys: []string{"name"}},
+			{Header: "机构", Keys: []string{"institution", "org"}},
+		}))
+		if keywords := legacyDetailJSONArrayStrings(detail, "key_words"); len(keywords) > 0 {
+			body.WriteString(`<section><div class="detail-panel"><h3>关键词</h3><p>`)
+			body.WriteString(html.EscapeString(strings.Join(keywords, "、")))
+			body.WriteString(`</p></div></section>`)
+		}
+		if readNum := legacyDetailValue(detail, "read_num"); readNum != "" {
+			body.WriteString(legacyDetailTextPanel("阅读统计", "阅读量："+readNum))
+		}
+	case "bidding", "knowledge", "invite":
+		if contentHTML := legacyDetailValue(detail, "content_html"); contentHTML != "" {
+			body.WriteString(`<section><div class="detail-panel"><h3>正文内容</h3><div class="detail-content-html">`)
+			body.WriteString(contentHTML)
+			body.WriteString(`</div></div></section>`)
+		}
+		if intro := legacyDetailValue(detail, "company_intro"); intro != "" {
+			body.WriteString(legacyDetailTextPanel("企业介绍", intro))
+		}
+	case "report":
+		if reportURL := legacyDetailValue(detail, "url", "detailUrl", "source_url"); reportURL != "" {
+			body.WriteString(`<section><div class="detail-panel"><h3>报告预览</h3><iframe src="`)
+			body.WriteString(html.EscapeString(reportURL))
+			body.WriteString(`" style="width:100%;min-height:720px;border:1px solid #ece7dc;border-radius:12px"></iframe></div></section>`)
 		}
 	}
-	table := ""
-	if len(rows) > 0 {
-		table = "<table><tbody>" + strings.Join(rows, "") + "</tbody></table>"
+
+	if kind == "judgment" || kind == "lawyer" || kind == "executionPerson" || kind == "professor" || kind == "doctor" || summary != "" {
+		body.WriteString(legacyDetailTextPanel("摘要", summary))
 	}
-	linkHTML := ""
-	if link != "" {
-		linkHTML = `<p><a class="inline" href="` + link + `" target="_blank">查看原文</a></p>`
+	if content := legacyDetailValue(detail, "content"); content != "" && content != summary && kind != "bidding" && kind != "knowledge" && kind != "invite" {
+		body.WriteString(legacyDetailTextPanel("正文", content))
 	}
-	body := `<section><p class="subtle">类型：` + kind + `</p><h2>` + title + `</h2><p>来源：` + source + `</p><p>时间：` + publishTime + `</p>` + linkHTML + table
-	if summary != "" {
-		body += `<h3>摘要</h3><pre>` + summary + `</pre>`
+
+	return body.String()
+}
+
+type legacyDetailField struct {
+	Label string
+	Keys  []string
+}
+
+type legacyDetailColumn struct {
+	Header string
+	Keys   []string
+}
+
+func legacyDetailOverviewFields(kind string) []legacyDetailField {
+	switch kind {
+	case "lawyer":
+		return []legacyDetailField{
+			{Label: "所属机构", Keys: []string{"lawfirm"}},
+			{Label: "电话", Keys: []string{"telephone", "phone_number"}},
+			{Label: "城市", Keys: []string{"city"}},
+			{Label: "擅长领域", Keys: []string{"goods", "adept"}},
+			{Label: "类型", Keys: []string{"kinds"}},
+			{Label: "学历", Keys: []string{"educationbackground"}},
+			{Label: "邮箱", Keys: []string{"email"}},
+			{Label: "地址", Keys: []string{"address"}},
+		}
+	case "executionPerson":
+		return []legacyDetailField{
+			{Label: "执行单位", Keys: []string{"gistUnit"}},
+			{Label: "履行情况", Keys: []string{"performance"}},
+			{Label: "法院名称", Keys: []string{"courtName"}},
+			{Label: "案件编号", Keys: []string{"caseCode"}},
+			{Label: "行为", Keys: []string{"disruptTypeName"}},
+			{Label: "职责", Keys: []string{"duty"}},
+			{Label: "地址", Keys: []string{"address"}},
+		}
+	case "professor":
+		return []legacyDetailField{
+			{Label: "机构", Keys: []string{"institution"}},
+			{Label: "引用量", Keys: []string{"times_cited"}},
+			{Label: "作品数", Keys: []string{"works"}},
+			{Label: "H 指数", Keys: []string{"H_index"}},
+			{Label: "G 指数", Keys: []string{"G_index"}},
+		}
+	case "doctor":
+		return []legacyDetailField{
+			{Label: "医院", Keys: []string{"hospital"}},
+			{Label: "科室", Keys: []string{"department"}},
+			{Label: "电话", Keys: []string{"phone_number"}},
+			{Label: "擅长", Keys: []string{"adept"}},
+			{Label: "职称", Keys: []string{"degree"}},
+			{Label: "地区", Keys: []string{"location", "province"}},
+			{Label: "邮箱", Keys: []string{"email"}},
+		}
+	case "company":
+		return []legacyDetailField{
+			{Label: "企业名称", Keys: []string{"name"}},
+			{Label: "法定代表人", Keys: []string{"legal_representative", "legal_person"}},
+			{Label: "统一社会信用代码", Keys: []string{"uniformSocialCreditCode", "taxpayer_identification"}},
+			{Label: "登记状态", Keys: []string{"status"}},
+			{Label: "注册资本", Keys: []string{"registered_capital_str"}},
+			{Label: "所属行业", Keys: []string{"industry_involved"}},
+			{Label: "地址", Keys: []string{"address", "location"}},
+			{Label: "参保人数", Keys: []string{"insured_num", "insureds"}},
+		}
+	case "judgment":
+		return []legacyDetailField{
+			{Label: "案由标题", Keys: []string{"caseTitle", "title"}},
+			{Label: "法院", Keys: []string{"court", "courtName"}},
+			{Label: "案件类型", Keys: []string{"caseType"}},
+			{Label: "当事人", Keys: []string{"parties"}},
+		}
+	case "knowledge":
+		return []legacyDetailField{
+			{Label: "名称", Keys: []string{"name", "title"}},
+			{Label: "类型", Keys: []string{"caseType", "ip_type"}},
+			{Label: "权利人", Keys: []string{"owner"}},
+		}
+	case "investment":
+		return []legacyDetailField{
+			{Label: "公司", Keys: []string{"companyName", "company", "name"}},
+			{Label: "轮次", Keys: []string{"rounds", "round", "investment_type"}},
+			{Label: "融资金额", Keys: []string{"money"}},
+			{Label: "行业", Keys: []string{"industry"}},
+			{Label: "采集时间", Keys: []string{"spider_time", "publish_time"}},
+		}
+	case "thesisn":
+		return []legacyDetailField{
+			{Label: "来源", Keys: []string{"source_name"}},
+			{Label: "阅读量", Keys: []string{"read_num"}},
+			{Label: "时间", Keys: []string{"spider_time", "publish_time"}},
+		}
+	case "bidding":
+		return []legacyDetailField{
+			{Label: "项目编号", Keys: []string{"numberid"}},
+			{Label: "来源", Keys: []string{"source_name"}},
+			{Label: "时间", Keys: []string{"publish_time", "spider_time"}},
+		}
+	case "invite":
+		return []legacyDetailField{
+			{Label: "企业", Keys: []string{"company_name", "name"}},
+			{Label: "地区", Keys: []string{"address", "city"}},
+			{Label: "时间", Keys: []string{"publish_time"}},
+		}
+	case "report":
+		return []legacyDetailField{
+			{Label: "标题", Keys: []string{"title"}},
+			{Label: "日期", Keys: []string{"reportDate"}},
+			{Label: "链接", Keys: []string{"url"}},
+		}
+	default:
+		return nil
 	}
-	body += `</section>`
-	return body
+}
+
+func legacyDetailValue(detail map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value := strings.TrimSpace(legacyAnyString(detail[key])); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func legacyDetailCard(label string, value string) string {
+	if strings.TrimSpace(value) == "" {
+		value = "暂无"
+	}
+	return `<div class="detail-card"><div class="template-meta">` + html.EscapeString(label) + `</div><strong>` + html.EscapeString(value) + `</strong></div>`
+}
+
+func legacyDetailTextPanel(title string, content string) string {
+	if strings.TrimSpace(content) == "" {
+		return ""
+	}
+	return `<section><div class="detail-panel"><h3>` + html.EscapeString(title) + `</h3><div class="detail-prose">` + html.EscapeString(content) + `</div></div></section>`
+}
+
+func legacyDetailJSONRows(detail map[string]any, key string) []map[string]any {
+	raw := strings.TrimSpace(legacyAnyString(detail[key]))
+	if raw == "" {
+		return nil
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(raw), &rows); err == nil {
+		return rows
+	}
+	return nil
+}
+
+func legacyDetailJSONArrayStrings(detail map[string]any, key string) []string {
+	raw := strings.TrimSpace(legacyAnyString(detail[key]))
+	if raw == "" {
+		return nil
+	}
+	var stringsOut []string
+	if err := json.Unmarshal([]byte(raw), &stringsOut); err == nil {
+		return stringsOut
+	}
+	var mixed []any
+	if err := json.Unmarshal([]byte(raw), &mixed); err == nil {
+		out := make([]string, 0, len(mixed))
+		for _, item := range mixed {
+			if value := strings.TrimSpace(legacyAnyString(item)); value != "" {
+				out = append(out, value)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+func legacyDetailJSONArraySection(title string, rows []map[string]any, columns []legacyDetailColumn) string {
+	if len(rows) == 0 || len(columns) == 0 {
+		return ""
+	}
+	var body strings.Builder
+	body.WriteString(`<section><div class="detail-panel"><h3>`)
+	body.WriteString(html.EscapeString(title))
+	body.WriteString(`</h3><table><thead><tr>`)
+	for _, column := range columns {
+		body.WriteString(`<th>`)
+		body.WriteString(html.EscapeString(column.Header))
+		body.WriteString(`</th>`)
+	}
+	body.WriteString(`</tr></thead><tbody>`)
+	for _, row := range rows {
+		body.WriteString(`<tr>`)
+		for _, column := range columns {
+			value := ""
+			for _, key := range column.Keys {
+				if text := strings.TrimSpace(legacyAnyString(row[key])); text != "" {
+					value = text
+					break
+				}
+			}
+			body.WriteString(`<td>`)
+			body.WriteString(html.EscapeString(value))
+			body.WriteString(`</td>`)
+		}
+		body.WriteString(`</tr>`)
+	}
+	body.WriteString(`</tbody></table></div></section>`)
+	return body.String()
 }
 
 func legacyTemplateMatchesType(stype string, sourceType string, name string, configJSON string) bool {

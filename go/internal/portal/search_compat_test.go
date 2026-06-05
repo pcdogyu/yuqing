@@ -398,7 +398,19 @@ func TestLegacySpecializedFullSearchEndpoints(t *testing.T) {
 							SourceURL:       "https://example.com/company/202",
 							PublishTime:     "2026-06-05 11:00:00",
 							PublishTimeText: "今天",
-							RawPayload:      `{"name":"星云科技有限公司","industry_involved":"人工智能","legal_person":"李四","registered_capital_str":"500万","status":"存续","location":"上海市浦东新区","business_scope":"人工智能软件开发","uniformSocialCreditCode":"91310000X","insured_num":"30"}`,
+							RawPayload:      `{"name":"星云科技有限公司","industry_involved":"人工智能","legal_person":"李四","registered_capital_str":"500万","status":"存续","location":"上海市浦东新区","business_scope":"人工智能软件开发","uniformSocialCreditCode":"91310000X","insured_num":"30","key_person":"[{\"id\":1,\"name\":\"李四\",\"position\":\"董事长\"}]","shareholder":"[{\"id\":1,\"name\":\"星云控股\",\"capital_contribution\":\"300万\",\"actual_contribution\":\"300万\"}]","change_record":"[{\"id\":1,\"alterDate\":\"2026-01-01\",\"alterItem\":\"法定代表人\",\"alterBefore\":\"王五\",\"alterAfter\":\"李四\"}]","phone_number":"025-12345678"}`,
+						},
+						{
+							ID:              303,
+							Title:           "Alpha AI 完成 A 轮融资",
+							Content:         "项目简介与融资历史",
+							Summary:         "聚焦智能风控",
+							SourceType:      "investment",
+							FromText:        "投融资库",
+							SourceURL:       "https://example.com/investment/303",
+							PublishTime:     "2026-06-05 12:00:00",
+							PublishTimeText: "今天",
+							RawPayload:      `{"title":"Alpha AI 完成 A 轮融资","companyName":"Alpha AI","rounds":"A轮","money":"数千万人民币","industry":"人工智能","infoIntro":"智能风控平台","companyLogo":"https://example.com/logo.png","deatilUrl":"https://example.com/investment/303","push_time":"2026-06-05","spider_time":"2026-06-05 12:00:00","investorArray":"[{\"investorName\":\"启明创投\",\"investorType\":\"VC\"}]","historyArray":"[{\"history_rounds\":\"天使轮\",\"history_investors\":\"个人投资者\",\"history_time\":\"2025-01-01\",\"history_money\":\"数百万人民币\"}]"} `,
 						},
 					},
 				},
@@ -434,7 +446,24 @@ func TestLegacySpecializedFullSearchEndpoints(t *testing.T) {
 					SourceURL:       "https://example.com/company/202",
 					PublishTime:     "2026-06-05 11:00:00",
 					PublishTimeText: "今天",
-					RawPayload:      `{"name":"星云科技有限公司","industry_involved":"人工智能","legal_person":"李四","registered_capital_str":"500万","status":"存续","location":"上海市浦东新区","business_scope":"人工智能软件开发","uniformSocialCreditCode":"91310000X","insured_num":"30"}`,
+					RawPayload:      `{"name":"星云科技有限公司","industry_involved":"人工智能","legal_person":"李四","registered_capital_str":"500万","status":"存续","location":"上海市浦东新区","business_scope":"人工智能软件开发","uniformSocialCreditCode":"91310000X","insured_num":"30","key_person":"[{\"id\":1,\"name\":\"李四\",\"position\":\"董事长\"}]","shareholder":"[{\"id\":1,\"name\":\"星云控股\",\"capital_contribution\":\"300万\",\"actual_contribution\":\"300万\"}]","change_record":"[{\"id\":1,\"alterDate\":\"2026-01-01\",\"alterItem\":\"法定代表人\",\"alterBefore\":\"王五\",\"alterAfter\":\"李四\"}]","phone_number":"025-12345678"}`,
+				},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/articles/303":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    200,
+				"message": "ok",
+				"data": model.Item{
+					ID:              303,
+					Title:           "Alpha AI 完成 A 轮融资",
+					Content:         "项目简介与融资历史",
+					Summary:         "聚焦智能风控",
+					SourceType:      "investment",
+					FromText:        "投融资库",
+					SourceURL:       "https://example.com/investment/303",
+					PublishTime:     "2026-06-05 12:00:00",
+					PublishTimeText: "今天",
+					RawPayload:      `{"title":"Alpha AI 完成 A 轮融资","companyName":"Alpha AI","rounds":"A轮","money":"数千万人民币","industry":"人工智能","infoIntro":"智能风控平台","companyLogo":"https://example.com/logo.png","deatilUrl":"https://example.com/investment/303","push_time":"2026-06-05","spider_time":"2026-06-05 12:00:00","investorArray":"[{\"investorName\":\"启明创投\",\"investorType\":\"VC\"}]","historyArray":"[{\"history_rounds\":\"天使轮\",\"history_investors\":\"个人投资者\",\"history_time\":\"2025-01-01\",\"history_money\":\"数百万人民币\"}]"} `,
 				},
 			})
 		default:
@@ -521,6 +550,16 @@ func TestLegacySpecializedFullSearchEndpoints(t *testing.T) {
 		t.Fatalf("unexpected lawyer detail page: %s", pageRR.Body.String())
 	}
 
+	companyPageReq := httptest.NewRequest(http.MethodGet, "/fullsearch/companyDetail/202", nil)
+	companyPageRR := httptest.NewRecorder()
+	srv.handleSearchCompat(companyPageRR, companyPageReq, user, "full")
+	if companyPageRR.Code != http.StatusOK {
+		t.Fatalf("expected company detail page 200, got %d", companyPageRR.Code)
+	}
+	if !strings.Contains(companyPageRR.Body.String(), "主要人员") || !strings.Contains(companyPageRR.Body.String(), "董事长") || !strings.Contains(companyPageRR.Body.String(), "人工智能软件开发") {
+		t.Fatalf("unexpected company detail page: %s", companyPageRR.Body.String())
+	}
+
 	companyDetailReq := httptest.NewRequest(http.MethodGet, "/fullsearch/companyDetails?article_public_id=202", nil)
 	companyDetailRR := httptest.NewRecorder()
 	srv.handleSearchCompat(companyDetailRR, companyDetailReq, user, "full")
@@ -536,6 +575,16 @@ func TestLegacySpecializedFullSearchEndpoints(t *testing.T) {
 	}
 	if companyDetail["taxpayer_identification"] != "91310000X" || companyDetail["insureds"] != "30" || companyDetail["legal_person"] != "李四" {
 		t.Fatalf("expected company alias fields, got %+v", companyDetail)
+	}
+
+	investmentPageReq := httptest.NewRequest(http.MethodGet, "/fullsearch/investmentDetail/303", nil)
+	investmentPageRR := httptest.NewRecorder()
+	srv.handleSearchCompat(investmentPageRR, investmentPageReq, user, "full")
+	if investmentPageRR.Code != http.StatusOK {
+		t.Fatalf("expected investment detail page 200, got %d", investmentPageRR.Code)
+	}
+	if !strings.Contains(investmentPageRR.Body.String(), "融资历史") || !strings.Contains(investmentPageRR.Body.String(), "启明创投") || !strings.Contains(investmentPageRR.Body.String(), "智能风控平台") {
+		t.Fatalf("unexpected investment detail page: %s", investmentPageRR.Body.String())
 	}
 }
 
