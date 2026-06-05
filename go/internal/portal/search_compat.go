@@ -266,45 +266,43 @@ func (s *Server) handleSearchCompat(w http.ResponseWriter, r *http.Request, user
 		}
 		http.NotFound(w, r)
 	default:
-		if mode == "full" {
-			switch {
-			case strings.HasPrefix(path, "lawyerDetail/"):
-				s.handleLegacySpecialDetailPage(w, r, "lawyer", strings.TrimPrefix(path, "lawyerDetail/"))
-				return
-			case strings.HasPrefix(path, "executionPersonDetail/"):
-				s.handleLegacySpecialDetailPage(w, r, "executionPerson", strings.TrimPrefix(path, "executionPersonDetail/"))
-				return
-			case strings.HasPrefix(path, "professorDetail/"):
-				s.handleLegacySpecialDetailPage(w, r, "professor", strings.TrimPrefix(path, "professorDetail/"))
-				return
-			case strings.HasPrefix(path, "doctorDetail/"):
-				s.handleLegacySpecialDetailPage(w, r, "doctor", strings.TrimPrefix(path, "doctorDetail/"))
-				return
-			case strings.HasPrefix(path, "biddingdetail/"):
-				s.handleLegacySpecialDetailPage(w, r, "bidding", strings.TrimPrefix(path, "biddingdetail/"))
-				return
-			case strings.HasPrefix(path, "inviteDetails/"):
-				s.handleLegacySpecialDetailPage(w, r, "invite", strings.TrimPrefix(path, "inviteDetails/"))
-				return
-			case strings.HasPrefix(path, "companyDetail/"):
-				s.handleLegacySpecialDetailPage(w, r, "company", strings.TrimPrefix(path, "companyDetail/"))
-				return
-			case strings.HasPrefix(path, "judgmentDetail/"):
-				s.handleLegacySpecialDetailPage(w, r, "judgment", strings.TrimPrefix(path, "judgmentDetail/"))
-				return
-			case strings.HasPrefix(path, "knowLedgeDetail/"):
-				s.handleLegacySpecialDetailPage(w, r, "knowledge", strings.TrimPrefix(path, "knowLedgeDetail/"))
-				return
-			case strings.HasPrefix(path, "investmentDetail/"):
-				s.handleLegacySpecialDetailPage(w, r, "investment", strings.TrimPrefix(path, "investmentDetail/"))
-				return
-			case strings.HasPrefix(path, "thesisnDetail/"):
-				s.handleLegacySpecialDetailPage(w, r, "thesisn", strings.TrimPrefix(path, "thesisnDetail/"))
-				return
-			case strings.HasPrefix(path, "reportdetail/"):
-				s.handleLegacySpecialDetailPage(w, r, "report", strings.TrimPrefix(path, "reportdetail/"))
-				return
-			}
+		switch {
+		case strings.HasPrefix(path, "lawyerDetail/"):
+			s.handleLegacySpecialDetailPage(w, r, mode, "lawyer", strings.TrimPrefix(path, "lawyerDetail/"))
+			return
+		case strings.HasPrefix(path, "executionPersonDetail/"):
+			s.handleLegacySpecialDetailPage(w, r, mode, "executionPerson", strings.TrimPrefix(path, "executionPersonDetail/"))
+			return
+		case strings.HasPrefix(path, "professorDetail/"):
+			s.handleLegacySpecialDetailPage(w, r, mode, "professor", strings.TrimPrefix(path, "professorDetail/"))
+			return
+		case strings.HasPrefix(path, "doctorDetail/"):
+			s.handleLegacySpecialDetailPage(w, r, mode, "doctor", strings.TrimPrefix(path, "doctorDetail/"))
+			return
+		case strings.HasPrefix(path, "biddingdetail/"):
+			s.handleLegacySpecialDetailPage(w, r, mode, "bidding", strings.TrimPrefix(path, "biddingdetail/"))
+			return
+		case strings.HasPrefix(path, "inviteDetails/"):
+			s.handleLegacySpecialDetailPage(w, r, mode, "invite", strings.TrimPrefix(path, "inviteDetails/"))
+			return
+		case strings.HasPrefix(path, "companyDetail/"):
+			s.handleLegacySpecialDetailPage(w, r, mode, "company", strings.TrimPrefix(path, "companyDetail/"))
+			return
+		case strings.HasPrefix(path, "judgmentDetail/"):
+			s.handleLegacySpecialDetailPage(w, r, mode, "judgment", strings.TrimPrefix(path, "judgmentDetail/"))
+			return
+		case strings.HasPrefix(path, "knowLedgeDetail/"):
+			s.handleLegacySpecialDetailPage(w, r, mode, "knowledge", strings.TrimPrefix(path, "knowLedgeDetail/"))
+			return
+		case strings.HasPrefix(path, "investmentDetail/"):
+			s.handleLegacySpecialDetailPage(w, r, mode, "investment", strings.TrimPrefix(path, "investmentDetail/"))
+			return
+		case strings.HasPrefix(path, "thesisnDetail/"):
+			s.handleLegacySpecialDetailPage(w, r, mode, "thesisn", strings.TrimPrefix(path, "thesisnDetail/"))
+			return
+		case strings.HasPrefix(path, "reportdetail/"):
+			s.handleLegacySpecialDetailPage(w, r, mode, "report", strings.TrimPrefix(path, "reportdetail/"))
+			return
 		}
 		if strings.Contains(path, "Detail/") || strings.Contains(path, "detail/") {
 			s.handleLegacySearchArticleRedirect(w, r, mode)
@@ -530,8 +528,7 @@ func (s *Server) handleLegacySearchArticleRedirect(w http.ResponseWriter, r *htt
 		http.Redirect(w, r, s.legacySearchTarget(mode, r), http.StatusSeeOther)
 		return
 	}
-	returnTo := legacySearchResultPath(mode, r)
-	target := "/articles/" + url.PathEscape(articleID) + "?return_to=" + url.QueryEscape(returnTo)
+	target := s.legacyArticleDetailTarget(r.Context(), mode, articleID, legacySearchResultPath(mode, r))
 	http.Redirect(w, r, target, http.StatusSeeOther)
 }
 
@@ -741,6 +738,7 @@ func (s *Server) handleTimelySearchPage(w http.ResponseWriter, r *http.Request) 
 		body.WriteString(`<tr><td colspan="4">暂无匹配结果</td></tr>`)
 	} else {
 		for _, item := range result.Items {
+			detailTarget := s.legacySpecialDetailTarget("timely", item, legacySearchResultPath("timely", r))
 			body.WriteString(`<tr><td>`)
 			body.WriteString(html.EscapeString(item.Title))
 			body.WriteString(`</td><td>`)
@@ -748,10 +746,8 @@ func (s *Server) handleTimelySearchPage(w http.ResponseWriter, r *http.Request) 
 			body.WriteString(`</td><td>`)
 			body.WriteString(html.EscapeString(nonEmpty(item.PublishTimeText, item.PublishTime)))
 			body.WriteString(`</td><td>`)
-			body.WriteString(`<a class="inline" href="/articles/`)
-			body.WriteString(strconv.FormatInt(item.ID, 10))
-			body.WriteString(`?return_to=`)
-			body.WriteString(url.QueryEscape(legacySearchResultPath("timely", r)))
+			body.WriteString(`<a class="inline" href="`)
+			body.WriteString(html.EscapeString(detailTarget))
 			body.WriteString(`">查看详情</a></td></tr>`)
 		}
 	}
@@ -969,19 +965,23 @@ func (s *Server) handleLegacySpecialCategoryOptions(w http.ResponseWriter, r *ht
 	writeJSONText(w, options)
 }
 
-func (s *Server) handleLegacySpecialDetailPage(w http.ResponseWriter, r *http.Request, kind string, rawID string) {
+func (s *Server) handleLegacySpecialDetailPage(w http.ResponseWriter, r *http.Request, mode string, kind string, rawID string) {
 	itemID := legacySpecialDetailID(rawID)
+	returnPath := strings.TrimSpace(r.URL.Query().Get("return_to"))
+	if returnPath == "" {
+		returnPath = legacySearchResultPath(mode, r)
+	}
 	if itemID == "" {
-		http.Redirect(w, r, s.legacySearchTarget("full", r), http.StatusSeeOther)
+		http.Redirect(w, r, s.legacySearchTarget(mode, r), http.StatusSeeOther)
 		return
 	}
 	item, err := s.fetchLegacyItemByID(itemID, 0)
 	if err != nil {
-		http.Redirect(w, r, "/articles/"+url.PathEscape(itemID)+"?return_to="+url.QueryEscape(legacySearchResultPath("full", r)), http.StatusSeeOther)
+		http.Redirect(w, r, "/articles/"+url.PathEscape(itemID)+"?return_to="+url.QueryEscape(returnPath), http.StatusSeeOther)
 		return
 	}
 	detail := legacySpecialDetailEntry(kind, item)
-	body := legacySpecialDetailPageBody(kind, detail)
+	body := legacySpecialDetailPageBody(kind, detail, mode, returnPath)
 	_ = s.writeSimplePage(w, "fullsearch/"+kind, legacySpecialTitle(kind), body)
 }
 
@@ -1926,7 +1926,7 @@ func legacySpecialTitle(kind string) string {
 	}
 }
 
-func legacySpecialDetailPageBody(kind string, detail map[string]any) string {
+func legacySpecialDetailPageBody(kind string, detail map[string]any, mode string, returnPath string) string {
 	title := nonEmpty(legacyDetailValue(detail, "name", "title", "caseTitle", "companyName"), "未命名")
 	source := nonEmpty(legacyDetailValue(detail, "source_name", "source"), "未知来源")
 	publishTime := legacyDetailValue(detail, "publish_time", "reportDate", "spider_time", "push_time")
@@ -1959,7 +1959,9 @@ func legacySpecialDetailPageBody(kind string, detail map[string]any) string {
 		body.WriteString(html.EscapeString(link))
 		body.WriteString(`" target="_blank" rel="noreferrer">查看原文</a>`)
 	}
-	body.WriteString(`<a class="inline" href="/fullsearch/result">返回搜索结果</a></div><div class="detail-meta">`)
+	body.WriteString(`<a class="inline" href="`)
+	body.WriteString(html.EscapeString(nonEmpty(returnPath, "/"+mode+"search/result")))
+	body.WriteString(`">返回搜索结果</a></div><div class="detail-meta">`)
 	body.WriteString(legacyDetailCard("来源", source))
 	body.WriteString(legacyDetailCard("时间", publishTime))
 	body.WriteString(legacyDetailCard("类型", legacySpecialTitle(kind)))
@@ -2064,6 +2066,117 @@ func legacySpecialDetailPageBody(kind string, detail map[string]any) string {
 	}
 
 	return body.String()
+}
+
+func (s *Server) legacyArticleDetailTarget(ctx context.Context, mode string, articleID string, returnPath string) string {
+	item, err := s.fetchLegacyItemByID(articleID, 0)
+	if err == nil {
+		return s.legacySpecialDetailTarget(mode, item, returnPath)
+	}
+	return "/articles/" + url.PathEscape(articleID) + "?return_to=" + url.QueryEscape(returnPath)
+}
+
+func (s *Server) legacySpecialDetailTarget(mode string, item model.Item, returnPath string) string {
+	kind := legacySpecialKind(item)
+	if kind == "" {
+		return "/articles/" + url.PathEscape(strconv.FormatInt(item.ID, 10)) + "?return_to=" + url.QueryEscape(returnPath)
+	}
+	path := legacySpecialPathPrefix(kind)
+	if path == "" {
+		return "/articles/" + url.PathEscape(strconv.FormatInt(item.ID, 10)) + "?return_to=" + url.QueryEscape(returnPath)
+	}
+	target := "/" + mode + "search/" + path + "/" + url.PathEscape(strconv.FormatInt(item.ID, 10))
+	if returnPath != "" {
+		target += "?return_to=" + url.QueryEscape(returnPath)
+	}
+	return target
+}
+
+func legacySpecialKind(item model.Item) string {
+	source := strings.ToLower(strings.TrimSpace(item.SourceType))
+	switch {
+	case strings.Contains(source, "lawyer"):
+		return "lawyer"
+	case strings.Contains(source, "execution"):
+		return "executionPerson"
+	case strings.Contains(source, "professor"):
+		return "professor"
+	case strings.Contains(source, "doctor"):
+		return "doctor"
+	case strings.Contains(source, "bidding"):
+		return "bidding"
+	case strings.Contains(source, "invite"):
+		return "invite"
+	case strings.Contains(source, "company"):
+		return "company"
+	case strings.Contains(source, "judgment"):
+		return "judgment"
+	case strings.Contains(source, "knowledge"):
+		return "knowledge"
+	case strings.Contains(source, "investment"):
+		return "investment"
+	case strings.Contains(source, "thesis"):
+		return "thesisn"
+	case strings.Contains(source, "report"), strings.Contains(source, "announcement"):
+		return "report"
+	default:
+		payload := legacyPayloadMap(item)
+		for _, candidate := range []struct {
+			keys []string
+			kind string
+		}{
+			{[]string{"lawfirm", "goods", "telephone"}, "lawyer"},
+			{[]string{"gistUnit", "caseCode", "disruptTypeName"}, "executionPerson"},
+			{[]string{"institution", "times_cited", "H_index"}, "professor"},
+			{[]string{"hospital", "department", "adept"}, "doctor"},
+			{[]string{"numberid", "content_html"}, "bidding"},
+			{[]string{"company_intro"}, "invite"},
+			{[]string{"business_scope", "registered_capital_str"}, "company"},
+			{[]string{"court", "caseType", "parties"}, "judgment"},
+			{[]string{"ip_type", "owner", "content_html"}, "knowledge"},
+			{[]string{"investorArray", "historyArray", "rounds"}, "investment"},
+			{[]string{"co_author", "read_num"}, "thesisn"},
+			{[]string{"reportDate", "authorList"}, "report"},
+		} {
+			for _, key := range candidate.keys {
+				if strings.TrimSpace(legacyPayloadString(payload, key)) != "" {
+					return candidate.kind
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func legacySpecialPathPrefix(kind string) string {
+	switch kind {
+	case "lawyer":
+		return "lawyerDetail"
+	case "executionPerson":
+		return "executionPersonDetail"
+	case "professor":
+		return "professorDetail"
+	case "doctor":
+		return "doctorDetail"
+	case "bidding":
+		return "biddingdetail"
+	case "invite":
+		return "inviteDetails"
+	case "company":
+		return "companyDetail"
+	case "judgment":
+		return "judgmentDetail"
+	case "knowledge":
+		return "knowLedgeDetail"
+	case "investment":
+		return "investmentDetail"
+	case "thesisn":
+		return "thesisnDetail"
+	case "report":
+		return "reportdetail"
+	default:
+		return ""
+	}
 }
 
 type legacyDetailField struct {

@@ -658,13 +658,31 @@ func TestTimelySearchPageExecuteAndDataFlow(t *testing.T) {
 					PageSize: 20,
 					Items: []model.Item{{
 						ID:              301,
-						Title:           "Flash item",
-						Summary:         "Flash summary",
-						SourceType:      "flash",
+						Title:           "AI 行业快报",
+						Summary:         "AI 行业快报摘要",
+						SourceType:      "report",
 						FromText:        "Flash Source",
 						PublishTimeText: "刚刚",
-						SourceURL:       "https://example.com/flash/301",
+						SourceURL:       "https://example.com/report/301",
+						RawPayload:      `{"reportDate":"2026-06-05","url":"https://example.com/report/301"}`,
 					}},
+				},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/articles/301":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    200,
+				"message": "ok",
+				"data": model.Item{
+					ID:              301,
+					Title:           "AI 行业快报",
+					Summary:         "AI 行业快报摘要",
+					Content:         "AI 行业快报正文",
+					SourceType:      "report",
+					FromText:        "Flash Source",
+					PublishTime:     "2026-06-05 12:45:00",
+					PublishTimeText: "刚刚",
+					SourceURL:       "https://example.com/report/301",
+					RawPayload:      `{"reportDate":"2026-06-05","url":"https://example.com/report/301"}`,
 				},
 			})
 		default:
@@ -709,8 +727,11 @@ func TestTimelySearchPageExecuteAndDataFlow(t *testing.T) {
 		t.Fatalf("expected timelysearch result page 200, got %d", pageRR.Code)
 	}
 	pageBody := pageRR.Body.String()
-	if !strings.Contains(pageBody, "即时搜索") || !strings.Contains(pageBody, "Flash Template") || !strings.Contains(pageBody, "Flash item") || !strings.Contains(pageBody, "立即抓取") {
+	if !strings.Contains(pageBody, "即时搜索") || !strings.Contains(pageBody, "Flash Template") || !strings.Contains(pageBody, "AI 行业快报") || !strings.Contains(pageBody, "立即抓取") {
 		t.Fatalf("unexpected timelysearch result page: %s", pageBody)
+	}
+	if !strings.Contains(pageBody, `/timelysearch/reportdetail/301`) {
+		t.Fatalf("expected timelysearch result page to point to timely detail route, got %s", pageBody)
 	}
 	if searchQuery.Get("q") != "AI" || searchQuery.Get("page") != "2" || searchQuery.Get("source_type") != "flash" {
 		t.Fatalf("unexpected timely search forwarding: %+v", searchQuery)
@@ -722,7 +743,7 @@ func TestTimelySearchPageExecuteAndDataFlow(t *testing.T) {
 	if dataRR.Code != http.StatusOK {
 		t.Fatalf("expected timelysearch data 200, got %d", dataRR.Code)
 	}
-	if !strings.Contains(dataRR.Body.String(), `Flash item`) || !strings.Contains(dataRR.Body.String(), `Flash Source`) {
+	if !strings.Contains(dataRR.Body.String(), `AI 行业快报`) || !strings.Contains(dataRR.Body.String(), `Flash Source`) {
 		t.Fatalf("unexpected timelysearch data body: %s", dataRR.Body.String())
 	}
 
@@ -744,5 +765,16 @@ func TestTimelySearchPageExecuteAndDataFlow(t *testing.T) {
 	}
 	if crawlQuery.Get("template_id") != "1" || crawlQuery.Get("keyword") != "AI" {
 		t.Fatalf("unexpected crawl execute query: %+v", crawlQuery)
+	}
+
+	detailReq := httptest.NewRequest(http.MethodGet, "/timelysearch/reportdetail/301?return_to=%2Ftimelysearch%2Fresult%3Fkeyword%3DAI", nil)
+	detailRR := httptest.NewRecorder()
+	srv.handleSearchCompat(detailRR, detailReq, nil, "timely")
+	if detailRR.Code != http.StatusOK {
+		t.Fatalf("expected timelysearch detail page 200, got %d", detailRR.Code)
+	}
+	detailBody := detailRR.Body.String()
+	if !strings.Contains(detailBody, "公告研报详情") || !strings.Contains(detailBody, "返回搜索结果") || !strings.Contains(detailBody, "/timelysearch/result?keyword=AI") {
+		t.Fatalf("unexpected timely detail page: %s", detailBody)
 	}
 }
