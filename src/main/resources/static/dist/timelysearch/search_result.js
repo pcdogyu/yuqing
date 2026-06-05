@@ -1666,8 +1666,4 @@ $("#date-range input").change(function () {
 });
 
 
-
-
-
-
-
+initdata(full_type);
