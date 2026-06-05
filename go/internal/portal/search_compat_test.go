@@ -696,8 +696,24 @@ func TestTimelySearchPageExecuteAndDataFlow(t *testing.T) {
 					PublishTime:     "2026-06-05 12:45:00",
 					PublishTimeText: "刚刚",
 					SourceURL:       "https://example.com/report/301",
-					RawPayload:      `{"reportDate":"2026-06-05","url":"https://example.com/report/301"}`,
+					TagFlags:        "AI,产业",
+					RawPayload:      `{"reportDate":"2026-06-05","url":"https://example.com/report/301","sourcewebsitename":"Flash Source","ner":{"org":{"OpenAI":1}}}`,
 				},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/articles/301/related":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    200,
+				"message": "ok",
+				"data": []model.Item{{
+					ID:              302,
+					Title:           "AI 关联快讯",
+					Summary:         "AI 关联快讯摘要",
+					Content:         "AI 关联快讯正文",
+					SourceType:      "headline",
+					FromText:        "Flash Source",
+					PublishTime:     "2026-06-05 13:00:00",
+					PublishTimeText: "1分钟前",
+				}},
 			})
 		default:
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 404, "message": "not found", "data": nil})
@@ -807,6 +823,40 @@ func TestTimelySearchPageExecuteAndDataFlow(t *testing.T) {
 	}
 	if timelyReportDetail["title"] != "AI 行业快报" {
 		t.Fatalf("unexpected timely report detail payload: %+v", timelyReportDetail)
+	}
+
+	articleDetailReq := httptest.NewRequest(http.MethodPost, "/timelysearch/articleDetail", strings.NewReader(url.Values{"articleId": {"301"}}.Encode()))
+	articleDetailReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	articleDetailRR := httptest.NewRecorder()
+	srv.handleSearchCompat(articleDetailRR, articleDetailReq, nil, "timely")
+	if articleDetailRR.Code != http.StatusOK {
+		t.Fatalf("expected timelysearch articleDetail 200, got %d", articleDetailRR.Code)
+	}
+	var timelyDetail map[string]any
+	if err := json.Unmarshal(articleDetailRR.Body.Bytes(), &timelyDetail); err != nil {
+		t.Fatalf("unmarshal timely articleDetail: %v", err)
+	}
+	if timelyDetail["title"] != "AI 行业快报" || !strings.Contains(timelyDetail["text"].(string), "正文") {
+		t.Fatalf("unexpected timely articleDetail payload: %+v", timelyDetail)
+	}
+	detailMap, ok := timelyDetail["detail"].(map[string]any)
+	if !ok || detailMap["sourcewebsitename"] != "Flash Source" {
+		t.Fatalf("unexpected timely articleDetail detail map: %+v", timelyDetail["detail"])
+	}
+
+	relatedReq := httptest.NewRequest(http.MethodPost, "/timelysearch/relatedArticles", strings.NewReader(url.Values{"articleId": {"301"}, "keywords": {"AI"}}.Encode()))
+	relatedReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	relatedRR := httptest.NewRecorder()
+	srv.handleSearchCompat(relatedRR, relatedReq, nil, "timely")
+	if relatedRR.Code != http.StatusOK {
+		t.Fatalf("expected timelysearch relatedArticles 200, got %d", relatedRR.Code)
+	}
+	var timelyRelated []map[string]any
+	if err := json.Unmarshal(relatedRR.Body.Bytes(), &timelyRelated); err != nil {
+		t.Fatalf("unmarshal timely relatedArticles: %v", err)
+	}
+	if len(timelyRelated) != 1 || timelyRelated[0]["article_public_id"] != "302" {
+		t.Fatalf("unexpected timely relatedArticles payload: %+v", timelyRelated)
 	}
 
 	infoReq := httptest.NewRequest(http.MethodGet, "/timelysearch/informationList?keyword=AI&page=2&pageSize=20&website_id=1", nil)

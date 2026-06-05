@@ -259,6 +259,18 @@ func (s *Server) handleSearchCompat(w http.ResponseWriter, r *http.Request, user
 			return
 		}
 		http.NotFound(w, r)
+	case "articleDetail":
+		if mode == "timely" {
+			s.handleLegacySearchArticleDetailData(w, r, user)
+			return
+		}
+		http.NotFound(w, r)
+	case "relatedArticles":
+		if mode == "timely" {
+			s.handleLegacySearchRelatedArticles(w, r, user)
+			return
+		}
+		http.NotFound(w, r)
 	case "templete":
 		if mode == "timely" {
 			s.handleTimelySearchTemplate(w, r, user)
@@ -762,6 +774,57 @@ func (s *Server) handleTimelySearchPage(w http.ResponseWriter, r *http.Request) 
 	body.WriteString(`">查看 data 接口结果</a></p></section>`)
 
 	_ = s.writeSimplePage(w, "timelysearch/result", "即时搜索", body.String())
+}
+
+func (s *Server) handleLegacySearchArticleDetailData(w http.ResponseWriter, r *http.Request, user any) {
+	articleID := strings.TrimSpace(firstNonEmpty(r.FormValue("articleId"), r.FormValue("articleid"), r.URL.Query().Get("articleId"), r.URL.Query().Get("articleid")))
+	if articleID == "" {
+		writeJSONText(w, map[string]any{"detail": "", "title": "", "text": ""})
+		return
+	}
+	item, err := s.fetchLegacyItemByID(articleID, userIDFromMap(user))
+	if err != nil {
+		writeJSONText(w, map[string]any{"detail": "", "title": "", "text": ""})
+		return
+	}
+	writeJSONText(w, legacySearchArticleDetailPayload(item))
+}
+
+func (s *Server) handleLegacySearchRelatedArticles(w http.ResponseWriter, r *http.Request, user any) {
+	articleID := strings.TrimSpace(firstNonEmpty(r.FormValue("articleId"), r.FormValue("articleid"), r.URL.Query().Get("articleId"), r.URL.Query().Get("articleid")))
+	userID := userIDFromMap(user)
+	var related []model.Item
+	if articleID != "" {
+		target := s.cfg.ContentURL + "/api/v1/articles/" + url.PathEscape(articleID) + "/related"
+		if userID > 0 {
+			target += "?user_id=" + strconv.FormatInt(userID, 10)
+		}
+		_ = s.getJSON(target, &related)
+	}
+	if len(related) == 0 {
+		keyword := strings.TrimSpace(firstNonEmpty(r.FormValue("keywords"), r.FormValue("keyword"), r.URL.Query().Get("keywords"), r.URL.Query().Get("keyword")))
+		if keyword != "" {
+			var result model.SearchResult
+			query := url.Values{}
+			query.Set("page", "1")
+			query.Set("page_size", "6")
+			query.Set("q", keyword)
+			if err := s.getJSON(s.cfg.ContentURL+"/api/v1/search/timely?"+query.Encode(), &result); err == nil {
+				related = result.Items
+			}
+		}
+	}
+	payload := make([]map[string]any, 0, len(related))
+	for _, item := range related {
+		payload = append(payload, map[string]any{
+			"article_public_id": strconv.FormatInt(item.ID, 10),
+			"title":             item.Title,
+			"content":           nonEmpty(item.Summary, item.Content),
+			"sourceName":        nonEmpty(item.FromText, item.SourceType, item.ExternalSourceHost),
+			"publishTime":       nonEmpty(item.PublishTime, item.PublishTimeText, item.CapturedAt.Format("2006-01-02 15:04:05")),
+		})
+	}
+	writeJSONText(w, payload)
 }
 
 func (s *Server) handleTimelySearchExecute(w http.ResponseWriter, r *http.Request) {
@@ -1453,6 +1516,62 @@ func legacySearchArticleFromItem(item model.Item, keyword string, detailTarget s
 		Abstract:          nonEmpty(item.Summary, item.Content),
 		PublishTimeText:   nonEmpty(item.PublishTimeText, item.PublishTime),
 		VideoJSON:         "",
+	}
+}
+
+func legacySearchArticleDetailPayload(item model.Item) map[string]any {
+	payload := legacyPayloadMap(item)
+	keywords := legacyJSONTextPayload(payload, "key_words")
+	if keywords == "" {
+		labels := splitLegacyLabels(strings.TrimSpace(item.TagFlags))
+		if len(labels) > 0 {
+			keywordMap := make(map[string]int, len(labels))
+			for _, label := range labels {
+				keywordMap[label] = 1
+			}
+			keywords = legacyJSONString(keywordMap)
+		}
+	}
+	ner := legacyJSONTextPayload(payload, "ner")
+	if ner == "" {
+		ner = "{}"
+	}
+	policy := legacyJSONTextPayload(payload, "policylable")
+	detail := map[string]any{
+		"article_public_id": strconv.FormatInt(item.ID, 10),
+		"author":            nonEmpty(legacyPayloadString(payload, "author"), item.FromText, item.ExternalSourceHost),
+		"sourcewebsitename": nonEmpty(legacyPayloadString(payload, "sourcewebsitename"), legacyPayloadString(payload, "source_name"), item.FromText, item.SourceType),
+		"publish_time":      nonEmpty(item.PublishTime, item.PublishTimeText, item.CapturedAt.Format("2006-01-02 15:04:05")),
+		"industrylable":     nonEmpty(legacyPayloadString(payload, "industrylable"), legacyPayloadString(payload, "industry")),
+		"eventlable":        nonEmpty(legacyPayloadString(payload, "eventlable"), strings.TrimSpace(item.TagFlags)),
+		"source_url":        nonEmpty(item.SourceURL, item.DetailURL),
+		"extend_string_one": legacyJSONTextPayload(payload, "extend_string_one"),
+		"key_words":         keywords,
+		"ner":               ner,
+		"policylable":       policy,
+	}
+	return map[string]any{
+		"title":       item.Title,
+		"text":        nonEmpty(item.Content, item.Summary),
+		"emotionText": legacySearchEmotionText(item),
+		"emotionChart": [][]any{
+			{"正面", 0},
+			{"中性", 1},
+			{"负面", 0},
+		},
+		"detail": detail,
+	}
+}
+
+func legacySearchEmotionText(item model.Item) string {
+	text := strings.ToLower(strings.TrimSpace(item.Title + " " + item.Summary + " " + item.Content))
+	switch legacyHotSentiment(text) {
+	case "positive":
+		return "正面"
+	case "negative":
+		return "负面"
+	default:
+		return "中性"
 	}
 }
 

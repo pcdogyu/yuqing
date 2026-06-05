@@ -324,7 +324,7 @@ $("#currentyear").text((new Date()).getFullYear());
     // 文章详情
     function articleDetail() {
         $.ajax({
-                url: ctxPath + 'monitor/articleDetail',
+                url: ctxPath + 'timelysearch/articleDetail',
                 type: 'post',
                 dataType: 'json',
                 data: {
@@ -777,10 +777,11 @@ $("#currentyear").text((new Date()).getFullYear());
     // 相关文章
     function relatedArticles(keywords) {
         $.ajax({
-            url: ctxPath + 'monitor/relatedArticles',
+            url: ctxPath + 'timelysearch/relatedArticles',
             type: 'post',
             dataType: 'json',
             data: {
+                articleId: articleId,
                 keywords: keywords
             },
             beforeSend: function () {
@@ -835,7 +836,7 @@ $("#currentyear").text((new Date()).getFullYear());
         let $event = $(event);
         var groupId = $event.attr("data-groupid");
         var projectId = $event.attr("data-index");
-        window.location.href = ctxPath + 'monitor?groupid=' + groupId + '&projectid=' + projectId;
+        window.location.href = ctxPath + 'timelysearch?groupid=' + groupId + '&projectid=' + projectId;
     }
 
     // 情感分析
