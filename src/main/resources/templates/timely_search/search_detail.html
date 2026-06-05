@@ -796,7 +796,7 @@ $("#currentyear").text((new Date()).getFullYear());
                         time = time.substring(0, 10);
                     }
                     var html = '<div class="article-content-list">' +
-                        '<a target="_blank" href="' + ctxPath + 'monitor/detail/' + list[i].article_public_id + '?menu=' + menu + '&groupid=' + groupId + '&projectid=' + projectId + '">' +
+                        '<a target="_blank" href="' + ctxPath + 'timelysearch/detail/' + list[i].article_public_id + '?return_to=' + encodeURIComponent(window.location.pathname + window.location.search) + '">' +
                         '<div class="font-medium">' + list[i].title + '</div>' +
                         '<div class="article-content-list-con text-over-2 font-13">' +
                         list[i].content +
