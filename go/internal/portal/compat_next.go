@@ -58,6 +58,14 @@ func (s *Server) handleDisplayBoard(w http.ResponseWriter, r *http.Request, user
 		returnTo = "/displayboard?" + values.Encode()
 	}
 	var b strings.Builder
+	b.WriteString(`<section class="hero"><div><h1>综合看板</h1><p>Go 版已接管旧 Java 大屏的核心数据能力，继续保留共享顶部菜单与统一门户体验。</p></div>`)
+	b.WriteString(`<div class="hero-meta"><span>更新时间：`)
+	if dashboard.UpdatedAt.IsZero() {
+		b.WriteString("暂无")
+	} else {
+		b.WriteString(dashboard.UpdatedAt.Format("2006-01-02 15:04"))
+	}
+	b.WriteString(`</span><span>总览页面：<a class="inline" href="/analysis">监测分析</a></span></div></section>`)
 	b.WriteString("<h1>综合看板</h1>")
 	b.WriteString(`<p><a href="/projects">项目中心</a> | <a href="/articles">文章中心</a> | <a href="/reports">报告中心</a> | <a href="/system">系统工作台</a></p>`)
 	b.WriteString(`<section><form class="inline" method="get"><select name="groupid"><option value="">全部项目组</option>`)
@@ -93,13 +101,74 @@ func (s *Server) handleDisplayBoard(w http.ResponseWriter, r *http.Request, user
 		b.WriteString(`">项目详情</a></p>`)
 	}
 	b.WriteString(`</section>`)
-	b.WriteString(`<section><h2>核心指标</h2><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px">`)
+	b.WriteString(`<section><h2>核心指标</h2><div class="metric-row">`)
 	b.WriteString(metricCard("文章数", strconv.Itoa(dashboard.Overview.ArticleCount)))
 	b.WriteString(metricCard("项目数", strconv.Itoa(dashboard.Overview.ProjectCount)))
 	b.WriteString(metricCard("报告数", strconv.Itoa(dashboard.Overview.ReportCount)))
 	b.WriteString(metricCard("活跃规则", strconv.Itoa(dashboard.Overview.AlertRuleCount)))
 	b.WriteString(`</div></section>`)
+	b.WriteString(`<section><div class="dashboard-grid"><div class="dashboard-col">`)
+	b.WriteString(`<div class="section-card"><h2>7日趋势</h2>`)
+	if len(dashboard.Trends) == 0 {
+		b.WriteString(`<p class="muted">暂无趋势数据</p>`)
+	} else {
+		maxTrend := maxDisplayBoardCount(dashboard.Trends)
+		b.WriteString(`<ul class="topic-list">`)
+		for _, trend := range dashboard.Trends {
+			b.WriteString(`<li><div class="topic-head"><strong>`)
+			b.WriteString(html.EscapeString(trend.Label))
+			b.WriteString(`</strong><span class="muted">`)
+			b.WriteString(strconv.Itoa(trend.Count))
+			b.WriteString(`</span></div><div class="progress"><i style="width:`)
+			b.WriteString(strconv.Itoa(displayBoardPercent(trend.Count, maxTrend)))
+			b.WriteString(`%"></i></div></li>`)
+		}
+		b.WriteString(`</ul>`)
+	}
+	b.WriteString(`</div>`)
+	b.WriteString(`<div class="section-card"><h2>来源分布</h2>`)
+	if len(dashboard.Sources) == 0 {
+		b.WriteString(`<p class="muted">暂无来源分布数据</p>`)
+	} else {
+		maxSource := maxDisplayBoardSourceCount(dashboard.Sources)
+		b.WriteString(`<ul class="topic-list">`)
+		for _, source := range dashboard.Sources {
+			b.WriteString(`<li><div class="topic-head"><strong>`)
+			b.WriteString(html.EscapeString(nonEmpty(source.SourceType, "未知来源")))
+			b.WriteString(`</strong><span class="muted">`)
+			b.WriteString(strconv.Itoa(source.Count))
+			b.WriteString(`</span></div><div class="progress"><i style="width:`)
+			b.WriteString(strconv.Itoa(displayBoardPercent(source.Count, maxSource)))
+			b.WriteString(`%"></i></div></li>`)
+		}
+		b.WriteString(`</ul>`)
+	}
+	b.WriteString(`</div></div><div class="dashboard-col">`)
 	synthesizeSections := buildDisplayBoardSynthSections(boardArticles.Items)
+	b.WriteString(`<section><h2>旧版主题区</h2><div class="grid">`)
+	for _, title := range []string{"政策热点", "财经热点", "36氪", "头条热点"} {
+		section := findDisplayBoardSection(synthesizeSections, title)
+		if section == nil {
+			continue
+		}
+		b.WriteString(`<div class="section-card"><h3>`)
+		b.WriteString(html.EscapeString(section.Title))
+		b.WriteString(`</h3><ul class="topic-list">`)
+		for _, item := range section.Items {
+			link := "/articles/" + strconv.FormatInt(item.ID, 10) + "?return_to=" + url.QueryEscape(returnTo)
+			b.WriteString(`<li><a class="inline" href="`)
+			b.WriteString(link)
+			b.WriteString(`">`)
+			b.WriteString(html.EscapeString(item.Title))
+			b.WriteString(`</a><div class="muted">`)
+			b.WriteString(html.EscapeString(item.SourceName))
+			b.WriteString(` · `)
+			b.WriteString(item.CapturedAt.Format("2006-01-02 15:04"))
+			b.WriteString(`</div></li>`)
+		}
+		b.WriteString(`</ul></div>`)
+	}
+	b.WriteString(`</div></section>`)
 	b.WriteString(`<section><h2>综合热点</h2><div class="grid">`)
 	for _, section := range synthesizeSections {
 		b.WriteString(`<div class="section-card"><h3>`)
@@ -139,7 +208,19 @@ func (s *Server) handleDisplayBoard(w http.ResponseWriter, r *http.Request, user
 	if len(hotspots) == 0 {
 		b.WriteString(`<tr><td colspan="3">暂无热点关键词</td></tr>`)
 	}
-	b.WriteString(`</table></section>`)
+	b.WriteString(`</table><div class="section-card"><h2>迁移说明</h2><div class="summary-strip"><div><strong>Go 门户接管</strong><span class="muted">统一菜单、统一鉴权、统一分析源</span></div><div><strong>旧版结构保留</strong><span class="muted">主题区 / 热点 / 项目入口仍保持熟悉布局</span></div><div><strong>可继续增强</strong><span class="muted">后续可把图表区拆成更强的可视化组件</span></div></div><p class="muted">旧 Java 大屏已逐步迁移到 Go 门户，当前页面继续保留原有信息架构，同时接入统一菜单头、统一鉴权与统一分析数据源。</p></div></div>`)
+	b.WriteString(`</div><div class="dashboard-col">`)
+	b.WriteString(`<section><h2>右栏摘要</h2><div class="summary-strip">`)
+	b.WriteString(`<div><strong>最新文章` + `</strong><span class="muted">`)
+	b.WriteString(strconv.Itoa(len(articles.Items)))
+	b.WriteString(` 条</span></div>`)
+	b.WriteString(`<div><strong>热点关键词</strong><span class="muted">`)
+	b.WriteString(strconv.Itoa(len(hotspots)))
+	b.WriteString(` 个</span></div>`)
+	b.WriteString(`<div><strong>项目入口</strong><span class="muted">`)
+	b.WriteString(strconv.Itoa(len(projects)))
+	b.WriteString(` 个</span></div>`)
+	b.WriteString(`</div></section>`)
 	b.WriteString(`<section><h2>最新文章</h2><table><tr><th>标题</th><th>来源</th><th>时间</th><th>入口</th></tr>`)
 	for _, item := range articles.Items {
 		link := "/articles/" + strconv.FormatInt(item.ID, 10) + "?return_to=" + url.QueryEscape(returnTo)
@@ -159,6 +240,22 @@ func (s *Server) handleDisplayBoard(w http.ResponseWriter, r *http.Request, user
 		b.WriteString(`<tr><td colspan="4">暂无文章</td></tr>`)
 	}
 	b.WriteString(`</table></section>`)
+	b.WriteString(`<section><h2>重点摘要</h2><div class="section-card">`)
+	if len(articles.Items) > 0 {
+		top := articles.Items[0]
+		b.WriteString(`<div class="kpi-chip">`)
+		b.WriteString(html.EscapeString(nonEmpty(top.FromText, top.SourceType)))
+		b.WriteString(`</div><h3>`)
+		b.WriteString(html.EscapeString(top.Title))
+		b.WriteString(`</h3><p class="muted">`)
+		b.WriteString(top.CapturedAt.Format("2006-01-02 15:04"))
+		b.WriteString(` · `)
+		b.WriteString(html.EscapeString(nonEmpty(top.Summary, "暂无摘要")))
+		b.WriteString(`</p>`)
+	} else {
+		b.WriteString(`<p class="muted">暂无重点摘要</p>`)
+	}
+	b.WriteString(`</div></section>`)
 	b.WriteString(`<section><h2>项目快捷入口</h2><table><tr><th>项目</th><th>项目组</th><th>关键词</th><th>入口</th></tr>`)
 	for _, project := range projects {
 		b.WriteString(`<tr><td><a class="inline" href="/projects/`)
@@ -230,7 +327,7 @@ func (s *Server) handleDisplayBoard(w http.ResponseWriter, r *http.Request, user
 		b.WriteString(strconv.Itoa(run.InsertedCount))
 		b.WriteString(`</td></tr>`)
 	}
-	b.WriteString(`</table></div></div></section>`)
+	b.WriteString(`</table></div></div></section></div></section>`)
 	_ = s.writeSimplePage(w, "dashboard", "综合看板", b.String())
 }
 
@@ -252,6 +349,49 @@ func metricCard(label, value string) string {
 	b.WriteString(html.EscapeString(value))
 	b.WriteString(`</strong></div>`)
 	return b.String()
+}
+
+func maxDisplayBoardCount(points []model.TrendPoint) int {
+	maxValue := 0
+	for _, point := range points {
+		if point.Count > maxValue {
+			maxValue = point.Count
+		}
+	}
+	if maxValue <= 0 {
+		return 1
+	}
+	return maxValue
+}
+
+func maxDisplayBoardSourceCount(points []model.SourceBreakdown) int {
+	maxValue := 0
+	for _, point := range points {
+		if point.Count > maxValue {
+			maxValue = point.Count
+		}
+	}
+	if maxValue <= 0 {
+		return 1
+	}
+	return maxValue
+}
+
+func displayBoardPercent(value, maxValue int) int {
+	if maxValue <= 0 {
+		return 0
+	}
+	if value < 0 {
+		value = 0
+	}
+	percent := int(float64(value) / float64(maxValue) * 100)
+	if percent < 1 && value > 0 {
+		percent = 1
+	}
+	if percent > 100 {
+		percent = 100
+	}
+	return percent
 }
 
 func displayBoardProjectID(item model.Item, projects []model.Project) int64 {
@@ -374,6 +514,15 @@ func displayBoardItemSourceName(item model.Item) string {
 		return host
 	}
 	return "综合"
+}
+
+func findDisplayBoardSection(sections []displayBoardTopicSection, title string) *displayBoardTopicSection {
+	for i := range sections {
+		if sections[i].Title == title {
+			return &sections[i]
+		}
+	}
+	return nil
 }
 
 func (s *Server) handleSystemProductManualOnline(w http.ResponseWriter, r *http.Request, _ any) {

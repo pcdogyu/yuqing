@@ -398,6 +398,12 @@ func TestDisplayBoardCompat(t *testing.T) {
 	if !strings.Contains(body, "综合看板") {
 		t.Fatalf("expected page title, got %s", body)
 	}
+	if !strings.Contains(body, "旧版主题区") || !strings.Contains(body, "头条热点") {
+		t.Fatalf("expected legacy themed sections on board, got %s", body)
+	}
+	if !strings.Contains(body, "summary-strip") && !strings.Contains(body, "核心指标") {
+		t.Fatalf("expected dashboard layout cues on board, got %s", body)
+	}
 	if !strings.Contains(body, "综合热点") || !strings.Contains(body, "微博热点") || !strings.Contains(body, "政策热点") {
 		t.Fatalf("expected synthesize sections on board, got %s", body)
 	}
