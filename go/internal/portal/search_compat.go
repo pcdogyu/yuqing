@@ -829,12 +829,15 @@ func (s *Server) handleLegacySearchRelatedArticles(w http.ResponseWriter, r *htt
 	}
 	payload := make([]map[string]any, 0, len(related))
 	for _, item := range related {
+		detailTarget := s.legacySpecialDetailTarget("timely", item, "")
 		payload = append(payload, map[string]any{
 			"article_public_id": strconv.FormatInt(item.ID, 10),
 			"title":             item.Title,
 			"content":           nonEmpty(item.Summary, item.Content),
 			"sourceName":        nonEmpty(item.FromText, item.SourceType, item.ExternalSourceHost),
 			"publishTime":       nonEmpty(item.PublishTime, item.PublishTimeText, item.CapturedAt.Format("2006-01-02 15:04:05")),
+			"url":               detailTarget,
+			"detailUrl":         detailTarget,
 		})
 	}
 	writeJSONText(w, payload)

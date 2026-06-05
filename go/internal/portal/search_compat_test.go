@@ -976,6 +976,9 @@ func TestTimelySearchPageExecuteAndDataFlow(t *testing.T) {
 	if len(timelyRelated) != 1 || timelyRelated[0]["article_public_id"] != "302" {
 		t.Fatalf("unexpected timely relatedArticles payload: %+v", timelyRelated)
 	}
+	if legacyAnyString(timelyRelated[0]["detailUrl"]) == "" || legacyAnyString(timelyRelated[0]["url"]) == "" {
+		t.Fatalf("expected timely relatedArticles to expose detailUrl and url, got %+v", timelyRelated[0])
+	}
 
 	infoReq := httptest.NewRequest(http.MethodGet, "/timelysearch/informationList?keyword=AI&page=2&pageSize=20&website_id=1", nil)
 	infoRR := httptest.NewRecorder()

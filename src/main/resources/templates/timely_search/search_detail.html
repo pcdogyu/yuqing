@@ -796,8 +796,15 @@ $("#currentyear").text((new Date()).getFullYear());
                     if (time.length > 10) {
                         time = time.substring(0, 10);
                     }
+                    var detailUrl = list[i].detailUrl || list[i].url || (ctxPath + 'timelysearch/detail/' + list[i].article_public_id);
+                    var returnTo = encodeURIComponent(window.location.pathname + window.location.search);
+                    if (detailUrl.indexOf('return_to=') === -1) {
+                        detailUrl += (detailUrl.indexOf('?') === -1 ? '?' : '&') + 'return_to=' + returnTo;
+                    } else {
+                        detailUrl = detailUrl.replace(/return_to=[^&]*/, 'return_to=' + returnTo);
+                    }
                     var html = '<div class="article-content-list">' +
-                        '<a target="_blank" href="' + ctxPath + 'timelysearch/detail/' + list[i].article_public_id + '?return_to=' + encodeURIComponent(window.location.pathname + window.location.search) + '">' +
+                        '<a target="_blank" href="' + detailUrl + '">' +
                         '<div class="font-medium">' + list[i].title + '</div>' +
                         '<div class="article-content-list-con text-over-2 font-13">' +
                         list[i].content +
