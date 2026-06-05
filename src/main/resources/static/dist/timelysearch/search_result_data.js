@@ -76,6 +76,54 @@ function timelyDetailHref(path, query) {
 	return ctx + path + query + '&return_to=' + returnTo;
 }
 
+function timelyResultHref(query) {
+	var params = {};
+	if (typeof menuStyle !== 'undefined' && menuStyle !== null && menuStyle !== '') {
+		params.menuStyle = menuStyle;
+	}
+	if (typeof full_poly !== 'undefined' && full_poly !== null && full_poly !== '') {
+		params.full_poly = full_poly;
+	}
+	if (typeof full_type !== 'undefined' && full_type !== null && full_type !== '') {
+		params.fulltype = full_type;
+	}
+	if (typeof pageSize !== 'undefined' && pageSize !== null && pageSize !== '') {
+		params.pageSize = pageSize;
+	}
+	if (typeof stype !== 'undefined' && stype !== null && stype !== '') {
+		params.stype = stype;
+	}
+	if (typeof website_id !== 'undefined' && website_id !== null && website_id !== '' && website_id !== 0) {
+		params.website_id = website_id;
+	}
+	if (typeof pageNoData !== 'undefined' && pageNoData !== null && pageNoData !== '' && pageNoData !== 0) {
+		params.pageNoData = pageNoData;
+	}
+	if (typeof onlyid !== 'undefined' && onlyid !== null && onlyid !== '') {
+		params.only_id = onlyid;
+	}
+	if (query) {
+		for (const key in query) {
+			if (!Object.prototype.hasOwnProperty.call(query, key)) {
+				continue;
+			}
+			const value = query[key];
+			if (typeof value === 'undefined' || value === null || value === '') {
+				continue;
+			}
+			params[key] = value;
+		}
+	}
+	var queryParts = [];
+	for (const key in params) {
+		if (!Object.prototype.hasOwnProperty.call(params, key)) {
+			continue;
+		}
+		queryParts.push(encodeURIComponent(key) + "=" + encodeURIComponent(params[key]));
+	}
+	return ctx + 'timelysearch/result?' + queryParts.join("&");
+}
+
 /**
  * 装载 一级分类
  * 
@@ -224,18 +272,10 @@ function searchSetting(params) {
 	})
 	$("#confirm").click(
 			function() {
-				let params = ""
-				if (menuStyle == 0) {
-					params = "?" + "searchword=" + $('#searchWord').val()
-							+ "&menuStyle=" + menuStyle + "&full_poly="
-							+ full_poly + "&fulltype=" + full_type
-							+ "&pageSize=" + pageSize + "&page=1" + "&only_id=" + onlyid;
-				} else {
-					params = "?" + "searchword=" + $('#searchWord').val()
-							+ "&menuStyle=" + menuStyle + "&fulltype="
-							+ full_type + "&pageSize=" + pageSize + "&page=1";
-				}
-				window.location.href = ctx + 'timelysearch/result' + params;
+				window.location.href = timelyResultHref({
+					searchword : $('#searchWord').val(),
+					page : 1
+				});
 			})
 }
 
