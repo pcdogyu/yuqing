@@ -14,6 +14,24 @@ let currentPage = pageNoData;
 
 gettempleteinfo(stype, website_id);
 
+function syncTimelyResultUrl(stypeValue, websiteIDValue, pageNumValue, keywordValue) {
+	if (typeof buildTimelyResultUrl !== 'function') {
+		return;
+	}
+	currentPage = pageNumValue;
+	stype = stypeValue;
+	website_id = websiteIDValue;
+	pageNoData = pageNumValue;
+	setUrl(buildTimelyResultUrl(stypeValue, 1, {
+		website_id: websiteIDValue,
+		pageNoData: pageNumValue,
+		keyword: keywordValue,
+		searchword: keywordValue,
+		fulltype: stypeValue,
+		stype: stypeValue
+	}));
+}
+
 
 
 
@@ -387,10 +405,7 @@ function loadContent(stype, keywords, sexdata, pageNum) {
 			$("#monitor-content").html(resultresultdata);
 		}
 	});
-	let url = "result?website_id=" + sexdata + "&pageNoData=" + pageNum + "&keyword=" + keywords + "&stype=" + stype +
-		"&fulltype=" + stype;
-		console.info("11111111"+url);
-	setUrl(url);
+	syncTimelyResultUrl(stype, sexdata, pageNum, keywords);
 }
 
 
@@ -444,10 +459,7 @@ $('body').on(
 
 		pageHelper(1, totalPage);
 
-		let url = "result?website_id=" + website_id + "&pageNoData=1&keyword=" + keywords +
-			"&stype=" + stype + "&fulltype=" + stype;
-			console.info("3333333"+url);
-		setUrl(url);
+		syncTimelyResultUrl(stype, website_id, 1, keywords);
 	})
 
 
@@ -580,10 +592,7 @@ function gettempleteinfo2(fulltype, website_id) {
 			debugger;
 			loadContent(fulltype, keywords, website_id, 1);
 			
-			let url = "result?website_id=" + website_id + "&pageNoData=1&keyword=" + keywords +
-				"&stype=" + fulltype + "&fulltype=" + fulltype;
-				console.info("22222222222"+url);
-			setUrl(url);
+			syncTimelyResultUrl(fulltype, website_id, 1, keywords);
 			
 			
 			
