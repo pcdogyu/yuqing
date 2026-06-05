@@ -68,6 +68,14 @@ function ajax(type, url, data, funcname) {
 	});
 }
 
+function timelyDetailHref(path, query) {
+	var returnTo = encodeURIComponent(window.location.pathname + window.location.search);
+	if (!query) {
+		return ctx + path + '?return_to=' + returnTo;
+	}
+	return ctx + path + query + '&return_to=' + returnTo;
+}
+
 /**
  * 装载 一级分类
  * 
@@ -300,11 +308,11 @@ function installLawyer(res){
 				  //获取主机地址，如： http://localhost:8083
 
 				  var localhostPaht=curWwwPath.substring(0,pos);
-				let detailUrl = localhostPaht+'/timelysearch/lawyerDetail/'
-					+ list1.article_public_id + '?fulltype=' + full_type
+				let detailUrl = timelyDetailHref('timelysearch/lawyerDetail/'
+					+ list1.article_public_id, '?fulltype=' + full_type
 					+ '&menuStyle=' + menuStyle + '&fullpoly=' + full_poly
 					+ '&onlyid=' + onlyid + '&searchWord='
-					+ $('#searchWord').val()
+					+ $('#searchWord').val())
 				let html='<div class="feed-activity-list" id="list">'+
 							'<div class="feed-element">'+
 							'<div class="search-result" style="display: flex;">'+
@@ -381,11 +389,11 @@ function installExecutionPerson(res){
 				  //获取主机地址，如： http://localhost:8083
 
 				  var localhostPaht=curWwwPath.substring(0,pos);
-				let detailUrl = localhostPaht+'/timelysearch/executionPersonDetail/'
-					+ list1.article_public_id + '?fulltype=' + full_type
+				let detailUrl = timelyDetailHref('timelysearch/executionPersonDetail/'
+					+ list1.article_public_id, '?fulltype=' + full_type
 					+ '&menuStyle=' + menuStyle + '&fullpoly=' + full_poly
 					+ '&onlyid=' + onlyid + '&searchWord='
-					+ $('#searchWord').val()
+					+ $('#searchWord').val())
 				let html='<div class="feed-activity-list" id="list">'+
 								'<div class="feed-element">'+
 				                '<div class="search-result">'+
@@ -454,11 +462,11 @@ function installProfessor(res){
 				  //获取主机地址，如： http://localhost:8083
 
 				  var localhostPaht=curWwwPath.substring(0,pos);
-				let detailUrl = localhostPaht+'/timelysearch/professorDetail/'
-					+ list1.article_public_id + '?fulltype=' + full_type
+				let detailUrl = timelyDetailHref('timelysearch/professorDetail/'
+					+ list1.article_public_id, '?fulltype=' + full_type
 					+ '&menuStyle=' + menuStyle + '&fullpoly=' + full_poly
 					+ '&onlyid=' + onlyid + '&searchWord='
-					+ $('#searchWord').val()
+					+ $('#searchWord').val())
 				let arr=JSON.parse(list1.field)
 				let fields=new String()
 				for(let j=0;j<arr.length;j++){
@@ -529,11 +537,11 @@ function installDoctor(res){
 				  //获取主机地址，如： http://localhost:8083
 
 				  var localhostPaht=curWwwPath.substring(0,pos);
-				let detailUrl = localhostPaht+'/timelysearch/doctorDetail/'
-					+ list1.article_public_id + '?fulltype=' + full_type
+				let detailUrl = timelyDetailHref('timelysearch/doctorDetail/'
+					+ list1.article_public_id, '?fulltype=' + full_type
 					+ '&menuStyle=' + menuStyle + '&fullpoly=' + full_poly
 					+ '&onlyid=' + onlyid + '&searchWord='
-					+ $('#searchWord').val()
+					+ $('#searchWord').val())
 				var adept = list1.adept;
         		if (adept && adept.length > 100) {
         			adept = adept.substring(0, 100) + '......';
@@ -998,10 +1006,9 @@ function installAnnouncement(res) {
 						+ data[i].codename
 						+ '</div>'
 						+ '       <div class="text-over" style="width: 50%"><a target="_blank" href="'
-						+ ctx
-						+ 'timelysearch/reportdetail/'
+						+ timelyDetailHref('timelysearch/reportdetail/'
 						+ data[i].article_public_id
-						+ '/announcement?fulltype=28'
+						+ '/announcement', '?fulltype=28'
 						+ '&menuStyle='
 						+ menuStyle
 						+ '&fullpoly='
@@ -1009,7 +1016,7 @@ function installAnnouncement(res) {
 						+ '&onlyid='
 						+ onlyid
 						+ '&searchWord='
-						+ $('#searchWord').val()
+						+ $('#searchWord').val())
 						+ '">'
 						+ data[i].title
 						+ '</a></div>'
@@ -1090,10 +1097,9 @@ function installReport(res) {
 						+ gucode[0]
 						+ '</div>'
 						+ '       <div class="text-over" style="width: 50%;min-width: 300px;"><a target="_blank" href="'
-						+ ctx
-						+ 'timelysearch/reportdetail/'
+						+ timelyDetailHref('timelysearch/reportdetail/'
 						+ data[i].article_public_id
-						+ '/report?fulltype=35'
+						+ '/report', '?fulltype=35'
 						+ '&menuStyle='
 						+ menuStyle
 						+ '&fullpoly='
@@ -1101,7 +1107,7 @@ function installReport(res) {
 						+ '&onlyid='
 						+ onlyid
 						+ '&searchWord='
-						+ $('#searchWord').val()
+						+ $('#searchWord').val())
 						+ '">'
 						+ data[i].title
 						+ '</a></div>'
@@ -1169,10 +1175,8 @@ function installBidding(res) {
 						+ data[i].article_public_id
 						+ '">'
 						+ '       <div class="text-over" style="width: 50%;min-width: 100px;"><a target="_blank" href="'
-						+ ctx
-						+ 'timelysearch/biddingdetail/'
-						+ article_public_id
-						+ '?fulltype=37'
+						+ timelyDetailHref('timelysearch/biddingdetail/'
+						+ article_public_id, '?fulltype=37'
 						+ '&menuStyle='
 						+ menuStyle
 						+ '&fullpoly='
@@ -1180,7 +1184,7 @@ function installBidding(res) {
 						+ '&onlyid='
 						+ onlyid
 						+ '&searchWord='
-						+ $('#searchWord').val()
+						+ $('#searchWord').val())
 						+ '">'
 						+ title
 						+ '</a></div>'
@@ -1274,10 +1278,8 @@ function installInvite(res) {
 						+ record_id
 						+ '">'
 						+ '       <div class="text-over" style="width: 200px;min-width: 200px;"><a target="_blank" href="'
-						+ ctx
-						+ 'timelysearch/inviteDetails/'
-						+ record_id
-						+ '?fulltype=36'
+						+ timelyDetailHref('timelysearch/inviteDetails/'
+						+ record_id, '?fulltype=36'
 						+ '&menuStyle='
 						+ menuStyle
 						+ '&fullpoly='
@@ -1285,7 +1287,7 @@ function installInvite(res) {
 						+ '&onlyid='
 						+ onlyid
 						+ '&searchWord='
-						+ $('#searchWord').val()
+						+ $('#searchWord').val())
 						+ '">'
 						+ invite_title
 						+ '</a></div>'
@@ -1352,10 +1354,8 @@ function installCompany(res) {
 						+ data[i].article_public_id
 						+ '">'
 						+ '       <div class="text-over" style="width: 50%;min-width: 200px;"><a target="_blank" href="'
-						+ ctx
-						+ 'timelysearch/companyDetail/'
-						+ data[i].article_public_id
-						+ '?fulltype=39'
+						+ timelyDetailHref('timelysearch/companyDetail/'
+						+ data[i].article_public_id, '?fulltype=39'
 						+ '&menuStyle='
 						+ menuStyle
 						+ '&fullpoly='
@@ -1363,7 +1363,7 @@ function installCompany(res) {
 						+ '&onlyid='
 						+ onlyid
 						+ '&searchWord='
-						+ $('#searchWord').val()
+						+ $('#searchWord').val())
 						+ '">'
 						+ data[i].name
 						+ '</a></div>'
@@ -1540,10 +1540,8 @@ function installJudgment(res) {
 				var html = '<div class="feed-element">'
 						+ '<div class="search-result">'
 						+ '<a target="_blank" class="link font-bold" href="'
-						+ ctx
-						+ 'timelysearch/judgmentDetail/'
-						+ data[i].article_public_id
-						+ '?fulltype=42'
+						+ timelyDetailHref('timelysearch/judgmentDetail/'
+						+ data[i].article_public_id, '?fulltype=42'
 						+ '&menuStyle='
 						+ menuStyle
 						+ '&fullpoly='
@@ -1551,7 +1549,7 @@ function installJudgment(res) {
 						+ '&onlyid='
 						+ onlyid
 						+ '&searchWord='
-						+ $('#searchWord').val()
+						+ $('#searchWord').val())
 						+ '">'
 						+ data[i].title
 						+ '</a>'
@@ -1646,11 +1644,11 @@ function installKnowLedge(res) {
 				if (openNumber == undefined || openNumber == "") {
 					openNumber = "暂无数据";
 				}
-				let detailUrl = ctx + 'timelysearch/knowLedgeDetail/'
-						+ article_public_id + '?fulltype=' + full_type
+				let detailUrl = timelyDetailHref('timelysearch/knowLedgeDetail/'
+						+ article_public_id, '?fulltype=' + full_type
 						+ '&menuStyle=' + menuStyle + '&fullpoly=' + full_poly
 						+ '&onlyid=' + onlyid + '&searchWord='
-						+ $('#searchWord').val()
+						+ $('#searchWord').val())
 
 				var conhtml = '<div class="feed-element" style="overflow: hidden"><div class="search-result" ><div style="padding:0 0 0 20px;">'
 						+ '<h5><a target="_blank" class="link font-bold" href="'
@@ -1754,10 +1752,8 @@ function installInvestment(res) {
 						+ data[i].companyLogo
 						+ '"></div>'
 						+ '       <div class="text-over" style="width: 20%;min-width: 150px;"><a target="_blank" href="'
-						+ ctx
-						+ 'timelysearch/investmentDetail/'
-						+ data[i].article_public_id
-						+ '?fulltype=40'
+						+ timelyDetailHref('timelysearch/investmentDetail/'
+						+ data[i].article_public_id, '?fulltype=40'
 						+ '&menuStyle='
 						+ menuStyle
 						+ '&fullpoly='
@@ -1765,7 +1761,7 @@ function installInvestment(res) {
 						+ '&onlyid='
 						+ onlyid
 						+ '&searchWord='
-						+ $('#searchWord').val()
+						+ $('#searchWord').val())
 						+ '">'
 						+ data[i].companyName
 						+ '</a></div>'
@@ -1908,10 +1904,8 @@ function installThesisn(res) {
 				var html = '<div class="feed-element">'
 						+ ' <div class="search-result">'
 						+ '<a target="_blank" class="link font-bold" href="'
-						+ ctx
-						+ 'timelysearch/thesisnDetail/'
-						+ data[i].article_public_id
-						+ '?fulltype=45'
+						+ timelyDetailHref('timelysearch/thesisnDetail/'
+						+ data[i].article_public_id, '?fulltype=45'
 						+ '&menuStyle='
 						+ menuStyle
 						+ '&fullpoly='
@@ -1919,7 +1913,7 @@ function installThesisn(res) {
 						+ '&onlyid='
 						+ onlyid
 						+ '&searchWord='
-						+ $('#searchWord').val()
+						+ $('#searchWord').val())
 						+ '">'
 						+ data[i].title
 						+ '</a>'
@@ -2026,10 +2020,8 @@ function installArticle3(res) {
 							+ '" id="check2"><span></span></div>';
 					let strContentStart = '<div class="monitor-right">';
 					let strTitle = '<div class="monitor-content-title"><a target="_blank" href="'
-							+ ctx
-							+ 'timelysearch/detail/'
-							+ article_public_id
-							+ '?fulltype='
+							+ timelyDetailHref('timelysearch/detail/'
+							+ article_public_id, '?fulltype='
 							+ full_type
 							+ '&menuStyle='
 							+ menuStyle
@@ -2040,7 +2032,7 @@ function installArticle3(res) {
 							+ '&publish_time='
 							+ pub_data
 							+ '&searchWord='
-							+ $('#searchWord').val()
+							+ $('#searchWord').val())
 							+ '" class="link font-bold"><span class="content-logo" style="background: url('
 							+ websitelogo
 							+ ');"></span>'
@@ -2182,10 +2174,8 @@ function installArticle3(res) {
 								websitelogoStr = '';
 							}
 							let strTitle = '<div class="monitor-content-title"><a target="_blank" href="'
-									+ ctx
-									+ 'timelysearch/detail/'
-									+ article_public_id
-									+ '?fulltype='
+									+ timelyDetailHref('timelysearch/detail/'
+									+ article_public_id, '?fulltype='
 									+ full_type
 									+ '&menuStyle='
 									+ menuStyle
@@ -2196,7 +2186,7 @@ function installArticle3(res) {
 									+ '&publish_time='
 									+ pub_data
 									+ '&searchWord='
-									+ $('#searchWord').val()
+									+ $('#searchWord').val())
 									+ '"  class="link font-bold">'
 									+ websitelogoStr
 									+ title
@@ -2356,10 +2346,8 @@ function installArticle3(res) {
 								websitelogoStr = '';
 							}
 							let strTitle = '<div class="monitor-content-title"><a target="_blank" href="'
-									+ ctx
-									+ 'timelysearch/detail/'
-									+ article_public_id
-									+ '?fulltype='
+									+ timelyDetailHref('timelysearch/detail/'
+									+ article_public_id, '?fulltype='
 									+ full_type
 									+ '&menuStyle='
 									+ menuStyle
@@ -2368,7 +2356,7 @@ function installArticle3(res) {
 									+ '&publish_time='
 									+ pub_data
 									+ '&searchWord='
-									+ $('#searchWord').val()
+									+ $('#searchWord').val())
 									+ '"  class="link font-bold">'
 									+ websitelogoStr
 									+ title
@@ -2515,10 +2503,8 @@ function installArticle3(res) {
 							websitelogoStr = '';
 						}
 						let strTitle = '<div class="monitor-content-title"><a target="_blank" href="'
-								+ ctx
-								+ 'timelysearch/detail/'
-								+ article_public_id
-								+ '?fulltype='
+								+ timelyDetailHref('timelysearch/detail/'
+								+ article_public_id, '?fulltype='
 								+ full_type
 								+ '&menuStyle='
 								+ menuStyle
@@ -2527,7 +2513,7 @@ function installArticle3(res) {
 								+ '&publish_time='
 								+ pub_data
 								+ '&searchWord='
-								+ $('#searchWord').val()
+								+ $('#searchWord').val())
 								+ '"  class="link font-bold">'
 								+ websitelogoStr
 								+ title
