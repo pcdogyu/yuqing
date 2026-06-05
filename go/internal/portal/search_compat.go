@@ -379,8 +379,9 @@ func (s *Server) handleLegacySearchInformationList(w http.ResponseWriter, r *htt
 	}
 	articles := make([]legacySearchArticle, 0, len(result.Items))
 	articleIDs := make([]string, 0, len(result.Items))
+	returnPath := legacySearchResultPath(mode, r)
 	for _, item := range result.Items {
-		articles = append(articles, legacySearchArticleFromItem(item, filter.Keyword))
+		articles = append(articles, legacySearchArticleFromItem(item, filter.Keyword, s.legacySpecialDetailTarget(mode, item, returnPath)))
 		articleIDs = append(articleIDs, strconv.FormatInt(item.ID, 10))
 	}
 	totalPage := 1
@@ -564,15 +565,18 @@ func (s *Server) handleTimelySearchData(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	items := make([]map[string]any, 0, len(result.Items))
+	returnPath := legacySearchResultPath("timely", r)
 	for _, item := range result.Items {
+		detailTarget := s.legacySpecialDetailTarget("timely", item, returnPath)
 		items = append(items, map[string]any{
 			"title":        item.Title,
 			"abstract":     nonEmpty(item.Summary, item.Content),
-			"url":          nonEmpty(item.SourceURL, item.DetailURL, "/articles/"+strconv.FormatInt(item.ID, 10)),
+			"url":          detailTarget,
 			"publish_time": nonEmpty(item.PublishTimeText, item.PublishTime),
 			"source":       nonEmpty(item.FromText, item.SourceType),
 			"videojson":    "",
 			"author":       item.FromText,
+			"detailUrl":    detailTarget,
 		})
 	}
 	body, _ := json.Marshal(items)
@@ -1412,7 +1416,7 @@ func legacySearchPolyName(id int) string {
 	return ""
 }
 
-func legacySearchArticleFromItem(item model.Item, keyword string) legacySearchArticle {
+func legacySearchArticleFromItem(item model.Item, keyword string, detailTarget string) legacySearchArticle {
 	sourceType := strings.TrimSpace(item.SourceType)
 	classify := 1
 	if strings.Contains(strings.ToLower(sourceType), "weibo") || strings.Contains(strings.ToLower(sourceType), "video") {
@@ -1445,7 +1449,7 @@ func legacySearchArticleFromItem(item model.Item, keyword string) legacySearchAr
 		Num:               0,
 		SourceURL:         item.SourceURL,
 		Source:            sourceType,
-		Url:               nonEmpty(item.SourceURL, item.DetailURL, "/articles/"+strconv.FormatInt(item.ID, 10)),
+		Url:               nonEmpty(detailTarget, item.SourceURL, item.DetailURL, "/articles/"+strconv.FormatInt(item.ID, 10)),
 		Abstract:          nonEmpty(item.Summary, item.Content),
 		PublishTimeText:   nonEmpty(item.PublishTimeText, item.PublishTime),
 		VideoJSON:         "",

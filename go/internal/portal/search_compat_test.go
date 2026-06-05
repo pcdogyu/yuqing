@@ -746,6 +746,9 @@ func TestTimelySearchPageExecuteAndDataFlow(t *testing.T) {
 	if !strings.Contains(dataRR.Body.String(), `AI 行业快报`) || !strings.Contains(dataRR.Body.String(), `Flash Source`) {
 		t.Fatalf("unexpected timelysearch data body: %s", dataRR.Body.String())
 	}
+	if !strings.Contains(dataRR.Body.String(), `/timelysearch/reportdetail/301`) {
+		t.Fatalf("expected timelysearch data body to contain timely detail route, got %s", dataRR.Body.String())
+	}
 
 	form := url.Values{}
 	form.Set("website_id", "1")
@@ -776,5 +779,23 @@ func TestTimelySearchPageExecuteAndDataFlow(t *testing.T) {
 	detailBody := detailRR.Body.String()
 	if !strings.Contains(detailBody, "公告研报详情") || !strings.Contains(detailBody, "返回搜索结果") || !strings.Contains(detailBody, "/timelysearch/result?keyword=AI") {
 		t.Fatalf("unexpected timely detail page: %s", detailBody)
+	}
+
+	infoReq := httptest.NewRequest(http.MethodGet, "/timelysearch/informationList?keyword=AI&page=2&pageSize=20&website_id=1", nil)
+	infoRR := httptest.NewRecorder()
+	srv.handleSearchCompat(infoRR, infoReq, nil, "timely")
+	if infoRR.Code != http.StatusOK {
+		t.Fatalf("expected timelysearch informationList 200, got %d", infoRR.Code)
+	}
+	var infoEnvelope struct {
+		Data struct {
+			Data []legacySearchArticle `json:"data"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(infoRR.Body.Bytes(), &infoEnvelope); err != nil {
+		t.Fatalf("unmarshal timely informationList: %v", err)
+	}
+	if len(infoEnvelope.Data.Data) != 1 || !strings.Contains(infoEnvelope.Data.Data[0].Url, "/timelysearch/reportdetail/301") {
+		t.Fatalf("unexpected timely informationList payload: %+v", infoEnvelope)
 	}
 }
