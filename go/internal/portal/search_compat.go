@@ -130,19 +130,19 @@ func (s *Server) handleSearchCompat(w http.ResponseWriter, r *http.Request, user
 	case "search":
 		s.handleLegacySearchHistory(w, r, user)
 	case "listFullTypeByFirst":
-		apiutil.WriteJSON(w, http.StatusOK, "ok", legacySearchTypesForMode(mode))
+		writeJSONText(w, legacySearchTypesForMode(mode))
 	case "listFullTypeBySecond":
 		typeOneID, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("type_one_id")))
-		apiutil.WriteJSON(w, http.StatusOK, "ok", legacySearchTypesBySecond(typeOneID))
+		writeJSONText(w, legacySearchTypesBySecond(typeOneID))
 	case "listFullTypeByThird":
 		typeTwoID, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("type_two_id")))
-		apiutil.WriteJSON(w, http.StatusOK, "ok", legacySearchTypesByThird(typeTwoID))
+		writeJSONText(w, legacySearchTypesByThird(typeTwoID))
 	case "listFullTypeOneByIdList":
-		apiutil.WriteJSON(w, http.StatusOK, "ok", legacySearchTypesByIDs(strings.TrimSpace(r.URL.Query().Get("id"))))
+		writeJSONText(w, legacySearchTypesByIDs(strings.TrimSpace(r.URL.Query().Get("id"))))
 	case "listFullPolymerization":
-		apiutil.WriteJSON(w, http.StatusOK, "ok", legacySearchPolymerizations)
+		writeJSONText(w, legacySearchPolymerizations)
 	case "getBreadCrumbs":
-		apiutil.WriteJSON(w, http.StatusOK, "ok", legacySearchBreadcrumbs(r))
+		writeJSONText(w, legacySearchBreadcrumbs(r))
 	case "hotList":
 		if mode == "full" {
 			s.handleLegacyHotList(w, r, user)
@@ -169,13 +169,61 @@ func (s *Server) handleSearchCompat(w http.ResponseWriter, r *http.Request, user
 		http.NotFound(w, r)
 	case "announcementrtype":
 		if mode == "full" {
-			apiutil.WriteJSON(w, http.StatusOK, "ok", legacySearchCategoryOptions(r, "announcement"))
+			writeJSONText(w, legacySearchCategoryOptions(r, "announcement"))
 			return
 		}
 		http.NotFound(w, r)
 	case "reportIndustry":
 		if mode == "full" {
-			apiutil.WriteJSON(w, http.StatusOK, "ok", legacySearchCategoryOptions(r, "report"))
+			writeJSONText(w, legacySearchCategoryOptions(r, "report"))
+			return
+		}
+		http.NotFound(w, r)
+	case "lawyerList", "executionPersonList", "professorList", "doctorList", "biddingList", "inviteList", "companyList", "judgmentList", "knowLedgeList", "investmentList", "baiduKnowsList", "thesisnList":
+		if mode == "full" {
+			s.handleLegacySpecialList(w, r, user, path)
+			return
+		}
+		http.NotFound(w, r)
+	case "lawyerDetailData", "executionPersonDetailData", "professorDetailData", "doctorDetailData":
+		if mode == "full" {
+			s.handleLegacySpecialDetailData(w, r, path)
+			return
+		}
+		http.NotFound(w, r)
+	case "companyIndustry":
+		if mode == "full" {
+			s.handleLegacySpecialCategoryOptions(w, r, "company")
+			return
+		}
+		http.NotFound(w, r)
+	case "judgmentCaseType":
+		if mode == "full" {
+			s.handleLegacySpecialCategoryOptions(w, r, "judgment")
+			return
+		}
+		http.NotFound(w, r)
+	case "knowLedgeCaseType":
+		if mode == "full" {
+			s.handleLegacySpecialCategoryOptions(w, r, "knowledge")
+			return
+		}
+		http.NotFound(w, r)
+	case "investmentType":
+		if mode == "full" {
+			s.handleLegacySpecialCategoryOptions(w, r, "investment")
+			return
+		}
+		http.NotFound(w, r)
+	case "companyDetails":
+		if mode == "full" {
+			s.handleLegacyCompanyDetailData(w, r)
+			return
+		}
+		http.NotFound(w, r)
+	case "getresearch-report-detail":
+		if mode == "full" {
+			s.handleLegacyReportDetailData(w, r)
 			return
 		}
 		http.NotFound(w, r)
@@ -194,6 +242,46 @@ func (s *Server) handleSearchCompat(w http.ResponseWriter, r *http.Request, user
 		}
 		http.NotFound(w, r)
 	default:
+		if mode == "full" {
+			switch {
+			case strings.HasPrefix(path, "lawyerDetail/"):
+				s.handleLegacySpecialDetailPage(w, r, "lawyer", strings.TrimPrefix(path, "lawyerDetail/"))
+				return
+			case strings.HasPrefix(path, "executionPersonDetail/"):
+				s.handleLegacySpecialDetailPage(w, r, "executionPerson", strings.TrimPrefix(path, "executionPersonDetail/"))
+				return
+			case strings.HasPrefix(path, "professorDetail/"):
+				s.handleLegacySpecialDetailPage(w, r, "professor", strings.TrimPrefix(path, "professorDetail/"))
+				return
+			case strings.HasPrefix(path, "doctorDetail/"):
+				s.handleLegacySpecialDetailPage(w, r, "doctor", strings.TrimPrefix(path, "doctorDetail/"))
+				return
+			case strings.HasPrefix(path, "biddingdetail/"):
+				s.handleLegacySpecialDetailPage(w, r, "bidding", strings.TrimPrefix(path, "biddingdetail/"))
+				return
+			case strings.HasPrefix(path, "inviteDetails/"):
+				s.handleLegacySpecialDetailPage(w, r, "invite", strings.TrimPrefix(path, "inviteDetails/"))
+				return
+			case strings.HasPrefix(path, "companyDetail/"):
+				s.handleLegacySpecialDetailPage(w, r, "company", strings.TrimPrefix(path, "companyDetail/"))
+				return
+			case strings.HasPrefix(path, "judgmentDetail/"):
+				s.handleLegacySpecialDetailPage(w, r, "judgment", strings.TrimPrefix(path, "judgmentDetail/"))
+				return
+			case strings.HasPrefix(path, "knowLedgeDetail/"):
+				s.handleLegacySpecialDetailPage(w, r, "knowledge", strings.TrimPrefix(path, "knowLedgeDetail/"))
+				return
+			case strings.HasPrefix(path, "investmentDetail/"):
+				s.handleLegacySpecialDetailPage(w, r, "investment", strings.TrimPrefix(path, "investmentDetail/"))
+				return
+			case strings.HasPrefix(path, "thesisnDetail/"):
+				s.handleLegacySpecialDetailPage(w, r, "thesisn", strings.TrimPrefix(path, "thesisnDetail/"))
+				return
+			case strings.HasPrefix(path, "reportdetail/"):
+				s.handleLegacySpecialDetailPage(w, r, "report", strings.TrimPrefix(path, "reportdetail/"))
+				return
+			}
+		}
 		if strings.Contains(path, "Detail/") || strings.Contains(path, "detail/") {
 			s.handleLegacySearchArticleRedirect(w, r, mode)
 			return
@@ -468,11 +556,218 @@ func (s *Server) handleTimelySearchData(w http.ResponseWriter, r *http.Request, 
 }
 
 func (s *Server) handleTimelySearchTemplate(w http.ResponseWriter, r *http.Request, user any) {
-	_ = r
-	writeJSONText(w, []map[string]any{
-		{"id": 1, "engine": "全部"},
-		{"id": 2, "engine": "默认"},
+	_ = user
+	templates := []model.CrawlTemplate{}
+	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/crawl-templates", &templates); err != nil {
+		writeJSONText(w, []map[string]any{{"id": 0, "engine": "全部"}})
+		return
+	}
+	stype := strings.TrimSpace(r.URL.Query().Get("stype"))
+	result := []map[string]any{{"id": 0, "engine": "全部", "source_type": stype}}
+	for _, tpl := range templates {
+		if !tpl.Enabled {
+			continue
+		}
+		if stype != "" && stype != "0" && !legacyTemplateMatchesType(stype, tpl.SourceType, tpl.Name, tpl.ConfigJSON) {
+			continue
+		}
+		result = append(result, map[string]any{
+			"id":          tpl.ID,
+			"engine":      tpl.Name,
+			"source_type": tpl.SourceType,
+		})
+	}
+	writeJSONText(w, result)
+}
+
+func (s *Server) handleLegacySpecialList(w http.ResponseWriter, r *http.Request, _ any, kind string) {
+	filter, pageSize := legacySearchFilterFromRequest(r, "full")
+	if page := apiutil.IntQuery(r, "pageNum", 0); page > 0 {
+		filter.Page = page
+	}
+	if size := apiutil.IntQuery(r, "pageSize", 0); size > 0 {
+		filter.PageSize = size
+		pageSize = size
+	}
+	filter.Keyword = nonEmpty(
+		strings.TrimSpace(r.URL.Query().Get("searchWord")),
+		strings.TrimSpace(r.URL.Query().Get("searchword")),
+		strings.TrimSpace(r.URL.Query().Get("keyword")),
+		filter.Keyword,
+	)
+	items, err := s.fetchLegacyCompatSearchItems(filter, "full", 200)
+	if err != nil {
+		writeJSONText(w, map[string]any{"code": "500", "msg": err.Error(), "list": []map[string]any{}})
+		return
+	}
+	criteria := legacySpecialCriteriaFromRequest(r)
+	filtered := make([]model.Item, 0, len(items))
+	for _, item := range items {
+		if legacySpecialMatchesItem(kind, item, criteria) {
+			filtered = append(filtered, item)
+		}
+	}
+	page := max(filter.Page, 1)
+	size := max(filter.PageSize, pageSize)
+	start := (page - 1) * size
+	if start > len(filtered) {
+		start = len(filtered)
+	}
+	end := start + size
+	if end > len(filtered) {
+		end = len(filtered)
+	}
+	list := make([]map[string]any, 0, end-start)
+	for _, item := range filtered[start:end] {
+		list = append(list, legacySpecialListEntry(kind, item))
+	}
+	totalPages := 1
+	if size > 0 && len(filtered) > 0 {
+		totalPages = (len(filtered) + size - 1) / size
+	}
+	writeJSONText(w, map[string]any{
+		"code":        "200",
+		"msg":         "success",
+		"list":        list,
+		"totalData":   len(filtered),
+		"totalPage":   totalPages,
+		"currentPage": page,
 	})
+}
+
+func (s *Server) handleLegacySpecialDetailData(w http.ResponseWriter, r *http.Request, path string) {
+	kind := map[string]string{
+		"lawyerDetailData":          "lawyer",
+		"executionPersonDetailData": "executionPerson",
+		"professorDetailData":       "professor",
+		"doctorDetailData":          "doctor",
+	}[path]
+	itemID := strings.TrimSpace(firstNonEmpty(r.FormValue("article_public_id"), r.URL.Query().Get("article_public_id"), r.FormValue("articleid"), r.URL.Query().Get("articleid")))
+	if itemID == "" {
+		writeJSONText(w, map[string]any{"list": []map[string]any{}})
+		return
+	}
+	item, err := s.fetchLegacyItemByID(itemID, 0)
+	if err != nil {
+		writeJSONText(w, map[string]any{"list": []map[string]any{}})
+		return
+	}
+	writeJSONText(w, map[string]any{"list": []map[string]any{legacySpecialDetailEntry(kind, item)}})
+}
+
+func (s *Server) handleLegacyCompanyDetailData(w http.ResponseWriter, r *http.Request) {
+	itemID := strings.TrimSpace(firstNonEmpty(r.FormValue("article_public_id"), r.URL.Query().Get("article_public_id"), r.FormValue("articleid"), r.URL.Query().Get("articleid")))
+	if itemID == "" {
+		writeJSONText(w, map[string]any{})
+		return
+	}
+	item, err := s.fetchLegacyItemByID(itemID, 0)
+	if err != nil {
+		writeJSONText(w, map[string]any{})
+		return
+	}
+	writeJSONText(w, legacySpecialDetailEntry("company", item))
+}
+
+func (s *Server) handleLegacyReportDetailData(w http.ResponseWriter, r *http.Request) {
+	itemID := strings.TrimSpace(firstNonEmpty(r.FormValue("article_public_id"), r.URL.Query().Get("article_public_id"), r.FormValue("articleid"), r.URL.Query().Get("articleid")))
+	if itemID == "" {
+		writeJSONText(w, map[string]any{})
+		return
+	}
+	item, err := s.fetchLegacyItemByID(itemID, 0)
+	if err != nil {
+		writeJSONText(w, map[string]any{})
+		return
+	}
+	writeJSONText(w, legacySpecialDetailEntry("report", item))
+}
+
+func (s *Server) handleLegacySpecialCategoryOptions(w http.ResponseWriter, r *http.Request, kind string) {
+	filter, _ := legacySearchFilterFromRequest(r, "full")
+	filter.Keyword = nonEmpty(
+		strings.TrimSpace(r.URL.Query().Get("searchWord")),
+		strings.TrimSpace(r.URL.Query().Get("searchword")),
+		strings.TrimSpace(r.URL.Query().Get("keyword")),
+		filter.Keyword,
+	)
+	items, err := s.fetchLegacyCompatSearchItems(filter, "full", 200)
+	if err != nil {
+		writeJSONText(w, legacySearchCategoryOptions(r, kind))
+		return
+	}
+	options := legacyDynamicCategoryOptions(kind, items)
+	if len(options) == 0 {
+		options = legacySearchCategoryOptions(r, kind)
+	}
+	writeJSONText(w, options)
+}
+
+func (s *Server) handleLegacySpecialDetailPage(w http.ResponseWriter, r *http.Request, kind string, rawID string) {
+	itemID := legacySpecialDetailID(rawID)
+	if itemID == "" {
+		http.Redirect(w, r, s.legacySearchTarget("full", r), http.StatusSeeOther)
+		return
+	}
+	item, err := s.fetchLegacyItemByID(itemID, 0)
+	if err != nil {
+		http.Redirect(w, r, "/articles/"+url.PathEscape(itemID)+"?return_to="+url.QueryEscape(legacySearchResultPath("full", r)), http.StatusSeeOther)
+		return
+	}
+	detail := legacySpecialDetailEntry(kind, item)
+	body := legacySpecialDetailPageBody(kind, detail)
+	_ = s.writeSimplePage(w, "fullsearch/"+kind, legacySpecialTitle(kind), body)
+}
+
+func (s *Server) fetchLegacyCompatSearchItems(filter model.ArticleFilter, mode string, limit int) ([]model.Item, error) {
+	query := url.Values{}
+	query.Set("page", "1")
+	query.Set("page_size", strconv.Itoa(max(limit, 50)))
+	if filter.Keyword != "" {
+		query.Set("q", filter.Keyword)
+	}
+	if filter.ProjectID > 0 {
+		query.Set("project_id", strconv.FormatInt(filter.ProjectID, 10))
+	}
+	if filter.SourceType != "" {
+		query.Set("source_type", filter.SourceType)
+	}
+	if filter.Start != "" {
+		query.Set("start", filter.Start)
+	}
+	if filter.End != "" {
+		query.Set("end", filter.End)
+	}
+	if filter.Industry != "" {
+		query.Set("industry", filter.Industry)
+	}
+	if filter.Province != "" {
+		query.Set("province", filter.Province)
+	}
+	if filter.City != "" {
+		query.Set("city", filter.City)
+	}
+	path := "/api/v1/search/full"
+	if mode == "timely" {
+		path = "/api/v1/search/timely"
+	}
+	var result model.SearchResult
+	if err := s.getJSON(s.cfg.ContentURL+path+"?"+query.Encode(), &result); err != nil {
+		return nil, err
+	}
+	return result.Items, nil
+}
+
+func (s *Server) fetchLegacyItemByID(itemID string, userID int64) (model.Item, error) {
+	target := s.cfg.ContentURL + "/api/v1/articles/" + url.PathEscape(strings.TrimSpace(itemID))
+	if userID > 0 {
+		target += "?user_id=" + strconv.FormatInt(userID, 10)
+	}
+	var item model.Item
+	if err := s.getJSON(target, &item); err != nil {
+		return model.Item{}, err
+	}
+	return item, nil
 }
 
 func (s *Server) recordLegacySearchWord(r *http.Request, userID int64) error {
@@ -734,17 +1029,64 @@ func legacySearchTypesForMode(mode string) []legacySearchFullType {
 }
 
 func legacySearchTypesBySecond(typeOneID int) []legacySearchFullType {
-	if typeOneID <= 0 {
+	switch typeOneID {
+	case 28:
+		return legacyTypeChildren(typeOneID, "公告类型", []string{"公告", "新闻"})
+	case 35:
+		return legacyTypeChildren(typeOneID, "研报行业", []string{"研报", "公告"})
+	case 39:
+		return legacyTypeChildren(typeOneID, "工商分类", []string{"企业信息", "股东信息", "变更记录"})
+	case 40:
+		return legacyTypeChildren(typeOneID, "投融资分类", []string{"投融资", "融资轮次", "机构动态"})
+	case 42:
+		return legacyTypeChildren(typeOneID, "法律文书分类", []string{"裁判文书", "执行公告", "开庭公告"})
+	case 43:
+		return legacyTypeChildren(typeOneID, "知识产权分类", []string{"专利", "商标", "著作权"})
+	case 45:
+		return legacyTypeChildren(typeOneID, "学术分类", []string{"学术论文", "学位论文", "研究成果"})
+	case 100:
+		return legacyTypeChildren(typeOneID, "律师筛选", []string{"姓名", "律所名称", "擅长领域", "城市"})
+	case 101:
+		return legacyTypeChildren(typeOneID, "被执行人筛选", []string{"地区", "名称", "企业", "个人"})
+	case 102:
+		return legacyTypeChildren(typeOneID, "专家人才筛选", []string{"姓名", "研究领域", "机构"})
+	case 103:
+		return legacyTypeChildren(typeOneID, "医生筛选", []string{"姓名", "医院", "擅长领域", "所属科室"})
+	default:
 		return []legacySearchFullType{}
 	}
-	return []legacySearchFullType{}
 }
 
 func legacySearchTypesByThird(typeTwoID int) []legacySearchFullType {
 	if typeTwoID <= 0 {
 		return []legacySearchFullType{}
 	}
-	return []legacySearchFullType{}
+	switch typeTwoID / 100 {
+	case 28:
+		return legacyTypeChildren(typeTwoID, "公告来源", []string{"全部", "公告", "新闻"})
+	case 35:
+		return legacyTypeChildren(typeTwoID, "研报来源", []string{"全部", "研报", "公告"})
+	case 39:
+		return legacyTypeChildren(typeTwoID, "工商来源", []string{"全部", "天眼查", "企查查", "企业公示"})
+	case 40:
+		return legacyTypeChildren(typeTwoID, "投融资来源", []string{"全部", "机构", "企业", "项目"})
+	case 42:
+		return legacyTypeChildren(typeTwoID, "法律文书来源", []string{"全部", "法院", "执行", "公告"})
+	case 43:
+		return legacyTypeChildren(typeTwoID, "知识产权来源", []string{"全部", "专利", "商标", "著作权"})
+	case 45:
+		return legacyTypeChildren(typeTwoID, "学术来源", []string{"全部", "期刊", "学位", "论文"})
+	case 100:
+		return legacyTypeChildren(typeTwoID, "律师来源", []string{"全部", "专职律师", "合伙人", "顾问"})
+	case 101:
+		return legacyTypeChildren(typeTwoID, "被执行人来源", []string{"全部", "企业", "个人"})
+	case 102:
+		return legacyTypeChildren(typeTwoID, "专家人才来源", []string{"全部", "高校", "研究院", "企业"})
+	case 103:
+		return legacyTypeChildren(typeTwoID, "医生来源", []string{"全部", "三甲医院", "专科医院", "社区医院"})
+	default:
+		return []legacySearchFullType{}
+	}
 }
 
 func legacySearchTypesByIDs(raw string) []legacySearchFullType {
@@ -842,6 +1184,454 @@ func legacySearchArticleFromItem(item model.Item, keyword string) legacySearchAr
 		PublishTimeText:   nonEmpty(item.PublishTimeText, item.PublishTime),
 		VideoJSON:         "",
 	}
+}
+
+type legacySpecialCriteria struct {
+	Keyword      string
+	MatchingMode string
+	KindFilter   string
+	SourceName   string
+	RType        string
+}
+
+func legacySpecialCriteriaFromRequest(r *http.Request) legacySpecialCriteria {
+	return legacySpecialCriteria{
+		Keyword:      nonEmpty(strings.TrimSpace(r.URL.Query().Get("searchWord")), strings.TrimSpace(r.URL.Query().Get("searchword")), strings.TrimSpace(r.URL.Query().Get("keyword"))),
+		MatchingMode: strings.TrimSpace(r.URL.Query().Get("matchingmode")),
+		KindFilter:   strings.TrimSpace(r.URL.Query().Get("kinds")),
+		SourceName:   strings.TrimSpace(r.URL.Query().Get("source_name")),
+		RType:        strings.TrimSpace(r.URL.Query().Get("rtype")),
+	}
+}
+
+func legacySpecialMatchesItem(kind string, item model.Item, criteria legacySpecialCriteria) bool {
+	payload := legacyPayloadMap(item)
+	if criteria.KindFilter != "" && !legacyPayloadContains(payload, criteria.KindFilter) && !legacyItemBlobContains(item, criteria.KindFilter) {
+		return false
+	}
+	if criteria.SourceName != "" && criteria.SourceName != "全部" && criteria.SourceName != item.SourceType && criteria.SourceName != item.FromText {
+		if !legacyPayloadContains(payload, criteria.SourceName) && !legacyItemBlobContains(item, criteria.SourceName) {
+			return false
+		}
+	}
+	if criteria.RType != "" && criteria.RType != "全部" && !legacyPayloadContains(payload, criteria.RType) && !legacyItemBlobContains(item, criteria.RType) {
+		return false
+	}
+	if criteria.Keyword == "" {
+		return true
+	}
+	return legacySpecialKeywordMatch(kind, item, payload, criteria.Keyword, criteria.MatchingMode)
+}
+
+func legacySpecialKeywordMatch(kind string, item model.Item, payload map[string]any, keyword string, matchingMode string) bool {
+	fields := legacySpecialSearchFields(kind, matchingMode)
+	if len(fields) == 0 {
+		return legacyItemBlobContains(item, keyword) || legacyPayloadContains(payload, keyword)
+	}
+	for _, field := range fields {
+		if legacyPayloadFieldContains(payload, field, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+func legacySpecialSearchFields(kind string, matchingMode string) []string {
+	switch kind {
+	case "lawyerList":
+		switch matchingMode {
+		case "lawpace":
+			return []string{"lawfirm"}
+		case "lawyerAdept":
+			return []string{"goods", "adept"}
+		case "lawyerCity":
+			return []string{"city"}
+		default:
+			return []string{"name", "title"}
+		}
+	case "executionPersonList":
+		switch matchingMode {
+		case "executionPersonArea":
+			return []string{"areaNameNew", "province", "city"}
+		default:
+			return []string{"iname", "name", "title"}
+		}
+	case "professorList":
+		switch matchingMode {
+		case "professorAdept":
+			return []string{"field", "research_field"}
+		case "organization":
+			return []string{"institution", "source_name"}
+		default:
+			return []string{"title", "name"}
+		}
+	case "doctorList":
+		switch matchingMode {
+		case "hospital":
+			return []string{"hospital"}
+		case "doctorAdept":
+			return []string{"adept"}
+		case "doctorDept":
+			return []string{"department"}
+		default:
+			return []string{"name", "title"}
+		}
+	case "judgmentList":
+		switch matchingMode {
+		case "parties":
+			return []string{"parties"}
+		case "court":
+			return []string{"court"}
+		case "text":
+			return []string{"content", "summary"}
+		case "area":
+			return []string{"province", "city", "area"}
+		default:
+			return []string{"title", "name"}
+		}
+	default:
+		return nil
+	}
+}
+
+func legacySpecialListEntry(kind string, item model.Item) map[string]any {
+	payload := legacyPayloadMap(item)
+	base := map[string]any{
+		"article_public_id": strconv.FormatInt(item.ID, 10),
+		"title":             nonEmpty(legacyPayloadString(payload, "title"), item.Title),
+		"content":           nonEmpty(legacyPayloadString(payload, "content"), item.Content, item.Summary),
+		"source_name":       nonEmpty(legacyPayloadString(payload, "source_name"), item.FromText, item.SourceType),
+		"publish_time":      nonEmpty(item.PublishTime, item.PublishTimeText, item.CapturedAt.Format("2006-01-02 15:04:05")),
+		"detailUrl":         nonEmpty(item.SourceURL, item.DetailURL),
+		"url":               nonEmpty(item.SourceURL, item.DetailURL),
+	}
+	switch kind {
+	case "lawyerList":
+		base["name"] = nonEmpty(legacyPayloadString(payload, "name"), item.Title)
+		base["telephone"] = nonEmpty(legacyPayloadString(payload, "telephone"), legacyPayloadString(payload, "phone_number"))
+		base["kinds"] = legacyPayloadString(payload, "kinds")
+		base["goods"] = nonEmpty(legacyPayloadString(payload, "goods"), legacyPayloadString(payload, "adept"))
+		base["educationbackground"] = legacyPayloadString(payload, "educationbackground")
+		base["email"] = legacyPayloadString(payload, "email")
+		base["certID"] = legacyPayloadString(payload, "certID")
+		base["qualifitime"] = legacyPayloadString(payload, "qualifitime")
+		base["lawfirm"] = legacyPayloadString(payload, "lawfirm")
+		base["address"] = legacyPayloadString(payload, "address")
+		base["city"] = legacyPayloadString(payload, "city")
+	case "executionPersonList":
+		base["iname"] = nonEmpty(legacyPayloadString(payload, "iname"), legacyPayloadString(payload, "name"), item.Title)
+		base["gistUnit"] = legacyPayloadString(payload, "gistUnit")
+		base["cardNum"] = legacyPayloadString(payload, "cardNum")
+		base["type"] = legacyPayloadString(payload, "type")
+		base["caseCode"] = legacyPayloadString(payload, "caseCode")
+		base["gistId"] = legacyPayloadString(payload, "gistId")
+		base["areaNameNew"] = legacyPayloadString(payload, "areaNameNew")
+		base["courtName"] = legacyPayloadString(payload, "courtName")
+		base["duty"] = legacyPayloadString(payload, "duty")
+		base["performance"] = legacyPayloadString(payload, "performance")
+		base["disruptTypeName"] = legacyPayloadString(payload, "disruptTypeName")
+	case "professorList":
+		base["title"] = nonEmpty(legacyPayloadString(payload, "title"), legacyPayloadString(payload, "name"), item.Title)
+		base["avatar"] = nonEmpty(legacyPayloadString(payload, "avatar"), legacyPayloadString(payload, "profile"))
+		base["institution"] = legacyPayloadString(payload, "institution")
+		base["field"] = legacyPayloadJSONArrayString(payload, "field")
+		base["works"] = legacyPayloadString(payload, "works")
+		base["times_cited"] = legacyPayloadString(payload, "times_cited")
+	case "doctorList":
+		base["name"] = nonEmpty(legacyPayloadString(payload, "name"), item.Title)
+		base["profile"] = nonEmpty(legacyPayloadString(payload, "profile"), legacyPayloadString(payload, "avatar"))
+		base["hospital"] = legacyPayloadString(payload, "hospital")
+		base["department"] = legacyPayloadString(payload, "department")
+		base["province"] = legacyPayloadString(payload, "province")
+		base["city"] = legacyPayloadString(payload, "city")
+		base["area"] = legacyPayloadString(payload, "area")
+		base["degree"] = legacyPayloadString(payload, "degree")
+		base["adept"] = legacyPayloadString(payload, "adept")
+	case "companyList":
+		base["name"] = nonEmpty(legacyPayloadString(payload, "name"), item.Title)
+		base["legal_person"] = nonEmpty(legacyPayloadString(payload, "legal_person"), legacyPayloadString(payload, "legal_representative"))
+		base["status"] = legacyPayloadString(payload, "status")
+		base["registered_capital_str"] = legacyPayloadString(payload, "registered_capital_str")
+		base["industry_involved"] = nonEmpty(legacyPayloadString(payload, "industry_involved"), legacyPayloadString(payload, "industry"))
+		base["location"] = nonEmpty(legacyPayloadString(payload, "location"), legacyPayloadString(payload, "address"))
+	case "judgmentList":
+		base["caseTitle"] = nonEmpty(legacyPayloadString(payload, "caseTitle"), item.Title)
+		base["court"] = legacyPayloadString(payload, "court")
+		base["caseType"] = legacyPayloadString(payload, "caseType")
+		base["parties"] = legacyPayloadString(payload, "parties")
+	case "knowLedgeList":
+		base["name"] = nonEmpty(legacyPayloadString(payload, "name"), item.Title)
+		base["caseType"] = nonEmpty(legacyPayloadString(payload, "caseType"), legacyPayloadString(payload, "ip_type"))
+		base["owner"] = legacyPayloadString(payload, "owner")
+	case "investmentList":
+		base["name"] = nonEmpty(legacyPayloadString(payload, "name"), item.Title)
+		base["round"] = nonEmpty(legacyPayloadString(payload, "round"), legacyPayloadString(payload, "investment_type"))
+		base["company"] = legacyPayloadString(payload, "company")
+	case "baiduKnowsList", "thesisnList", "biddingList", "inviteList":
+		base["name"] = nonEmpty(legacyPayloadString(payload, "name"), item.Title)
+	}
+	for key, value := range payload {
+		if _, exists := base[key]; !exists {
+			base[key] = value
+		}
+	}
+	return base
+}
+
+func legacySpecialDetailEntry(kind string, item model.Item) map[string]any {
+	entry := legacySpecialListEntry(kind, item)
+	payload := legacyPayloadMap(item)
+	entry["summary"] = nonEmpty(item.Summary, item.Content)
+	entry["source_url"] = nonEmpty(item.SourceURL, item.DetailURL)
+	entry["publish_time"] = nonEmpty(item.PublishTime, item.PublishTimeText, item.CapturedAt.Format("2006-01-02 15:04:05"))
+	switch kind {
+	case "company":
+		entry["name"] = nonEmpty(legacyPayloadString(payload, "name"), item.Title)
+		entry["phone_number"] = nonEmpty(legacyPayloadString(payload, "phone_number"), legacyPayloadString(payload, "phone"))
+		entry["address"] = nonEmpty(legacyPayloadString(payload, "address"), legacyPayloadString(payload, "location"))
+		entry["legal_representative"] = nonEmpty(legacyPayloadString(payload, "legal_representative"), legacyPayloadString(payload, "legal_person"))
+		entry["uniformSocialCreditCode"] = nonEmpty(legacyPayloadString(payload, "uniformSocialCreditCode"), legacyPayloadString(payload, "taxpayer_identification"))
+		entry["insured_num"] = nonEmpty(legacyPayloadString(payload, "insured_num"), legacyPayloadString(payload, "insureds"))
+		entry["registration"] = legacyPayloadString(payload, "registration")
+		entry["enterprise_type"] = legacyPayloadString(payload, "enterprise_type")
+		entry["registered_capital_str"] = legacyPayloadString(payload, "registered_capital_str")
+		entry["industry_involved"] = nonEmpty(legacyPayloadString(payload, "industry_involved"), legacyPayloadString(payload, "industry"))
+		entry["business_scope"] = legacyPayloadString(payload, "business_scope")
+		entry["establish_time"] = nonEmpty(legacyPayloadString(payload, "establish_time"), item.PublishTime)
+	case "report":
+		entry["title"] = item.Title
+		entry["reportDate"] = nonEmpty(item.PublishTime, item.PublishTimeText, item.CapturedAt.Format("2006-01-02 15:04:05"))
+		entry["url"] = nonEmpty(item.SourceURL, item.DetailURL)
+	case "lawyer":
+		entry["img"] = nonEmpty(legacyPayloadString(payload, "img"), legacyPayloadString(payload, "profile"), legacyPayloadString(payload, "avatar"))
+	case "doctor":
+		entry["hospital_url"] = legacyPayloadString(payload, "hospital_url")
+	}
+	for key, value := range payload {
+		if _, exists := entry[key]; !exists {
+			entry[key] = value
+		}
+	}
+	return entry
+}
+
+func legacyDynamicCategoryOptions(kind string, items []model.Item) []map[string]any {
+	fieldSets := map[string][][]string{
+		"company":    {{"industry_involved", "industry", "industrylable"}},
+		"judgment":   {{"caseType", "case_type", "category"}},
+		"knowledge":  {{"caseType", "ip_type", "type"}},
+		"investment": {{"round", "investment_type", "type"}},
+	}
+	fields := fieldSets[kind]
+	if len(fields) == 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	result := []map[string]any{{"id": 0, "value": "", "name": "全部"}}
+	nextID := 1
+	for _, item := range items {
+		payload := legacyPayloadMap(item)
+		for _, group := range fields {
+			value := ""
+			for _, field := range group {
+				value = legacyPayloadString(payload, field)
+				if value != "" {
+					break
+				}
+			}
+			for _, part := range splitLegacyLabels(value) {
+				if _, ok := seen[part]; ok || part == "" {
+					continue
+				}
+				seen[part] = struct{}{}
+				result = append(result, map[string]any{"id": nextID, "value": part, "name": part})
+				nextID++
+			}
+		}
+	}
+	return result
+}
+
+func legacyPayloadMap(item model.Item) map[string]any {
+	payload := map[string]any{}
+	if strings.TrimSpace(item.RawPayload) != "" {
+		_ = json.Unmarshal([]byte(item.RawPayload), &payload)
+	}
+	if _, ok := payload["title"]; !ok {
+		payload["title"] = item.Title
+	}
+	if _, ok := payload["content"]; !ok {
+		payload["content"] = item.Content
+	}
+	if _, ok := payload["summary"]; !ok {
+		payload["summary"] = item.Summary
+	}
+	if _, ok := payload["source_name"]; !ok {
+		payload["source_name"] = nonEmpty(item.FromText, item.SourceType)
+	}
+	return payload
+}
+
+func legacyPayloadContains(payload map[string]any, needle string) bool {
+	for _, value := range payload {
+		if strings.Contains(strings.ToLower(legacyAnyString(value)), strings.ToLower(strings.TrimSpace(needle))) {
+			return true
+		}
+	}
+	return false
+}
+
+func legacyPayloadFieldContains(payload map[string]any, field string, needle string) bool {
+	return strings.Contains(strings.ToLower(legacyAnyString(payload[field])), strings.ToLower(strings.TrimSpace(needle)))
+}
+
+func legacyItemBlobContains(item model.Item, needle string) bool {
+	blob := strings.ToLower(strings.TrimSpace(item.Title + " " + item.Content + " " + item.Summary + " " + item.SourceType + " " + item.FromText + " " + item.TagFlags))
+	return strings.Contains(blob, strings.ToLower(strings.TrimSpace(needle)))
+}
+
+func legacyPayloadString(payload map[string]any, key string) string {
+	return strings.TrimSpace(legacyAnyString(payload[key]))
+}
+
+func legacyPayloadJSONArrayString(payload map[string]any, key string) string {
+	value, ok := payload[key]
+	if !ok {
+		return "[]"
+	}
+	switch typed := value.(type) {
+	case []any:
+		raw, _ := json.Marshal(typed)
+		return string(raw)
+	case []string:
+		raw, _ := json.Marshal(typed)
+		return string(raw)
+	default:
+		if str := strings.TrimSpace(legacyAnyString(value)); str != "" {
+			if strings.HasPrefix(str, "[") {
+				return str
+			}
+			return legacyJSONString([]string{str})
+		}
+	}
+	return "[]"
+}
+
+func legacyAnyString(value any) string {
+	switch typed := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return typed
+	case []any:
+		parts := make([]string, 0, len(typed))
+		for _, item := range typed {
+			part := strings.TrimSpace(legacyAnyString(item))
+			if part != "" {
+				parts = append(parts, part)
+			}
+		}
+		return strings.Join(parts, ",")
+	case map[string]any:
+		raw, _ := json.Marshal(typed)
+		return string(raw)
+	default:
+		return fmt.Sprint(typed)
+	}
+}
+
+func legacyTypeChildren(parentID int, prefix string, names []string) []legacySearchFullType {
+	result := make([]legacySearchFullType, 0, len(names))
+	for idx, name := range names {
+		result = append(result, legacySearchFullType{
+			OnlyID:    parentID*100 + idx + 1,
+			ID:        parentID*100 + idx + 1,
+			Type:      2,
+			Name:      name,
+			Value:     name,
+			TypeOneID: parentID,
+			Icon:      "mdi mdi-chevron-right",
+			IsShow:    0,
+			IsDefault: 0,
+		})
+	}
+	if len(result) > 0 {
+		result[0].Name = prefix + " / " + result[0].Name
+	}
+	return result
+}
+
+func legacySpecialDetailID(raw string) string {
+	parts := strings.Split(strings.Trim(raw, "/"), "/")
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(parts[0])
+}
+
+func legacySpecialTitle(kind string) string {
+	switch kind {
+	case "lawyer":
+		return "律师详情"
+	case "executionPerson":
+		return "被执行人详情"
+	case "professor":
+		return "专家人才详情"
+	case "doctor":
+		return "医生详情"
+	case "bidding":
+		return "招标详情"
+	case "invite":
+		return "招聘详情"
+	case "company":
+		return "工商详情"
+	case "judgment":
+		return "法律文书详情"
+	case "knowledge":
+		return "知识产权详情"
+	case "investment":
+		return "投融资详情"
+	case "thesisn":
+		return "学术详情"
+	case "report":
+		return "公告研报详情"
+	default:
+		return "全文搜索详情"
+	}
+}
+
+func legacySpecialDetailPageBody(kind string, detail map[string]any) string {
+	title := nonEmpty(legacyAnyString(detail["name"]), legacyAnyString(detail["title"]), "未命名")
+	source := nonEmpty(legacyAnyString(detail["source_name"]), legacyAnyString(detail["source"]), "未知来源")
+	publishTime := legacyAnyString(detail["publish_time"])
+	link := nonEmpty(legacyAnyString(detail["detailUrl"]), legacyAnyString(detail["url"]), legacyAnyString(detail["source_url"]))
+	summary := nonEmpty(legacyAnyString(detail["summary"]), legacyAnyString(detail["content"]))
+	rows := make([]string, 0, len(detail))
+	for _, key := range []string{"phone_number", "telephone", "email", "address", "city", "hospital", "department", "lawfirm", "court", "caseType", "round", "industry_involved"} {
+		if value := strings.TrimSpace(legacyAnyString(detail[key])); value != "" {
+			rows = append(rows, "<tr><th>"+key+"</th><td>"+value+"</td></tr>")
+		}
+	}
+	table := ""
+	if len(rows) > 0 {
+		table = "<table><tbody>" + strings.Join(rows, "") + "</tbody></table>"
+	}
+	linkHTML := ""
+	if link != "" {
+		linkHTML = `<p><a class="inline" href="` + link + `" target="_blank">查看原文</a></p>`
+	}
+	body := `<section><p class="subtle">类型：` + kind + `</p><h2>` + title + `</h2><p>来源：` + source + `</p><p>时间：` + publishTime + `</p>` + linkHTML + table
+	if summary != "" {
+		body += `<h3>摘要</h3><pre>` + summary + `</pre>`
+	}
+	body += `</section>`
+	return body
+}
+
+func legacyTemplateMatchesType(stype string, sourceType string, name string, configJSON string) bool {
+	target := strings.ToLower(strings.TrimSpace(stype))
+	blob := strings.ToLower(strings.TrimSpace(sourceType + " " + name + " " + configJSON))
+	return strings.Contains(blob, target)
 }
 
 func writePlainJSONText(w http.ResponseWriter, payload any) {

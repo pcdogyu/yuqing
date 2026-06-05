@@ -361,3 +361,211 @@ func TestLegacySearchCategoryLists(t *testing.T) {
 		t.Fatalf("expected reportIndustry 200, got %d", reportTypeRR.Code)
 	}
 }
+
+func TestLegacySpecializedFullSearchEndpoints(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/search/full":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    200,
+				"message": "ok",
+				"data": model.SearchResult{
+					Total:    2,
+					Page:     1,
+					PageSize: 200,
+					Items: []model.Item{
+						{
+							ID:              101,
+							Title:           "张三律师",
+							Content:         "擅长公司法与投融资",
+							Summary:         "南京律师",
+							SourceType:      "lawyer",
+							FromText:        "律所库",
+							SourceURL:       "https://example.com/lawyer/101",
+							PublishTime:     "2026-06-05 10:00:00",
+							PublishTimeText: "今天",
+							RawPayload:      `{"name":"张三","telephone":"13800000000","kinds":"专职律师","goods":"公司法","educationbackground":"硕士","email":"zhang@example.com","certID":"A1001","qualifitime":"2020-01-01","lawfirm":"金陵律师事务所","address":"南京市鼓楼区","city":"南京"}`,
+						},
+						{
+							ID:              202,
+							Title:           "星云科技有限公司",
+							Content:         "企业信息与股东结构",
+							Summary:         "高新技术企业",
+							SourceType:      "company",
+							FromText:        "企查查",
+							SourceURL:       "https://example.com/company/202",
+							PublishTime:     "2026-06-05 11:00:00",
+							PublishTimeText: "今天",
+							RawPayload:      `{"name":"星云科技有限公司","industry_involved":"人工智能","legal_person":"李四","registered_capital_str":"500万","status":"存续","location":"上海市浦东新区","business_scope":"人工智能软件开发","uniformSocialCreditCode":"91310000X","insured_num":"30"}`,
+						},
+					},
+				},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/articles/101":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    200,
+				"message": "ok",
+				"data": model.Item{
+					ID:              101,
+					Title:           "张三律师",
+					Content:         "擅长公司法与投融资",
+					Summary:         "南京律师",
+					SourceType:      "lawyer",
+					FromText:        "律所库",
+					SourceURL:       "https://example.com/lawyer/101",
+					PublishTime:     "2026-06-05 10:00:00",
+					PublishTimeText: "今天",
+					RawPayload:      `{"name":"张三","telephone":"13800000000","kinds":"专职律师","goods":"公司法","educationbackground":"硕士","email":"zhang@example.com","certID":"A1001","qualifitime":"2020-01-01","lawfirm":"金陵律师事务所","address":"南京市鼓楼区","city":"南京"}`,
+				},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/articles/202":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    200,
+				"message": "ok",
+				"data": model.Item{
+					ID:              202,
+					Title:           "星云科技有限公司",
+					Content:         "企业信息与股东结构",
+					Summary:         "高新技术企业",
+					SourceType:      "company",
+					FromText:        "企查查",
+					SourceURL:       "https://example.com/company/202",
+					PublishTime:     "2026-06-05 11:00:00",
+					PublishTimeText: "今天",
+					RawPayload:      `{"name":"星云科技有限公司","industry_involved":"人工智能","legal_person":"李四","registered_capital_str":"500万","status":"存续","location":"上海市浦东新区","business_scope":"人工智能软件开发","uniformSocialCreditCode":"91310000X","insured_num":"30"}`,
+				},
+			})
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 404, "message": "not found", "data": nil})
+		}
+	}))
+	defer content.Close()
+
+	srv := &Server{cfg: config.Config{ContentURL: content.URL}, client: resty.New()}
+	user := map[string]any{"id": int64(42)}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/fullsearch/lawyerList?searchWord=张&pageNum=1&pageSize=10", nil)
+	listRR := httptest.NewRecorder()
+	srv.handleSearchCompat(listRR, listReq, user, "full")
+	if listRR.Code != http.StatusOK {
+		t.Fatalf("expected lawyerList 200, got %d", listRR.Code)
+	}
+	var lawyerList struct {
+		Code      string                   `json:"code"`
+		TotalData int                      `json:"totalData"`
+		List      []map[string]interface{} `json:"list"`
+	}
+	if err := json.Unmarshal(listRR.Body.Bytes(), &lawyerList); err != nil {
+		t.Fatalf("unmarshal lawyerList: %v", err)
+	}
+	if lawyerList.Code != "200" || lawyerList.TotalData != 1 || lawyerList.List[0]["name"] != "张三" {
+		t.Fatalf("unexpected lawyer list payload: %+v", lawyerList)
+	}
+
+	detailDataReq := httptest.NewRequest(http.MethodPost, "/fullsearch/lawyerDetailData?article_public_id=101", nil)
+	detailDataRR := httptest.NewRecorder()
+	srv.handleSearchCompat(detailDataRR, detailDataReq, user, "full")
+	if detailDataRR.Code != http.StatusOK {
+		t.Fatalf("expected lawyerDetailData 200, got %d", detailDataRR.Code)
+	}
+	var lawyerDetail struct {
+		List []map[string]interface{} `json:"list"`
+	}
+	if err := json.Unmarshal(detailDataRR.Body.Bytes(), &lawyerDetail); err != nil {
+		t.Fatalf("unmarshal lawyerDetailData: %v", err)
+	}
+	if len(lawyerDetail.List) != 1 || lawyerDetail.List[0]["lawfirm"] != "金陵律师事务所" {
+		t.Fatalf("unexpected lawyer detail payload: %+v", lawyerDetail)
+	}
+
+	companyCategoryReq := httptest.NewRequest(http.MethodGet, "/fullsearch/companyIndustry", nil)
+	companyCategoryRR := httptest.NewRecorder()
+	srv.handleSearchCompat(companyCategoryRR, companyCategoryReq, user, "full")
+	if companyCategoryRR.Code != http.StatusOK {
+		t.Fatalf("expected companyIndustry 200, got %d", companyCategoryRR.Code)
+	}
+	var companyCategories []map[string]interface{}
+	if err := json.Unmarshal(companyCategoryRR.Body.Bytes(), &companyCategories); err != nil {
+		t.Fatalf("unmarshal companyIndustry: %v", err)
+	}
+	if len(companyCategories) < 2 || companyCategories[1]["name"] != "人工智能" {
+		t.Fatalf("unexpected company categories: %+v", companyCategories)
+	}
+
+	typeReq := httptest.NewRequest(http.MethodGet, "/fullsearch/listFullTypeBySecond?type_one_id=39", nil)
+	typeRR := httptest.NewRecorder()
+	srv.handleSearchCompat(typeRR, typeReq, user, "full")
+	if typeRR.Code != http.StatusOK {
+		t.Fatalf("expected listFullTypeBySecond 200, got %d", typeRR.Code)
+	}
+	var secondTypes []legacySearchFullType
+	if err := json.Unmarshal(typeRR.Body.Bytes(), &secondTypes); err != nil {
+		t.Fatalf("unmarshal second types: %v", err)
+	}
+	if len(secondTypes) == 0 || secondTypes[0].TypeOneID != 39 {
+		t.Fatalf("unexpected second type payload: %+v", secondTypes)
+	}
+
+	pageReq := httptest.NewRequest(http.MethodGet, "/fullsearch/lawyerDetail/101", nil)
+	pageRR := httptest.NewRecorder()
+	srv.handleSearchCompat(pageRR, pageReq, user, "full")
+	if pageRR.Code != http.StatusOK {
+		t.Fatalf("expected lawyerDetail page 200, got %d", pageRR.Code)
+	}
+	if !strings.Contains(pageRR.Body.String(), "律师详情") || !strings.Contains(pageRR.Body.String(), "张三") {
+		t.Fatalf("unexpected lawyer detail page: %s", pageRR.Body.String())
+	}
+
+	companyDetailReq := httptest.NewRequest(http.MethodGet, "/fullsearch/companyDetails?article_public_id=202", nil)
+	companyDetailRR := httptest.NewRecorder()
+	srv.handleSearchCompat(companyDetailRR, companyDetailReq, user, "full")
+	if companyDetailRR.Code != http.StatusOK {
+		t.Fatalf("expected companyDetails 200, got %d", companyDetailRR.Code)
+	}
+	var companyDetail map[string]interface{}
+	if err := json.Unmarshal(companyDetailRR.Body.Bytes(), &companyDetail); err != nil {
+		t.Fatalf("unmarshal company detail: %v", err)
+	}
+	if companyDetail["name"] != "星云科技有限公司" || companyDetail["industry_involved"] != "人工智能" {
+		t.Fatalf("unexpected company detail payload: %+v", companyDetail)
+	}
+}
+
+func TestTimelySearchTemplateUsesCrawlTemplates(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/crawl-templates" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 404, "message": "not found", "data": nil})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    200,
+			"message": "ok",
+			"data": []model.CrawlTemplate{
+				{ID: 1, Name: "Flash Template", SourceType: "flash", Enabled: true, ConfigJSON: `{"source_type":"flash"}`},
+				{ID: 2, Name: "Disabled Template", SourceType: "flash", Enabled: false, ConfigJSON: `{"source_type":"flash"}`},
+				{ID: 3, Name: "Headline Template", SourceType: "headline", Enabled: true, ConfigJSON: `{"source_type":"headline"}`},
+			},
+		})
+	}))
+	defer content.Close()
+
+	srv := &Server{cfg: config.Config{ContentURL: content.URL}, client: resty.New()}
+	req := httptest.NewRequest(http.MethodGet, "/timelysearch/templete?stype=flash", nil)
+	rr := httptest.NewRecorder()
+	srv.handleTimelySearchTemplate(rr, req, map[string]any{"id": int64(42)})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected timelysearch template 200, got %d", rr.Code)
+	}
+	var templates []map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &templates); err != nil {
+		t.Fatalf("unmarshal timely template response: %v", err)
+	}
+	if len(templates) != 2 {
+		t.Fatalf("expected filtered templates plus all option, got %+v", templates)
+	}
+	if templates[0]["engine"] != "全部" || templates[1]["engine"] != "Flash Template" {
+		t.Fatalf("unexpected timely template payload: %+v", templates)
+	}
+}
