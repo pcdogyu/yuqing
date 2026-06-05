@@ -2,8 +2,10 @@ package portal
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -111,7 +113,7 @@ func (s *Server) handleFullSearchEntry(w http.ResponseWriter, r *http.Request, _
 }
 
 func (s *Server) handleTimelySearchEntry(w http.ResponseWriter, r *http.Request, _ any) {
-	http.Redirect(w, r, s.legacySearchTarget("timely", r), http.StatusSeeOther)
+	s.handleTimelySearchPage(w, r)
 }
 
 func (s *Server) handleFullSearchCompat(w http.ResponseWriter, r *http.Request, user any) {
@@ -125,10 +127,32 @@ func (s *Server) handleTimelySearchCompat(w http.ResponseWriter, r *http.Request
 func (s *Server) handleSearchCompat(w http.ResponseWriter, r *http.Request, user any, mode string) {
 	path := strings.TrimPrefix(r.URL.Path, "/"+mode+"search/")
 	switch path {
-	case "", "result":
+	case "":
+		if mode == "timely" {
+			s.handleTimelySearchPage(w, r)
+			return
+		}
 		s.handleLegacySearchResult(w, r, user, mode)
+	case "result":
+		if mode == "timely" {
+			s.handleTimelySearchPage(w, r)
+			return
+		}
+		s.handleLegacySearchResult(w, r, user, mode)
+	case "index":
+		if mode == "timely" {
+			s.handleTimelySearchPage(w, r)
+			return
+		}
+		http.NotFound(w, r)
 	case "search":
 		s.handleLegacySearchHistory(w, r, user)
+	case "execute":
+		if mode == "timely" {
+			s.handleTimelySearchExecute(w, r)
+			return
+		}
+		http.NotFound(w, r)
 	case "listFullTypeByFirst":
 		writeJSONText(w, legacySearchTypesForMode(mode))
 	case "listFullTypeBySecond":
@@ -516,11 +540,17 @@ func (s *Server) handleTimelySearchData(w http.ResponseWriter, r *http.Request, 
 	filter, _ := legacySearchFilterFromRequest(r, "timely")
 	filter.Page = max(apiutil.IntQuery(r, "pageNoData", 1), 1)
 	filter.PageSize = 30
+	if tpl, ok := s.legacyTimelyTemplate(r.Context(), r); ok && strings.TrimSpace(filter.SourceType) == "" {
+		filter.SourceType = tpl.SourceType
+	}
 	query := url.Values{}
 	query.Set("page", strconv.Itoa(filter.Page))
 	query.Set("page_size", strconv.Itoa(filter.PageSize))
 	if filter.Keyword != "" {
 		query.Set("q", filter.Keyword)
+	}
+	if filter.SourceType != "" {
+		query.Set("source_type", filter.SourceType)
 	}
 	if filter.Industry != "" {
 		query.Set("industry", filter.Industry)
@@ -553,6 +583,242 @@ func (s *Server) handleTimelySearchData(w http.ResponseWriter, r *http.Request, 
 		"time": time.Since(started).Milliseconds(),
 		"data": string(body),
 	})
+}
+
+func (s *Server) handleTimelySearchPage(w http.ResponseWriter, r *http.Request) {
+	templates := []model.CrawlTemplate{}
+	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/crawl-templates", &templates)
+	selectedID := legacyTimelyTemplateID(r)
+	selectedTemplate, hasSelectedTemplate := s.legacyTimelyTemplate(r.Context(), r)
+	keyword := strings.TrimSpace(firstNonEmpty(r.URL.Query().Get("keyword"), r.URL.Query().Get("searchword"), r.URL.Query().Get("searchWord")))
+	stype := strings.TrimSpace(firstNonEmpty(r.URL.Query().Get("stype"), selectedTemplate.SourceType))
+	pageNo := max(apiutil.IntQuery(r, "pageNoData", 1), 1)
+
+	query := url.Values{}
+	query.Set("page", strconv.Itoa(pageNo))
+	query.Set("page_size", "20")
+	if keyword != "" {
+		query.Set("q", keyword)
+	}
+	if hasSelectedTemplate && strings.TrimSpace(selectedTemplate.SourceType) != "" {
+		query.Set("source_type", selectedTemplate.SourceType)
+	} else if sourceType := strings.TrimSpace(r.URL.Query().Get("source_type")); sourceType != "" {
+		query.Set("source_type", sourceType)
+	}
+	var result model.SearchResult
+	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/search/timely?"+query.Encode(), &result)
+
+	runs := []model.CrawlRun{}
+	_ = s.getJSON(s.cfg.CrawlerURL+"/api/v1/admin/tasks/crawl/runs?limit=10", &runs)
+	visibleRuns := make([]model.CrawlRun, 0, len(runs))
+	for _, run := range runs {
+		if hasSelectedTemplate && selectedTemplate.ID > 0 {
+			if run.TemplateID == selectedTemplate.ID {
+				visibleRuns = append(visibleRuns, run)
+			}
+			continue
+		}
+		if query.Get("source_type") != "" && run.SourceType == query.Get("source_type") {
+			visibleRuns = append(visibleRuns, run)
+			continue
+		}
+		if query.Get("source_type") == "" {
+			visibleRuns = append(visibleRuns, run)
+		}
+	}
+	if len(visibleRuns) > 5 {
+		visibleRuns = visibleRuns[:5]
+	}
+
+	var body strings.Builder
+	body.WriteString(`<section><div class="summary-grid">`)
+	body.WriteString(`<div class="summary-card"><div class="template-meta">当前关键词</div><strong>`)
+	body.WriteString(html.EscapeString(nonEmpty(keyword, "未设置")))
+	body.WriteString(`</strong></div>`)
+	body.WriteString(`<div class="summary-card"><div class="template-meta">模板来源</div><strong>`)
+	if hasSelectedTemplate {
+		body.WriteString(html.EscapeString(selectedTemplate.Name))
+		body.WriteString(`</strong><div class="template-meta">`)
+		body.WriteString(html.EscapeString(selectedTemplate.SourceType))
+		body.WriteString(`</div></div>`)
+	} else {
+		body.WriteString(`全部模板</strong></div>`)
+	}
+	body.WriteString(`<div class="summary-card"><div class="template-meta">结果页码</div><strong>`)
+	body.WriteString(strconv.Itoa(pageNo))
+	body.WriteString(`</strong></div>`)
+	body.WriteString(`<div class="summary-card"><div class="template-meta">当前结果数</div><strong>`)
+	body.WriteString(strconv.Itoa(len(result.Items)))
+	body.WriteString(`</strong></div></div></section>`)
+
+	if msg := strings.TrimSpace(r.URL.Query().Get("msg")); msg != "" {
+		body.WriteString(`<section><p style="padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34">`)
+		body.WriteString(html.EscapeString(msg))
+		body.WriteString(`</p></section>`)
+	}
+
+	body.WriteString(`<section><h2>即时搜索</h2><form method="get" action="/timelysearch/result">`)
+	body.WriteString(`<label>关键词</label><input name="keyword" value="`)
+	body.WriteString(html.EscapeString(keyword))
+	body.WriteString(`" placeholder="输入检索关键词">`)
+	body.WriteString(`<label>来源类型</label><input name="stype" value="`)
+	body.WriteString(html.EscapeString(stype))
+	body.WriteString(`" placeholder="如 flash、headline、crypto">`)
+	body.WriteString(`<label>模板</label><select name="website_id"><option value="">全部模板</option>`)
+	for _, tpl := range templates {
+		if !tpl.Enabled {
+			continue
+		}
+		if stype != "" && stype != "0" && !legacyTemplateMatchesType(stype, tpl.SourceType, tpl.Name, tpl.ConfigJSON) {
+			continue
+		}
+		body.WriteString(`<option value="`)
+		body.WriteString(strconv.FormatInt(tpl.ID, 10))
+		body.WriteString(`"`)
+		if selectedID != "" && selectedID == strconv.FormatInt(tpl.ID, 10) {
+			body.WriteString(` selected`)
+		}
+		body.WriteString(`>`)
+		body.WriteString(html.EscapeString(tpl.Name + " [" + tpl.SourceType + "]"))
+		body.WriteString(`</option>`)
+	}
+	body.WriteString(`</select><label>数据页码</label><input name="pageNoData" value="`)
+	body.WriteString(strconv.Itoa(pageNo))
+	body.WriteString(`" placeholder="1">`)
+	body.WriteString(`<button type="submit">查看结果</button></form></section>`)
+
+	body.WriteString(`<section><h2>模板执行</h2><form method="post" action="/timelysearch/execute">`)
+	body.WriteString(`<input type="hidden" name="keyword" value="`)
+	body.WriteString(html.EscapeString(keyword))
+	body.WriteString(`"><input type="hidden" name="stype" value="`)
+	body.WriteString(html.EscapeString(stype))
+	body.WriteString(`"><input type="hidden" name="pageNoData" value="`)
+	body.WriteString(strconv.Itoa(pageNo))
+	body.WriteString(`"><label>执行模板</label><select name="website_id"><option value="">请选择模板</option>`)
+	for _, tpl := range templates {
+		if !tpl.Enabled {
+			continue
+		}
+		if stype != "" && stype != "0" && !legacyTemplateMatchesType(stype, tpl.SourceType, tpl.Name, tpl.ConfigJSON) {
+			continue
+		}
+		body.WriteString(`<option value="`)
+		body.WriteString(strconv.FormatInt(tpl.ID, 10))
+		body.WriteString(`"`)
+		if selectedID != "" && selectedID == strconv.FormatInt(tpl.ID, 10) {
+			body.WriteString(` selected`)
+		}
+		body.WriteString(`>`)
+		body.WriteString(html.EscapeString(tpl.Name + " [" + tpl.SourceType + "]"))
+		body.WriteString(`</option>`)
+	}
+	body.WriteString(`</select><button type="submit">立即抓取</button><p class="template-meta">执行后会回到当前结果页，并展示最近抓取记录。</p></form><p><a class="inline" href="/crawl-templates/manage">打开模板管理</a></p></section>`)
+
+	body.WriteString(`<section><h2>最近抓取状态</h2><table><tr><th>模板</th><th>来源</th><th>状态</th><th>抓取</th><th>入库</th><th>开始时间</th></tr>`)
+	if len(visibleRuns) == 0 {
+		body.WriteString(`<tr><td colspan="6">暂无抓取记录</td></tr>`)
+	} else {
+		for _, run := range visibleRuns {
+			body.WriteString(`<tr><td>`)
+			body.WriteString(html.EscapeString(nonEmpty(run.TemplateName, strconv.FormatInt(run.TemplateID, 10), "手动抓取")))
+			body.WriteString(`</td><td>`)
+			body.WriteString(html.EscapeString(run.SourceType))
+			body.WriteString(`</td><td>`)
+			body.WriteString(html.EscapeString(run.Status))
+			body.WriteString(`</td><td>`)
+			body.WriteString(strconv.Itoa(run.FetchedCount))
+			body.WriteString(`</td><td>`)
+			body.WriteString(strconv.Itoa(run.InsertedCount))
+			body.WriteString(`</td><td>`)
+			body.WriteString(html.EscapeString(run.StartedAt.Format("2006-01-02 15:04")))
+			body.WriteString(`</td></tr>`)
+		}
+	}
+	body.WriteString(`</table></section>`)
+
+	body.WriteString(`<section><h2>搜索结果</h2><table><tr><th>标题</th><th>来源</th><th>时间</th><th>跳转</th></tr>`)
+	if len(result.Items) == 0 {
+		body.WriteString(`<tr><td colspan="4">暂无匹配结果</td></tr>`)
+	} else {
+		for _, item := range result.Items {
+			body.WriteString(`<tr><td>`)
+			body.WriteString(html.EscapeString(item.Title))
+			body.WriteString(`</td><td>`)
+			body.WriteString(html.EscapeString(nonEmpty(item.FromText, item.SourceType)))
+			body.WriteString(`</td><td>`)
+			body.WriteString(html.EscapeString(nonEmpty(item.PublishTimeText, item.PublishTime)))
+			body.WriteString(`</td><td>`)
+			body.WriteString(`<a class="inline" href="/articles/`)
+			body.WriteString(strconv.FormatInt(item.ID, 10))
+			body.WriteString(`?return_to=`)
+			body.WriteString(url.QueryEscape(legacySearchResultPath("timely", r)))
+			body.WriteString(`">查看详情</a></td></tr>`)
+		}
+	}
+	body.WriteString(`</table></section>`)
+
+	body.WriteString(`<section><h2>兼容接口</h2><p><a class="inline" href="/timelysearch/data?`)
+	body.WriteString(legacySearchResultPath("timely", r)[len("/timelysearch/result?"):])
+	body.WriteString(`">查看 data 接口结果</a></p></section>`)
+
+	_ = s.writeSimplePage(w, "timelysearch/result", "即时搜索", body.String())
+}
+
+func (s *Server) handleTimelySearchExecute(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Redirect(w, r, "/timelysearch/result", http.StatusSeeOther)
+		return
+	}
+	_ = r.ParseForm()
+	templateID := strings.TrimSpace(firstNonEmpty(r.FormValue("website_id"), r.FormValue("template_id")))
+	keyword := strings.TrimSpace(firstNonEmpty(r.FormValue("keyword"), r.URL.Query().Get("keyword")))
+	stype := strings.TrimSpace(firstNonEmpty(r.FormValue("stype"), r.URL.Query().Get("stype")))
+	pageNoData := strings.TrimSpace(firstNonEmpty(r.FormValue("pageNoData"), r.URL.Query().Get("pageNoData"), "1"))
+	targetQuery := url.Values{}
+	if keyword != "" {
+		targetQuery.Set("keyword", keyword)
+	}
+	if stype != "" {
+		targetQuery.Set("stype", stype)
+	}
+	if pageNoData != "" {
+		targetQuery.Set("pageNoData", pageNoData)
+	}
+	if templateID != "" {
+		targetQuery.Set("website_id", templateID)
+	}
+	message := "模板抓取已触发"
+	req := s.client.R()
+	if !applyManualCrawlTemplate(req, templateID) {
+		targetQuery.Set("msg", "模板编号无效")
+		http.Redirect(w, r, "/timelysearch/result?"+targetQuery.Encode(), http.StatusSeeOther)
+		return
+	}
+	if keyword != "" {
+		req.SetQueryParam("keyword", keyword)
+	}
+	resp, err := req.Post(s.cfg.CrawlerURL + "/api/v1/admin/tasks/crawl")
+	if err != nil || !resp.IsSuccess() {
+		message = "模板抓取触发失败"
+	}
+	targetQuery.Set("msg", message)
+	http.Redirect(w, r, "/timelysearch/result?"+targetQuery.Encode(), http.StatusSeeOther)
+}
+
+func (s *Server) legacyTimelyTemplate(ctx context.Context, r *http.Request) (model.CrawlTemplate, bool) {
+	templateID := legacyTimelyTemplateID(r)
+	if templateID == "" {
+		return model.CrawlTemplate{}, false
+	}
+	tpl, err := s.fetchCrawlTemplate(ctx, templateID)
+	if err != nil {
+		return model.CrawlTemplate{}, false
+	}
+	return tpl, true
+}
+
+func legacyTimelyTemplateID(r *http.Request) string {
+	return strings.TrimSpace(firstNonEmpty(r.URL.Query().Get("website_id"), r.URL.Query().Get("template_id"), r.FormValue("website_id"), r.FormValue("template_id")))
 }
 
 func (s *Server) handleTimelySearchTemplate(w http.ResponseWriter, r *http.Request, user any) {
@@ -1384,28 +1650,74 @@ func legacySpecialDetailEntry(kind string, item model.Item) map[string]any {
 	entry["summary"] = nonEmpty(item.Summary, item.Content)
 	entry["source_url"] = nonEmpty(item.SourceURL, item.DetailURL)
 	entry["publish_time"] = nonEmpty(item.PublishTime, item.PublishTimeText, item.CapturedAt.Format("2006-01-02 15:04:05"))
+	entry["detailUrl"] = nonEmpty(legacyAnyString(entry["detailUrl"]), item.SourceURL, item.DetailURL)
+	entry["detail_url"] = nonEmpty(legacyPayloadString(payload, "detail_url"), legacyPayloadString(payload, "detailUrl"), legacyPayloadString(payload, "detailurl"), item.SourceURL, item.DetailURL)
+	entry["detailurl"] = nonEmpty(legacyPayloadString(payload, "detailurl"), legacyAnyString(entry["detail_url"]), legacyAnyString(entry["detailUrl"]))
+	entry["source_name"] = nonEmpty(legacyAnyString(entry["source_name"]), item.FromText, item.SourceType)
+	entry["source"] = nonEmpty(legacyPayloadString(payload, "source"), item.SourceType)
 	switch kind {
 	case "company":
 		entry["name"] = nonEmpty(legacyPayloadString(payload, "name"), item.Title)
 		entry["phone_number"] = nonEmpty(legacyPayloadString(payload, "phone_number"), legacyPayloadString(payload, "phone"))
+		entry["phone"] = nonEmpty(legacyPayloadString(payload, "phone"), legacyAnyString(entry["phone_number"]))
 		entry["address"] = nonEmpty(legacyPayloadString(payload, "address"), legacyPayloadString(payload, "location"))
+		entry["location"] = nonEmpty(legacyPayloadString(payload, "location"), legacyAnyString(entry["address"]))
 		entry["legal_representative"] = nonEmpty(legacyPayloadString(payload, "legal_representative"), legacyPayloadString(payload, "legal_person"))
+		entry["legal_person"] = nonEmpty(legacyPayloadString(payload, "legal_person"), legacyAnyString(entry["legal_representative"]))
 		entry["uniformSocialCreditCode"] = nonEmpty(legacyPayloadString(payload, "uniformSocialCreditCode"), legacyPayloadString(payload, "taxpayer_identification"))
+		entry["taxpayer_identification"] = nonEmpty(legacyPayloadString(payload, "taxpayer_identification"), legacyAnyString(entry["uniformSocialCreditCode"]))
 		entry["insured_num"] = nonEmpty(legacyPayloadString(payload, "insured_num"), legacyPayloadString(payload, "insureds"))
+		entry["insureds"] = nonEmpty(legacyPayloadString(payload, "insureds"), legacyAnyString(entry["insured_num"]))
 		entry["registration"] = legacyPayloadString(payload, "registration")
 		entry["enterprise_type"] = legacyPayloadString(payload, "enterprise_type")
 		entry["registered_capital_str"] = legacyPayloadString(payload, "registered_capital_str")
 		entry["industry_involved"] = nonEmpty(legacyPayloadString(payload, "industry_involved"), legacyPayloadString(payload, "industry"))
 		entry["business_scope"] = legacyPayloadString(payload, "business_scope")
 		entry["establish_time"] = nonEmpty(legacyPayloadString(payload, "establish_time"), item.PublishTime)
+		entry["key_person"] = legacyJSONTextPayload(payload, "key_person")
+		entry["shareholder"] = legacyJSONTextPayload(payload, "shareholder")
+		entry["change_record"] = legacyJSONTextPayload(payload, "change_record")
 	case "report":
 		entry["title"] = item.Title
 		entry["reportDate"] = nonEmpty(item.PublishTime, item.PublishTimeText, item.CapturedAt.Format("2006-01-02 15:04:05"))
 		entry["url"] = nonEmpty(item.SourceURL, item.DetailURL)
 	case "lawyer":
 		entry["img"] = nonEmpty(legacyPayloadString(payload, "img"), legacyPayloadString(payload, "profile"), legacyPayloadString(payload, "avatar"))
+		entry["telephone"] = nonEmpty(legacyPayloadString(payload, "telephone"), legacyPayloadString(payload, "phone_number"))
+		entry["detailurl"] = nonEmpty(legacyPayloadString(payload, "detailurl"), legacyAnyString(entry["detail_url"]), legacyAnyString(entry["detailUrl"]))
+		entry["name"] = nonEmpty(legacyPayloadString(payload, "name"), item.Title)
+		entry["goods"] = nonEmpty(legacyPayloadString(payload, "goods"), legacyPayloadString(payload, "adept"))
+		entry["WeChat"] = legacyPayloadString(payload, "WeChat")
+		entry["microblog"] = legacyPayloadString(payload, "microblog")
+		entry["tecent"] = legacyPayloadString(payload, "tecent")
+		entry["status"] = legacyPayloadString(payload, "status")
+		entry["language"] = legacyPayloadString(payload, "language")
+		entry["sex"] = legacyPayloadString(payload, "sex")
+		entry["achievements"] = legacyPayloadString(payload, "achievements")
+	case "executionPerson":
+		entry["photo"] = nonEmpty(legacyPayloadString(payload, "photo"), legacyPayloadString(payload, "avatar"), legacyPayloadString(payload, "img"))
+		entry["detailurl"] = nonEmpty(legacyPayloadString(payload, "detailurl"), legacyAnyString(entry["detail_url"]), legacyAnyString(entry["detailUrl"]))
+		entry["address"] = legacyPayloadString(payload, "address")
+		entry["iname"] = nonEmpty(legacyPayloadString(payload, "iname"), legacyPayloadString(payload, "name"), item.Title)
+	case "professor":
+		entry["avatar"] = nonEmpty(legacyPayloadString(payload, "avatar"), legacyPayloadString(payload, "profile"), legacyPayloadString(payload, "img"))
+		entry["detail_url"] = nonEmpty(legacyPayloadString(payload, "detail_url"), legacyAnyString(entry["detailUrl"]), legacyAnyString(entry["detailurl"]))
+		entry["views"] = legacyPayloadString(payload, "views")
+		entry["field"] = legacyPayloadJSONArrayString(payload, "field")
+		entry["H_index"] = nonEmpty(legacyPayloadString(payload, "H_index"), legacyPayloadString(payload, "h_index"))
+		entry["G_index"] = nonEmpty(legacyPayloadString(payload, "G_index"), legacyPayloadString(payload, "g_index"))
+		entry["cooperation_agency"] = legacyJSONTextPayload(payload, "cooperation_agency")
+		entry["periodical"] = legacyJSONTextPayload(payload, "periodical")
 	case "doctor":
 		entry["hospital_url"] = legacyPayloadString(payload, "hospital_url")
+		entry["phone_number"] = nonEmpty(legacyPayloadString(payload, "phone_number"), legacyPayloadString(payload, "telephone"))
+		entry["location"] = nonEmpty(legacyPayloadString(payload, "location"), strings.TrimSpace(strings.Join([]string{legacyPayloadString(payload, "province"), legacyPayloadString(payload, "city"), legacyPayloadString(payload, "area")}, " ")))
+		entry["honor"] = legacyPayloadString(payload, "honor")
+		entry["paper"] = legacyPayloadString(payload, "paper")
+		entry["detailUrl"] = nonEmpty(legacyPayloadString(payload, "detailUrl"), legacyAnyString(entry["detail_url"]), legacyAnyString(entry["detailurl"]))
+		entry["email"] = legacyPayloadString(payload, "email")
+		entry["postcode"] = legacyPayloadString(payload, "postcode")
+		entry["administrative_function"] = legacyPayloadString(payload, "administrative_function")
 	}
 	for key, value := range payload {
 		if _, exists := entry[key]; !exists {
@@ -1515,6 +1827,20 @@ func legacyPayloadJSONArrayString(payload map[string]any, key string) string {
 		}
 	}
 	return "[]"
+}
+
+func legacyJSONTextPayload(payload map[string]any, key string) string {
+	value, ok := payload[key]
+	if !ok || value == nil {
+		return ""
+	}
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	default:
+		raw, _ := json.Marshal(typed)
+		return string(raw)
+	}
 }
 
 func legacyAnyString(value any) string {

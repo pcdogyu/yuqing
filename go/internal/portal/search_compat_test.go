@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-resty/resty/v2"
 
@@ -478,6 +479,9 @@ func TestLegacySpecializedFullSearchEndpoints(t *testing.T) {
 	if len(lawyerDetail.List) != 1 || lawyerDetail.List[0]["lawfirm"] != "金陵律师事务所" {
 		t.Fatalf("unexpected lawyer detail payload: %+v", lawyerDetail)
 	}
+	if lawyerDetail.List[0]["telephone"] != "13800000000" || lawyerDetail.List[0]["detailurl"] != "https://example.com/lawyer/101" {
+		t.Fatalf("expected lawyer compatibility fields, got %+v", lawyerDetail.List[0])
+	}
 
 	companyCategoryReq := httptest.NewRequest(http.MethodGet, "/fullsearch/companyIndustry", nil)
 	companyCategoryRR := httptest.NewRecorder()
@@ -530,6 +534,9 @@ func TestLegacySpecializedFullSearchEndpoints(t *testing.T) {
 	if companyDetail["name"] != "星云科技有限公司" || companyDetail["industry_involved"] != "人工智能" {
 		t.Fatalf("unexpected company detail payload: %+v", companyDetail)
 	}
+	if companyDetail["taxpayer_identification"] != "91310000X" || companyDetail["insureds"] != "30" || companyDetail["legal_person"] != "李四" {
+		t.Fatalf("expected company alias fields, got %+v", companyDetail)
+	}
 }
 
 func TestTimelySearchTemplateUsesCrawlTemplates(t *testing.T) {
@@ -567,5 +574,126 @@ func TestTimelySearchTemplateUsesCrawlTemplates(t *testing.T) {
 	}
 	if templates[0]["engine"] != "全部" || templates[1]["engine"] != "Flash Template" {
 		t.Fatalf("unexpected timely template payload: %+v", templates)
+	}
+}
+
+func TestTimelySearchPageExecuteAndDataFlow(t *testing.T) {
+	var searchQuery url.Values
+	var crawlQuery url.Values
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/crawl-templates":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    200,
+				"message": "ok",
+				"data": []model.CrawlTemplate{
+					{ID: 1, Name: "Flash Template", SourceType: "flash", Enabled: true, ConfigJSON: `{"source_type":"flash"}`},
+					{ID: 2, Name: "Headline Template", SourceType: "headline", Enabled: true, ConfigJSON: `{"source_type":"headline"}`},
+				},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/crawl-templates/1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    200,
+				"message": "ok",
+				"data":    model.CrawlTemplate{ID: 1, Name: "Flash Template", SourceType: "flash", Enabled: true, ConfigJSON: `{"source_type":"flash"}`},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/search/timely":
+			searchQuery = r.URL.Query()
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    200,
+				"message": "ok",
+				"data": model.SearchResult{
+					Total:    1,
+					Page:     2,
+					PageSize: 20,
+					Items: []model.Item{{
+						ID:              301,
+						Title:           "Flash item",
+						Summary:         "Flash summary",
+						SourceType:      "flash",
+						FromText:        "Flash Source",
+						PublishTimeText: "刚刚",
+						SourceURL:       "https://example.com/flash/301",
+					}},
+				},
+			})
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 404, "message": "not found", "data": nil})
+		}
+	}))
+	defer content.Close()
+
+	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/admin/tasks/crawl/runs":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    200,
+				"message": "ok",
+				"data": []model.CrawlRun{{
+					ID:            99,
+					SourceType:    "flash",
+					TemplateID:    1,
+					TemplateName:  "Flash Template",
+					Status:        "success",
+					FetchedCount:  12,
+					InsertedCount: 8,
+					StartedAt:     time.Date(2026, 6, 5, 12, 30, 0, 0, time.UTC),
+				}},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/admin/tasks/crawl":
+			crawlQuery = r.URL.Query()
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "message": "ok", "data": model.CrawlSummary{SourceType: "flash", RunID: 99}})
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 404, "message": "not found", "data": nil})
+		}
+	}))
+	defer crawler.Close()
+
+	srv := &Server{cfg: config.Config{ContentURL: content.URL, CrawlerURL: crawler.URL}, client: resty.New()}
+
+	pageReq := httptest.NewRequest(http.MethodGet, "/timelysearch/result?keyword=AI&website_id=1&stype=flash&pageNoData=2", nil)
+	pageRR := httptest.NewRecorder()
+	srv.handleSearchCompat(pageRR, pageReq, nil, "timely")
+	if pageRR.Code != http.StatusOK {
+		t.Fatalf("expected timelysearch result page 200, got %d", pageRR.Code)
+	}
+	pageBody := pageRR.Body.String()
+	if !strings.Contains(pageBody, "即时搜索") || !strings.Contains(pageBody, "Flash Template") || !strings.Contains(pageBody, "Flash item") || !strings.Contains(pageBody, "立即抓取") {
+		t.Fatalf("unexpected timelysearch result page: %s", pageBody)
+	}
+	if searchQuery.Get("q") != "AI" || searchQuery.Get("page") != "2" || searchQuery.Get("source_type") != "flash" {
+		t.Fatalf("unexpected timely search forwarding: %+v", searchQuery)
+	}
+
+	dataReq := httptest.NewRequest(http.MethodGet, "/timelysearch/data?keyword=AI&website_id=1&pageNoData=2", nil)
+	dataRR := httptest.NewRecorder()
+	srv.handleSearchCompat(dataRR, dataReq, nil, "timely")
+	if dataRR.Code != http.StatusOK {
+		t.Fatalf("expected timelysearch data 200, got %d", dataRR.Code)
+	}
+	if !strings.Contains(dataRR.Body.String(), `Flash item`) || !strings.Contains(dataRR.Body.String(), `Flash Source`) {
+		t.Fatalf("unexpected timelysearch data body: %s", dataRR.Body.String())
+	}
+
+	form := url.Values{}
+	form.Set("website_id", "1")
+	form.Set("keyword", "AI")
+	form.Set("stype", "flash")
+	form.Set("pageNoData", "2")
+	executeReq := httptest.NewRequest(http.MethodPost, "/timelysearch/execute", strings.NewReader(form.Encode()))
+	executeReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	executeRR := httptest.NewRecorder()
+	srv.handleSearchCompat(executeRR, executeReq, nil, "timely")
+	if executeRR.Code != http.StatusSeeOther {
+		t.Fatalf("expected timelysearch execute redirect, got %d", executeRR.Code)
+	}
+	loc := executeRR.Header().Get("Location")
+	if !strings.Contains(loc, "/timelysearch/result?") || !strings.Contains(loc, "website_id=1") || !strings.Contains(loc, "msg=") {
+		t.Fatalf("unexpected execute redirect: %s", loc)
+	}
+	if crawlQuery.Get("template_id") != "1" || crawlQuery.Get("keyword") != "AI" {
+		t.Fatalf("unexpected crawl execute query: %+v", crawlQuery)
 	}
 }
