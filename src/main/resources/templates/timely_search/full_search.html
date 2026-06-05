@@ -149,11 +149,20 @@ $("#currentyear").text((new Date()).getFullYear());
         }
     })
 
+    function timelySearchResultHref(searchWord) {
+        var params = new URLSearchParams();
+        params.set('keyword', searchWord);
+        params.set('stype', full_type);
+        params.set('full_poly', full_poly);
+        params.set('fulltype', full_type);
+        params.set('pageNoData', 1);
+        return ctx + 'timelysearch/result?' + params.toString();
+    }
+
     // 搜索按钮
     $('#searchBtn').click(function () {
         var searchWord = $('#searchWord').val().trim();
-        var params = '?keyword=' + searchWord + '&stype=' + full_type + '&full_poly=' + full_poly+"&fulltype="+full_type;
-        window.location.href = ctx + 'timelysearch/result' + params;
+        window.location.href = timelySearchResultHref(searchWord);
     })
 
     // 回车搜索
@@ -218,8 +227,7 @@ $("#currentyear").text((new Date()).getFullYear());
             setTimeout(function(){
                 $('.search-record a').click(function () {
                     var searchWord = this.innerText.trim();
-                    var params = '?keyword=' + searchWord + '&stype=' + full_type + '&full_poly=' + full_poly+"&fulltype="+full_type;
-                    window.location.href = ctx + 'timelysearch/result' + params;
+                    window.location.href = timelySearchResultHref(searchWord);
                 })
             },100)
         }
