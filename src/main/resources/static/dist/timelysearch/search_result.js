@@ -3,6 +3,65 @@
  * @param full_type
  * @returns
  */
+function buildTimelyResultUrl(targetFullType, page, overrides){
+	let params = {};
+	let selectedType = targetFullType;
+	if (typeof selectedType === 'undefined' || selectedType === null || selectedType === '') {
+		selectedType = full_type;
+	}
+	params.searchword = $('#searchWord').val();
+	params.fulltype = selectedType;
+	params.menuStyle = menuStyle;
+	if (typeof full_poly !== 'undefined' && full_poly !== null && full_poly !== '') {
+		params.full_poly = full_poly;
+	}
+	if (pageSize) {
+		params.pageSize = pageSize;
+	}
+	if (page) {
+		params.page = page;
+	}
+	if (typeof stype !== 'undefined' && stype !== null && stype !== '') {
+		params.stype = stype;
+	}
+	if (typeof website_id !== 'undefined' && website_id !== null && website_id !== '' && website_id !== 0) {
+		params.website_id = website_id;
+	}
+	if (typeof pageNoData !== 'undefined' && pageNoData !== null && pageNoData !== '' && pageNoData !== 0) {
+		params.pageNoData = pageNoData;
+	}
+	if (selectedType == 8 || selectedType == 36) {
+		if (sourcename) {
+			params.sourcename = sourcename;
+		}
+	}
+	if (selectedType == 28 || selectedType == 35) {
+		if (sourcename) {
+			params.rtype = sourcename;
+		}
+	}
+	if (overrides) {
+		for (const key in overrides) {
+			if (!Object.prototype.hasOwnProperty.call(overrides, key)) {
+				continue;
+			}
+			const value = overrides[key];
+			if (typeof value === 'undefined' || value === null || value === '') {
+				continue;
+			}
+			params[key] = value;
+		}
+	}
+	let query = [];
+	for (const key in params) {
+		if (!Object.prototype.hasOwnProperty.call(params, key)) {
+			continue;
+		}
+		query.push(encodeURIComponent(key) + "=" + encodeURIComponent(params[key]));
+	}
+	return "result?" + query.join("&");
+}
+
 function initdata(full_type){
 	$('#company-status-box').hide()
 	$('#establish-date-box').hide()
@@ -336,12 +395,7 @@ function initdata(full_type){
  * @returns
  */
 function firstBox(full_type){
-	let seturl = ""
-	if(menuStyle == 0){
-		seturl = "result?" + "searchword=" + $('#searchWord').val() + "&menuStyle=" + menuStyle + "&full_poly=" + full_poly + "&fulltype=" + full_type + "&pageSize="+ pageSize + "&page=1";
-	}else{
-		seturl = "result?" + "searchword=" + $('#searchWord').val() + "&menuStyle=" + menuStyle + "&fulltype=" + full_type + "&page=1";
-	}
+	let seturl = buildTimelyResultUrl(full_type, 1)
     setUrl(seturl);
 	var data = {type_one_id:full_type}
 	ajax('GET',ctx + 'timelysearch/listFullTypeBySecond', data, setFirstBox);
@@ -915,13 +969,13 @@ function getArticleData(page) {
 
 function getSource_websitename(twoid,sourcename,rtype){
 	//sourcename = $("#sourceName-select option:selected").text()
-	let seturl = "result?" + "searchword=" + $('#searchWord').val() + "&fulltype=" + full_type + "&page=1";
+	let seturl = buildTimelyResultUrl(full_type, 1);
     setUrl(seturl);
 	if(full_type == 1){
 		informationList(1);
 	}else if(full_type == 8){
 		debugger;
-		seturl = seturl + "&sourcename="+sourcename
+		seturl = buildTimelyResultUrl(full_type, 1, {sourcename: sourcename})
 		setUrl(seturl);
 		thirdBox(twoid);
 		$("#sourceName-select option").each(function(){
@@ -967,34 +1021,29 @@ function pageHelper(currentPage, totalPages) {
             }
             
             //let seturl = "result?" + "searchword=" + $('#searchWord').val() + "&full_poly=" +full_poly + "&fulltype=" + full_type + "&page=" + page;
-            let seturl = ""
-        	if(menuStyle == 0){
-        		seturl = "result?" + "searchword=" + $('#searchWord').val() + "&menuStyle=" + menuStyle + "&full_poly=" + full_poly + "&fulltype=" + full_type + "&pageSize="+ pageSize + "&page=" + page;
-        	}else{
-        		seturl = "result?" + "searchword=" + $('#searchWord').val() + "&menuStyle=" + menuStyle + "&fulltype=" + full_type + "&pageSize="+ pageSize + "&page=" + page;
-        	}
+            let seturl = buildTimelyResultUrl(full_type, page)
             
             
             let articleParam = new Object();
             articleParam.type = "GET";
             if(full_type == 8){
-            	seturl = seturl + "&sourcename="+sourcename;
+            	seturl = buildTimelyResultUrl(full_type, page, {sourcename: sourcename});
             	articleParam.url = ctx + "timelysearch/hotList";
             }else if(full_type == 1){
             	articleParam.url = ctx + "timelysearch/informationList";
             }else if(full_type == 23){
             	articleParam.url = ctx + "timelysearch/complaintList";
             }else if(full_type == 28){
-            	seturl = seturl + "&rtype="+sourcename;
+            	seturl = buildTimelyResultUrl(full_type, page, {rtype: sourcename});
             	articleParam.url = ctx + "timelysearch/announcementList";
             }else if(full_type == 35){
-            	seturl = seturl + "&rtype="+sourcename;
+            	seturl = buildTimelyResultUrl(full_type, page, {rtype: sourcename});
             	articleParam.url = ctx + "timelysearch/reportList";
             }else if(full_type == 36){
-            	seturl = seturl + "&sourcename="+sourcename;
+            	seturl = buildTimelyResultUrl(full_type, page, {sourcename: sourcename});
             	articleParam.url = ctx + "timelysearch/inviteList";
             }else if(full_type == 37){
-            	seturl = seturl + "&website_id="+website_id;
+            	seturl = buildTimelyResultUrl(full_type, page, {website_id: website_id});
             	articleParam.url = ctx + "timelysearch/biddingList";
             }else if(full_type == 38){
             	articleParam.url = ctx + "timelysearch/informationList";
@@ -1119,12 +1168,7 @@ function pageHelper(currentPage, totalPages) {
  * @returns
  */
 $("#searchBtn").click(function (e) {
-	let seturl = ''
-	if(menuStyle == 0){
-		seturl = "result?" + "searchword=" + $('#searchWord').val() + "&fulltype=" + full_type + "&menuStyle=" + menuStyle + "&sourcename="+sourcename + "&page=1";
-	}else{
-		seturl = "result?" + "searchword=" + $('#searchWord').val() + "&fulltype=" + full_type + "&menuStyle=" + menuStyle + "&full_poly="+full_poly + "&pageSize=" + pageSize + "&page=1";
-	}
+	let seturl = buildTimelyResultUrl(full_type, 1)
 	if(full_type == 1){
 		//如果是网络资讯
 		informationList(1);
@@ -1140,7 +1184,7 @@ $("#searchBtn").click(function (e) {
 	}else if(full_type == 36){
 		inviteList(1)
 	}else if(full_type == 37){
-		seturl = seturl + "&website_id=" + website_id
+		seturl = buildTimelyResultUrl(full_type, 1, {website_id: website_id})
 		biddingList(1)
 	}else if(full_type == 38){
 		informationList(1);
@@ -1177,31 +1221,37 @@ $("#searchBtn").click(function (e) {
  */
 $("#sourceName-select").change(function (e) {
 	sourcename = $("#sourceName-select option:selected").text()
-	let seturl = "result?" + "searchword=" + $('#searchWord').val() + "&fulltype=" + full_type + "&page=1";
+	let seturl = buildTimelyResultUrl(full_type, 1);
     setUrl(seturl);
 	if(full_type == 1){
 		informationList(1);
 	}else if(full_type == 8){
-		seturl = seturl + "&sourcename="+sourcename
+		seturl = buildTimelyResultUrl(full_type, 1, {sourcename: sourcename})
 		setUrl(seturl);
 		hotList(1)
 	}else if(full_type == 28){
-		seturl = seturl + "&rtype="+sourcename
+		seturl = buildTimelyResultUrl(full_type, 1, {rtype: sourcename})
+		setUrl(seturl);
 		announcementList(1)
 	}else if(full_type == 35){
-		seturl = seturl + "&rtype="+sourcename
+		seturl = buildTimelyResultUrl(full_type, 1, {rtype: sourcename})
+		setUrl(seturl);
 		reportList(1)
 	}else if(full_type == 39){
-		seturl = seturl + "&rtype="+sourcename
+		seturl = buildTimelyResultUrl(full_type, 1, {rtype: sourcename})
+		setUrl(seturl);
 		companyList(1)
 	}else if(full_type == 40){
-		seturl = seturl + "&rtype="+sourcename
+		seturl = buildTimelyResultUrl(full_type, 1, {rtype: sourcename})
+		setUrl(seturl);
 		investmentList(1)
 	}else if(full_type == 42){
-		seturl = seturl + "&rtype="+sourcename
+		seturl = buildTimelyResultUrl(full_type, 1, {rtype: sourcename})
+		setUrl(seturl);
 		judgmentList(1)
 	}else if(full_type == 43){
-		seturl = seturl + "&rtype="+sourcename
+		seturl = buildTimelyResultUrl(full_type, 1, {rtype: sourcename})
+		setUrl(seturl);
 		knowLedgeList(1)
 	}
 });
