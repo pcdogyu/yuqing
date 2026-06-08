@@ -78,6 +78,14 @@ func ResolvePair(input string) (model.CryptoPairResolution, error) {
 		}
 		return buildResolution(raw, base, quote), nil
 	}
+
+	if base, ok := resolveAsset(compact, baseAssets); ok {
+		quote, okQuote := resolveAsset("USDT", quoteAssets)
+		if !okQuote {
+			return model.CryptoPairResolution{}, ErrUnsupportedPair
+		}
+		return buildResolution(raw, base, quote), nil
+	}
 	return model.CryptoPairResolution{}, ErrUnsupportedPair
 }
 

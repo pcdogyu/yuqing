@@ -241,6 +241,29 @@ func TestLegacySearchTarget(t *testing.T) {
 	}
 }
 
+func TestLegacySearchTargetRedirectsCryptoTerms(t *testing.T) {
+	s := &Server{}
+	tests := []struct {
+		name string
+		path string
+		want string
+	}{
+		{name: "symbol", path: "/fullsearch/result?searchword=btc", want: "/crypto?pair=BTCUSDT"},
+		{name: "cn alias", path: "/fullsearch/result?searchword=比特币", want: "/crypto?pair=BTCUSDT"},
+		{name: "slash pair", path: "/fullsearch/result?searchword=btc/usdt", want: "/crypto?pair=BTCUSDT"},
+		{name: "cross pair", path: "/fullsearch/result?searchword=ethbtc", want: "/crypto?pair=ETHBTC"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			if got := s.legacySearchTarget("full", req); got != tc.want {
+				t.Fatalf("expected %q, got %q", tc.want, got)
+			}
+		})
+	}
+}
+
 func TestLegacySearchBucketsIndustry(t *testing.T) {
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/search/full" {

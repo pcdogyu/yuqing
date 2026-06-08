@@ -52,6 +52,17 @@ func TestResolvePair(t *testing.T) {
 			wantBaseCN:   "比特币",
 			wantTerms:    []string{"BTC", "Bitcoin", "比特币", "BTCUSDT", "BTC/USDT"},
 		},
+		{
+			name:         "base asset alias defaults to usdt",
+			input:        " 比特币 ",
+			wantPair:     "BTCUSDT",
+			wantDisplay:  "BTC/USDT",
+			wantBase:     "BTC",
+			wantQuote:    "USDT",
+			wantBaseName: "Bitcoin",
+			wantBaseCN:   "比特币",
+			wantTerms:    []string{"BTC", "Bitcoin", "比特币", "BTCUSDT", "BTC/USDT"},
+		},
 	}
 
 	for _, tt := range tests {

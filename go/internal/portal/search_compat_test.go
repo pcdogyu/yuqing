@@ -91,6 +91,56 @@ func TestLegacySearchHistoryAndRedirect(t *testing.T) {
 	}
 }
 
+func TestLegacySearchResultRedirectsCryptoTermsAndKeepsHistory(t *testing.T) {
+	var posted map[string]string
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/search/history":
+			if got := r.URL.Query().Get("user_id"); got != "42" {
+				t.Fatalf("expected user_id 42, got %q", got)
+			}
+			if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
+				t.Fatalf("decode history post: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "message": "ok", "data": map[string]any{"saved": true}})
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "message": "ok", "data": map[string]any{}})
+		}
+	}))
+	defer content.Close()
+
+	srv := &Server{cfg: config.Config{ContentURL: content.URL}, client: resty.New()}
+	tests := []struct {
+		name string
+		path string
+		want string
+		word string
+	}{
+		{name: "btc", path: "/fullsearch/result?searchword=btc", want: "/crypto?pair=BTCUSDT", word: "btc"},
+		{name: "bitcoin cn", path: "/fullsearch/result?searchword=比特币", want: "/crypto?pair=BTCUSDT", word: "比特币"},
+		{name: "btc usdt", path: "/fullsearch/result?searchword=btc/usdt", want: "/crypto?pair=BTCUSDT", word: "btc/usdt"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			posted = nil
+			rr := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			srv.handleLegacySearchResult(rr, req, map[string]any{"id": int64(42)}, "full")
+			if rr.Code != http.StatusSeeOther {
+				t.Fatalf("expected redirect, got %d", rr.Code)
+			}
+			if got := rr.Header().Get("Location"); got != tc.want {
+				t.Fatalf("expected redirect %q, got %q", tc.want, got)
+			}
+			if posted["search_word"] != tc.word {
+				t.Fatalf("expected search word %q to be recorded, got %+v", tc.word, posted)
+			}
+		})
+	}
+}
+
 func TestLegacySearchInformationList(t *testing.T) {
 	var seenQuery url.Values
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

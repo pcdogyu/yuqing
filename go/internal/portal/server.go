@@ -19,6 +19,7 @@ import (
 	"github.com/go-resty/resty/v2"
 
 	"github.com/stonedt-yuqing/go-jin10/internal/config"
+	"github.com/stonedt-yuqing/go-jin10/internal/cryptoutil"
 	"github.com/stonedt-yuqing/go-jin10/internal/model"
 	"github.com/stonedt-yuqing/go-jin10/internal/provider"
 )
@@ -451,6 +452,10 @@ func (s *Server) handleLegacySearchRedirect(mode string) func(http.ResponseWrite
 }
 
 func (s *Server) legacySearchTarget(mode string, r *http.Request) string {
+	if target, ok := s.legacyCryptoSearchTarget(r); ok {
+		return target
+	}
+
 	values := url.Values{}
 	values.Set("mode", mode)
 	if keyword := nonEmpty(r.URL.Query().Get("keyword"), r.URL.Query().Get("searchword"), r.URL.Query().Get("searchWord")); keyword != "" {
@@ -462,6 +467,19 @@ func (s *Server) legacySearchTarget(mode string, r *http.Request) string {
 		}
 	}
 	return "/articles?" + values.Encode()
+}
+
+func (s *Server) legacyCryptoSearchTarget(r *http.Request) (string, bool) {
+	keyword := nonEmpty(r.URL.Query().Get("keyword"), r.URL.Query().Get("searchword"), r.URL.Query().Get("searchWord"))
+	if keyword == "" {
+		return "", false
+	}
+
+	resolution, err := cryptoutil.ResolvePair(keyword)
+	if err != nil {
+		return "", false
+	}
+	return "/crypto?pair=" + url.QueryEscape(resolution.Pair), true
 }
 
 func (s *Server) handleLegacySearchBuckets(kind string) func(http.ResponseWriter, *http.Request, any) {
