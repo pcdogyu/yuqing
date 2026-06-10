@@ -194,6 +194,56 @@ func TestItemEmotionAndDeletion(t *testing.T) {
 	}
 }
 
+func TestSetItemLegacyStatus(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	now := time.Date(2026, 6, 10, 3, 0, 0, 0, time.UTC)
+	_, _, err := store.UpsertItems(ctx, []model.Item{{
+		SourceType:  "headline",
+		SourceKey:   "legacy-status-1",
+		Title:       "legacy status item",
+		Content:     "legacy status content",
+		Summary:     "legacy status summary",
+		SourceURL:   "https://example.com/status",
+		CapturedAt:  now,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		PublishTime: "2026-06-10 11:00:00",
+	}})
+	if err != nil {
+		t.Fatalf("UpsertItems error: %v", err)
+	}
+
+	list, err := store.ListItems(ctx, model.ArticleFilter{Page: 1, PageSize: 10})
+	if err != nil || len(list.Items) != 1 {
+		t.Fatalf("ListItems error: %v %+v", err, list)
+	}
+	itemID := list.Items[0].ID
+
+	if err := store.SetItemLegacyStatus(ctx, itemID, "invalid"); err != nil {
+		t.Fatalf("SetItemLegacyStatus invalid error: %v", err)
+	}
+	var tag string
+	if err := store.db.QueryRowContext(ctx, `SELECT tag FROM item_tags WHERE item_id = ? AND tag LIKE 'legacy_status:%'`, itemID).Scan(&tag); err != nil {
+		t.Fatalf("query legacy status tag: %v", err)
+	}
+	if tag != "legacy_status:invalid" {
+		t.Fatalf("unexpected legacy status tag: %s", tag)
+	}
+
+	if err := store.SetItemLegacyStatus(ctx, itemID, "active"); err != nil {
+		t.Fatalf("SetItemLegacyStatus active error: %v", err)
+	}
+	var count int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM item_tags WHERE item_id = ? AND tag LIKE 'legacy_status:%'`, itemID).Scan(&count); err != nil {
+		t.Fatalf("count legacy status tag: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected cleared legacy status tag, got %d", count)
+	}
+}
+
 func TestAuditLogs(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()

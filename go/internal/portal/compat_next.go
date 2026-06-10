@@ -1591,6 +1591,8 @@ func (s *Server) handleMonitorCompat(w http.ResponseWriter, r *http.Request, use
 		s.handleMonitorDetail(w, r, user)
 	case path == "wxGroup":
 		s.handleMonitorWxGroup(w, r, user)
+	case s.handleLegacyMonitorAction(w, r, user, path):
+		return
 	default:
 		http.NotFound(w, r)
 	}

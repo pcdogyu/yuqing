@@ -466,6 +466,31 @@ func (s *Store) MarkItemDeleted(ctx context.Context, itemID int64) error {
 	return err
 }
 
+func (s *Store) SetItemLegacyStatus(ctx context.Context, itemID int64, status string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err = tx.ExecContext(ctx, `DELETE FROM item_tags WHERE item_id = ? AND tag LIKE 'legacy_status:%'`, itemID); err != nil {
+		return err
+	}
+	status = strings.ToLower(strings.TrimSpace(status))
+	if status == "" || status == "active" || status == "valid" || status == "normal" {
+		return tx.Commit()
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO item_tags (item_id, tag, created_at) VALUES (?, ?, ?)`, itemID, "legacy_status:"+status, now); err != nil {
+		return err
+	}
+	err = tx.Commit()
+	return err
+}
+
 func (s *Store) SearchItemsAdvanced(ctx context.Context, filter model.ArticleFilter) (model.SearchResult, error) {
 	items, err := s.listItemsForAdvancedFilter(ctx, filter)
 	if err != nil {

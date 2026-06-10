@@ -255,6 +255,42 @@ func TestArticleEmotionDeleteAndShareHandlers(t *testing.T) {
 	}
 }
 
+func TestArticleStatusHandler(t *testing.T) {
+	store := newContentSearchTestStore(t)
+	svc := NewService(config.Config{}, store)
+	ctx := context.Background()
+
+	now := time.Date(2026, 6, 10, 3, 0, 0, 0, time.UTC)
+	_, _, err := store.UpsertItems(ctx, []model.Item{{
+		SourceType: "headline",
+		SourceKey:  "status-key-1",
+		Title:      "status article",
+		Content:    "content",
+		Summary:    "summary",
+		SourceURL:  "https://example.com/status",
+		CapturedAt: now,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}})
+	if err != nil {
+		t.Fatalf("UpsertItems error: %v", err)
+	}
+	list, err := store.ListItems(ctx, model.ArticleFilter{Page: 1, PageSize: 10})
+	if err != nil || len(list.Items) != 1 {
+		t.Fatalf("ListItems error: %v %+v", err, list)
+	}
+	itemID := list.Items[0].ID
+
+	statusReq := httptest.NewRequest(http.MethodPut, "/api/v1/articles/1/status", strings.NewReader(`{"status":"invalid"}`))
+	statusReq.Header.Set("Content-Type", "application/json")
+	statusReq = statusReq.WithContext(contextWithRoute(statusReq, routeContextWithID(itemID)))
+	statusRR := httptest.NewRecorder()
+	svc.handleSetArticleStatus(statusRR, statusReq)
+	if statusRR.Code != http.StatusOK {
+		t.Fatalf("expected status handler success, got %d", statusRR.Code)
+	}
+}
+
 func TestHandleCryptoPairResolve(t *testing.T) {
 	svc := NewService(config.Config{}, newContentSearchTestStore(t))
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/crypto/pairs/resolve?q=btc/usdt", nil)

@@ -46,6 +46,7 @@ type Store interface {
 	PopulateUserItemState(rctx context.Context, userID int64, items []model.Item) error
 	SearchItemsFTS(rctx context.Context, filter model.ArticleFilter) (model.SearchResult, error)
 	SetItemEmotion(rctx context.Context, itemID int64, emotion string) error
+	SetItemLegacyStatus(rctx context.Context, itemID int64, status string) error
 	MarkItemDeleted(rctx context.Context, itemID int64) error
 	MarkItemRead(rctx context.Context, userID, itemID int64) error
 	DeleteItemRead(rctx context.Context, userID, itemID int64) error
@@ -138,6 +139,7 @@ func (s *Service) Routes(r chi.Router) {
 	r.Get("/api/v1/articles/{id}", s.handleGetArticle)
 	r.Get("/api/v1/articles/{id}/related", s.handleGetRelatedArticles)
 	r.Post("/api/v1/articles/{id}/emotion", s.handleSetArticleEmotion)
+	r.Put("/api/v1/articles/{id}/status", s.handleSetArticleStatus)
 	r.Delete("/api/v1/articles/{id}", s.handleDeleteArticle)
 	r.Post("/api/v1/articles/{id}/read", s.handleMarkArticleRead)
 	r.Delete("/api/v1/articles/{id}/read", s.handleUnmarkArticleRead)
@@ -520,6 +522,39 @@ func (s *Service) handleSetArticleEmotion(w http.ResponseWriter, r *http.Request
 		return
 	}
 	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]any{"emotion": emotion})
+}
+
+func (s *Service) handleSetArticleStatus(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid id", nil)
+		return
+	}
+	var req struct {
+		Status string `json:"status"`
+	}
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+	status := strings.ToLower(strings.TrimSpace(nonEmpty(req.Status, r.URL.Query().Get("status"), r.FormValue("status"))))
+	if status == "" {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "status required", nil)
+		return
+	}
+	switch status {
+	case "active", "valid", "normal":
+		status = "active"
+	case "invalid", "inactive", "deleted":
+		status = "invalid"
+	default:
+		apiutil.WriteJSON(w, http.StatusBadRequest, "unsupported status", nil)
+		return
+	}
+	if err := s.store.SetItemLegacyStatus(r.Context(), id, status); err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]string{"status": status})
 }
 
 func (s *Service) handleDeleteArticle(w http.ResponseWriter, r *http.Request) {

@@ -62,6 +62,128 @@ func TestNonEmpty(t *testing.T) {
 	}
 }
 
+func TestMonitorCompatGetArticle(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/search/full":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{
+					"items": []map[string]any{{
+						"id":           101,
+						"source_type":  "headline",
+						"source_key":   "monitor-key-101",
+						"title":        "钢铁行业快讯",
+						"content":      "钢铁行业正文",
+						"summary":      "钢铁行业摘要",
+						"publish_time": "2026-06-10 10:00:00",
+						"source_url":   "https://example.com/101",
+						"from_text":    "金十数据",
+						"tag_flags":    "1",
+						"project_ids":  []int64{7},
+					}},
+					"total":     1,
+					"page":      1,
+					"page_size": 10,
+				},
+			})
+		case "/api/v1/projects":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{{
+				"id":         7,
+				"group_id":   3,
+				"group_name": "钢铁组",
+				"name":       "钢铁项目",
+			}}})
+		case "/api/v1/project-groups":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{{"id": 3, "name": "钢铁组"}}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer content.Close()
+
+	srv := &Server{
+		cfg:       config.Config{ContentURL: content.URL},
+		client:    resty.New(),
+		templates: NewServer(config.Config{}).templates,
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/monitor/getarticle", strings.NewReader(`{"projectid":"7","searchkeyword":"钢铁","page":1,"pageSize":10}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	srv.handleMonitorCompat(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	var envelope struct {
+		Status int `json:"status"`
+		Data   struct {
+			List []map[string]any `json:"list"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal monitor getarticle: %v", err)
+	}
+	if envelope.Status != http.StatusOK {
+		t.Fatalf("unexpected monitor getarticle payload: %+v", envelope)
+	}
+	if len(envelope.Data.List) > 0 && (envelope.Data.List[0]["projectid"] != float64(7) || envelope.Data.List[0]["groupid"] != float64(3)) {
+		t.Fatalf("expected project/group ids in payload, got %+v", envelope.Data.List[0])
+	}
+}
+
+func TestMonitorCompatWarningSettingAndStatus(t *testing.T) {
+	var statusCalls []string
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{{"id": 7, "group_id": 3, "group_name": "钢铁组", "name": "钢铁项目"}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/system/warning-settings/7":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
+				"project_id":         7,
+				"warning_status":     1,
+				"warning_word":       "钢铁",
+				"warning_name":       "钢铁预警",
+				"channels":           "mail",
+				"enabled":            true,
+				"warning_setting_id": 11,
+			}})
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/articles/101/status":
+			var req map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			statusCalls = append(statusCalls, req["status"].(string))
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": map[string]any{"status": req["status"]}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer content.Close()
+
+	srv := &Server{
+		cfg:       config.Config{ContentURL: content.URL},
+		client:    resty.New(),
+		templates: NewServer(config.Config{}).templates,
+	}
+
+	warnReq := httptest.NewRequest(http.MethodGet, "/monitor/warningSetting/7", nil)
+	warnRR := httptest.NewRecorder()
+	srv.handleMonitorCompat(warnRR, warnReq, map[string]any{"id": 1})
+	if warnRR.Code != http.StatusOK {
+		t.Fatalf("expected warning setting 200, got %d", warnRR.Code)
+	}
+
+	statusReq := httptest.NewRequest(http.MethodPost, "/monitor/edit/status", strings.NewReader(`{"articleId":"101","type":"1"}`))
+	statusReq.Header.Set("Content-Type", "application/json")
+	statusRR := httptest.NewRecorder()
+	srv.handleMonitorCompat(statusRR, statusReq, map[string]any{"id": 9})
+	if statusRR.Code != http.StatusOK {
+		t.Fatalf("expected edit status 200, got %d", statusRR.Code)
+	}
+	if len(statusCalls) != 1 || statusCalls[0] != "invalid" {
+		t.Fatalf("expected invalid status call, got %+v", statusCalls)
+	}
+}
+
 func TestCryptoPageUsesSharedNavAndFriendlyFallback(t *testing.T) {
 	analysis := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
