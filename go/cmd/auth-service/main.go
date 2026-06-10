@@ -32,6 +32,7 @@ func main() {
 		Handler:           auth.NewService(cfg, store).Router(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	app.LogServiceReady("auth-service", cfg.AuthAddr)
 	run(server, "auth-service", cfg.AuthAddr)
 }
 

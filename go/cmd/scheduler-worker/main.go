@@ -19,5 +19,6 @@ func main() {
 	defer cancel()
 	worker := scheduler.NewWorker(cfg)
 	defer func() { _ = worker.Close() }()
+	app.LogServiceReady("scheduler-worker", cfg.SchedulerAddr)
 	worker.Run(ctx)
 }

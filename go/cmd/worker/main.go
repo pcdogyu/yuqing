@@ -72,6 +72,7 @@ func main() {
 		go runLoop(ctx, crawler, provider.SourceTypeCryptoTelegram, cfg.CryptoTelegramInterval)
 	}
 
+	app.LogServiceReady("worker", "")
 	<-ctx.Done()
 	log.Info().Msg("worker stopped")
 }

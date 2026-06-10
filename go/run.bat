@@ -73,11 +73,13 @@ cd /d "%GO_DIR%"
 echo [2/6] Resolve build metadata...
 pushd "%REPO_ROOT%" >nul
 for /f %%I in ('git rev-parse --short HEAD') do set "YUQING_GIT_COMMIT=%%I"
+for /f %%I in ('git rev-parse --abbrev-ref HEAD') do set "YUQING_GIT_BRANCH=%%I"
 popd >nul
 for /f "usebackq delims=" %%I in (`powershell -NoProfile -Command "(Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')"`) do set "YUQING_BUILD_TIME=%%I"
 if not defined YUQING_GIT_COMMIT set "YUQING_GIT_COMMIT=unknown"
+if not defined YUQING_GIT_BRANCH set "YUQING_GIT_BRANCH=unknown"
 if not defined YUQING_BUILD_TIME set "YUQING_BUILD_TIME=unknown"
-set "LDFLAGS=-X github.com/stonedt-yuqing/go-jin10/internal/app.Version=%YUQING_RUN_VERSION% -X github.com/stonedt-yuqing/go-jin10/internal/app.GitCommit=%YUQING_GIT_COMMIT% -X github.com/stonedt-yuqing/go-jin10/internal/app.BuildTime=%YUQING_BUILD_TIME%"
+set "LDFLAGS=-X github.com/stonedt-yuqing/go-jin10/internal/app.Version=%YUQING_RUN_VERSION% -X github.com/stonedt-yuqing/go-jin10/internal/app.GitCommit=%YUQING_GIT_COMMIT% -X github.com/stonedt-yuqing/go-jin10/internal/app.BuildTime=%YUQING_BUILD_TIME% -X github.com/stonedt-yuqing/go-jin10/internal/app.BranchName=%YUQING_GIT_BRANCH%"
 
 if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
 
@@ -150,6 +152,7 @@ echo LogLevel: %YUQING_LOG_LEVEL%
 echo Version: %YUQING_RUN_VERSION%
 echo Commit: %YUQING_GIT_COMMIT%
 echo BuildTime: %YUQING_BUILD_TIME%
+echo Branch: %YUQING_GIT_BRANCH%
 exit /b 0
 
 :start_process_service

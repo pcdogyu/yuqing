@@ -34,6 +34,7 @@ func main() {
 		Handler:           api.Router(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	app.LogServiceReady("crawler-service", cfg.CrawlerAddr)
 	run(server, "crawler-service", cfg.CrawlerAddr)
 }
 

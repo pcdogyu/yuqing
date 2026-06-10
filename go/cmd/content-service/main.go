@@ -34,6 +34,7 @@ func main() {
 		Handler:           contentSvc.Router(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	app.LogServiceReady("content-service", cfg.ContentAddr)
 	run(server, "content-service", cfg.ContentAddr)
 }
 

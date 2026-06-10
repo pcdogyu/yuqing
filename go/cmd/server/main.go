@@ -66,6 +66,7 @@ func main() {
 		Handler:           api.Router(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	app.LogServiceReady("server", cfg.ListenAddr)
 
 	go func() {
 		log.Info().Str("addr", cfg.ListenAddr).Msg("http server listening")

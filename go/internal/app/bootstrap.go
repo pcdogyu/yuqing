@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/go-resty/resty/v2"
@@ -21,9 +22,10 @@ import (
 )
 
 var (
-	Version   = "dev"
-	GitCommit = "unknown"
-	BuildTime = "unknown"
+	Version    = "dev"
+	GitCommit  = "unknown"
+	BuildTime  = "unknown"
+	BranchName = "unknown"
 )
 
 func NewStore(cfg config.Config) (*sqlitestore.Store, error) {
@@ -69,6 +71,7 @@ func LogStartup(serviceName, listenAddr string, cfg config.Config) {
 		Str("version", Version).
 		Str("git_commit", GitCommit).
 		Str("build_time", BuildTime).
+		Str("branch_name", BranchName).
 		Str("go_version", runtime.Version()).
 		Str("log_level", cfg.LogLevel).
 		Str("listen_addr", listenAddr).
@@ -106,6 +109,14 @@ func LogStartup(serviceName, listenAddr string, cfg config.Config) {
 		Str("llm_model", cfg.LLMModel).
 		Str("generated_at", time.Now().UTC().Format(time.RFC3339))
 	event.Msg("startup debug info")
+}
+
+func LogServiceReady(serviceName, listenAddr string) {
+	event := log.Info().Str("service", serviceName)
+	if strings.TrimSpace(listenAddr) != "" {
+		event = event.Str("addr", listenAddr)
+	}
+	event.Msg("service started")
 }
 
 func jin10FullOptions(cfg config.Config) jin10full.Options {

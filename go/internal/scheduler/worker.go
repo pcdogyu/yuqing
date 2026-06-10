@@ -36,31 +36,37 @@ func NewWorker(cfg config.Config) *Worker {
 func (w *Worker) Run(ctx context.Context) {
 	w.waitForDependencies(ctx)
 
+	log.Info().Str("service", "scheduler-service").Str("task", "flash-crawl").Dur("interval", w.cfg.FlashInterval).Msg("scheduler task registered")
 	go w.loop(ctx, "flash-crawl", w.cfg.FlashInterval, func() error {
 		_, err := w.client.R().
 			SetQueryParam("source_type", "flash").
 			Post(w.cfg.CrawlerURL + "/api/v1/admin/tasks/crawl")
 		return err
 	})
+	log.Info().Str("service", "scheduler-service").Str("task", "headline-crawl").Dur("interval", w.cfg.HeadlineInterval).Msg("scheduler task registered")
 	go w.loop(ctx, "headline-crawl", w.cfg.HeadlineInterval, func() error {
 		_, err := w.client.R().
 			SetQueryParam("source_type", "headline").
 			Post(w.cfg.CrawlerURL + "/api/v1/admin/tasks/crawl")
 		return err
 	})
+	log.Info().Str("service", "scheduler-service").Str("task", "analysis-refresh").Dur("interval", w.cfg.AnalysisInterval).Msg("scheduler task registered")
 	go w.loop(ctx, "analysis-refresh", w.cfg.AnalysisInterval, func() error {
 		_, err := w.client.R().
 			Post(w.cfg.AnalysisURL + "/api/v1/admin/tasks/analysis/refresh")
 		return err
 	})
+	log.Info().Str("service", "scheduler-service").Str("task", "wechat-challenge-cleanup").Dur("interval", w.cfg.WechatCleanupInterval).Msg("scheduler task registered")
 	go w.loop(ctx, "wechat-challenge-cleanup", w.cfg.WechatCleanupInterval, func() error {
 		return w.cleanupExpiredWechatChallenges(ctx)
 	})
 	if w.cfg.WechatPushEnabled {
+		log.Info().Str("service", "scheduler-service").Str("task", "wechat-daily-push").Dur("interval", w.cfg.WechatPushInterval).Msg("scheduler task registered")
 		go w.loop(ctx, "wechat-daily-push", w.cfg.WechatPushInterval, func() error {
 			return w.pushWechatDailySummary(ctx)
 		})
 	}
+	log.Info().Str("service", "scheduler-service").Msg("scheduler service ready")
 	<-ctx.Done()
 }
 

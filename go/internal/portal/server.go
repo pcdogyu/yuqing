@@ -18,6 +18,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 
+	"github.com/stonedt-yuqing/go-jin10/internal/app"
 	"github.com/stonedt-yuqing/go-jin10/internal/config"
 	"github.com/stonedt-yuqing/go-jin10/internal/cryptoutil"
 	"github.com/stonedt-yuqing/go-jin10/internal/model"
@@ -178,6 +179,12 @@ type pageData struct {
 	FavoritePageNext         int
 	FavoriteProjectID        string
 	FavoriteTotalPages       int
+	ArticlePage              int
+	ArticlePagePrev          int
+	ArticlePageNext          int
+	ArticleTotalPages        int
+	ArticlePrevURL           string
+	ArticleNextURL           string
 	WarningArticles          []legacyWarningArticleCompat
 	WarningArticlePage       int
 	WarningArticlePrev       int
@@ -199,6 +206,9 @@ type pageData struct {
 	CountDraft               int
 	CountGenerated           int
 	CountArchived            int
+	FooterCommit             string
+	FooterBuildTime          string
+	FooterBranch             string
 }
 
 type serviceStatus struct {
@@ -3067,6 +3077,8 @@ func (s *Server) handleArticles(w http.ResponseWriter, r *http.Request, user any
 		return
 	}
 	mode := strings.TrimSpace(r.URL.Query().Get("mode"))
+	pageNum := maxInt(parseIntDefault(strings.TrimSpace(r.URL.Query().Get("page")), 1), 1)
+	pageSize := 20
 	keyword := strings.TrimSpace(r.URL.Query().Get("keyword"))
 	projectID := strings.TrimSpace(r.URL.Query().Get("project_id"))
 	sourceType := strings.TrimSpace(r.URL.Query().Get("source_type"))
@@ -3077,19 +3089,19 @@ func (s *Server) handleArticles(w http.ResponseWriter, r *http.Request, user any
 	industry := strings.TrimSpace(r.URL.Query().Get("industry"))
 	province := strings.TrimSpace(r.URL.Query().Get("province"))
 	city := strings.TrimSpace(r.URL.Query().Get("city"))
-	query := "/api/v1/articles?page=1&page_size=200"
+	query := "/api/v1/articles?page=" + strconv.Itoa(pageNum) + "&page_size=" + strconv.Itoa(pageSize)
 	if mode == "search" {
-		query = "/api/v1/search/articles?page=1&page_size=200"
+		query = "/api/v1/search/articles?page=" + strconv.Itoa(pageNum) + "&page_size=" + strconv.Itoa(pageSize)
 		if keyword != "" {
-			query += "&q=" + keyword
+			query += "&q=" + url.QueryEscape(keyword)
 		}
 	} else if mode == "full" {
-		query = "/api/v1/search/full?page=1&page_size=200"
+		query = "/api/v1/search/full?page=" + strconv.Itoa(pageNum) + "&page_size=" + strconv.Itoa(pageSize)
 		if keyword != "" {
 			query += "&q=" + url.QueryEscape(keyword)
 		}
 	} else if mode == "timely" {
-		query = "/api/v1/search/timely?page=1&page_size=200"
+		query = "/api/v1/search/timely?page=" + strconv.Itoa(pageNum) + "&page_size=" + strconv.Itoa(pageSize)
 		if keyword != "" {
 			query += "&q=" + url.QueryEscape(keyword)
 		}
@@ -3117,6 +3129,12 @@ func (s *Server) handleArticles(w http.ResponseWriter, r *http.Request, user any
 	if city != "" {
 		query += "&city=" + url.QueryEscape(city)
 	}
+	if readFilter != "" {
+		query += "&read=" + url.QueryEscape(readFilter)
+	}
+	if flagFilter != "" {
+		query += "&favorite=" + url.QueryEscape(flagFilter)
+	}
 	if userID > 0 {
 		query += "&user_id=" + strconv.FormatInt(userID, 10)
 	}
@@ -3126,23 +3144,10 @@ func (s *Server) handleArticles(w http.ResponseWriter, r *http.Request, user any
 	_ = s.getJSON(s.cfg.ContentURL+query, &articles)
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/projects", &projects)
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/search/options", &options)
-	filteredItems := make([]model.Item, 0, len(articles.Items))
 	readCount := 0
 	unreadCount := 0
 	flaggedCount := 0
 	for _, item := range articles.Items {
-		if readFilter == "read" && !item.Read {
-			continue
-		}
-		if readFilter == "unread" && item.Read {
-			continue
-		}
-		if flagFilter == "favorited" && !item.Favorited {
-			continue
-		}
-		if flagFilter == "unfavorited" && item.Favorited {
-			continue
-		}
 		if item.Read {
 			readCount++
 		} else {
@@ -3151,35 +3156,39 @@ func (s *Server) handleArticles(w http.ResponseWriter, r *http.Request, user any
 		if item.Favorited {
 			flaggedCount++
 		}
-		filteredItems = append(filteredItems, item)
 	}
-	articles.Items = filteredItems
-	if readFilter != "" || flagFilter != "" {
-		articles.Total = len(filteredItems)
-	}
+	totalPages := maxInt((articles.Total+pageSize-1)/pageSize, 1)
+	prevURL := buildPageURL(r, maxInt(pageNum-1, 1))
+	nextURL := buildPageURL(r, minInt(pageNum+1, totalPages))
 	returnTo := url.QueryEscape(r.URL.RequestURI())
 	_ = s.render(w, "articles", pageData{
-		Title:          "文章中心",
-		User:           user,
-		Articles:       articles,
-		Projects:       projects,
-		ReturnTo:       returnTo,
-		FilterKeyword:  keyword,
-		FilterProject:  projectID,
-		FilterRead:     readFilter,
-		FilterFlag:     flagFilter,
-		FilterSource:   sourceType,
-		FilterStart:    start,
-		FilterEnd:      end,
-		FilterIndustry: industry,
-		FilterProvince: province,
-		FilterCity:     city,
-		SearchMode:     mode,
-		SearchOptions:  options,
-		CountRead:      readCount,
-		CountUnread:    unreadCount,
-		CountFlagged:   flaggedCount,
-		Message:        r.URL.Query().Get("msg"),
+		Title:             "文章中心",
+		User:              user,
+		Articles:          articles,
+		Projects:          projects,
+		ReturnTo:          returnTo,
+		FilterKeyword:     keyword,
+		FilterProject:     projectID,
+		FilterRead:        readFilter,
+		FilterFlag:        flagFilter,
+		FilterSource:      sourceType,
+		FilterStart:       start,
+		FilterEnd:         end,
+		FilterIndustry:    industry,
+		FilterProvince:    province,
+		FilterCity:        city,
+		SearchMode:        mode,
+		SearchOptions:     options,
+		CountRead:         readCount,
+		CountUnread:       unreadCount,
+		CountFlagged:      flaggedCount,
+		ArticlePage:       pageNum,
+		ArticlePagePrev:   maxInt(pageNum-1, 1),
+		ArticlePageNext:   minInt(pageNum+1, totalPages),
+		ArticleTotalPages: totalPages,
+		ArticlePrevURL:    prevURL,
+		ArticleNextURL:    nextURL,
+		Message:           r.URL.Query().Get("msg"),
 	})
 }
 
@@ -3926,6 +3935,15 @@ func (s *Server) getJSONWithContext(ctx context.Context, url string, target any)
 }
 
 func (s *Server) render(w http.ResponseWriter, name string, data pageData) error {
+	if strings.TrimSpace(data.FooterCommit) == "" {
+		data.FooterCommit = app.GitCommit
+	}
+	if strings.TrimSpace(data.FooterBuildTime) == "" {
+		data.FooterBuildTime = app.BuildTime
+	}
+	if strings.TrimSpace(data.FooterBranch) == "" {
+		data.FooterBranch = app.BranchName
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	return s.templates.ExecuteTemplate(w, name, data)
 }
@@ -4027,6 +4045,13 @@ func parsePositiveInt(raw string, fallback int) int {
 	return fallback
 }
 
+func parseIntDefault(raw string, fallback int) int {
+	if parsed, err := strconv.Atoi(strings.TrimSpace(raw)); err == nil {
+		return parsed
+	}
+	return fallback
+}
+
 func maxInt(values ...int) int {
 	if len(values) == 0 {
 		return 0
@@ -4051,6 +4076,12 @@ func minInt(values ...int) int {
 		}
 	}
 	return min
+}
+
+func buildPageURL(r *http.Request, page int) string {
+	query := r.URL.Query()
+	query.Set("page", strconv.Itoa(maxInt(page, 1)))
+	return r.URL.Path + "?" + query.Encode()
 }
 
 func parseProjectID(raw string) int64 {
@@ -4656,12 +4687,14 @@ func (s *Server) collectServiceStatuses() []serviceStatus {
 }
 
 const portalNavHTML = `<nav><a href="/">总览</a><a href="/projects">项目</a><a href="/monitor-rules">规则</a><a href="/articles">文章</a><a href="/reports">报告</a><a href="/crawl-templates">模板中心</a><a href="/crawl-templates/manage">模板管理</a><a href="/crypto">Crypto</a><a href="/system">系统</a><a href="/logout">退出</a></nav>`
+const portalFooterHTML = `<footer class="site-footer"><div>Code by Yuhao@jiansutech.com</div><div>{{.FooterCommit}} - {{.FooterBuildTime}} - {{.FooterBranch}}</div></footer>`
 
 const layoutTemplate = `
 {{define "nav"}}` + portalNavHTML + `{{end}}
+{{define "footer"}}` + portalFooterHTML + `{{end}}
 `
 
-const baseStyles = `body{font-family:Segoe UI,system-ui;background:#f7f3eb;margin:0;color:#222}header,main{max-width:1180px;margin:0 auto;padding:24px}header{padding-bottom:0}header h1{margin:0 0 18px;font-size:30px;line-height:1.25}nav{display:flex;gap:16px;flex-wrap:wrap;align-items:center}nav a{margin-right:0;color:#214e34;text-decoration:none;font-weight:600;display:inline-flex;align-items:center;min-height:24px;line-height:1.2}section{background:#fff;border-radius:16px;padding:20px;margin-top:20px;box-shadow:0 8px 24px rgba(0,0,0,.06)}input,select,textarea,button{width:100%;padding:12px;margin:8px 0;border-radius:10px;border:1px solid #d0c8b8;box-sizing:border-box}button{background:#214e34;color:#fff;border:none;cursor:pointer}table{width:100%;border-collapse:collapse}th,td{padding:10px;border-bottom:1px solid #ece7dc;text-align:left}pre{white-space:pre-wrap;line-height:1.6}a.inline{margin-right:0;color:#214e34}.muted{color:#6a6257}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}.dashboard-grid{display:grid;grid-template-columns:1.05fr 1.65fr 1.1fr;gap:18px;align-items:start}.dashboard-col{display:grid;gap:16px}.section-card{border:1px solid #ece7dc;border-radius:14px;background:#faf8f2;padding:16px}.topic-list{list-style:none;padding:0;margin:0}.topic-list li{padding:12px 0;border-bottom:1px solid #ece7dc}.topic-list li:last-child{border-bottom:none}.topic-head{display:flex;justify-content:space-between;gap:12px;align-items:baseline}.metric-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}.summary-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:12px}.summary-strip>div{padding:12px 14px;border-radius:12px;border:1px solid #ece7dc;background:#fff}.summary-strip strong{display:block;margin-bottom:4px;font-size:16px;color:#214e34}.summary-strip .muted{font-size:13px}.kpi-chip{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:999px;background:rgba(33,78,52,.08);color:#214e34;font-size:13px}.hero{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;background:linear-gradient(135deg,#214e34 0%,#315d42 100%);color:#fff}.hero h1,.hero p{margin:0}.hero p{opacity:.9}.hero-meta{display:flex;flex-direction:column;gap:10px;align-items:flex-end;font-size:14px}.hero-meta a{color:#fff;text-decoration:underline}.progress{height:10px;background:rgba(33,78,52,.1);border-radius:999px;overflow:hidden;margin-top:8px}.progress i{display:block;height:100%;background:linear-gradient(90deg,#214e34,#5b8b69)}.section-card h3{margin-top:0}@media (max-width: 1100px){.dashboard-grid{grid-template-columns:1fr}.hero{flex-direction:column}.hero-meta{align-items:flex-start}}`
+const baseStyles = `body{font-family:Segoe UI,system-ui;background:#f7f3eb;margin:0;color:#222}header,main,.site-footer{max-width:1180px;margin:0 auto;padding:24px}header{padding-bottom:0}header h1{margin:0 0 18px;font-size:30px;line-height:1.25}nav{display:flex;gap:16px;flex-wrap:wrap;align-items:center}nav a{margin-right:0;color:#214e34;text-decoration:none;font-weight:600;display:inline-flex;align-items:center;min-height:24px;line-height:1.2}.site-footer{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;color:#6a6257;font-size:13px;padding-top:12px;padding-bottom:28px}section{background:#fff;border-radius:16px;padding:20px;margin-top:20px;box-shadow:0 8px 24px rgba(0,0,0,.06)}input,select,textarea,button{width:100%;padding:12px;margin:8px 0;border-radius:10px;border:1px solid #d0c8b8;box-sizing:border-box}button{background:#214e34;color:#fff;border:none;cursor:pointer}table{width:100%;border-collapse:collapse}th,td{padding:10px;border-bottom:1px solid #ece7dc;text-align:left}pre{white-space:pre-wrap;line-height:1.6}a.inline{margin-right:0;color:#214e34}.muted{color:#6a6257}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}.dashboard-grid{display:grid;grid-template-columns:1.05fr 1.65fr 1.1fr;gap:18px;align-items:start}.dashboard-col{display:grid;gap:16px}.section-card{border:1px solid #ece7dc;border-radius:14px;background:#faf8f2;padding:16px}.topic-list{list-style:none;padding:0;margin:0}.topic-list li{padding:12px 0;border-bottom:1px solid #ece7dc}.topic-list li:last-child{border-bottom:none}.topic-head{display:flex;justify-content:space-between;gap:12px;align-items:baseline}.metric-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}.summary-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:12px}.summary-strip>div{padding:12px 14px;border-radius:12px;border:1px solid #ece7dc;background:#fff}.summary-strip strong{display:block;margin-bottom:4px;font-size:16px;color:#214e34}.summary-strip .muted{font-size:13px}.kpi-chip{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:999px;background:rgba(33,78,52,.08);color:#214e34;font-size:13px}.hero{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;background:linear-gradient(135deg,#214e34 0%,#315d42 100%);color:#fff}.hero h1,.hero p{margin:0}.hero p{opacity:.9}.hero-meta{display:flex;flex-direction:column;gap:10px;align-items:flex-end;font-size:14px}.hero-meta a{color:#fff;text-decoration:underline}.progress{height:10px;background:rgba(33,78,52,.1);border-radius:999px;overflow:hidden;margin-top:8px}.progress i{display:block;height:100%;background:linear-gradient(90deg,#214e34,#5b8b69)}.section-card h3{margin-top:0}@media (max-width: 1100px){.dashboard-grid{grid-template-columns:1fr}.hero{flex-direction:column}.hero-meta{align-items:flex-start}.site-footer{padding-top:8px}}`
 
 const portalSourceOptions = `<option value="">全部来源</option><option value="flash">flash</option><option value="headline">headline</option><option value="crypto_x">crypto_x</option><option value="crypto_telegram">crypto_telegram</option>`
 const portalSourceFilterOptions = `<option value="">全部来源</option><option value="flash" {{if eq .FilterSource "flash"}}selected{{end}}>flash</option><option value="headline" {{if eq .FilterSource "headline"}}selected{{end}}>headline</option><option value="crypto_x" {{if eq .FilterSource "crypto_x"}}selected{{end}}>crypto_x</option><option value="crypto_telegram" {{if eq .FilterSource "crypto_telegram"}}selected{{end}}>crypto_telegram</option>`
@@ -4696,7 +4729,7 @@ const ruleTemplate = `
 `
 
 const articlesTemplate = `
-{{define "articles"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `main{max-width:1700px;font-size:14px}.pill{display:inline-block;padding:4px 10px;border-radius:999px;background:#ece7dc}.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}.subtle{color:#6a6257}.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.summary-card{padding:14px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.summary-card strong{display:block;font-size:24px;margin-top:6px}.articles-table th,.articles-table td{font-size:14px;padding:8px}.articles-table .col-title{width:58%}.articles-table .col-source{width:7%}.articles-table .col-status{width:9%}.articles-table .col-time{width:12%}.articles-table .col-actions{width:14%}.articles-table .ops{white-space:nowrap}.articles-table .ops form{display:inline-block;width:auto;margin:0 6px 0 0;vertical-align:middle}.articles-table .ops form:last-child{margin-right:0}.articles-table .ops button{width:auto;margin:0;padding:9px 12px;font-size:13px;white-space:nowrap}` + `</style></head><body><header><h1>文章中心</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><form class="inline" method="get"><select name="mode"><option value="" {{if eq .SearchMode ""}}selected{{end}}>普通筛选</option><option value="search" {{if eq .SearchMode "search"}}selected{{end}}>基础全文</option><option value="full" {{if eq .SearchMode "full"}}selected{{end}}>高级检索</option><option value="timely" {{if eq .SearchMode "timely"}}selected{{end}}>实时搜索</option></select><input name="keyword" placeholder="关键词" value="{{.FilterKeyword}}"><select name="project_id"><option value="">全部项目</option>{{range .Projects}}<option value="{{.ID}}" {{if eq (printf "%d" .ID) $.FilterProject}}selected{{end}}>{{.Name}}</option>{{end}}</select><select name="source_type">` + portalSourceFilterOptions + `</select><select name="industry"><option value="">全部行业</option>{{range .SearchOptions.Industries}}<option value="{{.}}" {{if eq . $.FilterIndustry}}selected{{end}}>{{.}}</option>{{end}}</select><select name="province"><option value="">全部省份</option>{{range .SearchOptions.Provinces}}<option value="{{.}}" {{if eq . $.FilterProvince}}selected{{end}}>{{.}}</option>{{end}}</select><select name="city"><option value="">全部城市</option>{{range .SearchOptions.Cities}}<option value="{{.}}" {{if eq . $.FilterCity}}selected{{end}}>{{.}}</option>{{end}}</select><select name="read"><option value="">全部阅读状态</option><option value="read" {{if eq .FilterRead "read"}}selected{{end}}>已读</option><option value="unread" {{if eq .FilterRead "unread"}}selected{{end}}>未读</option></select><select name="favorite"><option value="">全部收藏状态</option><option value="favorited" {{if eq .FilterFlag "favorited"}}selected{{end}}>已收藏</option><option value="unfavorited" {{if eq .FilterFlag "unfavorited"}}selected{{end}}>未收藏</option></select><input type="date" name="start" value="{{.FilterStart}}"><input type="date" name="end" value="{{.FilterEnd}}"><button type="submit">筛选</button></form>{{if or .FilterKeyword .FilterProject .FilterSource .FilterRead .FilterFlag .FilterStart .FilterEnd .SearchMode .FilterIndustry .FilterProvince .FilterCity}}<p class="subtle">当前筛选已生效 <a class="inline" href="/articles">清空筛选</a></p>{{end}}</section><section><h2>当前结果</h2><div class="summary-grid"><div class="summary-card">文章<strong>{{.Articles.Total}}</strong></div><div class="summary-card">已读<strong>{{.CountRead}}</strong></div><div class="summary-card">未读<strong>{{.CountUnread}}</strong></div><div class="summary-card">已收藏<strong>{{.CountFlagged}}</strong></div><div class="summary-card">模式<strong>{{if eq .SearchMode "search"}}基础全文{{else if eq .SearchMode "full"}}高级检索{{else if eq .SearchMode "timely"}}实时搜索{{else}}筛选{{end}}</strong></div></div></section><section><h2>{{if eq .SearchMode "search"}}全文搜索结果{{else if eq .SearchMode "full"}}高级检索结果{{else if eq .SearchMode "timely"}}实时搜索结果{{else}}列表{{end}}</h2><table class="articles-table"><tr><th class="col-title">标题</th><th class="col-source">来源</th><th class="col-status">状态</th><th class="col-time">时间</th><th class="col-actions">操作</th></tr>{{range .Articles.Items}}<tr><td><a class="inline" href="/articles/{{.ID}}?return_to={{$.ReturnTo}}">{{.Title}}</a></td><td>{{.SourceType}}</td><td>{{if .Read}}<span class="pill">已读</span>{{else}}<span class="pill">未读</span>{{end}} {{if .Favorited}}<span class="pill">已收藏</span>{{end}}</td><td>{{.CapturedAt.Format "2006-01-02 15:04"}}</td><td class="ops"><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="read"><button type="submit">标记已读</button></form><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="favorite"><button type="submit">{{if .Favorited}}取消收藏{{else}}收藏{{end}}</button></form><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="share"><button type="submit">登记分享</button></form></td></tr>{{else}}<tr><td colspan="5">没有符合条件的文章</td></tr>{{end}}</table><p>共 {{.Articles.Total}} 条</p></section></main></body></html>{{end}}
+{{define "articles"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `main{max-width:1700px;font-size:14px}.pill{display:inline-block;padding:4px 10px;border-radius:999px;background:#ece7dc}.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}.subtle{color:#6a6257}.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.summary-card{padding:14px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.summary-card strong{display:block;font-size:24px;margin-top:6px}.articles-table th,.articles-table td{font-size:14px;padding:8px}.articles-table .col-title{width:58%}.articles-table .col-source{width:7%}.articles-table .col-status{width:9%}.articles-table .col-time{width:12%}.articles-table .col-actions{width:14%}.articles-table .ops{white-space:nowrap}.articles-table .ops form{display:inline-block;width:auto;margin:0 6px 0 0;vertical-align:middle}.articles-table .ops form:last-child{margin-right:0}.articles-table .ops button{width:auto;margin:0;padding:9px 12px;font-size:13px;white-space:nowrap}.page-title{display:flex;justify-content:space-between;gap:16px;align-items:flex-end;flex-wrap:wrap}.page-title p{margin:0;color:#6a6257}.filter-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;align-items:end}.filter-grid .field{margin:0}.filter-grid .field input,.filter-grid .field select{margin:0}.filter-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:12px;flex-wrap:wrap}.filter-actions button,.filter-actions a{width:auto;min-width:140px}.page-nav{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-top:16px}.page-nav .pager-links{display:flex;gap:10px;flex-wrap:wrap}.page-nav a{padding:8px 12px;border:1px solid #d0c8b8;border-radius:10px;text-decoration:none;color:#214e34;background:#fff}.page-nav a.disabled{pointer-events:none;opacity:.45}.top-menu-card{padding-top:16px;padding-bottom:16px}@media (max-width: 1400px){.filter-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}@media (max-width: 900px){.filter-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.page-nav{align-items:flex-start}}` + `</style></head><body><header><div class="page-title"><div><h1>文章中心</h1><p>统一菜单与版本信息已接入，普通筛选参数压缩为两行展示。</p></div></div><section class="top-menu-card">{{template "nav" .}}</section></header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><form method="get"><div class="filter-grid"><div class="field"><select name="mode"><option value="" {{if eq .SearchMode ""}}selected{{end}}>普通筛选</option><option value="search" {{if eq .SearchMode "search"}}selected{{end}}>基础全文</option><option value="full" {{if eq .SearchMode "full"}}selected{{end}}>高级检索</option><option value="timely" {{if eq .SearchMode "timely"}}selected{{end}}>实时搜索</option></select></div><div class="field"><input name="keyword" placeholder="关键词" value="{{.FilterKeyword}}"></div><div class="field"><select name="project_id"><option value="">全部项目</option>{{range .Projects}}<option value="{{.ID}}" {{if eq (printf "%d" .ID) $.FilterProject}}selected{{end}}>{{.Name}}</option>{{end}}</select></div><div class="field"><select name="source_type">` + portalSourceFilterOptions + `</select></div><div class="field"><select name="industry"><option value="">全部行业</option>{{range .SearchOptions.Industries}}<option value="{{.}}" {{if eq . $.FilterIndustry}}selected{{end}}>{{.}}</option>{{end}}</select></div><div class="field"><select name="province"><option value="">全部省份</option>{{range .SearchOptions.Provinces}}<option value="{{.}}" {{if eq . $.FilterProvince}}selected{{end}}>{{.}}</option>{{end}}</select></div><div class="field"><select name="city"><option value="">全部城市</option>{{range .SearchOptions.Cities}}<option value="{{.}}" {{if eq . $.FilterCity}}selected{{end}}>{{.}}</option>{{end}}</select></div><div class="field"><select name="read"><option value="">全部阅读状态</option><option value="read" {{if eq .FilterRead "read"}}selected{{end}}>已读</option><option value="unread" {{if eq .FilterRead "unread"}}selected{{end}}>未读</option></select></div><div class="field"><select name="favorite"><option value="">全部收藏状态</option><option value="favorited" {{if eq .FilterFlag "favorited"}}selected{{end}}>已收藏</option><option value="unfavorited" {{if eq .FilterFlag "unfavorited"}}selected{{end}}>未收藏</option></select></div><div class="field"><input type="date" name="start" value="{{.FilterStart}}"></div><div class="field"><input type="date" name="end" value="{{.FilterEnd}}"></div></div><div class="filter-actions"><button type="submit">筛选</button>{{if or .FilterKeyword .FilterProject .FilterSource .FilterRead .FilterFlag .FilterStart .FilterEnd .SearchMode .FilterIndustry .FilterProvince .FilterCity}}<a class="inline" href="/articles">清空筛选</a>{{end}}</div></form></section><section><h2>当前结果</h2><div class="summary-grid"><div class="summary-card">文章<strong>{{.Articles.Total}}</strong></div><div class="summary-card">当前页已读<strong>{{.CountRead}}</strong></div><div class="summary-card">当前页未读<strong>{{.CountUnread}}</strong></div><div class="summary-card">当前页已收藏<strong>{{.CountFlagged}}</strong></div><div class="summary-card">模式<strong>{{if eq .SearchMode "search"}}基础全文{{else if eq .SearchMode "full"}}高级检索{{else if eq .SearchMode "timely"}}实时搜索{{else}}筛选{{end}}</strong></div><div class="summary-card">分页<strong>{{.ArticlePage}} / {{.ArticleTotalPages}}</strong></div></div></section><section><h2>{{if eq .SearchMode "search"}}全文搜索结果{{else if eq .SearchMode "full"}}高级检索结果{{else if eq .SearchMode "timely"}}实时搜索结果{{else}}列表{{end}}</h2><table class="articles-table"><tr><th class="col-title">标题</th><th class="col-source">来源</th><th class="col-status">状态</th><th class="col-time">时间</th><th class="col-actions">操作</th></tr>{{range .Articles.Items}}<tr><td><a class="inline" href="/articles/{{.ID}}?return_to={{$.ReturnTo}}">{{.Title}}</a></td><td>{{.SourceType}}</td><td>{{if .Read}}<span class="pill">已读</span>{{else}}<span class="pill">未读</span>{{end}} {{if .Favorited}}<span class="pill">已收藏</span>{{end}}</td><td>{{.CapturedAt.Format "2006-01-02 15:04"}}</td><td class="ops"><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="read"><button type="submit">标记已读</button></form><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="favorite"><button type="submit">{{if .Favorited}}取消收藏{{else}}收藏{{end}}</button></form><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="share"><button type="submit">登记分享</button></form></td></tr>{{else}}<tr><td colspan="5">没有符合条件的文章</td></tr>{{end}}</table><div class="page-nav"><div>共 {{.Articles.Total}} 条，每页 20 条</div><div class="pager-links"><a class="{{if le .ArticlePage 1}}disabled{{end}}" href="{{.ArticlePrevURL}}">上一页</a><span>第 {{.ArticlePage}} / {{.ArticleTotalPages}} 页</span><a class="{{if ge .ArticlePage .ArticleTotalPages}}disabled{{end}}" href="{{.ArticleNextURL}}">下一页</a></div></div></section></main>{{template "footer" .}}</body></html>{{end}}
 `
 
 const articleTemplate = `

@@ -25,6 +25,7 @@ func main() {
 		Handler:           nlp.NewService().Router(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	app.LogServiceReady("nlp-service", cfg.NLPAddr)
 	go func() {
 		log.Info().Str("service", "nlp-service").Str("addr", cfg.NLPAddr).Msg("listening")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {

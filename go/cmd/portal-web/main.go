@@ -25,6 +25,7 @@ func main() {
 		Handler:           portal.NewServer(cfg).Router(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	app.LogServiceReady("portal-web", cfg.GatewayWebAddr)
 	go func() {
 		log.Info().Str("service", "portal-web").Str("addr", cfg.GatewayWebAddr).Msg("listening")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {

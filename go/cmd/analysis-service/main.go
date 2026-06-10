@@ -32,6 +32,7 @@ func main() {
 		Handler:           analysis.NewService(cfg, store).Router(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	app.LogServiceReady("analysis-service", cfg.AnalysisAddr)
 	run(server, "analysis-service", cfg.AnalysisAddr)
 }
 
