@@ -764,6 +764,35 @@ func (s *Store) CreateReport(ctx context.Context, report model.Report) (model.Re
 	return report, nil
 }
 
+func (s *Store) BatchDeleteReports(ctx context.Context, ids []int64) error {
+	return s.BatchUpdateReportStatus(ctx, ids, "archived")
+}
+
+func (s *Store) BatchUpdateReportStatus(ctx context.Context, ids []int64, status string) error {
+	if len(ids) == 0 {
+		return errors.New("report_ids required")
+	}
+	status = strings.ToLower(strings.TrimSpace(status))
+	switch status {
+	case "draft", "generated", "archived":
+	default:
+		return errors.New("unsupported report status")
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	args := make([]any, 0, len(ids)+2)
+	args = append(args, status, now)
+	for _, id := range ids {
+		if id <= 0 {
+			return errors.New("invalid report id")
+		}
+		args = append(args, id)
+	}
+	query := `UPDATE reports SET status = ?, updated_at = ? WHERE id IN (` + placeholders + `)`
+	_, err := s.db.ExecContext(ctx, query, args...)
+	return err
+}
+
 func (s *Store) seedReportSections(ctx context.Context, report model.Report) error {
 	parts := strings.Split(report.Content, "\n")
 	now := time.Now().UTC().Format(time.RFC3339)

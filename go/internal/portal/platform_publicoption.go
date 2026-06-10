@@ -1118,12 +1118,13 @@ func (s *Server) streamXieReport(w http.ResponseWriter, userID int64, articleID,
 	}
 	generated := fmt.Sprintf("标题：%s\n时间：%s\n关键词：%s\n\n%s", title, nonEmpty(params["publishTime"], time.Now().Format("2006-01-02 15:04:05")), params["relatedword"], truncateRunes(stripHTMLTags(text), 1000))
 	writeSSEEvent(w, flusher, 1, "start", "start")
-	for i, chunk := 0, 1; i < len(generated); i, chunk = i+12, chunk+1 {
+	runes := []rune(generated)
+	for i, chunk := 0, 1; i < len(runes); i, chunk = i+12, chunk+1 {
 		end := i + 12
-		if end > len(generated) {
-			end = len(generated)
+		if end > len(runes) {
+			end = len(runes)
 		}
-		writeSSEEvent(w, flusher, chunk+1, "message", mustJSONString(map[string]any{"data": generated[i:end]}))
+		writeSSEEvent(w, flusher, chunk+1, "message", mustJSONString(map[string]any{"data": string(runes[i:end])}))
 	}
 	writeSSEEvent(w, flusher, 999, "end", "end")
 }

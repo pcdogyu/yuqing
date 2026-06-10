@@ -55,6 +55,8 @@ type Store interface {
 	ListReports(rctx context.Context, projectID int64) ([]model.Report, error)
 	GetReport(rctx context.Context, id int64) (model.Report, error)
 	CreateReport(rctx context.Context, report model.Report) (model.Report, error)
+	BatchDeleteReports(rctx context.Context, ids []int64) error
+	BatchUpdateReportStatus(rctx context.Context, ids []int64, status string) error
 	ListNotices(rctx context.Context) ([]model.SystemNotice, error)
 	CreateFeedback(rctx context.Context, feedback model.Feedback) (model.Feedback, error)
 	ListTaskRuns(rctx context.Context, limit int) ([]model.TaskRun, error)
@@ -171,6 +173,8 @@ func (s *Service) Routes(r chi.Router) {
 	r.Post("/api/v1/reports", s.handleCreateReport)
 	r.Get("/api/v1/reports/{id}", s.handleGetReport)
 	r.Post("/api/v1/reports/generate", s.handleGenerateReport)
+	r.Post("/api/v1/reports/batch-delete", s.handleBatchDeleteReports)
+	r.Post("/api/v1/reports/batch-status", s.handleBatchUpdateReportStatus)
 
 	r.Get("/api/v1/system/notices", s.handleListNotices)
 	r.Post("/api/v1/system/feedback", s.handleCreateFeedback)
@@ -946,6 +950,56 @@ func (s *Service) handleListReports(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	apiutil.WriteJSON(w, http.StatusOK, "ok", reports)
+}
+
+func (s *Service) handleBatchDeleteReports(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ReportIDs []int64 `json:"report_ids"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if len(req.ReportIDs) == 0 {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "report_ids required", nil)
+		return
+	}
+	if err := s.store.BatchDeleteReports(r.Context(), req.ReportIDs); err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]any{
+		"updated": len(req.ReportIDs),
+		"status":  "archived",
+	})
+}
+
+func (s *Service) handleBatchUpdateReportStatus(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ReportIDs []int64 `json:"report_ids"`
+		Status    string  `json:"status"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if len(req.ReportIDs) == 0 {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "report_ids required", nil)
+		return
+	}
+	status := strings.ToLower(strings.TrimSpace(req.Status))
+	switch status {
+	case "draft", "generated", "archived":
+	default:
+		apiutil.WriteJSON(w, http.StatusBadRequest, "unsupported status", nil)
+		return
+	}
+	if err := s.store.BatchUpdateReportStatus(r.Context(), req.ReportIDs, status); err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]any{
+		"updated": len(req.ReportIDs),
+		"status":  status,
+	})
 }
 
 func (s *Service) handleGetReport(w http.ResponseWriter, r *http.Request) {

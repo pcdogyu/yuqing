@@ -1461,13 +1461,16 @@ func TestLegacyUserJSONCompat(t *testing.T) {
 		Code int `json:"code"`
 		Data struct {
 			SystemTitle string `json:"system_title"`
+			Username    string `json:"username"`
+			DisplayName string `json:"display_name"`
+			Email       string `json:"email"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &title); err != nil {
 		t.Fatalf("decode title: %v", err)
 	}
-	if title.Data.SystemTitle == "" {
-		t.Fatal("expected system title")
+	if title.Data.SystemTitle == "" || title.Data.Username != "alice" || title.Data.DisplayName != "Alice" || title.Data.Email != "alice@example.com" {
+		t.Fatalf("unexpected system title payload: %+v", title)
 	}
 }
 
@@ -1494,6 +1497,76 @@ func TestLegacyUserSaveCompat(t *testing.T) {
 	}
 	if !envelope.State || envelope.Message != "" {
 		t.Fatalf("unexpected save response: %+v", envelope)
+	}
+}
+
+func TestLegacyUserEditCompat(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+	user := map[string]any{"id": 1}
+
+	successReq := httptest.NewRequest(http.MethodPost, "/user/edit", strings.NewReader("oldPassword=password123&newPassword=newpass456"))
+	successReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	successReq.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "session-admin"})
+	successRR := httptest.NewRecorder()
+	srv.handleLegacyUserEdit(successRR, successReq, user)
+	if successRR.Code != http.StatusOK {
+		t.Fatalf("expected edit 200, got %d", successRR.Code)
+	}
+	var successEnvelope struct {
+		Status int    `json:"status"`
+		Msg    string `json:"msg"`
+	}
+	if err := json.Unmarshal(successRR.Body.Bytes(), &successEnvelope); err != nil {
+		t.Fatalf("decode edit success response: %v", err)
+	}
+	if successEnvelope.Status != http.StatusOK || successEnvelope.Msg != "OK" {
+		t.Fatalf("unexpected edit success payload: %+v", successEnvelope)
+	}
+
+	failReq := httptest.NewRequest(http.MethodPost, "/user/edit", strings.NewReader("oldPassword=wrong&newPassword=newpass456"))
+	failReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	failReq.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "session-admin"})
+	failRR := httptest.NewRecorder()
+	srv.handleLegacyUserEdit(failRR, failReq, user)
+	if failRR.Code != http.StatusOK {
+		t.Fatalf("expected edit compat 200, got %d", failRR.Code)
+	}
+	var failEnvelope struct {
+		Status int    `json:"status"`
+		Msg    string `json:"msg"`
+	}
+	if err := json.Unmarshal(failRR.Body.Bytes(), &failEnvelope); err != nil {
+		t.Fatalf("decode edit failure response: %v", err)
+	}
+	if failEnvelope.Status != 203 || failEnvelope.Msg != "旧密码输入错误！" {
+		t.Fatalf("unexpected edit failure payload: %+v", failEnvelope)
+	}
+}
+
+func TestLegacyUserWechatQRCodeCompat(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/user/getwechatqrcode", nil)
+	rr := httptest.NewRecorder()
+	srv.handleLegacyUserWechatQRCode(rr, req, nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected qrcode 200, got %d", rr.Code)
+	}
+	var envelope struct {
+		Status int    `json:"status"`
+		Msg    string `json:"msg"`
+		Data   struct {
+			Ticket   string `json:"ticket"`
+			SceneStr string `json:"sceneStr"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode qrcode response: %v", err)
+	}
+	if envelope.Status != http.StatusOK || envelope.Msg != "OK" || envelope.Data.Ticket != "https://example.com/qr" || envelope.Data.SceneStr != "scene-1" {
+		t.Fatalf("unexpected qrcode payload: %+v", envelope)
 	}
 }
 
@@ -1972,6 +2045,89 @@ func TestPlatformBindingsPage(t *testing.T) {
 	}
 }
 
+func TestPlatformXieCompat(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+	user := map[string]any{"id": 1}
+
+	checkReq := httptest.NewRequest(http.MethodGet, "/platform/xie/checkBind", nil)
+	checkRR := httptest.NewRecorder()
+	srv.handlePlatformCompat(checkRR, checkReq, user)
+	if checkRR.Code != http.StatusOK {
+		t.Fatalf("expected checkBind 200, got %d", checkRR.Code)
+	}
+	var checkEnvelope struct {
+		Status int    `json:"status"`
+		Msg    string `json:"msg"`
+	}
+	if err := json.Unmarshal(checkRR.Body.Bytes(), &checkEnvelope); err != nil {
+		t.Fatalf("decode checkBind response: %v", err)
+	}
+	if checkEnvelope.Status != http.StatusOK || checkEnvelope.Msg != "OK" {
+		t.Fatalf("unexpected checkBind payload: %+v", checkEnvelope)
+	}
+
+	titleBody := `{"params":{"text":"<p>这是用于生成标题的测试内容，覆盖旧版写作宝兼容接口。</p>"}}`
+	titleReq := httptest.NewRequest(http.MethodPost, "/platform/xie/title/101", strings.NewReader(titleBody))
+	titleReq.Header.Set("Content-Type", "application/json")
+	titleRR := httptest.NewRecorder()
+	srv.handlePlatformCompat(titleRR, titleReq, user)
+	if titleRR.Code != http.StatusOK {
+		t.Fatalf("expected xie title 200, got %d", titleRR.Code)
+	}
+	var titleEnvelope struct {
+		Status int    `json:"status"`
+		Msg    string `json:"msg"`
+		Data   string `json:"data"`
+	}
+	if err := json.Unmarshal(titleRR.Body.Bytes(), &titleEnvelope); err != nil {
+		t.Fatalf("decode xie title response: %v", err)
+	}
+	if titleEnvelope.Status != http.StatusOK || titleEnvelope.Msg != "OK" || strings.TrimSpace(titleEnvelope.Data) == "" {
+		t.Fatalf("unexpected xie title payload: %+v", titleEnvelope)
+	}
+
+	reportReq := httptest.NewRequest(http.MethodGet, "/platform/xie/report?articleId=101&projectId=7&relatedword=AI&publishTime=2026-06-10+12:00:00&title=%E6%B5%8B%E8%AF%95%E6%A0%87%E9%A2%98", nil)
+	reportRR := httptest.NewRecorder()
+	srv.handlePlatformCompat(reportRR, reportReq, user)
+	if reportRR.Code != http.StatusOK {
+		t.Fatalf("expected xie report 200, got %d", reportRR.Code)
+	}
+	if contentType := reportRR.Header().Get("Content-Type"); !strings.Contains(contentType, "text/event-stream") {
+		t.Fatalf("expected SSE content type, got %s", contentType)
+	}
+	body := reportRR.Body.String()
+	if !strings.Contains(body, "event: start") || !strings.Contains(body, "event: message") || !strings.Contains(body, "event: end") {
+		t.Fatalf("unexpected xie report stream: %s", body)
+	}
+	if !strings.Contains(body, "测试标题") && !strings.Contains(body, "AI 市场震荡") {
+		t.Fatalf("expected generated report content, got %s", body)
+	}
+}
+
+func TestPlatformNoticeCompat(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/platform/notice", nil)
+	rr := httptest.NewRecorder()
+	srv.handlePlatformCompat(rr, req, nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected notice 200, got %d", rr.Code)
+	}
+	var envelope struct {
+		Status int                  `json:"status"`
+		Msg    string               `json:"msg"`
+		Data   []model.SystemNotice `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode notice response: %v", err)
+	}
+	if envelope.Status != http.StatusOK || envelope.Msg != "OK" || len(envelope.Data) == 0 {
+		t.Fatalf("unexpected notice payload: %+v", envelope)
+	}
+}
+
 func TestTemplateCrawlActionsAcrossPages(t *testing.T) {
 	srv, cleanup := newPortalCompatServer(t)
 	defer cleanup()
@@ -2059,6 +2215,115 @@ func TestLegacyAPITokenCreatesBearerToken(t *testing.T) {
 	}
 }
 
+func TestLegacyLoginCompatRoutes(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+
+	loginReq := httptest.NewRequest(http.MethodGet, "/login?reference=%2Fmonitor%3Fprojectid%3D1", nil)
+	loginRR := httptest.NewRecorder()
+	srv.Router().ServeHTTP(loginRR, loginReq)
+	if loginRR.Code != http.StatusOK {
+		t.Fatalf("expected login page 200, got %d", loginRR.Code)
+	}
+	if body := loginRR.Body.String(); !strings.Contains(body, `name="reference" value="/monitor?projectid=1"`) {
+		t.Fatalf("expected login reference hidden field, got %s", body)
+	}
+
+	loginPostReq := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("username=admin&password=secret&reference=%2Fmonitor%3Fprojectid%3D1"))
+	loginPostReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	loginPostRR := httptest.NewRecorder()
+	srv.Router().ServeHTTP(loginPostRR, loginPostReq)
+	if loginPostRR.Code != http.StatusSeeOther {
+		t.Fatalf("expected login post redirect, got %d", loginPostRR.Code)
+	}
+	if loc := loginPostRR.Header().Get("Location"); loc != "/monitor?projectid=1" {
+		t.Fatalf("unexpected login redirect location: %s", loc)
+	}
+
+	loginBakReq := httptest.NewRequest(http.MethodGet, "/loginbak", nil)
+	loginBakRR := httptest.NewRecorder()
+	srv.Router().ServeHTTP(loginBakRR, loginBakReq)
+	if loginBakRR.Code != http.StatusOK || !strings.Contains(loginBakRR.Body.String(), "Go 舆情系统") {
+		t.Fatalf("unexpected loginbak response: code=%d body=%s", loginBakRR.Code, loginBakRR.Body.String())
+	}
+
+	forgotReq := httptest.NewRequest(http.MethodGet, "/forgotpwd", nil)
+	forgotRR := httptest.NewRecorder()
+	srv.Router().ServeHTTP(forgotRR, forgotReq)
+	if forgotRR.Code != http.StatusOK || !strings.Contains(forgotRR.Body.String(), "忘记密码") {
+		t.Fatalf("unexpected forgotpwd response: code=%d body=%s", forgotRR.Code, forgotRR.Body.String())
+	}
+}
+
+func TestLegacyJumpLoginFallbackRoutes(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+
+	for _, path := range []string{"/jumpLogin?b64=test", "/wechatJumpLogin?userId=1&sha=test"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rr := httptest.NewRecorder()
+		srv.Router().ServeHTTP(rr, req)
+		if rr.Code != http.StatusSeeOther {
+			t.Fatalf("expected redirect for %s, got %d", path, rr.Code)
+		}
+		if loc := rr.Header().Get("Location"); !strings.HasPrefix(loc, "/login?reference=%2Fmonitor") {
+			t.Fatalf("unexpected redirect location for %s: %s", path, loc)
+		}
+	}
+}
+
+func TestLegacyOnlineStatisticalCompat(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPost, "/onlinestatistical", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "session-admin"})
+	rr := httptest.NewRecorder()
+	srv.Router().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected onlinestatistical 200, got %d", rr.Code)
+	}
+	var envelope struct {
+		Code       int `json:"code"`
+		OnlineData struct {
+			UserID      int64  `json:"user_id"`
+			Username    string `json:"username"`
+			DisplayName string `json:"display_name"`
+			Online      bool   `json:"online"`
+		} `json:"onlinedata"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode onlinestatistical response: %v", err)
+	}
+	if envelope.Code != 1 || envelope.OnlineData.UserID != 1 || envelope.OnlineData.Username != "admin" || !envelope.OnlineData.Online {
+		t.Fatalf("unexpected onlinestatistical payload: %+v", envelope)
+	}
+}
+
+func TestLegacyUserGetTokenAlias(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPost, "/user/getToken", strings.NewReader(`{"username":"admin","password":"secret"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	srv.Router().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected user/getToken 200, got %d", rr.Code)
+	}
+	var envelope struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+		Data string `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode user/getToken response: %v", err)
+	}
+	if envelope.Code != 200 || envelope.Data != "legacy-token" {
+		t.Fatalf("unexpected user/getToken payload: %+v", envelope)
+	}
+}
+
 func TestLegacyAPIArticleListCompat(t *testing.T) {
 	srv, cleanup := newPortalCompatServer(t)
 	defer cleanup()
@@ -2126,6 +2391,128 @@ func TestLegacyAPIArticleDetailCompat(t *testing.T) {
 	if got := payload.Data.Detail["article_public_id"]; got != "101" {
 		t.Fatalf("expected article_public_id 101, got %#v", got)
 	}
+}
+
+func TestLegacyReportCompat(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+
+	user := map[string]any{"id": int64(1), "username": "admin"}
+
+	t.Run("report page alias", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/report?projectid=1&search=%E6%AF%8F%E6%97%A5&type=1&page=2", nil)
+		rr := httptest.NewRecorder()
+		srv.handleLegacyReportPage(rr, req, user)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rr.Code)
+		}
+		body := rr.Body.String()
+		if !strings.Contains(body, "报告中心") || !strings.Contains(body, "AI 每日简报") {
+			t.Fatalf("unexpected report page body: %s", body)
+		}
+		if !strings.Contains(body, "当前筛选已生效") {
+			t.Fatalf("expected legacy filters to map into report page, got %s", body)
+		}
+	})
+
+	t.Run("report detail alias", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/report/1?projectid=1&search=%E6%AF%8F%E6%97%A5&type=1&page=2", nil)
+		rr := httptest.NewRecorder()
+		srv.handleLegacyReportCompat(rr, req, user)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rr.Code)
+		}
+		body := rr.Body.String()
+		if !strings.Contains(body, "报告详情") || !strings.Contains(body, "AI 每日简报") {
+			t.Fatalf("unexpected report detail body: %s", body)
+		}
+		if !strings.Contains(body, "/reports?keyword=%e6%af%8f%e6%97%a5&amp;page=2&amp;project_id=1&amp;status=generated") {
+			t.Fatalf("expected legacy return_to mapping on detail page, got %s", body)
+		}
+	})
+
+	t.Run("report detail json", func(t *testing.T) {
+		form := url.Values{}
+		form.Set("reportId", "1")
+		req := httptest.NewRequest(http.MethodPost, "/report/reportDetail", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rr := httptest.NewRecorder()
+		srv.handleLegacyReportCustomDetailJSON(rr, req, user)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rr.Code)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("unmarshal report detail json: %v", err)
+		}
+		if payload["title"] != "AI 每日简报" {
+			t.Fatalf("unexpected payload: %+v", payload)
+		}
+	})
+
+	t.Run("report list json", func(t *testing.T) {
+		form := url.Values{}
+		form.Set("pageNum", "1")
+		form.Set("projectId", "1")
+		form.Set("reportType", "1")
+		form.Set("nameSearch", "AI")
+		req := httptest.NewRequest(http.MethodPost, "/report/listReportCustom", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rr := httptest.NewRecorder()
+		srv.handleLegacyReportCustomList(rr, req, user)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rr.Code)
+		}
+		var envelope struct {
+			Code int    `json:"code"`
+			Data string `json:"data"`
+		}
+		if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+			t.Fatalf("unmarshal report list envelope: %v", err)
+		}
+		if envelope.Code != http.StatusOK || !strings.Contains(envelope.Data, "AI 每日简报") {
+			t.Fatalf("unexpected report list payload: %+v", envelope)
+		}
+	})
+
+	t.Run("batch archive", func(t *testing.T) {
+		form := url.Values{}
+		form.Set("reportIds", "1,2")
+		req := httptest.NewRequest(http.MethodPost, "/report/batchUpdateReportCustom", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rr := httptest.NewRecorder()
+		srv.handleLegacyBatchUpdateReportCustom(rr, req, user)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rr.Code)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("unmarshal batch archive: %v", err)
+		}
+		if payload["status"] != true {
+			t.Fatalf("unexpected batch archive payload: %+v", payload)
+		}
+	})
+
+	t.Run("batch status", func(t *testing.T) {
+		form := url.Values{}
+		form.Set("reportIds", "2,3")
+		form.Set("reportType", "1")
+		req := httptest.NewRequest(http.MethodPost, "/report/batchUpdateReportCustomStatus", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rr := httptest.NewRecorder()
+		srv.handleLegacyBatchUpdateReportCustomStatus(rr, req, user)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rr.Code)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("unmarshal batch status: %v", err)
+		}
+		if payload["status"] != true {
+			t.Fatalf("unexpected batch status payload: %+v", payload)
+		}
+	})
 }
 
 func TestLegacyMonitorExportProducesWorkbook(t *testing.T) {
@@ -2254,6 +2641,11 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 	projects := []model.Project{
 		{ID: 1, GroupID: 1, GroupName: "组一", Name: "项目一", Keywords: "AI,新能源", Description: "测试项目", Status: "active", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()},
 	}
+	reports := []model.Report{
+		{ID: 1, ProjectID: 1, Title: "AI 每日简报", Summary: "AI 摘要", Content: "AI 正文", Status: "generated", CreatedAt: time.Now().UTC().Add(-3 * time.Hour), UpdatedAt: time.Now().UTC().Add(-2 * time.Hour)},
+		{ID: 2, ProjectID: 1, Title: "AI 草稿报告", Summary: "草稿摘要", Content: "草稿正文", Status: "draft", CreatedAt: time.Now().UTC().Add(-90 * time.Minute), UpdatedAt: time.Now().UTC().Add(-80 * time.Minute)},
+		{ID: 3, ProjectID: 1, Title: "AI 归档报告", Summary: "归档摘要", Content: "归档正文", Status: "archived", CreatedAt: time.Now().UTC().Add(-48 * time.Hour), UpdatedAt: time.Now().UTC().Add(-24 * time.Hour)},
+	}
 	nextGroupID := int64(2)
 	nextProjectID := int64(2)
 	platformBindings := map[string]model.PlatformBinding{
@@ -2262,6 +2654,13 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 			Kind:      "nlp",
 			SecretID:  "secret-id",
 			SecretKey: "secret-key",
+			Bound:     true,
+		},
+		"xie:1": {
+			UserID:    1,
+			Kind:      "xie",
+			SecretID:  "write-secret",
+			SecretKey: sha1Hex("write-secret"),
 			Bound:     true,
 		},
 	}
@@ -2467,6 +2866,58 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 			items := append([]model.Project(nil), projects...)
 			projectMu.Unlock()
 			writeEnvelope(http.StatusOK, "ok", items)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/reports":
+			projectID := parseTestInt64(strings.TrimSpace(r.URL.Query().Get("project_id")))
+			items := make([]model.Report, 0, len(reports))
+			for _, report := range reports {
+				if projectID > 0 && report.ProjectID != projectID {
+					continue
+				}
+				items = append(items, report)
+			}
+			writeEnvelope(http.StatusOK, "ok", items)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/reports/"):
+			id := parseTestInt64(strings.TrimPrefix(r.URL.Path, "/api/v1/reports/"))
+			for _, report := range reports {
+				if report.ID == id {
+					writeEnvelope(http.StatusOK, "ok", report)
+					return
+				}
+			}
+			writeEnvelope(http.StatusNotFound, "not found", nil)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/reports/batch-delete":
+			var req struct {
+				ReportIDs []int64 `json:"report_ids"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeEnvelope(http.StatusBadRequest, err.Error(), nil)
+				return
+			}
+			for i := range reports {
+				for _, id := range req.ReportIDs {
+					if reports[i].ID == id {
+						reports[i].Status = "archived"
+					}
+				}
+			}
+			writeEnvelope(http.StatusOK, "ok", map[string]any{"updated": len(req.ReportIDs), "status": "archived"})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/reports/batch-status":
+			var req struct {
+				ReportIDs []int64 `json:"report_ids"`
+				Status    string  `json:"status"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeEnvelope(http.StatusBadRequest, err.Error(), nil)
+				return
+			}
+			for i := range reports {
+				for _, id := range req.ReportIDs {
+					if reports[i].ID == id {
+						reports[i].Status = req.Status
+					}
+				}
+			}
+			writeEnvelope(http.StatusOK, "ok", map[string]any{"updated": len(req.ReportIDs), "status": req.Status})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/crawl-templates":
 			writeEnvelope(http.StatusOK, "ok", crawlTemplates)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/crawl-templates/1":
@@ -2912,6 +3363,10 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 			items := append([]model.AuditLog(nil), auditLogs...)
 			mu.Unlock()
 			writeEnvelope(http.StatusOK, "ok", items)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/system/notices":
+			writeEnvelope(http.StatusOK, "ok", []model.SystemNotice{
+				{ID: 1, Title: "系统公告", Content: "兼容测试公告", CreatedAt: time.Now().UTC()},
+			})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/articles/") && !strings.Contains(strings.TrimPrefix(r.URL.Path, "/api/v1/articles/"), "/"):
 			id := parseTestInt64(strings.TrimPrefix(r.URL.Path, "/api/v1/articles/"))
 			mu.Lock()
@@ -3223,6 +3678,38 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 				"code":    http.StatusCreated,
 				"message": "ok",
 				"data":    map[string]any{"user": user},
+			})
+			return
+		}
+		if r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/api/v1/users/") && strings.HasSuffix(r.URL.Path, "/password") {
+			if strings.TrimSpace(r.URL.Query().Get("session_token")) != "session-admin" {
+				w.WriteHeader(http.StatusUnauthorized)
+				_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusUnauthorized, "message": "invalid session", "data": nil})
+				return
+			}
+			var req struct {
+				OldPassword string `json:"old_password"`
+				NewPassword string `json:"new_password"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusBadRequest, "message": err.Error(), "data": nil})
+				return
+			}
+			if strings.TrimSpace(req.OldPassword) != "password123" {
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusBadRequest, "message": "old password mismatch", "data": nil})
+				return
+			}
+			if strings.TrimSpace(req.NewPassword) == "" {
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusBadRequest, "message": "new password required", "data": nil})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    http.StatusOK,
+				"message": "ok",
+				"data":    map[string]any{"updated": true},
 			})
 			return
 		}

@@ -3,6 +3,7 @@ package content
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -288,6 +289,63 @@ func TestArticleStatusHandler(t *testing.T) {
 	svc.handleSetArticleStatus(statusRR, statusReq)
 	if statusRR.Code != http.StatusOK {
 		t.Fatalf("expected status handler success, got %d", statusRR.Code)
+	}
+}
+
+func TestReportBatchHandlers(t *testing.T) {
+	store := newContentSearchTestStore(t)
+	svc := NewService(config.Config{}, store)
+	ctx := context.Background()
+
+	report1, err := store.CreateReport(ctx, model.Report{ProjectID: 1, Title: "report 1", Content: "content 1", Status: "draft"})
+	if err != nil {
+		t.Fatalf("CreateReport report1 error: %v", err)
+	}
+	report2, err := store.CreateReport(ctx, model.Report{ProjectID: 1, Title: "report 2", Content: "content 2", Status: "draft"})
+	if err != nil {
+		t.Fatalf("CreateReport report2 error: %v", err)
+	}
+
+	statusReq := httptest.NewRequest(http.MethodPost, "/api/v1/reports/batch-status", strings.NewReader(fmt.Sprintf(`{"report_ids":[%d,%d],"status":"generated"}`, report1.ID, report2.ID)))
+	statusReq.Header.Set("Content-Type", "application/json")
+	statusRR := httptest.NewRecorder()
+	svc.handleBatchUpdateReportStatus(statusRR, statusReq)
+	if statusRR.Code != http.StatusOK {
+		t.Fatalf("expected batch status 200, got %d body=%s", statusRR.Code, statusRR.Body.String())
+	}
+
+	updated1, err := store.GetReport(ctx, report1.ID)
+	if err != nil {
+		t.Fatalf("GetReport report1 error: %v", err)
+	}
+	updated2, err := store.GetReport(ctx, report2.ID)
+	if err != nil {
+		t.Fatalf("GetReport report2 error: %v", err)
+	}
+	if updated1.Status != "generated" || updated2.Status != "generated" {
+		t.Fatalf("expected generated statuses, got %q and %q", updated1.Status, updated2.Status)
+	}
+
+	deleteReq := httptest.NewRequest(http.MethodPost, "/api/v1/reports/batch-delete", strings.NewReader(fmt.Sprintf(`{"report_ids":[%d,%d]}`, report1.ID, report2.ID)))
+	deleteReq.Header.Set("Content-Type", "application/json")
+	deleteRR := httptest.NewRecorder()
+	svc.handleBatchDeleteReports(deleteRR, deleteReq)
+	if deleteRR.Code != http.StatusOK {
+		t.Fatalf("expected batch delete 200, got %d body=%s", deleteRR.Code, deleteRR.Body.String())
+	}
+
+	archived1, _ := store.GetReport(ctx, report1.ID)
+	archived2, _ := store.GetReport(ctx, report2.ID)
+	if archived1.Status != "archived" || archived2.Status != "archived" {
+		t.Fatalf("expected archived statuses, got %q and %q", archived1.Status, archived2.Status)
+	}
+
+	invalidReq := httptest.NewRequest(http.MethodPost, "/api/v1/reports/batch-status", strings.NewReader(`{"report_ids":[1],"status":"invalid"}`))
+	invalidReq.Header.Set("Content-Type", "application/json")
+	invalidRR := httptest.NewRecorder()
+	svc.handleBatchUpdateReportStatus(invalidRR, invalidReq)
+	if invalidRR.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid status 400, got %d", invalidRR.Code)
 	}
 }
 

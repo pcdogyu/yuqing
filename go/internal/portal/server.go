@@ -156,6 +156,7 @@ type pageData struct {
 	SearchOptions            model.SearchOptions
 	Error                    string
 	Message                  string
+	Reference                string
 	ReturnTo                 string
 	ReturnURL                string
 	FilterKeyword            string
@@ -246,6 +247,11 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/api/getMergeArticle", s.handleLegacyAPIMergeArticleList)
 	mux.HandleFunc("/api/detail", s.handleLegacyAPIArticleDetail)
 	mux.HandleFunc("/login", s.handleLoginPage)
+	mux.HandleFunc("/loginbak", s.handleLoginBakPage)
+	mux.HandleFunc("/forgotpwd", s.handleForgotPasswordPage)
+	mux.HandleFunc("/jumpLogin", s.handleLegacyJumpLogin)
+	mux.HandleFunc("/wechatJumpLogin", s.handleLegacyWechatJumpLogin)
+	mux.HandleFunc("/onlinestatistical", s.handleLegacyOnlineStatistical)
 	mux.HandleFunc("/img/code", s.handleCaptchaCode)
 	mux.HandleFunc("/displayboard", s.requireSession(s.handleDisplayBoard))
 	mux.HandleFunc("/displayboard/", s.requireSession(s.handleDisplayBoard))
@@ -283,6 +289,12 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/project/commiteditproject", s.requireSessionJSON(s.handleLegacyProjectCommitEditProject))
 	mux.HandleFunc("/project/delProject", s.requireSessionJSON(s.handleLegacyProjectDelProject))
 	mux.HandleFunc("/project/delProjectDetail", s.requireSessionJSON(s.handleLegacyProjectDelProjectDetail))
+	mux.HandleFunc("/report", s.requireSession(s.handleLegacyReportPage))
+	mux.HandleFunc("/report/", s.requireSession(s.handleLegacyReportCompat))
+	mux.HandleFunc("/report/listReportCustom", s.requireSessionJSON(s.handleLegacyReportCustomList))
+	mux.HandleFunc("/report/reportDetail", s.requireSessionJSON(s.handleLegacyReportCustomDetailJSON))
+	mux.HandleFunc("/report/batchUpdateReportCustom", s.requireSessionJSON(s.handleLegacyBatchUpdateReportCustom))
+	mux.HandleFunc("/report/batchUpdateReportCustomStatus", s.requireSessionJSON(s.handleLegacyBatchUpdateReportCustomStatus))
 	mux.HandleFunc("/volume", s.requireSession(s.handleVolume))
 	mux.HandleFunc("/volume/", s.requireSession(s.handleVolume))
 	mux.HandleFunc("/crypto", s.requireSession(s.handleCryptoPage))
@@ -323,6 +335,7 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/user/save", func(w http.ResponseWriter, r *http.Request) {
 		s.handleLegacyUserSave(w, r)
 	})
+	mux.HandleFunc("/user/getToken", s.handleLegacyAPIToken)
 	mux.HandleFunc("/user/detail", s.requireSessionJSON(s.handleLegacyUserDetail))
 	mux.HandleFunc("/user/edit", s.requireSessionJSON(s.handleLegacyUserEdit))
 	mux.HandleFunc("/user/getwechatqrcode", s.requireSessionJSON(s.handleLegacyUserWechatQRCode))
@@ -388,15 +401,17 @@ func (s *Server) Router() http.Handler {
 func (s *Server) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		_ = s.render(w, "login", pageData{Title: "登录"})
+		_ = s.render(w, "login", pageData{Title: "登录", Reference: localRedirectTarget(r.URL.Query().Get("reference"))})
 	case http.MethodPost:
 		if err := r.ParseForm(); err != nil {
 			_ = s.render(w, "login", pageData{Title: "登录", Error: "表单解析失败"})
 			return
 		}
-		loginResp, loginErr := s.authLogin(r.FormValue("username"), r.FormValue("password"))
+		username := nonEmpty(strings.TrimSpace(r.FormValue("username")), strings.TrimSpace(r.FormValue("telephone")))
+		reference := localRedirectTarget(r.FormValue("reference"))
+		loginResp, loginErr := s.authLogin(username, r.FormValue("password"))
 		if loginErr != nil {
-			_ = s.render(w, "login", pageData{Title: "登录", Error: loginErr.Error()})
+			_ = s.render(w, "login", pageData{Title: "登录", Error: loginErr.Error(), Reference: reference})
 			return
 		}
 		http.SetCookie(w, &http.Cookie{
@@ -406,10 +421,87 @@ func (s *Server) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 			HttpOnly: true,
 			SameSite: http.SameSiteLaxMode,
 		})
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		http.Redirect(w, r, nonEmpty(reference, "/"), http.StatusSeeOther)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func (s *Server) handleLoginBakPage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	_ = s.render(w, "login", pageData{Title: "登录", Reference: localRedirectTarget(r.URL.Query().Get("reference"))})
+}
+
+func (s *Server) handleForgotPasswordPage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	body := `<section><h1>忘记密码</h1><p>Go 兼容版暂未开放在线重置密码，请联系管理员处理。</p><p><a class="inline" href="/login">返回登录</a></p></section>`
+	_ = s.writeSimplePage(w, "forgotpwd", "忘记密码", body)
+}
+
+func (s *Server) handleLegacyJumpLogin(w http.ResponseWriter, r *http.Request) {
+	if cookie, err := r.Cookie(sessionCookieName); err == nil && strings.TrimSpace(cookie.Value) != "" {
+		if _, err := s.getSessionUser(cookie.Value); err == nil {
+			http.Redirect(w, r, "/monitor", http.StatusSeeOther)
+			return
+		}
+	}
+	http.Redirect(w, r, "/login?reference="+url.QueryEscape("/monitor"), http.StatusSeeOther)
+}
+
+func (s *Server) handleLegacyWechatJumpLogin(w http.ResponseWriter, r *http.Request) {
+	if cookie, err := r.Cookie(sessionCookieName); err == nil && strings.TrimSpace(cookie.Value) != "" {
+		if _, err := s.getSessionUser(cookie.Value); err == nil {
+			http.Redirect(w, r, "/monitor", http.StatusSeeOther)
+			return
+		}
+	}
+	http.Redirect(w, r, "/login?reference="+url.QueryEscape("/monitor"), http.StatusSeeOther)
+}
+
+func (s *Server) handleLegacyOnlineStatistical(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeRawJSON(w, http.StatusMethodNotAllowed, map[string]any{"code": -1, "msg": "method not allowed"})
+		return
+	}
+	token, ok := s.sessionTokenFromRequest(r)
+	if !ok {
+		writeRawJSON(w, http.StatusOK, map[string]any{"code": -1, "msg": "查询失败"})
+		return
+	}
+	var envelope struct {
+		Data struct {
+			User    map[string]any `json:"user"`
+			Session model.Session  `json:"session"`
+		} `json:"data"`
+	}
+	resp, err := s.client.R().
+		SetQueryParam("session_token", token).
+		SetResult(&envelope).
+		Get(s.cfg.AuthURL + "/api/v1/auth/session")
+	if err != nil || !resp.IsSuccess() || envelope.Data.User == nil {
+		writeRawJSON(w, http.StatusOK, map[string]any{"code": -1, "msg": "查询失败"})
+		return
+	}
+	user := envelope.Data.User
+	writeRawJSON(w, http.StatusOK, map[string]any{
+		"code": 1,
+		"onlinedata": map[string]any{
+			"user_id":            legacyInt64Value(user["id"]),
+			"username":           nonEmpty(legacyStringFromAny(user["username"]), legacyStringFromAny(user["display_name"])),
+			"display_name":       legacyStringFromAny(user["display_name"]),
+			"role":               legacyStringFromAny(user["role"]),
+			"status":             legacyIntFromAnyValue(user["status"]),
+			"session_token":      token,
+			"session_expires_at": envelope.Data.Session.ExpiresAt,
+			"online":             true,
+		},
+	})
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -915,10 +1007,10 @@ func (s *Server) handleLegacyUserEdit(w http.ResponseWriter, r *http.Request, us
 		return
 	}
 	if resp.StatusCode() == http.StatusBadRequest && strings.Contains(strings.ToLower(resp.String()), "old password") {
-		writeLegacyStatusJSON(w, 203, "旧密码输入错误！", map[string]any{})
+		writeLegacyStatusJSON(w, http.StatusOK, 203, "旧密码输入错误！", map[string]any{})
 		return
 	}
-	writeLegacyStatusJSON(w, 201, "密码修改失败！", map[string]any{})
+	writeLegacyStatusJSON(w, http.StatusOK, 201, "密码修改失败！", map[string]any{})
 }
 
 func (s *Server) handleLegacyUserSave(w http.ResponseWriter, r *http.Request) {
@@ -1137,7 +1229,7 @@ func (s *Server) handleLegacyGetFavoriteList(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	pageNum := parsePositiveInt(nonEmpty(r.FormValue("pageNum"), r.FormValue("page")), 1)
-	projectID := strings.TrimSpace(r.FormValue("project_id"))
+	projectID := strings.TrimSpace(nonEmpty(r.FormValue("project_id"), r.FormValue("projectId"), r.FormValue("projectid")))
 	var result model.ItemListResult
 	favoriteURL := s.cfg.ContentURL + "/api/v1/articles?favorite=favorited&page=" + strconv.Itoa(pageNum) + "&page_size=10&user_id=" + strconv.FormatInt(userID, 10)
 	if projectID != "" {
@@ -1385,8 +1477,20 @@ func (s *Server) handleLegacyGetSystemTitle(w http.ResponseWriter, r *http.Reque
 		"system_title": "网络情报分析系统",
 	}
 	if mapped, ok := user.(map[string]any); ok {
-		if displayName := nonEmpty(legacyStringFromAny(mapped["display_name"]), legacyStringFromAny(mapped["username"])); displayName != "" {
+		username := legacyStringFromAny(mapped["username"])
+		displayName := nonEmpty(legacyStringFromAny(mapped["display_name"]), username)
+		email := legacyStringFromAny(mapped["email"])
+		if displayName != "" {
 			payload["user_name"] = displayName
+		}
+		if username != "" {
+			payload["username"] = username
+		}
+		if displayName != "" {
+			payload["display_name"] = displayName
+		}
+		if email != "" {
+			payload["email"] = email
 		}
 	}
 	writeLegacyJSON(w, http.StatusOK, "OK", payload)
@@ -1423,6 +1527,287 @@ type legacyMailConfigResponse struct {
 	To       string   `json:"to"`
 	Cc       []string `json:"cc"`
 	ToList   []string `json:"toList"`
+}
+
+type legacyReportListEnvelope struct {
+	List      []map[string]any `json:"list"`
+	PageCount int              `json:"pageCount"`
+	DataCount int              `json:"dataCount"`
+}
+
+func (s *Server) handleLegacyReportPage(w http.ResponseWriter, r *http.Request, user any) {
+	reportsReq := cloneRequestWithURL(r, legacyReportListPath(r))
+	s.handleReports(w, reportsReq, user)
+}
+
+func (s *Server) handleLegacyReportCompat(w http.ResponseWriter, r *http.Request, user any) {
+	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/report/"), "/")
+	if path == "" {
+		s.handleLegacyReportPage(w, r, user)
+		return
+	}
+	if _, err := strconv.ParseInt(path, 10, 64); err == nil {
+		reportReq := cloneRequestWithURL(r, legacyReportDetailPath(r, path))
+		s.handleReportDetail(w, reportReq, user)
+		return
+	}
+	http.NotFound(w, r)
+}
+
+func (s *Server) handleLegacyReportCustomList(w http.ResponseWriter, r *http.Request, _ any) {
+	if err := r.ParseForm(); err != nil {
+		writeRawJSON(w, http.StatusOK, legacyReportListEnvelope{})
+		return
+	}
+	pageNum := parsePositiveInt(nonEmpty(r.FormValue("pageNum"), r.FormValue("page")), 1)
+	projectID := strings.TrimSpace(nonEmpty(r.FormValue("projectId"), r.FormValue("project_id")))
+	keyword := strings.TrimSpace(r.FormValue("nameSearch"))
+	status := legacyReportTypeToStatus(r.FormValue("reportType"))
+
+	reports, err := s.fetchFilteredReports(projectID, keyword, status)
+	if err != nil {
+		writeLegacyJSON(w, http.StatusInternalServerError, err.Error(), legacyJSONString(legacyReportListEnvelope{}))
+		return
+	}
+	pageSize := 10
+	total := len(reports)
+	pageCount := 1
+	if total > 0 {
+		pageCount = (total + pageSize - 1) / pageSize
+	}
+	start := (maxInt(pageNum, 1) - 1) * pageSize
+	if start > total {
+		start = total
+	}
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+	projectNames := map[int64]string{}
+	for _, project := range s.fetchLegacyProjects() {
+		projectNames[project.ProjectID] = project.ProjectName
+	}
+	items := make([]map[string]any, 0, end-start)
+	for _, report := range reports[start:end] {
+		items = append(items, map[string]any{
+			"id":           report.ID,
+			"report_id":    report.ID,
+			"reportId":     report.ID,
+			"project_id":   report.ProjectID,
+			"projectId":    report.ProjectID,
+			"project_name": projectNames[report.ProjectID],
+			"title":        report.Title,
+			"summary":      report.Summary,
+			"status":       report.Status,
+			"report_type":  legacyReportStatusToType(report.Status),
+			"create_time":  report.CreatedAt.Format("2006-01-02 15:04:05"),
+			"update_time":  report.UpdatedAt.Format("2006-01-02 15:04:05"),
+		})
+	}
+	payload := legacyReportListEnvelope{
+		List:      items,
+		PageCount: pageCount,
+		DataCount: total,
+	}
+	writeLegacyJSON(w, http.StatusOK, "", legacyJSONString(payload))
+}
+
+func (s *Server) handleLegacyReportCustomDetailJSON(w http.ResponseWriter, r *http.Request, _ any) {
+	if err := r.ParseForm(); err != nil {
+		writeRawJSON(w, http.StatusOK, map[string]any{})
+		return
+	}
+	reportID := parsePositiveInt(nonEmpty(r.FormValue("reportId"), r.FormValue("report_id")), 0)
+	if reportID <= 0 {
+		writeRawJSON(w, http.StatusOK, map[string]any{})
+		return
+	}
+	var report model.Report
+	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/reports/"+strconv.Itoa(reportID), &report); err != nil {
+		writeRawJSON(w, http.StatusOK, map[string]any{})
+		return
+	}
+	writeRawJSON(w, http.StatusOK, map[string]any{
+		"id":         report.ID,
+		"report_id":  report.ID,
+		"reportId":   report.ID,
+		"project_id": report.ProjectID,
+		"title":      report.Title,
+		"summary":    report.Summary,
+		"content":    report.Content,
+		"status":     report.Status,
+		"reportType": legacyReportStatusToType(report.Status),
+		"createdAt":  report.CreatedAt.Format("2006-01-02 15:04:05"),
+		"updatedAt":  report.UpdatedAt.Format("2006-01-02 15:04:05"),
+	})
+}
+
+func (s *Server) handleLegacyBatchUpdateReportCustom(w http.ResponseWriter, r *http.Request, _ any) {
+	ids, err := decodeLegacyReportIDs(r)
+	if err != nil || len(ids) == 0 {
+		writeRawJSON(w, http.StatusOK, map[string]any{"status": false, "message": "reportIds required"})
+		return
+	}
+	resp, err := s.client.R().
+		SetBody(map[string]any{"report_ids": ids}).
+		Post(s.cfg.ContentURL + "/api/v1/reports/batch-delete")
+	if err != nil {
+		writeRawJSON(w, http.StatusOK, map[string]any{"status": false, "message": err.Error()})
+		return
+	}
+	if !resp.IsSuccess() {
+		writeRawJSON(w, http.StatusOK, map[string]any{"status": false, "message": resp.Status()})
+		return
+	}
+	writeRawJSON(w, http.StatusOK, map[string]any{"status": true, "message": "操作成功"})
+}
+
+func (s *Server) handleLegacyBatchUpdateReportCustomStatus(w http.ResponseWriter, r *http.Request, _ any) {
+	ids, err := decodeLegacyReportIDs(r)
+	if err != nil || len(ids) == 0 {
+		writeRawJSON(w, http.StatusOK, map[string]any{"status": false, "message": "reportIds required"})
+		return
+	}
+	status := legacyReportTypeToStatus(nonEmpty(r.FormValue("status"), r.FormValue("reportType")))
+	if status == "" {
+		status = "generated"
+	}
+	resp, err := s.client.R().
+		SetBody(map[string]any{"report_ids": ids, "status": status}).
+		Post(s.cfg.ContentURL + "/api/v1/reports/batch-status")
+	if err != nil {
+		writeRawJSON(w, http.StatusOK, map[string]any{"status": false, "message": err.Error()})
+		return
+	}
+	if !resp.IsSuccess() {
+		writeRawJSON(w, http.StatusOK, map[string]any{"status": false, "message": resp.Status()})
+		return
+	}
+	writeRawJSON(w, http.StatusOK, map[string]any{"status": true, "message": "操作成功"})
+}
+
+func (s *Server) fetchFilteredReports(projectID, keyword, status string) ([]model.Report, error) {
+	reportURL := s.cfg.ContentURL + "/api/v1/reports"
+	if strings.TrimSpace(projectID) != "" {
+		reportURL += "?project_id=" + url.QueryEscape(projectID)
+	}
+	reports := []model.Report{}
+	if err := s.getJSON(reportURL, &reports); err != nil {
+		return nil, err
+	}
+	filtered := make([]model.Report, 0, len(reports))
+	for _, report := range reports {
+		if keyword != "" && !strings.Contains(strings.ToLower(report.Title), strings.ToLower(keyword)) {
+			continue
+		}
+		if status != "" && report.Status != status {
+			continue
+		}
+		filtered = append(filtered, report)
+	}
+	return filtered, nil
+}
+
+func legacyReportTypeToStatus(raw string) string {
+	switch strings.TrimSpace(raw) {
+	case "1":
+		return "generated"
+	case "2":
+		return "draft"
+	case "3":
+		return "archived"
+	default:
+		return ""
+	}
+}
+
+func legacyReportStatusToType(status string) int {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "generated":
+		return 1
+	case "draft":
+		return 2
+	case "archived":
+		return 3
+	default:
+		return 0
+	}
+}
+
+func decodeLegacyReportIDs(r *http.Request) ([]int64, error) {
+	if err := r.ParseForm(); err != nil {
+		return nil, err
+	}
+	raw := strings.TrimSpace(nonEmpty(r.FormValue("reportIds"), r.FormValue("report_ids")))
+	if raw == "" {
+		return nil, nil
+	}
+	parts := strings.FieldsFunc(raw, func(ch rune) bool {
+		return ch == ',' || ch == '，'
+	})
+	ids := make([]int64, 0, len(parts))
+	for _, part := range parts {
+		value, err := strconv.ParseInt(strings.TrimSpace(part), 10, 64)
+		if err != nil || value <= 0 {
+			return nil, errors.New("invalid report id")
+		}
+		ids = append(ids, value)
+	}
+	return ids, nil
+}
+
+func cloneRequestWithPath(r *http.Request, path string) *http.Request {
+	return cloneRequestWithURL(r, path)
+}
+
+func cloneRequestWithURL(r *http.Request, rawURL string) *http.Request {
+	cloned := r.Clone(r.Context())
+	nextURL, err := url.Parse(rawURL)
+	if err == nil {
+		cloned.URL = nextURL
+		cloned.RequestURI = rawURL
+		return cloned
+	}
+	if cloned.URL != nil {
+		fallback := *cloned.URL
+		fallback.Path = rawURL
+		fallback.RawQuery = ""
+		cloned.URL = &fallback
+	}
+	cloned.RequestURI = rawURL
+	return cloned
+}
+
+func legacyReportListPath(r *http.Request) string {
+	values := url.Values{}
+	projectID := strings.TrimSpace(nonEmpty(r.URL.Query().Get("project_id"), r.URL.Query().Get("projectid")))
+	if projectID == "" {
+		projectID = strings.TrimSpace(r.URL.Query().Get("projectId"))
+	}
+	if projectID != "" {
+		values.Set("project_id", projectID)
+	}
+	keyword := strings.TrimSpace(nonEmpty(r.URL.Query().Get("keyword"), r.URL.Query().Get("search")))
+	if keyword != "" {
+		values.Set("keyword", keyword)
+	}
+	status := legacyReportTypeToStatus(r.URL.Query().Get("type"))
+	if status != "" {
+		values.Set("status", status)
+	}
+	page := strings.TrimSpace(r.URL.Query().Get("page"))
+	if page != "" {
+		values.Set("page", page)
+	}
+	if len(values) == 0 {
+		return "/reports"
+	}
+	return "/reports?" + values.Encode()
+}
+
+func legacyReportDetailPath(r *http.Request, id string) string {
+	returnURL := legacyReportListPath(r)
+	return "/reports/" + id + "?return_to=" + url.QueryEscape(returnURL)
 }
 
 func decodeLegacyMailConfigRequest(r *http.Request) (legacyMailConfigRequest, error) {
@@ -3930,6 +4315,14 @@ func firstProjectGroupIDForTemplate(item model.Item, projects []model.Project) i
 	return groupID
 }
 
+func legacyInt64Value(value any) int64 {
+	v, ok := legacyAPIInt64(value)
+	if !ok {
+		return 0
+	}
+	return v
+}
+
 func legacyUserDetailPayload(user any) map[string]any {
 	mapped, _ := user.(map[string]any)
 	displayName := legacyStringFromAny(mapped["display_name"])
@@ -4275,7 +4668,7 @@ const portalSourceFilterOptions = `<option value="">全部来源</option><option
 const portalChannelPlaceholder = `来源，如 flash,headline,crypto_x,crypto_telegram`
 
 const loginTemplate = `
-{{define "login"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `main{max-width:420px}</style></head><body><main><section><h1>Go 舆情系统</h1>{{if .Error}}<p style="color:#9b1c1c">{{.Error}}</p>{{end}}<form method="post"><input name="username" placeholder="用户名" value="admin"><input name="password" type="password" placeholder="密码" value="admin123"><button type="submit">登录</button></form></section></main></body></html>{{end}}
+{{define "login"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `main{max-width:420px}</style></head><body><main><section><h1>Go 舆情系统</h1>{{if .Error}}<p style="color:#9b1c1c">{{.Error}}</p>{{end}}<form method="post"><input type="hidden" name="reference" value="{{.Reference}}"><input name="username" placeholder="用户名" value="admin"><input name="password" type="password" placeholder="密码" value="admin123"><button type="submit">登录</button></form></section></main></body></html>{{end}}
 `
 
 const dashboardTemplate = `
