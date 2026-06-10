@@ -58,6 +58,7 @@ type CrawlSummary struct {
 type CrawlTemplate struct {
 	ID         int64     `json:"id"`
 	Name       string    `json:"name"`
+	Website    string    `json:"website"`
 	SourceType string    `json:"source_type"`
 	Enabled    bool      `json:"enabled"`
 	ConfigJSON string    `json:"config_json"`

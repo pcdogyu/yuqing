@@ -1,6 +1,7 @@
 package portal
 
 import (
+	"encoding/json"
 	"html"
 	"net/http"
 	"net/url"
@@ -62,9 +63,9 @@ func (s *Server) handleCrawlTemplatesPage(w http.ResponseWriter, r *http.Request
 	body.WriteString(`</div></section>`)
 
 	body.WriteString(`<section><h2>新建模板</h2><form method="post"><input type="hidden" name="action" value="create"><div class="template-grid">`)
-	body.WriteString(`<div class="template-card"><label>模板名称</label><input name="name" placeholder="X BTC 热门账号模板"><label>来源类型</label><select name="source_type">`)
+	body.WriteString(`<div class="template-card"><label>模板名称</label><input name="name" placeholder="X BTC 热门账号模板"><label>网站参数</label><input class="js-website-input" name="website" list="crawl-template-website-options" placeholder="如 x.com / t.me / example.com"><label>来源类型</label><select class="js-source-type-input" name="source_type">`)
 	body.WriteString(crawlTemplateSourceOptions("custom"))
-	body.WriteString(`</select><label>配置 JSON</label><textarea name="config_json" rows="12" placeholder='{"source_type":"crypto_x","base_url":"https://example.com"}'>{}</textarea><p class="template-meta">新建模板默认启用；如果需要停用，可在下方列表保存后切换。</p><div class="template-actions"><button type="submit">创建模板</button></div></div></div></form></section>`)
+	body.WriteString(`</select><label>请求方式</label><select class="js-method-input" name="config_method"><option value="GET">GET</option><option value="POST">POST</option></select><label>页面地址</label><input class="js-base-url-input" name="config_base_url" placeholder="https://example.com"><label>列表选择器</label><input class="js-list-selector-input" name="config_list_selector" placeholder=".list-item"><label>详情链接字段</label><input class="js-detail-url-field-input" name="config_detail_url_field" placeholder="href"><label>配置 JSON</label><textarea class="js-config-json-input" name="config_json" rows="12" placeholder='{"source_type":"crypto_x","base_url":"https://example.com"}'>{}</textarea><p class="template-meta">常用字段可直接填写，上面的值会自动同步回配置 JSON；如果需要停用，可在下方列表保存后切换。</p><div class="template-actions"><button type="submit">创建模板</button></div></div></div></form></section>`)
 
 	body.WriteString(`<section><h2>模板列表</h2>`)
 	if len(templates) == 0 {
@@ -76,9 +77,11 @@ func (s *Server) handleCrawlTemplatesPage(w http.ResponseWriter, r *http.Request
 			body.WriteString(strconv.FormatInt(tpl.ID, 10))
 			body.WriteString(`"><input type="hidden" name="action" value="update"><label>模板名称</label><input name="name" value="`)
 			body.WriteString(html.EscapeString(tpl.Name))
-			body.WriteString(`"><label>来源类型</label><select name="source_type">`)
+			body.WriteString(`"><label>网站参数</label><input class="js-website-input" name="website" list="crawl-template-website-options" value="`)
+			body.WriteString(html.EscapeString(tpl.Website))
+			body.WriteString(`" placeholder="如 x.com / t.me / example.com"><label>来源类型</label><select class="js-source-type-input" name="source_type">`)
 			body.WriteString(crawlTemplateSourceOptions(tpl.SourceType))
-			body.WriteString(`</select><label>配置 JSON</label><textarea name="config_json" rows="12">`)
+			body.WriteString(`</select><label>请求方式</label><select class="js-method-input" name="config_method"><option value="GET">GET</option><option value="POST">POST</option></select><label>页面地址</label><input class="js-base-url-input" name="config_base_url" placeholder="https://example.com"><label>列表选择器</label><input class="js-list-selector-input" name="config_list_selector" placeholder=".list-item"><label>详情链接字段</label><input class="js-detail-url-field-input" name="config_detail_url_field" placeholder="href"><label>配置 JSON</label><textarea class="js-config-json-input" name="config_json" rows="12">`)
 			body.WriteString(html.EscapeString(tpl.ConfigJSON))
 			body.WriteString(`</textarea><label style="display:flex;align-items:center;gap:8px;margin-top:6px"><input type="checkbox" name="enabled"`)
 			if tpl.Enabled {
@@ -99,6 +102,8 @@ func (s *Server) handleCrawlTemplatesPage(w http.ResponseWriter, r *http.Request
 		body.WriteString(`</div>`)
 	}
 	body.WriteString(`</section>`)
+	body.WriteString(crawlTemplateWebsiteDatalist())
+	body.WriteString(crawlTemplateWebsiteScript())
 
 	_ = s.writeSimplePage(w, "crawl-templates", "抓取模板管理", body.String())
 }
@@ -116,8 +121,9 @@ func (s *Server) handleCrawlTemplateAction(r *http.Request) string {
 		}
 		payload := model.CrawlTemplate{
 			Name:       name,
+			Website:    strings.TrimSpace(r.FormValue("website")),
 			SourceType: strings.TrimSpace(r.FormValue("source_type")),
-			ConfigJSON: normalizeTemplateConfigJSON(r.FormValue("config_json")),
+			ConfigJSON: normalizeTemplateConfigJSON(r.FormValue("config_json"), r.FormValue("website"), r.FormValue("config_method"), r.FormValue("config_base_url"), r.FormValue("config_list_selector"), r.FormValue("config_detail_url_field")),
 		}
 		resp, err := s.client.R().SetBody(payload).Post(s.cfg.ContentURL + "/api/v1/crawl-templates")
 		if err != nil || !resp.IsSuccess() {
@@ -136,9 +142,10 @@ func (s *Server) handleCrawlTemplateAction(r *http.Request) string {
 		payload := model.CrawlTemplate{
 			ID:         id,
 			Name:       name,
+			Website:    strings.TrimSpace(r.FormValue("website")),
 			SourceType: strings.TrimSpace(r.FormValue("source_type")),
 			Enabled:    r.FormValue("enabled") == "on",
-			ConfigJSON: normalizeTemplateConfigJSON(r.FormValue("config_json")),
+			ConfigJSON: normalizeTemplateConfigJSON(r.FormValue("config_json"), r.FormValue("website"), r.FormValue("config_method"), r.FormValue("config_base_url"), r.FormValue("config_list_selector"), r.FormValue("config_detail_url_field")),
 		}
 		resp, err := s.client.R().SetBody(payload).Put(s.cfg.ContentURL + "/api/v1/crawl-templates/" + strconv.FormatInt(id, 10))
 		if err != nil || !resp.IsSuccess() {
@@ -199,14 +206,60 @@ func crawlTemplateSourceOptions(selected string) string {
 	return b.String()
 }
 
-func normalizeTemplateConfigJSON(raw string) string {
+func normalizeTemplateConfigJSON(raw string, website string, method string, baseURL string, listSelector string, detailURLField string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return "{}"
+		raw = "{}"
 	}
-	return raw
+	website = strings.TrimSpace(website)
+	method = strings.ToUpper(strings.TrimSpace(method))
+	baseURL = strings.TrimSpace(baseURL)
+	listSelector = strings.TrimSpace(listSelector)
+	detailURLField = strings.TrimSpace(detailURLField)
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return raw
+	}
+	if website == "" {
+		delete(payload, "website")
+	} else {
+		payload["website"] = website
+	}
+	if method == "" || method == "GET" {
+		delete(payload, "method")
+	} else {
+		payload["method"] = method
+	}
+	if baseURL == "" {
+		delete(payload, "base_url")
+	} else {
+		payload["base_url"] = baseURL
+	}
+	if listSelector == "" {
+		delete(payload, "list_selector")
+	} else {
+		payload["list_selector"] = listSelector
+	}
+	if detailURLField == "" {
+		delete(payload, "detail_url_field")
+	} else {
+		payload["detail_url_field"] = detailURLField
+	}
+	normalized, err := json.Marshal(payload)
+	if err != nil {
+		return raw
+	}
+	return string(normalized)
 }
 
 func templateSummaryCard(label string, value int) string {
 	return `<div class="summary-card"><div class="template-meta">` + html.EscapeString(label) + `</div><strong>` + strconv.Itoa(value) + `</strong></div>`
+}
+
+func crawlTemplateWebsiteDatalist() string {
+	return `<datalist id="crawl-template-website-options"><option value="x.com"></option><option value="twitter.com"></option><option value="t.me"></option><option value="telegram.org"></option><option value="jin10.com"></option><option value="xnews.jin10.com"></option><option value="flash.jin10.com"></option><option value="example.com"></option></datalist>`
+}
+
+func crawlTemplateWebsiteScript() string {
+	return `<script>(function(){var defaults={flash:"flash.jin10.com",headline:"xnews.jin10.com",jin10_full:"jin10.com",crypto_x:"x.com",crypto_telegram:"t.me"};var parseConfig=function(text){try{return JSON.parse(text||"{}")}catch(e){return {}}};document.querySelectorAll("form").forEach(function(form){var source=form.querySelector(".js-source-type-input");var website=form.querySelector(".js-website-input");var method=form.querySelector(".js-method-input");var baseUrl=form.querySelector(".js-base-url-input");var listSelector=form.querySelector(".js-list-selector-input");var detailUrlField=form.querySelector(".js-detail-url-field-input");var config=form.querySelector(".js-config-json-input");if(!source||!website||!method||!baseUrl||!listSelector||!detailUrlField||!config){return}var hydrate=function(){var parsed=parseConfig(config.value);if(!method.value&&parsed.method){method.value=String(parsed.method).toUpperCase()}if(method.value===""){method.value="GET"}if(!baseUrl.value&&parsed.base_url){baseUrl.value=parsed.base_url}if(!listSelector.value&&parsed.list_selector){listSelector.value=parsed.list_selector}if(!detailUrlField.value&&parsed.detail_url_field){detailUrlField.value=parsed.detail_url_field}if(!website.value&&parsed.website){website.value=parsed.website}};var applyDefaultWebsite=function(){if(website.value.trim()!==""||!defaults[source.value]){return}website.value=defaults[source.value]};source.addEventListener("change",applyDefaultWebsite);hydrate();applyDefaultWebsite()})})();</script>`
 }

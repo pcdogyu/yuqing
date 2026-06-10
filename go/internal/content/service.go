@@ -442,6 +442,7 @@ func (s *Service) handleCreateCrawlTemplate(w http.ResponseWriter, r *http.Reque
 	if strings.TrimSpace(tpl.ConfigJSON) == "" {
 		tpl.ConfigJSON = "{}"
 	}
+	tpl.ConfigJSON = syncTemplateWebsiteConfig(tpl.ConfigJSON, tpl.Website)
 	created, err := s.store.CreateCrawlTemplate(r.Context(), tpl)
 	if err != nil {
 		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
@@ -463,6 +464,7 @@ func (s *Service) handleUpdateCrawlTemplate(w http.ResponseWriter, r *http.Reque
 	if strings.TrimSpace(tpl.ConfigJSON) == "" {
 		tpl.ConfigJSON = "{}"
 	}
+	tpl.ConfigJSON = syncTemplateWebsiteConfig(tpl.ConfigJSON, tpl.Website)
 	updated, err := s.store.UpdateCrawlTemplate(r.Context(), tpl)
 	if err != nil {
 		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
@@ -481,6 +483,28 @@ func (s *Service) handleDeleteCrawlTemplate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]bool{"deleted": true})
+}
+
+func syncTemplateWebsiteConfig(rawConfig, website string) string {
+	rawConfig = strings.TrimSpace(rawConfig)
+	if rawConfig == "" {
+		rawConfig = "{}"
+	}
+	website = strings.TrimSpace(website)
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(rawConfig), &payload); err != nil {
+		return rawConfig
+	}
+	if website == "" {
+		delete(payload, "website")
+	} else {
+		payload["website"] = website
+	}
+	normalized, err := json.Marshal(payload)
+	if err != nil {
+		return rawConfig
+	}
+	return string(normalized)
 }
 
 func (s *Service) handleListArticles(w http.ResponseWriter, r *http.Request) {

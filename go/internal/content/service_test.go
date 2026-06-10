@@ -132,6 +132,18 @@ func TestSummarizeTextAndNonEmpty(t *testing.T) {
 	}
 }
 
+func TestSyncTemplateWebsiteConfig(t *testing.T) {
+	got := syncTemplateWebsiteConfig(`{"source_type":"flash","base_url":"https://example.com"}`, "flash.example.com")
+	if !strings.Contains(got, `"website":"flash.example.com"`) {
+		t.Fatalf("expected website injected into config_json, got %s", got)
+	}
+
+	got = syncTemplateWebsiteConfig(`{"source_type":"flash","website":"old.example.com"}`, "")
+	if strings.Contains(got, `"website"`) {
+		t.Fatalf("expected website removed from config_json, got %s", got)
+	}
+}
+
 func TestSearchSuggestionAndHotKeywordHandlers(t *testing.T) {
 	store := newContentSearchTestStore(t)
 	svc := NewService(config.Config{}, store)

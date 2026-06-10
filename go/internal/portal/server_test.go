@@ -694,12 +694,23 @@ func TestCrawlTemplatesPage(t *testing.T) {
 	if !strings.Contains(body, "/crawl-templates/manage") {
 		t.Fatalf("expected crawl-templates manage nav link, got %s", body)
 	}
+	if !strings.Contains(body, `<select class="js-source-type-input" name="source_type">`) {
+		t.Fatalf("expected source_type select on template management page, got %s", body)
+	}
+	if !strings.Contains(body, `name="config_method"`) || !strings.Contains(body, `name="config_base_url"`) || !strings.Contains(body, `name="config_list_selector"`) || !strings.Contains(body, `name="config_detail_url_field"`) {
+		t.Fatalf("expected common config fields on template management page, got %s", body)
+	}
 
 	createForm := url.Values{
-		"action":      {"create"},
-		"name":        {"BTC 资讯模板"},
-		"source_type": {"crypto_x"},
-		"config_json": {`{"source_type":"crypto_x","base_url":"https://example.com"}`},
+		"action":                  {"create"},
+		"name":                    {"BTC 资讯模板"},
+		"website":                 {"example.com"},
+		"source_type":             {"crypto_x"},
+		"config_method":           {"POST"},
+		"config_base_url":         {"https://example.com/feed"},
+		"config_list_selector":    {".feed-item"},
+		"config_detail_url_field": {"href"},
+		"config_json":             {`{"source_type":"crypto_x","base_url":"https://example.com"}`},
 	}
 	createReq := httptest.NewRequest(http.MethodPost, "/crawl-templates/manage", strings.NewReader(createForm.Encode()))
 	createReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -712,16 +723,21 @@ func TestCrawlTemplatesPage(t *testing.T) {
 	req = httptest.NewRequest(http.MethodGet, "/crawl-templates/manage", nil)
 	rr = httptest.NewRecorder()
 	srv.handleCrawlTemplatesPage(rr, req, map[string]any{"id": 7})
-	if !strings.Contains(rr.Body.String(), "BTC 资讯模板") {
+	if !strings.Contains(rr.Body.String(), "BTC 资讯模板") || !strings.Contains(rr.Body.String(), `&#34;website&#34;:&#34;example.com&#34;`) || !strings.Contains(rr.Body.String(), `&#34;method&#34;:&#34;POST&#34;`) || !strings.Contains(rr.Body.String(), `&#34;base_url&#34;:&#34;https://example.com/feed&#34;`) || !strings.Contains(rr.Body.String(), `&#34;list_selector&#34;:&#34;.feed-item&#34;`) || !strings.Contains(rr.Body.String(), `&#34;detail_url_field&#34;:&#34;href&#34;`) {
 		t.Fatalf("expected created template to render, got %s", rr.Body.String())
 	}
 
 	updateForm := url.Values{
-		"action":      {"update"},
-		"template_id": {"1"},
-		"name":        {"X BTC 热门账号模板 - 停用"},
-		"source_type": {"crypto_x"},
-		"config_json": {`{"source_type":"crypto_x","base_url":"https://example.com/updated"}`},
+		"action":                  {"update"},
+		"template_id":             {"1"},
+		"name":                    {"X BTC 热门账号模板 - 停用"},
+		"website":                 {"x.com"},
+		"source_type":             {"crypto_x"},
+		"config_method":           {"POST"},
+		"config_base_url":         {"https://example.com/updated"},
+		"config_list_selector":    {".updated-item"},
+		"config_detail_url_field": {"data-url"},
+		"config_json":             {`{"source_type":"crypto_x","base_url":"https://example.com/updated"}`},
 	}
 	updateReq := httptest.NewRequest(http.MethodPost, "/crawl-templates/manage", strings.NewReader(updateForm.Encode()))
 	updateReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -734,7 +750,7 @@ func TestCrawlTemplatesPage(t *testing.T) {
 	req = httptest.NewRequest(http.MethodGet, "/crawl-templates/manage", nil)
 	rr = httptest.NewRecorder()
 	srv.handleCrawlTemplatesPage(rr, req, map[string]any{"id": 7})
-	if !strings.Contains(rr.Body.String(), "X BTC 热门账号模板 - 停用") {
+	if !strings.Contains(rr.Body.String(), "X BTC 热门账号模板 - 停用") || !strings.Contains(rr.Body.String(), `&#34;website&#34;:&#34;x.com&#34;`) || !strings.Contains(rr.Body.String(), `&#34;method&#34;:&#34;POST&#34;`) || !strings.Contains(rr.Body.String(), `&#34;detail_url_field&#34;:&#34;data-url&#34;`) {
 		t.Fatalf("expected updated template name to render, got %s", rr.Body.String())
 	}
 
@@ -1278,7 +1294,12 @@ func TestCrawlTemplateCompatMutations(t *testing.T) {
 	createForm := url.Values{}
 	createForm.Set("form_type", "template")
 	createForm.Set("name", "手填模板")
+	createForm.Set("website", "news.example.com")
 	createForm.Set("source_type", "headline")
+	createForm.Set("config_method", "POST")
+	createForm.Set("config_base_url", "https://example.com/api")
+	createForm.Set("config_list_selector", ".article-card")
+	createForm.Set("config_detail_url_field", "data-href")
 	createForm.Set("enabled", "on")
 	createForm.Set("config_json", `{"source_type":"headline","method":"GET","base_url":"https://example.com"}`)
 	createReq := httptest.NewRequest(http.MethodPost, "/crawl-templates", strings.NewReader(createForm.Encode()))
@@ -1292,7 +1313,7 @@ func TestCrawlTemplateCompatMutations(t *testing.T) {
 	listRR := httptest.NewRecorder()
 	listReq := httptest.NewRequest(http.MethodGet, "/crawl-templates", nil)
 	srv.handleCrawlTemplates(listRR, listReq, user)
-	if !strings.Contains(listRR.Body.String(), "手填模板") {
+	if !strings.Contains(listRR.Body.String(), "手填模板") || !strings.Contains(listRR.Body.String(), `&#34;website&#34;:&#34;news.example.com&#34;`) || !strings.Contains(listRR.Body.String(), `&#34;method&#34;:&#34;POST&#34;`) || !strings.Contains(listRR.Body.String(), `&#34;base_url&#34;:&#34;https://example.com/api&#34;`) || !strings.Contains(listRR.Body.String(), `&#34;list_selector&#34;:&#34;.article-card&#34;`) || !strings.Contains(listRR.Body.String(), `&#34;detail_url_field&#34;:&#34;data-href&#34;`) {
 		t.Fatalf("expected created template to appear on page, got %s", listRR.Body.String())
 	}
 
@@ -1301,7 +1322,12 @@ func TestCrawlTemplateCompatMutations(t *testing.T) {
 	updateForm.Set("action", "update")
 	updateForm.Set("template_id", "2")
 	updateForm.Set("name", "手填模板更新")
+	updateForm.Set("website", "flash.example.org")
 	updateForm.Set("source_type", "flash")
+	updateForm.Set("config_method", "POST")
+	updateForm.Set("config_base_url", "https://example.org/feed")
+	updateForm.Set("config_list_selector", ".flash-item")
+	updateForm.Set("config_detail_url_field", "href")
 	updateForm.Set("config_json", `{"source_type":"flash","method":"POST","base_url":"https://example.org"}`)
 	updateReq := httptest.NewRequest(http.MethodPost, "/crawl-templates", strings.NewReader(updateForm.Encode()))
 	updateReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -1314,7 +1340,7 @@ func TestCrawlTemplateCompatMutations(t *testing.T) {
 	listRR = httptest.NewRecorder()
 	srv.handleCrawlTemplates(listRR, listReq, user)
 	listBody := listRR.Body.String()
-	if !strings.Contains(listBody, "手填模板更新") || !strings.Contains(listBody, "POST") {
+	if !strings.Contains(listBody, "手填模板更新") || !strings.Contains(listBody, "flash.example.org") || !strings.Contains(listBody, `&#34;base_url&#34;:&#34;https://example.org/feed&#34;`) || !strings.Contains(listBody, `&#34;list_selector&#34;:&#34;.flash-item&#34;`) || !strings.Contains(listBody, "POST") {
 		t.Fatalf("expected updated template to appear on page, got %s", listBody)
 	}
 
