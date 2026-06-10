@@ -874,6 +874,66 @@ func (s *Store) RecordTaskRun(ctx context.Context, name, status, message string,
 	return err
 }
 
+func (s *Store) CreateAuditLog(ctx context.Context, entry model.AuditLog) (model.AuditLog, error) {
+	entry.Username = strings.TrimSpace(entry.Username)
+	entry.Action = strings.TrimSpace(entry.Action)
+	entry.Resource = strings.TrimSpace(entry.Resource)
+	entry.DetailJSON = strings.TrimSpace(entry.DetailJSON)
+	if entry.Action == "" {
+		return model.AuditLog{}, errors.New("action required")
+	}
+	if entry.DetailJSON == "" {
+		entry.DetailJSON = "{}"
+	}
+	entry.CreatedAt = time.Now().UTC()
+	res, err := s.db.ExecContext(ctx, `INSERT INTO audit_logs (user_id, username, action, resource, detail_json, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		entry.UserID,
+		entry.Username,
+		entry.Action,
+		entry.Resource,
+		entry.DetailJSON,
+		entry.CreatedAt.Format(time.RFC3339),
+	)
+	if err != nil {
+		return model.AuditLog{}, err
+	}
+	entry.ID, _ = res.LastInsertId()
+	return entry, nil
+}
+
+func (s *Store) ListAuditLogs(ctx context.Context, limit int, userID int64, action string) ([]model.AuditLog, error) {
+	limit = max(limit, 1)
+	args := []any{}
+	var query strings.Builder
+	query.WriteString(`SELECT id, user_id, username, action, resource, detail_json, created_at FROM audit_logs WHERE 1=1`)
+	if userID > 0 {
+		query.WriteString(` AND user_id = ?`)
+		args = append(args, userID)
+	}
+	if trimmed := strings.TrimSpace(action); trimmed != "" {
+		query.WriteString(` AND action = ?`)
+		args = append(args, trimmed)
+	}
+	query.WriteString(` ORDER BY created_at DESC, id DESC LIMIT ?`)
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, query.String(), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	logs := make([]model.AuditLog, 0, limit)
+	for rows.Next() {
+		var entry model.AuditLog
+		var createdAt string
+		if err := rows.Scan(&entry.ID, &entry.UserID, &entry.Username, &entry.Action, &entry.Resource, &entry.DetailJSON, &createdAt); err != nil {
+			return nil, err
+		}
+		entry.CreatedAt = mustParseRFC3339(createdAt)
+		logs = append(logs, entry)
+	}
+	return logs, rows.Err()
+}
+
 func (s *Store) EnsureSeedData(ctx context.Context) error {
 	var count int
 	now := time.Now().UTC().Format(time.RFC3339)

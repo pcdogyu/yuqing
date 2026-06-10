@@ -93,3 +93,73 @@ func TestWechatChallengeAndBindingFlow(t *testing.T) {
 		t.Fatal("expected expired challenge to be removed")
 	}
 }
+
+func TestDeleteExpiredWechatChallengesAndListBindings(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	firstUser, err := store.CreateUser(ctx, model.User{
+		Username:    "wechat-user-1",
+		DisplayName: "Wechat User 1",
+		Role:        "user",
+		Status:      1,
+	}, "secret-1")
+	if err != nil {
+		t.Fatalf("CreateUser first error: %v", err)
+	}
+	secondUser, err := store.CreateUser(ctx, model.User{
+		Username:    "wechat-user-2",
+		DisplayName: "Wechat User 2",
+		Role:        "user",
+		Status:      1,
+	}, "secret-2")
+	if err != nil {
+		t.Fatalf("CreateUser second error: %v", err)
+	}
+
+	if _, err := store.UpsertWechatBinding(ctx, model.WechatBinding{UserID: firstUser.ID, OpenID: "openid-a"}); err != nil {
+		t.Fatalf("UpsertWechatBinding first error: %v", err)
+	}
+	if _, err := store.UpsertWechatBinding(ctx, model.WechatBinding{UserID: secondUser.ID, OpenID: "openid-b"}); err != nil {
+		t.Fatalf("UpsertWechatBinding second error: %v", err)
+	}
+
+	bindings, err := store.ListWechatBindings(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListWechatBindings error: %v", err)
+	}
+	if len(bindings) != 2 {
+		t.Fatalf("expected two bindings, got %+v", bindings)
+	}
+
+	if _, err := store.CreateWechatChallenge(ctx, model.WechatChallenge{
+		SceneStr:  "yuqing:cleanup-expired",
+		Purpose:   "login",
+		Status:    "pending",
+		ExpiresAt: time.Now().UTC().Add(-2 * time.Minute),
+	}); err != nil {
+		t.Fatalf("CreateWechatChallenge expired error: %v", err)
+	}
+	if _, err := store.CreateWechatChallenge(ctx, model.WechatChallenge{
+		SceneStr:  "yuqing:cleanup-live",
+		Purpose:   "login",
+		Status:    "pending",
+		ExpiresAt: time.Now().UTC().Add(2 * time.Minute),
+	}); err != nil {
+		t.Fatalf("CreateWechatChallenge live error: %v", err)
+	}
+
+	deleted, err := store.DeleteExpiredWechatChallenges(ctx)
+	if err != nil {
+		t.Fatalf("DeleteExpiredWechatChallenges error: %v", err)
+	}
+	if deleted != 1 {
+		t.Fatalf("expected one expired challenge deleted, got %d", deleted)
+	}
+	if _, err := store.GetWechatChallenge(ctx, "yuqing:cleanup-expired"); err == nil {
+		t.Fatal("expected expired challenge to be deleted")
+	}
+	if live, err := store.GetWechatChallenge(ctx, "yuqing:cleanup-live"); err != nil || live.SceneStr == "" {
+		t.Fatalf("expected live challenge to remain, got challenge=%+v err=%v", live, err)
+	}
+}

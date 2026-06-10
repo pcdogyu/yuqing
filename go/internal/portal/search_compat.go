@@ -14,6 +14,7 @@ import (
 
 	"github.com/stonedt-yuqing/go-jin10/internal/apiutil"
 	"github.com/stonedt-yuqing/go-jin10/internal/model"
+	"golang.org/x/net/websocket"
 )
 
 type legacySearchFullType struct {
@@ -150,6 +151,12 @@ func (s *Server) handleSearchCompat(w http.ResponseWriter, r *http.Request, user
 	case "execute":
 		if mode == "timely" {
 			s.handleTimelySearchExecute(w, r)
+			return
+		}
+		http.NotFound(w, r)
+	case "stream":
+		if mode == "timely" {
+			s.handleTimelySearchStream(w, r)
 			return
 		}
 		http.NotFound(w, r)
@@ -555,52 +562,10 @@ func (s *Server) handleLegacySearchArticleRedirect(w http.ResponseWriter, r *htt
 
 func (s *Server) handleTimelySearchData(w http.ResponseWriter, r *http.Request, user any) {
 	started := time.Now()
-	filter, _ := legacySearchFilterFromRequest(r, "timely")
-	filter.Page = max(apiutil.IntQuery(r, "pageNoData", 1), 1)
-	filter.PageSize = 30
-	if strings.TrimSpace(filter.SourceType) == "" {
-		filter.SourceType = legacyTimelySourceType(r)
-	}
-	if tpl, ok := s.legacyTimelyTemplate(r.Context(), r); ok && strings.TrimSpace(filter.SourceType) == "" {
-		filter.SourceType = tpl.SourceType
-	}
-	query := url.Values{}
-	query.Set("page", strconv.Itoa(filter.Page))
-	query.Set("page_size", strconv.Itoa(filter.PageSize))
-	if filter.Keyword != "" {
-		query.Set("q", filter.Keyword)
-	}
-	if filter.SourceType != "" {
-		query.Set("source_type", filter.SourceType)
-	}
-	if filter.Industry != "" {
-		query.Set("industry", filter.Industry)
-	}
-	if filter.Province != "" {
-		query.Set("province", filter.Province)
-	}
-	if filter.City != "" {
-		query.Set("city", filter.City)
-	}
-	var result model.SearchResult
-	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/search/timely?"+query.Encode(), &result); err != nil {
+	items, err := s.fetchTimelySearchWebSocketItems(r)
+	if err != nil {
 		writeJSONText(w, map[string]any{"time": 0, "data": "[]"})
 		return
-	}
-	items := make([]map[string]any, 0, len(result.Items))
-	returnPath := legacySearchResultPath("timely", r)
-	for _, item := range result.Items {
-		detailTarget := s.legacySpecialDetailTarget("timely", item, returnPath)
-		items = append(items, map[string]any{
-			"title":        item.Title,
-			"abstract":     nonEmpty(item.Summary, item.Content),
-			"url":          detailTarget,
-			"publish_time": nonEmpty(item.PublishTimeText, item.PublishTime),
-			"source":       nonEmpty(item.FromText, item.SourceType),
-			"videojson":    "",
-			"author":       item.FromText,
-			"detailUrl":    detailTarget,
-		})
 	}
 	body, _ := json.Marshal(items)
 	writePlainJSONText(w, map[string]any{
@@ -784,9 +749,176 @@ func (s *Server) handleTimelySearchPage(w http.ResponseWriter, r *http.Request) 
 
 	body.WriteString(`<section><h2>兼容接口</h2><p><a class="inline" href="/timelysearch/data?`)
 	body.WriteString(legacySearchResultPath("timely", r)[len("/timelysearch/result?"):])
-	body.WriteString(`">查看 data 接口结果</a></p></section>`)
+	body.WriteString(`">查看 data 接口结果</a> <a class="inline" href="/timelysearch/stream?`)
+	body.WriteString(legacySearchResultPath("timely", r)[len("/timelysearch/result?"):])
+	body.WriteString(`">查看 WebSocket 实时流</a></p></section>`)
 
 	_ = s.writeSimplePage(w, "timelysearch/result", "即时搜索", body.String())
+}
+
+func (s *Server) handleTimelySearchStream(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeLegacyJSON(w, http.StatusInternalServerError, "stream unsupported", nil)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	started := time.Now()
+	items, err := s.fetchTimelySearchWebSocketItems(r)
+	if err != nil {
+		writeSSEEvent(w, flusher, 1, "error", mustJSONString(map[string]any{"message": err.Error()}))
+		writeSSEEvent(w, flusher, 999, "end", "end")
+		return
+	}
+	writeSSEEvent(w, flusher, 1, "start", mustJSONString(map[string]any{
+		"keyword":     strings.TrimSpace(firstNonEmpty(r.URL.Query().Get("keyword"), r.URL.Query().Get("searchWord"), r.URL.Query().Get("searchword"))),
+		"template_id": legacyTimelyTemplateID(r),
+		"source_type": legacyTimelySourceType(r),
+		"elapsed_ms":  time.Since(started).Milliseconds(),
+	}))
+	for idx, item := range items {
+		writeSSEEvent(w, flusher, idx+10, "item", mustJSONString(item))
+	}
+	writeSSEEvent(w, flusher, 999, "end", mustJSONString(map[string]any{"count": len(items)}))
+}
+
+type timelyWebSocketEnvelope struct {
+	EventType string `json:"eventType"`
+	Message   string `json:"message"`
+}
+
+func (s *Server) fetchTimelySearchWebSocketItems(r *http.Request) ([]map[string]any, error) {
+	keyword := strings.TrimSpace(firstNonEmpty(r.URL.Query().Get("keyword"), r.URL.Query().Get("searchWord"), r.URL.Query().Get("searchword")))
+	templateID := legacyTimelyTemplateID(r)
+	sourceType := legacyTimelySourceType(r)
+	if sourceType == "" {
+		if tpl, ok := s.legacyTimelyTemplate(r.Context(), r); ok && strings.TrimSpace(tpl.SourceType) != "" {
+			sourceType = strings.TrimSpace(tpl.SourceType)
+		}
+	}
+	requestMessage := mustJSONString(map[string]any{
+		"keyword":      keyword,
+		"website_id":   templateID,
+		"pageNoData":   apiutil.IntQuery(r, "pageNoData", 1),
+		"source_type":  sourceType,
+		"request_path": r.URL.Path,
+	})
+	conn, err := websocket.Dial(s.cfg.TimelyWebSocketURL, "", timelyWebSocketOrigin(s.cfg.TimelyWebSocketURL))
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	if err := websocket.JSON.Send(conn, map[string]any{
+		"eventType": "test",
+		"message":   requestMessage,
+	}); err != nil {
+		return nil, err
+	}
+
+	items := make([]map[string]any, 0, 8)
+	for {
+		var envelope timelyWebSocketEnvelope
+		if err := websocket.JSON.Receive(conn, &envelope); err != nil {
+			return nil, err
+		}
+		switch strings.ToLower(strings.TrimSpace(envelope.EventType)) {
+		case "output":
+			item, ok := timelyWebSocketItemFromMessage(envelope.Message)
+			if ok {
+				items = append(items, item)
+			}
+		case "finish":
+			return items, nil
+		}
+	}
+}
+
+func timelyWebSocketItemFromMessage(raw string) (map[string]any, bool) {
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return nil, false
+	}
+	if nested, ok := payload["message"].(string); ok {
+		var nestedPayload map[string]any
+		if json.Unmarshal([]byte(nested), &nestedPayload) == nil && len(nestedPayload) > 0 {
+			payload = nestedPayload
+		}
+	}
+	names := timelyWebSocketStringSlice(payload["outputNames"])
+	values := timelyWebSocketAnySlice(payload["values"])
+	if len(names) == 0 {
+		return payload, true
+	}
+	item := make(map[string]any, len(names))
+	for idx, name := range names {
+		if name == "" {
+			continue
+		}
+		if idx < len(values) {
+			item[name] = values[idx]
+		} else {
+			item[name] = ""
+		}
+	}
+	return item, true
+}
+
+func timelyWebSocketStringSlice(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return typed
+	case []any:
+		result := make([]string, 0, len(typed))
+		for _, item := range typed {
+			result = append(result, strings.TrimSpace(legacyAnyString(item)))
+		}
+		return result
+	case string:
+		if strings.TrimSpace(typed) == "" {
+			return nil
+		}
+		return []string{strings.TrimSpace(typed)}
+	default:
+		return nil
+	}
+}
+
+func timelyWebSocketAnySlice(value any) []any {
+	switch typed := value.(type) {
+	case []any:
+		return typed
+	case []string:
+		result := make([]any, 0, len(typed))
+		for _, item := range typed {
+			result = append(result, item)
+		}
+		return result
+	default:
+		return nil
+	}
+}
+
+func timelyWebSocketOrigin(rawURL string) string {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return "http://127.0.0.1/"
+	}
+	switch parsed.Scheme {
+	case "ws":
+		parsed.Scheme = "http"
+	case "wss":
+		parsed.Scheme = "https"
+	default:
+		parsed.Scheme = "http"
+	}
+	parsed.Path = ""
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String()
 }
 
 func (s *Server) handleLegacySearchArticleDetailData(w http.ResponseWriter, r *http.Request, user any) {

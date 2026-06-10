@@ -105,6 +105,14 @@ func (s *Store) DeleteWechatChallenge(ctx context.Context, sceneStr string) erro
 	return err
 }
 
+func (s *Store) DeleteExpiredWechatChallenges(ctx context.Context) (int64, error) {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM wechat_challenges WHERE expires_at <= ?`, time.Now().UTC().Format(time.RFC3339))
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 func (s *Store) UpsertWechatBinding(ctx context.Context, binding model.WechatBinding) (model.WechatBinding, error) {
 	now := time.Now().UTC()
 	if binding.UserID <= 0 {
@@ -171,6 +179,27 @@ func (s *Store) GetWechatBindingByOpenID(ctx context.Context, openID string) (mo
 		return model.WechatBinding{}, err
 	}
 	return binding, nil
+}
+
+func (s *Store) ListWechatBindings(ctx context.Context, limit int) ([]model.WechatBinding, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT user_id, openid, bound_at, updated_at FROM wechat_bindings ORDER BY updated_at DESC, user_id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	bindings := make([]model.WechatBinding, 0, limit)
+	for rows.Next() {
+		binding, scanErr := scanWechatBinding(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		bindings = append(bindings, binding)
+	}
+	return bindings, rows.Err()
 }
 
 func (s *Store) GetUserByOpenID(ctx context.Context, openID string) (model.User, error) {

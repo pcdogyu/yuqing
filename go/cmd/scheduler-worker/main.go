@@ -17,5 +17,7 @@ func main() {
 	app.LogStartup("scheduler-worker", cfg.SchedulerAddr, cfg)
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
-	scheduler.NewWorker(cfg).Run(ctx)
+	worker := scheduler.NewWorker(cfg)
+	defer func() { _ = worker.Close() }()
+	worker.Run(ctx)
 }

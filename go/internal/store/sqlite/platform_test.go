@@ -193,3 +193,48 @@ func TestItemEmotionAndDeletion(t *testing.T) {
 		t.Fatalf("expected deleted item to disappear from list, got %+v", list)
 	}
 }
+
+func TestAuditLogs(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	first, err := store.CreateAuditLog(ctx, model.AuditLog{
+		UserID:     7,
+		Username:   "alice",
+		Action:     "legacy_api.getArticle",
+		Resource:   "/api/getArticle",
+		DetailJSON: `{"keyword":"AI"}`,
+	})
+	if err != nil {
+		t.Fatalf("CreateAuditLog first error: %v", err)
+	}
+	second, err := store.CreateAuditLog(ctx, model.AuditLog{
+		UserID:     8,
+		Username:   "bob",
+		Action:     "monitor.exportarticle",
+		Resource:   "/monitor/exportarticle",
+		DetailJSON: `{"count":2}`,
+	})
+	if err != nil {
+		t.Fatalf("CreateAuditLog second error: %v", err)
+	}
+	if first.ID <= 0 || second.ID <= first.ID {
+		t.Fatalf("unexpected audit ids: first=%+v second=%+v", first, second)
+	}
+
+	allLogs, err := store.ListAuditLogs(ctx, 10, 0, "")
+	if err != nil {
+		t.Fatalf("ListAuditLogs all error: %v", err)
+	}
+	if len(allLogs) != 2 || allLogs[0].Action != "monitor.exportarticle" {
+		t.Fatalf("unexpected audit log order: %+v", allLogs)
+	}
+
+	filtered, err := store.ListAuditLogs(ctx, 10, 7, "legacy_api.getArticle")
+	if err != nil {
+		t.Fatalf("ListAuditLogs filtered error: %v", err)
+	}
+	if len(filtered) != 1 || filtered[0].Username != "alice" {
+		t.Fatalf("unexpected filtered audit logs: %+v", filtered)
+	}
+}

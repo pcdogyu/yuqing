@@ -235,6 +235,16 @@ type TaskRun struct {
 	FinishedAt *time.Time `json:"finished_at,omitempty"`
 }
 
+type AuditLog struct {
+	ID         int64     `json:"id"`
+	UserID     int64     `json:"user_id"`
+	Username   string    `json:"username"`
+	Action     string    `json:"action"`
+	Resource   string    `json:"resource"`
+	DetailJSON string    `json:"detail_json"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
 type SearchResult struct {
 	Items    []Item `json:"items"`
 	Keyword  string `json:"keyword"`

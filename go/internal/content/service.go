@@ -57,6 +57,8 @@ type Store interface {
 	ListNotices(rctx context.Context) ([]model.SystemNotice, error)
 	CreateFeedback(rctx context.Context, feedback model.Feedback) (model.Feedback, error)
 	ListTaskRuns(rctx context.Context, limit int) ([]model.TaskRun, error)
+	CreateAuditLog(rctx context.Context, entry model.AuditLog) (model.AuditLog, error)
+	ListAuditLogs(rctx context.Context, limit int, userID int64, action string) ([]model.AuditLog, error)
 	GetUserPreference(rctx context.Context, userID int64) (model.UserPreference, error)
 	UpsertUserPreference(rctx context.Context, pref model.UserPreference) (model.UserPreference, error)
 	GetPopupState(rctx context.Context, userID int64, key string) (model.PopupState, error)
@@ -171,6 +173,8 @@ func (s *Service) Routes(r chi.Router) {
 	r.Get("/api/v1/system/notices", s.handleListNotices)
 	r.Post("/api/v1/system/feedback", s.handleCreateFeedback)
 	r.Get("/api/v1/system/task-runs", s.handleListTaskRuns)
+	r.Get("/api/v1/system/audit-logs", s.handleListAuditLogs)
+	r.Post("/api/v1/system/audit-logs", s.handleCreateAuditLog)
 	r.Get("/api/v1/system/popup", s.handleGetPopupState)
 	r.Put("/api/v1/system/popup", s.handleUpdatePopupState)
 	r.Get("/api/v1/system/preferences", s.handleGetPreferences)
@@ -1014,6 +1018,32 @@ func (s *Service) handleListTaskRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	apiutil.WriteJSON(w, http.StatusOK, "ok", runs)
+}
+
+func (s *Service) handleListAuditLogs(w http.ResponseWriter, r *http.Request) {
+	logs, err := s.store.ListAuditLogs(r.Context(), apiutil.IntQuery(r, "limit", 20), filterUserID(r), strings.TrimSpace(r.URL.Query().Get("action")))
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", logs)
+}
+
+func (s *Service) handleCreateAuditLog(w http.ResponseWriter, r *http.Request) {
+	if strings.TrimSpace(r.Header.Get("X-Service-Token")) != strings.TrimSpace(s.cfg.ServiceToken) {
+		apiutil.WriteJSON(w, http.StatusUnauthorized, "unauthorized", nil)
+		return
+	}
+	var entry model.AuditLog
+	if !decodeJSON(w, r, &entry) {
+		return
+	}
+	created, err := s.store.CreateAuditLog(r.Context(), entry)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusCreated, "ok", created)
 }
 
 func (s *Service) handleGetPopupState(w http.ResponseWriter, r *http.Request) {

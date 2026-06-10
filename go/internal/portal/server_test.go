@@ -1911,6 +1911,129 @@ func TestTemplateCrawlActionsAcrossPages(t *testing.T) {
 	})
 }
 
+func TestLegacyAPITokenCreatesBearerToken(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/getToken", strings.NewReader(`{"username":"admin","password":"secret"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	srv.handleLegacyAPIToken(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var payload struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+		Data string `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal token response: %v", err)
+	}
+	if payload.Code != http.StatusOK || payload.Data != "legacy-token" {
+		t.Fatalf("unexpected token payload: %+v", payload)
+	}
+}
+
+func TestLegacyAPIArticleListCompat(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/getArticle", strings.NewReader(`{"searchkeyword":"AI","pageNum":1,"pageSize":10}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer legacy-token")
+	rr := httptest.NewRecorder()
+
+	srv.handleLegacyAPIArticleList(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var payload struct {
+		Code int `json:"code"`
+		Data struct {
+			Data        []map[string]any `json:"data"`
+			TotalPage   int              `json:"totalPage"`
+			TotalCount  int              `json:"totalCount"`
+			CurrentPage int              `json:"currentPage"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal article response: %v", err)
+	}
+	if payload.Code != 0 || len(payload.Data.Data) == 0 {
+		t.Fatalf("unexpected article payload: %+v", payload)
+	}
+	if got := payload.Data.Data[0]["title"]; got != "AI 观察日报" {
+		t.Fatalf("expected first article title AI 观察日报, got %#v", got)
+	}
+	if payload.Data.TotalCount == 0 || payload.Data.CurrentPage != 1 {
+		t.Fatalf("unexpected paging payload: %+v", payload.Data)
+	}
+}
+
+func TestLegacyAPIArticleDetailCompat(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/detail?articleId=101", nil)
+	req.Header.Set("Authorization", "Bearer legacy-token")
+	rr := httptest.NewRecorder()
+
+	srv.handleLegacyAPIArticleDetail(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var payload struct {
+		Code int `json:"code"`
+		Data struct {
+			Title  string         `json:"title"`
+			Text   string         `json:"text"`
+			Detail map[string]any `json:"detail"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal detail response: %v", err)
+	}
+	if payload.Code != 0 || payload.Data.Title != "新能源 研判" {
+		t.Fatalf("unexpected detail payload: %+v", payload)
+	}
+	if got := payload.Data.Detail["article_public_id"]; got != "101" {
+		t.Fatalf("expected article_public_id 101, got %#v", got)
+	}
+}
+
+func TestLegacyMonitorExportProducesWorkbook(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+
+	form := url.Values{}
+	form.Set("data", `{"exportType":"0","exportlist":[100,101]}`)
+	req := httptest.NewRequest(http.MethodPost, "/monitor/exportarticle", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+
+	srv.handleLegacyMonitorExport(rr, req, map[string]any{"id": 1, "username": "admin"})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if contentType := rr.Header().Get("Content-Type"); !strings.Contains(contentType, "application/vnd.ms-excel") {
+		t.Fatalf("expected excel content type, got %q", contentType)
+	}
+	if disposition := rr.Header().Get("Content-Disposition"); !strings.Contains(disposition, "monitor_export_") {
+		t.Fatalf("expected attachment disposition, got %q", disposition)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"<Workbook", "AI 观察日报", "新能源 研判", "标题", "链接"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected export workbook to contain %q, got %s", want, body)
+		}
+	}
+}
+
 func assertLastCrawlRequest(t *testing.T, srv *Server, wantTemplateID, wantSourceType, wantKeyword string) {
 	t.Helper()
 	_ = srv
@@ -1939,6 +2062,13 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 	opinionConditions := map[int64]model.OpinionCondition{}
 	warningSettings := map[int64]model.WarningSetting{}
 	createdUsers := map[string]model.User{}
+	auditLogs := []model.AuditLog{}
+	apiTokens := map[string]model.APIToken{
+		"legacy-token": {Token: "legacy-token", UserID: 1, Name: "legacy-api", CreatedAt: time.Now().UTC()},
+	}
+	sessionUsers := map[string]map[string]any{
+		"session-admin": {"id": int64(1), "username": "admin", "display_name": "管理员", "role": "admin"},
+	}
 	publicOptions := map[int64]model.PublicOption{
 		1: {
 			ID:                  1,
@@ -2639,6 +2769,27 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 			popupStates[popupStateMapKey(state.UserID, state.Key)] = state
 			mu.Unlock()
 			writeEnvelope(http.StatusOK, "ok", state)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/system/audit-logs":
+			if r.Header.Get("X-Service-Token") != "test-token" {
+				writeEnvelope(http.StatusUnauthorized, "unauthorized", nil)
+				return
+			}
+			var entry model.AuditLog
+			if err := json.NewDecoder(r.Body).Decode(&entry); err != nil {
+				writeEnvelope(http.StatusBadRequest, err.Error(), nil)
+				return
+			}
+			entry.ID = int64(len(auditLogs) + 1)
+			entry.CreatedAt = time.Now().UTC()
+			mu.Lock()
+			auditLogs = append(auditLogs, entry)
+			mu.Unlock()
+			writeEnvelope(http.StatusCreated, "ok", entry)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/system/audit-logs":
+			mu.Lock()
+			items := append([]model.AuditLog(nil), auditLogs...)
+			mu.Unlock()
+			writeEnvelope(http.StatusOK, "ok", items)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/articles/") && !strings.Contains(strings.TrimPrefix(r.URL.Path, "/api/v1/articles/"), "/"):
 			id := parseTestInt64(strings.TrimPrefix(r.URL.Path, "/api/v1/articles/"))
 			mu.Lock()
@@ -2830,6 +2981,70 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 		if r.Header.Get("X-Service-Token") != "test-token" {
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusUnauthorized, "message": "unauthorized", "data": nil})
+			return
+		}
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/auth/login" {
+			var req struct {
+				Username string `json:"username"`
+				Password string `json:"password"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusBadRequest, "message": err.Error(), "data": nil})
+				return
+			}
+			if strings.TrimSpace(req.Username) != "admin" || strings.TrimSpace(req.Password) != "secret" {
+				w.WriteHeader(http.StatusUnauthorized)
+				_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusUnauthorized, "message": "invalid credentials", "data": nil})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    http.StatusOK,
+				"message": "ok",
+				"data":    map[string]any{"session_token": "session-admin"},
+			})
+			return
+		}
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/auth/tokens" {
+			if strings.TrimSpace(r.URL.Query().Get("session_token")) != "session-admin" {
+				w.WriteHeader(http.StatusUnauthorized)
+				_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusUnauthorized, "message": "invalid session", "data": nil})
+				return
+			}
+			token := apiTokens["legacy-token"]
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    http.StatusCreated,
+				"message": "ok",
+				"data":    token,
+			})
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/auth/me" {
+			authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
+			if authHeader != "Bearer legacy-token" {
+				w.WriteHeader(http.StatusUnauthorized)
+				_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusUnauthorized, "message": "invalid token", "data": nil})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    http.StatusOK,
+				"message": "ok",
+				"data":    sessionUsers["session-admin"],
+			})
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/auth/session" {
+			user, ok := sessionUsers[strings.TrimSpace(r.URL.Query().Get("session_token"))]
+			if !ok {
+				w.WriteHeader(http.StatusUnauthorized)
+				_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusUnauthorized, "message": "invalid session", "data": nil})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    http.StatusOK,
+				"message": "ok",
+				"data":    map[string]any{"user": user},
+			})
 			return
 		}
 		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/users" {

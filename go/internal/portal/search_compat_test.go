@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/go-resty/resty/v2"
+	"golang.org/x/net/websocket"
 
 	"github.com/stonedt-yuqing/go-jin10/internal/config"
 	"github.com/stonedt-yuqing/go-jin10/internal/model"
@@ -706,6 +707,7 @@ func TestTimelySearchTemplateUsesCrawlTemplates(t *testing.T) {
 func TestTimelySearchPageExecuteAndDataFlow(t *testing.T) {
 	var searchQuery url.Values
 	var crawlQuery url.Values
+	var wsRequest map[string]any
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -850,7 +852,28 @@ func TestTimelySearchPageExecuteAndDataFlow(t *testing.T) {
 	}))
 	defer crawler.Close()
 
-	srv := &Server{cfg: config.Config{ContentURL: content.URL, CrawlerURL: crawler.URL}, client: resty.New()}
+	ws := httptest.NewServer(websocket.Handler(func(conn *websocket.Conn) {
+		defer conn.Close()
+		var request map[string]any
+		if err := websocket.JSON.Receive(conn, &request); err != nil {
+			return
+		}
+		wsRequest = request
+		_ = websocket.JSON.Send(conn, map[string]any{
+			"eventType": "output",
+			"message": mustJSONString(map[string]any{
+				"outputNames": []string{"title", "abstract", "url", "publish_time", "source", "videojson", "author", "detailUrl"},
+				"values":      []any{"AI 行业快报", "AI 行业快报摘要", "https://example.com/report/301", "刚刚", "Flash Source", "", "Flash Source", "/timelysearch/reportdetail/301"},
+			}),
+		})
+		_ = websocket.JSON.Send(conn, map[string]any{
+			"eventType": "finish",
+			"message":   "finish",
+		})
+	}))
+	defer ws.Close()
+
+	srv := &Server{cfg: config.Config{ContentURL: content.URL, CrawlerURL: crawler.URL, TimelyWebSocketURL: strings.Replace(ws.URL, "http://", "ws://", 1)}, client: resty.New()}
 
 	pageReq := httptest.NewRequest(http.MethodGet, "/timelysearch/result?keyword=AI&website_id=1&stype=flash&pageNoData=2", nil)
 	pageRR := httptest.NewRecorder()
@@ -885,11 +908,26 @@ func TestTimelySearchPageExecuteAndDataFlow(t *testing.T) {
 	if dataRR.Code != http.StatusOK {
 		t.Fatalf("expected timelysearch data 200, got %d", dataRR.Code)
 	}
-	if !strings.Contains(dataRR.Body.String(), `AI 行业快报`) || !strings.Contains(dataRR.Body.String(), `Flash Source`) {
+	var dataEnvelope struct {
+		Time int64  `json:"time"`
+		Data string `json:"data"`
+	}
+	if err := json.Unmarshal(dataRR.Body.Bytes(), &dataEnvelope); err != nil {
+		t.Fatalf("unmarshal timelysearch data: %v", err)
+	}
+	if dataEnvelope.Time < 0 || !strings.Contains(dataEnvelope.Data, `AI 行业快报`) || !strings.Contains(dataEnvelope.Data, `Flash Source`) {
 		t.Fatalf("unexpected timelysearch data body: %s", dataRR.Body.String())
 	}
-	if !strings.Contains(dataRR.Body.String(), `/timelysearch/reportdetail/301`) {
-		t.Fatalf("expected timelysearch data body to contain timely detail route, got %s", dataRR.Body.String())
+	if wsRequest == nil {
+		t.Fatal("expected websocket request to be sent")
+	}
+	requestMessage, _ := wsRequest["message"].(string)
+	var requestPayload map[string]any
+	if err := json.Unmarshal([]byte(requestMessage), &requestPayload); err != nil {
+		t.Fatalf("unmarshal websocket request payload: %v", err)
+	}
+	if requestPayload["keyword"] != "AI" || int(requestPayload["pageNoData"].(float64)) != 2 || requestPayload["website_id"] != "1" {
+		t.Fatalf("unexpected websocket request payload: %+v", requestPayload)
 	}
 
 	stypeOnlyDataReq := httptest.NewRequest(http.MethodGet, "/timelysearch/data?keyword=AI&stype=flash&pageNoData=2", nil)
@@ -898,8 +936,24 @@ func TestTimelySearchPageExecuteAndDataFlow(t *testing.T) {
 	if stypeOnlyDataRR.Code != http.StatusOK {
 		t.Fatalf("expected timelysearch stype-only data 200, got %d", stypeOnlyDataRR.Code)
 	}
-	if searchQuery.Get("source_type") != "flash" {
-		t.Fatalf("expected stype-only timelysearch data to forward source_type=flash, got %+v", searchQuery)
+	if !strings.Contains(stypeOnlyDataRR.Body.String(), `AI 行业快报`) {
+		t.Fatalf("expected ws data response to contain article content, got %s", stypeOnlyDataRR.Body.String())
+	}
+
+	streamReq := httptest.NewRequest(http.MethodGet, "/timelysearch/stream?keyword=AI&website_id=1&pageNoData=2", nil)
+	streamRR := httptest.NewRecorder()
+	srv.handleSearchCompat(streamRR, streamReq, nil, "timely")
+	if streamRR.Code != http.StatusOK {
+		t.Fatalf("expected timelysearch stream 200, got %d", streamRR.Code)
+	}
+	if contentType := streamRR.Header().Get("Content-Type"); !strings.Contains(contentType, "text/event-stream") {
+		t.Fatalf("expected event-stream content type, got %q", contentType)
+	}
+	streamBody := streamRR.Body.String()
+	for _, want := range []string{"event: start", "event: item", "event: end", "AI 行业快报"} {
+		if !strings.Contains(streamBody, want) {
+			t.Fatalf("expected timelysearch stream to contain %q, got %s", want, streamBody)
+		}
 	}
 
 	form := url.Values{}

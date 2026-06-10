@@ -38,6 +38,10 @@ type legacySearchRequest struct {
 	Searchword         string           `json:"searchword"`
 	SearchWord         string           `json:"searchWord"`
 	Keyword            string           `json:"keyword"`
+	SearchKeyword      string           `json:"searchkeyword"`
+	Page               int              `json:"page"`
+	PageNum            int              `json:"pageNum"`
+	PageSize           int              `json:"pageSize"`
 	Similar            int              `json:"similar"`
 	MatchingMode       int              `json:"matchingmode"`
 	SearchType         int              `json:"searchType"`
@@ -237,6 +241,10 @@ func NewServer(cfg config.Config) *Server {
 
 func (s *Server) Router() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/api/getToken", s.handleLegacyAPIToken)
+	mux.HandleFunc("/api/getArticle", s.handleLegacyAPIArticleList)
+	mux.HandleFunc("/api/getMergeArticle", s.handleLegacyAPIMergeArticleList)
+	mux.HandleFunc("/api/detail", s.handleLegacyAPIArticleDetail)
 	mux.HandleFunc("/login", s.handleLoginPage)
 	mux.HandleFunc("/img/code", s.handleCaptchaCode)
 	mux.HandleFunc("/displayboard", s.requireSession(s.handleDisplayBoard))
@@ -254,6 +262,7 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/monitor", s.requireSession(s.handleMonitorEntry))
 	mux.HandleFunc("/monitor/", s.requireSession(s.handleMonitorCompat))
 	mux.HandleFunc("/monitor/wxGroup", s.requireSession(s.handleMonitorWxGroup))
+	mux.HandleFunc("/monitor/exportarticle", s.requireSession(s.handleLegacyMonitorExport))
 	mux.HandleFunc("/project", s.requireSession(s.handleLegacyProjectLanding))
 	mux.HandleFunc("/project/addproject", s.requireSession(s.handleLegacyProjectAddProject))
 	mux.HandleFunc("/project/editproject", s.requireSession(s.handleLegacyProjectEditProject))

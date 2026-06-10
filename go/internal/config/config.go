@@ -34,12 +34,17 @@ type Config struct {
 	CryptoXInterval         time.Duration
 	CryptoTelegramInterval  time.Duration
 	AnalysisInterval        time.Duration
+	WechatCleanupInterval   time.Duration
+	WechatPushInterval      time.Duration
+	TimelyWebSocketURL      string
 	UserAgent               string
 	LogLevel                string
 	ServiceToken            string
 	SessionTTL              time.Duration
 	WechatPrivateKey        string
 	WechatAccountName       string
+	WechatPushEnabled       bool
+	WechatPushWebhookURL    string
 
 	GatewayWebAddr string
 	AuthAddr       string
@@ -94,12 +99,17 @@ func Load() Config {
 		CryptoXInterval:         envDurationSeconds(90, "YUQING_CRYPTO_X_INTERVAL_SEC"),
 		CryptoTelegramInterval:  envDurationSeconds(90, "YUQING_CRYPTO_TELEGRAM_INTERVAL_SEC"),
 		AnalysisInterval:        envDurationSeconds(120, "YUQING_ANALYSIS_INTERVAL_SEC"),
+		WechatCleanupInterval:   envDurationSeconds(3600, "YUQING_WECHAT_CLEANUP_INTERVAL_SEC"),
+		WechatPushInterval:      envDurationSeconds(86400, "YUQING_WECHAT_PUSH_INTERVAL_SEC"),
+		TimelyWebSocketURL:      envOrDefault("YUQING_TIMELY_WEBSOCKET_URL", "ws://s1.stonedt.com:6388/ws"),
 		UserAgent:               envOrDefaultWithAliases("YUQING_USER_AGENT", defaultUserAgent, "JIN10_USER_AGENT"),
 		LogLevel:                envOrDefaultWithAliases("YUQING_LOG_LEVEL", "info", "JIN10_LOG_LEVEL"),
 		ServiceToken:            envOrDefaultWithAliases("YUQING_SERVICE_TOKEN", "stonedt-internal-token", "JIN10_SERVICE_TOKEN"),
 		SessionTTL:              envDurationSeconds(86400, "YUQING_SESSION_TTL_SEC", "JIN10_SESSION_TTL_SEC"),
 		WechatPrivateKey:        envOrDefaultWithAliases("YUQING_WECHAT_PRIVATE_KEY", "yuqing-wechat-private-key", "JIN10_TOKEN_PRIVATE_KEY"),
 		WechatAccountName:       envOrDefaultWithAliases("YUQING_WECHAT_NAME", "Go 舆情系统", "JIN10_WECHAT_NAME"),
+		WechatPushEnabled:       envBool(false, "YUQING_WECHAT_PUSH_ENABLED"),
+		WechatPushWebhookURL:    envOrDefault("YUQING_WECHAT_PUSH_WEBHOOK_URL", ""),
 
 		GatewayWebAddr: envOrDefaultWithAliases("YUQING_GATEWAY_ADDR", ":80", "JIN10_PORTAL_WEB_ADDR"),
 		AuthAddr:       envOrDefault("YUQING_AUTH_ADDR", ":8081"),

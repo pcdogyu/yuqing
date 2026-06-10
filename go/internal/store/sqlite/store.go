@@ -454,6 +454,16 @@ CREATE TABLE IF NOT EXISTS task_runs (
 	finished_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS audit_logs (
+	id INTEGER PRIMARY KEY,
+	user_id INTEGER NOT NULL DEFAULT 0,
+	username TEXT NOT NULL DEFAULT '',
+	action TEXT NOT NULL,
+	resource TEXT NOT NULL DEFAULT '',
+	detail_json TEXT NOT NULL DEFAULT '{}',
+	created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS crawl_templates (
 	id INTEGER PRIMARY KEY,
 	name TEXT NOT NULL UNIQUE,
@@ -508,6 +518,8 @@ CREATE INDEX IF NOT EXISTS idx_wechat_challenges_expires_at ON wechat_challenges
 CREATE INDEX IF NOT EXISTS idx_wechat_bindings_openid ON wechat_bindings(openid);
 CREATE INDEX IF NOT EXISTS idx_public_options_user_updated ON public_options(user_id, updatetime DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_opinion_conditions_updated ON opinion_conditions(updated_at DESC, project_id DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_action_created_at ON audit_logs(action, created_at DESC);
 `
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return err
