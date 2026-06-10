@@ -14,6 +14,8 @@ for %%I in ("%GO_DIR%.") do set "GO_DIR=%%~fI"
 for %%I in ("%GO_DIR%\..") do set "REPO_ROOT=%%~fI"
 set "BIN_DIR=%GO_DIR%\bin"
 set "LOG_DIR=%GO_DIR%\runtime-logs"
+set "GO_TEST_FLAGS=-count=1 -timeout 5m -v"
+set "GO_TEST_LOG=%LOG_DIR%\go-test.log"
 set "SERVICE_PORTS=80 8081 8082 8083 8084 8085"
 set "SERVICE_NAMES=auth-service content-service crawler-service analysis-service nlp-service gateway-web scheduler-service"
 set "PORT_CHECKS=auth-service=8081 content-service=8082 crawler-service=8083 analysis-service=8084 nlp-service=8085 gateway-web=80"
@@ -77,8 +79,10 @@ if not defined YUQING_GIT_COMMIT set "YUQING_GIT_COMMIT=unknown"
 if not defined YUQING_BUILD_TIME set "YUQING_BUILD_TIME=unknown"
 set "LDFLAGS=-X github.com/stonedt-yuqing/go-jin10/internal/app.Version=%YUQING_RUN_VERSION% -X github.com/stonedt-yuqing/go-jin10/internal/app.GitCommit=%YUQING_GIT_COMMIT% -X github.com/stonedt-yuqing/go-jin10/internal/app.BuildTime=%YUQING_BUILD_TIME%"
 
+if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
+
 echo [3/6] Run go test ./...
-go test ./...
+powershell -NoProfile -Command "& { Set-Location '%GO_DIR%'; if (Test-Path '%GO_TEST_LOG%') { Remove-Item '%GO_TEST_LOG%' -Force -ErrorAction SilentlyContinue }; Write-Host ('Go test flags: %GO_TEST_FLAGS%'); Write-Host ('Go test log: %GO_TEST_LOG%'); & go test ./... %GO_TEST_FLAGS% 2>&1 | Tee-Object -FilePath '%GO_TEST_LOG%'; exit $LASTEXITCODE }"
 if errorlevel 1 goto :fail
 
 echo [4/6] Stop processes occupying service ports...
@@ -93,7 +97,6 @@ for %%S in (%SERVICE_NAMES%) do (
 
 echo [5/6] Build service binaries...
 if not exist "%BIN_DIR%" mkdir "%BIN_DIR%"
-if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
 for %%S in (
     auth-service
     content-service
