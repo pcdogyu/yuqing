@@ -199,6 +199,52 @@
         .tippy {
             padding: 3px;
         }
+        .filter-grid {
+            float: left;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            width: calc(100% - 100px);
+            max-height: 68px;
+            overflow: hidden;
+        }
+        .filter-grid .fitem {
+            float: none;
+            flex: 0 0 calc(25% - 6px);
+            max-width: calc(25% - 6px);
+            margin: 0;
+            padding: 0;
+        }
+        .filter-grid .app-dselect,
+        .filter-grid .toggle {
+            display: block;
+            width: 100%;
+        }
+        .filter-grid .dselect-text {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            width: 100%;
+            min-width: 0;
+            padding: 6px 10px;
+            border: 1px solid #dfe3e8;
+            border-radius: 4px;
+            background: #fff;
+            line-height: 18px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .filter-grid .dselect-text .caret {
+            flex: 0 0 auto;
+            margin-left: 8px;
+        }
+        @media (max-width: 1280px) {
+            .filter-grid .fitem {
+                flex-basis: calc(33.333% - 6px);
+                max-width: calc(33.333% - 6px);
+            }
+        }
     </style>
 </head>
 <body>
@@ -363,7 +409,7 @@
                             >
                                 更多筛选
                             </div>
-                            <div data-v-0c8af649="" class="pills-after">
+                            <div data-v-0c8af649="" class="pills-after filter-grid">
                                 <div data-v-0c8af649="" class="fitem">
                                     <div
                                             data-v-03cb9676=""
