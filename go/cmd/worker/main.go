@@ -23,7 +23,7 @@ import (
 
 func main() {
 	cfg := config.Load()
-	logging.Setup(cfg.LogLevel)
+	logging.Setup(cfg.LogLevel, "worker")
 	app.LogStartup("worker", "", cfg)
 
 	store, err := sqlitestore.New(cfg.DatabasePath)

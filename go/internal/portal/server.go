@@ -3941,11 +3941,35 @@ func (s *Server) render(w http.ResponseWriter, name string, data pageData) error
 	if strings.TrimSpace(data.FooterBuildTime) == "" {
 		data.FooterBuildTime = app.BuildTime
 	}
+	data.FooterBuildTime = formatFooterBuildTime(data.FooterBuildTime)
 	if strings.TrimSpace(data.FooterBranch) == "" {
 		data.FooterBranch = app.BranchName
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	return s.templates.ExecuteTemplate(w, name, data)
+}
+func formatFooterBuildTime(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || strings.EqualFold(raw, "unknown") {
+		return raw
+	}
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		loc = time.FixedZone("UTC+8", 8*60*60)
+	}
+	layouts := []string{
+		time.RFC3339,
+		time.RFC3339Nano,
+		"2006-01-02 15:04:05 -0700 MST",
+		"2006-01-02 15:04:05 -0700",
+		"2006-01-02 15:04:05",
+	}
+	for _, layout := range layouts {
+		if ts, parseErr := time.Parse(layout, raw); parseErr == nil {
+			return ts.In(loc).Format("2006-01-02 15:04:05 UTC+8")
+		}
+	}
+	return raw
 }
 
 func userIDFromMap(user any) int64 {
@@ -4687,14 +4711,14 @@ func (s *Server) collectServiceStatuses() []serviceStatus {
 }
 
 const portalNavHTML = `<nav><a href="/">总览</a><a href="/projects">项目</a><a href="/monitor-rules">规则</a><a href="/articles">文章</a><a href="/reports">报告</a><a href="/crawl-templates">模板中心</a><a href="/crawl-templates/manage">模板管理</a><a href="/crypto">Crypto</a><a href="/system">系统</a><a href="/logout">退出</a></nav>`
-const portalFooterHTML = `<footer class="site-footer"><div>Code by Yuhao@jiansutech.com</div><div>{{.FooterCommit}} - {{.FooterBuildTime}} - {{.FooterBranch}}</div></footer>`
+const portalFooterHTML = `<footer class="site-footer"><div>Code by Yuhao@jiansutech.com{{.FooterCommit}} - {{.FooterBuildTime}} - {{.FooterBranch}}</div></footer>`
 
 const layoutTemplate = `
 {{define "nav"}}` + portalNavHTML + `{{end}}
 {{define "footer"}}` + portalFooterHTML + `{{end}}
 `
 
-const baseStyles = `body{font-family:Segoe UI,system-ui;background:#f7f3eb;margin:0;color:#222}header,main,.site-footer{max-width:1180px;margin:0 auto;padding:24px}header{padding-bottom:0}header h1{margin:0 0 18px;font-size:30px;line-height:1.25}nav{display:flex;gap:16px;flex-wrap:wrap;align-items:center}nav a{margin-right:0;color:#214e34;text-decoration:none;font-weight:600;display:inline-flex;align-items:center;min-height:24px;line-height:1.2}.site-footer{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;color:#6a6257;font-size:13px;padding-top:12px;padding-bottom:28px}section{background:#fff;border-radius:16px;padding:20px;margin-top:20px;box-shadow:0 8px 24px rgba(0,0,0,.06)}input,select,textarea,button{width:100%;padding:12px;margin:8px 0;border-radius:10px;border:1px solid #d0c8b8;box-sizing:border-box}button{background:#214e34;color:#fff;border:none;cursor:pointer}table{width:100%;border-collapse:collapse}th,td{padding:10px;border-bottom:1px solid #ece7dc;text-align:left}pre{white-space:pre-wrap;line-height:1.6}a.inline{margin-right:0;color:#214e34}.muted{color:#6a6257}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}.dashboard-grid{display:grid;grid-template-columns:1.05fr 1.65fr 1.1fr;gap:18px;align-items:start}.dashboard-col{display:grid;gap:16px}.section-card{border:1px solid #ece7dc;border-radius:14px;background:#faf8f2;padding:16px}.topic-list{list-style:none;padding:0;margin:0}.topic-list li{padding:12px 0;border-bottom:1px solid #ece7dc}.topic-list li:last-child{border-bottom:none}.topic-head{display:flex;justify-content:space-between;gap:12px;align-items:baseline}.metric-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}.summary-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:12px}.summary-strip>div{padding:12px 14px;border-radius:12px;border:1px solid #ece7dc;background:#fff}.summary-strip strong{display:block;margin-bottom:4px;font-size:16px;color:#214e34}.summary-strip .muted{font-size:13px}.kpi-chip{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:999px;background:rgba(33,78,52,.08);color:#214e34;font-size:13px}.hero{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;background:linear-gradient(135deg,#214e34 0%,#315d42 100%);color:#fff}.hero h1,.hero p{margin:0}.hero p{opacity:.9}.hero-meta{display:flex;flex-direction:column;gap:10px;align-items:flex-end;font-size:14px}.hero-meta a{color:#fff;text-decoration:underline}.progress{height:10px;background:rgba(33,78,52,.1);border-radius:999px;overflow:hidden;margin-top:8px}.progress i{display:block;height:100%;background:linear-gradient(90deg,#214e34,#5b8b69)}.section-card h3{margin-top:0}@media (max-width: 1100px){.dashboard-grid{grid-template-columns:1fr}.hero{flex-direction:column}.hero-meta{align-items:flex-start}.site-footer{padding-top:8px}}`
+const baseStyles = `body{font-family:Segoe UI,system-ui;background:#f7f3eb;margin:0;color:#222}header,main,.site-footer{max-width:1180px;margin:0 auto;padding:24px}header{padding-bottom:0}header h1{margin:0 0 18px;font-size:30px;line-height:1.25}nav{display:flex;gap:16px;flex-wrap:wrap;align-items:center}nav a{margin-right:0;color:#214e34;text-decoration:none;font-weight:600;display:inline-flex;align-items:center;min-height:24px;line-height:1.2}.site-footer{color:#6a6257;font-size:13px;padding-top:12px;padding-bottom:28px}section{background:#fff;border-radius:16px;padding:20px;margin-top:20px;box-shadow:0 8px 24px rgba(0,0,0,.06)}input,select,textarea,button{width:100%;padding:12px;margin:8px 0;border-radius:10px;border:1px solid #d0c8b8;box-sizing:border-box}button{background:#214e34;color:#fff;border:none;cursor:pointer}table{width:100%;border-collapse:collapse}th,td{padding:10px;border-bottom:1px solid #ece7dc;text-align:left}pre{white-space:pre-wrap;line-height:1.6}a.inline{margin-right:0;color:#214e34}.muted{color:#6a6257}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}.dashboard-grid{display:grid;grid-template-columns:1.05fr 1.65fr 1.1fr;gap:18px;align-items:start}.dashboard-col{display:grid;gap:16px}.section-card{border:1px solid #ece7dc;border-radius:14px;background:#faf8f2;padding:16px}.topic-list{list-style:none;padding:0;margin:0}.topic-list li{padding:12px 0;border-bottom:1px solid #ece7dc}.topic-list li:last-child{border-bottom:none}.topic-head{display:flex;justify-content:space-between;gap:12px;align-items:baseline}.metric-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}.summary-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:12px}.summary-strip>div{padding:12px 14px;border-radius:12px;border:1px solid #ece7dc;background:#fff}.summary-strip strong{display:block;margin-bottom:4px;font-size:16px;color:#214e34}.summary-strip .muted{font-size:13px}.kpi-chip{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:999px;background:rgba(33,78,52,.08);color:#214e34;font-size:13px}.hero{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;background:linear-gradient(135deg,#214e34 0%,#315d42 100%);color:#fff}.hero h1,.hero p{margin:0}.hero p{opacity:.9}.hero-meta{display:flex;flex-direction:column;gap:10px;align-items:flex-end;font-size:14px}.hero-meta a{color:#fff;text-decoration:underline}.progress{height:10px;background:rgba(33,78,52,.1);border-radius:999px;overflow:hidden;margin-top:8px}.progress i{display:block;height:100%;background:linear-gradient(90deg,#214e34,#5b8b69)}.section-card h3{margin-top:0}@media (max-width: 1100px){.dashboard-grid{grid-template-columns:1fr}.hero{flex-direction:column}.hero-meta{align-items:flex-start}.site-footer{padding-top:8px}}`
 
 const portalSourceOptions = `<option value="">全部来源</option><option value="flash">flash</option><option value="headline">headline</option><option value="crypto_x">crypto_x</option><option value="crypto_telegram">crypto_telegram</option>`
 const portalSourceFilterOptions = `<option value="">全部来源</option><option value="flash" {{if eq .FilterSource "flash"}}selected{{end}}>flash</option><option value="headline" {{if eq .FilterSource "headline"}}selected{{end}}>headline</option><option value="crypto_x" {{if eq .FilterSource "crypto_x"}}selected{{end}}>crypto_x</option><option value="crypto_telegram" {{if eq .FilterSource "crypto_telegram"}}selected{{end}}>crypto_telegram</option>`

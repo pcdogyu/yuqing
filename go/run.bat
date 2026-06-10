@@ -171,7 +171,7 @@ set "ERR_LOG=%LOG_DIR%\%TARGET_SERVICE%.err.log"
 if exist "%OUT_LOG%" del /Q "%OUT_LOG%" >nul 2>nul
 if exist "%ERR_LOG%" del /Q "%ERR_LOG%" >nul 2>nul
 echo Starting %TARGET_SERVICE%...
-powershell -NoProfile -Command "$p = Start-Process -FilePath '%BIN_DIR%\%TARGET_SERVICE%.exe' -WorkingDirectory '%GO_DIR%' -RedirectStandardOutput '%OUT_LOG%' -RedirectStandardError '%ERR_LOG%' -PassThru; if ($null -eq $p) { exit 1 }"
+powershell -NoProfile -Command "$p = Start-Process -FilePath '%BIN_DIR%\%TARGET_SERVICE%.exe' -WorkingDirectory '%GO_DIR%' -PassThru; if ($null -eq $p) { exit 1 }"
 if errorlevel 1 (
     echo Failed to start %TARGET_SERVICE%.
     exit /b 1

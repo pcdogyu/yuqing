@@ -18,7 +18,7 @@ import (
 
 func main() {
 	cfg := config.Load()
-	logging.Setup(cfg.LogLevel)
+	logging.Setup(cfg.LogLevel, "auth-service")
 	app.LogStartup("auth-service", cfg.AuthAddr, cfg)
 
 	store, err := app.NewStore(cfg)

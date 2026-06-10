@@ -18,7 +18,7 @@ import (
 
 func main() {
 	cfg := config.Load()
-	logging.Setup(cfg.LogLevel)
+	logging.Setup(cfg.LogLevel, "nlp-service")
 	app.LogStartup("nlp-service", cfg.NLPAddr, cfg)
 	server := &http.Server{
 		Addr:              cfg.NLPAddr,

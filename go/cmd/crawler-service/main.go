@@ -18,7 +18,7 @@ import (
 
 func main() {
 	cfg := config.Load()
-	logging.Setup(cfg.LogLevel)
+	logging.Setup(cfg.LogLevel, "crawler-service")
 	app.LogStartup("crawler-service", cfg.CrawlerAddr, cfg)
 
 	store, err := app.NewStore(cfg)

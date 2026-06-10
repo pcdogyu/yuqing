@@ -28,7 +28,7 @@ func TestSetupSetsExpectedGlobalLevel(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			Setup(tc.input)
+			Setup(tc.input, "test-service")
 			if got := zerolog.GlobalLevel(); got != tc.want {
 				t.Fatalf("expected global level %s, got %s", tc.want, got)
 			}

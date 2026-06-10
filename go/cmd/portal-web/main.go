@@ -18,7 +18,7 @@ import (
 
 func main() {
 	cfg := config.Load()
-	logging.Setup(cfg.LogLevel)
+	logging.Setup(cfg.LogLevel, "portal-web")
 	app.LogStartup("portal-web", cfg.GatewayWebAddr, cfg)
 	server := &http.Server{
 		Addr:              cfg.GatewayWebAddr,

@@ -26,7 +26,7 @@ import (
 
 func main() {
 	cfg := config.Load()
-	logging.Setup(cfg.LogLevel)
+	logging.Setup(cfg.LogLevel, "server")
 	app.LogStartup("server", cfg.ListenAddr, cfg)
 
 	store, err := sqlitestore.New(cfg.DatabasePath)

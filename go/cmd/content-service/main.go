@@ -18,7 +18,7 @@ import (
 
 func main() {
 	cfg := config.Load()
-	logging.Setup(cfg.LogLevel)
+	logging.Setup(cfg.LogLevel, "content-service")
 	app.LogStartup("content-service", cfg.ContentAddr, cfg)
 
 	store, err := app.NewStore(cfg)
