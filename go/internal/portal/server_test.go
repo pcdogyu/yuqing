@@ -887,7 +887,7 @@ func TestPublicOptionCompatPages(t *testing.T) {
 		t.Fatalf("expected publicoption list 200, got %d", listRR.Code)
 	}
 	listBody := listRR.Body.String()
-	if !strings.Contains(listBody, "事件分析任务") || !strings.Contains(listBody, "AI 舆情研判") {
+	if !strings.Contains(listBody, "事件分析工作台") || !strings.Contains(listBody, "AI 舆情研判") {
 		t.Fatalf("expected publicoption list content, got %s", listBody)
 	}
 	if !strings.Contains(listBody, "/publicoption/reportdetail/1") {
@@ -901,7 +901,7 @@ func TestPublicOptionCompatPages(t *testing.T) {
 		t.Fatalf("expected publicoption detail 200, got %d", detailRR.Code)
 	}
 	detailBody := detailRR.Body.String()
-	if !strings.Contains(detailBody, "事件分析详情") || !strings.Contains(detailBody, "事件脉络内容") {
+	if !strings.Contains(detailBody, "任务总览") || !strings.Contains(detailBody, "事件脉络内容") {
 		t.Fatalf("expected publicoption detail content, got %s", detailBody)
 	}
 
@@ -912,7 +912,7 @@ func TestPublicOptionCompatPages(t *testing.T) {
 		t.Fatalf("expected publicoption analysis 200, got %d", analysisRR.Code)
 	}
 	analysisBody := analysisRR.Body.String()
-	if !strings.Contains(analysisBody, "事件分析 - backanalysis") || !strings.Contains(analysisBody, "回溯分析内容") {
+	if !strings.Contains(analysisBody, "分析结果") || !strings.Contains(analysisBody, "回溯分析内容") {
 		t.Fatalf("expected publicoption analysis content, got %s", analysisBody)
 	}
 }
@@ -1316,7 +1316,7 @@ func TestPlatformBindingsPage(t *testing.T) {
 		t.Fatalf("expected bindings page 200, got %d", pageRR.Code)
 	}
 	body := pageRR.Body.String()
-	if !strings.Contains(body, "平台绑定") || !strings.Contains(body, "NLP 绑定") || !strings.Contains(body, "写作绑定") {
+	if !strings.Contains(body, "平台工作台") || !strings.Contains(body, "NLP 绑定") || !strings.Contains(body, "写作绑定") {
 		t.Fatalf("expected bindings page content, got %s", body)
 	}
 	if !strings.Contains(body, "已绑定") {
@@ -1337,6 +1337,112 @@ func TestPlatformBindingsPage(t *testing.T) {
 	}
 	if loc := postRR.Header().Get("Location"); !strings.Contains(loc, "msg=") {
 		t.Fatalf("expected redirect message, got %s", loc)
+	}
+}
+
+func TestPlatformBindingsWorkbenchShowsAuditLogs(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+	user := map[string]any{"id": 1}
+
+	form := url.Values{}
+	form.Set("kind", "xie")
+	form.Set("secret_id", "new-secret")
+	form.Set("secret_key", "new-key")
+	form.Set("bound", "on")
+	postRR := httptest.NewRecorder()
+	postReq := httptest.NewRequest(http.MethodPost, "/platform/bindings", strings.NewReader(form.Encode()))
+	postReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	srv.handlePlatformCompat(postRR, postReq, user)
+	if postRR.Code != http.StatusSeeOther {
+		t.Fatalf("expected bindings save redirect, got %d", postRR.Code)
+	}
+
+	pageRR := httptest.NewRecorder()
+	pageReq := httptest.NewRequest(http.MethodGet, "/platform/bindings", nil)
+	srv.handlePlatformCompat(pageRR, pageReq, user)
+	if pageRR.Code != http.StatusOK {
+		t.Fatalf("expected bindings page 200, got %d", pageRR.Code)
+	}
+	body := pageRR.Body.String()
+	if !strings.Contains(body, "平台工作台") {
+		t.Fatalf("expected platform workbench heading, got %s", body)
+	}
+	if !strings.Contains(body, "平台公告") || !strings.Contains(body, "最近平台操作") {
+		t.Fatalf("expected platform notice and audit sections, got %s", body)
+	}
+	if !strings.Contains(body, "platform.binding.save") {
+		t.Fatalf("expected platform audit log entry, got %s", body)
+	}
+}
+
+func TestPlatformWorkbenchActions(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+	user := map[string]any{"id": 1}
+
+	rootRR := httptest.NewRecorder()
+	rootReq := httptest.NewRequest(http.MethodGet, "/platform/", nil)
+	srv.handlePlatformCompat(rootRR, rootReq, user)
+	if rootRR.Code != http.StatusOK {
+		t.Fatalf("expected platform root 200, got %d", rootRR.Code)
+	}
+	rootBody := rootRR.Body.String()
+	if !strings.Contains(rootBody, "平台工作台") || !strings.Contains(rootBody, "OCR 识别") || !strings.Contains(rootBody, "写作报告预览") {
+		t.Fatalf("expected upgraded platform workbench, got %s", rootBody)
+	}
+
+	ocrForm := url.Values{}
+	ocrForm.Set("form_type", "nlp_ocr")
+	ocrForm.Set("imageUrl", srv.cfg.GatewayWebURL+"/image/screenshot.png")
+	ocrRR := httptest.NewRecorder()
+	ocrReq := httptest.NewRequest(http.MethodPost, "/platform/bindings", strings.NewReader(ocrForm.Encode()))
+	ocrReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	srv.handlePlatformCompat(ocrRR, ocrReq, user)
+	if ocrRR.Code != http.StatusOK {
+		t.Fatalf("expected workbench ocr 200, got %d", ocrRR.Code)
+	}
+	ocrBody := ocrRR.Body.String()
+	if !strings.Contains(ocrBody, "OCR 识别已完成") || !strings.Contains(ocrBody, "screenshot") {
+		t.Fatalf("expected OCR result in workbench, got %s", ocrBody)
+	}
+
+	titleForm := url.Values{}
+	titleForm.Set("form_type", "xie_title")
+	titleForm.Set("article_id", "101")
+	titleForm.Set("text", "这是用于平台工作台生成标题的测试内容。")
+	titleRR := httptest.NewRecorder()
+	titleReq := httptest.NewRequest(http.MethodPost, "/platform/bindings", strings.NewReader(titleForm.Encode()))
+	titleReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	srv.handlePlatformCompat(titleRR, titleReq, user)
+	if titleRR.Code != http.StatusOK {
+		t.Fatalf("expected workbench title 200, got %d", titleRR.Code)
+	}
+	titleBody := titleRR.Body.String()
+	if !strings.Contains(titleBody, "标题已生成") {
+		t.Fatalf("expected title generation message, got %s", titleBody)
+	}
+
+	reportForm := url.Values{}
+	reportForm.Set("form_type", "xie_report")
+	reportForm.Set("article_id", "101")
+	reportForm.Set("title", "测试标题")
+	reportForm.Set("relatedword", "AI")
+	reportForm.Set("publishTime", "2026-06-10 12:00:00")
+	reportForm.Set("text", "平台工作台报告预览正文。")
+	reportRR := httptest.NewRecorder()
+	reportReq := httptest.NewRequest(http.MethodPost, "/platform/bindings", strings.NewReader(reportForm.Encode()))
+	reportReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	srv.handlePlatformCompat(reportRR, reportReq, user)
+	if reportRR.Code != http.StatusOK {
+		t.Fatalf("expected workbench report 200, got %d", reportRR.Code)
+	}
+	reportBody := reportRR.Body.String()
+	if !strings.Contains(reportBody, "报告预览已生成") || !strings.Contains(reportBody, "测试标题") || !strings.Contains(reportBody, "平台工作台报告预览正文") {
+		t.Fatalf("expected report preview content, got %s", reportBody)
+	}
+	if !strings.Contains(reportBody, "platform.xie.report") && !strings.Contains(reportBody, "platform.nlp.ocr") {
+		t.Fatalf("expected workbench audit log entries, got %s", reportBody)
 	}
 }
 

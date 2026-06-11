@@ -46,6 +46,8 @@ type publicOptionPageData struct {
 func (s *Server) handlePlatformCompat(w http.ResponseWriter, r *http.Request, user any) {
 	path := strings.TrimPrefix(r.URL.Path, "/platform/")
 	switch {
+	case path == "", path == "/":
+		s.handlePlatformBindingsPage(w, r, user)
 	case path == "bindings":
 		s.handlePlatformBindingsPage(w, r, user)
 	case path == "notice":
@@ -79,6 +81,11 @@ func (s *Server) handlePlatformBindingsPage(w http.ResponseWriter, r *http.Reque
 	}
 	if r.Method == http.MethodPost {
 		_ = r.ParseForm()
+		formType := strings.TrimSpace(r.FormValue("form_type"))
+		if formType == "nlp_ocr" || formType == "nlp_image" || formType == "xie_title" || formType == "xie_report" {
+			s.handlePlatformWorkbenchAction(w, r, user, formType)
+			return
+		}
 		kind := strings.TrimSpace(r.FormValue("kind"))
 		if kind != "nlp" && kind != "xie" {
 			http.Redirect(w, r, "/platform/bindings?msg="+url.QueryEscape("未知绑定类型"), http.StatusSeeOther)
@@ -91,6 +98,10 @@ func (s *Server) handlePlatformBindingsPage(w http.ResponseWriter, r *http.Reque
 			SecretKey: strings.TrimSpace(firstNonEmpty(r.FormValue("secret_key"), r.FormValue("secretKey"))),
 			Bound:     r.FormValue("bound") == "on" || strings.EqualFold(r.FormValue("bound"), "true"),
 		}
+		s.writePlatformAuditLog(user, "platform.binding.save", kind, map[string]any{
+			"bound":     binding.Bound,
+			"secret_id": binding.SecretID,
+		})
 		if _, err := s.putPlatformBinding(binding); err != nil {
 			http.Redirect(w, r, "/platform/bindings?msg="+url.QueryEscape("绑定保存失败"), http.StatusSeeOther)
 			return
@@ -98,15 +109,90 @@ func (s *Server) handlePlatformBindingsPage(w http.ResponseWriter, r *http.Reque
 		http.Redirect(w, r, "/platform/bindings?msg="+url.QueryEscape("绑定已保存"), http.StatusSeeOther)
 		return
 	}
+	s.renderPlatformWorkbench(w, r, user, pageData{
+		Title:                "平台工作台",
+		Message:              r.URL.Query().Get("msg"),
+		PlatformImageURL:     strings.TrimSpace(r.URL.Query().Get("imageUrl")),
+		PlatformXieDraftText: strings.TrimSpace(r.URL.Query().Get("text")),
+		PlatformXieArticleID: strings.TrimSpace(r.URL.Query().Get("articleId")),
+	})
+	return
 	nlpBinding, _ := s.getPlatformBinding(userID, "nlp")
 	xieBinding, _ := s.getPlatformBinding(userID, "xie")
-	_ = s.render(w, "platform_bindings", pageData{
+	_ = s.render(w, "platform_bindings_v2", pageData{
 		Title:              "平台绑定",
 		User:               user,
 		Message:            r.URL.Query().Get("msg"),
+		Notices:            s.loadPlatformNotices(),
+		AuditLogs:          s.loadPlatformAuditLogs(userID),
 		PlatformNLPBinding: nlpBinding,
 		PlatformXieBinding: xieBinding,
 	})
+}
+
+func (s *Server) renderPlatformWorkbench(w http.ResponseWriter, r *http.Request, user any, data pageData) {
+	userID := userIDFromMap(user)
+	nlpBinding, _ := s.getPlatformBinding(userID, "nlp")
+	xieBinding, _ := s.getPlatformBinding(userID, "xie")
+	data.Title = nonEmpty(data.Title, "平台工作台")
+	data.User = user
+	data.Notices = s.loadPlatformNotices()
+	data.AuditLogs = s.loadPlatformAuditLogs(userID)
+	data.PlatformNLPBinding = nlpBinding
+	data.PlatformXieBinding = xieBinding
+	_ = s.render(w, "platform_bindings_v2", data)
+}
+
+func (s *Server) handlePlatformWorkbenchAction(w http.ResponseWriter, r *http.Request, user any, formType string) {
+	userID := userIDFromMap(user)
+	state := pageData{
+		Title:                "平台工作台",
+		PlatformImageURL:     strings.TrimSpace(firstNonEmpty(r.FormValue("imageUrl"), r.FormValue("image_url"))),
+		PlatformXieArticleID: strings.TrimSpace(firstNonEmpty(r.FormValue("article_id"), r.FormValue("articleId"))),
+		PlatformXieDraftText: strings.TrimSpace(firstNonEmpty(r.FormValue("text"), r.FormValue("content"), r.FormValue("summary"))),
+	}
+	switch formType {
+	case "nlp_ocr":
+		text, err := s.runPlatformOCRWorkbench(r, userID)
+		if err != nil {
+			state.Message = err.Error()
+		} else {
+			state.Message = "OCR 识别已完成"
+			state.PlatformOCRText = text
+			s.writePlatformAuditLog(user, "platform.nlp.ocr", "ocr", map[string]any{"image_url": state.PlatformImageURL})
+		}
+	case "nlp_image":
+		keywords, err := s.runPlatformImageWorkbench(r, userID)
+		if err != nil {
+			state.Message = err.Error()
+		} else {
+			state.Message = "图像识别已完成"
+			state.PlatformImageKeywords = keywords
+			s.writePlatformAuditLog(user, "platform.nlp.image", "image", map[string]any{"image_url": state.PlatformImageURL})
+		}
+	case "xie_title":
+		title, err := s.runPlatformXieTitleWorkbench(r, userID)
+		if err != nil {
+			state.Message = err.Error()
+		} else {
+			state.Message = "标题已生成"
+			state.PlatformXieGeneratedTitle = title
+			s.writePlatformAuditLog(user, "platform.xie.title", nonEmpty(state.PlatformXieArticleID, "manual"), map[string]any{"article_id": state.PlatformXieArticleID})
+		}
+	case "xie_report":
+		title, report, err := s.runPlatformXieReportWorkbench(r, userID)
+		if err != nil {
+			state.Message = err.Error()
+		} else {
+			state.Message = "报告预览已生成"
+			state.PlatformXieGeneratedTitle = title
+			state.PlatformXieGeneratedReport = report
+			s.writePlatformAuditLog(user, "platform.xie.report", nonEmpty(state.PlatformXieArticleID, "manual"), map[string]any{"article_id": state.PlatformXieArticleID})
+		}
+	default:
+		state.Message = "未知工作台动作"
+	}
+	s.renderPlatformWorkbench(w, r, user, state)
 }
 
 func (s *Server) handlePlatformNotice(w http.ResponseWriter, r *http.Request) {
@@ -116,6 +202,256 @@ func (s *Server) handlePlatformNotice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeLegacyStatusJSON(w, http.StatusOK, "OK", notices)
+}
+
+func (s *Server) loadPlatformNotices() []model.SystemNotice {
+	var notices []model.SystemNotice
+	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/system/notices", &notices); err != nil {
+		return nil
+	}
+	sort.Slice(notices, func(i, j int) bool {
+		return notices[i].CreatedAt.After(notices[j].CreatedAt)
+	})
+	if len(notices) > 5 {
+		notices = notices[:5]
+	}
+	return notices
+}
+
+func (s *Server) loadPlatformAuditLogs(userID int64) []model.AuditLog {
+	if userID <= 0 {
+		return nil
+	}
+	var logs []model.AuditLog
+	target := s.cfg.ContentURL + "/api/v1/system/audit-logs?limit=20&user_id=" + strconv.FormatInt(userID, 10)
+	if err := s.getJSON(target, &logs); err != nil {
+		return nil
+	}
+	filtered := make([]model.AuditLog, 0, len(logs))
+	for _, entry := range logs {
+		if strings.HasPrefix(strings.TrimSpace(entry.Action), "platform.") {
+			filtered = append(filtered, entry)
+		}
+	}
+	sort.Slice(filtered, func(i, j int) bool {
+		return filtered[i].CreatedAt.After(filtered[j].CreatedAt)
+	})
+	if len(filtered) > 8 {
+		filtered = filtered[:8]
+	}
+	return filtered
+}
+
+func (s *Server) writePlatformAuditLog(user any, action, resource string, detail any) {
+	userMap, _ := user.(map[string]any)
+	entry := model.AuditLog{
+		UserID:   userIDFromMap(user),
+		Username: firstNonEmpty(mapString(userMap, "username"), mapString(userMap, "display_name")),
+		Action:   strings.TrimSpace(action),
+		Resource: strings.TrimSpace(resource),
+	}
+	if entry.UserID <= 0 || entry.Action == "" {
+		return
+	}
+	if detail != nil {
+		if raw, err := json.Marshal(detail); err == nil {
+			entry.DetailJSON = string(raw)
+		}
+	}
+	_, _ = s.client.R().
+		SetBody(entry).
+		Post(s.cfg.ContentURL + "/api/v1/system/audit-logs")
+}
+
+func (s *Server) runPlatformOCRWorkbench(r *http.Request, userID int64) (string, error) {
+	if userID <= 0 {
+		return "", fmt.Errorf("未登录")
+	}
+	binding, err := s.getPlatformBinding(userID, "nlp")
+	if err != nil {
+		return "", fmt.Errorf("未绑定 NLP 服务")
+	}
+	filename, imageData, err := s.readLegacyNLPImagePayload(r)
+	if err != nil {
+		return "", err
+	}
+	results, code, msg, err := s.postLegacyNLPImage("ocr", filename, imageData, binding.SecretID, binding.SecretKey)
+	if err != nil {
+		return "", err
+	}
+	if code != http.StatusOK {
+		return "", fmt.Errorf(nonEmpty(msg, "OCR 识别失败"))
+	}
+	return summarizePlatformOCRResults(results), nil
+}
+
+func (s *Server) runPlatformImageWorkbench(r *http.Request, userID int64) (string, error) {
+	if userID <= 0 {
+		return "", fmt.Errorf("未登录")
+	}
+	binding, err := s.getPlatformBinding(userID, "nlp")
+	if err != nil {
+		return "", fmt.Errorf("未绑定 NLP 服务")
+	}
+	filename, imageData, err := s.readLegacyNLPImagePayload(r)
+	if err != nil {
+		return "", err
+	}
+	results, code, msg, err := s.postLegacyNLPImage("image", filename, imageData, binding.SecretID, binding.SecretKey)
+	if err != nil {
+		return "", err
+	}
+	if code != http.StatusOK {
+		return "", fmt.Errorf(nonEmpty(msg, "图像识别失败"))
+	}
+	return summarizePlatformImageResults(results), nil
+}
+
+func (s *Server) runPlatformXieTitleWorkbench(r *http.Request, userID int64) (string, error) {
+	if userID <= 0 {
+		return "", fmt.Errorf("未登录")
+	}
+	if _, err := s.getPlatformBinding(userID, "xie"); err != nil {
+		return "", fmt.Errorf("未绑定写作服务")
+	}
+	articleID := strings.TrimSpace(firstNonEmpty(r.FormValue("article_id"), r.FormValue("articleId")))
+	text := cleanXieText(nonEmpty(r.FormValue("text"), r.FormValue("content"), r.FormValue("summary")))
+	if text == "" {
+		text = s.articleTextForXie(articleID, map[string]string{
+			"text":    r.FormValue("text"),
+			"content": r.FormValue("content"),
+			"summary": r.FormValue("summary"),
+		})
+	}
+	if text == "" {
+		return "", fmt.Errorf("文章内容不能为空")
+	}
+	return s.generateXieTitle(truncateRunes(stripHTMLTags(text), 2900)), nil
+}
+
+func (s *Server) runPlatformXieReportWorkbench(r *http.Request, userID int64) (string, string, error) {
+	if userID <= 0 {
+		return "", "", fmt.Errorf("未登录")
+	}
+	if _, err := s.getPlatformBinding(userID, "xie"); err != nil {
+		return "", "", fmt.Errorf("未绑定写作服务")
+	}
+	articleID := strings.TrimSpace(firstNonEmpty(r.FormValue("article_id"), r.FormValue("articleId")))
+	title := strings.TrimSpace(firstNonEmpty(r.FormValue("title"), r.FormValue("articleTitle"), r.FormValue("topic")))
+	text := cleanXieText(nonEmpty(r.FormValue("text"), r.FormValue("content"), r.FormValue("summary")))
+	params := map[string]string{
+		"relatedword": firstNonEmpty(r.FormValue("relatedword"), r.FormValue("keyword")),
+		"publishTime": r.FormValue("publishTime"),
+		"title":       title,
+	}
+	if text == "" {
+		text = s.articleTextForXie(articleID, map[string]string{
+			"articleId":   articleID,
+			"content":     r.FormValue("content"),
+			"summary":     r.FormValue("summary"),
+			"text":        r.FormValue("text"),
+			"relatedword": params["relatedword"],
+			"publishTime": params["publishTime"],
+			"title":       title,
+		})
+	}
+	if text == "" {
+		return "", "", fmt.Errorf("文章内容不能为空")
+	}
+	if title == "" {
+		title = s.generateXieTitle(truncateRunes(stripHTMLTags(text), 2900))
+	}
+	return title, composeXieReportText(title, text, params), nil
+}
+
+func summarizePlatformOCRResults(results any) string {
+	list, ok := results.([]map[string]any)
+	if !ok {
+		return ""
+	}
+	lines := make([]string, 0, 8)
+	for _, block := range list {
+		rows, ok := block["data"].([]any)
+		if !ok {
+			continue
+		}
+		for _, row := range rows {
+			entry, ok := row.(map[string]any)
+			if !ok {
+				continue
+			}
+			text := strings.TrimSpace(legacyStringFromAny(entry["text"]))
+			if text != "" {
+				lines = append(lines, text)
+			}
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func summarizePlatformImageResults(results any) string {
+	payload, ok := results.(map[string]any)
+	if !ok {
+		return ""
+	}
+	rows, ok := payload["result"].([]any)
+	if !ok {
+		return ""
+	}
+	keywords := make([]string, 0, len(rows))
+	for _, row := range rows {
+		entry, ok := row.(map[string]any)
+		if !ok {
+			continue
+		}
+		keyword := strings.TrimSpace(legacyStringFromAny(entry["keyword"]))
+		if keyword != "" {
+			keywords = append(keywords, keyword)
+		}
+	}
+	return strings.Join(keywords, "，")
+}
+
+func mapString(values map[string]any, key string) string {
+	if values == nil {
+		return ""
+	}
+	raw, ok := values[key]
+	if !ok {
+		return ""
+	}
+	text, ok := raw.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(text)
+}
+
+func publicOptionAnalysisText(option model.PublicOption, section string) string {
+	switch strings.TrimSpace(section) {
+	case "backanalysis":
+		return option.BackAnalysis
+	case "eventContext":
+		return option.EventContext
+	case "eventTrace":
+		return option.EventTrace
+	case "hotAnalysis":
+		return option.HotAnalysis
+	case "netizensAnalysis":
+		return option.NetizensAnalysis
+	case "statistics":
+		return option.Statistics
+	case "propagationAnalysis":
+		return option.PropagationAnalysis
+	case "thematicAnalysis":
+		return option.ThematicAnalysis
+	case "unscrambleContent":
+		return option.UnscrambleContent
+	case "popular_feelings_analys":
+		return option.ContentAnalysis
+	default:
+		return option.EventContext
+	}
 }
 
 func (s *Server) handlePlatformNLPBind(w http.ResponseWriter, r *http.Request, user any) {
@@ -467,6 +803,10 @@ func mustParseURL(raw string) *url.URL {
 }
 
 func (s *Server) handlePublicOptionEntry(w http.ResponseWriter, r *http.Request, user any) {
+	if r.Method == http.MethodPost {
+		s.handlePublicOptionWorkbenchAction(w, r, user, 0)
+		return
+	}
 	s.renderPublicOptionListPage(w, r, user, "")
 }
 
@@ -482,7 +822,13 @@ func (s *Server) handlePublicOptionCompat(w http.ResponseWriter, r *http.Request
 	case path == "reportlist":
 		s.renderPublicOptionReportListPage(w, r, user, "")
 	case strings.HasPrefix(path, "reportdetail/"):
-		s.renderPublicOptionReportDetailPage(w, r, user, strings.TrimPrefix(path, "reportdetail/"))
+		id := strings.TrimPrefix(path, "reportdetail/")
+		if r.Method == http.MethodPost {
+			value, _ := strconv.ParseInt(strings.TrimSpace(id), 10, 64)
+			s.handlePublicOptionWorkbenchAction(w, r, user, value)
+			return
+		}
+		s.renderPublicOptionReportDetailPage(w, r, user, id)
 	case path == "updatedatabyid":
 		s.handlePublicOptionUpdateJSON(w, r, user)
 	case path == "addpublicoptiondata":
@@ -516,6 +862,62 @@ func (s *Server) handlePublicOptionCompat(w http.ResponseWriter, r *http.Request
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func (s *Server) handlePublicOptionWorkbenchAction(w http.ResponseWriter, r *http.Request, user any, selectedID int64) {
+	_ = r.ParseForm()
+	action := strings.TrimSpace(r.FormValue("action"))
+	userID := userIDFromMap(user)
+	if userID <= 0 {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	redirectTo := "/publicoption"
+	message := "操作失败"
+	switch action {
+	case "create":
+		option, ok := s.decodePublicOptionRequest(r)
+		if !ok {
+			http.Redirect(w, r, "/publicoption?msg="+url.QueryEscape("任务参数无效"), http.StatusSeeOther)
+			return
+		}
+		option.UserID = userID
+		option.Status = 3
+		option.DetailStatus = 3
+		s.enrichPublicOption(&option)
+		created, err := s.putPublicOptionCreate(option)
+		if err == nil && created.ID > 0 {
+			redirectTo = "/publicoption/reportdetail/" + strconv.FormatInt(created.ID, 10)
+			message = "任务已创建"
+		}
+	case "update":
+		option, ok := s.decodePublicOptionRequest(r)
+		if !ok {
+			http.Redirect(w, r, "/publicoption?msg="+url.QueryEscape("任务参数无效"), http.StatusSeeOther)
+			return
+		}
+		if option.ID <= 0 {
+			option.ID = selectedID
+		}
+		option.UserID = userID
+		option.Status = 3
+		option.DetailStatus = 3
+		s.enrichPublicOption(&option)
+		updated, err := s.putPublicOptionUpdate(option)
+		if err == nil && updated.ID > 0 {
+			redirectTo = "/publicoption/reportdetail/" + strconv.FormatInt(updated.ID, 10)
+			message = "任务已更新"
+		}
+	case "delete":
+		id := selectedID
+		if id <= 0 {
+			id, _ = strconv.ParseInt(firstNonEmpty(r.FormValue("id"), r.URL.Query().Get("id")), 10, 64)
+		}
+		if id > 0 && s.deletePublicOption(id) == nil {
+			message = "任务已删除"
+		}
+	}
+	http.Redirect(w, r, redirectTo+"?msg="+url.QueryEscape(message), http.StatusSeeOther)
 }
 
 func (s *Server) handlePublicOptionListJSON(w http.ResponseWriter, r *http.Request, user any) {
@@ -642,39 +1044,7 @@ func (s *Server) handlePublicOptionLoadInformation(w http.ResponseWriter, r *htt
 }
 
 func (s *Server) renderPublicOptionListPage(w http.ResponseWriter, r *http.Request, user any, message string) {
-	_ = user
-	userID := userIDFromMap(user)
-	options, err := s.getPublicOptions(userID, firstNonEmpty(r.URL.Query().Get("searchkeyword"), r.URL.Query().Get("keyword")))
-	if err != nil {
-		_ = s.writeSimplePage(w, "publicoption/list", "事件分析", "<p>加载失败："+html.EscapeString(err.Error())+"</p>")
-		return
-	}
-	var b strings.Builder
-	b.WriteString("<h1>事件分析任务</h1>")
-	if message != "" {
-		b.WriteString("<p>")
-		b.WriteString(html.EscapeString(message))
-		b.WriteString("</p>")
-	}
-	b.WriteString(`<form method="post" action="/publicoption/addpublicoptiondata"><input name="eventname" placeholder="任务名称"><input name="eventkeywords" placeholder="关键词"><input name="eventstarttime" placeholder="开始时间"><input name="eventendtime" placeholder="结束时间"><input name="eventstopwords" placeholder="屏蔽词"><button type="submit">创建任务</button></form>`)
-	b.WriteString("<table><tr><th>ID</th><th>名称</th><th>关键词</th><th>时间</th><th>状态</th><th>操作</th></tr>")
-	for _, option := range options {
-		b.WriteString("<tr><td>")
-		b.WriteString(strconv.FormatInt(option.ID, 10))
-		b.WriteString("</td><td>")
-		b.WriteString(html.EscapeString(option.EventName))
-		b.WriteString("</td><td>")
-		b.WriteString(html.EscapeString(option.EventKeywords))
-		b.WriteString("</td><td>")
-		b.WriteString(html.EscapeString(option.EventStartTime + " ~ " + option.EventEndTime))
-		b.WriteString("</td><td>")
-		b.WriteString(strconv.Itoa(option.Status))
-		b.WriteString("</td><td><a href=\"/publicoption/reportdetail/")
-		b.WriteString(strconv.FormatInt(option.ID, 10))
-		b.WriteString("\">详情</a></td></tr>")
-	}
-	b.WriteString("</table>")
-	_ = s.writeSimplePage(w, "publicoption/list", "事件分析", b.String())
+	s.renderPublicOptionWorkbench(w, r, user, 0, "", message)
 }
 
 func (s *Server) renderPublicOptionReportListPage(w http.ResponseWriter, r *http.Request, user any, message string) {
@@ -682,84 +1052,52 @@ func (s *Server) renderPublicOptionReportListPage(w http.ResponseWriter, r *http
 }
 
 func (s *Server) renderPublicOptionReportDetailPage(w http.ResponseWriter, r *http.Request, user any, id string) {
-	_ = user
-	option, err := s.getPublicOptionByID(id)
-	if err != nil {
-		_ = s.writeSimplePage(w, "publicoption/detail", "事件分析详情", "<p>加载失败："+html.EscapeString(err.Error())+"</p>")
-		return
-	}
-	var b strings.Builder
-	b.WriteString("<h1>")
-	b.WriteString(html.EscapeString(option.EventName))
-	b.WriteString("</h1>")
-	b.WriteString("<p>关键词：")
-	b.WriteString(html.EscapeString(option.EventKeywords))
-	b.WriteString(" | 屏蔽词：")
-	b.WriteString(html.EscapeString(option.EventStopWords))
-	b.WriteString("</p>")
-	b.WriteString("<p>时间：")
-	b.WriteString(html.EscapeString(option.EventStartTime))
-	b.WriteString(" ~ ")
-	b.WriteString(html.EscapeString(option.EventEndTime))
-	b.WriteString("</p>")
-	b.WriteString("<section><h2>事件脉络</h2><pre>")
-	b.WriteString(html.EscapeString(option.EventContext))
-	b.WriteString("</pre></section>")
-	b.WriteString("<section><h2>事件跟踪</h2><pre>")
-	b.WriteString(html.EscapeString(option.EventTrace))
-	b.WriteString("</pre></section>")
-	b.WriteString("<section><h2>统计</h2><pre>")
-	b.WriteString(html.EscapeString(option.Statistics))
-	b.WriteString("</pre></section>")
-	b.WriteString("<section><h2>传播分析</h2><pre>")
-	b.WriteString(html.EscapeString(option.PropagationAnalysis))
-	b.WriteString("</pre></section>")
-	b.WriteString("<section><h2>专题分析</h2><pre>")
-	b.WriteString(html.EscapeString(option.ThematicAnalysis))
-	b.WriteString("</pre></section>")
-	_ = s.writeSimplePage(w, "publicoption/detail", "事件分析详情", b.String())
+	value, _ := strconv.ParseInt(strings.TrimSpace(id), 10, 64)
+	s.renderPublicOptionWorkbench(w, r, user, value, "", "")
 }
 
 func (s *Server) renderPublicOptionAnalysisPage(w http.ResponseWriter, r *http.Request, user any, section string) {
-	_ = user
-	options, err := s.getPublicOptions(userIDFromMap(user), "")
+	selectedID, _ := strconv.ParseInt(firstNonEmpty(r.URL.Query().Get("id"), r.FormValue("id")), 10, 64)
+	s.renderPublicOptionWorkbench(w, r, user, selectedID, section, "")
+}
+
+func (s *Server) renderPublicOptionWorkbench(w http.ResponseWriter, r *http.Request, user any, selectedID int64, section string, message string) {
+	userID := userIDFromMap(user)
+	keyword := firstNonEmpty(r.URL.Query().Get("searchkeyword"), r.URL.Query().Get("keyword"))
+	options, err := s.getPublicOptions(userID, keyword)
 	if err != nil {
-		_ = s.writeSimplePage(w, "publicoption/analysis", "事件分析", "<p>加载失败："+html.EscapeString(err.Error())+"</p>")
+		_ = s.writeSimplePage(w, "publicoption/list", "事件分析", "<p>加载失败："+html.EscapeString(err.Error())+"</p>")
 		return
 	}
-	var b strings.Builder
-	b.WriteString("<h1>事件分析 - ")
-	b.WriteString(html.EscapeString(section))
-	b.WriteString("</h1><a href=\"/publicoption/reportlist\">返回列表</a>")
-	for _, option := range options {
-		b.WriteString("<section><h2>")
-		b.WriteString(html.EscapeString(option.EventName))
-		b.WriteString("</h2><pre>")
-		switch section {
-		case "backanalysis":
-			b.WriteString(html.EscapeString(option.BackAnalysis))
-		case "eventContext":
-			b.WriteString(html.EscapeString(option.EventContext))
-		case "eventTrace":
-			b.WriteString(html.EscapeString(option.EventTrace))
-		case "hotAnalysis":
-			b.WriteString(html.EscapeString(option.HotAnalysis))
-		case "netizensAnalysis":
-			b.WriteString(html.EscapeString(option.NetizensAnalysis))
-		case "statistics":
-			b.WriteString(html.EscapeString(option.Statistics))
-		case "propagationAnalysis":
-			b.WriteString(html.EscapeString(option.PropagationAnalysis))
-		case "thematicAnalysis":
-			b.WriteString(html.EscapeString(option.ThematicAnalysis))
-		case "unscrambleContent":
-			b.WriteString(html.EscapeString(option.UnscrambleContent))
-		case "popular_feelings_analys":
-			b.WriteString(html.EscapeString(option.ContentAnalysis))
+	selected := model.PublicOption{}
+	if selectedID > 0 {
+		for _, option := range options {
+			if option.ID == selectedID {
+				selected = option
+				break
+			}
 		}
-		b.WriteString("</pre></section>")
 	}
-	_ = s.writeSimplePage(w, "publicoption/analysis", "事件分析", b.String())
+	if selected.ID == 0 && len(options) > 0 {
+		selected = options[0]
+	}
+	if selected.ID > 0 {
+		if hydrated, err := s.getPublicOptionByID(strconv.FormatInt(selected.ID, 10)); err == nil && hydrated.ID > 0 {
+			selected = hydrated
+		}
+	}
+	if message == "" {
+		message = r.URL.Query().Get("msg")
+	}
+	_ = s.render(w, "public_option_workbench", pageData{
+		Title:         "事件分析工作台",
+		User:          user,
+		Message:       message,
+		PublicOptions: options,
+		PublicOption:  selected,
+		Section:       section,
+		FilterKeyword: keyword,
+	})
 }
 
 func (s *Server) decodeLegacyBinding(r *http.Request) (model.PlatformBinding, bool) {
@@ -1105,6 +1443,16 @@ func (s *Server) generateXieTitle(text string) string {
 		}
 	}
 	return truncateRunes(text, 24)
+}
+
+func composeXieReportText(title, text string, params map[string]string) string {
+	return fmt.Sprintf(
+		"标题：%s\n时间：%s\n关键词：%s\n\n%s",
+		title,
+		nonEmpty(params["publishTime"], time.Now().Format("2006-01-02 15:04:05")),
+		params["relatedword"],
+		truncateRunes(stripHTMLTags(text), 1000),
+	)
 }
 
 func (s *Server) streamXieReport(w http.ResponseWriter, userID int64, articleID, title, text string, params map[string]string) {

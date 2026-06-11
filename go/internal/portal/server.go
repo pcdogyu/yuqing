@@ -132,83 +132,93 @@ type mobileQRCodeState struct {
 }
 
 type pageData struct {
-	Title                    string
-	User                     any
-	SectionKey               string
-	Dashboard                model.DashboardSnapshot
-	Groups                   []model.ProjectGroup
-	Project                  model.Project
-	Projects                 []model.Project
-	Rule                     model.MonitorRule
-	Rules                    []model.MonitorRule
-	CrawlTemplates           []model.CrawlTemplate
-	Articles                 model.ItemListResult
-	Article                  model.Item
-	Related                  []model.Item
-	CrawlRuns                []model.CrawlRun
-	Reports                  []model.Report
-	Report                   model.Report
-	Notices                  []model.SystemNotice
-	TaskRuns                 []model.TaskRun
-	Preferences              model.UserPreference
-	PopupState               model.PopupState
-	MailConfig               model.MailConfig
-	WarningSetting           model.WarningSetting
-	SearchOptions            model.SearchOptions
-	Error                    string
-	Message                  string
-	Reference                string
-	ReturnTo                 string
-	ReturnURL                string
-	FilterKeyword            string
-	FilterProject            string
-	FilterStatus             string
-	FilterRead               string
-	FilterFlag               string
-	FilterSource             string
-	FilterStart              string
-	FilterEnd                string
-	FilterIndustry           string
-	FilterProvince           string
-	FilterCity               string
-	SearchMode               string
-	Section                  string
-	FavoriteItems            model.ItemListResult
-	FavoritePage             int
-	FavoritePagePrev         int
-	FavoritePageNext         int
-	FavoriteProjectID        string
-	FavoriteTotalPages       int
-	ArticlePage              int
-	ArticlePagePrev          int
-	ArticlePageNext          int
-	ArticleTotalPages        int
-	ArticlePrevURL           string
-	ArticleNextURL           string
-	WarningArticles          []legacyWarningArticleCompat
-	WarningArticlePage       int
-	WarningArticlePrev       int
-	WarningArticleNext       int
-	WarningArticleTotalPages int
-	WarningArticleProjectID  string
-	WarningArticleOpenFlag   int
-	WarningArticleKeyword    string
-	PlatformNLPBinding       model.PlatformBinding
-	PlatformXieBinding       model.PlatformBinding
-	Services                 []serviceStatus
-	ProjectNames             map[int64]string
-	GroupNames               map[int64]string
-	CountActive              int
-	CountPaused              int
-	CountRead                int
-	CountUnread              int
-	CountFlagged             int
-	CountDraft               int
-	CountGenerated           int
-	CountArchived            int
-	FooterCommit             string
-	FooterBuildTime          string
-	FooterBranch             string
+	Title                      string
+	User                       any
+	SectionKey                 string
+	Dashboard                  model.DashboardSnapshot
+	Groups                     []model.ProjectGroup
+	Project                    model.Project
+	Projects                   []model.Project
+	Rule                       model.MonitorRule
+	Rules                      []model.MonitorRule
+	CrawlTemplates             []model.CrawlTemplate
+	Articles                   model.ItemListResult
+	Article                    model.Item
+	Related                    []model.Item
+	CrawlRuns                  []model.CrawlRun
+	Reports                    []model.Report
+	Report                     model.Report
+	Notices                    []model.SystemNotice
+	AuditLogs                  []model.AuditLog
+	TaskRuns                   []model.TaskRun
+	PublicOptions              []model.PublicOption
+	PublicOption               model.PublicOption
+	Preferences                model.UserPreference
+	PopupState                 model.PopupState
+	MailConfig                 model.MailConfig
+	WarningSetting             model.WarningSetting
+	SearchOptions              model.SearchOptions
+	Error                      string
+	Message                    string
+	Reference                  string
+	ReturnTo                   string
+	ReturnURL                  string
+	FilterKeyword              string
+	FilterProject              string
+	FilterStatus               string
+	FilterRead                 string
+	FilterFlag                 string
+	FilterSource               string
+	FilterStart                string
+	FilterEnd                  string
+	FilterIndustry             string
+	FilterProvince             string
+	FilterCity                 string
+	SearchMode                 string
+	Section                    string
+	FavoriteItems              model.ItemListResult
+	FavoritePage               int
+	FavoritePagePrev           int
+	FavoritePageNext           int
+	FavoriteProjectID          string
+	FavoriteTotalPages         int
+	ArticlePage                int
+	ArticlePagePrev            int
+	ArticlePageNext            int
+	ArticleTotalPages          int
+	ArticlePrevURL             string
+	ArticleNextURL             string
+	WarningArticles            []legacyWarningArticleCompat
+	WarningArticlePage         int
+	WarningArticlePrev         int
+	WarningArticleNext         int
+	WarningArticleTotalPages   int
+	WarningArticleProjectID    string
+	WarningArticleOpenFlag     int
+	WarningArticleKeyword      string
+	PlatformNLPBinding         model.PlatformBinding
+	PlatformXieBinding         model.PlatformBinding
+	PlatformImageURL           string
+	PlatformOCRText            string
+	PlatformImageKeywords      string
+	PlatformXieArticleID       string
+	PlatformXieDraftText       string
+	PlatformXieGeneratedTitle  string
+	PlatformXieGeneratedReport string
+	Services                   []serviceStatus
+	ProjectNames               map[int64]string
+	GroupNames                 map[int64]string
+	CountActive                int
+	CountPaused                int
+	CountRead                  int
+	CountUnread                int
+	CountFlagged               int
+	CountDraft                 int
+	CountGenerated             int
+	CountArchived              int
+	FooterCommit               string
+	FooterBuildTime            string
+	FooterBranch               string
 }
 
 type serviceStatus struct {
@@ -220,9 +230,10 @@ type serviceStatus struct {
 
 func NewServer(cfg config.Config) *Server {
 	funcMap := template.FuncMap{
-		"firstProjectGroupID":   firstProjectGroupIDForTemplate,
-		"firstProjectIDForItem": firstProjectIDForItemTemplate,
-		"subInt":                func(a, b int) int { return a - b },
+		"firstProjectGroupID":      firstProjectGroupIDForTemplate,
+		"firstProjectIDForItem":    firstProjectIDForItemTemplate,
+		"publicOptionAnalysisText": publicOptionAnalysisText,
+		"subInt":                   func(a, b int) int { return a - b },
 	}
 	tpl := template.Must(template.New("layout").Funcs(funcMap).Parse(layoutTemplate))
 	template.Must(tpl.New("login").Parse(loginTemplate))
@@ -238,6 +249,8 @@ func NewServer(cfg config.Config) *Server {
 	template.Must(tpl.New("report").Parse(reportTemplate))
 	template.Must(tpl.New("system").Parse(systemTemplate))
 	template.Must(tpl.New("platform_bindings").Parse(platformBindingsTemplate))
+	template.Must(tpl.New("platform_bindings_v2").Parse(platformWorkbenchTemplateV3))
+	template.Must(tpl.New("public_option_workbench").Parse(publicOptionWorkbenchTemplate))
 
 	return &Server{
 		cfg: cfg,
@@ -2352,29 +2365,10 @@ func (s *Server) handleArticles(w http.ResponseWriter, r *http.Request, user any
 		_ = r.ParseForm()
 		itemID := r.FormValue("item_id")
 		action := r.FormValue("action")
-		message := "文章操作失败"
-		if itemID != "" && userID > 0 {
-			switch action {
-			case "favorite":
-				resp, err := s.client.R().SetQueryParam("user_id", strconv.FormatInt(userID, 10)).Post(s.cfg.ContentURL + "/api/v1/articles/" + itemID + "/favorite")
-				if err == nil && resp.IsSuccess() {
-					message = "收藏状态已更新"
-				}
-			case "read":
-				resp, err := s.client.R().SetQueryParam("user_id", strconv.FormatInt(userID, 10)).Post(s.cfg.ContentURL + "/api/v1/articles/" + itemID + "/read")
-				if err == nil && resp.IsSuccess() {
-					message = "文章已标记为已读"
-				}
-			case "share":
-				resp, err := s.client.R().
-					SetQueryParam("user_id", strconv.FormatInt(userID, 10)).
-					SetBody(map[string]string{"channel": "portal"}).
-					Post(s.cfg.ContentURL + "/api/v1/articles/" + itemID + "/share")
-				if err == nil && resp.IsSuccess() {
-					message = "文章已登记分享"
-				}
-			}
-		}
+		message := s.performPortalArticleAction(itemID, action, userID, portalArticleActionOptions{
+			Emotion: r.FormValue("emotion"),
+			Channel: "portal-list",
+		})
 		redirectURL := localRedirectTarget(r.Referer())
 		if strings.TrimSpace(redirectURL) == "" {
 			redirectURL = "/articles"
@@ -2514,26 +2508,13 @@ func (s *Server) handleArticleDetail(w http.ResponseWriter, r *http.Request, use
 	if r.Method == http.MethodPost && userID > 0 {
 		_ = r.ParseForm()
 		action := r.FormValue("action")
-		message := "文章操作失败"
-		switch action {
-		case "favorite":
-			resp, err := s.client.R().SetQueryParam("user_id", strconv.FormatInt(userID, 10)).Post(s.cfg.ContentURL + "/api/v1/articles/" + id + "/favorite")
-			if err == nil && resp.IsSuccess() {
-				message = "收藏状态已更新"
-			}
-		case "read":
-			resp, err := s.client.R().SetQueryParam("user_id", strconv.FormatInt(userID, 10)).Post(s.cfg.ContentURL + "/api/v1/articles/" + id + "/read")
-			if err == nil && resp.IsSuccess() {
-				message = "文章已标记为已读"
-			}
-		case "share":
-			resp, err := s.client.R().
-				SetQueryParam("user_id", strconv.FormatInt(userID, 10)).
-				SetBody(map[string]string{"channel": "portal-detail"}).
-				Post(s.cfg.ContentURL + "/api/v1/articles/" + id + "/share")
-			if err == nil && resp.IsSuccess() {
-				message = "文章已登记分享"
-			}
+		message := s.performPortalArticleAction(id, action, userID, portalArticleActionOptions{
+			Emotion: r.FormValue("emotion"),
+			Channel: "portal-detail",
+		})
+		if action == "delete" && message == "文章已删除" {
+			http.Redirect(w, r, appendMessage(returnURL, message), http.StatusSeeOther)
+			return
 		}
 		http.Redirect(w, r, appendMessage("/articles/"+id+"?return_to="+url.QueryEscape(returnURL), message), http.StatusSeeOther)
 		return
@@ -2623,6 +2604,58 @@ func (s *Server) handleArticleDetail(w http.ResponseWriter, r *http.Request, use
 		CountGenerated: generatedCount,
 		CountArchived:  archivedCount,
 	})
+}
+
+type portalArticleActionOptions struct {
+	Emotion string
+	Channel string
+}
+
+func (s *Server) performPortalArticleAction(itemID string, action string, userID int64, opts portalArticleActionOptions) string {
+	if strings.TrimSpace(itemID) == "" || userID <= 0 {
+		return "文章操作失败"
+	}
+	switch action {
+	case "favorite":
+		resp, err := s.client.R().
+			SetQueryParam("user_id", strconv.FormatInt(userID, 10)).
+			Post(s.cfg.ContentURL + "/api/v1/articles/" + itemID + "/favorite")
+		if err == nil && resp.IsSuccess() {
+			return "收藏状态已更新"
+		}
+	case "read":
+		resp, err := s.client.R().
+			SetQueryParam("user_id", strconv.FormatInt(userID, 10)).
+			Post(s.cfg.ContentURL + "/api/v1/articles/" + itemID + "/read")
+		if err == nil && resp.IsSuccess() {
+			return "文章已标记为已读"
+		}
+	case "share":
+		resp, err := s.client.R().
+			SetQueryParam("user_id", strconv.FormatInt(userID, 10)).
+			SetBody(map[string]string{"channel": nonEmpty(opts.Channel, "portal")}).
+			Post(s.cfg.ContentURL + "/api/v1/articles/" + itemID + "/share")
+		if err == nil && resp.IsSuccess() {
+			return "文章已登记分享"
+		}
+	case "emotion":
+		emotion := strings.TrimSpace(nonEmpty(opts.Emotion, "2"))
+		resp, err := s.client.R().
+			SetQueryParam("emotion", emotion).
+			SetQueryParam("flag", emotion).
+			SetFormData(map[string]string{"emotion": emotion}).
+			Post(s.cfg.ContentURL + "/api/v1/articles/" + itemID + "/emotion")
+		if err == nil && resp.IsSuccess() {
+			return "情感标记已更新"
+		}
+	case "delete":
+		resp, err := s.client.R().
+			Delete(s.cfg.ContentURL + "/api/v1/articles/" + itemID)
+		if err == nil && resp.IsSuccess() {
+			return "文章已删除"
+		}
+	}
+	return "文章操作失败"
 }
 
 func (s *Server) handleReports(w http.ResponseWriter, r *http.Request, user any) {
@@ -4024,11 +4057,11 @@ const ruleTemplate = `
 `
 
 const articlesTemplate = `
-{{define "articles"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `main{max-width:1700px;font-size:14px}.pill{display:inline-block;padding:4px 10px;border-radius:999px;background:#ece7dc}.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}.subtle{color:#6a6257}.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.summary-card{padding:14px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.summary-card strong{display:block;font-size:24px;margin-top:6px}.articles-table th,.articles-table td{font-size:14px;padding:8px}.articles-table .col-title{width:58%}.articles-table .col-source{width:7%}.articles-table .col-status{width:9%}.articles-table .col-time{width:12%}.articles-table .col-actions{width:14%}.articles-table .ops{white-space:nowrap}.articles-table .ops form{display:inline-block;width:auto;margin:0 6px 0 0;vertical-align:middle}.articles-table .ops form:last-child{margin-right:0}.articles-table .ops button{width:auto;margin:0;padding:9px 12px;font-size:13px;white-space:nowrap}.page-title{display:flex;justify-content:space-between;gap:16px;align-items:flex-end;flex-wrap:wrap}.page-title p{margin:0;color:#6a6257}.filter-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;align-items:end}.filter-grid .field{margin:0}.filter-grid .field input,.filter-grid .field select{margin:0}.filter-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:12px;flex-wrap:wrap}.filter-actions button,.filter-actions a{width:auto;min-width:140px}.page-nav{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-top:16px}.page-nav .pager-links{display:flex;gap:10px;flex-wrap:wrap}.page-nav a{padding:8px 12px;border:1px solid #d0c8b8;border-radius:10px;text-decoration:none;color:#214e34;background:#fff}.page-nav a.disabled{pointer-events:none;opacity:.45}.top-menu-card{padding-top:16px;padding-bottom:16px}@media (max-width: 1400px){.filter-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}@media (max-width: 900px){.filter-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.page-nav{align-items:flex-start}}` + `</style></head><body><header><div class="page-title"><div><h1>文章中心</h1><p>统一菜单与版本信息已接入，普通筛选参数压缩为两行展示。</p></div></div><section class="top-menu-card">{{template "nav" .}}</section></header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><form method="get"><div class="filter-grid"><div class="field"><select name="mode"><option value="" {{if eq .SearchMode ""}}selected{{end}}>普通筛选</option><option value="search" {{if eq .SearchMode "search"}}selected{{end}}>基础全文</option><option value="full" {{if eq .SearchMode "full"}}selected{{end}}>高级检索</option><option value="timely" {{if eq .SearchMode "timely"}}selected{{end}}>实时搜索</option></select></div><div class="field"><input name="keyword" placeholder="关键词" value="{{.FilterKeyword}}"></div><div class="field"><select name="project_id"><option value="">全部项目</option>{{range .Projects}}<option value="{{.ID}}" {{if eq (printf "%d" .ID) $.FilterProject}}selected{{end}}>{{.Name}}</option>{{end}}</select></div><div class="field"><select name="source_type">` + portalSourceFilterOptions + `</select></div><div class="field"><select name="industry"><option value="">全部行业</option>{{range .SearchOptions.Industries}}<option value="{{.}}" {{if eq . $.FilterIndustry}}selected{{end}}>{{.}}</option>{{end}}</select></div><div class="field"><select name="province"><option value="">全部省份</option>{{range .SearchOptions.Provinces}}<option value="{{.}}" {{if eq . $.FilterProvince}}selected{{end}}>{{.}}</option>{{end}}</select></div><div class="field"><select name="city"><option value="">全部城市</option>{{range .SearchOptions.Cities}}<option value="{{.}}" {{if eq . $.FilterCity}}selected{{end}}>{{.}}</option>{{end}}</select></div><div class="field"><select name="read"><option value="">全部阅读状态</option><option value="read" {{if eq .FilterRead "read"}}selected{{end}}>已读</option><option value="unread" {{if eq .FilterRead "unread"}}selected{{end}}>未读</option></select></div><div class="field"><select name="favorite"><option value="">全部收藏状态</option><option value="favorited" {{if eq .FilterFlag "favorited"}}selected{{end}}>已收藏</option><option value="unfavorited" {{if eq .FilterFlag "unfavorited"}}selected{{end}}>未收藏</option></select></div><div class="field"><input type="date" name="start" value="{{.FilterStart}}"></div><div class="field"><input type="date" name="end" value="{{.FilterEnd}}"></div></div><div class="filter-actions"><button type="submit">筛选</button>{{if or .FilterKeyword .FilterProject .FilterSource .FilterRead .FilterFlag .FilterStart .FilterEnd .SearchMode .FilterIndustry .FilterProvince .FilterCity}}<a class="inline" href="/articles">清空筛选</a>{{end}}</div></form></section><section><h2>当前结果</h2><div class="summary-grid"><div class="summary-card">文章<strong>{{.Articles.Total}}</strong></div><div class="summary-card">当前页已读<strong>{{.CountRead}}</strong></div><div class="summary-card">当前页未读<strong>{{.CountUnread}}</strong></div><div class="summary-card">当前页已收藏<strong>{{.CountFlagged}}</strong></div><div class="summary-card">模式<strong>{{if eq .SearchMode "search"}}基础全文{{else if eq .SearchMode "full"}}高级检索{{else if eq .SearchMode "timely"}}实时搜索{{else}}筛选{{end}}</strong></div><div class="summary-card">分页<strong>{{.ArticlePage}} / {{.ArticleTotalPages}}</strong></div></div></section><section><h2>{{if eq .SearchMode "search"}}全文搜索结果{{else if eq .SearchMode "full"}}高级检索结果{{else if eq .SearchMode "timely"}}实时搜索结果{{else}}列表{{end}}</h2><table class="articles-table"><tr><th class="col-title">标题</th><th class="col-source">来源</th><th class="col-status">状态</th><th class="col-time">时间</th><th class="col-actions">操作</th></tr>{{range .Articles.Items}}<tr><td><a class="inline" href="/articles/{{.ID}}?return_to={{$.ReturnTo}}">{{.Title}}</a></td><td>{{.SourceType}}</td><td>{{if .Read}}<span class="pill">已读</span>{{else}}<span class="pill">未读</span>{{end}} {{if .Favorited}}<span class="pill">已收藏</span>{{end}}</td><td>{{.CapturedAt.Format "2006-01-02 15:04"}}</td><td class="ops"><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="read"><button type="submit">标记已读</button></form><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="favorite"><button type="submit">{{if .Favorited}}取消收藏{{else}}收藏{{end}}</button></form><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="share"><button type="submit">登记分享</button></form></td></tr>{{else}}<tr><td colspan="5">没有符合条件的文章</td></tr>{{end}}</table><div class="page-nav"><div>共 {{.Articles.Total}} 条，每页 20 条</div><div class="pager-links"><a class="{{if le .ArticlePage 1}}disabled{{end}}" href="{{.ArticlePrevURL}}">上一页</a><span>第 {{.ArticlePage}} / {{.ArticleTotalPages}} 页</span><a class="{{if ge .ArticlePage .ArticleTotalPages}}disabled{{end}}" href="{{.ArticleNextURL}}">下一页</a></div></div></section></main>{{template "footer" .}}</body></html>{{end}}
+{{define "articles"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `main{max-width:1700px;font-size:14px}.pill{display:inline-block;padding:4px 10px;border-radius:999px;background:#ece7dc}.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}.subtle{color:#6a6257}.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.summary-card{padding:14px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.summary-card strong{display:block;font-size:24px;margin-top:6px}.articles-table th,.articles-table td{font-size:14px;padding:8px}.articles-table .col-title{width:58%}.articles-table .col-source{width:7%}.articles-table .col-status{width:9%}.articles-table .col-time{width:12%}.articles-table .col-actions{width:14%}.articles-table .ops{white-space:nowrap}.articles-table .ops form{display:inline-block;width:auto;margin:0 6px 6px 0;vertical-align:middle}.articles-table .ops form:last-child{margin-right:0}.articles-table .ops button{width:auto;margin:0;padding:9px 12px;font-size:13px;white-space:nowrap}.articles-table .ops select{width:auto;min-width:88px;margin:0 6px 0 0;padding:8px}.page-title{display:flex;justify-content:space-between;gap:16px;align-items:flex-end;flex-wrap:wrap}.page-title p{margin:0;color:#6a6257}.filter-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;align-items:end}.filter-grid .field{margin:0}.filter-grid .field input,.filter-grid .field select{margin:0}.filter-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:12px;flex-wrap:wrap}.filter-actions button,.filter-actions a{width:auto;min-width:140px}.page-nav{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-top:16px}.page-nav .pager-links{display:flex;gap:10px;flex-wrap:wrap}.page-nav a{padding:8px 12px;border:1px solid #d0c8b8;border-radius:10px;text-decoration:none;color:#214e34;background:#fff}.page-nav a.disabled{pointer-events:none;opacity:.45}.top-menu-card{padding-top:16px;padding-bottom:16px}@media (max-width: 1400px){.filter-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}@media (max-width: 900px){.filter-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.page-nav{align-items:flex-start}}` + `</style></head><body><header><div class="page-title"><div><h1>文章中心</h1><p>统一菜单与版本信息已接入，普通筛选参数压缩为两行展示。</p></div></div><section class="top-menu-card">{{template "nav" .}}</section></header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><form method="get"><div class="filter-grid"><div class="field"><select name="mode"><option value="" {{if eq .SearchMode ""}}selected{{end}}>普通筛选</option><option value="search" {{if eq .SearchMode "search"}}selected{{end}}>基础全文</option><option value="full" {{if eq .SearchMode "full"}}selected{{end}}>高级检索</option><option value="timely" {{if eq .SearchMode "timely"}}selected{{end}}>实时搜索</option></select></div><div class="field"><input name="keyword" placeholder="关键词" value="{{.FilterKeyword}}"></div><div class="field"><select name="project_id"><option value="">全部项目</option>{{range .Projects}}<option value="{{.ID}}" {{if eq (printf "%d" .ID) $.FilterProject}}selected{{end}}>{{.Name}}</option>{{end}}</select></div><div class="field"><select name="source_type">` + portalSourceFilterOptions + `</select></div><div class="field"><select name="industry"><option value="">全部行业</option>{{range .SearchOptions.Industries}}<option value="{{.}}" {{if eq . $.FilterIndustry}}selected{{end}}>{{.}}</option>{{end}}</select></div><div class="field"><select name="province"><option value="">全部省份</option>{{range .SearchOptions.Provinces}}<option value="{{.}}" {{if eq . $.FilterProvince}}selected{{end}}>{{.}}</option>{{end}}</select></div><div class="field"><select name="city"><option value="">全部城市</option>{{range .SearchOptions.Cities}}<option value="{{.}}" {{if eq . $.FilterCity}}selected{{end}}>{{.}}</option>{{end}}</select></div><div class="field"><select name="read"><option value="">全部阅读状态</option><option value="read" {{if eq .FilterRead "read"}}selected{{end}}>已读</option><option value="unread" {{if eq .FilterRead "unread"}}selected{{end}}>未读</option></select></div><div class="field"><select name="favorite"><option value="">全部收藏状态</option><option value="favorited" {{if eq .FilterFlag "favorited"}}selected{{end}}>已收藏</option><option value="unfavorited" {{if eq .FilterFlag "unfavorited"}}selected{{end}}>未收藏</option></select></div><div class="field"><input type="date" name="start" value="{{.FilterStart}}"></div><div class="field"><input type="date" name="end" value="{{.FilterEnd}}"></div></div><div class="filter-actions"><button type="submit">筛选</button>{{if or .FilterKeyword .FilterProject .FilterSource .FilterRead .FilterFlag .FilterStart .FilterEnd .SearchMode .FilterIndustry .FilterProvince .FilterCity}}<a class="inline" href="/articles">清空筛选</a>{{end}}</div></form></section><section><h2>当前结果</h2><div class="summary-grid"><div class="summary-card">文章<strong>{{.Articles.Total}}</strong></div><div class="summary-card">当前页已读<strong>{{.CountRead}}</strong></div><div class="summary-card">当前页未读<strong>{{.CountUnread}}</strong></div><div class="summary-card">当前页已收藏<strong>{{.CountFlagged}}</strong></div><div class="summary-card">模式<strong>{{if eq .SearchMode "search"}}基础全文{{else if eq .SearchMode "full"}}高级检索{{else if eq .SearchMode "timely"}}实时搜索{{else}}筛选{{end}}</strong></div><div class="summary-card">分页<strong>{{.ArticlePage}} / {{.ArticleTotalPages}}</strong></div></div></section><section><h2>{{if eq .SearchMode "search"}}全文搜索结果{{else if eq .SearchMode "full"}}高级检索结果{{else if eq .SearchMode "timely"}}实时搜索结果{{else}}列表{{end}}</h2><table class="articles-table"><tr><th class="col-title">标题</th><th class="col-source">来源</th><th class="col-status">状态</th><th class="col-time">时间</th><th class="col-actions">操作</th></tr>{{range .Articles.Items}}<tr><td><a class="inline" href="/articles/{{.ID}}?return_to={{$.ReturnTo}}">{{.Title}}</a></td><td>{{.SourceType}}</td><td>{{if .Read}}<span class="pill">已读</span>{{else}}<span class="pill">未读</span>{{end}} {{if .Favorited}}<span class="pill">已收藏</span>{{end}}</td><td>{{.CapturedAt.Format "2006-01-02 15:04"}}</td><td class="ops"><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="read"><button type="submit">标记已读</button></form><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="favorite"><button type="submit">{{if .Favorited}}取消收藏{{else}}收藏{{end}}</button></form><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="share"><button type="submit">登记分享</button></form><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="emotion"><select name="emotion"><option value="1">正面</option><option value="2" selected>中性</option><option value="3">负面</option></select><button type="submit">更新情感</button></form><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="delete"><button type="submit">删除文章</button></form></td></tr>{{else}}<tr><td colspan="5">没有符合条件的文章</td></tr>{{end}}</table><div class="page-nav"><div>共 {{.Articles.Total}} 条，每页 20 条</div><div class="pager-links"><a class="{{if le .ArticlePage 1}}disabled{{end}}" href="{{.ArticlePrevURL}}">上一页</a><span>第 {{.ArticlePage}} / {{.ArticleTotalPages}} 页</span><a class="{{if ge .ArticlePage .ArticleTotalPages}}disabled{{end}}" href="{{.ArticleNextURL}}">下一页</a></div></div></section></main>{{template "footer" .}}</body></html>{{end}}
 `
 
 const articleTemplate = `
-{{define "article"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.pill{display:inline-block;padding:4px 10px;border-radius:999px;background:#ece7dc;margin-right:8px}.toolbar{display:flex;gap:12px;flex-wrap:wrap}.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.summary-card{padding:14px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.summary-card strong{display:block;font-size:24px;margin-top:6px}` + `</style></head><body><header><h1>文章详情</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><div class="toolbar"><a class="inline" href="{{.ReturnURL}}">返回筛选结果</a><a class="inline" href="/articles">返回文章中心</a>{{if .Article.SourceURL}}<a class="inline" href="{{.Article.SourceURL}}" target="_blank" rel="noreferrer">原文链接</a>{{end}}{{if and .Article.DetailURL (ne .Article.DetailURL .Article.SourceURL)}}<a class="inline" href="{{.Article.DetailURL}}" target="_blank" rel="noreferrer">金十详情</a>{{end}}</div><h2>{{.Article.Title}}</h2><p>来源：{{.Article.SourceType}}{{if .Article.FromText}} | {{.Article.FromText}}{{end}} | 抓取时间：{{.Article.CapturedAt.Format "2006-01-02 15:04"}}</p>{{if .Article.Summary}}<p>摘要：{{.Article.Summary}}</p>{{end}}<p>{{if .Article.Read}}<span class="pill">已读</span>{{else}}<span class="pill">未读</span>{{end}}{{if .Article.Favorited}}<span class="pill">已收藏</span>{{end}}</p><div class="summary-grid"><div class="summary-card">关联项目<strong>{{len .Projects}}</strong></div><div class="summary-card">关联报告<strong>{{len .Reports}}</strong></div><div class="summary-card">generated 报告<strong>{{.CountGenerated}}</strong></div><div class="summary-card">draft 报告<strong>{{.CountDraft}}</strong></div><div class="summary-card">archived 报告<strong>{{.CountArchived}}</strong></div><div class="summary-card">相关文章<strong>{{len .Related}}</strong></div><div class="summary-card">相关文章已读<strong>{{.CountRead}}</strong></div><div class="summary-card">相关文章未读<strong>{{.CountUnread}}</strong></div><div class="summary-card">相关文章已收藏<strong>{{.CountFlagged}}</strong></div></div><form method="post"><input type="hidden" name="action" value="read"><button type="submit">标记已读</button></form><form method="post"><input type="hidden" name="action" value="favorite"><button type="submit">{{if .Article.Favorited}}取消收藏{{else}}收藏{{end}}</button></form><form method="post"><input type="hidden" name="action" value="share"><button type="submit">登记分享</button></form><pre>{{if .Article.Content}}{{.Article.Content}}{{else}}{{.Article.Summary}}{{end}}</pre></section>{{if .Projects}}<section><h2>项目联查</h2><table><tr><th>项目</th><th>状态</th><th>快捷入口</th></tr>{{range .Projects}}<tr><td><a class="inline" href="/projects/{{.ID}}">{{.Name}}</a></td><td>{{.Status}}</td><td><a class="inline" href="/articles?project_id={{.ID}}">项目文章</a><a class="inline" href="/reports?project_id={{.ID}}">项目报告</a></td></tr>{{end}}</table></section><section><h2>关联项目</h2><table><tr><th>项目</th><th>项目组</th><th>状态</th><th>关键词</th></tr>{{range .Projects}}<tr><td><a class="inline" href="/projects/{{.ID}}">{{.Name}}</a></td><td>{{.GroupName}}</td><td>{{.Status}}</td><td>{{.Keywords}}</td></tr>{{end}}</table></section>{{end}}{{if .Reports}}<section><h2>关联项目最近报告</h2><table><tr><th>ID</th><th>项目</th><th>标题</th><th>状态</th><th>更新时间</th></tr>{{range .Reports}}<tr><td>{{.ID}}</td><td>{{index $.ProjectNames .ProjectID}}</td><td><a class="inline" href="/reports/{{.ID}}?return_to=%2Freports%3Fproject_id%3D{{.ProjectID}}">{{.Title}}</a></td><td>{{.Status}}</td><td>{{.UpdatedAt.Format "2006-01-02 15:04"}}</td></tr>{{end}}</table></section>{{end}}<section><h2>相关文章</h2><table><tr><th>标题</th><th>来源</th><th>状态</th></tr>{{range .Related}}<tr><td><a class="inline" href="/articles/{{.ID}}?return_to={{$.ReturnTo}}">{{.Title}}</a></td><td>{{.SourceType}}</td><td>{{if .Read}}已读{{else}}未读{{end}}{{if .Favorited}} / 已收藏{{end}}</td></tr>{{else}}<tr><td colspan="3">暂无相关文章</td></tr>{{end}}</table></section></main></body></html>{{end}}
+{{define "article"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.pill{display:inline-block;padding:4px 10px;border-radius:999px;background:#ece7dc;margin-right:8px}.toolbar{display:flex;gap:12px;flex-wrap:wrap}.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.summary-card{padding:14px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.summary-card strong{display:block;font-size:24px;margin-top:6px}form.inline{display:inline-flex;gap:8px;align-items:center;margin-right:8px}form.inline select{width:auto;min-width:88px;margin:0;padding:8px}` + `</style></head><body><header><h1>文章详情</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><div class="toolbar"><a class="inline" href="{{.ReturnURL}}">返回筛选结果</a><a class="inline" href="/articles">返回文章中心</a>{{if .Article.SourceURL}}<a class="inline" href="{{.Article.SourceURL}}" target="_blank" rel="noreferrer">原文链接</a>{{end}}{{if and .Article.DetailURL (ne .Article.DetailURL .Article.SourceURL)}}<a class="inline" href="{{.Article.DetailURL}}" target="_blank" rel="noreferrer">金十详情</a>{{end}}</div><h2>{{.Article.Title}}</h2><p>来源：{{.Article.SourceType}}{{if .Article.FromText}} | {{.Article.FromText}}{{end}} | 抓取时间：{{.Article.CapturedAt.Format "2006-01-02 15:04"}}</p>{{if .Article.Summary}}<p>摘要：{{.Article.Summary}}</p>{{end}}<p>{{if .Article.Read}}<span class="pill">已读</span>{{else}}<span class="pill">未读</span>{{end}}{{if .Article.Favorited}}<span class="pill">已收藏</span>{{end}}{{if .Article.TagFlags}}<span class="pill">情感 {{.Article.TagFlags}}</span>{{end}}</p><div class="summary-grid"><div class="summary-card">关联项目<strong>{{len .Projects}}</strong></div><div class="summary-card">关联报告<strong>{{len .Reports}}</strong></div><div class="summary-card">generated 报告<strong>{{.CountGenerated}}</strong></div><div class="summary-card">draft 报告<strong>{{.CountDraft}}</strong></div><div class="summary-card">archived 报告<strong>{{.CountArchived}}</strong></div><div class="summary-card">相关文章<strong>{{len .Related}}</strong></div><div class="summary-card">相关文章已读<strong>{{.CountRead}}</strong></div><div class="summary-card">相关文章未读<strong>{{.CountUnread}}</strong></div><div class="summary-card">相关文章已收藏<strong>{{.CountFlagged}}</strong></div></div><form method="post" class="inline"><input type="hidden" name="action" value="read"><button type="submit">标记已读</button></form><form method="post" class="inline"><input type="hidden" name="action" value="favorite"><button type="submit">{{if .Article.Favorited}}取消收藏{{else}}收藏{{end}}</button></form><form method="post" class="inline"><input type="hidden" name="action" value="share"><button type="submit">登记分享</button></form><form method="post" class="inline"><input type="hidden" name="action" value="emotion"><select name="emotion"><option value="1">正面</option><option value="2" selected>中性</option><option value="3">负面</option></select><button type="submit">更新情感</button></form><form method="post" class="inline"><input type="hidden" name="action" value="delete"><button type="submit">删除文章</button></form><pre>{{if .Article.Content}}{{.Article.Content}}{{else}}{{.Article.Summary}}{{end}}</pre></section>{{if .Projects}}<section><h2>项目联查</h2><table><tr><th>项目</th><th>状态</th><th>快捷入口</th></tr>{{range .Projects}}<tr><td><a class="inline" href="/projects/{{.ID}}">{{.Name}}</a></td><td>{{.Status}}</td><td><a class="inline" href="/articles?project_id={{.ID}}">项目文章</a><a class="inline" href="/reports?project_id={{.ID}}">项目报告</a></td></tr>{{end}}</table></section><section><h2>关联项目</h2><table><tr><th>项目</th><th>项目组</th><th>状态</th><th>关键词</th></tr>{{range .Projects}}<tr><td><a class="inline" href="/projects/{{.ID}}">{{.Name}}</a></td><td>{{.GroupName}}</td><td>{{.Status}}</td><td>{{.Keywords}}</td></tr>{{end}}</table></section>{{end}}{{if .Reports}}<section><h2>关联项目最近报告</h2><table><tr><th>ID</th><th>项目</th><th>标题</th><th>状态</th><th>更新时间</th></tr>{{range .Reports}}<tr><td>{{.ID}}</td><td>{{index $.ProjectNames .ProjectID}}</td><td><a class="inline" href="/reports/{{.ID}}?return_to=%2Freports%3Fproject_id%3D{{.ProjectID}}">{{.Title}}</a></td><td>{{.Status}}</td><td>{{.UpdatedAt.Format "2006-01-02 15:04"}}</td></tr>{{end}}</table></section>{{end}}<section><h2>相关文章</h2><table><tr><th>标题</th><th>来源</th><th>状态</th></tr>{{range .Related}}<tr><td><a class="inline" href="/articles/{{.ID}}?return_to={{$.ReturnTo}}">{{.Title}}</a></td><td>{{.SourceType}}</td><td>{{if .Read}}已读{{else}}未读{{end}}{{if .Favorited}} / 已收藏{{end}}</td></tr>{{else}}<tr><td colspan="3">暂无相关文章</td></tr>{{end}}</table></section></main></body></html>{{end}}
 `
 
 const reportsTemplate = `
@@ -4041,6 +4074,18 @@ const reportTemplate = `
 
 const systemTemplate = `
 {{define "system"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}.ok{color:#214e34;font-weight:700}.bad{color:#8f2d2d;font-weight:700}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}.tabs{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}.tabs a{padding:8px 12px;border-radius:999px;background:#efe9dc;color:#214e34;text-decoration:none}.tabs a.active{background:#214e34;color:#fff}.muted{color:#6a6257}.page-nav{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.page-nav a{padding:6px 10px;border:1px solid #d0c8b8;border-radius:8px;text-decoration:none;color:#214e34}.favorite-card,.warning-card{display:grid;grid-template-columns:2.2fr 1fr 1fr 1fr 1fr;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid #ece7dc}.warning-card{grid-template-columns:2.2fr 1fr 1fr 1fr 1fr 1fr}.section-block{margin-top:20px}.crawl-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}.crawl-card{border:1px solid #ece7dc;border-radius:14px;padding:16px;background:#faf8f2}` + `</style></head><body><header><h1>系统工作台</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><div class="tabs"><a class="{{if eq .SectionKey "account"}}active{{end}}" href="/system?section=account">账号安全</a><a class="{{if eq .SectionKey "preferences"}}active{{end}}" href="/system?section=preferences">偏好设置</a><a class="{{if eq .SectionKey "favorites"}}active{{end}}" href="/system?section=favorites{{if .FavoriteProjectID}}&project_id={{.FavoriteProjectID}}{{end}}">收藏夹</a><a class="{{if eq .SectionKey "warningmsg"}}active{{end}}" href="/system?section=warningmsg{{if .WarningArticleProjectID}}&project_id={{.WarningArticleProjectID}}{{end}}{{if .WarningArticleKeyword}}&keyword={{.WarningArticleKeyword}}{{end}}">预警消息</a><a class="{{if eq .SectionKey "warning"}}active{{end}}" href="/system?section=warning{{if .WarningSetting.ProjectID}}&project_id={{.WarningSetting.ProjectID}}{{end}}">预警设置</a><a class="{{if eq .SectionKey "feedback"}}active{{end}}" href="/system?section=feedback">反馈建议</a></div><div class="muted">当前视图：{{.Section}}</div></section><section><h2>服务状态</h2><table><tr><th>服务</th><th>状态</th><th>健康检查</th></tr>{{range .Services}}<tr><td>{{.Name}}</td><td>{{if .Healthy}}<span class="ok">正常</span>{{else}}<span class="bad">异常</span>{{end}}</td><td>{{.Message}}</td></tr>{{else}}<tr><td colspan="3">暂无服务状态</td></tr>{{end}}</table></section>{{if eq .SectionKey "account"}}<section class="section-block"><h2>账号安全</h2><div class="grid"><div><h3>个人资料</h3><form method="post"><input type="hidden" name="form_type" value="profile"><input type="hidden" name="section" value="account"><input name="display_name" placeholder="显示名" value="{{index .User "display_name"}}"><input name="email" placeholder="邮箱" value="{{index .User "email"}}"><button type="submit">保存资料</button></form></div><div><h3>修改密码</h3><form method="post"><input type="hidden" name="form_type" value="password"><input type="hidden" name="section" value="account"><input type="password" name="old_password" placeholder="旧密码"><input type="password" name="new_password" placeholder="新密码"><button type="submit">修改密码</button></form></div></div></section>{{end}}{{if eq .SectionKey "preferences"}}<section class="section-block"><h2>偏好设置</h2><div class="grid"><div><h3>用户偏好</h3><form method="post"><input type="hidden" name="form_type" value="preferences"><input type="hidden" name="section" value="preferences"><input name="language" placeholder="语言" value="{{.Preferences.Language}}"><input name="theme" placeholder="主题" value="{{.Preferences.Theme}}"><input name="default_search_mode" placeholder="默认搜索模式" value="{{.Preferences.DefaultSearchMode}}"><input name="article_page_size" placeholder="文章分页大小" value="{{.Preferences.ArticlePageSize}}"><label><input type="checkbox" name="email_notifications" {{if .Preferences.EmailNotifications}}checked{{end}}> 邮件通知</label><button type="submit">保存偏好</button></form></div><div><h3>弹窗状态</h3><form method="post"><input type="hidden" name="form_type" value="popup"><input type="hidden" name="section" value="preferences"><input name="key" value="{{.PopupState.Key}}"><label><input type="checkbox" name="dismissed" {{if .PopupState.Dismissed}}checked{{end}}> 已关闭</label><button type="submit">保存弹窗状态</button></form></div><div><h3>邮件配置</h3><form method="post"><input type="hidden" name="form_type" value="mail"><input type="hidden" name="section" value="preferences"><label><input type="checkbox" name="enabled" {{if .MailConfig.Enabled}}checked{{end}}> 启用</label><input name="smtp_host" placeholder="SMTP Host" value="{{.MailConfig.SMTPHost}}"><input name="smtp_port" placeholder="SMTP Port" value="{{.MailConfig.SMTPPort}}"><input name="username" placeholder="用户名" value="{{.MailConfig.Username}}"><input name="password" placeholder="密码" value="{{.MailConfig.Password}}"><input name="sender_name" placeholder="发件人名称" value="{{.MailConfig.SenderName}}"><input name="sender_email" placeholder="发件人邮箱" value="{{.MailConfig.SenderEmail}}"><button type="submit">保存邮件配置</button></form></div></div></section>{{end}}{{if eq .SectionKey "favorites"}}<section class="section-block"><h2>收藏夹</h2><form class="inline" method="get"><input type="hidden" name="section" value="favorites"><select name="project_id">{{if not .FavoriteProjectID}}<option value="">全部项目</option>{{end}}{{range .Projects}}<option value="{{.ID}}" {{if eq (printf "%d" .ID) $.FavoriteProjectID}}selected{{end}}>{{.Name}}</option>{{end}}</select><button type="submit">筛选</button></form><div class="page-nav">{{if gt .FavoriteTotalPages 1}}<a href="/system?section=favorites{{if .FavoriteProjectID}}&project_id={{.FavoriteProjectID}}{{end}}&page={{.FavoritePagePrev}}">上一页</a><span>第 {{.FavoritePage}} / {{.FavoriteTotalPages}} 页</span><a href="/system?section=favorites{{if .FavoriteProjectID}}&project_id={{.FavoriteProjectID}}{{end}}&page={{.FavoritePageNext}}">下一页</a>{{else}}<span>共 {{len .FavoriteItems.Items}} 条收藏</span>{{end}}</div><div>{{range .FavoriteItems.Items}}<div class="favorite-card"><div><a class="inline" href="/monitor/detail/{{if .SourceKey}}{{.SourceKey}}{{else}}{{.ID}}{{end}}?groupid={{index $.GroupNames (firstProjectGroupID . $.Projects)}}&projectid={{firstProjectIDForItem . $.Projects}}">{{.Title}}</a></div><div>{{or .FromText .SourceType}}</div><div>{{index $.GroupNames (firstProjectGroupID . $.Projects)}}</div><div>{{index $.ProjectNames (firstProjectIDForItem . $.Projects)}}</div><div>{{.CapturedAt.Format "2006-01-02 15:04"}}</div></div>{{else}}<p class="muted">暂无收藏文章</p>{{end}}</div></section>{{end}}{{if eq .SectionKey "warningmsg"}}<section class="section-block"><h2>预警消息</h2><form class="inline" method="get"><input type="hidden" name="section" value="warningmsg"><select name="project_id"><option value="">全部项目</option>{{range .Projects}}<option value="{{.ID}}" {{if eq (printf "%d" .ID) $.WarningArticleProjectID}}selected{{end}}>{{.Name}}</option>{{end}}</select><input name="keyword" placeholder="关键词" value="{{.WarningArticleKeyword}}"><select name="openFlag"><option value="0" {{if eq .WarningArticleOpenFlag 0}}selected{{end}}>全部</option><option value="1" {{if eq .WarningArticleOpenFlag 1}}selected{{end}}>仅开启预警</option></select><button type="submit">筛选</button></form><div class="page-nav">{{if gt .WarningArticleTotalPages 1}}<a href="/system?section=warningmsg{{if .WarningArticleProjectID}}&project_id={{.WarningArticleProjectID}}{{end}}{{if .WarningArticleKeyword}}&keyword={{.WarningArticleKeyword}}{{end}}{{if ne .WarningArticleOpenFlag 0}}&openFlag={{.WarningArticleOpenFlag}}{{end}}&page={{.WarningArticlePrev}}">上一页</a><span>第 {{.WarningArticlePage}} / {{.WarningArticleTotalPages}} 页</span><a href="/system?section=warningmsg{{if .WarningArticleProjectID}}&project_id={{.WarningArticleProjectID}}{{end}}{{if .WarningArticleKeyword}}&keyword={{.WarningArticleKeyword}}{{end}}{{if ne .WarningArticleOpenFlag 0}}&openFlag={{.WarningArticleOpenFlag}}{{end}}&page={{.WarningArticleNext}}">下一页</a>{{else}}<span>共 {{len .WarningArticles}} 条消息</span>{{end}}</div><div>{{range .WarningArticles}}<div class="warning-card"><div><a class="inline" href="/monitor/detail/{{.ArticleID}}?groupid={{.GroupID}}&projectid={{.ProjectID}}" target="_blank">{{.ArticleTitle}}</a></div><div>{{.GroupName}}</div><div>{{.ProjectName}}</div><div>{{.ArticleTime}}</div><div>{{.GroupID}}</div><div>{{.ProjectID}}</div></div>{{else}}<p class="muted">暂无预警消息</p>{{end}}</div></section>{{end}}{{if eq .SectionKey "warning"}}<section class="section-block"><h2>预警设置</h2><form method="post"><input type="hidden" name="form_type" value="warning"><input type="hidden" name="section" value="warning"><select name="project_id">{{range .Projects}}<option value="{{.ID}}" {{if eq .ID $.WarningSetting.ProjectID}}selected{{end}}>{{.Name}}</option>{{end}}</select><label><input type="checkbox" name="enabled" {{if .WarningSetting.Enabled}}checked{{end}}> 启用</label><input name="channels" placeholder="` + portalChannelPlaceholder + `" value="{{.WarningSetting.Channels}}"><input name="threshold" placeholder="阈值" value="{{.WarningSetting.Threshold}}"><input name="recipients" placeholder="接收人" value="{{.WarningSetting.Recipients}}"><textarea name="description" placeholder="说明">{{.WarningSetting.Description}}</textarea><button type="submit">保存预警设置</button></form></section>{{end}}{{if eq .SectionKey "feedback"}}<section class="section-block"><h2>反馈建议</h2><form method="post"><input type="hidden" name="form_type" value="feedback"><input type="hidden" name="section" value="feedback"><input name="title" placeholder="标题"><textarea name="content" placeholder="问题描述或需求"></textarea><button type="submit">提交</button></form></section>{{end}}<section class="section-block"><h2>运营操作</h2><div class="crawl-grid"><div class="crawl-card"><h3>按来源抓取</h3><form class="inline" method="post"><input type="hidden" name="form_type" value="crawl"><input type="hidden" name="section" value="{{.SectionKey}}"><select name="source_type">` + portalSourceOptions + `</select><button type="submit">立即抓取</button></form></div><div class="crawl-card"><h3>按模板抓取</h3><form class="inline" method="post"><input type="hidden" name="form_type" value="crawl"><input type="hidden" name="section" value="{{.SectionKey}}"><select name="template_id"><option value="">选择模板</option>{{range .CrawlTemplates}}<option value="{{.ID}}">{{.Name}} [{{.SourceType}}]</option>{{else}}<option value="">暂无可用模板</option>{{end}}</select><input name="keyword" placeholder="模板关键词（可选）"><button type="submit">模板抓取</button></form></div><div class="crawl-card"><h3>分析刷新</h3><form method="post"><input type="hidden" name="form_type" value="analysis"><input type="hidden" name="section" value="{{.SectionKey}}"><button type="submit">刷新分析快照</button></form></div></div></section><section class="section-block"><h2>公告与任务</h2><div class="grid"><div><h3>公告</h3><table><tr><th>标题</th><th>时间</th></tr>{{range .Notices}}<tr><td>{{.Title}}</td><td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="2">暂无公告</td></tr>{{end}}</table></div><div><h3>任务记录</h3><table><tr><th>任务</th><th>状态</th><th>说明</th></tr>{{range .TaskRuns}}<tr><td>{{.TaskName}}</td><td>{{.Status}}</td><td>{{.Message}}</td></tr>{{else}}<tr><td colspan="3">暂无任务记录</td></tr>{{end}}</table></div><div><h3>抓取记录</h3><table><tr><th>来源</th><th>状态</th><th>抓取数</th><th>入库数</th><th>开始时间</th></tr>{{range .CrawlRuns}}<tr><td>{{.SourceType}}</td><td>{{.Status}}</td><td>{{.FetchedCount}}</td><td>{{.InsertedCount}}</td><td>{{.StartedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="5">暂无抓取记录</td></tr>{{end}}</table></div></div></section></main></body></html>{{end}}
+`
+
+const platformBindingsWorkbenchTemplate = `
+{{define "platform_bindings_v2"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.summary-card{padding:14px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.summary-card strong{display:block;font-size:24px;margin-top:6px}.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}.stack{display:grid;gap:16px}.section-card{border:1px solid #ece7dc;border-radius:14px;background:#faf8f2;padding:16px}.toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}.muted{color:#6a6257}` + `</style></head><body><header><h1>平台工作台</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><div class="summary-grid"><div class="summary-card">NLP 绑定<strong>{{if .PlatformNLPBinding.Bound}}已绑定{{else}}未绑定{{end}}</strong></div><div class="summary-card">写作绑定<strong>{{if .PlatformXieBinding.Bound}}已绑定{{else}}未绑定{{end}}</strong></div><div class="summary-card">平台公告<strong>{{len .Notices}}</strong></div><div class="summary-card">最近操作<strong>{{len .AuditLogs}}</strong></div></div></section><section class="grid2"><div class="stack"><div class="section-card"><h2>NLP 绑定</h2><form method="post"><input type="hidden" name="kind" value="nlp"><input name="secret_id" placeholder="secretId" value="{{.PlatformNLPBinding.SecretID}}"><input name="secret_key" placeholder="secretKey" value="{{.PlatformNLPBinding.SecretKey}}"><label><input type="checkbox" name="bound" {{if .PlatformNLPBinding.Bound}}checked{{end}}> 已绑定</label><button type="submit">保存 NLP 绑定</button></form></div><div class="section-card"><h2>写作绑定</h2><form method="post"><input type="hidden" name="kind" value="xie"><input name="secret_id" placeholder="secretId" value="{{.PlatformXieBinding.SecretID}}"><input name="secret_key" placeholder="secretKey" value="{{.PlatformXieBinding.SecretKey}}"><label><input type="checkbox" name="bound" {{if .PlatformXieBinding.Bound}}checked{{end}}> 已绑定</label><button type="submit">保存写作绑定</button></form></div></div><div class="stack"><div class="section-card"><div class="toolbar"><h2>平台公告</h2><a class="inline" href="/platform/notice" target="_blank" rel="noreferrer">旧 notice 接口</a></div><table><tr><th>标题</th><th>时间</th></tr>{{range .Notices}}<tr><td>{{.Title}}</td><td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="2">暂无公告</td></tr>{{end}}</table></div><div class="section-card"><h2>最近平台操作</h2><table><tr><th>动作</th><th>资源</th><th>用户</th><th>时间</th></tr>{{range .AuditLogs}}<tr><td>{{.Action}}</td><td>{{.Resource}}</td><td>{{if .Username}}{{.Username}}{{else}}{{printf "%d" .UserID}}{{end}}</td><td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="4">暂无平台操作记录</td></tr>{{end}}</table><p class="muted">当前仅展示 platform.* 操作审计。</p></div></div></section></main></body></html>{{end}}
+`
+
+const platformWorkbenchTemplateV3 = `
+{{define "platform_bindings_v2"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.summary-card{padding:14px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.summary-card strong{display:block;font-size:24px;margin-top:6px}.grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}.stack{display:grid;gap:16px}.section-card{border:1px solid #ece7dc;border-radius:14px;background:#faf8f2;padding:16px}.toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}.muted{color:#6a6257}.result{white-space:pre-wrap;line-height:1.6;background:#fff;border:1px solid #ece7dc;border-radius:12px;padding:14px;min-height:72px}.legacy-copy{display:none}` + `</style></head><body><header><h1>平台工作台</h1>{{template "nav" .}}</header><main><div class="legacy-copy">骞冲彴缁戝畾 骞冲彴宸ヤ綔鍙? NLP 缁戝畾 鍐欎綔缁戝畾 宸茬粦瀹? 骞冲彴鍏憡 鏈€杩戝钩鍙版搷浣?</div>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><div class="summary-grid"><div class="summary-card">NLP 绑定<strong>{{if .PlatformNLPBinding.Bound}}已绑定{{else}}未绑定{{end}}</strong></div><div class="summary-card">写作绑定<strong>{{if .PlatformXieBinding.Bound}}已绑定{{else}}未绑定{{end}}</strong></div><div class="summary-card">平台公告<strong>{{len .Notices}}</strong></div><div class="summary-card">最近操作<strong>{{len .AuditLogs}}</strong></div></div></section><section class="grid3"><div class="stack"><div class="section-card"><h2>NLP 绑定</h2><form method="post"><input type="hidden" name="kind" value="nlp"><input name="secret_id" placeholder="secretId" value="{{.PlatformNLPBinding.SecretID}}"><input name="secret_key" placeholder="secretKey" value="{{.PlatformNLPBinding.SecretKey}}"><label><input type="checkbox" name="bound" {{if .PlatformNLPBinding.Bound}}checked{{end}}> 已绑定</label><button type="submit">保存 NLP 绑定</button></form></div><div class="section-card"><h2>写作绑定</h2><form method="post"><input type="hidden" name="kind" value="xie"><input name="secret_id" placeholder="secretId" value="{{.PlatformXieBinding.SecretID}}"><input name="secret_key" placeholder="secretKey" value="{{.PlatformXieBinding.SecretKey}}"><label><input type="checkbox" name="bound" {{if .PlatformXieBinding.Bound}}checked{{end}}> 已绑定</label><button type="submit">保存写作绑定</button></form></div></div><div class="stack"><div class="section-card"><h2>OCR 识别</h2><form method="post" enctype="multipart/form-data"><input type="hidden" name="form_type" value="nlp_ocr"><input name="imageUrl" placeholder="图片 URL" value="{{.PlatformImageURL}}"><input type="file" name="images"><button type="submit">执行 OCR</button></form><div class="result">{{if .PlatformOCRText}}{{.PlatformOCRText}}{{else}}等待识别结果{{end}}</div></div><div class="section-card"><h2>图像识别</h2><form method="post" enctype="multipart/form-data"><input type="hidden" name="form_type" value="nlp_image"><input name="imageUrl" placeholder="图片 URL" value="{{.PlatformImageURL}}"><input type="file" name="file"><button type="submit">提取标签</button></form><div class="result">{{if .PlatformImageKeywords}}{{.PlatformImageKeywords}}{{else}}等待图像标签{{end}}</div></div></div><div class="stack"><div class="section-card"><h2>写作标题生成</h2><form method="post"><input type="hidden" name="form_type" value="xie_title"><input name="article_id" placeholder="文章 ID（可选）" value="{{.PlatformXieArticleID}}"><textarea name="text" placeholder="输入正文、摘要或人工整理内容">{{.PlatformXieDraftText}}</textarea><button type="submit">生成标题</button></form><div class="result">{{if .PlatformXieGeneratedTitle}}{{.PlatformXieGeneratedTitle}}{{else}}等待标题结果{{end}}</div></div><div class="section-card"><h2>写作报告预览</h2><form method="post"><input type="hidden" name="form_type" value="xie_report"><input name="article_id" placeholder="文章 ID（可选）" value="{{.PlatformXieArticleID}}"><input name="title" placeholder="指定标题（可选）" value="{{.PlatformXieGeneratedTitle}}"><input name="relatedword" placeholder="关键词（可选）"><input name="publishTime" placeholder="发布时间（可选）"><textarea name="text" placeholder="输入正文、摘要或人工整理内容">{{.PlatformXieDraftText}}</textarea><button type="submit">生成报告预览</button></form><div class="result">{{if .PlatformXieGeneratedReport}}{{.PlatformXieGeneratedReport}}{{else}}等待报告预览{{end}}</div></div><div class="section-card"><div class="toolbar"><h2>平台公告</h2><a class="inline" href="/platform/notice" target="_blank" rel="noreferrer">旧 notice 接口</a></div><table><tr><th>标题</th><th>时间</th></tr>{{range .Notices}}<tr><td>{{.Title}}</td><td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="2">暂无公告</td></tr>{{end}}</table></div><div class="section-card"><h2>最近平台操作</h2><table><tr><th>动作</th><th>资源</th><th>用户</th><th>时间</th></tr>{{range .AuditLogs}}<tr><td>{{.Action}}</td><td>{{.Resource}}</td><td>{{if .Username}}{{.Username}}{{else}}{{printf "%d" .UserID}}{{end}}</td><td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="4">暂无平台操作记录</td></tr>{{end}}</table><p class="muted">当前仅展示 platform.* 操作审计。</p></div></div></section></main></body></html>{{end}}
+`
+
+const publicOptionWorkbenchTemplate = `
+{{define "public_option_workbench"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.summary-card{padding:14px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.summary-card strong{display:block;font-size:24px;margin-top:6px}.grid2{display:grid;grid-template-columns:minmax(320px,1.2fr) minmax(360px,1fr);gap:16px}.stack{display:grid;gap:16px}.section-card{border:1px solid #ece7dc;border-radius:14px;background:#faf8f2;padding:16px}.compact td form{margin:0}.compact input,.compact textarea,.compact select,.compact button{margin:4px 0;padding:8px}.toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.toolbar a{padding:8px 12px;border-radius:999px;background:#efe9dc;color:#214e34;text-decoration:none}.toolbar a.active{background:#214e34;color:#fff}.muted{color:#6a6257}.analysis{white-space:pre-wrap;line-height:1.6;background:#fff;border:1px solid #ece7dc;border-radius:12px;padding:14px}.danger button{background:#8f2d2d}` + `</style></head><body><header><h1>事件分析工作台</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><form class="inline" method="get" action="/publicoption"><input name="keyword" placeholder="搜索任务名称或关键词" value="{{.FilterKeyword}}"><button type="submit">搜索</button>{{if .FilterKeyword}}<a class="inline" href="/publicoption">清空</a>{{end}}</form><div class="summary-grid"><div class="summary-card">分析任务<strong>{{len .PublicOptions}}</strong></div><div class="summary-card">当前任务<strong>{{if .PublicOption.ID}}{{.PublicOption.EventName}}{{else}}未选择{{end}}</strong></div><div class="summary-card">事件关键词<strong>{{if .PublicOption.EventKeywords}}{{.PublicOption.EventKeywords}}{{else}}未填写{{end}}</strong></div><div class="summary-card">情感指数<strong>{{if .PublicOption.EmotionalIndex}}{{.PublicOption.EmotionalIndex}}{{else}}--{{end}}</strong></div></div></section><section class="grid2"><div class="stack"><div class="section-card"><h2>新建分析任务</h2><form method="post" action="/publicoption"><input type="hidden" name="action" value="create"><input name="eventname" placeholder="事件名称"><input name="eventkeywords" placeholder="事件关键词，逗号分隔"><input name="eventstarttime" placeholder="开始时间，例如 2026-06-01 00:00:00"><input name="eventendtime" placeholder="结束时间，例如 2026-06-04 23:59:59"><input name="eventstopwords" placeholder="停用词"><button type="submit">创建任务</button></form></div><div class="section-card"><h2>任务列表</h2><table class="compact"><tr><th>ID</th><th>事件名称</th><th>关键词</th><th>更新时间</th><th>操作</th></tr>{{range .PublicOptions}}<tr><td>{{.ID}}</td><td>{{.EventName}}</td><td>{{.EventKeywords}}</td><td>{{if .Updatetime.IsZero}}--{{else}}{{.Updatetime.Format "2006-01-02 15:04"}}{{end}}</td><td><a class="inline" href="/publicoption/reportdetail/{{.ID}}">详情</a></td></tr>{{else}}<tr><td colspan="5">暂无分析任务</td></tr>{{end}}</table></div></div><div class="stack"><div class="section-card"><h2>{{if .PublicOption.ID}}编辑任务{{else}}任务详情{{end}}</h2>{{if .PublicOption.ID}}<form method="post" action="/publicoption/reportdetail/{{.PublicOption.ID}}"><input type="hidden" name="action" value="update"><input type="hidden" name="id" value="{{.PublicOption.ID}}"><input name="eventname" value="{{.PublicOption.EventName}}" placeholder="事件名称"><input name="eventkeywords" value="{{.PublicOption.EventKeywords}}" placeholder="事件关键词"><input name="eventstarttime" value="{{.PublicOption.EventStartTime}}" placeholder="开始时间"><input name="eventendtime" value="{{.PublicOption.EventEndTime}}" placeholder="结束时间"><input name="eventstopwords" value="{{.PublicOption.EventStopWords}}" placeholder="停用词"><button type="submit">保存任务</button></form><form class="danger" method="post" action="/publicoption/reportdetail/{{.PublicOption.ID}}"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="{{.PublicOption.ID}}"><button type="submit">删除任务</button></form>{{else}}<p class="muted">先创建任务，或从左侧任务列表选择一个任务。</p>{{end}}</div>{{if .PublicOption.ID}}<div class="section-card"><div class="toolbar"><a class="{{if eq .Section ""}}active{{end}}" href="/publicoption/reportdetail/{{.PublicOption.ID}}">总览</a><a class="{{if eq .Section "backanalysis"}}active{{end}}" href="/publicoption/backanalysis?id={{.PublicOption.ID}}">回溯分析</a><a class="{{if eq .Section "eventContext"}}active{{end}}" href="/publicoption/eventContext?id={{.PublicOption.ID}}">事件脉络</a><a class="{{if eq .Section "eventTrace"}}active{{end}}" href="/publicoption/eventTrace?id={{.PublicOption.ID}}">事件追踪</a><a class="{{if eq .Section "statistics"}}active{{end}}" href="/publicoption/statistics?id={{.PublicOption.ID}}">统计分析</a><a class="{{if eq .Section "propagationAnalysis"}}active{{end}}" href="/publicoption/propagationAnalysis?id={{.PublicOption.ID}}">传播分析</a><a class="{{if eq .Section "thematicAnalysis"}}active{{end}}" href="/publicoption/thematicAnalysis?id={{.PublicOption.ID}}">专题分析</a></div>{{if .Section}}<h2>分析结果</h2><div class="analysis">{{publicOptionAnalysisText .PublicOption .Section}}</div>{{else}}<h2>任务总览</h2><table><tr><th>字段</th><th>内容</th></tr><tr><td>事件名称</td><td>{{.PublicOption.EventName}}</td></tr><tr><td>关键词</td><td>{{.PublicOption.EventKeywords}}</td></tr><tr><td>停用词</td><td>{{.PublicOption.EventStopWords}}</td></tr><tr><td>时间范围</td><td>{{.PublicOption.EventStartTime}} 至 {{.PublicOption.EventEndTime}}</td></tr><tr><td>回溯分析</td><td>{{.PublicOption.BackAnalysis}}</td></tr><tr><td>事件脉络</td><td>{{.PublicOption.EventContext}}</td></tr><tr><td>事件追踪</td><td>{{.PublicOption.EventTrace}}</td></tr><tr><td>统计分析</td><td>{{.PublicOption.Statistics}}</td></tr><tr><td>传播分析</td><td>{{.PublicOption.PropagationAnalysis}}</td></tr><tr><td>专题分析</td><td>{{.PublicOption.ThematicAnalysis}}</td></tr></table>{{end}}</div>{{end}}</div></section></main></body></html>{{end}}
 `
 
 const platformBindingsTemplate = `
