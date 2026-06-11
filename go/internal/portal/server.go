@@ -252,16 +252,9 @@ func NewServer(cfg config.Config) *Server {
 
 func (s *Server) Router() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/getToken", s.handleLegacyAPIToken)
-	mux.HandleFunc("/api/getArticle", s.handleLegacyAPIArticleList)
-	mux.HandleFunc("/api/getMergeArticle", s.handleLegacyAPIMergeArticleList)
-	mux.HandleFunc("/api/detail", s.handleLegacyAPIArticleDetail)
 	mux.HandleFunc("/login", s.handleLoginPage)
 	mux.HandleFunc("/loginbak", s.handleLoginBakPage)
 	mux.HandleFunc("/forgotpwd", s.handleForgotPasswordPage)
-	mux.HandleFunc("/jumpLogin", s.handleLegacyJumpLogin)
-	mux.HandleFunc("/wechatJumpLogin", s.handleLegacyWechatJumpLogin)
-	mux.HandleFunc("/onlinestatistical", s.handleLegacyOnlineStatistical)
 	mux.HandleFunc("/img/code", s.handleCaptchaCode)
 	mux.HandleFunc("/displayboard", s.requireSession(s.handleDisplayBoard))
 	mux.HandleFunc("/displayboard/", s.requireSession(s.handleDisplayBoard))
@@ -278,33 +271,6 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/monitor", s.requireSession(s.handleMonitorEntry))
 	mux.HandleFunc("/monitor/", s.requireSession(s.handleMonitorCompat))
 	mux.HandleFunc("/monitor/wxGroup", s.requireSession(s.handleMonitorWxGroup))
-	mux.HandleFunc("/monitor/exportarticle", s.requireSession(s.handleLegacyMonitorExport))
-	mux.HandleFunc("/project", s.requireSession(s.handleLegacyProjectLanding))
-	mux.HandleFunc("/project/addproject", s.requireSession(s.handleLegacyProjectAddProject))
-	mux.HandleFunc("/project/editproject", s.requireSession(s.handleLegacyProjectEditProject))
-	mux.HandleFunc("/project/detail", s.requireSession(s.handleLegacyProjectDetail))
-	mux.HandleFunc("/project/getProjectCountByGroupId", s.requireSessionJSON(s.handleLegacyProjectGetProjectCountByGroupID))
-	mux.HandleFunc("/project/mkdirgroup", s.requireSessionJSON(s.handleLegacyProjectMkdirGroup))
-	mux.HandleFunc("/project/editgroup", s.requireSessionJSON(s.handleLegacyProjectEditGroup))
-	mux.HandleFunc("/project/updateSolutionGroupStatus", s.requireSessionJSON(s.handleLegacyProjectUpdateSolutionGroupStatus))
-	mux.HandleFunc("/project/names", s.requireSessionJSON(s.handleLegacyProjectNames))
-	mux.HandleFunc("/project/batchUpdateProject", s.requireSessionJSON(s.handleLegacyProjectBatchUpdateProject))
-	mux.HandleFunc("/project/keywords", s.requireSessionJSON(s.handleLegacyProjectKeywords))
-	mux.HandleFunc("/project/groupandproject", s.requireSessionJSON(s.handleLegacyProjectGroupAndProject))
-	mux.HandleFunc("/project/getGroupAndProject", s.requireSessionJSON(s.handleLegacyProjectGetGroupAndProject))
-	mux.HandleFunc("/project/listproject", s.requireSessionJSON(s.handleLegacyProjectListProject))
-	mux.HandleFunc("/project/verifygroup", s.requireSessionJSON(s.handleLegacyProjectVerifyGroup))
-	mux.HandleFunc("/project/getedit", s.requireSessionJSON(s.handleLegacyProjectGetEdit))
-	mux.HandleFunc("/project/commitproject", s.requireSessionJSON(s.handleLegacyProjectCommitProject))
-	mux.HandleFunc("/project/commiteditproject", s.requireSessionJSON(s.handleLegacyProjectCommitEditProject))
-	mux.HandleFunc("/project/delProject", s.requireSessionJSON(s.handleLegacyProjectDelProject))
-	mux.HandleFunc("/project/delProjectDetail", s.requireSessionJSON(s.handleLegacyProjectDelProjectDetail))
-	mux.HandleFunc("/report", s.requireSession(s.handleLegacyReportPage))
-	mux.HandleFunc("/report/", s.requireSession(s.handleLegacyReportCompat))
-	mux.HandleFunc("/report/listReportCustom", s.requireSessionJSON(s.handleLegacyReportCustomList))
-	mux.HandleFunc("/report/reportDetail", s.requireSessionJSON(s.handleLegacyReportCustomDetailJSON))
-	mux.HandleFunc("/report/batchUpdateReportCustom", s.requireSessionJSON(s.handleLegacyBatchUpdateReportCustom))
-	mux.HandleFunc("/report/batchUpdateReportCustomStatus", s.requireSessionJSON(s.handleLegacyBatchUpdateReportCustomStatus))
 	mux.HandleFunc("/volume", s.requireSession(s.handleVolume))
 	mux.HandleFunc("/volume/", s.requireSession(s.handleVolume))
 	mux.HandleFunc("/crypto", s.requireSession(s.handleCryptoPage))
@@ -325,44 +291,6 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/publicoption", s.requireSession(s.handlePublicOptionEntry))
 	mux.HandleFunc("/publicoption/", s.requireSession(s.handlePublicOptionCompat))
 	mux.HandleFunc("/logout", s.handleLogout)
-	mux.HandleFunc("/industry", s.requireSessionJSON(s.handleLegacySearchBuckets("industry")))
-	mux.HandleFunc("/industry/", s.requireSessionJSON(s.handleLegacySearchBuckets("industry")))
-	mux.HandleFunc("/getevent", s.requireSessionJSON(s.handleLegacySearchBuckets("event")))
-	mux.HandleFunc("/getevent/", s.requireSessionJSON(s.handleLegacySearchBuckets("event")))
-	mux.HandleFunc("/getProvinceList", s.requireSessionJSON(s.handleLegacySearchBuckets("province")))
-	mux.HandleFunc("/getProvinceList/", s.requireSessionJSON(s.handleLegacySearchBuckets("province")))
-	mux.HandleFunc("/getArticleCityList", s.requireSessionJSON(s.handleLegacySearchBuckets("city")))
-	mux.HandleFunc("/getArticleCityList/", s.requireSessionJSON(s.handleLegacySearchBuckets("city")))
-	mux.HandleFunc("/search", s.requireSession(s.handleLegacySearchRedirect("search")))
-	mux.HandleFunc("/search/", s.requireSession(s.handleLegacySearchRedirect("search")))
-	mux.HandleFunc("/fullsearch", s.requireSession(s.handleFullSearchEntry))
-	mux.HandleFunc("/fullsearch/", s.requireSession(s.handleFullSearchCompat))
-	mux.HandleFunc("/timelysearch", s.requireSession(s.handleTimelySearchEntry))
-	mux.HandleFunc("/timelysearch/", s.requireSession(s.handleTimelySearchCompat))
-	mux.HandleFunc("/mail/saveMailConfig", s.requireSessionJSON(s.handleLegacySaveMailConfig))
-	mux.HandleFunc("/mail/checkMailConfig", s.requireSessionJSON(s.handleLegacyCheckMailConfig))
-	mux.HandleFunc("/mail/getMailConfig", s.requireSessionJSON(s.handleLegacyGetMailConfig))
-	mux.HandleFunc("/user/save", func(w http.ResponseWriter, r *http.Request) {
-		s.handleLegacyUserSave(w, r)
-	})
-	mux.HandleFunc("/user/getToken", s.handleLegacyAPIToken)
-	mux.HandleFunc("/user/detail", s.requireSessionJSON(s.handleLegacyUserDetail))
-	mux.HandleFunc("/user/edit", s.requireSessionJSON(s.handleLegacyUserEdit))
-	mux.HandleFunc("/user/getwechatqrcode", s.requireSessionJSON(s.handleLegacyUserWechatQRCode))
-	mux.HandleFunc("/user/", s.requireSession(s.handleUserCompat))
-	mux.HandleFunc("/system/listSolutionGroupByUserId", s.requireSessionJSON(s.handleLegacyListSolutionGroupByUserID))
-	mux.HandleFunc("/system/listProjectByGroupId", s.requireSessionJSON(s.handleLegacyListProjectByGroupID))
-	mux.HandleFunc("/system/listProjectByUserId", s.requireSessionJSON(s.handleLegacyListProjectByUserID))
-	mux.HandleFunc("/system/listWarning", s.requireSessionJSON(s.handleLegacyListWarning))
-	mux.HandleFunc("/system/updateWarningStatusById", s.requireSessionJSON(s.handleLegacyUpdateWarningStatusByID))
-	mux.HandleFunc("/system/getFavoriteList", s.requireSessionJSON(s.handleLegacyGetFavoriteList))
-	mux.HandleFunc("/system/getWarningArticle", s.requireSessionJSON(s.handleLegacyGetWarningArticle))
-	mux.HandleFunc("/system/warningSettingDetail", s.requireSessionJSON(s.handleLegacyWarningSettingDetail))
-	mux.HandleFunc("/system/getOpinionConditionByProjectId", s.requireSessionJSON(s.handleLegacyGetOpinionConditionByProjectID))
-	mux.HandleFunc("/system/updateOpinionCondition", s.requireSessionJSON(s.handleLegacyUpdateOpinionCondition))
-	mux.HandleFunc("/system/getwords", s.requireSessionJSON(s.handleLegacyGetWarningWords))
-	mux.HandleFunc("/system/updateWarning", s.requireSessionJSON(s.handleLegacyUpdateWarning))
-	mux.HandleFunc("/system/getSystemTitle", s.requireSessionJSON(s.handleLegacyGetSystemTitle))
 	mux.HandleFunc("/system/productmanual/online", s.requireSession(s.handleSystemProductManualOnline))
 	mux.HandleFunc("/system/uploadProductManual", s.requireSession(s.handleSystemUploadProductManual))
 	mux.HandleFunc("/system/preference", s.requireSession(s.handleSystemSectionRedirect("preferences")))
@@ -380,17 +308,6 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/wechat/handleSubscribe", s.handleWechatHandleSubscribe)
 	mux.HandleFunc("/wechat/handleUnsubscribe", s.handleWechatHandleUnsubscribe)
 	mux.HandleFunc("/wechat/handleAuthorize", s.handleWechatHandleAuthorize)
-	mux.HandleFunc("/popUp/needPopUp", s.requireSessionBool(s.handleLegacyNeedPopUp))
-	mux.HandleFunc("/popUp/close", s.requireSessionBool(s.handleLegacyClosePopUp))
-	mux.HandleFunc("/popUp/needContact", s.handleLegacyNeedContact)
-	mux.HandleFunc("/popUp/closeContact", s.handleLegacyCloseContact)
-	mux.HandleFunc("/datamonitor/updateemtion", s.requireSessionJSON(s.handleLegacyUpdateEmotion))
-	mux.HandleFunc("/datamonitor/addfavoritedata", s.requireSessionJSON(s.handleLegacyAddFavorite))
-	mux.HandleFunc("/datamonitor/isread", s.requireSessionJSON(s.handleLegacyReadState))
-	mux.HandleFunc("/datamonitor/selectreadsign", s.requireSessionJSON(s.handleLegacySelectReadSign))
-	mux.HandleFunc("/datamonitor/deletedata", s.requireSessionJSON(s.handleLegacyDeleteData))
-	mux.HandleFunc("/datamonitor/copytext", s.requireSessionJSON(s.handleLegacyCopyText))
-	mux.HandleFunc("/datamonitor/sending", s.requireSessionJSON(s.handleLegacySending))
 	mux.HandleFunc("/projects/", s.requireSession(s.handleProjectDetail))
 	mux.HandleFunc("/projects", s.requireSession(s.handleProjects))
 	mux.HandleFunc("/crawl-templates/manage/", s.requireSession(s.handleCrawlTemplatesPage))
@@ -404,8 +321,16 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/reports/", s.requireSession(s.handleReportDetail))
 	mux.HandleFunc("/reports", s.requireSession(s.handleReports))
 	mux.HandleFunc("/system", s.requireSession(s.handleSystem))
-	mux.HandleFunc("/", s.requireSession(s.handleDashboard))
+	mux.HandleFunc("/", s.handleRoot)
 	return mux
+}
+
+func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
+	if isRemovedLegacyPortalPath(r.URL.Path) {
+		http.NotFound(w, r)
+		return
+	}
+	s.requireSession(s.handleDashboard)(w, r)
 }
 
 func (s *Server) handleLoginPage(w http.ResponseWriter, r *http.Request) {
@@ -452,66 +377,6 @@ func (s *Server) handleForgotPasswordPage(w http.ResponseWriter, r *http.Request
 	}
 	body := `<section><h1>忘记密码</h1><p>Go 兼容版暂未开放在线重置密码，请联系管理员处理。</p><p><a class="inline" href="/login">返回登录</a></p></section>`
 	_ = s.writeSimplePage(w, "forgotpwd", "忘记密码", body)
-}
-
-func (s *Server) handleLegacyJumpLogin(w http.ResponseWriter, r *http.Request) {
-	if cookie, err := r.Cookie(sessionCookieName); err == nil && strings.TrimSpace(cookie.Value) != "" {
-		if _, err := s.getSessionUser(cookie.Value); err == nil {
-			http.Redirect(w, r, "/monitor", http.StatusSeeOther)
-			return
-		}
-	}
-	http.Redirect(w, r, "/login?reference="+url.QueryEscape("/monitor"), http.StatusSeeOther)
-}
-
-func (s *Server) handleLegacyWechatJumpLogin(w http.ResponseWriter, r *http.Request) {
-	if cookie, err := r.Cookie(sessionCookieName); err == nil && strings.TrimSpace(cookie.Value) != "" {
-		if _, err := s.getSessionUser(cookie.Value); err == nil {
-			http.Redirect(w, r, "/monitor", http.StatusSeeOther)
-			return
-		}
-	}
-	http.Redirect(w, r, "/login?reference="+url.QueryEscape("/monitor"), http.StatusSeeOther)
-}
-
-func (s *Server) handleLegacyOnlineStatistical(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeRawJSON(w, http.StatusMethodNotAllowed, map[string]any{"code": -1, "msg": "method not allowed"})
-		return
-	}
-	token, ok := s.sessionTokenFromRequest(r)
-	if !ok {
-		writeRawJSON(w, http.StatusOK, map[string]any{"code": -1, "msg": "查询失败"})
-		return
-	}
-	var envelope struct {
-		Data struct {
-			User    map[string]any `json:"user"`
-			Session model.Session  `json:"session"`
-		} `json:"data"`
-	}
-	resp, err := s.client.R().
-		SetQueryParam("session_token", token).
-		SetResult(&envelope).
-		Get(s.cfg.AuthURL + "/api/v1/auth/session")
-	if err != nil || !resp.IsSuccess() || envelope.Data.User == nil {
-		writeRawJSON(w, http.StatusOK, map[string]any{"code": -1, "msg": "查询失败"})
-		return
-	}
-	user := envelope.Data.User
-	writeRawJSON(w, http.StatusOK, map[string]any{
-		"code": 1,
-		"onlinedata": map[string]any{
-			"user_id":            legacyInt64Value(user["id"]),
-			"username":           nonEmpty(legacyStringFromAny(user["username"]), legacyStringFromAny(user["display_name"])),
-			"display_name":       legacyStringFromAny(user["display_name"]),
-			"role":               legacyStringFromAny(user["role"]),
-			"status":             legacyIntFromAnyValue(user["status"]),
-			"session_token":      token,
-			"session_expires_at": envelope.Data.Session.ExpiresAt,
-			"online":             true,
-		},
-	})
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -614,317 +479,6 @@ func (s *Server) handleLegacySearchBuckets(kind string) func(http.ResponseWriter
 	}
 }
 
-func (s *Server) handleLegacySaveMailConfig(w http.ResponseWriter, r *http.Request, user any) {
-	req, err := decodeLegacyMailConfigRequest(r)
-	if err != nil {
-		writeLegacyStatusJSON(w, http.StatusBadRequest, "invalid body", map[string]any{})
-		return
-	}
-	if strings.TrimSpace(req.Host) == "" || strings.TrimSpace(req.Username) == "" || strings.TrimSpace(req.Password) == "" {
-		writeLegacyStatusJSON(w, http.StatusBadRequest, "邮箱配置不完整", map[string]any{})
-		return
-	}
-	if req.Port <= 0 {
-		writeLegacyStatusJSON(w, http.StatusBadRequest, "SMTP端口无效", map[string]any{})
-		return
-	}
-
-	stored, err := s.putMailConfig(model.MailConfig{
-		Enabled:     true,
-		SMTPHost:    req.Host,
-		SMTPPort:    req.Port,
-		Username:    req.Username,
-		Password:    req.Password,
-		SenderName:  nonEmpty(req.SenderName, "思通舆情"),
-		SenderEmail: nonEmpty(req.To, req.Username),
-	})
-	if err != nil {
-		writeLegacyStatusJSON(w, http.StatusInternalServerError, err.Error(), map[string]any{})
-		return
-	}
-	writeLegacyStatusJSON(w, http.StatusOK, "OK", legacyMailConfigResponseFromStored(stored))
-}
-
-func (s *Server) handleLegacyCheckMailConfig(w http.ResponseWriter, r *http.Request, _ any) {
-	cfg, err := s.getMailConfig()
-	if err != nil {
-		writeLegacyStatusJSON(w, http.StatusInternalServerError, err.Error(), map[string]any{})
-		return
-	}
-	if !mailConfigConfigured(cfg) {
-		writeLegacyStatusJSON(w, http.StatusInternalServerError, "未配置邮件", map[string]any{})
-		return
-	}
-	writeLegacyStatusJSON(w, http.StatusOK, "OK", map[string]any{})
-}
-
-func (s *Server) handleLegacyGetMailConfig(w http.ResponseWriter, r *http.Request, _ any) {
-	cfg, err := s.getMailConfig()
-	if err != nil {
-		writeLegacyStatusJSON(w, http.StatusInternalServerError, err.Error(), map[string]any{})
-		return
-	}
-	if !mailConfigConfigured(cfg) {
-		writeLegacyStatusJSON(w, http.StatusInternalServerError, "未配置邮件", map[string]any{})
-		return
-	}
-	writeLegacyStatusJSON(w, http.StatusOK, "OK", legacyMailConfigResponseFromStored(cfg))
-}
-
-func (s *Server) handleLegacyNeedPopUp(w http.ResponseWriter, r *http.Request, user any) {
-	userID := userIDFromMap(user)
-	if userID <= 0 {
-		w.WriteHeader(http.StatusForbidden)
-		return
-	}
-	key := legacyMobilePopupKey
-	state, ok, err := s.getPopupState(userID, key)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-	if !ok {
-		if _, err := s.putPopupState(model.PopupState{UserID: userID, Key: key, Count: 0}); err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		writeJSONBool(w, true)
-		return
-	}
-	if state.Dismissed && state.DismissedAt != nil && time.Since(*state.DismissedAt) < 24*time.Hour {
-		writeJSONBool(w, false)
-		return
-	}
-	writeJSONBool(w, state.Count < 5)
-}
-
-func (s *Server) handleLegacyClosePopUp(w http.ResponseWriter, r *http.Request, user any) {
-	userID := userIDFromMap(user)
-	if userID <= 0 {
-		w.WriteHeader(http.StatusForbidden)
-		return
-	}
-	key := legacyMobilePopupKey
-	state, ok, err := s.getPopupState(userID, key)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-	if !ok {
-		state = model.PopupState{UserID: userID, Key: key}
-	}
-	state.Count++
-	state.Dismissed = true
-	now := time.Now().UTC()
-	state.DismissedAt = &now
-	if _, err := s.putPopupState(state); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-	writeLegacyStatusJSON(w, http.StatusOK, "OK", map[string]any{})
-}
-
-func (s *Server) handleLegacyNeedContact(w http.ResponseWriter, r *http.Request) {
-	projectID, err := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("projectId")), 10, 64)
-	if err != nil || projectID <= 0 {
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-	total, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("total")))
-	if err != nil {
-		total = 0
-	}
-	if total > 50 {
-		now := time.Now().UTC()
-		_, _ = s.putPopupState(model.PopupState{UserID: 0, Key: legacyContactPopupKey(projectID), Dismissed: true, DismissedAt: &now, Count: 0})
-		writeJSONBool(w, false)
-		return
-	}
-	state, ok, err := s.getPopupState(0, legacyContactPopupKey(projectID))
-	if err != nil || !ok {
-		writeJSONBool(w, false)
-		return
-	}
-	writeJSONBool(w, !state.Dismissed)
-}
-
-func (s *Server) handleLegacyCloseContact(w http.ResponseWriter, r *http.Request) {
-	projectID, err := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("projectId")), 10, 64)
-	if err != nil || projectID <= 0 {
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-	state, ok, err := s.getPopupState(0, legacyContactPopupKey(projectID))
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-	if !ok {
-		state = model.PopupState{UserID: 0, Key: legacyContactPopupKey(projectID)}
-	}
-	state.Dismissed = true
-	now := time.Now().UTC()
-	state.DismissedAt = &now
-	if _, err := s.putPopupState(state); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-	writeLegacyStatusJSON(w, http.StatusOK, "OK", map[string]any{})
-}
-
-func (s *Server) handleLegacyUpdateEmotion(w http.ResponseWriter, r *http.Request, user any) {
-	itemID, err := legacyArticleIDFromRequest(r)
-	if err != nil {
-		writeDatamonitorJSON(w, http.StatusBadRequest, "fail")
-		return
-	}
-	emotion := nonEmpty(strings.TrimSpace(r.FormValue("flag")), strings.TrimSpace(r.FormValue("emotion")))
-	if err := s.updateLegacyEmotion(itemID, emotion); err != nil {
-		writeDatamonitorJSON(w, http.StatusInternalServerError, "fail")
-		return
-	}
-	writeDatamonitorJSON(w, http.StatusOK, "success")
-}
-
-func (s *Server) handleLegacyAddFavorite(w http.ResponseWriter, r *http.Request, user any) {
-	itemID, err := legacyArticleIDFromRequest(r)
-	if err != nil {
-		writeDatamonitorJSON(w, http.StatusBadRequest, "fail")
-		return
-	}
-	userID := userIDFromMap(user)
-	if userID <= 0 {
-		writeDatamonitorJSON(w, http.StatusForbidden, "fail")
-		return
-	}
-	item, err := s.fetchLegacyArticle(itemID, userID)
-	if err != nil {
-		writeDatamonitorJSON(w, http.StatusInternalServerError, "fail")
-		return
-	}
-	if !item.Favorited {
-		if err := s.ensureLegacyFavorite(itemID, userID); err != nil {
-			writeDatamonitorJSON(w, http.StatusInternalServerError, "fail")
-			return
-		}
-	}
-	writeDatamonitorJSON(w, http.StatusOK, "success")
-}
-
-func (s *Server) handleLegacyReadState(w http.ResponseWriter, r *http.Request, user any) {
-	itemID, err := legacyArticleIDFromRequest(r)
-	if err != nil {
-		writeDatamonitorJSON(w, http.StatusBadRequest, "fail")
-		return
-	}
-	userID := userIDFromMap(user)
-	if userID <= 0 {
-		writeDatamonitorJSON(w, http.StatusForbidden, "fail")
-		return
-	}
-	flag, _ := strconv.Atoi(strings.TrimSpace(r.FormValue("flag")))
-	item, err := s.fetchLegacyArticle(itemID, userID)
-	if err != nil {
-		writeDatamonitorJSON(w, http.StatusInternalServerError, "fail")
-		return
-	}
-	switch flag {
-	case 1:
-		if item.Read {
-			writeDatamonitorJSON(w, http.StatusInternalServerError, "fail")
-			return
-		}
-		if err := s.markLegacyRead(itemID, userID); err != nil {
-			writeDatamonitorJSON(w, http.StatusInternalServerError, "fail")
-			return
-		}
-		writeDatamonitorJSON(w, http.StatusOK, "success")
-	case 2:
-		if err := s.unmarkLegacyRead(itemID, userID); err != nil {
-			writeDatamonitorJSON(w, http.StatusInternalServerError, "fail")
-			return
-		}
-		writeDatamonitorJSON(w, http.StatusOK, "success")
-	default:
-		writeDatamonitorJSON(w, http.StatusBadRequest, "fail")
-	}
-}
-
-func (s *Server) handleLegacySelectReadSign(w http.ResponseWriter, r *http.Request, user any) {
-	itemID, err := legacyArticleIDFromRequest(r)
-	if err != nil {
-		writeDatamonitorJSON(w, http.StatusBadRequest, "err")
-		return
-	}
-	userID := userIDFromMap(user)
-	if userID <= 0 {
-		writeDatamonitorJSON(w, http.StatusForbidden, "err")
-		return
-	}
-	item, err := s.fetchLegacyArticle(itemID, userID)
-	if err != nil {
-		writeDatamonitorJSON(w, http.StatusInternalServerError, "err")
-		return
-	}
-	if item.Read {
-		writeDatamonitorJSON(w, http.StatusOK, "success")
-		return
-	}
-	writeDatamonitorJSON(w, http.StatusInternalServerError, "err")
-}
-
-func (s *Server) handleLegacyDeleteData(w http.ResponseWriter, r *http.Request, user any) {
-	itemID, err := legacyArticleIDFromRequest(r)
-	if err != nil {
-		writeDatamonitorJSON(w, http.StatusBadRequest, "fail")
-		return
-	}
-	if err := s.deleteLegacyArticle(itemID); err != nil {
-		writeDatamonitorJSON(w, http.StatusInternalServerError, "fail")
-		return
-	}
-	writeDatamonitorJSON(w, http.StatusOK, "success")
-}
-
-func (s *Server) handleLegacyCopyText(w http.ResponseWriter, r *http.Request, user any) {
-	itemID, err := legacyArticleIDFromRequest(r)
-	if err != nil {
-		writeDatamonitorJSON(w, http.StatusBadRequest, "")
-		return
-	}
-	userID := userIDFromMap(user)
-	item, err := s.fetchLegacyArticle(itemID, userID)
-	if err != nil {
-		writeDatamonitorJSON(w, http.StatusInternalServerError, "")
-		return
-	}
-	writeDatamonitorJSON(w, http.StatusOK, "标题："+item.Title+" 内容："+nonEmpty(item.Content, item.Summary))
-}
-
-func (s *Server) handleLegacySending(w http.ResponseWriter, r *http.Request, user any) {
-	itemID, err := legacyArticleIDFromRequest(r)
-	if err != nil {
-		writeDatamonitorJSON(w, http.StatusBadRequest, "1")
-		return
-	}
-	userID := userIDFromMap(user)
-	if userID <= 0 {
-		writeDatamonitorJSON(w, http.StatusForbidden, "0")
-		return
-	}
-	channel := "legacy-sending"
-	if projectID := strings.TrimSpace(r.FormValue("projectid")); projectID != "" {
-		channel = "project:" + projectID
-	} else if groupID := strings.TrimSpace(r.FormValue("groupid")); groupID != "" {
-		channel = "group:" + groupID
-	}
-	if err := s.shareLegacyArticle(itemID, userID, channel); err != nil {
-		writeDatamonitorJSON(w, http.StatusInternalServerError, "0")
-		return
-	}
-	writeDatamonitorJSON(w, http.StatusOK, "1")
-}
-
 func (s *Server) handleUserCompat(w http.ResponseWriter, r *http.Request, user any) {
 	target := url.Values{}
 	target.Set("section", "account")
@@ -973,160 +527,6 @@ func (s *Server) handleSystemWarningMessage(w http.ResponseWriter, r *http.Reque
 		target.Set("keyword", keyword)
 	}
 	http.Redirect(w, r, "/system?"+target.Encode(), http.StatusSeeOther)
-}
-
-func (s *Server) handleLegacyUserDetail(w http.ResponseWriter, r *http.Request, user any) {
-	mapped := legacyUserDetailPayload(user)
-	writeLegacyJSON(w, http.StatusOK, "OK", mapped)
-}
-
-func (s *Server) handleLegacyUserEdit(w http.ResponseWriter, r *http.Request, user any) {
-	if err := r.ParseForm(); err != nil {
-		writeLegacyStatusJSON(w, http.StatusBadRequest, "请求参数错误", nil)
-		return
-	}
-	oldPassword := strings.TrimSpace(r.FormValue("oldPassword"))
-	newPassword := strings.TrimSpace(r.FormValue("newPassword"))
-	if oldPassword == "" || newPassword == "" {
-		writeLegacyStatusJSON(w, http.StatusBadRequest, "密码不能为空", nil)
-		return
-	}
-	userID := userIDFromMap(user)
-	if userID <= 0 {
-		writeLegacyStatusJSON(w, http.StatusForbidden, "未登录", nil)
-		return
-	}
-	token, ok := s.sessionTokenFromRequest(r)
-	if !ok {
-		writeLegacyStatusJSON(w, http.StatusForbidden, "未登录", nil)
-		return
-	}
-	resp, err := s.client.R().
-		SetQueryParam("session_token", token).
-		SetBody(map[string]string{
-			"old_password": oldPassword,
-			"new_password": newPassword,
-		}).
-		Put(s.cfg.AuthURL + "/api/v1/users/" + strconv.FormatInt(userID, 10) + "/password")
-	if err != nil {
-		writeLegacyStatusJSON(w, http.StatusInternalServerError, err.Error(), nil)
-		return
-	}
-	if resp.IsSuccess() {
-		writeLegacyStatusJSON(w, http.StatusOK, "OK", map[string]any{})
-		return
-	}
-	if resp.StatusCode() == http.StatusBadRequest && strings.Contains(strings.ToLower(resp.String()), "old password") {
-		writeLegacyStatusJSON(w, http.StatusOK, 203, "旧密码输入错误！", map[string]any{})
-		return
-	}
-	writeLegacyStatusJSON(w, http.StatusOK, 201, "密码修改失败！", map[string]any{})
-}
-
-func (s *Server) handleLegacyUserSave(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		writeRawJSON(w, http.StatusOK, map[string]any{"state": false, "message": "请求参数错误"})
-		return
-	}
-	username := nonEmpty(r.FormValue("username"), r.FormValue("telephone"))
-	password := strings.TrimSpace(r.FormValue("password"))
-	if username == "" {
-		writeRawJSON(w, http.StatusOK, map[string]any{"state": false, "message": "用户名不能为空"})
-		return
-	}
-	if password == "" {
-		writeRawJSON(w, http.StatusOK, map[string]any{"state": false, "message": "密码不能为空"})
-		return
-	}
-	payload := map[string]any{
-		"username":         username,
-		"telephone":        strings.TrimSpace(r.FormValue("telephone")),
-		"password":         password,
-		"display_name":     nonEmpty(r.FormValue("display_name"), username),
-		"email":            strings.TrimSpace(r.FormValue("email")),
-		"role":             strings.TrimSpace(r.FormValue("role")),
-		"term_of_validity": strings.TrimSpace(r.FormValue("term_of_validity")),
-		"wechat_number":    strings.TrimSpace(r.FormValue("wechat_number")),
-		"openid":           strings.TrimSpace(r.FormValue("openid")),
-		"organization_id":  strings.TrimSpace(r.FormValue("organization_id")),
-	}
-	if raw := strings.TrimSpace(r.FormValue("status")); raw != "" {
-		if value, err := strconv.Atoi(raw); err == nil {
-			payload["status"] = value
-		}
-	}
-	if raw := strings.TrimSpace(r.FormValue("identity")); raw != "" {
-		if value, err := strconv.Atoi(raw); err == nil {
-			payload["identity"] = value
-		}
-	}
-	if raw := strings.TrimSpace(r.FormValue("user_level")); raw != "" {
-		if value, err := strconv.Atoi(raw); err == nil {
-			payload["user_level"] = value
-		}
-	}
-	if raw := strings.TrimSpace(r.FormValue("user_type")); raw != "" {
-		if value, err := strconv.Atoi(raw); err == nil {
-			payload["user_type"] = value
-		}
-	}
-	if raw := strings.TrimSpace(r.FormValue("wechatflag")); raw != "" {
-		if value, err := strconv.Atoi(raw); err == nil {
-			payload["wechatflag"] = value
-		}
-	}
-	resp, err := s.client.R().
-		SetBody(payload).
-		Post(s.cfg.AuthURL + "/api/v1/users")
-	if err != nil {
-		writeRawJSON(w, http.StatusOK, map[string]any{"state": false, "message": err.Error()})
-		return
-	}
-	if resp.IsSuccess() {
-		writeRawJSON(w, http.StatusOK, map[string]any{"state": true, "message": ""})
-		return
-	}
-	message := strings.TrimSpace(resp.String())
-	if message == "" {
-		message = resp.Status()
-	}
-	var envelope struct {
-		Message string `json:"message"`
-		Msg     string `json:"msg"`
-	}
-	if err := json.Unmarshal(resp.Body(), &envelope); err == nil {
-		if trimmed := strings.TrimSpace(nonEmpty(envelope.Message, envelope.Msg)); trimmed != "" {
-			message = trimmed
-		}
-	}
-	writeRawJSON(w, http.StatusOK, map[string]any{"state": false, "message": message})
-}
-
-func (s *Server) handleLegacyUserWechatQRCode(w http.ResponseWriter, r *http.Request, _ any) {
-	resp, err := s.client.R().Get(s.cfg.AuthURL + "/api/v1/wechat/getQrCode")
-	if err != nil {
-		writeLegacyStatusJSON(w, http.StatusBadGateway, err.Error(), nil)
-		return
-	}
-	if !resp.IsSuccess() {
-		writeLegacyStatusJSON(w, resp.StatusCode(), resp.Status(), nil)
-		return
-	}
-	var envelope struct {
-		Msg  string `json:"msg"`
-		Data struct {
-			QRCodeURL string `json:"qrcodeUrl"`
-			SceneStr  string `json:"sceneStr"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(resp.Body(), &envelope); err != nil {
-		writeLegacyStatusJSON(w, http.StatusInternalServerError, err.Error(), nil)
-		return
-	}
-	writeLegacyStatusJSON(w, http.StatusOK, "OK", map[string]any{
-		"ticket":   envelope.Data.QRCodeURL,
-		"sceneStr": envelope.Data.SceneStr,
-	})
 }
 
 func (s *Server) handleLegacyListSolutionGroupByUserID(w http.ResponseWriter, r *http.Request, _ any) {
@@ -1480,30 +880,6 @@ func (s *Server) handleLegacyUpdateWarning(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeLegacyStatusJSON(w, http.StatusOK, "OK", map[string]any{})
-}
-
-func (s *Server) handleLegacyGetSystemTitle(w http.ResponseWriter, r *http.Request, user any) {
-	payload := map[string]any{
-		"system_title": "网络情报分析系统",
-	}
-	if mapped, ok := user.(map[string]any); ok {
-		username := legacyStringFromAny(mapped["username"])
-		displayName := nonEmpty(legacyStringFromAny(mapped["display_name"]), username)
-		email := legacyStringFromAny(mapped["email"])
-		if displayName != "" {
-			payload["user_name"] = displayName
-		}
-		if username != "" {
-			payload["username"] = username
-		}
-		if displayName != "" {
-			payload["display_name"] = displayName
-		}
-		if email != "" {
-			payload["email"] = email
-		}
-	}
-	writeLegacyJSON(w, http.StatusOK, "OK", payload)
 }
 
 func decodeLegacySearchRequest(r *http.Request) (legacySearchRequest, error) {
@@ -2135,15 +1511,6 @@ func writeLegacyStatusJSON(w http.ResponseWriter, status int, args ...any) {
 	})
 }
 
-func writeDatamonitorJSON(w http.ResponseWriter, status int, result any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"status": status,
-		"result": result,
-	})
-}
-
 func writeJSONBool(w http.ResponseWriter, value bool) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
@@ -2168,17 +1535,6 @@ func writeResultUtilJSON(w http.ResponseWriter, status int, msg string, data any
 
 func legacyContactPopupKey(projectID int64) string {
 	return legacyContactPopupKeyPrefix + strconv.FormatInt(projectID, 10)
-}
-
-func legacyArticleIDFromRequest(r *http.Request) (int64, error) {
-	id := strings.TrimSpace(r.FormValue("id"))
-	if id == "" {
-		id = strings.TrimSpace(r.URL.Query().Get("id"))
-	}
-	if id == "" {
-		return 0, errors.New("id required")
-	}
-	return strconv.ParseInt(id, 10, 64)
 }
 
 func legacyStringFromAny(value any) string {
@@ -2271,119 +1627,6 @@ func (s *Server) putMailConfig(cfg model.MailConfig) (model.MailConfig, error) {
 	return envelope.Data, nil
 }
 
-func mailConfigConfigured(cfg model.MailConfig) bool {
-	return cfg.Enabled || strings.TrimSpace(cfg.SMTPHost) != "" || strings.TrimSpace(cfg.Username) != "" || strings.TrimSpace(cfg.Password) != "" || strings.TrimSpace(cfg.SenderEmail) != "" || strings.TrimSpace(cfg.SenderName) != ""
-}
-
-func legacyMailConfigResponseFromStored(cfg model.MailConfig) legacyMailConfigResponse {
-	return legacyMailConfigResponse{
-		Host:     cfg.SMTPHost,
-		Port:     strconv.Itoa(cfg.SMTPPort),
-		Username: cfg.Username,
-		Password: cfg.Password,
-		To:       nonEmpty(cfg.SenderEmail, cfg.Username),
-		Cc:       nil,
-		ToList:   nil,
-	}
-}
-
-func (s *Server) fetchLegacyArticle(itemID, userID int64) (model.Item, error) {
-	var item model.Item
-	target := s.cfg.ContentURL + "/api/v1/articles/" + strconv.FormatInt(itemID, 10)
-	if userID > 0 {
-		target += "?user_id=" + strconv.FormatInt(userID, 10)
-	}
-	if err := s.getJSON(target, &item); err != nil {
-		return model.Item{}, err
-	}
-	return item, nil
-}
-
-func (s *Server) ensureLegacyFavorite(itemID, userID int64) error {
-	item, err := s.fetchLegacyArticle(itemID, userID)
-	if err != nil {
-		return err
-	}
-	if item.Favorited {
-		return nil
-	}
-	resp, err := s.client.R().
-		SetQueryParam("user_id", strconv.FormatInt(userID, 10)).
-		Post(s.cfg.ContentURL + "/api/v1/articles/" + strconv.FormatInt(itemID, 10) + "/favorite")
-	if err != nil {
-		return err
-	}
-	if !resp.IsSuccess() {
-		return errors.New(resp.Status())
-	}
-	return nil
-}
-
-func (s *Server) markLegacyRead(itemID, userID int64) error {
-	resp, err := s.client.R().
-		SetQueryParam("user_id", strconv.FormatInt(userID, 10)).
-		Post(s.cfg.ContentURL + "/api/v1/articles/" + strconv.FormatInt(itemID, 10) + "/read")
-	if err != nil {
-		return err
-	}
-	if !resp.IsSuccess() {
-		return errors.New(resp.Status())
-	}
-	return nil
-}
-
-func (s *Server) unmarkLegacyRead(itemID, userID int64) error {
-	resp, err := s.client.R().
-		SetQueryParam("user_id", strconv.FormatInt(userID, 10)).
-		Delete(s.cfg.ContentURL + "/api/v1/articles/" + strconv.FormatInt(itemID, 10) + "/read")
-	if err != nil {
-		return err
-	}
-	if !resp.IsSuccess() {
-		return errors.New(resp.Status())
-	}
-	return nil
-}
-
-func (s *Server) updateLegacyEmotion(itemID int64, emotion string) error {
-	resp, err := s.client.R().
-		SetQueryParam("emotion", emotion).
-		Post(s.cfg.ContentURL + "/api/v1/articles/" + strconv.FormatInt(itemID, 10) + "/emotion")
-	if err != nil {
-		return err
-	}
-	if !resp.IsSuccess() {
-		return errors.New(resp.Status())
-	}
-	return nil
-}
-
-func (s *Server) deleteLegacyArticle(itemID int64) error {
-	resp, err := s.client.R().
-		Delete(s.cfg.ContentURL + "/api/v1/articles/" + strconv.FormatInt(itemID, 10))
-	if err != nil {
-		return err
-	}
-	if !resp.IsSuccess() {
-		return errors.New(resp.Status())
-	}
-	return nil
-}
-
-func (s *Server) shareLegacyArticle(itemID, userID int64, channel string) error {
-	resp, err := s.client.R().
-		SetQueryParam("user_id", strconv.FormatInt(userID, 10)).
-		SetBody(map[string]any{"channel": channel}).
-		Post(s.cfg.ContentURL + "/api/v1/articles/" + strconv.FormatInt(itemID, 10) + "/share")
-	if err != nil {
-		return err
-	}
-	if !resp.IsSuccess() {
-		return errors.New(resp.Status())
-	}
-	return nil
-}
-
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request, user any) {
 	if r.Method == http.MethodPost {
 		resp, err := s.client.R().Post(s.cfg.AnalysisURL + "/api/v1/admin/tasks/analysis/refresh")
@@ -2434,6 +1677,71 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request, user an
 		Services:  s.collectServiceStatuses(),
 		Message:   r.URL.Query().Get("msg"),
 	})
+}
+
+func isRemovedLegacyPortalPath(path string) bool {
+	switch {
+	case path == "/api/getToken",
+		path == "/api/getArticle",
+		path == "/api/getMergeArticle",
+		path == "/api/detail",
+		path == "/jumpLogin",
+		path == "/wechatJumpLogin",
+		path == "/onlinestatistical",
+		path == "/monitor/exportarticle",
+		path == "/search",
+		path == "/search/",
+		path == "/fullsearch",
+		path == "/fullsearch/",
+		path == "/timelysearch",
+		path == "/timelysearch/",
+		path == "/project/names",
+		path == "/project/groupandproject",
+		path == "/project/mkdirgroup",
+		path == "/project/getProjectCountByGroupId",
+		path == "/project/editgroup",
+		path == "/project/listproject",
+		path == "/project/getGroupAndProject",
+		path == "/project/verifygroup",
+		path == "/project/getedit",
+		path == "/project/commitproject",
+		path == "/project/detail",
+		path == "/project/commiteditproject",
+		path == "/project/delProject",
+		path == "/project/updateSolutionGroupStatus",
+		path == "/project/batchUpdateProject",
+		path == "/project/keywords",
+		path == "/mail/saveMailConfig",
+		path == "/mail/checkMailConfig",
+		path == "/mail/getMailConfig",
+		path == "/user/save",
+		path == "/user/getToken",
+		path == "/user/detail",
+		path == "/user/edit",
+		path == "/user/getwechatqrcode",
+		path == "/industry",
+		path == "/industry/",
+		path == "/getevent",
+		path == "/getevent/",
+		path == "/getProvinceList",
+		path == "/getProvinceList/",
+		path == "/getArticleCityList",
+		path == "/getArticleCityList/",
+		path == "/popUp/needPopUp",
+		path == "/popUp/close",
+		path == "/popUp/needContact",
+		path == "/popUp/closeContact",
+		path == "/datamonitor/updateemtion",
+		path == "/datamonitor/addfavoritedata",
+		path == "/datamonitor/isread",
+		path == "/datamonitor/selectreadsign",
+		path == "/datamonitor/deletedata",
+		path == "/datamonitor/copytext",
+		path == "/datamonitor/sending":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request, user any) {
@@ -4367,42 +3675,6 @@ func firstProjectGroupIDForTemplate(item model.Item, projects []model.Project) i
 	}
 	_, groupID := firstLegacyProjectAndGroup(item, projectMap)
 	return groupID
-}
-
-func legacyInt64Value(value any) int64 {
-	v, ok := legacyAPIInt64(value)
-	if !ok {
-		return 0
-	}
-	return v
-}
-
-func legacyUserDetailPayload(user any) map[string]any {
-	mapped, _ := user.(map[string]any)
-	displayName := legacyStringFromAny(mapped["display_name"])
-	username := legacyStringFromAny(mapped["username"])
-	email := legacyStringFromAny(mapped["email"])
-	status := legacyIntFromAnyValue(mapped["status"])
-	if status == 0 {
-		status = 1
-	}
-	updatedAt := legacyStringFromAny(mapped["updated_at"])
-	if updatedAt == "" {
-		updatedAt = time.Now().UTC().Format(time.RFC3339)
-	}
-	return map[string]any{
-		"username":          username,
-		"display_name":      displayName,
-		"telephone":         nonEmpty(legacyStringFromAny(mapped["telephone"]), username),
-		"organization_name": legacyStringFromAny(mapped["organization_name"]),
-		"email":             email,
-		"status":            status,
-		"login_count":       legacyIntFromAnyValue(mapped["login_count"]),
-		"end_login_time":    nonEmpty(legacyStringFromAny(mapped["end_login_time"]), updatedAt),
-		"role":              legacyStringFromAny(mapped["role"]),
-		"system_title":      "网络情报分析系统",
-		"updated_at":        updatedAt,
-	}
 }
 
 func legacyIntFromAnyValue(value any) int {

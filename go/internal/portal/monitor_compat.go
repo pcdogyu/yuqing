@@ -266,7 +266,57 @@ func (s *Server) handleLegacyMonitorEditRead(w http.ResponseWriter, r *http.Requ
 	}
 	formReq.Form = values
 	formReq.PostForm = values
-	s.handleLegacyReadState(w, formReq, user)
+	itemID := parseProjectID(nonEmpty(values.Get("id"), values.Get("articleid"), values.Get("articleId"), r.URL.Query().Get("id")))
+	if itemID <= 0 {
+		writeLegacyMonitorJSON(w, http.StatusBadRequest, "fail")
+		return
+	}
+	userID := userIDFromMap(user)
+	if userID <= 0 {
+		writeLegacyMonitorJSON(w, http.StatusForbidden, "fail")
+		return
+	}
+	flag, _ := strconv.Atoi(strings.TrimSpace(formReq.FormValue("flag")))
+	var item model.Item
+	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/articles/"+strconv.FormatInt(itemID, 10)+"?user_id="+strconv.FormatInt(userID, 10), &item); err != nil {
+		writeLegacyMonitorJSON(w, http.StatusInternalServerError, "fail")
+		return
+	}
+	switch flag {
+	case 1:
+		if item.Read {
+			writeLegacyMonitorJSON(w, http.StatusInternalServerError, "fail")
+			return
+		}
+		resp, err := s.client.R().
+			SetQueryParam("user_id", strconv.FormatInt(userID, 10)).
+			Post(s.cfg.ContentURL + "/api/v1/articles/" + strconv.FormatInt(itemID, 10) + "/read")
+		if err != nil || !resp.IsSuccess() {
+			writeLegacyMonitorJSON(w, http.StatusInternalServerError, "fail")
+			return
+		}
+		writeLegacyMonitorJSON(w, http.StatusOK, "success")
+	case 2:
+		resp, err := s.client.R().
+			SetQueryParam("user_id", strconv.FormatInt(userID, 10)).
+			Delete(s.cfg.ContentURL + "/api/v1/articles/" + strconv.FormatInt(itemID, 10) + "/read")
+		if err != nil || !resp.IsSuccess() {
+			writeLegacyMonitorJSON(w, http.StatusInternalServerError, "fail")
+			return
+		}
+		writeLegacyMonitorJSON(w, http.StatusOK, "success")
+	default:
+		writeLegacyMonitorJSON(w, http.StatusBadRequest, "fail")
+	}
+}
+
+func writeLegacyMonitorJSON(w http.ResponseWriter, status int, result any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status": status,
+		"result": result,
+	})
 }
 
 func (s *Server) handleLegacyMonitorEditStatus(w http.ResponseWriter, r *http.Request, user any) {

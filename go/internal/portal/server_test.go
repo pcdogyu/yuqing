@@ -875,265 +875,6 @@ func TestAnalysisCompatJSON(t *testing.T) {
 	}
 }
 
-func TestLegacyMailCompatibility(t *testing.T) {
-	srv, cleanup := newPortalCompatServer(t)
-	defer cleanup()
-
-	blankReq := httptest.NewRequest(http.MethodPost, "/mail/checkMailConfig", strings.NewReader(`{}`))
-	blankRR := httptest.NewRecorder()
-	srv.handleLegacyCheckMailConfig(blankRR, blankReq, map[string]any{"id": 1})
-	if blankRR.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500 before save, got %d", blankRR.Code)
-	}
-
-	saveReq := httptest.NewRequest(http.MethodPost, "/mail/saveMailConfig", strings.NewReader(`{"host":"smtp.example.com","username":"robot@example.com","password":"secret","port":"465"}`))
-	saveRR := httptest.NewRecorder()
-	srv.handleLegacySaveMailConfig(saveRR, saveReq, map[string]any{"id": 1})
-	if saveRR.Code != http.StatusOK {
-		t.Fatalf("expected 200 on save, got %d", saveRR.Code)
-	}
-	var saveEnvelope struct {
-		Status int                      `json:"status"`
-		Msg    string                   `json:"msg"`
-		Data   legacyMailConfigResponse `json:"data"`
-	}
-	if err := json.Unmarshal(saveRR.Body.Bytes(), &saveEnvelope); err != nil {
-		t.Fatalf("unmarshal save response: %v", err)
-	}
-	if saveEnvelope.Status != http.StatusOK || saveEnvelope.Data.Host != "smtp.example.com" || saveEnvelope.Data.Port != "465" {
-		t.Fatalf("unexpected save response: %+v", saveEnvelope)
-	}
-
-	checkReq := httptest.NewRequest(http.MethodPost, "/mail/checkMailConfig", strings.NewReader(`{}`))
-	checkRR := httptest.NewRecorder()
-	srv.handleLegacyCheckMailConfig(checkRR, checkReq, map[string]any{"id": 1})
-	if checkRR.Code != http.StatusOK {
-		t.Fatalf("expected 200 after save, got %d", checkRR.Code)
-	}
-	var checkEnvelope struct {
-		Status int    `json:"status"`
-		Msg    string `json:"msg"`
-	}
-	if err := json.Unmarshal(checkRR.Body.Bytes(), &checkEnvelope); err != nil {
-		t.Fatalf("unmarshal check response: %v", err)
-	}
-	if checkEnvelope.Status != http.StatusOK {
-		t.Fatalf("unexpected check response: %+v", checkEnvelope)
-	}
-
-	getReq := httptest.NewRequest(http.MethodPost, "/mail/getMailConfig", strings.NewReader(`{}`))
-	getRR := httptest.NewRecorder()
-	srv.handleLegacyGetMailConfig(getRR, getReq, map[string]any{"id": 1})
-	if getRR.Code != http.StatusOK {
-		t.Fatalf("expected 200 on get, got %d", getRR.Code)
-	}
-	var getEnvelope struct {
-		Status int                      `json:"status"`
-		Data   legacyMailConfigResponse `json:"data"`
-	}
-	if err := json.Unmarshal(getRR.Body.Bytes(), &getEnvelope); err != nil {
-		t.Fatalf("unmarshal get response: %v", err)
-	}
-	if getEnvelope.Data.Host != "smtp.example.com" || getEnvelope.Data.Username != "robot@example.com" || getEnvelope.Data.Password != "secret" {
-		t.Fatalf("unexpected get response: %+v", getEnvelope)
-	}
-}
-
-func TestLegacyPopupCompatibility(t *testing.T) {
-	srv, cleanup := newPortalCompatServer(t)
-	defer cleanup()
-
-	seedPopupState(t, srv, model.PopupState{
-		UserID:      1,
-		Key:         legacyMobilePopupKey,
-		Count:       4,
-		Dismissed:   true,
-		DismissedAt: timePtr(time.Now().Add(-25 * time.Hour)),
-	})
-	needReq := httptest.NewRequest(http.MethodGet, "/popUp/needPopUp", nil)
-	needRR := httptest.NewRecorder()
-	srv.handleLegacyNeedPopUp(needRR, needReq, map[string]any{"id": 1})
-	if needRR.Code != http.StatusOK {
-		t.Fatalf("expected 200 on needPopUp, got %d", needRR.Code)
-	}
-	if got := strings.TrimSpace(needRR.Body.String()); got != "true" {
-		t.Fatalf("expected true on expired popup state, got %q", got)
-	}
-
-	closeReq := httptest.NewRequest(http.MethodPost, "/popUp/close", nil)
-	closeRR := httptest.NewRecorder()
-	srv.handleLegacyClosePopUp(closeRR, closeReq, map[string]any{"id": 1})
-	if closeRR.Code != http.StatusOK {
-		t.Fatalf("expected 200 on close, got %d", closeRR.Code)
-	}
-	state := getStoredPopupState(t, srv, 1, legacyMobilePopupKey)
-	if !state.Dismissed || state.Count != 5 {
-		t.Fatalf("expected popup to be dismissed with count 5, got %+v", state)
-	}
-
-	needRR2 := httptest.NewRecorder()
-	srv.handleLegacyNeedPopUp(needRR2, needReq, map[string]any{"id": 1})
-	if got := strings.TrimSpace(needRR2.Body.String()); got != "false" {
-		t.Fatalf("expected false after 5th close, got %q", got)
-	}
-
-	seedPopupState(t, srv, model.PopupState{
-		UserID:      0,
-		Key:         legacyContactPopupKey(7),
-		Dismissed:   false,
-		DismissedAt: nil,
-	})
-	contactReq := httptest.NewRequest(http.MethodGet, "/popUp/needContact?projectId=7&total=20", nil)
-	contactRR := httptest.NewRecorder()
-	srv.handleLegacyNeedContact(contactRR, contactReq)
-	if got := strings.TrimSpace(contactRR.Body.String()); got != "true" {
-		t.Fatalf("expected true for seeded contact popup, got %q", got)
-	}
-	closeContactReq := httptest.NewRequest(http.MethodPost, "/popUp/closeContact?projectId=7", nil)
-	closeContactRR := httptest.NewRecorder()
-	srv.handleLegacyCloseContact(closeContactRR, closeContactReq)
-	if closeContactRR.Code != http.StatusOK {
-		t.Fatalf("expected 200 on closeContact, got %d", closeContactRR.Code)
-	}
-	contactState := getStoredPopupState(t, srv, 0, legacyContactPopupKey(7))
-	if !contactState.Dismissed {
-		t.Fatalf("expected contact popup dismissed, got %+v", contactState)
-	}
-
-	contactRR2 := httptest.NewRecorder()
-	srv.handleLegacyNeedContact(contactRR2, httptest.NewRequest(http.MethodGet, "/popUp/needContact?projectId=7&total=51", nil))
-	if got := strings.TrimSpace(contactRR2.Body.String()); got != "false" {
-		t.Fatalf("expected false for large result set, got %q", got)
-	}
-}
-
-func TestLegacyDataMonitorCompatibility(t *testing.T) {
-	srv, cleanup := newPortalCompatServer(t)
-	defer cleanup()
-
-	var envelope struct {
-		Status int    `json:"status"`
-		Result string `json:"result"`
-	}
-
-	addReq := httptest.NewRequest(http.MethodPost, "/datamonitor/addfavoritedata", strings.NewReader("id=99&projectid=7&groupid=8"))
-	addReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	addRR := httptest.NewRecorder()
-	srv.handleLegacyAddFavorite(addRR, addReq, map[string]any{"id": 1})
-	if err := json.Unmarshal(addRR.Body.Bytes(), &envelope); err != nil {
-		t.Fatalf("unmarshal add favorite response: %v", err)
-	}
-	if envelope.Status != http.StatusOK || envelope.Result != "success" {
-		t.Fatalf("unexpected add favorite response: %+v", envelope)
-	}
-
-	addRR2 := httptest.NewRecorder()
-	srv.handleLegacyAddFavorite(addRR2, addReq, map[string]any{"id": 1})
-	if err := json.Unmarshal(addRR2.Body.Bytes(), &envelope); err != nil {
-		t.Fatalf("unmarshal second add favorite response: %v", err)
-	}
-	if envelope.Status != http.StatusOK {
-		t.Fatalf("unexpected second add favorite response: %+v", envelope)
-	}
-
-	readReq := httptest.NewRequest(http.MethodPost, "/datamonitor/isread", strings.NewReader("id=99&flag=1"))
-	readReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	readRR := httptest.NewRecorder()
-	srv.handleLegacyReadState(readRR, readReq, map[string]any{"id": 1})
-	if err := json.Unmarshal(readRR.Body.Bytes(), &envelope); err != nil {
-		t.Fatalf("unmarshal read response: %v", err)
-	}
-	if envelope.Status != http.StatusOK {
-		t.Fatalf("expected 200 on mark read, got %+v", envelope)
-	}
-
-	selectReq := httptest.NewRequest(http.MethodPost, "/datamonitor/selectreadsign", strings.NewReader("id=99"))
-	selectReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	selectRR := httptest.NewRecorder()
-	srv.handleLegacySelectReadSign(selectRR, selectReq, map[string]any{"id": 1})
-	if err := json.Unmarshal(selectRR.Body.Bytes(), &envelope); err != nil {
-		t.Fatalf("unmarshal select read response: %v", err)
-	}
-	if envelope.Status != http.StatusOK {
-		t.Fatalf("expected read sign to exist, got %+v", envelope)
-	}
-
-	unreadReq := httptest.NewRequest(http.MethodPost, "/datamonitor/isread", strings.NewReader("id=99&flag=2"))
-	unreadReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	unreadRR := httptest.NewRecorder()
-	srv.handleLegacyReadState(unreadRR, unreadReq, map[string]any{"id": 1})
-	if err := json.Unmarshal(unreadRR.Body.Bytes(), &envelope); err != nil {
-		t.Fatalf("unmarshal unread response: %v", err)
-	}
-	if envelope.Status != http.StatusOK {
-		t.Fatalf("expected 200 on unmark read, got %+v", envelope)
-	}
-
-	selectRR2 := httptest.NewRecorder()
-	srv.handleLegacySelectReadSign(selectRR2, selectReq, map[string]any{"id": 1})
-	if err := json.Unmarshal(selectRR2.Body.Bytes(), &envelope); err != nil {
-		t.Fatalf("unmarshal second select read response: %v", err)
-	}
-	if envelope.Status != http.StatusInternalServerError {
-		t.Fatalf("expected missing read sign after unmark, got %+v", envelope)
-	}
-
-	copyReq := httptest.NewRequest(http.MethodPost, "/datamonitor/copytext", strings.NewReader("id=99"))
-	copyReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	copyRR := httptest.NewRecorder()
-	srv.handleLegacyCopyText(copyRR, copyReq, map[string]any{"id": 1})
-	if err := json.Unmarshal(copyRR.Body.Bytes(), &envelope); err != nil {
-		t.Fatalf("unmarshal copy response: %v", err)
-	}
-	if envelope.Status != http.StatusOK || !strings.Contains(envelope.Result, "测试标题") {
-		t.Fatalf("unexpected copy response: %+v", envelope)
-	}
-
-	emotionReq := httptest.NewRequest(http.MethodPost, "/datamonitor/updateemtion", strings.NewReader("id=99&flag=3"))
-	emotionReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	emotionRR := httptest.NewRecorder()
-	srv.handleLegacyUpdateEmotion(emotionRR, emotionReq, map[string]any{"id": 1})
-	if err := json.Unmarshal(emotionRR.Body.Bytes(), &envelope); err != nil {
-		t.Fatalf("unmarshal emotion response: %v", err)
-	}
-	if envelope.Status != http.StatusOK {
-		t.Fatalf("unexpected emotion response: %+v", envelope)
-	}
-
-	if item, err := srv.fetchLegacyArticle(99, 1); err != nil || item.TagFlags != "3" {
-		t.Fatalf("expected emotion to be reflected in article payload, got item=%+v err=%v", item, err)
-	}
-
-	sendReq := httptest.NewRequest(http.MethodPost, "/datamonitor/sending", strings.NewReader("id=99&projectid=7&groupid=8"))
-	sendReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	sendRR := httptest.NewRecorder()
-	srv.handleLegacySending(sendRR, sendReq, map[string]any{"id": 1})
-	if err := json.Unmarshal(sendRR.Body.Bytes(), &envelope); err != nil {
-		t.Fatalf("unmarshal send response: %v", err)
-	}
-	if envelope.Status != http.StatusOK {
-		t.Fatalf("unexpected send response: %+v", envelope)
-	}
-
-	if item, err := srv.fetchLegacyArticle(99, 1); err != nil || item.FromText != "project:7" {
-		t.Fatalf("expected share channel to be reflected in article payload, got item=%+v err=%v", item, err)
-	}
-
-	deleteReq := httptest.NewRequest(http.MethodPost, "/datamonitor/deletedata", strings.NewReader("id=99&flag=1"))
-	deleteReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	deleteRR := httptest.NewRecorder()
-	srv.handleLegacyDeleteData(deleteRR, deleteReq, map[string]any{"id": 1})
-	if err := json.Unmarshal(deleteRR.Body.Bytes(), &envelope); err != nil {
-		t.Fatalf("unmarshal delete response: %v", err)
-	}
-	if envelope.Status != http.StatusOK {
-		t.Fatalf("unexpected delete response: %+v", envelope)
-	}
-	if _, err := srv.fetchLegacyArticle(99, 1); err == nil {
-		t.Fatal("expected deleted article to become inaccessible")
-	}
-}
-
 func TestPublicOptionCompatPages(t *testing.T) {
 	srv, cleanup := newPortalCompatServer(t)
 	defer cleanup()
@@ -1449,57 +1190,6 @@ func TestLegacySystemAndUserCompat(t *testing.T) {
 	}
 }
 
-func TestLegacyUserJSONCompat(t *testing.T) {
-	srv := &Server{}
-	user := map[string]any{
-		"username":     "alice",
-		"display_name": "Alice",
-		"email":        "alice@example.com",
-		"status":       1,
-		"updated_at":   "2026-06-03T10:00:00Z",
-	}
-
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/user/detail", nil)
-	srv.handleLegacyUserDetail(rr, req, user)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rr.Code)
-	}
-	var detail struct {
-		Code int `json:"code"`
-		Data struct {
-			Username string `json:"username"`
-			Email    string `json:"email"`
-			Status   int    `json:"status"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &detail); err != nil {
-		t.Fatalf("decode detail: %v", err)
-	}
-	if detail.Code != http.StatusOK || detail.Data.Username != "alice" || detail.Data.Email != "alice@example.com" || detail.Data.Status != 1 {
-		t.Fatalf("unexpected detail response: %+v", detail)
-	}
-
-	rr = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodGet, "/system/getSystemTitle", nil)
-	srv.handleLegacyGetSystemTitle(rr, req, user)
-	var title struct {
-		Code int `json:"code"`
-		Data struct {
-			SystemTitle string `json:"system_title"`
-			Username    string `json:"username"`
-			DisplayName string `json:"display_name"`
-			Email       string `json:"email"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &title); err != nil {
-		t.Fatalf("decode title: %v", err)
-	}
-	if title.Data.SystemTitle == "" || title.Data.Username != "alice" || title.Data.DisplayName != "Alice" || title.Data.Email != "alice@example.com" {
-		t.Fatalf("unexpected system title payload: %+v", title)
-	}
-}
-
 func TestLegacyUserSaveCompat(t *testing.T) {
 	srv, cleanup := newPortalCompatServer(t)
 	defer cleanup()
@@ -1511,429 +1201,8 @@ func TestLegacyUserSaveCompat(t *testing.T) {
 
 	srv.Router().ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rr.Code)
-	}
-	var envelope struct {
-		State   bool   `json:"state"`
-		Message string `json:"message"`
-	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
-		t.Fatalf("decode save response: %v", err)
-	}
-	if !envelope.State || envelope.Message != "" {
-		t.Fatalf("unexpected save response: %+v", envelope)
-	}
-}
-
-func TestLegacyUserEditCompat(t *testing.T) {
-	srv, cleanup := newPortalCompatServer(t)
-	defer cleanup()
-	user := map[string]any{"id": 1}
-
-	successReq := httptest.NewRequest(http.MethodPost, "/user/edit", strings.NewReader("oldPassword=password123&newPassword=newpass456"))
-	successReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	successReq.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "session-admin"})
-	successRR := httptest.NewRecorder()
-	srv.handleLegacyUserEdit(successRR, successReq, user)
-	if successRR.Code != http.StatusOK {
-		t.Fatalf("expected edit 200, got %d", successRR.Code)
-	}
-	var successEnvelope struct {
-		Status int    `json:"status"`
-		Msg    string `json:"msg"`
-	}
-	if err := json.Unmarshal(successRR.Body.Bytes(), &successEnvelope); err != nil {
-		t.Fatalf("decode edit success response: %v", err)
-	}
-	if successEnvelope.Status != http.StatusOK || successEnvelope.Msg != "OK" {
-		t.Fatalf("unexpected edit success payload: %+v", successEnvelope)
-	}
-
-	failReq := httptest.NewRequest(http.MethodPost, "/user/edit", strings.NewReader("oldPassword=wrong&newPassword=newpass456"))
-	failReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	failReq.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "session-admin"})
-	failRR := httptest.NewRecorder()
-	srv.handleLegacyUserEdit(failRR, failReq, user)
-	if failRR.Code != http.StatusOK {
-		t.Fatalf("expected edit compat 200, got %d", failRR.Code)
-	}
-	var failEnvelope struct {
-		Status int    `json:"status"`
-		Msg    string `json:"msg"`
-	}
-	if err := json.Unmarshal(failRR.Body.Bytes(), &failEnvelope); err != nil {
-		t.Fatalf("decode edit failure response: %v", err)
-	}
-	if failEnvelope.Status != 203 || failEnvelope.Msg != "旧密码输入错误！" {
-		t.Fatalf("unexpected edit failure payload: %+v", failEnvelope)
-	}
-}
-
-func TestLegacyUserWechatQRCodeCompat(t *testing.T) {
-	srv, cleanup := newPortalCompatServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/user/getwechatqrcode", nil)
-	rr := httptest.NewRecorder()
-	srv.handleLegacyUserWechatQRCode(rr, req, nil)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected qrcode 200, got %d", rr.Code)
-	}
-	var envelope struct {
-		Status int    `json:"status"`
-		Msg    string `json:"msg"`
-		Data   struct {
-			Ticket   string `json:"ticket"`
-			SceneStr string `json:"sceneStr"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
-		t.Fatalf("decode qrcode response: %v", err)
-	}
-	if envelope.Status != http.StatusOK || envelope.Msg != "OK" || envelope.Data.Ticket != "https://example.com/qr" || envelope.Data.SceneStr != "scene-1" {
-		t.Fatalf("unexpected qrcode payload: %+v", envelope)
-	}
-}
-
-func TestLegacyProjectCompat(t *testing.T) {
-	srv, cleanup := newPortalCompatServer(t)
-	defer cleanup()
-	user := map[string]any{"id": 1}
-
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/project/names?groupId=1", nil)
-	srv.handleLegacyProjectNames(rr, req, user)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected names 200, got %d", rr.Code)
-	}
-	var names struct {
-		GroupName   string `json:"groupName"`
-		ProjectName string `json:"projectName"`
-	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &names); err != nil {
-		t.Fatalf("decode names: %v", err)
-	}
-	if names.GroupName != "组一" {
-		t.Fatalf("unexpected group name: %+v", names)
-	}
-
-	rr = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/project/groupandproject", nil)
-	srv.handleLegacyProjectGroupAndProject(rr, req, user)
-	var groupsEnvelope struct {
-		Code int `json:"code"`
-		Data []struct {
-			GroupID   string `json:"group_id"`
-			GroupName string `json:"group_name"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &groupsEnvelope); err != nil {
-		t.Fatalf("decode group list: %v", err)
-	}
-	if groupsEnvelope.Code != 200 || len(groupsEnvelope.Data) == 0 || groupsEnvelope.Data[0].GroupName != "组一" {
-		t.Fatalf("unexpected group list: %+v", groupsEnvelope)
-	}
-
-	rr = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/project/mkdirgroup", strings.NewReader("group_name=组二"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	srv.handleLegacyProjectMkdirGroup(rr, req, user)
-	if rr.Code != http.StatusOK || strings.TrimSpace(rr.Body.String()) != "success" {
-		t.Fatalf("unexpected mkdirgroup response: code=%d body=%q", rr.Code, rr.Body.String())
-	}
-
-	rr = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/project/getProjectCountByGroupId?groupId=2", nil)
-	srv.handleLegacyProjectGetProjectCountByGroupID(rr, req, user)
-	var countEnvelope struct {
-		Count int `json:"count"`
-	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &countEnvelope); err != nil {
-		t.Fatalf("decode count response: %v", err)
-	}
-	if countEnvelope.Count != 0 {
-		t.Fatalf("unexpected new group count: %+v", countEnvelope)
-	}
-
-	rr = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/project/editgroup", strings.NewReader("group_id=2&group_name=组二改"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	srv.handleLegacyProjectEditGroup(rr, req, user)
-	var editGroupEnvelope struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
-	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &editGroupEnvelope); err != nil {
-		t.Fatalf("decode editgroup response: %v", err)
-	}
-	if editGroupEnvelope.Code != 200 {
-		t.Fatalf("unexpected editgroup response: %+v", editGroupEnvelope)
-	}
-
-	rr = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/project/listproject", strings.NewReader("groupid=1&page=1"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	srv.handleLegacyProjectListProject(rr, req, user)
-	var listEnvelope struct {
-		Code      int              `json:"code"`
-		TotalPage int              `json:"totalPage"`
-		TotalData int              `json:"totalData"`
-		Page      int              `json:"page"`
-		Data      []map[string]any `json:"data"`
-	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &listEnvelope); err != nil {
-		t.Fatalf("decode project list: %v", err)
-	}
-	if listEnvelope.Code != 200 || listEnvelope.TotalData != 1 || len(listEnvelope.Data) != 1 {
-		t.Fatalf("unexpected project list: %+v", listEnvelope)
-	}
-
-	rr = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/project/getGroupAndProject", nil)
-	srv.handleLegacyProjectGetGroupAndProject(rr, req, user)
-	var treeEnvelope struct {
-		Code int                           `json:"code"`
-		Flag bool                          `json:"flag"`
-		Data []map[string][]map[string]any `json:"data"`
-	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &treeEnvelope); err != nil {
-		t.Fatalf("decode group tree: %v", err)
-	}
-	if treeEnvelope.Code != 200 || len(treeEnvelope.Data) == 0 {
-		t.Fatalf("unexpected group tree: %+v", treeEnvelope)
-	}
-
-	rr = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/project/verifygroup", nil)
-	srv.handleLegacyProjectVerifyGroup(rr, req, user)
-	var verifyEnvelope struct {
-		Code int `json:"code"`
-	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &verifyEnvelope); err != nil {
-		t.Fatalf("decode verify response: %v", err)
-	}
-	if verifyEnvelope.Code != 200 {
-		t.Fatalf("unexpected verify response: %+v", verifyEnvelope)
-	}
-
-	rr = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodGet, "/project/getedit?projectid=1", nil)
-	srv.handleLegacyProjectGetEdit(rr, req, user)
-	var editEnvelope struct {
-		Code int            `json:"code"`
-		Data map[string]any `json:"data"`
-	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &editEnvelope); err != nil {
-		t.Fatalf("decode getedit response: %v", err)
-	}
-	if editEnvelope.Code != 200 || editEnvelope.Data["project_name"] != "项目一" {
-		t.Fatalf("unexpected getedit response: %+v", editEnvelope)
-	}
-
-	createBody := strings.NewReader(`{"project_name":"新方案","group_id":1,"project_type":2,"subject_word":"AI,金融","stop_word":"stop","regional_word":"北京","character_word":"张三","event_word":"事件","project_description":"新建方案"}`)
-	rr = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/project/commitproject", createBody)
-	req.Header.Set("Content-Type", "application/json")
-	srv.handleLegacyProjectCommitProject(rr, req, user)
-	var createEnvelope struct {
-		Code int `json:"code"`
-		Data struct {
-			GroupID   string `json:"group_id"`
-			ProjectID string `json:"project_id"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &createEnvelope); err != nil {
-		t.Fatalf("decode commitproject response: %v", err)
-	}
-	if createEnvelope.Code != 200 || createEnvelope.Data.ProjectID != "2" {
-		t.Fatalf("unexpected commitproject response: %+v", createEnvelope)
-	}
-
-	rr = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/project/detail", strings.NewReader("projectid=2"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	srv.handleLegacyProjectDetail(rr, req, user)
-	var detailEnvelope struct {
-		ProjectName   string `json:"project_name"`
-		ProjectType   int    `json:"project_type"`
-		SubjectWord   string `json:"subject_word"`
-		StopWord      string `json:"stop_word"`
-		RegionalWord  string `json:"regional_word"`
-		CharacterWord string `json:"character_word"`
-		EventWord     string `json:"event_word"`
-		Precise       string `json:"precise"`
-		IsOpenWarning bool   `json:"isOpenWarning"`
-	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &detailEnvelope); err != nil {
-		t.Fatalf("decode project detail: %v", err)
-	}
-	if detailEnvelope.ProjectName != "新方案" || detailEnvelope.SubjectWord != "AI,金融" || detailEnvelope.ProjectType != 2 {
-		t.Fatalf("unexpected detail response: %+v", detailEnvelope)
-	}
-	if detailEnvelope.Precise != "1" {
-		t.Fatalf("expected precise 1 after create, got %+v", detailEnvelope)
-	}
-
-	editBody := strings.NewReader(`{"project_id":2,"group_id":1,"project_name":"新方案改","project_type":1,"subject_word":"AI,金融,科技","stop_word":"","project_description":"更新方案"}`)
-	rr = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/project/commiteditproject", editBody)
-	req.Header.Set("Content-Type", "application/json")
-	srv.handleLegacyProjectCommitEditProject(rr, req, user)
-	var updateEnvelope struct {
-		Code int `json:"code"`
-		Data struct {
-			ProjectID string `json:"project_id"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &updateEnvelope); err != nil {
-		t.Fatalf("decode commitedit response: %v", err)
-	}
-	if updateEnvelope.Code != 200 || updateEnvelope.Data.ProjectID != "2" {
-		t.Fatalf("unexpected commitedit response: %+v", updateEnvelope)
-	}
-
-	rr = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodGet, "/project/getedit?projectid=2", nil)
-	srv.handleLegacyProjectGetEdit(rr, req, user)
-	if err := json.Unmarshal(rr.Body.Bytes(), &editEnvelope); err != nil {
-		t.Fatalf("decode getedit after update: %v", err)
-	}
-	if editEnvelope.Code != 200 || editEnvelope.Data["project_name"] != "新方案改" {
-		t.Fatalf("unexpected updated getedit response: %+v", editEnvelope)
-	}
-
-	rr = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/project/detail", strings.NewReader("projectid=2"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	srv.handleLegacyProjectDetail(rr, req, user)
-	if err := json.Unmarshal(rr.Body.Bytes(), &detailEnvelope); err != nil {
-		t.Fatalf("decode project detail after update: %v", err)
-	}
-	if detailEnvelope.ProjectName != "新方案改" || detailEnvelope.Precise != "0" {
-		t.Fatalf("unexpected updated detail response: %+v", detailEnvelope)
-	}
-
-	rr = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/project/delProject?groupid=1&projectid=1,2", nil)
-	srv.handleLegacyProjectDelProject(rr, req, user)
-	var deleteEnvelope struct {
-		DelStatus int    `json:"delstatus"`
-		Msg       string `json:"msg"`
-	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &deleteEnvelope); err != nil {
-		t.Fatalf("decode delProject response: %v", err)
-	}
-	if deleteEnvelope.DelStatus != 200 {
-		t.Fatalf("unexpected delProject response: %+v", deleteEnvelope)
-	}
-
-	rr = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/project/getProjectCountByGroupId?groupId=1", nil)
-	srv.handleLegacyProjectGetProjectCountByGroupID(rr, req, user)
-	if err := json.Unmarshal(rr.Body.Bytes(), &countEnvelope); err != nil {
-		t.Fatalf("decode count response after delete: %v", err)
-	}
-	if countEnvelope.Count != 0 {
-		t.Fatalf("unexpected deleted group count: %+v", countEnvelope)
-	}
-
-	rr = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/project/updateSolutionGroupStatus?groupId=2", nil)
-	srv.handleLegacyProjectUpdateSolutionGroupStatus(rr, req, user)
-	var deleteGroupEnvelope struct {
-		State   bool   `json:"state"`
-		Message string `json:"message"`
-	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &deleteGroupEnvelope); err != nil {
-		t.Fatalf("decode updateSolutionGroupStatus response: %v", err)
-	}
-	if !deleteGroupEnvelope.State {
-		t.Fatalf("unexpected group delete response: %+v", deleteGroupEnvelope)
-	}
-}
-
-func TestLegacyProjectBatchUpdateCompat(t *testing.T) {
-	srv, cleanup := newPortalCompatServer(t)
-	defer cleanup()
-	user := map[string]any{"id": 1}
-
-	createBody := strings.NewReader(`{"project_name":"批量删除方案","group_id":1,"project_type":1,"subject_word":"港股,AI","stop_word":"","project_description":"批量删除测试"}`)
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/project/commitproject", createBody)
-	req.Header.Set("Content-Type", "application/json")
-	srv.handleLegacyProjectCommitProject(rr, req, user)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected create 200, got %d", rr.Code)
-	}
-
-	form := url.Values{}
-	form.Set("projectIds", "[1,2]")
-	rr = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/project/batchUpdateProject", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	srv.handleLegacyProjectBatchUpdateProject(rr, req, user)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected batch delete 200, got %d", rr.Code)
-	}
-	var envelope struct {
-		State   bool   `json:"state"`
-		Message string `json:"message"`
-	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
-		t.Fatalf("decode batch delete response: %v", err)
-	}
-	if !envelope.State || envelope.Message != "删除方案成功！" {
-		t.Fatalf("unexpected batch delete response: %+v", envelope)
-	}
-
-	rr = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/project/getProjectCountByGroupId?groupId=1", nil)
-	srv.handleLegacyProjectGetProjectCountByGroupID(rr, req, user)
-	var countEnvelope struct {
-		Count int `json:"count"`
-	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &countEnvelope); err != nil {
-		t.Fatalf("decode count response: %v", err)
-	}
-	if countEnvelope.Count != 0 {
-		t.Fatalf("expected empty group after batch delete, got %+v", countEnvelope)
-	}
-}
-
-func TestLegacyProjectKeywordsCompat(t *testing.T) {
-	srv, cleanup := newPortalCompatServer(t)
-	defer cleanup()
-	user := map[string]any{"id": 1}
-
-	createBody := strings.NewReader(`{"project_name":"关键词方案","group_id":1,"project_type":1,"subject_word":"港股,AI","stop_word":"","project_description":"关键词测试"}`)
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/project/commitproject", createBody)
-	req.Header.Set("Content-Type", "application/json")
-	srv.handleLegacyProjectCommitProject(rr, req, user)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected create 200, got %d", rr.Code)
-	}
-
-	rr = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/project/keywords?page=1&size=20", nil)
-	srv.handleLegacyProjectKeywords(rr, req, user)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected keywords 200, got %d", rr.Code)
-	}
-	var envelope struct {
-		Code int    `json:"code"`
-		Data string `json:"data"`
-		Msg  string `json:"msg"`
-	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
-		t.Fatalf("decode keywords response: %v", err)
-	}
-	if envelope.Code != 200 || envelope.Msg != "获取关键词成功！" {
-		t.Fatalf("unexpected keywords response: %+v", envelope)
-	}
-	if envelope.Data != "AI,新能源,港股,AI" {
-		t.Fatalf("unexpected keywords data: %+v", envelope)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for removed legacy route, got %d", rr.Code)
 	}
 }
 
@@ -2215,29 +1484,54 @@ func TestTemplateCrawlActionsAcrossPages(t *testing.T) {
 	})
 }
 
-func TestLegacyAPITokenCreatesBearerToken(t *testing.T) {
+func TestRemovedLegacyAPIRoutesReturn404(t *testing.T) {
 	srv, cleanup := newPortalCompatServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/getToken", strings.NewReader(`{"username":"admin","password":"secret"}`))
-	req.Header.Set("Content-Type", "application/json")
-	rr := httptest.NewRecorder()
-
-	srv.handleLegacyAPIToken(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rr.Code)
-	}
-
-	var payload struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
-		Data string `json:"data"`
-	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("unmarshal token response: %v", err)
-	}
-	if payload.Code != http.StatusOK || payload.Data != "legacy-token" {
-		t.Fatalf("unexpected token payload: %+v", payload)
+	for _, path := range []string{
+		"/api/getToken",
+		"/api/getArticle",
+		"/api/getMergeArticle",
+		"/api/detail",
+		"/monitor/exportarticle",
+		"/project/names",
+		"/project/groupandproject",
+		"/project/mkdirgroup",
+		"/project/getProjectCountByGroupId",
+		"/project/editgroup",
+		"/project/listproject",
+		"/project/getGroupAndProject",
+		"/project/verifygroup",
+		"/project/getedit",
+		"/project/commitproject",
+		"/project/detail",
+		"/project/commiteditproject",
+		"/project/delProject",
+		"/project/updateSolutionGroupStatus",
+		"/project/batchUpdateProject",
+		"/project/keywords",
+		"/mail/checkMailConfig",
+		"/mail/saveMailConfig",
+		"/mail/getMailConfig",
+		"/popUp/needPopUp",
+		"/popUp/close",
+		"/popUp/needContact",
+		"/popUp/closeContact",
+		"/datamonitor/addfavoritedata",
+		"/datamonitor/isread",
+		"/datamonitor/selectreadsign",
+		"/datamonitor/copytext",
+		"/datamonitor/updateemtion",
+		"/datamonitor/sending",
+		"/datamonitor/deletedata",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "session-admin"})
+		rr := httptest.NewRecorder()
+		srv.Router().ServeHTTP(rr, req)
+		if rr.Code != http.StatusNotFound {
+			t.Fatalf("expected 404 for removed legacy route %s, got %d", path, rr.Code)
+		}
 	}
 }
 
@@ -2289,11 +1583,8 @@ func TestLegacyJumpLoginFallbackRoutes(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		rr := httptest.NewRecorder()
 		srv.Router().ServeHTTP(rr, req)
-		if rr.Code != http.StatusSeeOther {
-			t.Fatalf("expected redirect for %s, got %d", path, rr.Code)
-		}
-		if loc := rr.Header().Get("Location"); !strings.HasPrefix(loc, "/login?reference=%2Fmonitor") {
-			t.Fatalf("unexpected redirect location for %s: %s", path, loc)
+		if rr.Code != http.StatusNotFound {
+			t.Fatalf("expected 404 for removed legacy route %s, got %d", path, rr.Code)
 		}
 	}
 }
@@ -2303,119 +1594,10 @@ func TestLegacyOnlineStatisticalCompat(t *testing.T) {
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodPost, "/onlinestatistical", nil)
-	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "session-admin"})
 	rr := httptest.NewRecorder()
 	srv.Router().ServeHTTP(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected onlinestatistical 200, got %d", rr.Code)
-	}
-	var envelope struct {
-		Code       int `json:"code"`
-		OnlineData struct {
-			UserID      int64  `json:"user_id"`
-			Username    string `json:"username"`
-			DisplayName string `json:"display_name"`
-			Online      bool   `json:"online"`
-		} `json:"onlinedata"`
-	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
-		t.Fatalf("decode onlinestatistical response: %v", err)
-	}
-	if envelope.Code != 1 || envelope.OnlineData.UserID != 1 || envelope.OnlineData.Username != "admin" || !envelope.OnlineData.Online {
-		t.Fatalf("unexpected onlinestatistical payload: %+v", envelope)
-	}
-}
-
-func TestLegacyUserGetTokenAlias(t *testing.T) {
-	srv, cleanup := newPortalCompatServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/user/getToken", strings.NewReader(`{"username":"admin","password":"secret"}`))
-	req.Header.Set("Content-Type", "application/json")
-	rr := httptest.NewRecorder()
-	srv.Router().ServeHTTP(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected user/getToken 200, got %d", rr.Code)
-	}
-	var envelope struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
-		Data string `json:"data"`
-	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
-		t.Fatalf("decode user/getToken response: %v", err)
-	}
-	if envelope.Code != 200 || envelope.Data != "legacy-token" {
-		t.Fatalf("unexpected user/getToken payload: %+v", envelope)
-	}
-}
-
-func TestLegacyAPIArticleListCompat(t *testing.T) {
-	srv, cleanup := newPortalCompatServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/getArticle", strings.NewReader(`{"searchkeyword":"AI","pageNum":1,"pageSize":10}`))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer legacy-token")
-	rr := httptest.NewRecorder()
-
-	srv.handleLegacyAPIArticleList(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rr.Code)
-	}
-
-	var payload struct {
-		Code int `json:"code"`
-		Data struct {
-			Data        []map[string]any `json:"data"`
-			TotalPage   int              `json:"totalPage"`
-			TotalCount  int              `json:"totalCount"`
-			CurrentPage int              `json:"currentPage"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("unmarshal article response: %v", err)
-	}
-	if payload.Code != 0 || len(payload.Data.Data) == 0 {
-		t.Fatalf("unexpected article payload: %+v", payload)
-	}
-	if got := payload.Data.Data[0]["title"]; got != "AI 观察日报" {
-		t.Fatalf("expected first article title AI 观察日报, got %#v", got)
-	}
-	if payload.Data.TotalCount == 0 || payload.Data.CurrentPage != 1 {
-		t.Fatalf("unexpected paging payload: %+v", payload.Data)
-	}
-}
-
-func TestLegacyAPIArticleDetailCompat(t *testing.T) {
-	srv, cleanup := newPortalCompatServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/detail?articleId=101", nil)
-	req.Header.Set("Authorization", "Bearer legacy-token")
-	rr := httptest.NewRecorder()
-
-	srv.handleLegacyAPIArticleDetail(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rr.Code)
-	}
-
-	var payload struct {
-		Code int `json:"code"`
-		Data struct {
-			Title  string         `json:"title"`
-			Text   string         `json:"text"`
-			Detail map[string]any `json:"detail"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("unmarshal detail response: %v", err)
-	}
-	if payload.Code != 0 || payload.Data.Title != "新能源 研判" {
-		t.Fatalf("unexpected detail payload: %+v", payload)
-	}
-	if got := payload.Data.Detail["article_public_id"]; got != "101" {
-		t.Fatalf("expected article_public_id 101, got %#v", got)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for removed legacy route, got %d", rr.Code)
 	}
 }
 
@@ -2541,34 +1723,6 @@ func TestLegacyReportCompat(t *testing.T) {
 	})
 }
 
-func TestLegacyMonitorExportProducesWorkbook(t *testing.T) {
-	srv, cleanup := newPortalCompatServer(t)
-	defer cleanup()
-
-	form := url.Values{}
-	form.Set("data", `{"exportType":"0","exportlist":[100,101]}`)
-	req := httptest.NewRequest(http.MethodPost, "/monitor/exportarticle", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	rr := httptest.NewRecorder()
-
-	srv.handleLegacyMonitorExport(rr, req, map[string]any{"id": 1, "username": "admin"})
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rr.Code)
-	}
-	if contentType := rr.Header().Get("Content-Type"); !strings.Contains(contentType, "application/vnd.ms-excel") {
-		t.Fatalf("expected excel content type, got %q", contentType)
-	}
-	if disposition := rr.Header().Get("Content-Disposition"); !strings.Contains(disposition, "monitor_export_") {
-		t.Fatalf("expected attachment disposition, got %q", disposition)
-	}
-	body := rr.Body.String()
-	for _, want := range []string{"<Workbook", "AI 观察日报", "新能源 研判", "标题", "链接"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("expected export workbook to contain %q, got %s", want, body)
-		}
-	}
-}
-
 func assertLastCrawlRequest(t *testing.T, srv *Server, wantTemplateID, wantSourceType, wantKeyword string) {
 	t.Helper()
 	_ = srv
@@ -2581,10 +1735,6 @@ func assertLastCrawlRequest(t *testing.T, srv *Server, wantTemplateID, wantSourc
 
 func newPortalCompatServer(t *testing.T) (*Server, func()) {
 	t.Helper()
-	legacyProjectMetaMu.Lock()
-	legacyProjectMetaByID = map[int64]legacyProjectMeta{}
-	legacyProjectMetaMu.Unlock()
-
 	var mu sync.Mutex
 	var projectMu sync.Mutex
 	var authMu sync.Mutex

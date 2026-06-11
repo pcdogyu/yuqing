@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -124,10 +125,37 @@ func TestHandleCreateUser(t *testing.T) {
 	}
 }
 
+func TestHandleCreateToken(t *testing.T) {
+	store := newFakeAuthStore()
+	svc := NewService(config.Config{}, store)
+	router := svc.Router()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/tokens?session_token=session-2", strings.NewReader(`{"name":"cli"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	var envelope struct {
+		Code int `json:"code"`
+		Data model.APIToken
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode token response: %v", err)
+	}
+	if envelope.Code != http.StatusOK || envelope.Data.Token != "api-token-2" || envelope.Data.UserID != 2 || envelope.Data.Name != "cli" {
+		t.Fatalf("unexpected token response: %+v", envelope)
+	}
+}
+
 type fakeAuthStore struct {
 	users      map[int64]model.User
 	sessions   map[string]model.Session
 	passwords  map[string]string
+	apiTokens  map[int64]model.APIToken
 	updateErr  error
 	lastUpdate int64
 	nextID     int64
@@ -147,7 +175,8 @@ func newFakeAuthStore() *fakeAuthStore {
 			"alice": "old-secret",
 			"bob":   "admin-secret",
 		},
-		nextID: 3,
+		apiTokens: map[int64]model.APIToken{},
+		nextID:    3,
 	}
 }
 
@@ -218,8 +247,15 @@ func (f *fakeAuthStore) UpdateUserPassword(_ context.Context, userID int64, pass
 	f.lastUpdate = userID
 	return f.updateErr
 }
-func (f *fakeAuthStore) CreateAPIToken(context.Context, int64, string) (model.APIToken, error) {
-	return model.APIToken{}, errors.New("unused")
+func (f *fakeAuthStore) CreateAPIToken(_ context.Context, userID int64, name string) (model.APIToken, error) {
+	token := model.APIToken{
+		Token:     "api-token-" + strconv.FormatInt(userID, 10),
+		UserID:    userID,
+		Name:      name,
+		CreatedAt: time.Now().UTC(),
+	}
+	f.apiTokens[userID] = token
+	return token, nil
 }
 func (f *fakeAuthStore) ResolveAPIToken(context.Context, string) (model.User, error) {
 	return model.User{}, errors.New("unused")
