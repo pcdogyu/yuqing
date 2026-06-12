@@ -5,7 +5,7 @@
 - 二期 Java -> Go 迁移截至 2026-06-12 仍未全部完成。
 - 当前更准确的判断标准不是“是否已经有 Go 代码”，而是“是否已经脱离 legacy 兼容层，并能由 Go 正式接口稳定承接”。
 - `DatafavoriteContoller` 已完成 Go 主链路收口。
-- `PublicOptionContoller` 已完成 Go 工作台承接，旧 JSON / 路由兼容层仍保留；其中旧详情页和分析页入口已降级为跳转，因此状态保持“兼容完成”。
+- `PublicOptionContoller` 已完成 Go 工作台承接，旧 JSON / 路由兼容层仍保留；其中旧详情页和分析页入口已推进为 `410 Gone` 下线，因此状态保持“兼容完成”。
 - `PlatformController` 已完成 Go 工作台承接，旧 JSON / SSE / 路由兼容层仍保留，因此状态更新为“兼容完成”。
 - Java 全量高级全文检索剩余能力已补齐正式 Go API 承接面，但 legacy 路由与旧返回格式兼容层仍保留，因此状态更新为“兼容完成”。
 - 复杂传播 / 情感 / 专题分析已补齐正式聚合查询契约，并由 `PublicOption` 工作台优先消费，因此状态更新为“兼容完成”。
@@ -46,7 +46,7 @@
 | `FullSearchController` | `兼容完成` | `gateway-web /fullsearch` + `content-service /api/v1/search/full` + `portal-web` | 全文搜索主能力已在 Go；旧结果页与特殊详情页入口已降级为跳转到 `/articles` / `/articles/{id}`，但旧筛选、历史词和部分 JSON 兼容仍在。 |
 | `TimelySearchController` | `兼容完成` | `gateway-web /timelysearch` + `content-service /api/v1/search/timely` + `portal-web` | 即时搜索和模板执行可用，但仍依赖兼容路由与旧返回格式。 |
 | `LSearchController` | `兼容完成` | `gateway-web` compatibility endpoints | `/industry` `/getevent` `/getProvinceList` `/getArticleCityList` 仍是兼容接口。 |
-| `PublicOptionContoller` | `兼容完成` | `portal-web /publicoption/*` + `content-service /api/v1/public-options` | `/publicoption` 已切到统一“事件分析工作台”；列表、详情、创建、更新、删除、分析视图均由 Go 页面承接；旧 `reportdetail/*` 和 `*analysis*` 页面入口已降级为跳转；旧 `loadInformation`、旧 JSON 兼容接口仍保留。 |
+| `PublicOptionContoller` | `兼容完成` | `portal-web /publicoption/*` + `content-service /api/v1/public-options` | `/publicoption` 已切到统一“事件分析工作台”；列表、详情、创建、更新、删除、分析视图均由 Go 页面承接；旧 `reportdetail/*` 和 `*analysis*` 页面入口已返回 `410 Gone`；旧 `loadInformation`、旧 JSON 兼容接口仍保留。 |
 | `PlatformController` | `兼容完成` | `portal-web /platform/*` + `content-service /system-*` + `content-service /platform/bindings/*` | `/platform` 与 `/platform/bindings` 已切到统一“平台工作台”；绑定、公告、最近平台操作审计、OCR、图像识别、写作标题生成、写作报告预览均可由 Go 页面承接；旧 JSON / SSE 兼容接口仍保留。 |
 | OCR 与外部平台集成 | `兼容完成` | `nlp-service /api/v1/nlp/*` + `portal-web /platform/*` | OCR、图像识别、标题生成、报告预览、能力清单均已有正式 Go API；旧 `/platform/nlp/*`、`/platform/xie/*` 兼容入口仍保留。 |
 | Java 全量高级全文检索剩余能力 | `兼容完成` | `content-service /api/v1/search/metadata/*` + `content-service /api/v1/search/special/*` + `portal-web` | 高级筛选、聚合面包屑、特殊类型列表/选项/详情已补到正式 Go API；旧 `fullsearch` / `timelysearch` 兼容入口仍保留。 |
@@ -137,6 +137,7 @@
   - `portal-web` 已新增集中式 legacy 路由注册表，作为兼容策略真相源。
   - [docs/legacy-route-inventory.md](docs/legacy-route-inventory.md) 已升级为包含 `legacy_path / owner_module / formal_target / current_behavior / strategy / removal_gate` 的执行清单。
   - `/publicoption/reportdetail/*` 和各类 `publicoption/*analysis*` 旧页面入口已统一跳转到 `/publicoption?id=...&section=...`。
+  - 第一批 PublicOption 页面型旧入口收口完成后，上述旧 URL 已进一步调整为 `410 Gone`，正式主链路保留 `/publicoption?id=...&section=...`。
 - 2026-06-12：二期接口基线补充：
   - `content-service` 新增 `GET /api/v1/search/details/{id}` 作为统一详情出口。
   - `analysis-service` 新增 `GET /api/v1/public-opinion/enrich`，`PublicOption` 分析富化优先改为正式接口消费。

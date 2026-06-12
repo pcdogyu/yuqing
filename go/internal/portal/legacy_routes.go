@@ -1,6 +1,9 @@
 package portal
 
-import "strings"
+import (
+	"net/http"
+	"strings"
+)
 
 type legacyRouteStrategy string
 
@@ -37,17 +40,17 @@ var portalLegacyRoutes = []legacyRouteSpec{
 	{LegacyPath: "/getevent", OwnerModule: "LSearchController", FormalTarget: "/api/v1/search/metadata/breadcrumbs", CurrentBehavior: "legacy event bucket JSON", Strategy: legacyStrategyProxy, RemovalGate: legacyRemovalGateClientMigrated},
 	{LegacyPath: "/getProvinceList", OwnerModule: "LSearchController", FormalTarget: "/api/v1/search/full/facets", CurrentBehavior: "legacy province list JSON", Strategy: legacyStrategyProxy, RemovalGate: legacyRemovalGateClientMigrated},
 	{LegacyPath: "/getArticleCityList", OwnerModule: "LSearchController", FormalTarget: "/api/v1/search/full/facets", CurrentBehavior: "legacy city list JSON", Strategy: legacyStrategyProxy, RemovalGate: legacyRemovalGateClientMigrated},
-	{LegacyPath: "/publicoption/reportdetail/*", OwnerModule: "PublicOptionContoller", FormalTarget: "/publicoption?id={id}", CurrentBehavior: "legacy detail page entry", Strategy: legacyStrategyRedirect, RemovalGate: legacyRemovalGateUIMigrated},
-	{LegacyPath: "/publicoption/backanalysis", OwnerModule: "PublicOptionContoller", FormalTarget: "/publicoption?id={id}&section=backanalysis", CurrentBehavior: "legacy analysis page entry", Strategy: legacyStrategyRedirect, RemovalGate: legacyRemovalGateUIMigrated},
-	{LegacyPath: "/publicoption/eventContext", OwnerModule: "PublicOptionContoller", FormalTarget: "/publicoption?id={id}&section=eventContext", CurrentBehavior: "legacy analysis page entry", Strategy: legacyStrategyRedirect, RemovalGate: legacyRemovalGateUIMigrated},
-	{LegacyPath: "/publicoption/eventTrace", OwnerModule: "PublicOptionContoller", FormalTarget: "/publicoption?id={id}&section=eventTrace", CurrentBehavior: "legacy analysis page entry", Strategy: legacyStrategyRedirect, RemovalGate: legacyRemovalGateUIMigrated},
-	{LegacyPath: "/publicoption/hotAnalysis", OwnerModule: "PublicOptionContoller", FormalTarget: "/publicoption?id={id}&section=hotAnalysis", CurrentBehavior: "legacy analysis page entry", Strategy: legacyStrategyRedirect, RemovalGate: legacyRemovalGateUIMigrated},
-	{LegacyPath: "/publicoption/netizensAnalysis", OwnerModule: "PublicOptionContoller", FormalTarget: "/publicoption?id={id}&section=netizensAnalysis", CurrentBehavior: "legacy analysis page entry", Strategy: legacyStrategyRedirect, RemovalGate: legacyRemovalGateUIMigrated},
-	{LegacyPath: "/publicoption/statistics", OwnerModule: "PublicOptionContoller", FormalTarget: "/publicoption?id={id}&section=statistics", CurrentBehavior: "legacy analysis page entry", Strategy: legacyStrategyRedirect, RemovalGate: legacyRemovalGateUIMigrated},
-	{LegacyPath: "/publicoption/propagationAnalysis", OwnerModule: "PublicOptionContoller", FormalTarget: "/publicoption?id={id}&section=propagationAnalysis", CurrentBehavior: "legacy analysis page entry", Strategy: legacyStrategyRedirect, RemovalGate: legacyRemovalGateUIMigrated},
-	{LegacyPath: "/publicoption/thematicAnalysis", OwnerModule: "PublicOptionContoller", FormalTarget: "/publicoption?id={id}&section=thematicAnalysis", CurrentBehavior: "legacy analysis page entry", Strategy: legacyStrategyRedirect, RemovalGate: legacyRemovalGateUIMigrated},
-	{LegacyPath: "/publicoption/unscrambleContent", OwnerModule: "PublicOptionContoller", FormalTarget: "/publicoption?id={id}&section=unscrambleContent", CurrentBehavior: "legacy analysis page entry", Strategy: legacyStrategyRedirect, RemovalGate: legacyRemovalGateUIMigrated},
-	{LegacyPath: "/publicoption/popular_feelings_analys", OwnerModule: "PublicOptionContoller", FormalTarget: "/publicoption?id={id}&section=popular_feelings_analys", CurrentBehavior: "legacy analysis page entry", Strategy: legacyStrategyRedirect, RemovalGate: legacyRemovalGateUIMigrated},
+	{LegacyPath: "/publicoption/reportdetail/*", OwnerModule: "PublicOptionContoller", FormalTarget: "/publicoption?id={id}", CurrentBehavior: "legacy detail page entry removed after workbench migration", Strategy: legacyStrategyGone, RemovalGate: legacyRemovalGateUIMigrated},
+	{LegacyPath: "/publicoption/backanalysis", OwnerModule: "PublicOptionContoller", FormalTarget: "/publicoption?id={id}&section=backanalysis", CurrentBehavior: "legacy analysis page entry removed after workbench migration", Strategy: legacyStrategyGone, RemovalGate: legacyRemovalGateUIMigrated},
+	{LegacyPath: "/publicoption/eventContext", OwnerModule: "PublicOptionContoller", FormalTarget: "/publicoption?id={id}&section=eventContext", CurrentBehavior: "legacy analysis page entry removed after workbench migration", Strategy: legacyStrategyGone, RemovalGate: legacyRemovalGateUIMigrated},
+	{LegacyPath: "/publicoption/eventTrace", OwnerModule: "PublicOptionContoller", FormalTarget: "/publicoption?id={id}&section=eventTrace", CurrentBehavior: "legacy analysis page entry removed after workbench migration", Strategy: legacyStrategyGone, RemovalGate: legacyRemovalGateUIMigrated},
+	{LegacyPath: "/publicoption/hotAnalysis", OwnerModule: "PublicOptionContoller", FormalTarget: "/publicoption?id={id}&section=hotAnalysis", CurrentBehavior: "legacy analysis page entry removed after workbench migration", Strategy: legacyStrategyGone, RemovalGate: legacyRemovalGateUIMigrated},
+	{LegacyPath: "/publicoption/netizensAnalysis", OwnerModule: "PublicOptionContoller", FormalTarget: "/publicoption?id={id}&section=netizensAnalysis", CurrentBehavior: "legacy analysis page entry removed after workbench migration", Strategy: legacyStrategyGone, RemovalGate: legacyRemovalGateUIMigrated},
+	{LegacyPath: "/publicoption/statistics", OwnerModule: "PublicOptionContoller", FormalTarget: "/publicoption?id={id}&section=statistics", CurrentBehavior: "legacy analysis page entry removed after workbench migration", Strategy: legacyStrategyGone, RemovalGate: legacyRemovalGateUIMigrated},
+	{LegacyPath: "/publicoption/propagationAnalysis", OwnerModule: "PublicOptionContoller", FormalTarget: "/publicoption?id={id}&section=propagationAnalysis", CurrentBehavior: "legacy analysis page entry removed after workbench migration", Strategy: legacyStrategyGone, RemovalGate: legacyRemovalGateUIMigrated},
+	{LegacyPath: "/publicoption/thematicAnalysis", OwnerModule: "PublicOptionContoller", FormalTarget: "/publicoption?id={id}&section=thematicAnalysis", CurrentBehavior: "legacy analysis page entry removed after workbench migration", Strategy: legacyStrategyGone, RemovalGate: legacyRemovalGateUIMigrated},
+	{LegacyPath: "/publicoption/unscrambleContent", OwnerModule: "PublicOptionContoller", FormalTarget: "/publicoption?id={id}&section=unscrambleContent", CurrentBehavior: "legacy analysis page entry removed after workbench migration", Strategy: legacyStrategyGone, RemovalGate: legacyRemovalGateUIMigrated},
+	{LegacyPath: "/publicoption/popular_feelings_analys", OwnerModule: "PublicOptionContoller", FormalTarget: "/publicoption?id={id}&section=popular_feelings_analys", CurrentBehavior: "legacy analysis page entry removed after workbench migration", Strategy: legacyStrategyGone, RemovalGate: legacyRemovalGateUIMigrated},
 	{LegacyPath: "/publicoption/loadInformation", OwnerModule: "PublicOptionContoller", FormalTarget: "/api/v1/search/full", CurrentBehavior: "legacy article list JSON", Strategy: legacyStrategyProxy, RemovalGate: legacyRemovalGateClientMigrated},
 	{LegacyPath: "/platform/nlp/*", OwnerModule: "PlatformController", FormalTarget: "/api/v1/nlp/*", CurrentBehavior: "legacy platform NLP compatibility endpoints", Strategy: legacyStrategyProxy, RemovalGate: legacyRemovalGateExternalContract},
 	{LegacyPath: "/platform/xie/*", OwnerModule: "PlatformController", FormalTarget: "/api/v1/nlp/*", CurrentBehavior: "legacy writing tool compatibility and SSE endpoints", Strategy: legacyStrategyProxy, RemovalGate: legacyRemovalGateExternalContract},
@@ -119,6 +122,21 @@ func legacyRouteHasStrategy(path string, strategies ...legacyRouteStrategy) bool
 		}
 	}
 	return false
+}
+
+func removedLegacyPortalStatus(path string) (int, bool) {
+	spec, ok := legacyRouteSpecForPath(path)
+	if !ok {
+		return 0, false
+	}
+	switch spec.Strategy {
+	case legacyStrategyGone:
+		return http.StatusGone, true
+	case legacyStrategyDelete:
+		return http.StatusNotFound, true
+	default:
+		return 0, false
+	}
 }
 
 func legacyPathMatches(pattern, path string) bool {

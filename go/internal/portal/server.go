@@ -339,11 +339,19 @@ func (s *Server) Router() http.Handler {
 }
 
 func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
-	if isRemovedLegacyPortalPath(r.URL.Path) {
-		http.NotFound(w, r)
+	if status, ok := removedLegacyPortalStatus(r.URL.Path); ok {
+		writeRemovedLegacyPortalResponse(w, r, status)
 		return
 	}
 	s.requireSession(s.handleDashboard)(w, r)
+}
+
+func writeRemovedLegacyPortalResponse(w http.ResponseWriter, r *http.Request, status int) {
+	if status == http.StatusNotFound {
+		http.NotFound(w, r)
+		return
+	}
+	http.Error(w, http.StatusText(status), status)
 }
 
 func (s *Server) handleLoginPage(w http.ResponseWriter, r *http.Request) {
@@ -1693,7 +1701,8 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request, user an
 }
 
 func isRemovedLegacyPortalPath(path string) bool {
-	return legacyRouteHasStrategy(path, legacyStrategyGone, legacyStrategyDelete)
+	_, ok := removedLegacyPortalStatus(path)
+	return ok
 }
 
 func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request, user any) {

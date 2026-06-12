@@ -897,11 +897,8 @@ func TestPublicOptionCompatPages(t *testing.T) {
 	detailRR := httptest.NewRecorder()
 	detailReq := httptest.NewRequest(http.MethodGet, "/publicoption/reportdetail/1", nil)
 	srv.handlePublicOptionCompat(detailRR, detailReq, user)
-	if detailRR.Code != http.StatusSeeOther {
-		t.Fatalf("expected publicoption detail redirect, got %d", detailRR.Code)
-	}
-	if location := detailRR.Header().Get("Location"); location != "/publicoption?id=1" {
-		t.Fatalf("expected detail redirect target, got %q", location)
+	if detailRR.Code != http.StatusGone {
+		t.Fatalf("expected publicoption detail legacy route 410, got %d", detailRR.Code)
 	}
 
 	workbenchRR := httptest.NewRecorder()
@@ -918,11 +915,16 @@ func TestPublicOptionCompatPages(t *testing.T) {
 	analysisRR := httptest.NewRecorder()
 	analysisReq := httptest.NewRequest(http.MethodGet, "/publicoption/backanalysis?id=1", nil)
 	srv.handlePublicOptionCompat(analysisRR, analysisReq, user)
-	if analysisRR.Code != http.StatusSeeOther {
-		t.Fatalf("expected publicoption analysis redirect, got %d", analysisRR.Code)
+	if analysisRR.Code != http.StatusGone {
+		t.Fatalf("expected publicoption analysis legacy route 410, got %d", analysisRR.Code)
 	}
-	if location := analysisRR.Header().Get("Location"); location != "/publicoption?id=1&section=backanalysis" {
-		t.Fatalf("expected analysis redirect target, got %q", location)
+
+	routerGoneRR := httptest.NewRecorder()
+	routerGoneReq := httptest.NewRequest(http.MethodGet, "/publicoption/eventTrace?id=1", nil)
+	routerGoneReq.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "session-admin"})
+	srv.Router().ServeHTTP(routerGoneRR, routerGoneReq)
+	if routerGoneRR.Code != http.StatusGone {
+		t.Fatalf("expected publicoption legacy route 410 through router, got %d", routerGoneRR.Code)
 	}
 
 	analysisPageRR := httptest.NewRecorder()

@@ -20,17 +20,6 @@
 | `/getevent` | `LSearchController` | `/api/v1/search/metadata/breadcrumbs` | 事件聚合兼容 JSON | `proxy` | `client-migrated` |
 | `/getProvinceList` | `LSearchController` | `/api/v1/search/full/facets` | 省份聚合兼容 JSON | `proxy` | `client-migrated` |
 | `/getArticleCityList` | `LSearchController` | `/api/v1/search/full/facets` | 城市聚合兼容 JSON | `proxy` | `client-migrated` |
-| `/publicoption/reportdetail/*` | `PublicOptionContoller` | `/publicoption?id={id}` | 旧详情页入口，现仅保留跳转 | `redirect` | `ui-migrated` |
-| `/publicoption/backanalysis` | `PublicOptionContoller` | `/publicoption?id={id}&section=backanalysis` | 旧分析页入口，现仅保留跳转 | `redirect` | `ui-migrated` |
-| `/publicoption/eventContext` | `PublicOptionContoller` | `/publicoption?id={id}&section=eventContext` | 旧分析页入口，现仅保留跳转 | `redirect` | `ui-migrated` |
-| `/publicoption/eventTrace` | `PublicOptionContoller` | `/publicoption?id={id}&section=eventTrace` | 旧分析页入口，现仅保留跳转 | `redirect` | `ui-migrated` |
-| `/publicoption/hotAnalysis` | `PublicOptionContoller` | `/publicoption?id={id}&section=hotAnalysis` | 旧分析页入口，现仅保留跳转 | `redirect` | `ui-migrated` |
-| `/publicoption/netizensAnalysis` | `PublicOptionContoller` | `/publicoption?id={id}&section=netizensAnalysis` | 旧分析页入口，现仅保留跳转 | `redirect` | `ui-migrated` |
-| `/publicoption/statistics` | `PublicOptionContoller` | `/publicoption?id={id}&section=statistics` | 旧分析页入口，现仅保留跳转 | `redirect` | `ui-migrated` |
-| `/publicoption/propagationAnalysis` | `PublicOptionContoller` | `/publicoption?id={id}&section=propagationAnalysis` | 旧分析页入口，现仅保留跳转 | `redirect` | `ui-migrated` |
-| `/publicoption/thematicAnalysis` | `PublicOptionContoller` | `/publicoption?id={id}&section=thematicAnalysis` | 旧分析页入口，现仅保留跳转 | `redirect` | `ui-migrated` |
-| `/publicoption/unscrambleContent` | `PublicOptionContoller` | `/publicoption?id={id}&section=unscrambleContent` | 旧分析页入口，现仅保留跳转 | `redirect` | `ui-migrated` |
-| `/publicoption/popular_feelings_analys` | `PublicOptionContoller` | `/publicoption?id={id}&section=popular_feelings_analys` | 旧分析页入口，现仅保留跳转 | `redirect` | `ui-migrated` |
 | `/publicoption/loadInformation` | `PublicOptionContoller` | `/api/v1/search/full` | 旧任务文章列表 JSON | `proxy` | `client-migrated` |
 | `/platform/nlp/*` | `PlatformController` | `/api/v1/nlp/*` | OCR / 图像识别兼容入口 | `proxy` | `external-contract` |
 | `/platform/xie/*` | `PlatformController` | `/api/v1/nlp/*` | 标题 / 报告预览 / SSE 兼容入口 | `proxy` | `external-contract` |
@@ -50,3 +39,14 @@
 | `/onlinestatistical` | `LoginController` | `/system?section=account` | 已移除旧在线统计入口 | `delete` | `usage-zero` |
 | `/user/save` | `UserController` | `/system?section=account` | 已移除旧用户保存入口 | `delete` | `usage-zero` |
 | `/user/getToken` | `UserController` | `/api/v1/auth/login` | 已移除旧 token 入口 | `delete` | `usage-zero` |
+| `/publicoption/reportdetail/*` | `PublicOptionContoller` | `/publicoption?id={id}` | 已下线旧详情页入口，访问返回 `410 Gone` | `gone` | `ui-migrated` |
+| `/publicoption/backanalysis` | `PublicOptionContoller` | `/publicoption?id={id}&section=backanalysis` | 已下线旧分析页入口，访问返回 `410 Gone` | `gone` | `ui-migrated` |
+| `/publicoption/eventContext` | `PublicOptionContoller` | `/publicoption?id={id}&section=eventContext` | 已下线旧分析页入口，访问返回 `410 Gone` | `gone` | `ui-migrated` |
+| `/publicoption/eventTrace` | `PublicOptionContoller` | `/publicoption?id={id}&section=eventTrace` | 已下线旧分析页入口，访问返回 `410 Gone` | `gone` | `ui-migrated` |
+| `/publicoption/hotAnalysis` | `PublicOptionContoller` | `/publicoption?id={id}&section=hotAnalysis` | 已下线旧分析页入口，访问返回 `410 Gone` | `gone` | `ui-migrated` |
+| `/publicoption/netizensAnalysis` | `PublicOptionContoller` | `/publicoption?id={id}&section=netizensAnalysis` | 已下线旧分析页入口，访问返回 `410 Gone` | `gone` | `ui-migrated` |
+| `/publicoption/statistics` | `PublicOptionContoller` | `/publicoption?id={id}&section=statistics` | 已下线旧分析页入口，访问返回 `410 Gone` | `gone` | `ui-migrated` |
+| `/publicoption/propagationAnalysis` | `PublicOptionContoller` | `/publicoption?id={id}&section=propagationAnalysis` | 已下线旧分析页入口，访问返回 `410 Gone` | `gone` | `ui-migrated` |
+| `/publicoption/thematicAnalysis` | `PublicOptionContoller` | `/publicoption?id={id}&section=thematicAnalysis` | 已下线旧分析页入口，访问返回 `410 Gone` | `gone` | `ui-migrated` |
+| `/publicoption/unscrambleContent` | `PublicOptionContoller` | `/publicoption?id={id}&section=unscrambleContent` | 已下线旧分析页入口，访问返回 `410 Gone` | `gone` | `ui-migrated` |
+| `/publicoption/popular_feelings_analys` | `PublicOptionContoller` | `/publicoption?id={id}&section=popular_feelings_analys` | 已下线旧分析页入口，访问返回 `410 Gone` | `gone` | `ui-migrated` |

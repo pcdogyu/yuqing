@@ -848,6 +848,10 @@ func (s *Server) handlePublicOptionEntry(w http.ResponseWriter, r *http.Request,
 }
 
 func (s *Server) handlePublicOptionCompat(w http.ResponseWriter, r *http.Request, user any) {
+	if status, ok := removedLegacyPortalStatus(r.URL.Path); ok {
+		writeRemovedLegacyPortalResponse(w, r, status)
+		return
+	}
 	path := strings.TrimPrefix(r.URL.Path, "/publicoption/")
 	switch {
 	case path == "", path == "/":
