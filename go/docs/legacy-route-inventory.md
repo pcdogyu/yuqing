@@ -1,8 +1,8 @@
 # Legacy Route Inventory
 
-截至 `2026-06-12`，三期按“代码注册表 + 文档执行清单”统一管理 legacy 路由。新增兼容入口必须先补注册表与本清单；禁止继续新增匿名 legacy handler。
+截至 `2026-06-12`，四期收尾已把三期遗留的 `proxy / preserve` 旧入口全部推进为 `410 Gone`。新增兼容入口必须先补注册表与本清单；禁止继续新增匿名 legacy handler。
 
-当前代码注册表基线：`proxy=3`、`preserve=6`、`gone=66`、`delete=40`、`redirect=0`。`go/internal/portal/legacy_routes.go` 是精确真相源，本清单按执行批次合并展示。
+当前代码注册表基线：`proxy=0`、`preserve=0`、`gone=75`、`delete=40`、`redirect=0`。`go/internal/portal/legacy_routes.go` 是精确真相源，本清单按执行批次合并展示。
 
 ## 执行规则
 
@@ -14,17 +14,7 @@
 
 ## 存活 legacy 路由
 
-| legacy_path | owner_module | formal_target | current_behavior | strategy | removal_gate |
-| --- | --- | --- | --- | --- | --- |
-| `/timelysearch/*` | `TimelySearchController` | `/articles?mode=timely` | 旧即时搜索页面、结果页与兼容数据流 | `proxy` | `client-migrated` |
-| `/platform/nlp/*` | `PlatformController` | `/api/v1/nlp/*` | OCR / 图像识别兼容入口 | `proxy` | `external-contract` |
-| `/platform/xie/*` | `PlatformController` | `/api/v1/nlp/*` | 标题 / 报告预览 / SSE 兼容入口 | `proxy` | `external-contract` |
-| `/mobile/*` | `MobileController` | `portal SSR pages` | 移动端兼容页 | `preserve` | `external-contract` |
-| `/displayboard*` | `DisplayBoardController` | `portal SSR pages` | 大屏兼容页 | `preserve` | `external-contract` |
-| `/volume*` | `VolumeController` | `portal SSR pages` | 声量兼容页 | `preserve` | `external-contract` |
-| `/hot/*` | `HotNewsController` | `portal SSR pages` | 热点兼容页 | `preserve` | `external-contract` |
-| `/dist/*` | `UserAuthController` | `portal SSR pages` | 试用申请兼容页 | `preserve` | `external-contract` |
-| `/img/code` | `ImageController` | `/login` | 验证码兼容入口 | `preserve` | `external-contract` |
+无。四期收尾后 legacy 注册表不再保留 `proxy` 或 `preserve` 入口。
 
 ## 已下线 legacy 路由
 
@@ -55,6 +45,15 @@
 | `/publicoption/unscrambleContent` | `PublicOptionContoller` | `/publicoption?id={id}&section=unscrambleContent` | 已下线旧分析页入口，访问返回 `410 Gone` | `gone` | `ui-migrated` |
 | `/publicoption/popular_feelings_analys` | `PublicOptionContoller` | `/publicoption?id={id}&section=popular_feelings_analys` | 已下线旧分析页入口，访问返回 `410 Gone` | `gone` | `ui-migrated` |
 | `/publicoption/loadInformation` | `PublicOptionContoller` | `/api/v1/search/full` | 已下线旧任务文章列表 JSON，访问返回 `410 Gone` | `gone` | `client-migrated` |
+| `/timelysearch/*` | `TimelySearchController` | `/articles?mode=timely`、`/api/v1/search/timely` | 已下线旧即时搜索页面、结果页、详情页和兼容数据流，访问返回 `410 Gone` | `gone` | `client-migrated` |
+| `/platform/nlp/*` | `PlatformController` | `/api/v1/nlp/*` | 已下线 OCR / 图像识别兼容入口，访问返回 `410 Gone` | `gone` | `external-contract` |
+| `/platform/xie/*` | `PlatformController` | `/api/v1/nlp/*` | 已下线标题、报告预览和 SSE 兼容入口，访问返回 `410 Gone` | `gone` | `external-contract` |
+| `/mobile/*` | `MobileController` | `/articles`、portal SSR pages | 已下线移动端兼容页，访问返回 `410 Gone` | `gone` | `external-contract` |
+| `/displayboard*` | `DisplayBoardController` | `/`、`/system?section=operations` | 已下线大屏兼容页，访问返回 `410 Gone` | `gone` | `external-contract` |
+| `/volume*` | `VolumeController` | `/api/v1/analysis/*`、`/system?section=operations` | 已下线声量兼容页，访问返回 `410 Gone` | `gone` | `external-contract` |
+| `/hot/*` | `HotNewsController` | `/api/v1/search/hot-keywords` | 已下线热点兼容页和旧 JSON，访问返回 `410 Gone` | `gone` | `external-contract` |
+| `/dist/*` | `UserAuthController` | `/login` | 已下线试用申请兼容页，访问返回 `410 Gone` | `gone` | `external-contract` |
+| `/img/code` | `ImageController` | `/login` | 已下线验证码兼容入口，访问返回 `410 Gone` | `gone` | `external-contract` |
 | `/api/getToken`、`/api/getArticle`、`/api/getMergeArticle`、`/api/detail` | `ApiController` | `/api/v1/auth/login`、`/api/v1/articles*` | 已移除旧开放 API，访问返回 `404 Not Found` | `delete` | `usage-zero` |
 | `/monitor/exportarticle` | `MonitorController` | `/articles` | 已移除旧导出入口，访问返回 `404 Not Found` | `delete` | `usage-zero` |
 | `/project/*` 旧项目 JSON 入口 | `ProjectController` | `/projects`、`/projects/{id}` | 已移除旧项目管理 JSON，访问返回 `404 Not Found` | `delete` | `usage-zero` |

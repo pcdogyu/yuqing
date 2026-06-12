@@ -5,12 +5,12 @@
 - 二期/三期 Java -> Go 主链路迁移截至 2026-06-12 已完成到“可运行 + 兼容收口”状态；四期核心生产化能力已开始落地，覆盖 scheduler 任务注册表、AOP 审计、健康检查和 Windows 运维脚本。
 - 当前更准确的判断标准不是“是否已经有 Go 代码”，而是“是否已经脱离 legacy 兼容层，并能由 Go 正式接口稳定承接”。
 - `DatafavoriteContoller` 已完成 Go 主链路收口。
-- `PublicOptionContoller` 已完成 Go 工作台承接，旧 JSON / 路由兼容层仍保留；其中旧详情页和分析页入口已推进为 `410 Gone` 下线，因此状态保持“兼容完成”。
-- `PlatformController` 已完成 Go 工作台承接，旧 JSON / SSE / 路由兼容层仍保留，因此状态更新为“兼容完成”。
-- Java 全量高级全文检索剩余能力已补齐正式 Go API 承接面，旧 `fullsearch` JSON 入口已推进为 `410 Gone`，因此状态更新为“兼容完成”。
-- 复杂传播 / 情感 / 专题分析已补齐正式聚合查询契约，并由 `PublicOption` 工作台优先消费，因此状态更新为“兼容完成”。
-- OCR 与外部平台集成已补齐正式报告预览接口、能力清单和文档，平台工作台优先消费正式 `nlp-service` 能力；旧 Platform/NLP URL 仅作为外部契约兼容入口保留。
-- 三期 legacy 收口已把注册表收敛到 `proxy=3`、`preserve=6`、`gone=66`、`delete=40`：剩余 `proxy` 均为 `timelysearch` 或外部平台契约，剩余 `preserve` 均为外部访问页面。
+- `PublicOptionContoller` 已完成 Go 工作台承接，旧详情页、分析页和 `loadInformation` 已推进为 `410 Gone` 下线。
+- `PlatformController` 已完成 Go 工作台承接，旧 `/platform/nlp/*`、`/platform/xie/*` JSON / SSE 入口已在四期收尾中推进为 `410 Gone`。
+- Java 全量高级全文检索剩余能力已补齐正式 Go API 承接面，旧 `fullsearch` 与 `timelysearch` 兼容入口均已推进为 `410 Gone`。
+- 复杂传播 / 情感 / 专题分析已补齐正式聚合查询契约，并由 `PublicOption` 工作台优先消费；旧兼容页面入口已下线。
+- OCR 与外部平台集成已补齐正式报告预览接口、能力清单和文档，正式接入统一使用 `nlp-service /api/v1/nlp/*`。
+- 四期收尾已把 legacy 注册表收敛到 `proxy=0`、`preserve=0`、`gone=75`、`delete=40`：不再保留存活旧入口。
 
 ## 状态定义
 
@@ -37,22 +37,22 @@
 | `WechatController` | `兼容完成` | `portal-web /wechat/*` + `auth-service /api/v1/wechat/*` | Go 已实现登录、绑定、token 等能力，但仍保留兼容入口。 |
 | `MailController` | `兼容完成` | `gateway-web /mail/*` + `content-service /system/mail-config` | 邮件配置已落到 Go，但旧接口格式仍在兼容。 |
 | `PopUpController` | `兼容完成` | `gateway-web /popUp/*` + `content-service /system/popup` | 弹窗状态由 Go 存取，但旧入口仍保留。 |
-| `ImageController` | `兼容完成` | `portal-web /img/code` | 验证码入口已在 Go，但属于 legacy 兼容页体系。 |
-| `MobileController` | `兼容完成` | `portal-web /mobile/*` | 移动端页面、二维码、跳转已由 Go 提供兼容入口。 |
-| `DisplayBoardController` | `兼容完成` | `portal-web /displayboard` | 看板页可由 Go 打开，但仍是兼容页面形态。 |
-| `VolumeController` | `兼容完成` | `portal-web /volume` | 页面和 `getproject` / `projectname` 仍按旧入口兼容。 |
-| `HotNewsController` | `兼容完成` | `portal-web /hot/*` | 热点页和热点列表已在 Go，但仍保留旧访问方式。 |
-| `UserAuthController` | `兼容完成` | `portal-web /dist/*` | 申请试用、跳转入口已在 Go 兼容层。 |
+| `ImageController` | `完成` | `/login` | 旧 `/img/code` 验证码兼容入口已下线为 `410 Gone`。 |
+| `MobileController` | `完成` | `portal-web /articles` + 主门户页面 | 旧 `/mobile/*` 移动端兼容入口已下线为 `410 Gone`。 |
+| `DisplayBoardController` | `完成` | `portal-web /` + `/system?section=operations` | 旧 `/displayboard*` 大屏兼容入口已下线为 `410 Gone`。 |
+| `VolumeController` | `完成` | `analysis-service /api/v1/analysis/*` + `/system?section=operations` | 旧 `/volume*` 声量兼容入口已下线为 `410 Gone`。 |
+| `HotNewsController` | `完成` | `content-service /api/v1/search/hot-keywords` | 旧 `/hot/*` 热点兼容入口已下线为 `410 Gone`。 |
+| `UserAuthController` | `完成` | `/login` + 正式账号流程 | 旧 `/dist/*` 试用申请兼容入口已下线为 `410 Gone`。 |
 | `UserController` | `兼容完成` | `content-service /system/preferences` + `gateway-web /system` | 用户资料、偏好已迁移，但仍通过部分兼容入口暴露。 |
 | `FullSearchController` | `兼容完成` | `gateway-web /fullsearch` + `content-service /api/v1/search/full` + `portal-web` | 全文搜索主能力已在 Go；旧结果页、特殊详情页、历史词、列表、元数据、特殊类型 JSON 入口均已下线为 `410 Gone`。 |
-| `TimelySearchController` | `兼容完成` | `gateway-web /timelysearch` + `content-service /api/v1/search/timely` + `portal-web` | 即时搜索和模板执行可用，但仍依赖兼容路由与旧返回格式。 |
+| `TimelySearchController` | `完成` | `portal-web /articles?mode=timely` + `content-service /api/v1/search/timely` | 即时搜索正式入口可用，旧 `/timelysearch/*` 兼容路由已下线为 `410 Gone`。 |
 | `LSearchController` | `兼容完成` | `content-service /api/v1/search/metadata/*` + `/api/v1/search/full/facets` | `/industry` `/getevent` `/getProvinceList` `/getArticleCityList` 已下线为 `410 Gone`，调用方应使用正式搜索元数据和 facets 接口。 |
 | `PublicOptionContoller` | `兼容完成` | `portal-web /publicoption/*` + `content-service /api/v1/public-options` | `/publicoption` 已切到统一“事件分析工作台”；列表、详情、创建、更新、删除、分析视图均由 Go 页面承接；旧 `reportdetail/*`、`*analysis*` 和 `loadInformation` 已返回 `410 Gone`；增改删旧 JSON 兼容接口仍保留。 |
-| `PlatformController` | `兼容完成` | `portal-web /platform/*` + `content-service /system-*` + `content-service /platform/bindings/*` | `/platform` 与 `/platform/bindings` 已切到统一“平台工作台”；绑定、公告、最近平台操作审计、OCR、图像识别、写作标题生成、写作报告预览均可由 Go 页面承接；旧 JSON / SSE 兼容接口仍保留。 |
-| OCR 与外部平台集成 | `兼容完成` | `nlp-service /api/v1/nlp/*` + `portal-web /platform/*` | OCR、图像识别、标题生成、报告预览、能力清单均已有正式 Go API；旧 `/platform/nlp/*`、`/platform/xie/*` 兼容入口仍保留。 |
-| Java 全量高级全文检索剩余能力 | `兼容完成` | `content-service /api/v1/search/metadata/*` + `content-service /api/v1/search/special/*` + `portal-web` | 高级筛选、聚合面包屑、特殊类型列表/选项/详情已补到正式 Go API；旧 `fullsearch` JSON 已下线，`timelysearch` 因模板执行和 `return_to` 兼容继续保留。 |
-| 复杂传播 / 情感 / 专题分析 | `兼容完成` | `analysis-service /api/v1/public-opinion/analysis` + `portal-web /publicoption/*` | 情感、传播、专题、事件概览、报告建议已形成统一聚合契约，`PublicOption` 页面优先消费正式接口；旧兼容页面与返回格式仍保留。 |
-| legacy 路由清理与兼容层收口 | `兼容完成` | `gateway-web` + `portal-web` | 已建立集中式 legacy 路由注册表和执行清单；旧 `fullsearch` JSON、LSearch、`publicoption/loadInformation` 已下线为 `410 Gone`；剩余入口均标注为 `client-migrated` 过渡或 `external-contract` 长期兼容。 |
+| `PlatformController` | `完成` | `portal-web /platform/bindings` + `content-service /platform/bindings/*` + `nlp-service /api/v1/nlp/*` | 平台工作台、绑定、公告、审计、OCR、图像识别、写作标题生成、写作报告预览均由正式 Go 页面/API 承接；旧 `/platform/nlp/*`、`/platform/xie/*` 已下线为 `410 Gone`。 |
+| OCR 与外部平台集成 | `完成` | `nlp-service /api/v1/nlp/*` + `portal-web /platform/bindings` | OCR、图像识别、标题生成、报告预览、能力清单均已有正式 Go API；旧 Platform/NLP 兼容入口已下线。 |
+| Java 全量高级全文检索剩余能力 | `完成` | `content-service /api/v1/search/metadata/*` + `content-service /api/v1/search/special/*` + `portal-web` | 高级筛选、聚合面包屑、特殊类型列表/选项/详情已补到正式 Go API；旧 `fullsearch` 与 `timelysearch` 兼容入口均已下线。 |
+| 复杂传播 / 情感 / 专题分析 | `完成` | `analysis-service /api/v1/public-opinion/analysis` + `portal-web /publicoption/*` | 情感、传播、专题、事件概览、报告建议已形成统一聚合契约，`PublicOption` 页面优先消费正式接口；旧兼容页面已下线。 |
+| legacy 路由清理与兼容层收口 | `完成` | `gateway-web` + `portal-web` | 已建立集中式 legacy 路由注册表和执行清单；四期收尾后 `proxy=0`、`preserve=0`，所有存活旧入口均已改为 `410 Gone` 或 `404 Not Found`。 |
 
 ## 二期接口基线
 
@@ -87,16 +87,16 @@
 
 - `PublicOption` 工作台的分析富化已优先走 `analysis-service` 正式接口，`portal-web` 本地拼装只作为降级兜底。
 - 特殊详情数据不再只依赖 legacy `*detailData` 接口，`content-service` 已提供统一详情出口。
-- legacy `fullsearch` / `timelysearch` 的类型筛选、聚合、面包屑、特殊实体查询现已优先转发到 `content-service` 正式搜索接口，只有在正式接口不可用或返回空载荷时才回退旧兼容逻辑。
+- legacy `fullsearch` / `timelysearch` 入口已下线为 `410 Gone`；调用方应使用 `content-service` 正式搜索接口和 `/articles` 页面。
 - `analysis-service` 已新增 `GET /api/v1/public-opinion/analysis`，统一返回情感、传播、专题、事件概览、报告建议与 legacy 字符串结果；`portal-web` 事件分析工作台已优先消费此正式聚合契约，仅在失败时回退旧 `enrich` 接口。
-- `nlp-service` 已新增 `POST /api/v1/nlp/report-preview` 和 `GET /api/v1/nlp/capabilities`；`portal-web` 平台工作台和 legacy `/platform/xie/report*` 已优先消费正式报告预览接口，仅在正式接口不可用时回退本地拼装逻辑。
+- `nlp-service` 已新增 `POST /api/v1/nlp/report-preview` 和 `GET /api/v1/nlp/capabilities`；`portal-web` 平台工作台优先消费正式报告预览接口，仅在正式接口不可用时回退本地拼装逻辑，旧 `/platform/xie/report*` 已下线。
 
 ## 按状态汇总
 
 | 状态 | 项数 | 范围 |
 | --- | --- | --- |
-| `完成` | 9 | 登录、项目、监测、报告、基础分析、基础文章查询、主搜索入口、系统页核心能力、Datafavorite 主链路 |
-| `兼容完成` | 19 | 微信、邮件、弹窗、验证码、移动端、大屏、音量、热点、试用申请、用户资料、全文搜索、即时搜索、LSearch、PublicOption、Platform、高级全文检索剩余能力、复杂分析、OCR/外部平台、legacy 收口 |
+| `完成` | 19 | 登录、项目、监测、报告、基础分析、基础文章查询、主搜索入口、系统页核心能力、Datafavorite 主链路、验证码旧入口下线、移动端旧入口下线、大屏旧入口下线、声量旧入口下线、热点旧入口下线、试用申请旧入口下线、即时搜索正式入口、Platform、OCR/外部平台、legacy 收口 |
+| `兼容完成` | 9 | 微信、邮件、弹窗、用户资料、全文搜索、LSearch、PublicOption、高级分析相关工作台、复杂分析历史数据契约 |
 | `部分完成` | 0 | - |
 | `未完成` | 0 | - |
 
@@ -104,11 +104,7 @@
 
 ### `兼容保留` 项
 
-| 项目 | 当前缺口 | 建议动作 | 完成标准 |
-| --- | --- | --- | --- |
-| `timelysearch/*` | 仍承接模板执行、结果页、详情页和 `return_to` 兼容语义。 | 保持 `proxy / client-migrated`，新调用方使用 `/articles?mode=timely` 与 `/api/v1/search/timely`。 | 调用方迁移完成后再改为 `410 Gone`。 |
-| `/platform/nlp/*`、`/platform/xie/*` | 作为 OCR、图像识别、写作工具和 SSE 外部契约兼容入口。 | 保持 `proxy / external-contract`，正式接入统一使用 `/api/v1/nlp/*`。 | 外部契约确认废弃后再下线。 |
-| `/mobile/*`、`/displayboard*`、`/volume*`、`/hot/*`、`/dist/*`、`/img/code` | 外部访问页面或历史入口仍需保留。 | 保持 `preserve / external-contract`，不再计入未完成迁移缺口。 | 只有业务确认废弃后才删除。 |
+无。四期收尾后 `proxy / preserve` 入口均已推进为 `410 Gone`。
 
 当前 legacy 路由清单基线见 [docs/legacy-route-inventory.md](docs/legacy-route-inventory.md)。
 
@@ -128,7 +124,7 @@
 - 2026-06-12：文档同步反映以下已落地能力：
   - `/platform` 根路径已直接进入统一“平台工作台”。
   - OCR、图像识别、写作标题生成、写作报告预览已并入 Go 工作台。
-  - 旧 `/platform/nlp/*`、`/platform/xie/*` JSON / SSE 接口仍保留，因此未提升为 `完成`。
+  - 旧 `/platform/nlp/*`、`/platform/xie/*` JSON / SSE 接口当时仍保留，因此未提升为 `完成`。
   - 已补 `portal` 测试覆盖平台工作台主链路。
 - 2026-06-12：`PublicOptionContoller` 从 `部分完成` 更新为 `兼容完成`。
 - 2026-06-12：文档同步反映以下已落地能力：
@@ -174,6 +170,11 @@
   - `fullsearch` 剩余 JSON 兼容入口、LSearch 顶层聚合入口、`publicoption/loadInformation` 已推进到 `410 Gone`。
   - 代码注册表收敛为 `proxy=3`、`preserve=6`、`gone=66`、`delete=40`；剩余 `proxy` 为 `timelysearch` 与 Platform/NLP 外部契约，剩余 `preserve` 为外部访问页面。
   - [docs/legacy-route-inventory.md](docs/legacy-route-inventory.md) 已按注册表同步存活、下线和删除分组。
+- 2026-06-12：四期收尾移除“兼容完成”旧入口：
+  - `/timelysearch/*`、`/platform/nlp/*`、`/platform/xie/*`、`/mobile/*`、`/displayboard*`、`/volume*`、`/hot/*`、`/dist/*`、`/img/code` 已统一下线为 `410 Gone`。
+  - `portal-web` 路由层已在进入旧 handler 前按 legacy 注册表拦截，避免旧入口继续对外提供兼容访问。
+  - 代码注册表收敛为 `proxy=0`、`preserve=0`、`gone=75`、`delete=40`。
+  - [docs/legacy-route-inventory.md](docs/legacy-route-inventory.md)、[docs/nlp-platform-api.md](docs/nlp-platform-api.md)、[docs/phase4-productionization.md](docs/phase4-productionization.md) 已同步旧入口下线状态。
 
 ## 建议执行顺序
 
@@ -185,7 +186,7 @@
 - `gateway-web`
   - 统一入口、搜索入口、兼容跳转
 - `portal-web`
-  - SSR 门户、旧页面兼容入口、二维码、移动端、热点、看板页面
+  - SSR 门户、正式工作台页面、legacy 入口下线拦截
 - `auth-service`
   - 登录、登出、session、token、微信登录 / 绑定
 - `content-service`
@@ -197,6 +198,7 @@
 - `scheduler-service`
   - 定时触发抓取、分析、PublicOption 预热、预警扫描、报表、声量、热点和微信任务
   - 提供 `/healthz`、`GET /api/v1/scheduler/jobs`、`POST /api/v1/scheduler/jobs/{name}/run`
+  - job 列表返回 Java Quartz 对应关系、cron 描述、下次执行时间和最近运行结果
 - `nlp-service`
   - 报告标题、摘要、关键词生成
 
@@ -207,9 +209,15 @@
   - scheduler 外部 HTTP 调用统一设置超时与重试，任务执行成功/失败均写入 `task_runs`。
   - `content-service` 新增 HTTP 审计 middleware，对用户访问和操作写入 `audit_logs.detail_json`，包含 method/path/status/duration/ip/user_agent/module/operation，并脱敏 query 中的敏感字段。
   - 新增 PowerShell 运维脚本：`start-all.ps1`、`stop-all.ps1`、`health-check.ps1`、`backup-sqlite.ps1`、`smoke-test.ps1`。
+- 2026-06-12：四期生产化深化：
+  - `GET /api/v1/scheduler/jobs` 已补齐 `java_quartz_name`、`cron`、`next_run_at`、`last_status`、`last_message`、`last_started_at`、`last_finished_at`。
+  - 新增 `cmd/ops-check` 和 `scripts/reconcile-production.ps1`，对 SQLite 生产数据做只读对账，覆盖文章、项目、报告、FTS、任务、审计、平台绑定和 crypto social 来源。
+  - `backup-sqlite.ps1` 已扩展为备份后校验，输出备份路径、大小和校验 JSON。
+  - `/system?section=operations` 已增加生产运行视图，展示服务健康、scheduler jobs、失败任务、审计、抓取健康和 legacy 注册表。
+  - `smoke-test.ps1` 已扩展覆盖 scheduler 运行态、NLP capabilities、审计写入和 legacy 410 探测。
 
 ## 下一步
 
-- 深化四期：围绕 Java cron 绝对时刻、生产数据对账、外部集成限流和告警看板继续补齐。
-- 对剩余 `proxy / preserve` 项保持注册表和文档同步；只有调用方确认迁移或外部契约废弃后才继续下线。
+- 深化四期：如需严格执行 Java cron 绝对时刻，可继续把当前 interval 触发切换为 cron 表达式驱动；生产数据对账、备份校验和告警看板骨架已落地。
+- legacy 注册表已无剩余 `proxy / preserve` 项；后续新增旧入口必须先更新注册表和文档，并给出明确下线门槛。
 - 后续若迁移状态变更，先更新本文件，再同步 `README.md` 摘要。

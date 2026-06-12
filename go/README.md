@@ -117,6 +117,7 @@ go run .\cmd\scheduler-service
 .\scripts\start-all.ps1
 .\scripts\health-check.ps1
 .\scripts\smoke-test.ps1
+.\scripts\reconcile-production.ps1
 .\scripts\backup-sqlite.ps1
 .\scripts\stop-all.ps1
 ```
@@ -196,14 +197,17 @@ http://127.0.0.1
 ## 四期核心完成范围
 
 - `scheduler-service` 已提供统一任务注册表、健康检查、任务列表和手动触发接口。
+- `GET /api/v1/scheduler/jobs` 已返回 Java Quartz 对应关系、cron 描述、下次执行时间和最近运行结果。
 - Quartz 等价任务已覆盖抓取、分析、PublicOption 预热、预警扫描、报表、声量、热点、微信二维码清理和微信每日推送。
 - `content-service` 已增加 HTTP 审计 middleware，操作日志写入 `audit_logs` 并脱敏 query 中的 token/password/secret/key。
 - 外部 HTTP 调用已在 scheduler 侧增加超时和重试，失败写入 `task_runs`，不拖垮后台循环。
-- Windows PowerShell 已补齐启动、停止、健康检查、SQLite 备份和 smoke test 脚本。
+- `/system?section=operations` 已提供服务健康、scheduler、失败任务、审计、抓取健康和 legacy 注册表视图。
+- Windows PowerShell 已补齐启动、停止、健康检查、SQLite 备份校验、生产对账和 smoke test 脚本。
+- 四期收尾已把剩余旧入口统一下线：`/timelysearch/*`、`/platform/nlp/*`、`/platform/xie/*`、`/mobile/*`、`/displayboard*`、`/volume*`、`/hot/*`、`/dist/*`、`/img/code` 均返回 `410 Gone`。
 
 ## 后续深化
 
-- 若需要 Java cron 的绝对时刻 1:1 对齐，可继续把 interval 调度切换为 cron 表达式配置。
-- Java 原系统直接数据库对账仍需生产数据导出后执行专项脚本。
+- 若需要严格按 Java cron 执行，可继续把当前 interval 调度切换为 cron 表达式驱动。
+- Java 原系统直接数据库对账仍需生产数据导出后做跨库专项比较。
 
 说明：具体模块状态以 [MIGRATION.md](MIGRATION.md) 的详细矩阵为准。

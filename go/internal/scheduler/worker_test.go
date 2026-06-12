@@ -115,6 +115,25 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	if listRR.Code != http.StatusOK || !strings.Contains(listRR.Body.String(), "hot-data-refresh") {
 		t.Fatalf("expected scheduler jobs list, got status=%d body=%s", listRR.Code, listRR.Body.String())
 	}
+	var listEnvelope struct {
+		Data []Job `json:"data"`
+	}
+	if err := json.Unmarshal(listRR.Body.Bytes(), &listEnvelope); err != nil {
+		t.Fatalf("unmarshal jobs list: %v", err)
+	}
+	if len(listEnvelope.Data) != 16 {
+		t.Fatalf("expected 16 scheduler jobs, got %d", len(listEnvelope.Data))
+	}
+	var hotJob Job
+	for _, job := range listEnvelope.Data {
+		if job.Name == "hot-data-refresh" {
+			hotJob = job
+			break
+		}
+	}
+	if hotJob.JavaQuartzName != "HotDataSchedule" || hotJob.Cron == "" || hotJob.NextRunAt == nil {
+		t.Fatalf("expected hot job runtime metadata, got %+v", hotJob)
+	}
 
 	runReq := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/jobs/hot-data-refresh/run", nil)
 	runReq.Header.Set("X-Service-Token", "secret-token")
@@ -130,6 +149,21 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	}
 	if len(runs) == 0 || runs[0].TaskName != "hot-data-refresh" || runs[0].Status != "success" {
 		t.Fatalf("expected successful hot-data task run, got %+v", runs)
+	}
+
+	listAfterReq := httptest.NewRequest(http.MethodGet, "/api/v1/scheduler/jobs", nil)
+	listAfterRR := httptest.NewRecorder()
+	router.ServeHTTP(listAfterRR, listAfterReq)
+	var listAfterEnvelope struct {
+		Data []Job `json:"data"`
+	}
+	if err := json.Unmarshal(listAfterRR.Body.Bytes(), &listAfterEnvelope); err != nil {
+		t.Fatalf("unmarshal jobs list after run: %v", err)
+	}
+	for _, job := range listAfterEnvelope.Data {
+		if job.Name == "hot-data-refresh" && (job.LastStatus != "success" || job.LastStartedAt == nil || job.LastFinishedAt == nil) {
+			t.Fatalf("expected last run metadata after manual trigger, got %+v", job)
+		}
 	}
 }
 

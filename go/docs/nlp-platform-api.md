@@ -14,11 +14,11 @@
 
 - 服务直连：当前接口默认允许服务内网直接调用。
 - 平台工作台：通过 `portal-web` 读取 `platform_bindings` 中的 `nlp` / `xie` 绑定信息后转发调用。
-- 兼容入口：旧 `/platform/nlp/*`、`/platform/xie/*` 入口仍保留，但只作为过渡代理或 SSE 包装层。
+- 旧兼容入口：`/platform/nlp/*`、`/platform/xie/*` 已在四期收尾中下线为 `410 Gone`，新调用必须使用正式 `/api/v1/nlp/*`。
 
 说明：
 
-- `secret-id` / `secret-key` 头目前主要用于兼容旧工作台请求形态。
+- `secret-id` / `secret-key` 头仅保留给正式 API 调用方传递绑定信息，不再表示旧 `/platform/*` URL 可用。
 - 正式 API 的推荐调用方式是直接访问 `nlp-service`，不要再依赖 legacy URL 理解能力边界。
 
 ## 错误码
@@ -86,10 +86,10 @@ Invoke-RestMethod http://127.0.0.1:8085/api/v1/nlp/capabilities
 
 - `nlp-service` 不可用时：
   - `portal-web` 工作台标题生成和报告预览会先尝试正式接口，再回退到本地简化逻辑。
-  - 旧 `/platform/xie/report*` SSE 入口仍保留，但流内容优先来自 `report-preview` 正式接口。
+  - 旧 `/platform/xie/report*` SSE 入口已下线，不再作为降级出口。
 - `portal-web` 不可用时：
   - 外部调用方仍可直接访问 `nlp-service` 正式接口。
-- 下线顺序：
+- 下线状态：
   1. 新联调路径统一改用 `nlp-service` 正式 API
-  2. 旧 `/platform/nlp/*`、`/platform/xie/*` 仅保留过渡兼容
-  3. 完成调用方切换后再清理 legacy URL
+  2. 旧 `/platform/nlp/*`、`/platform/xie/*` 已返回 `410 Gone`
+  3. 后续不再新增 `/platform/*` 形式的 NLP 兼容入口

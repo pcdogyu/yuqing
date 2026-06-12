@@ -151,6 +151,9 @@ type pageData struct {
 	Notices                    []model.SystemNotice
 	AuditLogs                  []model.AuditLog
 	TaskRuns                   []model.TaskRun
+	SchedulerJobs              []schedulerJobStatus
+	LegacyRouteSummary         []legacyRouteSummary
+	LegacyLiveRoutes           []legacyRouteSpec
 	PublicOptions              []model.PublicOption
 	PublicOption               model.PublicOption
 	Preferences                model.UserPreference
@@ -228,6 +231,26 @@ type serviceStatus struct {
 	Message string
 }
 
+type schedulerJobStatus struct {
+	Name           string     `json:"name"`
+	Group          string     `json:"group"`
+	Description    string     `json:"description"`
+	JavaQuartzName string     `json:"java_quartz_name"`
+	Cron           string     `json:"cron"`
+	IntervalSec    int64      `json:"interval_sec"`
+	Enabled        bool       `json:"enabled"`
+	NextRunAt      *time.Time `json:"next_run_at"`
+	LastStatus     string     `json:"last_status"`
+	LastMessage    string     `json:"last_message"`
+	LastStartedAt  *time.Time `json:"last_started_at"`
+	LastFinishedAt *time.Time `json:"last_finished_at"`
+}
+
+type legacyRouteSummary struct {
+	Strategy string
+	Count    int
+}
+
 func NewServer(cfg config.Config) *Server {
 	funcMap := template.FuncMap{
 		"firstProjectGroupID":      firstProjectGroupIDForTemplate,
@@ -269,39 +292,39 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/login", s.handleLoginPage)
 	mux.HandleFunc("/loginbak", s.handleLoginBakPage)
 	mux.HandleFunc("/forgotpwd", s.handleForgotPasswordPage)
-	mux.HandleFunc("/img/code", s.handleCaptchaCode)
-	mux.HandleFunc("/displayboard", s.requireSession(s.handleDisplayBoard))
-	mux.HandleFunc("/displayboard/", s.requireSession(s.handleDisplayBoard))
-	mux.HandleFunc("/displayboard/collection2", s.requireSessionJSON(s.handleDisplayBoardCollection2))
+	mux.HandleFunc("/img/code", s.unlessRemoved(s.handleCaptchaCode))
+	mux.HandleFunc("/displayboard", s.requireSessionUnlessRemoved(s.handleDisplayBoard))
+	mux.HandleFunc("/displayboard/", s.requireSessionUnlessRemoved(s.handleDisplayBoard))
+	mux.HandleFunc("/displayboard/collection2", s.requireSessionJSONUnlessRemoved(s.handleDisplayBoardCollection2))
 	mux.HandleFunc("/analysis", s.requireSession(s.handleAnalysisEntry))
 	mux.HandleFunc("/analysis/", s.requireSessionJSON(s.handleAnalysisCompatJSON))
-	mux.HandleFunc("/mobile/monitor", s.requireSession(s.handleMobileMonitor))
-	mux.HandleFunc("/mobile/monitor/", s.requireSession(s.handleMobileMonitor))
-	mux.HandleFunc("/mobile/monitor/detail", s.requireSession(s.handleMobileMonitorDetail))
-	mux.HandleFunc("/mobile/warning", s.requireSession(s.handleMobileWarning))
-	mux.HandleFunc("/mobile/getGroupAndProject", s.requireSessionJSON(s.handleMobileGetGroupAndProject))
-	mux.HandleFunc("/mobile/mobileQRCode", s.requireSession(s.handleMobileQRCode))
-	mux.HandleFunc("/mobile/uuid/", s.handleMobileUUID)
+	mux.HandleFunc("/mobile/monitor", s.requireSessionUnlessRemoved(s.handleMobileMonitor))
+	mux.HandleFunc("/mobile/monitor/", s.requireSessionUnlessRemoved(s.handleMobileMonitor))
+	mux.HandleFunc("/mobile/monitor/detail", s.requireSessionUnlessRemoved(s.handleMobileMonitorDetail))
+	mux.HandleFunc("/mobile/warning", s.requireSessionUnlessRemoved(s.handleMobileWarning))
+	mux.HandleFunc("/mobile/getGroupAndProject", s.requireSessionJSONUnlessRemoved(s.handleMobileGetGroupAndProject))
+	mux.HandleFunc("/mobile/mobileQRCode", s.requireSessionUnlessRemoved(s.handleMobileQRCode))
+	mux.HandleFunc("/mobile/uuid/", s.unlessRemoved(s.handleMobileUUID))
 	mux.HandleFunc("/monitor", s.requireSession(s.handleMonitorEntry))
 	mux.HandleFunc("/monitor/", s.requireSession(s.handleMonitorCompat))
 	mux.HandleFunc("/monitor/wxGroup", s.requireSession(s.handleMonitorWxGroup))
-	mux.HandleFunc("/volume", s.requireSession(s.handleVolume))
-	mux.HandleFunc("/volume/", s.requireSession(s.handleVolume))
+	mux.HandleFunc("/volume", s.requireSessionUnlessRemoved(s.handleVolume))
+	mux.HandleFunc("/volume/", s.requireSessionUnlessRemoved(s.handleVolume))
 	mux.HandleFunc("/crypto", s.requireSession(s.handleCryptoPage))
 	mux.HandleFunc("/crypto/", s.requireSession(s.handleCryptoPage))
-	mux.HandleFunc("/volume/getproject", s.requireSessionJSON(s.handleVolumeGetProject))
-	mux.HandleFunc("/volume/projectname", s.requireSessionJSON(s.handleVolumeProjectName))
-	mux.HandleFunc("/hot/hotpage", s.requireSession(s.handleHotPage))
-	mux.HandleFunc("/hot/hotpage/", s.requireSession(s.handleHotPage))
-	mux.HandleFunc("/hot/hotlist", s.requireSession(s.handleHotList))
-	mux.HandleFunc("/dist/monitor", s.handleDistMonitor)
-	mux.HandleFunc("/dist/getdata", s.handleDistGetData)
-	mux.HandleFunc("/dist/apply", s.handleDistApply)
-	mux.HandleFunc("/dist/yqapply", s.handleDistYqApply)
-	mux.HandleFunc("/dist/applydatainfo", s.handleDistApplyDataInfo)
-	mux.HandleFunc("/dist/yqmontitor", s.handleDistYqMonitor)
-	mux.HandleFunc("/dist/hotdata", s.handleDistHotData)
-	mux.HandleFunc("/platform/", s.requireSession(s.handlePlatformCompat))
+	mux.HandleFunc("/volume/getproject", s.requireSessionJSONUnlessRemoved(s.handleVolumeGetProject))
+	mux.HandleFunc("/volume/projectname", s.requireSessionJSONUnlessRemoved(s.handleVolumeProjectName))
+	mux.HandleFunc("/hot/hotpage", s.requireSessionUnlessRemoved(s.handleHotPage))
+	mux.HandleFunc("/hot/hotpage/", s.requireSessionUnlessRemoved(s.handleHotPage))
+	mux.HandleFunc("/hot/hotlist", s.requireSessionUnlessRemoved(s.handleHotList))
+	mux.HandleFunc("/dist/monitor", s.unlessRemoved(s.handleDistMonitor))
+	mux.HandleFunc("/dist/getdata", s.unlessRemoved(s.handleDistGetData))
+	mux.HandleFunc("/dist/apply", s.unlessRemoved(s.handleDistApply))
+	mux.HandleFunc("/dist/yqapply", s.unlessRemoved(s.handleDistYqApply))
+	mux.HandleFunc("/dist/applydatainfo", s.unlessRemoved(s.handleDistApplyDataInfo))
+	mux.HandleFunc("/dist/yqmontitor", s.unlessRemoved(s.handleDistYqMonitor))
+	mux.HandleFunc("/dist/hotdata", s.unlessRemoved(s.handleDistHotData))
+	mux.HandleFunc("/platform/", s.requireSessionUnlessRemoved(s.handlePlatformCompat))
 	mux.HandleFunc("/fullsearch", s.requireSessionUnlessRemoved(s.handleFullSearchEntry))
 	mux.HandleFunc("/fullsearch/", s.requireSessionUnlessRemoved(s.handleFullSearchCompat))
 	mux.HandleFunc("/timelysearch", s.requireSessionUnlessRemoved(s.handleTimelySearchEntry))
@@ -366,6 +389,26 @@ func (s *Server) requireSessionUnlessRemoved(next func(http.ResponseWriter, *htt
 			return
 		}
 		s.requireSession(next)(w, r)
+	}
+}
+
+func (s *Server) requireSessionJSONUnlessRemoved(next func(http.ResponseWriter, *http.Request, any)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if status, ok := removedLegacyPortalStatus(r.URL.Path); ok {
+			writeRemovedLegacyPortalResponse(w, r, status)
+			return
+		}
+		s.requireSessionJSON(next)(w, r)
+	}
+}
+
+func (s *Server) unlessRemoved(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if status, ok := removedLegacyPortalStatus(r.URL.Path); ok {
+			writeRemovedLegacyPortalResponse(w, r, status)
+			return
+		}
+		next(w, r)
 	}
 }
 
@@ -2120,21 +2163,49 @@ func (s *Server) handleRules(w http.ResponseWriter, r *http.Request, user any) {
 		action := r.FormValue("action")
 		message := "规则创建成功"
 		projectID, _ := strconv.ParseInt(r.FormValue("project_id"), 10, 64)
+		ruleName := strings.TrimSpace(r.FormValue("name"))
+		includeKeywords := strings.TrimSpace(r.FormValue("include_keywords"))
+		excludeKeywords := strings.TrimSpace(r.FormValue("exclude_keywords"))
+		channels := strings.TrimSpace(r.FormValue("channels"))
+		severity := nonEmpty(r.FormValue("severity"), "medium")
+		status := nonEmpty(r.FormValue("status"), "active")
+		redirectURL := localRedirectTarget(r.Referer())
+		if strings.TrimSpace(redirectURL) == "" {
+			redirectURL = "/monitor-rules"
+		}
+		if action == "" {
+			if ruleName == "" {
+				ruleName = defaultRuleName(includeKeywords, channels)
+			}
+			if ruleName == "" {
+				http.Redirect(w, r, appendMessage(redirectURL, "请填写规则名称、包含关键词或来源"), http.StatusSeeOther)
+				return
+			}
+			if projectID <= 0 {
+				projectName := defaultRuleProjectName(strings.TrimSpace(r.FormValue("project_name")), ruleName, includeKeywords)
+				createdProject, err := s.createProjectForRule(projectName, includeKeywords)
+				if err != nil {
+					http.Redirect(w, r, appendMessage(redirectURL, "规则创建失败：项目创建失败："+err.Error()), http.StatusSeeOther)
+					return
+				}
+				projectID = createdProject.ID
+			}
+		}
 		body := map[string]any{
 			"project_id":       projectID,
-			"name":             r.FormValue("name"),
-			"include_keywords": r.FormValue("include_keywords"),
-			"exclude_keywords": r.FormValue("exclude_keywords"),
-			"channels":         r.FormValue("channels"),
-			"severity":         r.FormValue("severity"),
-			"status":           nonEmpty(r.FormValue("status"), "active"),
+			"name":             ruleName,
+			"include_keywords": includeKeywords,
+			"exclude_keywords": excludeKeywords,
+			"channels":         channels,
+			"severity":         severity,
+			"status":           status,
 		}
 		ruleID := r.FormValue("rule_id")
 		switch action {
 		case "update":
 			resp, err := s.client.R().SetBody(body).Put(s.cfg.ContentURL + "/api/v1/monitor-rules/" + ruleID)
 			if err != nil || !resp.IsSuccess() {
-				message = "规则更新失败"
+				message = "规则更新失败：" + responseErrorMessage(resp, err)
 			} else {
 				message = "规则更新成功"
 			}
@@ -2149,24 +2220,20 @@ func (s *Server) handleRules(w http.ResponseWriter, r *http.Request, user any) {
 			body["status"] = status
 			resp, err := s.client.R().SetBody(body).Put(s.cfg.ContentURL + "/api/v1/monitor-rules/" + ruleID)
 			if err != nil || !resp.IsSuccess() {
-				message = "规则状态更新失败"
+				message = "规则状态更新失败：" + responseErrorMessage(resp, err)
 			}
 		case "delete":
 			resp, err := s.client.R().Delete(s.cfg.ContentURL + "/api/v1/monitor-rules/" + ruleID)
 			if err != nil || !resp.IsSuccess() {
-				message = "规则删除失败"
+				message = "规则删除失败：" + responseErrorMessage(resp, err)
 			} else {
 				message = "规则已删除"
 			}
 		default:
 			resp, err := s.client.R().SetBody(body).Post(s.cfg.ContentURL + "/api/v1/monitor-rules")
 			if err != nil || !resp.IsSuccess() {
-				message = "规则创建失败"
+				message = "规则创建失败：" + responseErrorMessage(resp, err)
 			}
-		}
-		redirectURL := localRedirectTarget(r.Referer())
-		if strings.TrimSpace(redirectURL) == "" {
-			redirectURL = "/monitor-rules"
 		}
 		http.Redirect(w, r, appendMessage(redirectURL, message), http.StatusSeeOther)
 		return
@@ -2998,6 +3065,8 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) 
 
 	notices := []model.SystemNotice{}
 	taskRuns := []model.TaskRun{}
+	auditLogs := []model.AuditLog{}
+	schedulerJobs := []schedulerJobStatus{}
 	crawlRuns := []model.CrawlRun{}
 	preferences := model.UserPreference{}
 	popupState := model.PopupState{}
@@ -3016,7 +3085,9 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) 
 	warningArticleKeyword := strings.TrimSpace(r.URL.Query().Get("keyword"))
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/system/notices", &notices)
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/system/task-runs?limit=20", &taskRuns)
+	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/system/audit-logs?limit=20", &auditLogs)
 	_ = s.getJSON(s.cfg.CrawlerURL+"/api/v1/admin/tasks/crawl/runs?limit=20", &crawlRuns)
+	schedulerJobs = s.collectSchedulerJobs()
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/projects", &projects)
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/project-groups", &groups)
 	projectNames := make(map[int64]string, len(projects))
@@ -3095,13 +3166,18 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) 
 		"warningmsg":  "预警消息",
 		"warning":     "预警设置",
 		"feedback":    "反馈建议",
+		"operations":  "生产运行",
 	}[sectionKey]
 	_ = s.render(w, "system", pageData{
 		Title:                    "系统设置",
 		User:                     user,
 		SectionKey:               sectionKey,
 		Notices:                  notices,
+		AuditLogs:                auditLogs,
 		TaskRuns:                 taskRuns,
+		SchedulerJobs:            schedulerJobs,
+		LegacyRouteSummary:       collectLegacyRouteSummary(),
+		LegacyLiveRoutes:         collectLegacyLiveRoutes(),
 		CrawlRuns:                crawlRuns,
 		Projects:                 projects,
 		ProjectNames:             projectNames,
@@ -3385,6 +3461,8 @@ func normalizeSystemSection(section string) string {
 		return "warning"
 	case "feedback":
 		return "feedback"
+	case "operations", "production":
+		return "operations"
 	default:
 		return "account"
 	}
@@ -3959,6 +4037,67 @@ func appendMessage(rawURL, message string) string {
 	return parsed.String()
 }
 
+func defaultRuleName(includeKeywords, channels string) string {
+	if includeKeywords = strings.TrimSpace(includeKeywords); includeKeywords != "" {
+		return "关键词监测：" + includeKeywords
+	}
+	if channels = strings.TrimSpace(channels); channels != "" {
+		return "来源监测：" + channels
+	}
+	return ""
+}
+
+func defaultRuleProjectName(projectName, ruleName, includeKeywords string) string {
+	if projectName = strings.TrimSpace(projectName); projectName != "" {
+		return projectName
+	}
+	if includeKeywords = strings.TrimSpace(includeKeywords); includeKeywords != "" {
+		return "监测项目：" + includeKeywords
+	}
+	if ruleName = strings.TrimSpace(ruleName); ruleName != "" {
+		return "监测项目：" + ruleName
+	}
+	return "默认监测项目"
+}
+
+func (s *Server) createProjectForRule(name, keywords string) (model.Project, error) {
+	resp, err := s.client.R().SetBody(map[string]any{
+		"name":        strings.TrimSpace(name),
+		"keywords":    strings.TrimSpace(keywords),
+		"description": "由监测规则页面自动创建",
+		"status":      "active",
+	}).Post(s.cfg.ContentURL + "/api/v1/projects")
+	if err != nil || !resp.IsSuccess() {
+		return model.Project{}, errors.New(responseErrorMessage(resp, err))
+	}
+	var envelope struct {
+		Data model.Project `json:"data"`
+	}
+	if err := json.Unmarshal(resp.Body(), &envelope); err != nil {
+		return model.Project{}, err
+	}
+	if envelope.Data.ID <= 0 {
+		return model.Project{}, errors.New("content service returned empty project id")
+	}
+	return envelope.Data, nil
+}
+
+func responseErrorMessage(resp *resty.Response, err error) string {
+	if err != nil {
+		return err.Error()
+	}
+	if resp == nil {
+		return "请求未返回响应"
+	}
+	var envelope struct {
+		Message string `json:"message"`
+	}
+	if len(resp.Body()) > 0 && json.Unmarshal(resp.Body(), &envelope) == nil && strings.TrimSpace(envelope.Message) != "" {
+		return strings.TrimSpace(envelope.Message)
+	}
+	return resp.Status()
+}
+
 func localRedirectTarget(rawURL string) string {
 	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
@@ -3985,6 +4124,7 @@ func (s *Server) collectServiceStatuses() []serviceStatus {
 		{Name: "crawler-service", URL: s.cfg.CrawlerURL + "/healthz"},
 		{Name: "analysis-service", URL: s.cfg.AnalysisURL + "/healthz"},
 		{Name: "nlp-service", URL: s.cfg.NLPURL + "/healthz"},
+		{Name: "scheduler-service", URL: s.cfg.SchedulerURL + "/healthz"},
 	}
 	for idx := range services {
 		resp, err := s.client.R().Get(services[idx].URL)
@@ -4002,8 +4142,43 @@ func (s *Server) collectServiceStatuses() []serviceStatus {
 	return services
 }
 
+func (s *Server) collectSchedulerJobs() []schedulerJobStatus {
+	jobs := []schedulerJobStatus{}
+	_ = s.getJSON(s.cfg.SchedulerURL+"/api/v1/scheduler/jobs", &jobs)
+	return jobs
+}
+
+func collectLegacyRouteSummary() []legacyRouteSummary {
+	counts := map[string]int{}
+	for _, spec := range portalLegacyRoutes {
+		counts[string(spec.Strategy)]++
+	}
+	keys := make([]string, 0, len(counts))
+	for key := range counts {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	result := make([]legacyRouteSummary, 0, len(keys))
+	for _, key := range keys {
+		result = append(result, legacyRouteSummary{Strategy: key, Count: counts[key]})
+	}
+	return result
+}
+
+func collectLegacyLiveRoutes() []legacyRouteSpec {
+	result := make([]legacyRouteSpec, 0)
+	for _, spec := range portalLegacyRoutes {
+		if spec.Strategy == legacyStrategyProxy || spec.Strategy == legacyStrategyPreserve {
+			result = append(result, spec)
+		}
+	}
+	return result
+}
+
 const portalNavHTML = `<nav><a href="/">总览</a><a href="/projects">项目</a><a href="/monitor-rules">规则</a><a href="/articles">文章</a><a href="/reports">报告</a><a href="/crawl-templates">模板中心</a><a href="/crawl-templates/manage">模板管理</a><a href="/crypto">Crypto</a><a href="/system">系统</a><a href="/logout">退出</a></nav>`
-const portalFooterHTML = `<footer class="site-footer"><div>Code By Yuhao@jiansutech.com - {{.FooterBuildTime}} - {{.FooterCommit}} - {{.FooterBranch}}</div></footer>`
+const portalFooterHTML = `<footer class="site-footer"><div>Code By Yuhao@jiansutech.com - {{.FooterBuildTime}} - {{.FooterCommit}} - {{.FooterBranch}}</div></footer>` + portalRulesFormEnhancementScript
+
+const portalRulesFormEnhancementScript = `<script>(function(){if(location.pathname!=="/monitor-rules"){return}var headings=[].slice.call(document.querySelectorAll("h2"));var heading=headings.find(function(node){return node.textContent.trim()==="新建规则"});if(!heading){return}var section=heading.closest("section");var form=section&&section.querySelector("form");if(!form){return}var project=form.querySelector('select[name="project_id"]');if(project&&project.options.length===0){var option=document.createElement("option");option.value="";option.textContent="无可选项目，提交时自动创建项目";project.appendChild(option)}if(project&&!form.querySelector('input[name="project_name"]')){var input=document.createElement("input");input.name="project_name";input.placeholder="新项目名称（可选，未选择项目时使用）";project.insertAdjacentElement("afterend",input)}var channels=form.querySelector('input[name="channels"]');if(channels){channels.setAttribute("list","monitor-rule-channel-options");if(!document.getElementById("monitor-rule-channel-options")){var list=document.createElement("datalist");list.id="monitor-rule-channel-options";["flash","headline","crypto_x","crypto_telegram","flash,headline","all"].forEach(function(value){var option=document.createElement("option");option.value=value;list.appendChild(option)});document.body.appendChild(list)}}var name=form.querySelector('input[name="name"]');var include=form.querySelector('input[name="include_keywords"]');form.addEventListener("submit",function(){if(name&&include&&!name.value.trim()&&include.value.trim()){name.value="关键词监测："+include.value.trim()}})})();</script>`
 
 const layoutTemplate = `
 {{define "nav"}}` + portalNavHTML + `{{end}}
@@ -4061,7 +4236,7 @@ const reportTemplate = `
 `
 
 const systemTemplate = `
-{{define "system"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}.ok{color:#214e34;font-weight:700}.bad{color:#8f2d2d;font-weight:700}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}.tabs{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}.tabs a{padding:8px 12px;border-radius:999px;background:#efe9dc;color:#214e34;text-decoration:none}.tabs a.active{background:#214e34;color:#fff}.muted{color:#6a6257}.page-nav{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.page-nav a{padding:6px 10px;border:1px solid #d0c8b8;border-radius:8px;text-decoration:none;color:#214e34}.favorite-card,.warning-card{display:grid;grid-template-columns:2.2fr 1fr 1fr 1fr 1fr;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid #ece7dc}.warning-card{grid-template-columns:2.2fr 1fr 1fr 1fr 1fr 1fr}.section-block{margin-top:20px}.crawl-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}.crawl-card{border:1px solid #ece7dc;border-radius:14px;padding:16px;background:#faf8f2}` + `</style></head><body><header><h1>系统工作台</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><div class="tabs"><a class="{{if eq .SectionKey "account"}}active{{end}}" href="/system?section=account">账号安全</a><a class="{{if eq .SectionKey "preferences"}}active{{end}}" href="/system?section=preferences">偏好设置</a><a class="{{if eq .SectionKey "favorites"}}active{{end}}" href="/system?section=favorites{{if .FavoriteProjectID}}&project_id={{.FavoriteProjectID}}{{end}}">收藏夹</a><a class="{{if eq .SectionKey "warningmsg"}}active{{end}}" href="/system?section=warningmsg{{if .WarningArticleProjectID}}&project_id={{.WarningArticleProjectID}}{{end}}{{if .WarningArticleKeyword}}&keyword={{.WarningArticleKeyword}}{{end}}">预警消息</a><a class="{{if eq .SectionKey "warning"}}active{{end}}" href="/system?section=warning{{if .WarningSetting.ProjectID}}&project_id={{.WarningSetting.ProjectID}}{{end}}">预警设置</a><a class="{{if eq .SectionKey "feedback"}}active{{end}}" href="/system?section=feedback">反馈建议</a></div><div class="muted">当前视图：{{.Section}}</div></section><section><h2>服务状态</h2><table><tr><th>服务</th><th>状态</th><th>健康检查</th></tr>{{range .Services}}<tr><td>{{.Name}}</td><td>{{if .Healthy}}<span class="ok">正常</span>{{else}}<span class="bad">异常</span>{{end}}</td><td>{{.Message}}</td></tr>{{else}}<tr><td colspan="3">暂无服务状态</td></tr>{{end}}</table></section>{{if eq .SectionKey "account"}}<section class="section-block"><h2>账号安全</h2><div class="grid"><div><h3>个人资料</h3><form method="post"><input type="hidden" name="form_type" value="profile"><input type="hidden" name="section" value="account"><input name="display_name" placeholder="显示名" value="{{index .User "display_name"}}"><input name="email" placeholder="邮箱" value="{{index .User "email"}}"><button type="submit">保存资料</button></form></div><div><h3>修改密码</h3><form method="post"><input type="hidden" name="form_type" value="password"><input type="hidden" name="section" value="account"><input type="password" name="old_password" placeholder="旧密码"><input type="password" name="new_password" placeholder="新密码"><button type="submit">修改密码</button></form></div></div></section>{{end}}{{if eq .SectionKey "preferences"}}<section class="section-block"><h2>偏好设置</h2><div class="grid"><div><h3>用户偏好</h3><form method="post"><input type="hidden" name="form_type" value="preferences"><input type="hidden" name="section" value="preferences"><input name="language" placeholder="语言" value="{{.Preferences.Language}}"><input name="theme" placeholder="主题" value="{{.Preferences.Theme}}"><input name="default_search_mode" placeholder="默认搜索模式" value="{{.Preferences.DefaultSearchMode}}"><input name="article_page_size" placeholder="文章分页大小" value="{{.Preferences.ArticlePageSize}}"><label><input type="checkbox" name="email_notifications" {{if .Preferences.EmailNotifications}}checked{{end}}> 邮件通知</label><button type="submit">保存偏好</button></form></div><div><h3>弹窗状态</h3><form method="post"><input type="hidden" name="form_type" value="popup"><input type="hidden" name="section" value="preferences"><input name="key" value="{{.PopupState.Key}}"><label><input type="checkbox" name="dismissed" {{if .PopupState.Dismissed}}checked{{end}}> 已关闭</label><button type="submit">保存弹窗状态</button></form></div><div><h3>邮件配置</h3><form method="post"><input type="hidden" name="form_type" value="mail"><input type="hidden" name="section" value="preferences"><label><input type="checkbox" name="enabled" {{if .MailConfig.Enabled}}checked{{end}}> 启用</label><input name="smtp_host" placeholder="SMTP Host" value="{{.MailConfig.SMTPHost}}"><input name="smtp_port" placeholder="SMTP Port" value="{{.MailConfig.SMTPPort}}"><input name="username" placeholder="用户名" value="{{.MailConfig.Username}}"><input name="password" placeholder="密码" value="{{.MailConfig.Password}}"><input name="sender_name" placeholder="发件人名称" value="{{.MailConfig.SenderName}}"><input name="sender_email" placeholder="发件人邮箱" value="{{.MailConfig.SenderEmail}}"><button type="submit">保存邮件配置</button></form></div></div></section>{{end}}{{if eq .SectionKey "favorites"}}<section class="section-block"><h2>收藏夹</h2><form class="inline" method="get"><input type="hidden" name="section" value="favorites"><select name="project_id">{{if not .FavoriteProjectID}}<option value="">全部项目</option>{{end}}{{range .Projects}}<option value="{{.ID}}" {{if eq (printf "%d" .ID) $.FavoriteProjectID}}selected{{end}}>{{.Name}}</option>{{end}}</select><button type="submit">筛选</button></form><div class="page-nav">{{if gt .FavoriteTotalPages 1}}<a href="/system?section=favorites{{if .FavoriteProjectID}}&project_id={{.FavoriteProjectID}}{{end}}&page={{.FavoritePagePrev}}">上一页</a><span>第 {{.FavoritePage}} / {{.FavoriteTotalPages}} 页</span><a href="/system?section=favorites{{if .FavoriteProjectID}}&project_id={{.FavoriteProjectID}}{{end}}&page={{.FavoritePageNext}}">下一页</a>{{else}}<span>共 {{len .FavoriteItems.Items}} 条收藏</span>{{end}}</div><div>{{range .FavoriteItems.Items}}<div class="favorite-card"><div><a class="inline" href="/monitor/detail/{{if .SourceKey}}{{.SourceKey}}{{else}}{{.ID}}{{end}}?groupid={{index $.GroupNames (firstProjectGroupID . $.Projects)}}&projectid={{firstProjectIDForItem . $.Projects}}">{{.Title}}</a></div><div>{{or .FromText .SourceType}}</div><div>{{index $.GroupNames (firstProjectGroupID . $.Projects)}}</div><div>{{index $.ProjectNames (firstProjectIDForItem . $.Projects)}}</div><div>{{.CapturedAt.Format "2006-01-02 15:04"}}</div></div>{{else}}<p class="muted">暂无收藏文章</p>{{end}}</div></section>{{end}}{{if eq .SectionKey "warningmsg"}}<section class="section-block"><h2>预警消息</h2><form class="inline" method="get"><input type="hidden" name="section" value="warningmsg"><select name="project_id"><option value="">全部项目</option>{{range .Projects}}<option value="{{.ID}}" {{if eq (printf "%d" .ID) $.WarningArticleProjectID}}selected{{end}}>{{.Name}}</option>{{end}}</select><input name="keyword" placeholder="关键词" value="{{.WarningArticleKeyword}}"><select name="openFlag"><option value="0" {{if eq .WarningArticleOpenFlag 0}}selected{{end}}>全部</option><option value="1" {{if eq .WarningArticleOpenFlag 1}}selected{{end}}>仅开启预警</option></select><button type="submit">筛选</button></form><div class="page-nav">{{if gt .WarningArticleTotalPages 1}}<a href="/system?section=warningmsg{{if .WarningArticleProjectID}}&project_id={{.WarningArticleProjectID}}{{end}}{{if .WarningArticleKeyword}}&keyword={{.WarningArticleKeyword}}{{end}}{{if ne .WarningArticleOpenFlag 0}}&openFlag={{.WarningArticleOpenFlag}}{{end}}&page={{.WarningArticlePrev}}">上一页</a><span>第 {{.WarningArticlePage}} / {{.WarningArticleTotalPages}} 页</span><a href="/system?section=warningmsg{{if .WarningArticleProjectID}}&project_id={{.WarningArticleProjectID}}{{end}}{{if .WarningArticleKeyword}}&keyword={{.WarningArticleKeyword}}{{end}}{{if ne .WarningArticleOpenFlag 0}}&openFlag={{.WarningArticleOpenFlag}}{{end}}&page={{.WarningArticleNext}}">下一页</a>{{else}}<span>共 {{len .WarningArticles}} 条消息</span>{{end}}</div><div>{{range .WarningArticles}}<div class="warning-card"><div><a class="inline" href="/monitor/detail/{{.ArticleID}}?groupid={{.GroupID}}&projectid={{.ProjectID}}" target="_blank">{{.ArticleTitle}}</a></div><div>{{.GroupName}}</div><div>{{.ProjectName}}</div><div>{{.ArticleTime}}</div><div>{{.GroupID}}</div><div>{{.ProjectID}}</div></div>{{else}}<p class="muted">暂无预警消息</p>{{end}}</div></section>{{end}}{{if eq .SectionKey "warning"}}<section class="section-block"><h2>预警设置</h2><form method="post"><input type="hidden" name="form_type" value="warning"><input type="hidden" name="section" value="warning"><select name="project_id">{{range .Projects}}<option value="{{.ID}}" {{if eq .ID $.WarningSetting.ProjectID}}selected{{end}}>{{.Name}}</option>{{end}}</select><label><input type="checkbox" name="enabled" {{if .WarningSetting.Enabled}}checked{{end}}> 启用</label><input name="channels" placeholder="` + portalChannelPlaceholder + `" value="{{.WarningSetting.Channels}}"><input name="threshold" placeholder="阈值" value="{{.WarningSetting.Threshold}}"><input name="recipients" placeholder="接收人" value="{{.WarningSetting.Recipients}}"><textarea name="description" placeholder="说明">{{.WarningSetting.Description}}</textarea><button type="submit">保存预警设置</button></form></section>{{end}}{{if eq .SectionKey "feedback"}}<section class="section-block"><h2>反馈建议</h2><form method="post"><input type="hidden" name="form_type" value="feedback"><input type="hidden" name="section" value="feedback"><input name="title" placeholder="标题"><textarea name="content" placeholder="问题描述或需求"></textarea><button type="submit">提交</button></form></section>{{end}}<section class="section-block"><h2>运营操作</h2><div class="crawl-grid"><div class="crawl-card"><h3>按来源抓取</h3><form class="inline" method="post"><input type="hidden" name="form_type" value="crawl"><input type="hidden" name="section" value="{{.SectionKey}}"><select name="source_type">` + portalSourceOptions + `</select><button type="submit">立即抓取</button></form></div><div class="crawl-card"><h3>按模板抓取</h3><form class="inline" method="post"><input type="hidden" name="form_type" value="crawl"><input type="hidden" name="section" value="{{.SectionKey}}"><select name="template_id"><option value="">选择模板</option>{{range .CrawlTemplates}}<option value="{{.ID}}">{{.Name}} [{{.SourceType}}]</option>{{else}}<option value="">暂无可用模板</option>{{end}}</select><input name="keyword" placeholder="模板关键词（可选）"><button type="submit">模板抓取</button></form></div><div class="crawl-card"><h3>分析刷新</h3><form method="post"><input type="hidden" name="form_type" value="analysis"><input type="hidden" name="section" value="{{.SectionKey}}"><button type="submit">刷新分析快照</button></form></div></div></section><section class="section-block"><h2>公告与任务</h2><div class="grid"><div><h3>公告</h3><table><tr><th>标题</th><th>时间</th></tr>{{range .Notices}}<tr><td>{{.Title}}</td><td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="2">暂无公告</td></tr>{{end}}</table></div><div><h3>任务记录</h3><table><tr><th>任务</th><th>状态</th><th>说明</th></tr>{{range .TaskRuns}}<tr><td>{{.TaskName}}</td><td>{{.Status}}</td><td>{{.Message}}</td></tr>{{else}}<tr><td colspan="3">暂无任务记录</td></tr>{{end}}</table></div><div><h3>抓取记录</h3><table><tr><th>来源</th><th>状态</th><th>抓取数</th><th>入库数</th><th>开始时间</th></tr>{{range .CrawlRuns}}<tr><td>{{.SourceType}}</td><td>{{.Status}}</td><td>{{.FetchedCount}}</td><td>{{.InsertedCount}}</td><td>{{.StartedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="5">暂无抓取记录</td></tr>{{end}}</table></div></div></section></main>{{template "footer" .}}</body></html>{{end}}
+{{define "system"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}.ok{color:#214e34;font-weight:700}.bad{color:#8f2d2d;font-weight:700}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}.tabs{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}.tabs a{padding:8px 12px;border-radius:999px;background:#efe9dc;color:#214e34;text-decoration:none}.tabs a.active{background:#214e34;color:#fff}.muted{color:#6a6257}.page-nav{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.page-nav a{padding:6px 10px;border:1px solid #d0c8b8;border-radius:8px;text-decoration:none;color:#214e34}.favorite-card,.warning-card{display:grid;grid-template-columns:2.2fr 1fr 1fr 1fr 1fr;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid #ece7dc}.warning-card{grid-template-columns:2.2fr 1fr 1fr 1fr 1fr 1fr}.section-block{margin-top:20px}.crawl-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}.crawl-card{border:1px solid #ece7dc;border-radius:14px;padding:16px;background:#faf8f2}` + `</style></head><body><header><h1>系统工作台</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><div class="tabs"><a class="{{if eq .SectionKey "account"}}active{{end}}" href="/system?section=account">账号安全</a><a class="{{if eq .SectionKey "preferences"}}active{{end}}" href="/system?section=preferences">偏好设置</a><a class="{{if eq .SectionKey "favorites"}}active{{end}}" href="/system?section=favorites{{if .FavoriteProjectID}}&project_id={{.FavoriteProjectID}}{{end}}">收藏夹</a><a class="{{if eq .SectionKey "warningmsg"}}active{{end}}" href="/system?section=warningmsg{{if .WarningArticleProjectID}}&project_id={{.WarningArticleProjectID}}{{end}}{{if .WarningArticleKeyword}}&keyword={{.WarningArticleKeyword}}{{end}}">预警消息</a><a class="{{if eq .SectionKey "warning"}}active{{end}}" href="/system?section=warning{{if .WarningSetting.ProjectID}}&project_id={{.WarningSetting.ProjectID}}{{end}}">预警设置</a><a class="{{if eq .SectionKey "feedback"}}active{{end}}" href="/system?section=feedback">反馈建议</a><a class="{{if eq .SectionKey "operations"}}active{{end}}" href="/system?section=operations">生产运行</a></div><div class="muted">当前视图：{{.Section}}</div></section><section><h2>服务状态</h2><table><tr><th>服务</th><th>状态</th><th>健康检查</th></tr>{{range .Services}}<tr><td>{{.Name}}</td><td>{{if .Healthy}}<span class="ok">正常</span>{{else}}<span class="bad">异常</span>{{end}}</td><td>{{.Message}}</td></tr>{{else}}<tr><td colspan="3">暂无服务状态</td></tr>{{end}}</table></section>{{if eq .SectionKey "operations"}}<section class="section-block"><h2>生产运行</h2><div class="grid"><div><h3>Scheduler Jobs</h3><table><tr><th>任务</th><th>Java Quartz</th><th>状态</th><th>下次执行</th></tr>{{range .SchedulerJobs}}<tr><td>{{.Name}}</td><td>{{.JavaQuartzName}}</td><td>{{if .Enabled}}{{if eq .LastStatus "failed"}}<span class="bad">{{.LastStatus}}</span>{{else}}{{.LastStatus}}{{end}}{{else}}disabled{{end}}</td><td>{{if .NextRunAt}}{{.NextRunAt.Format "2006-01-02 15:04"}}{{else}}--{{end}}</td></tr>{{else}}<tr><td colspan="4">暂无 scheduler 数据</td></tr>{{end}}</table></div><div><h3>失败任务</h3><table><tr><th>任务</th><th>时间</th><th>说明</th></tr>{{range .TaskRuns}}{{if eq .Status "failed"}}<tr><td>{{.TaskName}}</td><td>{{.StartedAt.Format "2006-01-02 15:04"}}</td><td>{{.Message}}</td></tr>{{end}}{{else}}<tr><td colspan="3">暂无任务记录</td></tr>{{end}}</table></div><div><h3>Legacy 注册表</h3><table><tr><th>策略</th><th>数量</th></tr>{{range .LegacyRouteSummary}}<tr><td>{{.Strategy}}</td><td>{{.Count}}</td></tr>{{else}}<tr><td colspan="2">暂无注册表数据</td></tr>{{end}}</table></div></div></section><section class="section-block"><h2>外部契约与审计</h2><div class="grid"><div><h3>存活 legacy 路由</h3><table><tr><th>入口</th><th>策略</th><th>下线门槛</th></tr>{{range .LegacyLiveRoutes}}<tr><td>{{.LegacyPath}}</td><td>{{.Strategy}}</td><td>{{.RemovalGate}}</td></tr>{{else}}<tr><td colspan="3">无存活 legacy 路由</td></tr>{{end}}</table></div><div><h3>最近审计</h3><table><tr><th>动作</th><th>资源</th><th>时间</th></tr>{{range .AuditLogs}}<tr><td>{{.Action}}</td><td>{{.Resource}}</td><td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="3">暂无审计日志</td></tr>{{end}}</table></div><div><h3>抓取健康</h3><table><tr><th>来源</th><th>状态</th><th>抓取</th><th>入库</th></tr>{{range .CrawlRuns}}<tr><td>{{.SourceType}}</td><td>{{if eq .Status "failed"}}<span class="bad">{{.Status}}</span>{{else}}{{.Status}}{{end}}</td><td>{{.FetchedCount}}</td><td>{{.InsertedCount}}</td></tr>{{else}}<tr><td colspan="4">暂无抓取记录</td></tr>{{end}}</table></div></div></section>{{end}}{{if eq .SectionKey "account"}}<section class="section-block"><h2>账号安全</h2><div class="grid"><div><h3>个人资料</h3><form method="post"><input type="hidden" name="form_type" value="profile"><input type="hidden" name="section" value="account"><input name="display_name" placeholder="显示名" value="{{index .User "display_name"}}"><input name="email" placeholder="邮箱" value="{{index .User "email"}}"><button type="submit">保存资料</button></form></div><div><h3>修改密码</h3><form method="post"><input type="hidden" name="form_type" value="password"><input type="hidden" name="section" value="account"><input type="password" name="old_password" placeholder="旧密码"><input type="password" name="new_password" placeholder="新密码"><button type="submit">修改密码</button></form></div></div></section>{{end}}{{if eq .SectionKey "preferences"}}<section class="section-block"><h2>偏好设置</h2><div class="grid"><div><h3>用户偏好</h3><form method="post"><input type="hidden" name="form_type" value="preferences"><input type="hidden" name="section" value="preferences"><input name="language" placeholder="语言" value="{{.Preferences.Language}}"><input name="theme" placeholder="主题" value="{{.Preferences.Theme}}"><input name="default_search_mode" placeholder="默认搜索模式" value="{{.Preferences.DefaultSearchMode}}"><input name="article_page_size" placeholder="文章分页大小" value="{{.Preferences.ArticlePageSize}}"><label><input type="checkbox" name="email_notifications" {{if .Preferences.EmailNotifications}}checked{{end}}> 邮件通知</label><button type="submit">保存偏好</button></form></div><div><h3>弹窗状态</h3><form method="post"><input type="hidden" name="form_type" value="popup"><input type="hidden" name="section" value="preferences"><input name="key" value="{{.PopupState.Key}}"><label><input type="checkbox" name="dismissed" {{if .PopupState.Dismissed}}checked{{end}}> 已关闭</label><button type="submit">保存弹窗状态</button></form></div><div><h3>邮件配置</h3><form method="post"><input type="hidden" name="form_type" value="mail"><input type="hidden" name="section" value="preferences"><label><input type="checkbox" name="enabled" {{if .MailConfig.Enabled}}checked{{end}}> 启用</label><input name="smtp_host" placeholder="SMTP Host" value="{{.MailConfig.SMTPHost}}"><input name="smtp_port" placeholder="SMTP Port" value="{{.MailConfig.SMTPPort}}"><input name="username" placeholder="用户名" value="{{.MailConfig.Username}}"><input name="password" placeholder="密码" value="{{.MailConfig.Password}}"><input name="sender_name" placeholder="发件人名称" value="{{.MailConfig.SenderName}}"><input name="sender_email" placeholder="发件人邮箱" value="{{.MailConfig.SenderEmail}}"><button type="submit">保存邮件配置</button></form></div></div></section>{{end}}{{if eq .SectionKey "favorites"}}<section class="section-block"><h2>收藏夹</h2><form class="inline" method="get"><input type="hidden" name="section" value="favorites"><select name="project_id">{{if not .FavoriteProjectID}}<option value="">全部项目</option>{{end}}{{range .Projects}}<option value="{{.ID}}" {{if eq (printf "%d" .ID) $.FavoriteProjectID}}selected{{end}}>{{.Name}}</option>{{end}}</select><button type="submit">筛选</button></form><div class="page-nav">{{if gt .FavoriteTotalPages 1}}<a href="/system?section=favorites{{if .FavoriteProjectID}}&project_id={{.FavoriteProjectID}}{{end}}&page={{.FavoritePagePrev}}">上一页</a><span>第 {{.FavoritePage}} / {{.FavoriteTotalPages}} 页</span><a href="/system?section=favorites{{if .FavoriteProjectID}}&project_id={{.FavoriteProjectID}}{{end}}&page={{.FavoritePageNext}}">下一页</a>{{else}}<span>共 {{len .FavoriteItems.Items}} 条收藏</span>{{end}}</div><div>{{range .FavoriteItems.Items}}<div class="favorite-card"><div><a class="inline" href="/monitor/detail/{{if .SourceKey}}{{.SourceKey}}{{else}}{{.ID}}{{end}}?groupid={{index $.GroupNames (firstProjectGroupID . $.Projects)}}&projectid={{firstProjectIDForItem . $.Projects}}">{{.Title}}</a></div><div>{{or .FromText .SourceType}}</div><div>{{index $.GroupNames (firstProjectGroupID . $.Projects)}}</div><div>{{index $.ProjectNames (firstProjectIDForItem . $.Projects)}}</div><div>{{.CapturedAt.Format "2006-01-02 15:04"}}</div></div>{{else}}<p class="muted">暂无收藏文章</p>{{end}}</div></section>{{end}}{{if eq .SectionKey "warningmsg"}}<section class="section-block"><h2>预警消息</h2><form class="inline" method="get"><input type="hidden" name="section" value="warningmsg"><select name="project_id"><option value="">全部项目</option>{{range .Projects}}<option value="{{.ID}}" {{if eq (printf "%d" .ID) $.WarningArticleProjectID}}selected{{end}}>{{.Name}}</option>{{end}}</select><input name="keyword" placeholder="关键词" value="{{.WarningArticleKeyword}}"><select name="openFlag"><option value="0" {{if eq .WarningArticleOpenFlag 0}}selected{{end}}>全部</option><option value="1" {{if eq .WarningArticleOpenFlag 1}}selected{{end}}>仅开启预警</option></select><button type="submit">筛选</button></form><div class="page-nav">{{if gt .WarningArticleTotalPages 1}}<a href="/system?section=warningmsg{{if .WarningArticleProjectID}}&project_id={{.WarningArticleProjectID}}{{end}}{{if .WarningArticleKeyword}}&keyword={{.WarningArticleKeyword}}{{end}}{{if ne .WarningArticleOpenFlag 0}}&openFlag={{.WarningArticleOpenFlag}}{{end}}&page={{.WarningArticlePrev}}">上一页</a><span>第 {{.WarningArticlePage}} / {{.WarningArticleTotalPages}} 页</span><a href="/system?section=warningmsg{{if .WarningArticleProjectID}}&project_id={{.WarningArticleProjectID}}{{end}}{{if .WarningArticleKeyword}}&keyword={{.WarningArticleKeyword}}{{end}}{{if ne .WarningArticleOpenFlag 0}}&openFlag={{.WarningArticleOpenFlag}}{{end}}&page={{.WarningArticleNext}}">下一页</a>{{else}}<span>共 {{len .WarningArticles}} 条消息</span>{{end}}</div><div>{{range .WarningArticles}}<div class="warning-card"><div><a class="inline" href="/monitor/detail/{{.ArticleID}}?groupid={{.GroupID}}&projectid={{.ProjectID}}" target="_blank">{{.ArticleTitle}}</a></div><div>{{.GroupName}}</div><div>{{.ProjectName}}</div><div>{{.ArticleTime}}</div><div>{{.GroupID}}</div><div>{{.ProjectID}}</div></div>{{else}}<p class="muted">暂无预警消息</p>{{end}}</div></section>{{end}}{{if eq .SectionKey "warning"}}<section class="section-block"><h2>预警设置</h2><form method="post"><input type="hidden" name="form_type" value="warning"><input type="hidden" name="section" value="warning"><select name="project_id">{{range .Projects}}<option value="{{.ID}}" {{if eq .ID $.WarningSetting.ProjectID}}selected{{end}}>{{.Name}}</option>{{end}}</select><label><input type="checkbox" name="enabled" {{if .WarningSetting.Enabled}}checked{{end}}> 启用</label><input name="channels" placeholder="` + portalChannelPlaceholder + `" value="{{.WarningSetting.Channels}}"><input name="threshold" placeholder="阈值" value="{{.WarningSetting.Threshold}}"><input name="recipients" placeholder="接收人" value="{{.WarningSetting.Recipients}}"><textarea name="description" placeholder="说明">{{.WarningSetting.Description}}</textarea><button type="submit">保存预警设置</button></form></section>{{end}}{{if eq .SectionKey "feedback"}}<section class="section-block"><h2>反馈建议</h2><form method="post"><input type="hidden" name="form_type" value="feedback"><input type="hidden" name="section" value="feedback"><input name="title" placeholder="标题"><textarea name="content" placeholder="问题描述或需求"></textarea><button type="submit">提交</button></form></section>{{end}}<section class="section-block"><h2>运营操作</h2><div class="crawl-grid"><div class="crawl-card"><h3>按来源抓取</h3><form class="inline" method="post"><input type="hidden" name="form_type" value="crawl"><input type="hidden" name="section" value="{{.SectionKey}}"><select name="source_type">` + portalSourceOptions + `</select><button type="submit">立即抓取</button></form></div><div class="crawl-card"><h3>按模板抓取</h3><form class="inline" method="post"><input type="hidden" name="form_type" value="crawl"><input type="hidden" name="section" value="{{.SectionKey}}"><select name="template_id"><option value="">选择模板</option>{{range .CrawlTemplates}}<option value="{{.ID}}">{{.Name}} [{{.SourceType}}]</option>{{else}}<option value="">暂无可用模板</option>{{end}}</select><input name="keyword" placeholder="模板关键词（可选）"><button type="submit">模板抓取</button></form></div><div class="crawl-card"><h3>分析刷新</h3><form method="post"><input type="hidden" name="form_type" value="analysis"><input type="hidden" name="section" value="{{.SectionKey}}"><button type="submit">刷新分析快照</button></form></div></div></section><section class="section-block"><h2>公告与任务</h2><div class="grid"><div><h3>公告</h3><table><tr><th>标题</th><th>时间</th></tr>{{range .Notices}}<tr><td>{{.Title}}</td><td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="2">暂无公告</td></tr>{{end}}</table></div><div><h3>任务记录</h3><table><tr><th>任务</th><th>状态</th><th>说明</th></tr>{{range .TaskRuns}}<tr><td>{{.TaskName}}</td><td>{{.Status}}</td><td>{{.Message}}</td></tr>{{else}}<tr><td colspan="3">暂无任务记录</td></tr>{{end}}</table></div><div><h3>抓取记录</h3><table><tr><th>来源</th><th>状态</th><th>抓取数</th><th>入库数</th><th>开始时间</th></tr>{{range .CrawlRuns}}<tr><td>{{.SourceType}}</td><td>{{.Status}}</td><td>{{.FetchedCount}}</td><td>{{.InsertedCount}}</td><td>{{.StartedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="5">暂无抓取记录</td></tr>{{end}}</table></div></div></section></main>{{template "footer" .}}</body></html>{{end}}
 `
 
 const platformBindingsWorkbenchTemplate = `

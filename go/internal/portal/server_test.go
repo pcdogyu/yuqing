@@ -265,6 +265,61 @@ func TestCryptoPageDefaultsToBTCAndETHCards(t *testing.T) {
 	}
 }
 
+func TestHandleRulesCreatesProjectWhenProjectListIsEmpty(t *testing.T) {
+	var createdProject model.Project
+	var createdRule model.MonitorRule
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/projects":
+			if err := json.NewDecoder(r.Body).Decode(&createdProject); err != nil {
+				t.Fatalf("decode project body: %v", err)
+			}
+			createdProject.ID = 42
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusOK, "message": "ok", "data": createdProject})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/monitor-rules":
+			if err := json.NewDecoder(r.Body).Decode(&createdRule); err != nil {
+				t.Fatalf("decode rule body: %v", err)
+			}
+			createdRule.ID = 99
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusOK, "message": "ok", "data": createdRule})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer content.Close()
+
+	srv := &Server{
+		cfg:       config.Config{ContentURL: content.URL},
+		client:    resty.New(),
+		templates: NewServer(config.Config{}).templates,
+	}
+	form := url.Values{}
+	form.Set("name", "AI 监测")
+	form.Set("include_keywords", "AI,大模型")
+	form.Set("channels", "flash,headline")
+	form.Set("severity", "high")
+	req := httptest.NewRequest(http.MethodPost, "/monitor-rules", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Referer", "/monitor-rules")
+	rr := httptest.NewRecorder()
+
+	srv.handleRules(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d", rr.Code)
+	}
+	if createdProject.ID != 42 || createdProject.Name != "监测项目：AI,大模型" || createdProject.Keywords != "AI,大模型" {
+		t.Fatalf("unexpected created project: %+v", createdProject)
+	}
+	if createdRule.ProjectID != 42 || createdRule.Name != "AI 监测" || createdRule.Channels != "flash,headline" || createdRule.Severity != "high" {
+		t.Fatalf("unexpected created rule: %+v", createdRule)
+	}
+	if loc := rr.Header().Get("Location"); !strings.Contains(loc, "%E8%A7%84%E5%88%99%E5%88%9B%E5%BB%BA%E6%88%90%E5%8A%9F") {
+		t.Fatalf("expected success redirect, got %s", loc)
+	}
+}
+
 func TestCryptoPageQueriesRequestedPairOnly(t *testing.T) {
 	var requested []string
 	analysis := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1093,12 +1148,59 @@ func TestLegacyRouteRegistryStrategies(t *testing.T) {
 	}
 
 	platform, ok := legacyRouteSpecForPath("/platform/xie/report")
-	if !ok || platform.Strategy != legacyStrategyProxy {
+	if !ok || platform.Strategy != legacyStrategyGone || platform.RemovalGate != legacyRemovalGateExternalContract {
 		t.Fatalf("unexpected platform legacy spec: %+v ok=%v", platform, ok)
 	}
 
 	if !isRemovedLegacyPortalPath("/user/save") {
 		t.Fatalf("expected /user/save to be treated as removed")
+	}
+}
+
+func TestFinalLegacyCompatRoutesAreGone(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+
+	paths := []string{
+		"/timelysearch/result?keyword=AI",
+		"/platform/nlp/ocr",
+		"/platform/xie/report",
+		"/mobile/monitor",
+		"/mobile/getGroupAndProject",
+		"/mobile/mobileQRCode",
+		"/mobile/uuid/1-1000/test",
+		"/displayboard",
+		"/displayboard/collection2",
+		"/volume",
+		"/volume/getproject",
+		"/volume/projectname",
+		"/hot/hotpage",
+		"/hot/hotlist",
+		"/dist/monitor",
+		"/dist/yqapply",
+		"/dist/applydatainfo",
+		"/img/code",
+	}
+	for _, path := range paths {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "session-admin"})
+		rr := httptest.NewRecorder()
+		srv.Router().ServeHTTP(rr, req)
+		if rr.Code != http.StatusGone {
+			t.Fatalf("expected 410 for final removed legacy route %s, got %d", path, rr.Code)
+		}
+	}
+
+	if live := collectLegacyLiveRoutes(); len(live) != 0 {
+		t.Fatalf("expected no live legacy routes after final cleanup, got %+v", live)
+	}
+
+	counts := map[legacyRouteStrategy]int{}
+	for _, spec := range portalLegacyRoutes {
+		counts[spec.Strategy]++
+	}
+	if counts[legacyStrategyProxy] != 0 || counts[legacyStrategyPreserve] != 0 || counts[legacyStrategyGone] != 75 || counts[legacyStrategyDelete] != 40 {
+		t.Fatalf("unexpected legacy route counts after final cleanup: %+v", counts)
 	}
 }
 

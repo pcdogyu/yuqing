@@ -12,6 +12,16 @@
 
 手动触发任务必须携带 `X-Service-Token`。任务执行结果统一写入 `task_runs`。
 
+`GET /api/v1/scheduler/jobs` 返回每个任务的生产运行态：
+
+- `java_quartz_name`
+- `cron`
+- `next_run_at`
+- `last_status`
+- `last_message`
+- `last_started_at`
+- `last_finished_at`
+
 当前 job registry 覆盖：
 
 - `flash-crawl`
@@ -49,11 +59,23 @@ Query 中的 `token`、`password`、`secret`、`key` 会脱敏。
 .\scripts\start-all.ps1
 .\scripts\health-check.ps1
 .\scripts\smoke-test.ps1
+.\scripts\reconcile-production.ps1
 .\scripts\backup-sqlite.ps1
 .\scripts\stop-all.ps1
 ```
 
 脚本默认使用 `YUQING_DB_PATH`；未设置时使用 `data\yuqing.db`。
+
+`reconcile-production.ps1` 调用 `cmd/ops-check` 做 SQLite 只读对账，覆盖 `items`、`projects`、`reports`、`items_fts`、`task_runs`、`audit_logs`、`platform_bindings`、crypto social 来源、失败任务和最近审计。`backup-sqlite.ps1` 复制数据库后会对备份库执行同一套校验并输出 JSON。
+
+## Operations View
+
+`portal-web /system?section=operations` 展示生产运行闭环：
+
+- 服务健康，包括 `scheduler-service`
+- scheduler jobs 的 Java Quartz 对应关系、cron 描述、下次执行时间和最近结果
+- 最近失败任务、最近审计、抓取健康
+- legacy 注册表策略汇总；四期收尾后 `proxy / preserve` 均为 `0`
 
 ## Verification
 
@@ -66,4 +88,4 @@ go test ./...
 .\scripts\smoke-test.ps1
 ```
 
-`smoke-test.ps1` 需要服务已启动，覆盖服务健康、scheduler jobs、正式搜索/分析/NLP API 和 legacy 410 探测。
+`smoke-test.ps1` 需要服务已启动，覆盖服务健康、scheduler jobs 运行态、正式搜索/分析/NLP API、NLP capabilities、审计写入和 legacy 410 探测。旧 `timelysearch`、`platform/nlp`、`platform/xie`、`mobile`、`displayboard`、`volume`、`hot`、`dist`、`img/code` 入口已在四期收尾中统一返回 `410 Gone`。

@@ -60,6 +60,7 @@ type Config struct {
 	CrawlerURL    string
 	AnalysisURL   string
 	NLPURL        string
+	SchedulerURL  string
 
 	LLMBaseURL string
 	LLMAPIKey  string
@@ -125,6 +126,7 @@ func Load() Config {
 		CrawlerURL:    envOrDefaultWithAliases("YUQING_CRAWLER_URL", "http://127.0.0.1:8083", "JIN10_CRAWLER_URL"),
 		AnalysisURL:   envOrDefault("YUQING_ANALYSIS_URL", "http://127.0.0.1:8084"),
 		NLPURL:        envOrDefaultWithAliases("YUQING_NLP_URL", "http://127.0.0.1:8085", "JIN10_NLP_URL"),
+		SchedulerURL:  envOrDefaultWithAliases("YUQING_SCHEDULER_URL", "http://127.0.0.1:8086", "JIN10_SCHEDULER_URL"),
 		LLMBaseURL:    envOrDefault("YUQING_LLM_BASE_URL", ""),
 		LLMAPIKey:     envOrDefault("YUQING_LLM_API_KEY", ""),
 		LLMModel:      envOrDefault("YUQING_LLM_MODEL", ""),
