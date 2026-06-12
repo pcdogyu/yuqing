@@ -109,7 +109,19 @@ func (w *Worker) lastTaskRunsByName(ctx context.Context) map[string]model.TaskRu
 func withJobMeta(def jobDefinition, javaQuartzName, cron string) jobDefinition {
 	def.JavaQuartzName = javaQuartzName
 	def.Cron = cron
-	def.Cron = schedulerEnv(def.Name, "CRON", cron)
+	if override := schedulerEnv(def.Name, "CRON", ""); override != "" {
+		if _, err := parseCronSchedule(override); err != nil {
+			log.Warn().
+				Err(err).
+				Str("service", "scheduler-service").
+				Str("task", def.Name).
+				Str("cron", override).
+				Str("fallback_cron", cron).
+				Msg("invalid scheduler cron override ignored")
+		} else {
+			def.Cron = override
+		}
+	}
 	def.Enabled = schedulerEnvBool(def.Name, "ENABLED", def.Enabled)
 	return def
 }
@@ -140,7 +152,11 @@ func schedulerEnvBool(jobName, suffix string, fallback bool) bool {
 
 func quartzCronSpec(spec string) string {
 	fields := strings.Fields(strings.TrimSpace(spec))
-	if len(fields) == 6 {
+	switch len(fields) {
+	case 5:
+		fields = append([]string{"0"}, fields...)
+		fallthrough
+	case 6:
 		for i, field := range fields {
 			if field == "?" {
 				fields[i] = "*"
@@ -160,11 +176,15 @@ func nextCronRun(spec string, from time.Time) (time.Time, error) {
 	if err != nil {
 		location = time.Local
 	}
-	schedule, err := cronParser().Parse(quartzCronSpec(spec))
+	schedule, err := parseCronSchedule(spec)
 	if err != nil {
 		return time.Time{}, err
 	}
 	return schedule.Next(from.In(location)).UTC(), nil
+}
+
+func parseCronSchedule(spec string) (cron.Schedule, error) {
+	return cronParser().Parse(quartzCronSpec(spec))
 }
 
 func (w *Worker) jobDefinitions() []jobDefinition {

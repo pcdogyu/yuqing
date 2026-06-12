@@ -22,6 +22,7 @@ set "PORT_CHECKS=auth-service=8081 content-service=8082 crawler-service=8083 ana
 set "YUQING_LOG_LEVEL=debug"
 set "YUQING_RUN_VERSION=local"
 set "TEMP_BOOTSTRAP=%TEMP%\yuqing-run-bootstrap-%RANDOM%-%RANDOM%.cmd"
+set "YUQING_SCHEDULER_PORT=8086"
 
 if "%SKIP_PULL%"=="0" if "%AFTER_PULL%"=="0" (
     copy /Y "%~f0" "%TEMP_BOOTSTRAP%" >nul
@@ -96,6 +97,8 @@ for %%S in (%SERVICE_NAMES%) do (
     call :kill_service %%S
     if errorlevel 1 goto :fail
 )
+call :configure_scheduler_port
+if errorlevel 1 goto :fail
 
 echo [5/6] Build service binaries...
 if not exist "%BIN_DIR%" mkdir "%BIN_DIR%"
@@ -144,10 +147,12 @@ call :print_port_status content-service 8082
 call :print_port_status crawler-service 8083
 call :print_port_status analysis-service 8084
 call :print_port_status nlp-service 8085
+call :print_port_status scheduler-service %YUQING_SCHEDULER_PORT%
 
 echo.
 echo Services started.
 echo Gateway: http://127.0.0.1
+echo Scheduler: %YUQING_SCHEDULER_URL%
 echo LogLevel: %YUQING_LOG_LEVEL%
 echo Version: %YUQING_RUN_VERSION%
 echo Commit: %YUQING_GIT_COMMIT%
@@ -250,6 +255,19 @@ if exist "%ERR_LOG%" (
     for %%I in ("%ERR_LOG%") do if %%~zI GTR 0 type "%ERR_LOG%"
 )
 echo ---- end %LOG_SERVICE% log ----
+exit /b 0
+
+:configure_scheduler_port
+for /f "usebackq tokens=1,2,3 delims=|" %%A in (`powershell -NoProfile -Command "$addr=$env:YUQING_SCHEDULER_ADDR; if ([string]::IsNullOrWhiteSpace($addr)) { $addr=':8086' }; if ($addr -match ':(\d+)$') { $port=[int]$Matches[1] } else { $port=8086 }; function Test-Port([int]$p) { return @((Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue)).Count -gt 0 }; $changed=$false; if (Test-Port $port) { $found=$false; for ($p=18086; $p -le 18186; $p++) { if (-not (Test-Port $p)) { $port=$p; $addr=':'+$p; $changed=$true; $found=$true; break } }; if (-not $found) { throw 'no free scheduler port found from 18086' } }; $url=$env:YUQING_SCHEDULER_URL; if ([string]::IsNullOrWhiteSpace($url) -or $changed -or $url -match ':8086/?$') { $url='http://127.0.0.1:'+$port }; Write-Output ($addr+'|'+$url+'|'+$port)"`) do (
+    set "YUQING_SCHEDULER_ADDR=%%A"
+    set "YUQING_SCHEDULER_URL=%%B"
+    set "YUQING_SCHEDULER_PORT=%%C"
+)
+if not defined YUQING_SCHEDULER_ADDR (
+    echo Failed to configure scheduler port.
+    exit /b 1
+)
+echo Scheduler management endpoint: %YUQING_SCHEDULER_URL%
 exit /b 0
 
 :fail

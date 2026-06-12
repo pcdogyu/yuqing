@@ -205,6 +205,39 @@ func TestSchedulerCronNextRunAndEnvOverrides(t *testing.T) {
 	}
 }
 
+func TestSchedulerCronAcceptsFiveFieldAndIgnoresInvalidOverrides(t *testing.T) {
+	if _, err := nextCronRun("*/10 * * * *", time.Date(2026, 6, 12, 8, 1, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("expected five-field cron to parse, got %v", err)
+	}
+
+	t.Setenv("YUQING_SCHEDULER_FLASH_CRAWL_CRON", "interval from YUQING_FLASH_INTERVAL_SEC, default 15s")
+	t.Setenv("YUQING_SCHEDULER_HEADLINE_CRAWL_CRON", "*/5 * * * *")
+	worker := NewWorker(config.Config{
+		HTTPTimeout:           time.Second,
+		FlashInterval:         time.Hour,
+		HeadlineInterval:      time.Hour,
+		AnalysisInterval:      time.Hour,
+		WechatCleanupInterval: time.Hour,
+		WechatPushInterval:    time.Hour,
+	})
+	jobs := worker.Jobs()
+	var flash, headline Job
+	for _, job := range jobs {
+		switch job.Name {
+		case "flash-crawl":
+			flash = job
+		case "headline-crawl":
+			headline = job
+		}
+	}
+	if flash.Cron != "0/15 * * * * ?" || flash.NextRunAt == nil || flash.LastStatus == "invalid_cron" {
+		t.Fatalf("expected invalid flash cron override to fall back to default, got %+v", flash)
+	}
+	if headline.Cron != "*/5 * * * *" || headline.NextRunAt == nil {
+		t.Fatalf("expected five-field headline cron override to be accepted, got %+v", headline)
+	}
+}
+
 func TestSchedulerRunJobRejectsUnknownJob(t *testing.T) {
 	worker := NewWorker(config.Config{})
 	if err := worker.RunJobByName(context.Background(), "missing-job"); err == nil {
