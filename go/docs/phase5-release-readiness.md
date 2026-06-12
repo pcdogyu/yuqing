@@ -92,9 +92,25 @@ go test ./cmd/ops-check
 - `GET /api/v1/system/operations`
 - `GET /api/v1/system/alerts`
 
-`operations` 返回服务健康、最近任务、失败任务、最近审计、legacy 注册表、外部集成状态、备份状态和 `ready`。`alerts` 返回上线告警，覆盖服务不可用、失败任务、审计缺失、备份缺失和 legacy 存活入口。
+`operations` 返回服务健康、scheduler 摘要、任务摘要、最近任务、失败任务、审计摘要、最近审计、legacy 注册表、legacy 410 探测、外部集成状态、备份状态和 `ready`。`alerts` 返回上线告警，覆盖服务不可用、失败任务、连续任务失败、审计缺失或过期、备份缺失或过期、legacy 非 410、外部集成失败和 crypto social 长时间无入库。
 
 `portal-web /system?section=operations` 优先消费同一份 operations 数据。
+
+四批检查结论：
+
+- `operations.scheduler_jobs` 直接来自 scheduler API，页面不再单独解释 scheduler 运行态。
+- `operations.task_summary` 输出最近任务数、失败数和连续失败数，`alerts` 在连续失败达到 2 次时输出 `consecutive_task_failures`。
+- `operations.audit_summary` 输出最近审计数量、最后动作和距今秒数，超过 24 小时无新审计会输出 `recent_audit_stale`。
+- `operations.legacy_route_probes` 对关键旧入口执行 `410 Gone` 探测，非 410 会输出 `legacy_non_410`。
+- `operations.external_integrations` 对 crypto social 输出最近抓取时间、抓取数、入库数、更新数和重复数；最近一次成功抓取超过 6 小时仍无入库会输出 `crypto_social_no_recent_insert`。
+- `operations.backup` 输出备份文件、大小、最近备份时间和年龄小时数。
+
+四批最小验收命令：
+
+```powershell
+cd D:\yuqing\go
+go test ./internal/content ./internal/portal
+```
 
 ## External Integration Resilience
 

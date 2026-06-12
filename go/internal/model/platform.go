@@ -330,9 +330,14 @@ type OperationServiceStatus struct {
 }
 
 type OperationExternalStatus struct {
-	Name    string `json:"name"`
-	Status  string `json:"status"`
-	Message string `json:"message,omitempty"`
+	Name           string     `json:"name"`
+	Status         string     `json:"status"`
+	Message        string     `json:"message,omitempty"`
+	LastFetchAt    *time.Time `json:"last_fetch_at,omitempty"`
+	FetchedCount   int        `json:"fetched_count,omitempty"`
+	InsertedCount  int        `json:"inserted_count,omitempty"`
+	UpdatedCount   int        `json:"updated_count,omitempty"`
+	DuplicateCount int        `json:"duplicate_count,omitempty"`
 }
 
 type LegacyStrategyCount struct {
@@ -340,16 +345,73 @@ type LegacyStrategyCount struct {
 	Count    int    `json:"count"`
 }
 
+type OperationSchedulerJob struct {
+	Name           string     `json:"name"`
+	Group          string     `json:"group"`
+	Description    string     `json:"description"`
+	JavaQuartzName string     `json:"java_quartz_name"`
+	Cron           string     `json:"cron"`
+	IntervalSec    int64      `json:"interval_sec"`
+	Enabled        bool       `json:"enabled"`
+	NextRunAt      *time.Time `json:"next_run_at,omitempty"`
+	LastStatus     string     `json:"last_status,omitempty"`
+	LastMessage    string     `json:"last_message,omitempty"`
+	LastStartedAt  *time.Time `json:"last_started_at,omitempty"`
+	LastFinishedAt *time.Time `json:"last_finished_at,omitempty"`
+}
+
+type OperationTaskSummary struct {
+	RecentCount              int        `json:"recent_count"`
+	FailedCount              int        `json:"failed_count"`
+	ConsecutiveFailures      int        `json:"consecutive_failures"`
+	LastTaskName             string     `json:"last_task_name,omitempty"`
+	LastStatus               string     `json:"last_status,omitempty"`
+	LastStartedAt            *time.Time `json:"last_started_at,omitempty"`
+	LastFinishedAt           *time.Time `json:"last_finished_at,omitempty"`
+	ConsecutiveFailureTask   string     `json:"consecutive_failure_task,omitempty"`
+	ConsecutiveFailureReason string     `json:"consecutive_failure_reason,omitempty"`
+}
+
+type OperationAuditSummary struct {
+	RecentCount int        `json:"recent_count"`
+	LastAction  string     `json:"last_action,omitempty"`
+	LastAt      *time.Time `json:"last_at,omitempty"`
+	LastAgeSec  int64      `json:"last_age_sec,omitempty"`
+}
+
+type OperationBackupStatus struct {
+	Name         string     `json:"name"`
+	Status       string     `json:"status"`
+	Message      string     `json:"message,omitempty"`
+	Path         string     `json:"path,omitempty"`
+	SizeBytes    int64      `json:"size_bytes,omitempty"`
+	LastBackupAt *time.Time `json:"last_backup_at,omitempty"`
+	AgeHours     float64    `json:"age_hours,omitempty"`
+}
+
+type OperationLegacyRouteStatus struct {
+	Path       string `json:"path"`
+	Expected   int    `json:"expected"`
+	Actual     int    `json:"actual"`
+	Status     string `json:"status"`
+	Message    string `json:"message,omitempty"`
+	FormalPath string `json:"formal_path,omitempty"`
+}
+
 type OperationsSummary struct {
-	GeneratedAt          time.Time                 `json:"generated_at"`
-	Services             []OperationServiceStatus  `json:"services"`
-	RecentTaskRuns       []TaskRun                 `json:"recent_task_runs"`
-	FailedTaskRuns       []TaskRun                 `json:"failed_task_runs"`
-	RecentAuditLogs      []AuditLog                `json:"recent_audit_logs"`
-	LegacyRegistry       []LegacyStrategyCount     `json:"legacy_registry"`
-	ExternalIntegrations []OperationExternalStatus `json:"external_integrations"`
-	Backup               OperationExternalStatus   `json:"backup"`
-	Ready                bool                      `json:"ready"`
+	GeneratedAt          time.Time                    `json:"generated_at"`
+	Services             []OperationServiceStatus     `json:"services"`
+	SchedulerJobs        []OperationSchedulerJob      `json:"scheduler_jobs"`
+	TaskSummary          OperationTaskSummary         `json:"task_summary"`
+	RecentTaskRuns       []TaskRun                    `json:"recent_task_runs"`
+	FailedTaskRuns       []TaskRun                    `json:"failed_task_runs"`
+	AuditSummary         OperationAuditSummary        `json:"audit_summary"`
+	RecentAuditLogs      []AuditLog                   `json:"recent_audit_logs"`
+	LegacyRegistry       []LegacyStrategyCount        `json:"legacy_registry"`
+	LegacyRouteProbes    []OperationLegacyRouteStatus `json:"legacy_route_probes"`
+	ExternalIntegrations []OperationExternalStatus    `json:"external_integrations"`
+	Backup               OperationBackupStatus        `json:"backup"`
+	Ready                bool                         `json:"ready"`
 }
 
 type OperationAlert struct {

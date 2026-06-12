@@ -168,6 +168,8 @@ http://127.0.0.1
 - `POST /api/v1/system/feedback`
 - `GET /api/v1/system/task-runs`
 - `GET /api/v1/system/audit-logs`
+- `GET /api/v1/system/operations`
+- `GET /api/v1/system/alerts`
 - `GET /api/v1/scheduler/jobs`
 - `POST /api/v1/scheduler/jobs/{name}/run`
 - `POST /api/v1/admin/tasks/crawl`
@@ -211,5 +213,6 @@ http://127.0.0.1
 - 五期已新增上线验收闭环：`/api/v1/system/operations`、`/api/v1/system/alerts`、baseline 对账、备份恢复演练和 `release-check.ps1`。
 - Java 原系统直接数据差异对账通过 `ops-check --baseline` 接收导出的 JSON/CSV 基线；五期二批已支持 Java 领域名映射和恢复库表计数一致性检查。
 - 五期三批已统一外部 HTTP 重试策略，支持 `YUQING_EXTERNAL_RETRY_COUNT`、`YUQING_EXTERNAL_RETRY_WAIT_MS` 和 `YUQING_CRYPTO_SOCIAL_RATE_LIMIT_MS`。
+- 五期四批已深化 operations/alerts：统一返回 scheduler 摘要、连续失败任务、审计新鲜度、legacy 410 探测、外部集成健康和备份年龄。
 
 说明：具体模块状态以 [MIGRATION.md](MIGRATION.md) 的详细矩阵为准。

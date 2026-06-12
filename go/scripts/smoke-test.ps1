@@ -36,9 +36,18 @@ $operations = Invoke-RestMethod -Method Get -Uri "$ContentUrl/api/v1/system/oper
 if (-not $operations.data -or -not $operations.data.legacy_registry) {
     throw "operations API did not return production summary"
 }
+if (-not $operations.data.scheduler_jobs -or -not $operations.data.task_summary -or -not $operations.data.audit_summary) {
+    throw "operations API did not return scheduler/task/audit summaries"
+}
+if (-not $operations.data.legacy_route_probes -or -not $operations.data.external_integrations -or -not $operations.data.backup) {
+    throw "operations API did not return legacy/external/backup summaries"
+}
 $alerts = Invoke-RestMethod -Method Get -Uri "$ContentUrl/api/v1/system/alerts" -TimeoutSec 8
 if ($null -eq $alerts.data.ready) {
     throw "alerts API did not return readiness flag"
+}
+if ($null -eq $alerts.data.alerts) {
+    throw "alerts API did not return alerts list"
 }
 
 Invoke-RestMethod -Method Post -Uri "$ContentUrl/api/v1/system/audit-logs" `

@@ -156,16 +156,32 @@ func TestOperationsAndAlertsAPI(t *testing.T) {
 	if err := store.RecordTaskRun(ctx, "release-check", "failed", "boom", started, &finished); err != nil {
 		t.Fatalf("RecordTaskRun error: %v", err)
 	}
+	if err := store.RecordTaskRun(ctx, "release-check:smoke", "failed", "still broken", started.Add(time.Second), &finished); err != nil {
+		t.Fatalf("RecordTaskRun second error: %v", err)
+	}
 	if _, err := store.CreateAuditLog(ctx, model.AuditLog{Username: "ops", Action: "ops.test", Resource: "/ops", DetailJSON: `{}`}); err != nil {
 		t.Fatalf("CreateAuditLog error: %v", err)
 	}
+	crawlStarted := time.Now().UTC().Add(-7 * time.Hour)
+	crawlFinished := crawlStarted.Add(time.Minute)
+	crawlRunID, err := store.StartCrawlRun(ctx, "crypto_x", crawlStarted)
+	if err != nil {
+		t.Fatalf("StartCrawlRun error: %v", err)
+	}
+	if err := store.FinishCrawlRun(ctx, crawlRunID, "success", 5, 0, 0, "", crawlFinished); err != nil {
+		t.Fatalf("FinishCrawlRun error: %v", err)
+	}
 	healthy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/healthz" && r.URL.Path != "/api/v1/nlp/capabilities" {
-			http.NotFound(w, r)
-			return
+		switch r.URL.Path {
+		case "/healthz", "/api/v1/nlp/capabilities":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"status":"ok"}}`))
+		case "/api/v1/scheduler/jobs":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":[{"name":"analysis-refresh","java_quartz_name":"AnalysisQuartz","cron":"0 0/2 * * * ?","enabled":true,"last_status":"success"}]}`))
+		default:
+			http.Error(w, http.StatusText(http.StatusGone), http.StatusGone)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"status":"ok"}}`))
 	}))
 	defer healthy.Close()
 
@@ -178,6 +194,7 @@ func TestOperationsAndAlertsAPI(t *testing.T) {
 		AnalysisURL:    healthy.URL,
 		NLPURL:         healthy.URL,
 		SchedulerURL:   healthy.URL,
+		CryptoXURL:     healthy.URL + "/crypto-x",
 		BinanceBaseURL: "https://binance.example.com",
 		CoinLoreURL:    "https://coinlore.example.com",
 		CoinGeckoURL:   "https://coingecko.example.com",
@@ -197,8 +214,17 @@ func TestOperationsAndAlertsAPI(t *testing.T) {
 	if err := json.Unmarshal(opsRR.Body.Bytes(), &opsEnvelope); err != nil {
 		t.Fatalf("unmarshal operations: %v", err)
 	}
-	if len(opsEnvelope.Data.Services) != 7 || len(opsEnvelope.Data.FailedTaskRuns) != 1 {
+	if len(opsEnvelope.Data.Services) != 7 || len(opsEnvelope.Data.FailedTaskRuns) != 2 {
 		t.Fatalf("unexpected operations summary: %+v", opsEnvelope.Data)
+	}
+	if len(opsEnvelope.Data.SchedulerJobs) != 1 || opsEnvelope.Data.SchedulerJobs[0].Name != "analysis-refresh" {
+		t.Fatalf("expected scheduler job summary, got %+v", opsEnvelope.Data.SchedulerJobs)
+	}
+	if opsEnvelope.Data.TaskSummary.ConsecutiveFailures != 2 {
+		t.Fatalf("expected two consecutive failures, got %+v", opsEnvelope.Data.TaskSummary)
+	}
+	if len(opsEnvelope.Data.LegacyRouteProbes) == 0 || opsEnvelope.Data.LegacyRouteProbes[0].Status != "gone" {
+		t.Fatalf("expected legacy 410 probes, got %+v", opsEnvelope.Data.LegacyRouteProbes)
 	}
 	if opsEnvelope.Data.LegacyRegistry[2].Strategy != "preserve" || opsEnvelope.Data.LegacyRegistry[2].Count != 0 {
 		t.Fatalf("expected preserve legacy count to be zero, got %+v", opsEnvelope.Data.LegacyRegistry)
@@ -207,7 +233,7 @@ func TestOperationsAndAlertsAPI(t *testing.T) {
 	alertReq := httptest.NewRequest(http.MethodGet, "/api/v1/system/alerts", nil)
 	alertRR := httptest.NewRecorder()
 	router.ServeHTTP(alertRR, alertReq)
-	if alertRR.Code != http.StatusOK || !strings.Contains(alertRR.Body.String(), "failed_task_runs") {
+	if alertRR.Code != http.StatusOK || !strings.Contains(alertRR.Body.String(), "failed_task_runs") || !strings.Contains(alertRR.Body.String(), "consecutive_task_failures") || !strings.Contains(alertRR.Body.String(), "crypto_social_no_recent_insert") {
 		t.Fatalf("expected failed task alert, got status=%d body=%s", alertRR.Code, alertRR.Body.String())
 	}
 }

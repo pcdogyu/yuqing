@@ -79,7 +79,7 @@ Query 中的 `token`、`password`、`secret`、`key` 会脱敏。
 - 最近失败任务、最近审计、抓取健康
 - legacy 注册表策略汇总；四期收尾后 `proxy / preserve` 均为 `0`
 
-五期后该页面优先消费 `GET /api/v1/system/operations`，脚本、页面和 JSON API 使用同一份运行数据。`GET /api/v1/system/alerts` 输出上线告警与 `ready` 标志。
+五期后该页面优先消费 `GET /api/v1/system/operations`，脚本、页面和 JSON API 使用同一份运行数据。`GET /api/v1/system/alerts` 输出上线告警与 `ready` 标志。五期第四批后，operations 数据进一步包含 scheduler 摘要、任务连续失败数、审计新鲜度、legacy 410 探测、crypto social 最近抓取/入库统计和备份文件年龄。
 
 五期第三批后，外部 HTTP 访问的超时、重试和 crypto social 限流配置已统一收口；具体参数和验收口径见 [phase5-release-readiness.md](phase5-release-readiness.md)。
 

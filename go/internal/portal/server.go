@@ -151,7 +151,7 @@ type pageData struct {
 	Notices                    []model.SystemNotice
 	AuditLogs                  []model.AuditLog
 	TaskRuns                   []model.TaskRun
-	SchedulerJobs              []schedulerJobStatus
+	SchedulerJobs              []model.OperationSchedulerJob
 	LegacyRouteSummary         []legacyRouteSummary
 	LegacyLiveRoutes           []legacyRouteSpec
 	Operations                 model.OperationsSummary
@@ -230,21 +230,6 @@ type serviceStatus struct {
 	URL     string
 	Healthy bool
 	Message string
-}
-
-type schedulerJobStatus struct {
-	Name           string     `json:"name"`
-	Group          string     `json:"group"`
-	Description    string     `json:"description"`
-	JavaQuartzName string     `json:"java_quartz_name"`
-	Cron           string     `json:"cron"`
-	IntervalSec    int64      `json:"interval_sec"`
-	Enabled        bool       `json:"enabled"`
-	NextRunAt      *time.Time `json:"next_run_at"`
-	LastStatus     string     `json:"last_status"`
-	LastMessage    string     `json:"last_message"`
-	LastStartedAt  *time.Time `json:"last_started_at"`
-	LastFinishedAt *time.Time `json:"last_finished_at"`
 }
 
 type legacyRouteSummary struct {
@@ -3067,7 +3052,7 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) 
 	notices := []model.SystemNotice{}
 	taskRuns := []model.TaskRun{}
 	auditLogs := []model.AuditLog{}
-	schedulerJobs := []schedulerJobStatus{}
+	schedulerJobs := []model.OperationSchedulerJob{}
 	crawlRuns := []model.CrawlRun{}
 	preferences := model.UserPreference{}
 	popupState := model.PopupState{}
@@ -3094,6 +3079,7 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) 
 	if !operations.GeneratedAt.IsZero() {
 		taskRuns = operations.RecentTaskRuns
 		auditLogs = operations.RecentAuditLogs
+		schedulerJobs = operations.SchedulerJobs
 	}
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/projects", &projects)
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/project-groups", &groups)
@@ -4150,8 +4136,8 @@ func (s *Server) collectServiceStatuses() []serviceStatus {
 	return services
 }
 
-func (s *Server) collectSchedulerJobs() []schedulerJobStatus {
-	jobs := []schedulerJobStatus{}
+func (s *Server) collectSchedulerJobs() []model.OperationSchedulerJob {
+	jobs := []model.OperationSchedulerJob{}
 	_ = s.getJSON(s.cfg.SchedulerURL+"/api/v1/scheduler/jobs", &jobs)
 	return jobs
 }
