@@ -249,6 +249,9 @@
   - `smoke-test.ps1` 对 scheduler jobs 运行态增加短重试，`stop-all.ps1` 会清理 `go run` 留下的服务子进程。
   - `release-check.ps1` 会检测 gateway 默认端口 `80` 与 scheduler 默认端口 `8086` 冲突并自动切到空闲端口，`health-check.ps1` 会拒绝非本项目健康响应。
   - `mock-crypto-social.ps1` 已补充非 200、坏 JSON、空数据和重复数据样本端点，便于发布前验证外部降级路径。
+- 2026-06-12：五期第五批文档复核：
+  - 已同步 [docs/phase4-productionization.md](docs/phase4-productionization.md) 的 gateway `/healthz`、发布验收端口自适应和 `/fullsearch/getSearchResult` 旧入口下线说明。
+  - 已同步 [docs/phase5-release-readiness.md](docs/phase5-release-readiness.md) 的第五批复核结论，明确 release-check、备份恢复、scheduler 与 legacy 410 抽样口径一致。
 
 ## 下一步
 
