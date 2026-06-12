@@ -69,6 +69,22 @@ CSV 可使用 `metric,label,expected` 或 `name,count`。嵌套 JSON 可使用�
 
 `restore-sqlite.ps1` 会把备份复制到临时库执行只读校验，并在源库存在时比较源库与恢复库的表计数，输出 `table_counts_match` 和 `table_count_diff`。
 
+五期第二批检查结论：
+
+- 跨系统对账已从“单库健康检查”深化为 Java 导出 baseline 与 Go SQLite 指标对比。
+- baseline 允许 Java 侧领域命名，不要求导出字段名完全等同 Go 表名。
+- 恢复演练已从“备份可打开”深化为“临时恢复库可校验，并可与源库表计数比对”。
+- 发布验收链路中 `release-check.ps1` 会把 `DatabasePath` 传入恢复演练，保证恢复检查使用同一份上线目标库。
+
+二批最小验收命令：
+
+```powershell
+cd D:\yuqing\go
+go test ./cmd/ops-check
+.\scripts\backup-sqlite.ps1
+.\scripts\restore-sqlite.ps1 -SourceDatabasePath .\data\yuqing.db
+```
+
 ## Operations APIs
 
 `content-service` 新增只读接口：

@@ -225,6 +225,9 @@
   - baseline JSON 支持 `counts`、顶层数值、嵌套 `{count}` / `{expected}`；CSV 支持 `name,count` 和 `metric,label,expected`。
   - `restore-sqlite.ps1` 支持 `-SourceDatabasePath`，恢复后对源库与恢复库的表计数输出 `table_counts_match` 和 `table_count_diff`。
   - `release-check.ps1` 已把源库路径传入恢复演练，发布验收可以同时确认备份可读和恢复计数一致。
+- 2026-06-12：五期第二批文档复核：
+  - 已同步 [docs/phase5-release-readiness.md](docs/phase5-release-readiness.md) 的二批检查结论、baseline 命名映射、恢复演练输出和最小验收命令。
+  - 已同步 [docs/phase4-productionization.md](docs/phase4-productionization.md) 的五期二批对账/恢复说明，避免四期文档继续只描述单库健康检查。
 
 ## 下一步
 

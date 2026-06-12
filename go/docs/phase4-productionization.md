@@ -68,7 +68,7 @@ Query 中的 `token`、`password`、`secret`、`key` 会脱敏。
 
 脚本默认使用 `YUQING_DB_PATH`；未设置时使用 `data\yuqing.db`。
 
-`reconcile-production.ps1` 调用 `cmd/ops-check` 做 SQLite 只读对账，覆盖 `items`、`projects`、`reports`、`items_fts`、`task_runs`、`audit_logs`、`platform_bindings`、crypto social 来源、失败任务和最近审计。五期后可通过 `-BaselinePath` 对 Java 导出的 JSON/CSV 基线做差异比较。`backup-sqlite.ps1` 复制数据库后会对备份库执行同一套校验并输出 JSON，`restore-sqlite.ps1` 会对备份执行临时恢复演练。
+`reconcile-production.ps1` 调用 `cmd/ops-check` 做 SQLite 只读对账，覆盖 `items`、`projects`、`reports`、`items_fts`、`task_runs`、`audit_logs`、`platform_bindings`、crypto social 来源、失败任务和最近审计。五期后可通过 `-BaselinePath` 对 Java 导出的 JSON/CSV 基线做差异比较；五期第二批已支持 Java 领域名到 Go 指标的映射。`backup-sqlite.ps1` 复制数据库后会对备份库执行同一套校验并输出 JSON，`restore-sqlite.ps1` 会对备份执行临时恢复演练，并可通过 `-SourceDatabasePath` 比较源库与恢复库表计数。
 
 ## Operations View
 
