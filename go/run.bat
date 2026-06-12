@@ -84,7 +84,7 @@ set "LDFLAGS=-X github.com/pcdogyu/yuqing/go/internal/app.Version=%YUQING_RUN_VE
 if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
 
 echo [3/6] Run go test ./...
-powershell -NoProfile -Command "& { Set-Location '%GO_DIR%'; if (Test-Path '%GO_TEST_LOG%') { Remove-Item '%GO_TEST_LOG%' -Force -ErrorAction SilentlyContinue }; Write-Host ('Go test flags: %GO_TEST_FLAGS%'); Write-Host ('Go test log: %GO_TEST_LOG%'); & go test ./... %GO_TEST_FLAGS% 2>&1 | Tee-Object -FilePath '%GO_TEST_LOG%'; exit $LASTEXITCODE }"
+powershell -NoProfile -Command "& { Set-Location '%GO_DIR%'; if (Test-Path '%GO_TEST_LOG%') { Remove-Item '%GO_TEST_LOG%' -Force -ErrorAction SilentlyContinue }; Write-Host ('Go test flags: %GO_TEST_FLAGS%'); Write-Host ('Go test log: %GO_TEST_LOG%'); cmd /d /c 'go test ./... %GO_TEST_FLAGS% 2>&1' | Tee-Object -FilePath '%GO_TEST_LOG%'; exit $LASTEXITCODE }"
 if errorlevel 1 goto :fail
 
 echo [4/6] Stop processes occupying service ports...
