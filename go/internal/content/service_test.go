@@ -112,6 +112,42 @@ func TestParseID(t *testing.T) {
 	})
 }
 
+func TestAuditMiddlewareWritesSanitizedAccessLog(t *testing.T) {
+	store := newContentSearchTestStore(t)
+	svc := NewService(config.Config{}, store)
+	router := svc.Router()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects?token=secret&keyword=alpha", nil)
+	req.Header.Set("X-User-ID", "42")
+	req.Header.Set("X-User-Name", "auditor")
+	req.Header.Set("User-Agent", "audit-test")
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected projects 200, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	logs, err := store.ListAuditLogs(context.Background(), 5, 42, "http.get")
+	if err != nil {
+		t.Fatalf("ListAuditLogs error: %v", err)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("expected one audit log, got %+v", logs)
+	}
+	if logs[0].Resource != "/api/v1/projects" || !strings.Contains(logs[0].DetailJSON, `"status":200`) {
+		t.Fatalf("unexpected audit log: %+v", logs[0])
+	}
+	var detail map[string]any
+	if err := json.Unmarshal([]byte(logs[0].DetailJSON), &detail); err != nil {
+		t.Fatalf("unmarshal audit detail: %v", err)
+	}
+	query, _ := detail["query"].(string)
+	if strings.Contains(query, "secret") || !strings.Contains(query, "token=<redacted>") {
+		t.Fatalf("expected sanitized query, got %s", query)
+	}
+}
+
 func TestSummarizeTextAndNonEmpty(t *testing.T) {
 	short := " short text "
 	if got := summarizeText(short); got != "short text" {

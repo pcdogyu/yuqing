@@ -302,6 +302,10 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/dist/yqmontitor", s.handleDistYqMonitor)
 	mux.HandleFunc("/dist/hotdata", s.handleDistHotData)
 	mux.HandleFunc("/platform/", s.requireSession(s.handlePlatformCompat))
+	mux.HandleFunc("/fullsearch", s.requireSessionUnlessRemoved(s.handleFullSearchEntry))
+	mux.HandleFunc("/fullsearch/", s.requireSessionUnlessRemoved(s.handleFullSearchCompat))
+	mux.HandleFunc("/timelysearch", s.requireSessionUnlessRemoved(s.handleTimelySearchEntry))
+	mux.HandleFunc("/timelysearch/", s.requireSessionUnlessRemoved(s.handleTimelySearchCompat))
 	mux.HandleFunc("/publicoption", s.requireSession(s.handlePublicOptionEntry))
 	mux.HandleFunc("/publicoption/", s.requireSession(s.handlePublicOptionCompat))
 	mux.HandleFunc("/logout", s.handleLogout)
@@ -353,6 +357,16 @@ func writeRemovedLegacyPortalResponse(w http.ResponseWriter, r *http.Request, st
 		return
 	}
 	http.Error(w, http.StatusText(status), status)
+}
+
+func (s *Server) requireSessionUnlessRemoved(next func(http.ResponseWriter, *http.Request, any)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if status, ok := removedLegacyPortalStatus(r.URL.Path); ok {
+			writeRemovedLegacyPortalResponse(w, r, status)
+			return
+		}
+		s.requireSession(next)(w, r)
+	}
 }
 
 func (s *Server) handleLoginPage(w http.ResponseWriter, r *http.Request) {

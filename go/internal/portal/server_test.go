@@ -1066,8 +1066,25 @@ func TestLegacyRouteRegistryStrategies(t *testing.T) {
 	}
 
 	fullJSON, ok := legacyRouteSpecForPath("/fullsearch/informationListpost")
-	if !ok || fullJSON.Strategy != legacyStrategyProxy || fullJSON.RemovalGate != legacyRemovalGateClientMigrated {
+	if !ok || fullJSON.Strategy != legacyStrategyGone || fullJSON.RemovalGate != legacyRemovalGateClientMigrated {
 		t.Fatalf("unexpected fullsearch JSON legacy spec: %+v ok=%v", fullJSON, ok)
+	}
+
+	lsearch, ok := legacyRouteSpecForPath("/industry")
+	if !ok || lsearch.Strategy != legacyStrategyGone || lsearch.RemovalGate != legacyRemovalGateClientMigrated {
+		t.Fatalf("unexpected lsearch legacy spec: %+v ok=%v", lsearch, ok)
+	}
+
+	publicOptionLoad, ok := legacyRouteSpecForPath("/publicoption/loadInformation")
+	if !ok || publicOptionLoad.Strategy != legacyStrategyGone || publicOptionLoad.RemovalGate != legacyRemovalGateClientMigrated {
+		t.Fatalf("unexpected publicoption loadInformation legacy spec: %+v ok=%v", publicOptionLoad, ok)
+	}
+
+	router := NewServer(config.Config{}).Router()
+	routerGoneRR := httptest.NewRecorder()
+	router.ServeHTTP(routerGoneRR, httptest.NewRequest(http.MethodGet, "/fullsearch/informationListpost?searchword=AI", nil))
+	if routerGoneRR.Code != http.StatusGone {
+		t.Fatalf("expected fullsearch JSON legacy route 410 through router, got %d", routerGoneRR.Code)
 	}
 
 	detail, ok := legacyRouteSpecForPath("/publicoption/reportdetail/1")
@@ -1135,22 +1152,8 @@ func TestPublicOptionCompatMutations(t *testing.T) {
 	loadReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	loadRR := httptest.NewRecorder()
 	srv.handlePublicOptionCompat(loadRR, loadReq, user)
-	if loadRR.Code != http.StatusOK {
-		t.Fatalf("expected loadInformation 200, got %d", loadRR.Code)
-	}
-	var loadEnvelope struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
-		Data struct {
-			Data      []any `json:"data"`
-			DataCount int   `json:"dataCount"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(loadRR.Body.Bytes(), &loadEnvelope); err != nil {
-		t.Fatalf("decode loadInformation response: %v", err)
-	}
-	if loadEnvelope.Code != http.StatusOK || loadEnvelope.Data.DataCount == 0 || len(loadEnvelope.Data.Data) == 0 {
-		t.Fatalf("unexpected loadInformation response: %+v", loadEnvelope)
+	if loadRR.Code != http.StatusGone {
+		t.Fatalf("expected removed loadInformation 410, got %d", loadRR.Code)
 	}
 
 	deleteReq := httptest.NewRequest(http.MethodPost, "/publicoption/deletepublicoptioninfo", strings.NewReader("Ids=1"))

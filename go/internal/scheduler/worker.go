@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +30,9 @@ func NewWorker(cfg config.Config) *Worker {
 		cfg: cfg,
 		client: resty.New().
 			SetTimeout(cfg.HTTPTimeout).
+			SetRetryCount(2).
+			SetRetryWaitTime(500*time.Millisecond).
+			SetRetryMaxWaitTime(3*time.Second).
 			SetHeader("X-Service-Token", cfg.ServiceToken),
 	}
 }
@@ -36,34 +40,15 @@ func NewWorker(cfg config.Config) *Worker {
 func (w *Worker) Run(ctx context.Context) {
 	w.waitForDependencies(ctx)
 
-	log.Info().Str("service", "scheduler-service").Str("task", "flash-crawl").Dur("interval", w.cfg.FlashInterval).Msg("scheduler task registered")
-	go w.loop(ctx, "flash-crawl", w.cfg.FlashInterval, func() error {
-		_, err := w.client.R().
-			SetQueryParam("source_type", "flash").
-			Post(w.cfg.CrawlerURL + "/api/v1/admin/tasks/crawl")
-		return err
-	})
-	log.Info().Str("service", "scheduler-service").Str("task", "headline-crawl").Dur("interval", w.cfg.HeadlineInterval).Msg("scheduler task registered")
-	go w.loop(ctx, "headline-crawl", w.cfg.HeadlineInterval, func() error {
-		_, err := w.client.R().
-			SetQueryParam("source_type", "headline").
-			Post(w.cfg.CrawlerURL + "/api/v1/admin/tasks/crawl")
-		return err
-	})
-	log.Info().Str("service", "scheduler-service").Str("task", "analysis-refresh").Dur("interval", w.cfg.AnalysisInterval).Msg("scheduler task registered")
-	go w.loop(ctx, "analysis-refresh", w.cfg.AnalysisInterval, func() error {
-		_, err := w.client.R().
-			Post(w.cfg.AnalysisURL + "/api/v1/admin/tasks/analysis/refresh")
-		return err
-	})
-	log.Info().Str("service", "scheduler-service").Str("task", "wechat-challenge-cleanup").Dur("interval", w.cfg.WechatCleanupInterval).Msg("scheduler task registered")
-	go w.loop(ctx, "wechat-challenge-cleanup", w.cfg.WechatCleanupInterval, func() error {
-		return w.cleanupExpiredWechatChallenges(ctx)
-	})
-	if w.cfg.WechatPushEnabled {
-		log.Info().Str("service", "scheduler-service").Str("task", "wechat-daily-push").Dur("interval", w.cfg.WechatPushInterval).Msg("scheduler task registered")
-		go w.loop(ctx, "wechat-daily-push", w.cfg.WechatPushInterval, func() error {
-			return w.pushWechatDailySummary(ctx)
+	for _, job := range w.jobDefinitions() {
+		if !job.Enabled {
+			log.Info().Str("service", "scheduler-service").Str("task", job.Name).Msg("scheduler task disabled")
+			continue
+		}
+		current := job
+		log.Info().Str("service", "scheduler-service").Str("task", current.Name).Dur("interval", current.Interval).Msg("scheduler task registered")
+		go w.loop(ctx, current.Name, current.Interval, func() error {
+			return w.runJob(ctx, current)
 		})
 	}
 	log.Info().Str("service", "scheduler-service").Msg("scheduler service ready")
@@ -77,12 +62,7 @@ func (w *Worker) waitForDependencies(ctx context.Context) {
 	}{
 		{name: "crawler-service", url: w.cfg.CrawlerURL + "/healthz"},
 		{name: "analysis-service", url: w.cfg.AnalysisURL + "/healthz"},
-	}
-	if w.cfg.WechatPushEnabled {
-		dependencies = append(dependencies, struct {
-			name string
-			url  string
-		}{name: "content-service", url: w.cfg.ContentURL + "/healthz"})
+		{name: "content-service", url: w.cfg.ContentURL + "/healthz"},
 	}
 	for _, dependency := range dependencies {
 		if err := w.waitForHealthy(ctx, dependency.name, dependency.url, 15*time.Second); err != nil {
@@ -142,6 +122,32 @@ func (w *Worker) Close() error {
 	err := w.store.Close()
 	w.store = nil
 	return err
+}
+
+func (w *Worker) request(method, url string, body any) error {
+	req := w.client.R()
+	if body != nil {
+		req.SetBody(body)
+	}
+	var (
+		resp *resty.Response
+		err  error
+	)
+	switch method {
+	case http.MethodGet:
+		resp, err = req.Get(url)
+	case http.MethodPost:
+		resp, err = req.Post(url)
+	default:
+		return fmt.Errorf("unsupported scheduler request method %s", method)
+	}
+	if err != nil {
+		return err
+	}
+	if !resp.IsSuccess() {
+		return fmt.Errorf("%s %s failed: %s", method, url, resp.Status())
+	}
+	return nil
 }
 
 func (w *Worker) cleanupExpiredWechatChallenges(ctx context.Context) error {

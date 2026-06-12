@@ -11,7 +11,7 @@ Go 版已经从早期 `jin10` 采集骨架收敛为一套可运行的一期多�
 - `scheduler-service`：定时触发抓取和分析刷新
 - `nlp-service`：轻量标题/摘要/关键词生成
 
-二期已经开始推进，重点是把剩余 Java 兼容入口和未迁移功能继续收口到 Go；旧兼容路由会逐步下线，以 Go 正式接口为准。
+二期/三期已经把 Go 主链路和 legacy 收口推进到可运行状态；旧 `fullsearch` JSON、LSearch 顶层聚合和 `publicoption/loadInformation` 已下线为 `410 Gone`，剩余兼容入口仅保留 `timelysearch` 过渡流和外部契约页面。
 
 当前二期已经补出的正式接口基线：
 
@@ -38,12 +38,12 @@ Go 版已经从早期 `jin10` 采集骨架收敛为一套可运行的一期多�
 | 微信登录/绑定 | `兼容完成` | Go 已实现，但仍保留兼容入口。 |
 | 邮件配置、弹窗状态 | `兼容完成` | Go 已实现，旧接口格式仍在兼容。 |
 | 移动端、大屏、热点、声量、申请试用 | `兼容完成` | Go 已可承接页面和接口，但仍属于兼容层。 |
-| 全文搜索、即时搜索、LSearch 历史筛选接口 | `兼容完成` | Go 已可用，但 legacy 路由和旧返回格式仍在。 |
-| 平台设置、公共选项、收藏/已读等操作 | `兼容完成` | Go 已承接主闭环，但旧 JSON 和兼容路由仍保留。 |
+| 全文搜索、即时搜索、LSearch 历史筛选接口 | `兼容完成` | `fullsearch` JSON 和 LSearch 顶层聚合已下线为 `410 Gone`；`timelysearch` 因模板执行和 `return_to` 兼容继续保留。 |
+| 平台设置、公共选项、收藏/已读等操作 | `兼容完成` | Go 已承接主闭环；`publicoption/loadInformation` 已下线为 `410 Gone`，Platform/NLP 外部契约入口仍保留。 |
 | OCR 与外部平台集成 | `兼容完成` | OCR、图像识别、标题生成、报告预览、能力清单均已有正式 Go API，但兼容平台入口仍保留。 |
-| Java 全量高级全文检索剩余能力 | `兼容完成` | 高级筛选、聚合面包屑、特殊类型列表/选项/详情已补到正式 Go API，但 legacy 搜索入口仍保留。 |
+| Java 全量高级全文检索剩余能力 | `兼容完成` | 高级筛选、聚合面包屑、特殊类型列表/选项/详情已补到正式 Go API，旧 `fullsearch` JSON 已下线。 |
 | 复杂传播/情感/专题分析 | `兼容完成` | 已有统一聚合查询契约，`PublicOption` 页面优先消费正式分析接口，但兼容页面和旧返回格式仍保留。 |
-| legacy 路由清理与兼容层收口 | `未完成` | 代码中仍存在大量 legacy endpoints 和兼容页面。 |
+| legacy 路由清理与兼容层收口 | `兼容完成` | 注册表已收敛为 `proxy=3`、`preserve=6`、`gone=66`、`delete=40`；剩余入口均有过渡或外部契约标注。 |
 
 详细矩阵见 [MIGRATION.md](MIGRATION.md)。
 
@@ -111,6 +111,16 @@ go run .\cmd\gateway-web
 go run .\cmd\scheduler-service
 ```
 
+生产化脚本：
+
+```powershell
+.\scripts\start-all.ps1
+.\scripts\health-check.ps1
+.\scripts\smoke-test.ps1
+.\scripts\backup-sqlite.ps1
+.\scripts\stop-all.ps1
+```
+
 或者直接运行：
 
 ```powershell
@@ -156,6 +166,9 @@ http://127.0.0.1
 - `GET /api/v1/system/notices`
 - `POST /api/v1/system/feedback`
 - `GET /api/v1/system/task-runs`
+- `GET /api/v1/system/audit-logs`
+- `GET /api/v1/scheduler/jobs`
+- `POST /api/v1/scheduler/jobs/{name}/run`
 - `POST /api/v1/admin/tasks/crawl`
 - `GET /api/v1/admin/tasks/crawl/runs`
 - `POST /api/v1/admin/tasks/analysis/refresh`
@@ -180,8 +193,17 @@ http://127.0.0.1
 - 系统公告、反馈、任务记录页面
 - Windows 启动脚本和多服务入口
 
-## 暂未完全迁移
+## 四期核心完成范围
 
-- legacy 路由清理与兼容层收口
+- `scheduler-service` 已提供统一任务注册表、健康检查、任务列表和手动触发接口。
+- Quartz 等价任务已覆盖抓取、分析、PublicOption 预热、预警扫描、报表、声量、热点、微信二维码清理和微信每日推送。
+- `content-service` 已增加 HTTP 审计 middleware，操作日志写入 `audit_logs` 并脱敏 query 中的 token/password/secret/key。
+- 外部 HTTP 调用已在 scheduler 侧增加超时和重试，失败写入 `task_runs`，不拖垮后台循环。
+- Windows PowerShell 已补齐启动、停止、健康检查、SQLite 备份和 smoke test 脚本。
+
+## 后续深化
+
+- 若需要 Java cron 的绝对时刻 1:1 对齐，可继续把 interval 调度切换为 cron 表达式配置。
+- Java 原系统直接数据库对账仍需生产数据导出后执行专项脚本。
 
 说明：具体模块状态以 [MIGRATION.md](MIGRATION.md) 的详细矩阵为准。

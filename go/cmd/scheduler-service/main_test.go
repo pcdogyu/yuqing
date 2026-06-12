@@ -9,6 +9,8 @@ import (
 func TestMainWiresSchedulerService(t *testing.T) {
 	testutil.AssertFileContains(t, "main.go",
 		`app.LogStartup("scheduler-service"`,
-		`scheduler.NewWorker(cfg).Run(ctx)`,
+		`worker := scheduler.NewWorker(cfg)`,
+		`Handler:           worker.Router()`,
+		`go worker.Run(ctx)`,
 	)
 }

@@ -406,14 +406,14 @@ func TestLegacySearchCategoryLists(t *testing.T) {
 	announceTypeReq := httptest.NewRequest(http.MethodGet, "/fullsearch/announcementrtype", nil)
 	announceTypeRR := httptest.NewRecorder()
 	srv.handleSearchCompat(announceTypeRR, announceTypeReq, user, "full")
-	if announceTypeRR.Code != http.StatusOK {
-		t.Fatalf("expected announcementrtype 200, got %d", announceTypeRR.Code)
+	if announceTypeRR.Code != http.StatusGone {
+		t.Fatalf("expected announcementrtype 410 after client migration, got %d", announceTypeRR.Code)
 	}
 	reportTypeReq := httptest.NewRequest(http.MethodGet, "/fullsearch/reportIndustry", nil)
 	reportTypeRR := httptest.NewRecorder()
 	srv.handleSearchCompat(reportTypeRR, reportTypeReq, user, "full")
-	if reportTypeRR.Code != http.StatusOK {
-		t.Fatalf("expected reportIndustry 200, got %d", reportTypeRR.Code)
+	if reportTypeRR.Code != http.StatusGone {
+		t.Fatalf("expected reportIndustry 410 after client migration, got %d", reportTypeRR.Code)
 	}
 }
 
@@ -531,7 +531,7 @@ func TestLegacySpecializedFullSearchEndpoints(t *testing.T) {
 
 	listReq := httptest.NewRequest(http.MethodGet, "/fullsearch/lawyerList?searchWord=张&pageNum=1&pageSize=10", nil)
 	listRR := httptest.NewRecorder()
-	srv.handleSearchCompat(listRR, listReq, user, "full")
+	srv.handleLegacySpecialList(listRR, listReq, user, "lawyerList", "full")
 	if listRR.Code != http.StatusOK {
 		t.Fatalf("expected lawyerList 200, got %d", listRR.Code)
 	}
@@ -549,7 +549,7 @@ func TestLegacySpecializedFullSearchEndpoints(t *testing.T) {
 
 	detailDataReq := httptest.NewRequest(http.MethodPost, "/fullsearch/lawyerDetailData?article_public_id=101", nil)
 	detailDataRR := httptest.NewRecorder()
-	srv.handleSearchCompat(detailDataRR, detailDataReq, user, "full")
+	srv.handleLegacySpecialDetailData(detailDataRR, detailDataReq, "lawyerDetailData")
 	if detailDataRR.Code != http.StatusOK {
 		t.Fatalf("expected lawyerDetailData 200, got %d", detailDataRR.Code)
 	}
@@ -568,7 +568,7 @@ func TestLegacySpecializedFullSearchEndpoints(t *testing.T) {
 
 	companyCategoryReq := httptest.NewRequest(http.MethodGet, "/fullsearch/companyIndustry", nil)
 	companyCategoryRR := httptest.NewRecorder()
-	srv.handleSearchCompat(companyCategoryRR, companyCategoryReq, user, "full")
+	srv.handleLegacySpecialCategoryOptions(companyCategoryRR, companyCategoryReq, "company", "full")
 	if companyCategoryRR.Code != http.StatusOK {
 		t.Fatalf("expected companyIndustry 200, got %d", companyCategoryRR.Code)
 	}
@@ -582,7 +582,7 @@ func TestLegacySpecializedFullSearchEndpoints(t *testing.T) {
 
 	typeReq := httptest.NewRequest(http.MethodGet, "/fullsearch/listFullTypeBySecond?type_one_id=39", nil)
 	typeRR := httptest.NewRecorder()
-	srv.handleSearchCompat(typeRR, typeReq, user, "full")
+	srv.handleLegacySearchTypes(typeRR, typeReq, "full", "2")
 	if typeRR.Code != http.StatusOK {
 		t.Fatalf("expected listFullTypeBySecond 200, got %d", typeRR.Code)
 	}
@@ -600,6 +600,14 @@ func TestLegacySpecializedFullSearchEndpoints(t *testing.T) {
 		"/fullsearch/lawyerDetail/101",
 		"/fullsearch/companyDetail/202",
 		"/fullsearch/investmentDetail/303",
+		"/fullsearch/informationListpost?searchword=AI",
+		"/fullsearch/search",
+		"/fullsearch/hotList",
+		"/fullsearch/lawyerList?searchWord=张",
+		"/fullsearch/lawyerDetailData?article_public_id=101",
+		"/fullsearch/companyDetails?article_public_id=202",
+		"/fullsearch/listFullTypeBySecond?type_one_id=39",
+		"/fullsearch/companyIndustry",
 	} {
 		rr := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, legacyPath, nil)
@@ -611,7 +619,7 @@ func TestLegacySpecializedFullSearchEndpoints(t *testing.T) {
 
 	companyDetailReq := httptest.NewRequest(http.MethodGet, "/fullsearch/companyDetails?article_public_id=202", nil)
 	companyDetailRR := httptest.NewRecorder()
-	srv.handleSearchCompat(companyDetailRR, companyDetailReq, user, "full")
+	srv.handleLegacyCompanyDetailData(companyDetailRR, companyDetailReq)
 	if companyDetailRR.Code != http.StatusOK {
 		t.Fatalf("expected companyDetails 200, got %d", companyDetailRR.Code)
 	}

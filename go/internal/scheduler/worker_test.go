@@ -75,6 +75,71 @@ func TestWaitForHealthyTimesOutForUnavailableService(t *testing.T) {
 	}
 }
 
+func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "scheduler-api.db")
+	store, err := sqlitestore.New(dbPath)
+	if err != nil {
+		t.Fatalf("New store error: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/healthz", "/api/v1/search/hot-keywords":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusOK, "message": "ok", "data": []model.SearchWordStat{}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer content.Close()
+
+	worker := NewWorker(config.Config{
+		DatabasePath:          dbPath,
+		ContentURL:            content.URL,
+		HTTPTimeout:           time.Second,
+		ServiceToken:          "secret-token",
+		FlashInterval:         time.Hour,
+		HeadlineInterval:      time.Hour,
+		AnalysisInterval:      time.Hour,
+		WechatCleanupInterval: time.Hour,
+		WechatPushInterval:    time.Hour,
+	})
+	defer func() { _ = worker.Close() }()
+
+	router := worker.Router()
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/scheduler/jobs", nil)
+	listRR := httptest.NewRecorder()
+	router.ServeHTTP(listRR, listReq)
+	if listRR.Code != http.StatusOK || !strings.Contains(listRR.Body.String(), "hot-data-refresh") {
+		t.Fatalf("expected scheduler jobs list, got status=%d body=%s", listRR.Code, listRR.Body.String())
+	}
+
+	runReq := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/jobs/hot-data-refresh/run", nil)
+	runReq.Header.Set("X-Service-Token", "secret-token")
+	runRR := httptest.NewRecorder()
+	router.ServeHTTP(runRR, runReq)
+	if runRR.Code != http.StatusOK {
+		t.Fatalf("expected manual job run 200, got %d body=%s", runRR.Code, runRR.Body.String())
+	}
+
+	runs, err := store.ListTaskRuns(ctx, 5)
+	if err != nil {
+		t.Fatalf("ListTaskRuns error: %v", err)
+	}
+	if len(runs) == 0 || runs[0].TaskName != "hot-data-refresh" || runs[0].Status != "success" {
+		t.Fatalf("expected successful hot-data task run, got %+v", runs)
+	}
+}
+
+func TestSchedulerRunJobRejectsUnknownJob(t *testing.T) {
+	worker := NewWorker(config.Config{})
+	if err := worker.RunJobByName(context.Background(), "missing-job"); err == nil {
+		t.Fatal("expected missing job error")
+	}
+}
+
 func TestPushWechatDailySummaryWritesAuditAndWebhook(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "scheduler.db")

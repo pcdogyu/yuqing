@@ -106,6 +106,7 @@ func NewService(cfg config.Config, store Store) *Service {
 
 func (s *Service) Router() http.Handler {
 	r := chi.NewRouter()
+	r.Use(s.auditMiddleware)
 	s.Routes(r)
 	return r
 }
