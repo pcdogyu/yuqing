@@ -220,10 +220,15 @@
   - `cmd/ops-check` 支持 `--baseline` JSON/CSV 基线对账，输出 `success`、`failed`、`diff`、`missing`、`extra`、`warnings`。
   - 新增 `GET /api/v1/system/operations` 与 `GET /api/v1/system/alerts`，门户生产运行页优先消费同一份 operations 数据。
   - 新增 `restore-sqlite.ps1` 与 `release-check.ps1`，`smoke-test.ps1` 扩展覆盖 operations/alerts、备份和恢复演练。
+- 2026-06-12：五期第二批跨系统对账与恢复演练深化：
+  - `cmd/ops-check --baseline` 支持 Java 导出领域名映射，包括 `articles`、`search_index`、`task_records`、`crypto_social`、`nlp_status` 等。
+  - baseline JSON 支持 `counts`、顶层数值、嵌套 `{count}` / `{expected}`；CSV 支持 `name,count` 和 `metric,label,expected`。
+  - `restore-sqlite.ps1` 支持 `-SourceDatabasePath`，恢复后对源库与恢复库的表计数输出 `table_counts_match` 和 `table_count_diff`。
+  - `release-check.ps1` 已把源库路径传入恢复演练，发布验收可以同时确认备份可读和恢复计数一致。
 
 ## 下一步
 
-- 五期上线验收闭环已落地：scheduler 实际触发切为 Java Quartz cron 等价调度，`ops-check --baseline` 支持 Java 导出基线对账，`restore-sqlite.ps1` 和 `release-check.ps1` 支持备份恢复与发布验收。
+- 五期上线验收闭环已落地：scheduler 实际触发切为 Java Quartz cron 等价调度，`ops-check --baseline` 支持 Java 导出基线对账和领域名映射，`restore-sqlite.ps1` 和 `release-check.ps1` 支持备份恢复与源/恢复库计数一致性检查。
 - 新增只读生产运行接口：`GET /api/v1/system/operations`、`GET /api/v1/system/alerts`，`/system?section=operations` 优先消费同一份 operations 数据。
 - legacy 注册表已无剩余 `proxy / preserve` 项；后续新增旧入口必须先更新注册表和文档，并给出明确下线门槛。
 - 后续若迁移状态变更，先更新本文件，再同步 `README.md` 摘要。

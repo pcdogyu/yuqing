@@ -38,7 +38,7 @@ try {
         $backup = & (Join-Path $PSScriptRoot "backup-sqlite.ps1") -DatabasePath $DatabasePath | ConvertFrom-Json
         Add-Step "backup" $backup.status
 
-        $restore = & (Join-Path $PSScriptRoot "restore-sqlite.ps1") -BackupPath $backup.backup | ConvertFrom-Json
+        $restore = & (Join-Path $PSScriptRoot "restore-sqlite.ps1") -BackupPath $backup.backup -SourceDatabasePath $DatabasePath | ConvertFrom-Json
         Add-Step "restore" $restore.status
     } catch {
         Add-Step "release_check" "failed" $_.Exception.Message

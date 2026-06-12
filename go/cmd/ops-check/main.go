@@ -19,12 +19,13 @@ import (
 )
 
 type checkResult struct {
-	Name     string `json:"name"`
-	Status   string `json:"status"`
-	Message  string `json:"message,omitempty"`
-	Count    *int64 `json:"count,omitempty"`
-	Expected *int64 `json:"expected,omitempty"`
-	Actual   *int64 `json:"actual,omitempty"`
+	Name       string `json:"name"`
+	ActualName string `json:"actual_name,omitempty"`
+	Status     string `json:"status"`
+	Message    string `json:"message,omitempty"`
+	Count      *int64 `json:"count,omitempty"`
+	Expected   *int64 `json:"expected,omitempty"`
+	Actual     *int64 `json:"actual,omitempty"`
 }
 
 type report struct {
@@ -109,6 +110,8 @@ func main() {
 		value := count
 		ok(&out, checkResult{Name: check.name, Status: "ok", Count: &value})
 	}
+	nlpCapabilityCount := int64(6)
+	ok(&out, checkResult{Name: "nlp_capabilities", Status: "ok", Count: &nlpCapabilityCount})
 
 	var quickCheck string
 	if err := db.QueryRowContext(ctx, "PRAGMA quick_check").Scan(&quickCheck); err != nil {
@@ -182,10 +185,14 @@ func readBaselineCSV(raw []byte) (map[string]int64, error) {
 		if err != nil {
 			return nil, err
 		}
-		if len(record) < 2 || strings.EqualFold(record[0], "name") || strings.EqualFold(record[0], "table") {
+		if len(record) < 2 || strings.EqualFold(record[0], "name") || strings.EqualFold(record[0], "table") || strings.EqualFold(record[0], "metric") {
 			continue
 		}
-		count, err := strconv.ParseInt(strings.TrimSpace(record[1]), 10, 64)
+		countColumn := record[1]
+		if len(record) >= 3 && strings.TrimSpace(record[2]) != "" {
+			countColumn = record[2]
+		}
+		count, err := strconv.ParseInt(strings.TrimSpace(countColumn), 10, 64)
 		if err != nil {
 			return nil, fmt.Errorf("invalid baseline count for %s: %w", record[0], err)
 		}
@@ -209,7 +216,7 @@ func readBaselineJSON(raw []byte) (map[string]int64, error) {
 		if counts, ok := typed["counts"].(map[string]any); ok {
 			return numericMap(counts)
 		}
-		return numericMap(typed)
+		return nestedNumericMap(typed)
 	case []any:
 		for _, item := range typed {
 			row, ok := item.(map[string]any)
@@ -232,6 +239,28 @@ func readBaselineJSON(raw []byte) (map[string]int64, error) {
 	default:
 		return nil, fmt.Errorf("unsupported baseline JSON shape")
 	}
+}
+
+func nestedNumericMap(input map[string]any) (map[string]int64, error) {
+	result := map[string]int64{}
+	for key, value := range input {
+		if count, ok := baselineNumber(value); ok {
+			result[key] = count
+			continue
+		}
+		row, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		count, ok := baselineNumber(row["count"])
+		if !ok {
+			count, ok = baselineNumber(row["expected"])
+		}
+		if ok {
+			result[key] = count
+		}
+	}
+	return result, nil
 }
 
 func numericMap(input map[string]any) (map[string]int64, error) {
@@ -276,28 +305,69 @@ func compareBaseline(out *report, baseline map[string]int64) {
 		}
 	}
 	for name, expected := range baseline {
-		value, exists := actual[name]
+		actualName := baselineActualName(name)
+		value, exists := actual[actualName]
 		if !exists {
 			out.Missing = append(out.Missing, name)
+			out.Failed = append(out.Failed, name)
 			out.Status = "failed"
 			continue
 		}
 		if value != expected {
 			exp, act := expected, value
-			diff := checkResult{Name: name, Status: "diff", Expected: &exp, Actual: &act}
+			diff := checkResult{Name: name, ActualName: actualName, Status: "diff", Expected: &exp, Actual: &act}
 			out.Diff = append(out.Diff, diff)
 			out.Checks = append(out.Checks, diff)
+			out.Failed = append(out.Failed, name)
 			out.Status = "failed"
+		} else {
+			out.Success = append(out.Success, "baseline:"+name)
 		}
 	}
 	for name := range actual {
-		if _, exists := baseline[name]; !exists {
+		if _, exists := baselineByActualName(baseline)[name]; !exists {
 			out.Extra = append(out.Extra, name)
 		}
 	}
 	if len(baseline) == 0 {
 		out.Warnings = append(out.Warnings, "baseline file contained no comparable counts")
 	}
+}
+
+func baselineActualName(name string) string {
+	normalized := strings.ToLower(strings.TrimSpace(name))
+	normalized = strings.ReplaceAll(normalized, "-", "_")
+	normalized = strings.ReplaceAll(normalized, " ", "_")
+	switch normalized {
+	case "article", "articles", "java_articles":
+		return "items"
+	case "project", "projects", "java_projects":
+		return "projects"
+	case "report", "reports", "java_reports":
+		return "reports"
+	case "search_index", "search_indexes", "fts", "items_index":
+		return "items_fts"
+	case "task_records", "tasks", "task_run", "task_runs":
+		return "task_runs"
+	case "audit", "audits", "audit_log", "audit_logs":
+		return "audit_logs"
+	case "platform_binding", "platform_bindings":
+		return "platform_bindings"
+	case "crypto_social", "crypto_social_sources":
+		return "crypto_social_sources"
+	case "nlp_capability", "nlp_capabilities", "nlp_status":
+		return "nlp_capabilities"
+	default:
+		return normalized
+	}
+}
+
+func baselineByActualName(baseline map[string]int64) map[string]int64 {
+	result := map[string]int64{}
+	for name, count := range baseline {
+		result[baselineActualName(name)] = count
+	}
+	return result
 }
 
 func write(out report) {

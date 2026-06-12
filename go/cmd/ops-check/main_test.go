@@ -20,8 +20,20 @@ func TestReadBaselineCounts(t *testing.T) {
 		t.Fatalf("unexpected json baseline counts: %+v", jsonCounts)
 	}
 
+	nestedPath := filepath.Join(dir, "nested.json")
+	if err := os.WriteFile(nestedPath, []byte(`{"articles":{"count":9},"search_index":{"expected":8}}`), 0o644); err != nil {
+		t.Fatalf("write nested baseline: %v", err)
+	}
+	nestedCounts, err := readBaselineCounts(nestedPath)
+	if err != nil {
+		t.Fatalf("read nested baseline: %v", err)
+	}
+	if nestedCounts["articles"] != 9 || nestedCounts["search_index"] != 8 {
+		t.Fatalf("unexpected nested baseline counts: %+v", nestedCounts)
+	}
+
 	csvPath := filepath.Join(dir, "baseline.csv")
-	if err := os.WriteFile(csvPath, []byte("name,count\nitems,3\nreports,4\n"), 0o644); err != nil {
+	if err := os.WriteFile(csvPath, []byte("metric,label,expected\nitems,文章,3\nreports,报告,4\n"), 0o644); err != nil {
 		t.Fatalf("write csv baseline: %v", err)
 	}
 	csvCounts, err := readBaselineCounts(csvPath)
@@ -36,19 +48,21 @@ func TestReadBaselineCounts(t *testing.T) {
 func TestCompareBaselineReportsDiffMissingAndExtra(t *testing.T) {
 	items := int64(2)
 	reports := int64(1)
+	nlpCapabilities := int64(6)
 	out := &report{
 		Status: "ok",
 		Checks: []checkResult{
 			{Name: "items", Status: "ok", Count: &items},
 			{Name: "reports", Status: "ok", Count: &reports},
+			{Name: "nlp_capabilities", Status: "ok", Count: &nlpCapabilities},
 		},
 	}
-	compareBaseline(out, map[string]int64{"items": 3, "projects": 1})
+	compareBaseline(out, map[string]int64{"articles": 3, "projects": 1, "nlp_status": 6})
 	if out.Status != "failed" {
 		t.Fatalf("expected failed status, got %s", out.Status)
 	}
-	if len(out.Diff) != 1 || out.Diff[0].Name != "items" {
-		t.Fatalf("expected items diff, got %+v", out.Diff)
+	if len(out.Diff) != 1 || out.Diff[0].Name != "articles" || out.Diff[0].ActualName != "items" {
+		t.Fatalf("expected articles/items diff, got %+v", out.Diff)
 	}
 	if len(out.Missing) != 1 || out.Missing[0] != "projects" {
 		t.Fatalf("expected projects missing, got %+v", out.Missing)
@@ -56,4 +70,16 @@ func TestCompareBaselineReportsDiffMissingAndExtra(t *testing.T) {
 	if len(out.Extra) != 1 || out.Extra[0] != "reports" {
 		t.Fatalf("expected reports extra, got %+v", out.Extra)
 	}
+	if !containsString(out.Success, "baseline:nlp_status") {
+		t.Fatalf("expected nlp_status baseline success, got %+v", out.Success)
+	}
+}
+
+func containsString(values []string, needle string) bool {
+	for _, value := range values {
+		if value == needle {
+			return true
+		}
+	}
+	return false
 }

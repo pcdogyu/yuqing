@@ -48,6 +48,27 @@
 }
 ```
 
+也支持 Java 导出侧的领域命名，工具会映射到 Go SQLite 指标：
+
+- `articles` -> `items`
+- `search_index` -> `items_fts`
+- `task_records` -> `task_runs`
+- `audit_logs` -> `audit_logs`
+- `platform_bindings` -> `platform_bindings`
+- `crypto_social` -> `crypto_social_sources`
+- `nlp_status` -> `nlp_capabilities`
+
+CSV 可使用 `metric,label,expected` 或 `name,count`。嵌套 JSON 可使用：
+
+```json
+{
+  "articles": { "count": 100 },
+  "search_index": { "expected": 100 }
+}
+```
+
+`restore-sqlite.ps1` 会把备份复制到临时库执行只读校验，并在源库存在时比较源库与恢复库的表计数，输出 `table_counts_match` 和 `table_count_diff`。
+
 ## Operations APIs
 
 `content-service` 新增只读接口：
