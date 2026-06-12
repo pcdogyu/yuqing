@@ -293,3 +293,31 @@ type NLPResponse struct {
 	Summary  string   `json:"summary,omitempty"`
 	Keywords []string `json:"keywords,omitempty"`
 }
+
+type NLPReportPreviewRequest struct {
+	ArticleID   string `json:"article_id,omitempty"`
+	Text        string `json:"text,omitempty"`
+	Title       string `json:"title,omitempty"`
+	RelatedWord string `json:"relatedword,omitempty"`
+	PublishTime string `json:"publish_time,omitempty"`
+}
+
+type NLPReportPreviewResponse struct {
+	Title       string   `json:"title"`
+	Summary     string   `json:"summary"`
+	Keywords    []string `json:"keywords,omitempty"`
+	Report      string   `json:"report"`
+	PublishTime string   `json:"publish_time,omitempty"`
+	Status      string   `json:"status,omitempty"`
+}
+
+type NLPCapability struct {
+	Name            string   `json:"name"`
+	Method          string   `json:"method"`
+	Path            string   `json:"path"`
+	Description     string   `json:"description,omitempty"`
+	AuthMode        string   `json:"auth_mode,omitempty"`
+	LegacyPaths     []string `json:"legacy_paths,omitempty"`
+	DegradeStrategy string   `json:"degrade_strategy,omitempty"`
+	Enabled         bool     `json:"enabled"`
+}

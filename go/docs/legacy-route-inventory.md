@@ -18,7 +18,7 @@
 | `/platform/nlp/ocr` | OCR 兼容 JSON | `nlp-service /api/v1/nlp/ocr` | `替换`，兼容层只做过渡 |
 | `/platform/nlp/image` | 图像识别兼容 JSON | `nlp-service /api/v1/nlp/image` | `替换` |
 | `/platform/xie/title/*` | 写作标题兼容入口 | `nlp-service /api/v1/nlp/title` | `替换` |
-| `/platform/xie/report*` | 写作报告预览 / SSE | `portal-web` 工作台 + `nlp-service` 标题能力 | `保留` 过渡，后续拆正式报告接口 |
+| `/platform/xie/report*` | 写作报告预览 / SSE | `nlp-service /api/v1/nlp/report-preview` + `portal-web` SSE 兼容包装 | `保留` 过渡，默认联调改走正式报告接口 |
 | `/platform/notice` | 平台公告旧 JSON | `content-service /api/v1/system/notices` | `替换` |
 
 ## 公共舆情与分析

@@ -358,10 +358,11 @@ func (s *Server) runPlatformXieReportWorkbench(r *http.Request, userID int64) (s
 	if text == "" {
 		return "", "", fmt.Errorf("文章内容不能为空")
 	}
-	if title == "" {
-		title = s.generateXieTitle(truncateRunes(stripHTMLTags(text), 2900))
+	preview, err := s.requestPlatformReportPreview(text, title, params)
+	if err != nil {
+		return "", "", err
 	}
-	return title, composeXieReportText(title, text, params), nil
+	return preview.Title, preview.Report, nil
 }
 
 func summarizePlatformOCRResults(results any) string {
@@ -671,10 +672,12 @@ func (s *Server) handlePlatformXieReportArticle(w http.ResponseWriter, r *http.R
 		return
 	}
 	title := nonEmpty(copyWriting.Params["title"], copyWriting.Params["articleTitle"], copyWriting.Params["topic"])
-	if title == "" {
-		title = s.generateXieTitle(truncateRunes(stripHTMLTags(text), 2900))
+	preview, err := s.requestPlatformReportPreview(text, title, copyWriting.Params)
+	if err != nil {
+		writeLegacyStatusJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
 	}
-	s.streamXieReport(w, userID, articleID, title, text, copyWriting.Params)
+	s.streamReportText(w, preview.Report)
 }
 
 func (s *Server) handlePlatformXieReportQuery(w http.ResponseWriter, r *http.Request, user any) {
@@ -704,15 +707,17 @@ func (s *Server) handlePlatformXieReportQuery(w http.ResponseWriter, r *http.Req
 	if text == "" {
 		text = nonEmpty(title, relatedWord, publishTime)
 	}
-	if title == "" {
-		title = s.generateXieTitle(truncateRunes(stripHTMLTags(text), 2900))
-	}
-	s.streamXieReport(w, userID, articleID, title, text, map[string]string{
+	preview, err := s.requestPlatformReportPreview(text, title, map[string]string{
 		"projectId":   strconv.FormatInt(projectID, 10),
 		"relatedword": relatedWord,
 		"publishTime": publishTime,
 		"title":       title,
 	})
+	if err != nil {
+		writeLegacyStatusJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	s.streamReportText(w, preview.Report)
 }
 
 func (s *Server) fetchLegacyImage(imageURL string) (string, string, []byte, error) {
@@ -792,6 +797,37 @@ func (s *Server) postLegacyNLPImage(kind, filename string, data []byte, secretID
 		results = map[string]any{}
 	}
 	return results, envelope.Code, envelope.Msg, nil
+}
+
+func (s *Server) requestPlatformReportPreview(text, title string, params map[string]string) (model.NLPReportPreviewResponse, error) {
+	payload := model.NLPReportPreviewRequest{
+		Text:        cleanXieText(text),
+		Title:       strings.TrimSpace(title),
+		RelatedWord: strings.TrimSpace(params["relatedword"]),
+		PublishTime: strings.TrimSpace(params["publishTime"]),
+		ArticleID:   strings.TrimSpace(params["articleId"]),
+	}
+	var envelope struct {
+		Code    int                            `json:"code"`
+		Message string                         `json:"message"`
+		Data    model.NLPReportPreviewResponse `json:"data"`
+	}
+	if err := s.getJSONWithResult(s.cfg.NLPURL+"/api/v1/nlp/report-preview", payload, &envelope); err == nil {
+		if strings.TrimSpace(envelope.Data.Title) != "" || strings.TrimSpace(envelope.Data.Report) != "" {
+			return envelope.Data, nil
+		}
+	}
+	if payload.Title == "" {
+		payload.Title = s.generateXieTitle(truncateRunes(stripHTMLTags(payload.Text), 2900))
+	}
+	return model.NLPReportPreviewResponse{
+		Title:       payload.Title,
+		Summary:     summarizeText(payload.Text),
+		Keywords:    splitLegacyLabels(payload.RelatedWord),
+		Report:      composeXieReportText(payload.Title, payload.Text, map[string]string{"relatedword": payload.RelatedWord, "publishTime": payload.PublishTime}),
+		PublishTime: payload.PublishTime,
+		Status:      "fallback",
+	}, nil
 }
 
 func mustParseURL(raw string) *url.URL {
@@ -1496,6 +1532,12 @@ func composeXieReportText(title, text string, params map[string]string) string {
 }
 
 func (s *Server) streamXieReport(w http.ResponseWriter, userID int64, articleID, title, text string, params map[string]string) {
+	_ = userID
+	_ = articleID
+	s.streamReportText(w, composeXieReportText(title, text, params))
+}
+
+func (s *Server) streamReportText(w http.ResponseWriter, generated string) {
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -1504,7 +1546,6 @@ func (s *Server) streamXieReport(w http.ResponseWriter, userID int64, articleID,
 		writeLegacyJSON(w, http.StatusInternalServerError, "stream unsupported", nil)
 		return
 	}
-	generated := fmt.Sprintf("标题：%s\n时间：%s\n关键词：%s\n\n%s", title, nonEmpty(params["publishTime"], time.Now().Format("2006-01-02 15:04:05")), params["relatedword"], truncateRunes(stripHTMLTags(text), 1000))
 	writeSSEEvent(w, flusher, 1, "start", "start")
 	runes := []rune(generated)
 	for i, chunk := 0, 1; i < len(runes); i, chunk = i+12, chunk+1 {

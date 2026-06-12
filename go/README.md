@@ -18,7 +18,7 @@ Go 版已经从早期 `jin10` 采集骨架收敛为一套可运行的一期多�
 - 搜索增强：`/api/v1/search/full`、`/api/v1/search/timely`、`/api/v1/search/full/facets`、`/api/v1/search/history`、`/api/v1/search/suggestions`、`/api/v1/search/hot-keywords`、`/api/v1/search/metadata/types`、`/api/v1/search/metadata/polymerizations`、`/api/v1/search/metadata/breadcrumbs`
 - 特殊详情：`/api/v1/search/details/{id}`、`/api/v1/search/special/{kind}`、`/api/v1/search/special/{kind}/options`、`/api/v1/search/special/{kind}/details/{id}`
 - 公共舆情分析：`/api/v1/public-opinion/enrich`、`/api/v1/public-opinion/analysis`
-- NLP/OCR：`/api/v1/nlp/title`、`/api/v1/nlp/summarize`、`/api/v1/nlp/keywords`、`/api/v1/nlp/ocr`、`/api/v1/nlp/image`
+- NLP/OCR：`/api/v1/nlp/title`、`/api/v1/nlp/summarize`、`/api/v1/nlp/keywords`、`/api/v1/nlp/ocr`、`/api/v1/nlp/image`、`/api/v1/nlp/report-preview`、`/api/v1/nlp/capabilities`
 
 ## 迁移完成矩阵
 
@@ -40,7 +40,7 @@ Go 版已经从早期 `jin10` 采集骨架收敛为一套可运行的一期多�
 | 移动端、大屏、热点、声量、申请试用 | `兼容完成` | Go 已可承接页面和接口，但仍属于兼容层。 |
 | 全文搜索、即时搜索、LSearch 历史筛选接口 | `兼容完成` | Go 已可用，但 legacy 路由和旧返回格式仍在。 |
 | 平台设置、公共选项、收藏/已读等操作 | `兼容完成` | Go 已承接主闭环，但旧 JSON 和兼容路由仍保留。 |
-| OCR 与外部平台集成 | `未完成` | 尚未形成完整 Go 替代。 |
+| OCR 与外部平台集成 | `兼容完成` | OCR、图像识别、标题生成、报告预览、能力清单均已有正式 Go API，但兼容平台入口仍保留。 |
 | Java 全量高级全文检索剩余能力 | `兼容完成` | 高级筛选、聚合面包屑、特殊类型列表/选项/详情已补到正式 Go API，但 legacy 搜索入口仍保留。 |
 | 复杂传播/情感/专题分析 | `兼容完成` | 已有统一聚合查询契约，`PublicOption` 页面优先消费正式分析接口，但兼容页面和旧返回格式仍保留。 |
 | legacy 路由清理与兼容层收口 | `未完成` | 代码中仍存在大量 legacy endpoints 和兼容页面。 |
@@ -48,6 +48,8 @@ Go 版已经从早期 `jin10` 采集骨架收敛为一套可运行的一期多�
 详细矩阵见 [MIGRATION.md](MIGRATION.md)。
 
 legacy 路由清单基线见 [docs/legacy-route-inventory.md](docs/legacy-route-inventory.md)。
+
+NLP / OCR 正式接口说明见 [docs/nlp-platform-api.md](docs/nlp-platform-api.md)。
 
 ## Crypto 社媒接入
 
@@ -164,6 +166,8 @@ http://127.0.0.1
 - `POST /api/v1/nlp/keywords`
 - `POST /api/v1/nlp/ocr`
 - `POST /api/v1/nlp/image`
+- `POST /api/v1/nlp/report-preview`
+- `GET /api/v1/nlp/capabilities`
 
 ## 已完成的一期范围
 
@@ -178,7 +182,6 @@ http://127.0.0.1
 
 ## 暂未完全迁移
 
-- OCR 与外部平台集成
 - legacy 路由清理与兼容层收口
 
 说明：具体模块状态以 [MIGRATION.md](MIGRATION.md) 的详细矩阵为准。

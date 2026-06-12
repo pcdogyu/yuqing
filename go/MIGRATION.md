@@ -9,6 +9,7 @@
 - `PlatformController` 已完成 Go 工作台承接，旧 JSON / SSE / 路由兼容层仍保留，因此状态更新为“兼容完成”。
 - Java 全量高级全文检索剩余能力已补齐正式 Go API 承接面，但 legacy 路由与旧返回格式兼容层仍保留，因此状态更新为“兼容完成”。
 - 复杂传播 / 情感 / 专题分析已补齐正式聚合查询契约，并由 `PublicOption` 工作台优先消费，因此状态更新为“兼容完成”。
+- OCR 与外部平台集成已补齐正式报告预览接口、能力清单和文档，平台工作台优先消费正式 `nlp-service` 能力，因此状态更新为“兼容完成”。
 
 ## 状态定义
 
@@ -47,7 +48,7 @@
 | `LSearchController` | `兼容完成` | `gateway-web` compatibility endpoints | `/industry` `/getevent` `/getProvinceList` `/getArticleCityList` 仍是兼容接口。 |
 | `PublicOptionContoller` | `兼容完成` | `portal-web /publicoption/*` + `content-service /api/v1/public-options` | `/publicoption` 已切到统一“事件分析工作台”；列表、详情、创建、更新、删除、分析视图均由 Go 页面承接；旧 `loadInformation`、旧 JSON 兼容接口仍保留。 |
 | `PlatformController` | `兼容完成` | `portal-web /platform/*` + `content-service /system-*` + `content-service /platform/bindings/*` | `/platform` 与 `/platform/bindings` 已切到统一“平台工作台”；绑定、公告、最近平台操作审计、OCR、图像识别、写作标题生成、写作报告预览均可由 Go 页面承接；旧 JSON / SSE 兼容接口仍保留。 |
-| OCR 与外部平台集成 | `未完成` | - | 仍未形成明确、稳定的 Go 对外承接面。 |
+| OCR 与外部平台集成 | `兼容完成` | `nlp-service /api/v1/nlp/*` + `portal-web /platform/*` | OCR、图像识别、标题生成、报告预览、能力清单均已有正式 Go API；旧 `/platform/nlp/*`、`/platform/xie/*` 兼容入口仍保留。 |
 | Java 全量高级全文检索剩余能力 | `兼容完成` | `content-service /api/v1/search/metadata/*` + `content-service /api/v1/search/special/*` + `portal-web` | 高级筛选、聚合面包屑、特殊类型列表/选项/详情已补到正式 Go API；旧 `fullsearch` / `timelysearch` 兼容入口仍保留。 |
 | 复杂传播 / 情感 / 专题分析 | `兼容完成` | `analysis-service /api/v1/public-opinion/analysis` + `portal-web /publicoption/*` | 情感、传播、专题、事件概览、报告建议已形成统一聚合契约，`PublicOption` 页面优先消费正式接口；旧兼容页面与返回格式仍保留。 |
 | legacy 路由清理与兼容层收口 | `未完成` | `gateway-web` + `portal-web` | 代码中仍存在大量 legacy endpoints 和兼容页面。 |
@@ -78,6 +79,8 @@
   - `POST /api/v1/nlp/keywords`
   - `POST /api/v1/nlp/ocr`
   - `POST /api/v1/nlp/image`
+  - `POST /api/v1/nlp/report-preview`
+  - `GET /api/v1/nlp/capabilities`
 
 说明：
 
@@ -85,15 +88,16 @@
 - 特殊详情数据不再只依赖 legacy `*detailData` 接口，`content-service` 已提供统一详情出口。
 - legacy `fullsearch` / `timelysearch` 的类型筛选、聚合、面包屑、特殊实体查询现已优先转发到 `content-service` 正式搜索接口，只有在正式接口不可用或返回空载荷时才回退旧兼容逻辑。
 - `analysis-service` 已新增 `GET /api/v1/public-opinion/analysis`，统一返回情感、传播、专题、事件概览、报告建议与 legacy 字符串结果；`portal-web` 事件分析工作台已优先消费此正式聚合契约，仅在失败时回退旧 `enrich` 接口。
+- `nlp-service` 已新增 `POST /api/v1/nlp/report-preview` 和 `GET /api/v1/nlp/capabilities`；`portal-web` 平台工作台和 legacy `/platform/xie/report*` 已优先消费正式报告预览接口，仅在正式接口不可用时回退本地拼装逻辑。
 
 ## 按状态汇总
 
 | 状态 | 项数 | 范围 |
 | --- | --- | --- |
 | `完成` | 9 | 登录、项目、监测、报告、基础分析、基础文章查询、主搜索入口、系统页核心能力、Datafavorite 主链路 |
-| `兼容完成` | 17 | 微信、邮件、弹窗、验证码、移动端、大屏、音量、热点、试用申请、用户资料、全文搜索、即时搜索、LSearch、PublicOption、Platform、高级全文检索剩余能力、复杂分析 |
+| `兼容完成` | 18 | 微信、邮件、弹窗、验证码、移动端、大屏、音量、热点、试用申请、用户资料、全文搜索、即时搜索、LSearch、PublicOption、Platform、高级全文检索剩余能力、复杂分析、OCR/外部平台 |
 | `部分完成` | 0 | - |
-| `未完成` | 2 | OCR/外部平台、legacy 收口 |
+| `未完成` | 1 | legacy 收口 |
 
 ## 二期待办清单
 
@@ -101,7 +105,6 @@
 
 | 项目 | 当前缺口 | 建议动作 | 完成标准 |
 | --- | --- | --- | --- |
-| OCR 与外部平台集成 | `nlp-service` 内已有 OCR 处理代码线索，但尚未在迁移矩阵里形成明确、稳定的对外承接面。 | 确认 OCR 是否作为正式能力保留；补文档、鉴权、错误码和调用样例；梳理外部平台集成清单。 | OCR 与外部平台能力有明确接口、文档和启停策略，能独立上线验证。 |
 | legacy 路由清理与兼容层收口 | `gateway-web`、`portal-web` 内仍有大量 legacy endpoints、旧页面和旧 JSON 包装。 | 建立 legacy 路由清单；为每条路由标注“保留 / 替换 / 删除”；分批让测试覆盖 301/302/404/新接口替代行为。 | 兼容路由数量持续下降，最终只保留明确声明的过渡入口。 |
 
 当前 legacy 路由清单基线见 [docs/legacy-route-inventory.md](docs/legacy-route-inventory.md)。
@@ -144,6 +147,11 @@
   - `analysis-service` 新增 `GET /api/v1/public-opinion/analysis` 聚合契约，统一返回情感、传播、专题、事件概览、报告建议和 legacy 字符串结果。
   - `portal-web` 事件分析工作台已优先消费正式聚合契约，仅在正式接口失败时回退旧 `enrich` 接口。
   - 已补 `analysis` 与 `portal` 测试覆盖正式契约和页面消费链路。
+- 2026-06-12：`OCR 与外部平台集成` 从 `未完成` 更新为 `兼容完成`。
+- 2026-06-12：文档同步反映以下已落地能力：
+  - `nlp-service` 新增 `POST /api/v1/nlp/report-preview` 与 `GET /api/v1/nlp/capabilities`。
+  - `portal-web` 平台工作台与 legacy `/platform/xie/report*` 已优先消费正式报告预览接口，仅在正式接口不可用时回退本地拼装。
+  - 已新增 [docs/nlp-platform-api.md](docs/nlp-platform-api.md) 说明鉴权、错误码、调用样例与降级策略。
 
 ## 建议执行顺序
 

@@ -11,6 +11,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/stonedt-yuqing/go-jin10/internal/model"
 )
 
 func TestBuildTitleAndSummary(t *testing.T) {
@@ -113,6 +115,52 @@ func TestHandleOCRAndImageClassify(t *testing.T) {
 	}
 	if imgEnvelope.Code != http.StatusOK || len(imgEnvelope.Results.Result) == 0 {
 		t.Fatalf("unexpected image response: %+v", imgEnvelope)
+	}
+}
+
+func TestHandleReportPreviewAndCapabilities(t *testing.T) {
+	svc := NewService()
+
+	reportRR := httptest.NewRecorder()
+	reportReq := httptest.NewRequest(http.MethodPost, "/api/v1/nlp/report-preview", strings.NewReader(`{"text":"平台工作台报告预览正文。","title":"测试标题","relatedword":"AI","publish_time":"2026-06-10 12:00:00"}`))
+	svc.handleReportPreview(reportRR, reportReq)
+	if reportRR.Code != http.StatusOK {
+		t.Fatalf("expected report-preview 200, got %d", reportRR.Code)
+	}
+	var reportEnvelope struct {
+		Data model.NLPReportPreviewResponse `json:"data"`
+	}
+	if err := json.Unmarshal(reportRR.Body.Bytes(), &reportEnvelope); err != nil {
+		t.Fatalf("decode report-preview response: %v", err)
+	}
+	if reportEnvelope.Data.Title != "测试标题" || !strings.Contains(reportEnvelope.Data.Report, "平台工作台报告预览正文") {
+		t.Fatalf("unexpected report-preview response: %+v", reportEnvelope.Data)
+	}
+
+	capsRR := httptest.NewRecorder()
+	capsReq := httptest.NewRequest(http.MethodGet, "/api/v1/nlp/capabilities", nil)
+	svc.handleCapabilities(capsRR, capsReq)
+	if capsRR.Code != http.StatusOK {
+		t.Fatalf("expected capabilities 200, got %d", capsRR.Code)
+	}
+	var capsEnvelope struct {
+		Data []model.NLPCapability `json:"data"`
+	}
+	if err := json.Unmarshal(capsRR.Body.Bytes(), &capsEnvelope); err != nil {
+		t.Fatalf("decode capabilities response: %v", err)
+	}
+	if len(capsEnvelope.Data) == 0 {
+		t.Fatalf("expected capabilities, got %+v", capsEnvelope)
+	}
+	foundReport := false
+	for _, capability := range capsEnvelope.Data {
+		if capability.Path == "/api/v1/nlp/report-preview" && capability.Enabled {
+			foundReport = true
+			break
+		}
+	}
+	if !foundReport {
+		t.Fatalf("expected report-preview capability, got %+v", capsEnvelope.Data)
 	}
 }
 

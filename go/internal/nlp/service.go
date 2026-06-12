@@ -38,6 +38,8 @@ func (s *Service) Router() http.Handler {
 	r.Post("/api/v1/nlp/keywords", s.handleKeywords)
 	r.Post("/api/v1/nlp/ocr", s.handleOCR)
 	r.Post("/api/v1/nlp/image", s.handleImageClassify)
+	r.Post("/api/v1/nlp/report-preview", s.handleReportPreview)
+	r.Get("/api/v1/nlp/capabilities", s.handleCapabilities)
 	return r
 }
 
@@ -85,6 +87,98 @@ func (s *Service) handleImageClassify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeNLPJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleReportPreview(w http.ResponseWriter, r *http.Request) {
+	var req model.NLPReportPreviewRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid body", nil)
+		return
+	}
+	text := strings.TrimSpace(req.Text)
+	title := strings.TrimSpace(req.Title)
+	relatedWord := strings.TrimSpace(req.RelatedWord)
+	publishTime := strings.TrimSpace(req.PublishTime)
+	if text == "" && title == "" && relatedWord == "" {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "text or title required", nil)
+		return
+	}
+	if title == "" {
+		title = buildTitle(nonEmpty(text, relatedWord))
+	}
+	if publishTime == "" {
+		publishTime = "auto"
+	}
+	resp := model.NLPReportPreviewResponse{
+		Title:       title,
+		Summary:     buildSummary(nonEmpty(text, title, relatedWord)),
+		Keywords:    extractKeywords(nonEmpty(text+" "+relatedWord, title)),
+		Report:      composeReportPreviewText(title, text, relatedWord, publishTime),
+		PublishTime: publishTime,
+		Status:      "ok",
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", resp)
+}
+
+func (s *Service) handleCapabilities(w http.ResponseWriter, r *http.Request) {
+	apiutil.WriteJSON(w, http.StatusOK, "ok", []model.NLPCapability{
+		{
+			Name:            "title",
+			Method:          http.MethodPost,
+			Path:            "/api/v1/nlp/title",
+			Description:     "根据正文生成标题。",
+			AuthMode:        "direct or via platform binding",
+			LegacyPaths:     []string{"/platform/xie/title/*"},
+			DegradeStrategy: "portal-workbench falls back to local title truncation only when the API is unavailable",
+			Enabled:         true,
+		},
+		{
+			Name:        "summarize",
+			Method:      http.MethodPost,
+			Path:        "/api/v1/nlp/summarize",
+			Description: "生成标题、摘要和关键词。",
+			AuthMode:    "direct service call",
+			Enabled:     true,
+		},
+		{
+			Name:        "keywords",
+			Method:      http.MethodPost,
+			Path:        "/api/v1/nlp/keywords",
+			Description: "提取关键词。",
+			AuthMode:    "direct service call",
+			Enabled:     true,
+		},
+		{
+			Name:            "ocr",
+			Method:          http.MethodPost,
+			Path:            "/api/v1/nlp/ocr",
+			Description:     "图片 OCR 识别。",
+			AuthMode:        "direct upload or via platform binding",
+			LegacyPaths:     []string{"/platform/nlp/ocr"},
+			DegradeStrategy: "legacy platform route proxies this API during transition",
+			Enabled:         true,
+		},
+		{
+			Name:            "image",
+			Method:          http.MethodPost,
+			Path:            "/api/v1/nlp/image",
+			Description:     "图像标签识别。",
+			AuthMode:        "direct upload or via platform binding",
+			LegacyPaths:     []string{"/platform/nlp/image"},
+			DegradeStrategy: "legacy platform route proxies this API during transition",
+			Enabled:         true,
+		},
+		{
+			Name:            "report-preview",
+			Method:          http.MethodPost,
+			Path:            "/api/v1/nlp/report-preview",
+			Description:     "生成写作报告预览。",
+			AuthMode:        "direct or via platform binding",
+			LegacyPaths:     []string{"/platform/xie/report", "/platform/xie/report/*"},
+			DegradeStrategy: "legacy SSE routes stream chunks derived from this response during transition",
+			Enabled:         true,
+		},
+	})
 }
 
 func analyzeUploadedImage(r *http.Request, kind string) (any, error) {
@@ -324,4 +418,17 @@ func extractKeywords(text string) []string {
 		result = append(result, pairs[idx].Word)
 	}
 	return result
+}
+
+func composeReportPreviewText(title, text, relatedWord, publishTime string) string {
+	text = buildSummary(text)
+	if text == "" {
+		text = buildSummary(nonEmpty(title, relatedWord))
+	}
+	relatedWord = strings.TrimSpace(relatedWord)
+	publishTime = strings.TrimSpace(publishTime)
+	if publishTime == "" || publishTime == "auto" {
+		publishTime = "自动推断"
+	}
+	return fmt.Sprintf("标题：%s\n时间：%s\n关键词：%s\n\n%s", title, publishTime, relatedWord, text)
 }
