@@ -275,6 +275,7 @@ func NewServer(cfg config.Config) *Server {
 
 func (s *Server) Router() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/login", s.handleLoginPage)
 	mux.HandleFunc("/loginbak", s.handleLoginBakPage)
 	mux.HandleFunc("/forgotpwd", s.handleForgotPasswordPage)
@@ -350,6 +351,11 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/system", s.requireSession(s.handleSystem))
 	mux.HandleFunc("/", s.handleRoot)
 	return mux
+}
+
+func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {

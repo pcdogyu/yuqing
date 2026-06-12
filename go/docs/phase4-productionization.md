@@ -68,7 +68,7 @@ Query 中的 `token`、`password`、`secret`、`key` 会脱敏。
 
 脚本默认使用 `YUQING_DB_PATH`；未设置时使用 `data\yuqing.db`。
 
-`reconcile-production.ps1` 调用 `cmd/ops-check` 做 SQLite 只读对账，覆盖 `items`、`projects`、`reports`、`items_fts`、`task_runs`、`audit_logs`、`platform_bindings`、crypto social 来源、失败任务和最近审计。五期后可通过 `-BaselinePath` 对 Java 导出的 JSON/CSV 基线做差异比较；五期第二批已支持 Java 领域名到 Go 指标的映射。`backup-sqlite.ps1` 复制数据库后会对备份库执行同一套校验并输出 JSON，`restore-sqlite.ps1` 会对备份执行临时恢复演练，并可通过 `-SourceDatabasePath` 比较源库与恢复库表计数。
+`reconcile-production.ps1` 调用 `cmd/ops-check` 做 SQLite 只读对账，覆盖 `items`、`projects`、`reports`、`items_fts`、`task_runs`、`audit_logs`、`platform_bindings`、crypto social 来源、失败任务和最近审计。五期后可通过 `-BaselinePath` 对 Java 导出的 JSON/CSV 基线做差异比较；五期第二批已支持 Java 领域名到 Go 指标的映射。`backup-sqlite.ps1` 会先执行 WAL checkpoint，再复制数据库并对备份库执行同一套校验，`restore-sqlite.ps1` 会对备份执行临时恢复演练，并可通过 `-SourceDatabasePath` 比较源库与恢复库表计数。
 
 ## Operations View
 
@@ -94,4 +94,4 @@ go test ./...
 .\scripts\smoke-test.ps1
 ```
 
-`smoke-test.ps1` 需要服务已启动，覆盖服务健康、scheduler jobs 运行态、正式搜索/分析/NLP API、NLP capabilities、审计写入和 legacy 410 探测。旧 `timelysearch`、`platform/nlp`、`platform/xie`、`mobile`、`displayboard`、`volume`、`hot`、`dist`、`img/code` 入口已在四期收尾中统一返回 `410 Gone`。
+`smoke-test.ps1` 需要服务已启动，覆盖服务健康、scheduler jobs 运行态、正式搜索/分析/NLP API、NLP capabilities、审计写入和 legacy 410 探测。五期第五批后，smoke 会使用同一份 `DatabasePath` 做备份/恢复演练，对 scheduler jobs 启动空窗做短重试，并可通过 `YUQING_CRYPTO_MOCK_URL` 检查 crypto social 非 200、坏 JSON、空数据和重复数据 mock 样本。旧 `timelysearch`、`platform/nlp`、`platform/xie`、`mobile`、`displayboard`、`volume`、`hot`、`dist`、`img/code` 入口已在四期收尾中统一返回 `410 Gone`。

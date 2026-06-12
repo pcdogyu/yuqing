@@ -1125,6 +1125,11 @@ func TestLegacyRouteRegistryStrategies(t *testing.T) {
 		t.Fatalf("unexpected fullsearch JSON legacy spec: %+v ok=%v", fullJSON, ok)
 	}
 
+	fullSearchResult, ok := legacyRouteSpecForPath("/fullsearch/getSearchResult")
+	if !ok || fullSearchResult.Strategy != legacyStrategyGone || fullSearchResult.RemovalGate != legacyRemovalGateClientMigrated {
+		t.Fatalf("unexpected fullsearch getSearchResult legacy spec: %+v ok=%v", fullSearchResult, ok)
+	}
+
 	lsearch, ok := legacyRouteSpecForPath("/industry")
 	if !ok || lsearch.Strategy != legacyStrategyGone || lsearch.RemovalGate != legacyRemovalGateClientMigrated {
 		t.Fatalf("unexpected lsearch legacy spec: %+v ok=%v", lsearch, ok)
@@ -1140,6 +1145,11 @@ func TestLegacyRouteRegistryStrategies(t *testing.T) {
 	router.ServeHTTP(routerGoneRR, httptest.NewRequest(http.MethodGet, "/fullsearch/informationListpost?searchword=AI", nil))
 	if routerGoneRR.Code != http.StatusGone {
 		t.Fatalf("expected fullsearch JSON legacy route 410 through router, got %d", routerGoneRR.Code)
+	}
+	searchResultGoneRR := httptest.NewRecorder()
+	router.ServeHTTP(searchResultGoneRR, httptest.NewRequest(http.MethodGet, "/fullsearch/getSearchResult?searchword=AI", nil))
+	if searchResultGoneRR.Code != http.StatusGone {
+		t.Fatalf("expected fullsearch getSearchResult legacy route 410 through router, got %d", searchResultGoneRR.Code)
 	}
 
 	detail, ok := legacyRouteSpecForPath("/publicoption/reportdetail/1")
@@ -1199,7 +1209,7 @@ func TestFinalLegacyCompatRoutesAreGone(t *testing.T) {
 	for _, spec := range portalLegacyRoutes {
 		counts[spec.Strategy]++
 	}
-	if counts[legacyStrategyProxy] != 0 || counts[legacyStrategyPreserve] != 0 || counts[legacyStrategyGone] != 75 || counts[legacyStrategyDelete] != 40 {
+	if counts[legacyStrategyProxy] != 0 || counts[legacyStrategyPreserve] != 0 || counts[legacyStrategyGone] != 76 || counts[legacyStrategyDelete] != 40 {
 		t.Fatalf("unexpected legacy route counts after final cleanup: %+v", counts)
 	}
 }

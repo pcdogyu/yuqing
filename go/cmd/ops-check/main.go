@@ -45,6 +45,7 @@ type report struct {
 func main() {
 	dbPath := flag.String("db", "", "SQLite database path")
 	baselinePath := flag.String("baseline", "", "optional Java baseline JSON/CSV counts file")
+	checkpoint := flag.Bool("checkpoint", false, "checkpoint SQLite WAL before checks")
 	flag.Parse()
 	if *dbPath == "" {
 		*dbPath = os.Getenv("YUQING_DB_PATH")
@@ -75,6 +76,14 @@ func main() {
 		os.Exit(1)
 	}
 	ok(&out, checkResult{Name: "ping_database", Status: "ok"})
+
+	if *checkpoint {
+		if err := checkpointWAL(ctx, db); err != nil {
+			fail(&out, "wal_checkpoint", err.Error())
+		} else {
+			ok(&out, checkResult{Name: "wal_checkpoint", Status: "ok"})
+		}
+	}
 
 	for _, table := range []string{
 		"items",
@@ -147,6 +156,17 @@ func scalarCount(ctx context.Context, db *sql.DB, query string) (int64, error) {
 		return 0, err
 	}
 	return count, nil
+}
+
+func checkpointWAL(ctx context.Context, db *sql.DB) error {
+	var busy, logFrames, checkpointedFrames int
+	if err := db.QueryRowContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &logFrames, &checkpointedFrames); err != nil {
+		return err
+	}
+	if busy != 0 {
+		return fmt.Errorf("checkpoint busy: log=%d checkpointed=%d", logFrames, checkpointedFrames)
+	}
+	return nil
 }
 
 func fail(out *report, name, message string) {

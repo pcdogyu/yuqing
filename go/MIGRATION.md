@@ -10,7 +10,7 @@
 - Java 全量高级全文检索剩余能力已补齐正式 Go API 承接面，旧 `fullsearch` 与 `timelysearch` 兼容入口均已推进为 `410 Gone`。
 - 复杂传播 / 情感 / 专题分析已补齐正式聚合查询契约，并由 `PublicOption` 工作台优先消费；旧兼容页面入口已下线。
 - OCR 与外部平台集成已补齐正式报告预览接口、能力清单和文档，正式接入统一使用 `nlp-service /api/v1/nlp/*`。
-- 四期收尾已把 legacy 注册表收敛到 `proxy=0`、`preserve=0`、`gone=75`、`delete=40`：不再保留存活旧入口。
+- 四期收尾已把 legacy 注册表收敛到 `proxy=0`、`preserve=0`、`gone=76`、`delete=40`：不再保留存活旧入口。
 
 ## 状态定义
 
@@ -168,12 +168,12 @@
 - 2026-06-12：三期第三批 legacy 入口收口：
   - `gateway-web` 显式注册 `/fullsearch` 与 `/timelysearch`，并在鉴权前按注册表返回 `410 Gone` / `404 Not Found`，避免旧 URL 落入 dashboard。
   - `fullsearch` 剩余 JSON 兼容入口、LSearch 顶层聚合入口、`publicoption/loadInformation` 已推进到 `410 Gone`。
-  - 当时代码注册表收敛为 `proxy=3`、`preserve=6`、`gone=66`、`delete=40`；四期收尾后已推进到 `proxy=0`、`preserve=0`、`gone=75`、`delete=40`。
+  - 当时代码注册表收敛为 `proxy=3`、`preserve=6`、`gone=66`、`delete=40`；四期收尾后已推进到 `proxy=0`、`preserve=0`、`gone=76`、`delete=40`。
   - [docs/legacy-route-inventory.md](docs/legacy-route-inventory.md) 已按注册表同步存活、下线和删除分组。
 - 2026-06-12：四期收尾移除“兼容完成”旧入口：
   - `/timelysearch/*`、`/platform/nlp/*`、`/platform/xie/*`、`/mobile/*`、`/displayboard*`、`/volume*`、`/hot/*`、`/dist/*`、`/img/code` 已统一下线为 `410 Gone`。
   - `portal-web` 路由层已在进入旧 handler 前按 legacy 注册表拦截，避免旧入口继续对外提供兼容访问。
-  - 代码注册表收敛为 `proxy=0`、`preserve=0`、`gone=75`、`delete=40`。
+  - 代码注册表收敛为 `proxy=0`、`preserve=0`、`gone=76`、`delete=40`。
   - [docs/legacy-route-inventory.md](docs/legacy-route-inventory.md)、[docs/nlp-platform-api.md](docs/nlp-platform-api.md)、[docs/phase4-productionization.md](docs/phase4-productionization.md) 已同步旧入口下线状态。
 
 ## 建议执行顺序
@@ -242,10 +242,18 @@
 - 2026-06-12：五期第四批文档复核：
   - 已同步 [docs/phase5-release-readiness.md](docs/phase5-release-readiness.md) 的 operations 页面/API 同源口径。
   - 已同步 [docs/crypto-social-proxy.md](docs/crypto-social-proxy.md) 的 `external_integrations` 字段和 `crypto_social_no_recent_insert` 告警说明。
+- 2026-06-12：五期第五批发布验收脚本闭环：
+  - `release-check.ps1` 已改为捕获子命令输出，标准输出只返回最终发布验收 JSON，可用 `-OutputPath` 归档报告。
+  - `smoke-test.ps1` 已与 `DatabasePath` 对齐备份/恢复演练，并支持 `YUQING_CRYPTO_MOCK_URL` 检查外部异常 mock。
+  - `backup-sqlite.ps1` 复制前会通过 `ops-check -checkpoint` 执行 SQLite WAL checkpoint，保证备份库单文件可校验。
+  - `smoke-test.ps1` 对 scheduler jobs 运行态增加短重试，`stop-all.ps1` 会清理 `go run` 留下的服务子进程。
+  - `release-check.ps1` 会检测 gateway 默认端口 `80` 与 scheduler 默认端口 `8086` 冲突并自动切到空闲端口，`health-check.ps1` 会拒绝非本项目健康响应。
+  - `mock-crypto-social.ps1` 已补充非 200、坏 JSON、空数据和重复数据样本端点，便于发布前验证外部降级路径。
 
 ## 下一步
 
 - 五期上线验收闭环已落地：scheduler 实际触发切为 Java Quartz cron 等价调度，`ops-check --baseline` 支持 Java 导出基线对账和领域名映射，`restore-sqlite.ps1` 和 `release-check.ps1` 支持备份恢复与源/恢复库计数一致性检查。
+- 发布验收一条命令为 `.\scripts\release-check.ps1`，最终 JSON 中 `ready=true` 才视为上线通过。
 - 新增只读生产运行接口：`GET /api/v1/system/operations`、`GET /api/v1/system/alerts`，`/system?section=operations` 优先消费同一份 operations 数据；第四批后告警口径已覆盖 scheduler、审计、legacy、外部集成和备份状态。
 - 外部集成韧性已标准化；后续如接入真实第三方 SLA，可在现有错误分类基础上增加告警阈值和通知渠道。
 - legacy 注册表已无剩余 `proxy / preserve` 项；后续新增旧入口必须先更新注册表和文档，并给出明确下线门槛。

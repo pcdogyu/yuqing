@@ -6,10 +6,27 @@ param(
     [string]$AnalysisUrl = "http://127.0.0.1:8084",
     [string]$NlpUrl = "http://127.0.0.1:8085",
     [string]$GatewayUrl = "http://127.0.0.1",
+    [string]$DatabasePath = $env:YUQING_DB_PATH,
+    [string]$CryptoMockUrl = $env:YUQING_CRYPTO_MOCK_URL,
     [string]$ServiceToken = $(if ($env:YUQING_SERVICE_TOKEN) { $env:YUQING_SERVICE_TOKEN } else { "stonedt-internal-token" })
 )
 
 $ErrorActionPreference = "Stop"
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+if (-not $DatabasePath) {
+    $DatabasePath = Join-Path $repoRoot "data\yuqing.db"
+}
+
+function Invoke-WebRequestAllowError([string]$Method, [string]$Uri, [int]$TimeoutSec = 5) {
+    try {
+        return Invoke-WebRequest -Method $Method -Uri $Uri -TimeoutSec $TimeoutSec
+    } catch {
+        if ($_.Exception.Response) {
+            return $_.Exception.Response
+        }
+        throw
+    }
+}
 
 & (Join-Path $PSScriptRoot "health-check.ps1") `
     -GatewayUrl $GatewayUrl `
@@ -20,7 +37,20 @@ $ErrorActionPreference = "Stop"
     -NlpUrl $NlpUrl `
     -SchedulerUrl $SchedulerUrl
 
-$jobs = Invoke-RestMethod -Method Get -Uri "$SchedulerUrl/api/v1/scheduler/jobs" -TimeoutSec 5
+$jobs = $null
+for ($attempt = 1; $attempt -le 12; $attempt++) {
+    try {
+        $jobs = Invoke-RestMethod -Method Get -Uri "$SchedulerUrl/api/v1/scheduler/jobs" -TimeoutSec 5
+        if ($jobs.data | Where-Object { $_.name -eq "analysis-refresh" -and $_.java_quartz_name -and $_.next_run_at }) {
+            break
+        }
+    } catch {
+        if ($attempt -eq 12) {
+            throw
+        }
+    }
+    Start-Sleep -Seconds 2
+}
 if (-not ($jobs.data | Where-Object { $_.name -eq "analysis-refresh" })) {
     throw "scheduler jobs endpoint did not return analysis-refresh"
 }
@@ -75,20 +105,47 @@ $legacyProbes = @(
 )
 foreach ($path in $legacyProbes) {
     try {
-        $legacy = Invoke-WebRequest -Method Get -Uri "$GatewayUrl$path" -TimeoutSec 5 -SkipHttpErrorCheck
-        if ($legacy.StatusCode -ne 410) {
-            throw "expected 410, got $($legacy.StatusCode)"
+        $legacy = Invoke-WebRequestAllowError "Get" "$GatewayUrl$path" 5
+        $statusCode = [int]$legacy.StatusCode
+        if ($statusCode -ne 410) {
+            throw "expected 410, got $statusCode"
         }
     } catch {
         throw "legacy 410 probe failed for ${path}: $($_.Exception.Message)"
     }
 }
 
-$backup = & (Join-Path $PSScriptRoot "backup-sqlite.ps1") | ConvertFrom-Json
+if ($CryptoMockUrl) {
+    $mockBase = $CryptoMockUrl.TrimEnd("/")
+    foreach ($probe in @(
+        @{ Path = "/mock/non-200"; Expected = 502; Name = "external_non_200" },
+        @{ Path = "/mock/bad-json"; Expected = 200; Name = "external_invalid_json" },
+        @{ Path = "/mock/empty"; Expected = 200; Name = "external_empty_data" },
+        @{ Path = "/mock/duplicate"; Expected = 200; Name = "external_duplicate_data" }
+    )) {
+        $mock = Invoke-WebRequestAllowError "Get" "$mockBase$($probe.Path)" 5
+        $statusCode = [int]$mock.StatusCode
+        if ($statusCode -ne $probe.Expected) {
+            throw "crypto mock $($probe.Name) expected $($probe.Expected), got $statusCode"
+        }
+        if ($probe.Name -eq "external_invalid_json") {
+            try {
+                $mock.Content | ConvertFrom-Json | Out-Null
+                throw "crypto mock external_invalid_json returned valid json"
+            } catch {
+                if ($_.Exception.Message -eq "crypto mock external_invalid_json returned valid json") {
+                    throw
+                }
+            }
+        }
+    }
+}
+
+$backup = & (Join-Path $PSScriptRoot "backup-sqlite.ps1") -DatabasePath $DatabasePath | ConvertFrom-Json
 if ($backup.status -ne "ok" -or -not $backup.backup) {
     throw "backup verification failed during smoke test"
 }
-$restore = & (Join-Path $PSScriptRoot "restore-sqlite.ps1") -BackupPath $backup.backup | ConvertFrom-Json
+$restore = & (Join-Path $PSScriptRoot "restore-sqlite.ps1") -BackupPath $backup.backup -SourceDatabasePath $DatabasePath | ConvertFrom-Json
 if (-not $restore.ready) {
     throw "restore verification failed during smoke test"
 }

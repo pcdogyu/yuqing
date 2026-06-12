@@ -11,7 +11,7 @@ Go 版已经从早期 `jin10` 采集骨架收敛为一套可运行的一期多�
 - `scheduler-service`：定时触发抓取和分析刷新
 - `nlp-service`：轻量标题/摘要/关键词生成
 
-二期/三期已经把 Go 主链路和 legacy 收口推进到可运行状态；四期收尾已将剩余 legacy `proxy` / `preserve` 入口统一下线为 `410 Gone`，当前注册表为 `proxy=0`、`preserve=0`、`gone=75`、`delete=40`。
+二期/三期已经把 Go 主链路和 legacy 收口推进到可运行状态；四期收尾已将剩余 legacy `proxy` / `preserve` 入口统一下线为 `410 Gone`，当前注册表为 `proxy=0`、`preserve=0`、`gone=76`、`delete=40`。
 
 当前二期已经补出的正式接口基线：
 
@@ -43,7 +43,7 @@ Go 版已经从早期 `jin10` 采集骨架收敛为一套可运行的一期多�
 | OCR 与外部平台集成 | `完成` | OCR、图像识别、标题生成、报告预览、能力清单均由正式 Go API 承接，旧兼容平台入口已下线。 |
 | Java 全量高级全文检索剩余能力 | `兼容完成` | 高级筛选、聚合面包屑、特殊类型列表/选项/详情已补到正式 Go API，旧 `fullsearch` JSON 已下线。 |
 | 复杂传播/情感/专题分析 | `完成` | 已有统一聚合查询契约，`PublicOption` 页面优先消费正式分析接口，旧分析兼容入口已下线。 |
-| legacy 路由清理与兼容层收口 | `完成` | 注册表已收敛为 `proxy=0`、`preserve=0`、`gone=75`、`delete=40`；不再保留存活 legacy 业务入口。 |
+| legacy 路由清理与兼容层收口 | `完成` | 注册表已收敛为 `proxy=0`、`preserve=0`、`gone=76`、`delete=40`；不再保留存活 legacy 业务入口。 |
 
 详细矩阵见 [MIGRATION.md](MIGRATION.md)。
 
@@ -119,6 +119,8 @@ go run .\cmd\scheduler-service
 .\scripts\smoke-test.ps1
 .\scripts\reconcile-production.ps1
 .\scripts\backup-sqlite.ps1
+.\scripts\restore-sqlite.ps1
+.\scripts\release-check.ps1
 .\scripts\stop-all.ps1
 ```
 
@@ -214,5 +216,6 @@ http://127.0.0.1
 - Java 原系统直接数据差异对账通过 `ops-check --baseline` 接收导出的 JSON/CSV 基线；五期二批已支持 Java 领域名映射和恢复库表计数一致性检查。
 - 五期三批已统一外部 HTTP 重试策略，支持 `YUQING_EXTERNAL_RETRY_COUNT`、`YUQING_EXTERNAL_RETRY_WAIT_MS` 和 `YUQING_CRYPTO_SOCIAL_RATE_LIMIT_MS`。
 - 五期四批已深化 operations/alerts：统一返回 scheduler 摘要、连续失败任务、审计新鲜度、legacy 410 探测、外部集成健康和备份年龄。
+- 五期五批已将 `release-check.ps1` 收口为纯 JSON 发布验收报告；`ready=true` 才视为上线验收通过，可通过 `-OutputPath` 保存报告。备份脚本复制前会执行 WAL checkpoint，停止脚本会清理 `go run` 留下的服务子进程。
 
 说明：具体模块状态以 [MIGRATION.md](MIGRATION.md) 的详细矩阵为准。

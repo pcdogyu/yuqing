@@ -23,7 +23,29 @@ $failed = 0
 foreach ($target in $targets) {
     try {
         $response = Invoke-RestMethod -Method Get -Uri $target.Url -TimeoutSec 5
-        Write-Host "ok $($target.Name) $($target.Url) $($response.message)"
+        if ($response -is [string]) {
+            if ($response.Trim() -eq "ok") {
+                Write-Host "ok $($target.Name) $($target.Url) ok"
+                continue
+            }
+            throw "unexpected non-json health response"
+        }
+        $message = ""
+        if ($response.PSObject.Properties.Name -contains "message") {
+            $message = [string]$response.message
+        }
+        $status = ""
+        if ($response.PSObject.Properties.Name -contains "status") {
+            $status = [string]$response.status
+        }
+        $code = $null
+        if ($response.PSObject.Properties.Name -contains "code") {
+            $code = $response.code
+        }
+        if ($status -ne "ok" -and $message -ne "ok" -and $code -ne 200) {
+            throw "unexpected health payload"
+        }
+        Write-Host "ok $($target.Name) $($target.Url) $message"
     } catch {
         $failed += 1
         Write-Host "failed $($target.Name) $($target.Url): $($_.Exception.Message)"

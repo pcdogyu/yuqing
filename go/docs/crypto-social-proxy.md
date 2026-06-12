@@ -151,3 +151,12 @@ crypto social provider 复用全局外部 HTTP 超时和重试策略：
 - `message`
 
 当最近一次成功抓取超过 6 小时仍无入库时，`GET /api/v1/system/alerts` 会输出 `crypto_social_no_recent_insert`，用于上线验收和长期运行巡检。
+
+五期第五批后，`scripts\mock-crypto-social.ps1` 额外提供异常样本端点：
+
+- `/mock/non-200`：返回 HTTP `502`
+- `/mock/bad-json`：返回不可解析 JSON
+- `/mock/empty`：返回空数据
+- `/mock/duplicate`：返回重复 URL 数据
+
+设置 `YUQING_CRYPTO_MOCK_URL=http://127.0.0.1:19090` 后，`smoke-test.ps1` 和 `release-check.ps1` 会把这些异常样本纳入发布验收探测。

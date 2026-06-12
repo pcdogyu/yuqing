@@ -2,7 +2,7 @@
 
 截至 `2026-06-12`，四期收尾已把三期遗留的 `proxy / preserve` 旧入口全部推进为 `410 Gone`。新增兼容入口必须先补注册表与本清单；禁止继续新增匿名 legacy handler。
 
-当前代码注册表基线：`proxy=0`、`preserve=0`、`gone=75`、`delete=40`、`redirect=0`。`go/internal/portal/legacy_routes.go` 是精确真相源，本清单按执行批次合并展示。
+当前代码注册表基线：`proxy=0`、`preserve=0`、`gone=76`、`delete=40`、`redirect=0`。`go/internal/portal/legacy_routes.go` 是精确真相源，本清单按执行批次合并展示。
 
 ## 执行规则
 
@@ -28,7 +28,7 @@
 | `/fullsearch/result` | `FullSearchController` | `/articles?mode=full` | 已下线旧全文搜索结果页入口，访问返回 `410 Gone` | `gone` | `ui-migrated` |
 | `/fullsearch/index` | `FullSearchController` | `/articles?mode=full` | 已下线旧全文搜索首页入口，访问返回 `410 Gone` | `gone` | `ui-migrated` |
 | `/fullsearch/*Detail/*` | `FullSearchController` | `/articles/{id}` | 已下线旧特殊详情页入口，访问返回 `410 Gone`；详情主链路使用 `/articles/{id}` | `gone` | `ui-migrated` |
-| `/fullsearch/informationList*`、`/fullsearch/hotList`、`/fullsearch/*List` | `FullSearchController` | `/api/v1/search/full`、`/api/v1/search/special/{kind}` | 已下线旧全文搜索列表类 JSON，访问返回 `410 Gone` | `gone` | `client-migrated` |
+| `/fullsearch/getSearchResult`、`/fullsearch/informationList*`、`/fullsearch/hotList`、`/fullsearch/*List` | `FullSearchController` | `/api/v1/search/full`、`/api/v1/search/special/{kind}` | 已下线旧全文搜索列表类 JSON，访问返回 `410 Gone` | `gone` | `client-migrated` |
 | `/fullsearch/*DetailData`、`/fullsearch/companyDetails`、`/fullsearch/getresearch-report-detail` | `FullSearchController` | `/api/v1/search/special/{kind}/details/{id}` | 已下线旧特殊详情数据 JSON，访问返回 `410 Gone` | `gone` | `client-migrated` |
 | `/fullsearch/search`、`/fullsearch/listFullType*`、`/fullsearch/listFullPolymerization`、`/fullsearch/getBreadCrumbs` | `FullSearchController` | `/api/v1/search/history`、`/api/v1/search/metadata/*` | 已下线旧历史词与元数据 JSON，访问返回 `410 Gone` | `gone` | `client-migrated` |
 | `/fullsearch/*Industry`、`/fullsearch/*CaseType`、`/fullsearch/*Type`、`/fullsearch/announcementrtype` | `FullSearchController` | `/api/v1/search/special/{kind}/options` | 已下线旧特殊类型选项 JSON，访问返回 `410 Gone` | `gone` | `client-migrated` |

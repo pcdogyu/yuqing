@@ -178,7 +178,7 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 			Run: func(ctx context.Context) error {
 				return w.runCrawl("flash")
 			},
-		}, "FlashCrawlerQuartz", "interval from YUQING_FLASH_INTERVAL_SEC, default 15s"),
+		}, "FlashCrawlerQuartz", "0/15 * * * * ?"),
 		withJobMeta(jobDefinition{
 			Name:        "headline-crawl",
 			Group:       "crawl",
@@ -188,7 +188,7 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 			Run: func(ctx context.Context) error {
 				return w.runCrawl("headline")
 			},
-		}, "HeadlineCrawlerQuartz", "interval from YUQING_HEADLINE_INTERVAL_SEC, default 60s"),
+		}, "HeadlineCrawlerQuartz", "0 0/1 * * * ?"),
 		withJobMeta(jobDefinition{
 			Name:        "analysis-refresh",
 			Group:       "analysis",
@@ -198,7 +198,7 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 			Run: func(ctx context.Context) error {
 				return w.request(http.MethodPost, w.cfg.AnalysisURL+"/api/v1/admin/tasks/analysis/refresh", nil)
 			},
-		}, "AnalysisQuartz", "interval from YUQING_ANALYSIS_INTERVAL_SEC, default 120s"),
+		}, "AnalysisQuartz", "0 0/2 * * * ?"),
 		withJobMeta(jobDefinition{
 			Name:        "publicoption-analysis-refresh",
 			Group:       "analysis",
@@ -316,7 +316,7 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 			Interval:    w.cfg.WechatCleanupInterval,
 			Enabled:     true,
 			Run:         w.cleanupExpiredWechatChallenges,
-		}, "WechatqrcodeSchedule", "interval from YUQING_WECHAT_CLEANUP_INTERVAL_SEC, default 3600s"),
+		}, "WechatqrcodeSchedule", "0 0 * * * ?"),
 		withJobMeta(jobDefinition{
 			Name:        "wechat-daily-push",
 			Group:       "wechat",
@@ -324,7 +324,7 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 			Interval:    w.cfg.WechatPushInterval,
 			Enabled:     w.cfg.WechatPushEnabled,
 			Run:         w.pushWechatDailySummary,
-		}, "WechatSchedule", "interval from YUQING_WECHAT_PUSH_INTERVAL_SEC, default 86400s"),
+		}, "WechatSchedule", "0 30 8 * * ?"),
 	}
 }
 

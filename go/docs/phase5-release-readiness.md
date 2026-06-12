@@ -69,6 +69,8 @@ CSV 可使用 `metric,label,expected` 或 `name,count`。嵌套 JSON 可使用�
 
 `restore-sqlite.ps1` 会把备份复制到临时库执行只读校验，并在源库存在时比较源库与恢复库的表计数，输出 `table_counts_match` 和 `table_count_diff`。
 
+五期第五批后，`backup-sqlite.ps1` 在复制数据库文件前会通过 `ops-check -checkpoint` 执行 `PRAGMA wal_checkpoint(TRUNCATE)`，避免 WAL 模式下最新表结构或审计数据只存在于 `*.db-wal` 导致备份校验缺表。
+
 五期第二批检查结论：
 
 - 跨系统对账已从“单库健康检查”深化为 Java 导出 baseline 与 Go SQLite 指标对比。
@@ -162,6 +164,19 @@ go test ./internal/external ./internal/config ./internal/app ./internal/provider
 .\scripts\release-check.ps1
 ```
 
+需要保存验收报告时：
+
+```powershell
+.\scripts\release-check.ps1 -OutputPath .\reports\phase5-release-check.json
+```
+
+如需把 crypto social 异常 mock 纳入 smoke，可先启动 `mock-crypto-social.ps1`，再执行：
+
+```powershell
+$env:YUQING_CRYPTO_MOCK_URL = "http://127.0.0.1:19090"
+.\scripts\release-check.ps1
+```
+
 脚本串联：
 
 - `go test ./...`
@@ -172,5 +187,18 @@ go test ./internal/external ./internal/config ./internal/app ./internal/provider
 - `backup-sqlite.ps1`
 - `restore-sqlite.ps1`
 - `stop-all.ps1`
+
+五批检查结论：
+
+- `release-check.ps1` 捕获子命令输出，标准输出只返回最终发布验收 JSON。
+- JSON 顶层固定包含 `ready`、`status`、`generated_at`、`database`、`baseline`、`steps`、`artifacts`。
+- `steps` 记录 `go_test`、`start_all`、`health_check`、`smoke_test`、`reconcile`、`backup`、`restore`、`stop_all` 的状态、耗时和摘要。
+- `artifacts` 保留对账、备份、恢复演练的原始 JSON 结果，便于上线归档。
+- `smoke-test.ps1` 使用同一份 `DatabasePath` 执行备份和恢复；提供 `YUQING_CRYPTO_MOCK_URL` 时会检查非 200、坏 JSON、空数据、重复数据 mock 样本。
+- `backup-sqlite.ps1` 复制前执行 WAL checkpoint，备份后的校验库不依赖源库旁路 WAL 文件。
+- `smoke-test.ps1` 对 scheduler jobs 运行态做短重试，避免服务刚启动时的短暂空窗误报。
+- `release-check.ps1` 会检测默认 gateway 端口 `80` 和 scheduler 端口 `8086` 是否已被本机其他服务占用；冲突时自动切到 `18080` / `18086` 起的空闲端口，并同步对应环境变量。
+- `health-check.ps1` 会校验健康检查 JSON 结构，避免外部 HTML 页面被误判为本项目服务健康。
+- `stop-all.ps1` 除 PID 文件外，也会清理 `go run` 留下的服务子进程，保证发布验收结束后本机端口释放。
 
 输出 JSON 中 `ready=true` 才视为五期发布验收通过。

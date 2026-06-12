@@ -21,3 +21,18 @@ Get-ChildItem -Path $pidDir -Filter "*.pid" | ForEach-Object {
     }
     Remove-Item -LiteralPath $_.FullName -Force
 }
+
+foreach ($name in @(
+    "auth-service",
+    "content-service",
+    "crawler-service",
+    "analysis-service",
+    "nlp-service",
+    "scheduler-service",
+    "gateway-web"
+)) {
+    Get-Process -Name $name -ErrorAction SilentlyContinue | ForEach-Object {
+        Stop-Process -Id $_.Id -Force
+        Write-Host "stopped $name child PID $($_.Id)"
+    }
+}
