@@ -8,6 +8,8 @@ import (
 	"net"
 	"net/http"
 	"strings"
+
+	"github.com/go-resty/resty/v2"
 )
 
 const (
@@ -70,4 +72,15 @@ func HTTPStatus(status string, code int) error {
 
 func IsSuccess(status int) bool {
 	return status >= http.StatusOK && status < http.StatusMultipleChoices
+}
+
+func ShouldRetryResponse(resp *resty.Response, err error) bool {
+	if err != nil {
+		return Classify(err) == ErrTimeout
+	}
+	if resp == nil {
+		return false
+	}
+	status := resp.StatusCode()
+	return status == http.StatusTooManyRequests || status >= http.StatusInternalServerError
 }

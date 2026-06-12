@@ -107,7 +107,22 @@ go test ./cmd/ops-check
 - `external_duplicate_data`
 - `external_disabled`
 
-crypto social provider 对非 200、坏 JSON、空数据返回分类错误；重复数据会去重并记录结构化日志。NLP capabilities 已明确 `/platform/*` 旧入口为 `410 Gone`，不再描述过渡代理。
+五期第三批检查结论：
+
+- crawler 和 scheduler 的外部 HTTP 客户端统一使用 `YUQING_HTTP_TIMEOUT_SEC`、`YUQING_EXTERNAL_RETRY_COUNT`、`YUQING_EXTERNAL_RETRY_WAIT_MS`。
+- 仅超时、HTTP `429` 和 `5xx` 会重试；`4xx` 客户端错误不重试。
+- crypto social provider 支持 `YUQING_CRYPTO_SOCIAL_RATE_LIMIT_MS`，用于限制同一 provider 连续请求间隔。
+- crypto social 对禁用端点、非 200、坏 JSON、空数据返回固定分类错误；重复数据会去重并记录 `external_duplicate_data` 结构化日志。
+- 启动日志输出 `external_retry_count`、`external_retry_wait`、`crypto_social_rate_limit`，便于生产核对当前韧性配置。
+- NLP capabilities 已明确 `/platform/*` 旧入口为 `410 Gone`，不再描述过渡代理。
+
+相关环境变量：
+
+```powershell
+$env:YUQING_EXTERNAL_RETRY_COUNT = "2"
+$env:YUQING_EXTERNAL_RETRY_WAIT_MS = "500"
+$env:YUQING_CRYPTO_SOCIAL_RATE_LIMIT_MS = "0"
+```
 
 ## Release Check
 

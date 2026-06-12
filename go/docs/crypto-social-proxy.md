@@ -129,3 +129,14 @@ $env:YUQING_CRYPTO_TELEGRAM_INTERVAL_SEC = "90"
 - `title`
 
 则后续 `/crypto` 页面上的社媒证据、热度排序和摘要展示会更稳定。
+
+## 五期三批韧性配置
+
+crypto social provider 复用全局外部 HTTP 超时和重试策略：
+
+- `YUQING_HTTP_TIMEOUT_SEC`
+- `YUQING_EXTERNAL_RETRY_COUNT`
+- `YUQING_EXTERNAL_RETRY_WAIT_MS`
+- `YUQING_CRYPTO_SOCIAL_RATE_LIMIT_MS`
+
+重试只覆盖超时、HTTP `429` 和 `5xx`。禁用端点、非 200、坏 JSON、空数据会返回固定错误分类；重复数据会去重并记录 `external_duplicate_data` 结构化日志。最近抓取状态、抓取数、入库数和错误摘要会通过 `crawl_runs` 进入 operations 视图。

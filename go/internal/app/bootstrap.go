@@ -12,6 +12,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/pcdogyu/yuqing/go/internal/config"
+	"github.com/pcdogyu/yuqing/go/internal/external"
 	"github.com/pcdogyu/yuqing/go/internal/provider"
 	"github.com/pcdogyu/yuqing/go/internal/provider/cryptosocial"
 	"github.com/pcdogyu/yuqing/go/internal/provider/jin10flash"
@@ -47,7 +48,10 @@ func NewStore(cfg config.Config) (*sqlitestore.Store, error) {
 func NewCrawler(cfg config.Config, store *sqlitestore.Store) *service.Crawler {
 	httpClient := resty.New().
 		SetTimeout(cfg.HTTPTimeout).
-		SetRetryCount(2).
+		SetRetryCount(cfg.ExternalRetryCount).
+		SetRetryWaitTime(cfg.ExternalRetryWait).
+		SetRetryMaxWaitTime(maxDuration(cfg.ExternalRetryWait*6, cfg.ExternalRetryWait)).
+		AddRetryCondition(external.ShouldRetryResponse).
 		SetHeader("User-Agent", cfg.UserAgent)
 	registry := provider.Registry{
 		Flash:     jin10flash.NewProvider(httpClient, cfg.FlashURL),
@@ -55,12 +59,19 @@ func NewCrawler(cfg config.Config, store *sqlitestore.Store) *service.Crawler {
 		Jin10Full: jin10full.NewProvider(httpClient, store, jin10FullOptions(cfg)),
 	}
 	if cfg.CryptoXURL != "" {
-		registry.CryptoX = cryptosocial.NewXProvider(httpClient, cfg.CryptoXURL, cfg.CryptoXToken)
+		registry.CryptoX = cryptosocial.NewXProviderWithOptions(httpClient, cfg.CryptoXURL, cfg.CryptoXToken, cryptosocial.Options{RateLimit: cfg.CryptoSocialRateLimit})
 	}
 	if cfg.CryptoTelegramURL != "" {
-		registry.CryptoTelegram = cryptosocial.NewTelegramProvider(httpClient, cfg.CryptoTelegramURL, cfg.CryptoTelegramToken)
+		registry.CryptoTelegram = cryptosocial.NewTelegramProviderWithOptions(httpClient, cfg.CryptoTelegramURL, cfg.CryptoTelegramToken, cryptosocial.Options{RateLimit: cfg.CryptoSocialRateLimit})
 	}
 	return service.NewCrawler(store, registry, nil)
+}
+
+func maxDuration(value, fallback time.Duration) time.Duration {
+	if value > fallback {
+		return value
+	}
+	return fallback
 }
 
 func LogStartup(serviceName, listenAddr string, cfg config.Config) {
@@ -76,6 +87,8 @@ func LogStartup(serviceName, listenAddr string, cfg config.Config) {
 		Str("log_level", cfg.LogLevel).
 		Str("listen_addr", listenAddr).
 		Dur("http_timeout", cfg.HTTPTimeout).
+		Int("external_retry_count", cfg.ExternalRetryCount).
+		Dur("external_retry_wait", cfg.ExternalRetryWait).
 		Dur("flash_interval", cfg.FlashInterval).
 		Dur("headline_interval", cfg.HeadlineInterval).
 		Dur("jin10_full_interval", cfg.Jin10FullInterval).
@@ -84,6 +97,7 @@ func LogStartup(serviceName, listenAddr string, cfg config.Config) {
 		Int("jin10_full_max_pages", cfg.Jin10FullMaxPages).
 		Dur("jin10_full_rate_limit", cfg.Jin10FullRateLimit).
 		Bool("jin10_full_include_sitemap", cfg.Jin10FullIncludeSitemap).
+		Dur("crypto_social_rate_limit", cfg.CryptoSocialRateLimit).
 		Dur("crypto_x_interval", cfg.CryptoXInterval).
 		Dur("crypto_telegram_interval", cfg.CryptoTelegramInterval).
 		Dur("analysis_interval", cfg.AnalysisInterval).

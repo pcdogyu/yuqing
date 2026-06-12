@@ -53,6 +53,13 @@ func TestProviderFetchAppliesBearerToken(t *testing.T) {
 }
 
 func TestProviderFetchClassifiesExternalErrors(t *testing.T) {
+	t.Run("disabled endpoint", func(t *testing.T) {
+		_, err := NewXProvider(resty.New(), "", "").Fetch(context.Background())
+		if got := external.Classify(err); got != external.ErrDisabled {
+			t.Fatalf("expected %s, got %q err=%v", external.ErrDisabled, got, err)
+		}
+	})
+
 	t.Run("non 200", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "bad gateway", http.StatusBadGateway)
@@ -88,4 +95,23 @@ func TestProviderFetchClassifiesExternalErrors(t *testing.T) {
 			t.Fatalf("expected %s, got %q err=%v", external.ErrEmptyData, got, err)
 		}
 	})
+}
+
+func TestProviderFetchAppliesRateLimit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[{"url":"https://x.com/a/status/1","content":"BTC update"}]`))
+	}))
+	defer server.Close()
+
+	prov := NewXProviderWithOptions(resty.New(), server.URL, "", Options{RateLimit: 40 * time.Millisecond})
+	if _, err := prov.Fetch(context.Background()); err != nil {
+		t.Fatalf("first fetch error: %v", err)
+	}
+	started := time.Now()
+	if _, err := prov.Fetch(context.Background()); err != nil {
+		t.Fatalf("second fetch error: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed < 30*time.Millisecond {
+		t.Fatalf("expected second fetch to wait for rate limit, elapsed=%s", elapsed)
+	}
 }

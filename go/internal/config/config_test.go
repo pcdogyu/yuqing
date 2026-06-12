@@ -26,6 +26,9 @@ func TestLoadUsesDefaults(t *testing.T) {
 	t.Setenv("YUQING_JIN10_FULL_INTERVAL_SEC", "")
 	t.Setenv("YUQING_HTTP_TIMEOUT_SEC", "")
 	t.Setenv("JIN10_HTTP_TIMEOUT_SEC", "")
+	t.Setenv("YUQING_EXTERNAL_RETRY_COUNT", "")
+	t.Setenv("YUQING_EXTERNAL_RETRY_WAIT_MS", "")
+	t.Setenv("YUQING_CRYPTO_SOCIAL_RATE_LIMIT_MS", "")
 	t.Setenv("YUQING_CRYPTO_X_INTERVAL_SEC", "")
 	t.Setenv("YUQING_CRYPTO_TELEGRAM_INTERVAL_SEC", "")
 	t.Setenv("YUQING_LOG_LEVEL", "")
@@ -63,6 +66,9 @@ func TestLoadUsesDefaults(t *testing.T) {
 	if cfg.HTTPTimeout != 20*time.Second {
 		t.Fatalf("expected default http timeout, got %s", cfg.HTTPTimeout)
 	}
+	if cfg.ExternalRetryCount != 2 || cfg.ExternalRetryWait != 500*time.Millisecond || cfg.CryptoSocialRateLimit != 0 {
+		t.Fatalf("unexpected external defaults: retries=%d wait=%s social_rate=%s", cfg.ExternalRetryCount, cfg.ExternalRetryWait, cfg.CryptoSocialRateLimit)
+	}
 	if cfg.CryptoXInterval != 90*time.Second || cfg.CryptoTelegramInterval != 90*time.Second {
 		t.Fatalf("expected default social intervals, got x=%s tg=%s", cfg.CryptoXInterval, cfg.CryptoTelegramInterval)
 	}
@@ -88,6 +94,9 @@ func TestLoadPrefersPrimaryAndAliasEnv(t *testing.T) {
 	t.Setenv("YUQING_CRYPTO_TELEGRAM_URL", "https://social.example.com/tg")
 	t.Setenv("YUQING_CRYPTO_TELEGRAM_TOKEN", "tg-token")
 	t.Setenv("YUQING_HTTP_TIMEOUT_SEC", "45")
+	t.Setenv("YUQING_EXTERNAL_RETRY_COUNT", "3")
+	t.Setenv("YUQING_EXTERNAL_RETRY_WAIT_MS", "750")
+	t.Setenv("YUQING_CRYPTO_SOCIAL_RATE_LIMIT_MS", "1200")
 	t.Setenv("JIN10_HTTP_TIMEOUT_SEC", "99")
 	t.Setenv("YUQING_FLASH_INTERVAL_SEC", "")
 	t.Setenv("JIN10_FLASH_INTERVAL_SEC", "33")
@@ -116,6 +125,9 @@ func TestLoadPrefersPrimaryAndAliasEnv(t *testing.T) {
 	}
 	if cfg.HTTPTimeout != 45*time.Second {
 		t.Fatalf("expected primary http timeout, got %s", cfg.HTTPTimeout)
+	}
+	if cfg.ExternalRetryCount != 3 || cfg.ExternalRetryWait != 750*time.Millisecond || cfg.CryptoSocialRateLimit != 1200*time.Millisecond {
+		t.Fatalf("expected external config loaded, got retries=%d wait=%s social_rate=%s", cfg.ExternalRetryCount, cfg.ExternalRetryWait, cfg.CryptoSocialRateLimit)
 	}
 	if cfg.FlashInterval != 33*time.Second {
 		t.Fatalf("expected alias flash interval, got %s", cfg.FlashInterval)

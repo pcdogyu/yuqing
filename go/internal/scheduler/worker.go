@@ -32,11 +32,19 @@ func NewWorker(cfg config.Config) *Worker {
 		cfg: cfg,
 		client: resty.New().
 			SetTimeout(cfg.HTTPTimeout).
-			SetRetryCount(2).
-			SetRetryWaitTime(500*time.Millisecond).
-			SetRetryMaxWaitTime(3*time.Second).
+			SetRetryCount(cfg.ExternalRetryCount).
+			SetRetryWaitTime(cfg.ExternalRetryWait).
+			SetRetryMaxWaitTime(maxDuration(cfg.ExternalRetryWait*6, cfg.ExternalRetryWait)).
+			AddRetryCondition(external.ShouldRetryResponse).
 			SetHeader("X-Service-Token", cfg.ServiceToken),
 	}
+}
+
+func maxDuration(value, fallback time.Duration) time.Duration {
+	if value > fallback {
+		return value
+	}
+	return fallback
 }
 
 func (w *Worker) Run(ctx context.Context) {

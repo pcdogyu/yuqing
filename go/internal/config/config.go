@@ -29,8 +29,11 @@ type Config struct {
 	CryptoTelegramURL       string
 	CryptoTelegramToken     string
 	HTTPTimeout             time.Duration
+	ExternalRetryCount      int
+	ExternalRetryWait       time.Duration
 	FlashInterval           time.Duration
 	HeadlineInterval        time.Duration
+	CryptoSocialRateLimit   time.Duration
 	CryptoXInterval         time.Duration
 	CryptoTelegramInterval  time.Duration
 	AnalysisInterval        time.Duration
@@ -95,8 +98,11 @@ func Load() Config {
 		CryptoTelegramURL:       envOrDefault("YUQING_CRYPTO_TELEGRAM_URL", ""),
 		CryptoTelegramToken:     envOrDefault("YUQING_CRYPTO_TELEGRAM_TOKEN", ""),
 		HTTPTimeout:             envDurationSeconds(20, "YUQING_HTTP_TIMEOUT_SEC", "JIN10_HTTP_TIMEOUT_SEC"),
+		ExternalRetryCount:      envIntAllowZero(2, "YUQING_EXTERNAL_RETRY_COUNT"),
+		ExternalRetryWait:       envDurationMillis(500, "YUQING_EXTERNAL_RETRY_WAIT_MS"),
 		FlashInterval:           envDurationSeconds(15, "YUQING_FLASH_INTERVAL_SEC", "JIN10_FLASH_INTERVAL_SEC"),
 		HeadlineInterval:        envDurationSeconds(60, "YUQING_HEADLINE_INTERVAL_SEC", "JIN10_HEADLINE_INTERVAL_SEC"),
+		CryptoSocialRateLimit:   envDurationMillisAllowZero(0, "YUQING_CRYPTO_SOCIAL_RATE_LIMIT_MS"),
 		CryptoXInterval:         envDurationSeconds(90, "YUQING_CRYPTO_X_INTERVAL_SEC"),
 		CryptoTelegramInterval:  envDurationSeconds(90, "YUQING_CRYPTO_TELEGRAM_INTERVAL_SEC"),
 		AnalysisInterval:        envDurationSeconds(120, "YUQING_ANALYSIS_INTERVAL_SEC"),
@@ -146,6 +152,21 @@ func envInt(fallback int, keys ...string) int {
 	}
 	parsed, err := strconv.Atoi(raw)
 	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
+}
+
+func envIntAllowZero(fallback int, keys ...string) int {
+	raw := strconv.Itoa(fallback)
+	for _, key := range keys {
+		if value := os.Getenv(key); value != "" {
+			raw = value
+			break
+		}
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed < 0 {
 		return fallback
 	}
 	return parsed
@@ -212,5 +233,10 @@ func envDurationSeconds(fallback int, keys ...string) time.Duration {
 
 func envDurationMillis(fallback int, keys ...string) time.Duration {
 	ms := envInt(fallback, keys...)
+	return time.Duration(ms) * time.Millisecond
+}
+
+func envDurationMillisAllowZero(fallback int, keys ...string) time.Duration {
+	ms := envIntAllowZero(fallback, keys...)
 	return time.Duration(ms) * time.Millisecond
 }

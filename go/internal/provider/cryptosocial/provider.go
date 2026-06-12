@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-resty/resty/v2"
@@ -23,25 +24,42 @@ type Provider struct {
 	endpoint   string
 	authToken  string
 	platform   string
+	rateLimit  time.Duration
+	mu         sync.Mutex
+	lastFetch  time.Time
+}
+
+type Options struct {
+	RateLimit time.Duration
 }
 
 func NewXProvider(client *resty.Client, endpoint, authToken string) *Provider {
+	return NewXProviderWithOptions(client, endpoint, authToken, Options{})
+}
+
+func NewXProviderWithOptions(client *resty.Client, endpoint, authToken string, opts Options) *Provider {
 	return &Provider{
 		client:     client,
 		sourceType: provider.SourceTypeCryptoX,
 		endpoint:   strings.TrimSpace(endpoint),
 		authToken:  strings.TrimSpace(authToken),
 		platform:   "x",
+		rateLimit:  opts.RateLimit,
 	}
 }
 
 func NewTelegramProvider(client *resty.Client, endpoint, authToken string) *Provider {
+	return NewTelegramProviderWithOptions(client, endpoint, authToken, Options{})
+}
+
+func NewTelegramProviderWithOptions(client *resty.Client, endpoint, authToken string, opts Options) *Provider {
 	return &Provider{
 		client:     client,
 		sourceType: provider.SourceTypeCryptoTelegram,
 		endpoint:   strings.TrimSpace(endpoint),
 		authToken:  strings.TrimSpace(authToken),
 		platform:   "telegram",
+		rateLimit:  opts.RateLimit,
 	}
 }
 
@@ -53,6 +71,9 @@ func (p *Provider) Fetch(ctx context.Context) ([]model.Item, error) {
 	if strings.TrimSpace(p.endpoint) == "" {
 		return nil, external.New(external.ErrDisabled, p.sourceType+" endpoint is empty")
 	}
+	if err := p.waitRateLimit(ctx); err != nil {
+		return nil, err
+	}
 	req := p.client.R().SetContext(ctx)
 	if p.authToken != "" {
 		req.SetHeader("Authorization", "Bearer "+p.authToken)
@@ -60,24 +81,65 @@ func (p *Provider) Fetch(ctx context.Context) ([]model.Item, error) {
 	resp, err := req.Get(p.endpoint)
 	if err != nil {
 		if code := external.Classify(err); code != "" {
-			return nil, external.New(code, err.Error())
+			classified := external.New(code, err.Error())
+			p.logFetchError(classified)
+			return nil, classified
 		}
+		p.logFetchError(err)
 		return nil, err
 	}
 	if resp.IsError() {
-		return nil, external.HTTPStatus(p.sourceType+" fetch failed: "+resp.Status(), resp.StatusCode())
+		err := external.HTTPStatus(p.sourceType+" fetch failed: "+resp.Status(), resp.StatusCode())
+		p.logFetchError(err)
+		return nil, err
 	}
 	items, err := ParseResponse(resp.Body(), p.sourceType, p.platform, p.endpoint, time.Now().UTC())
 	if err != nil {
 		if code := external.Classify(err); code != "" {
-			return nil, external.New(code, err.Error())
+			classified := external.New(code, err.Error())
+			p.logFetchError(classified)
+			return nil, classified
 		}
+		p.logFetchError(err)
 		return nil, err
 	}
 	if len(items) == 0 {
-		return nil, external.New(external.ErrEmptyData, p.sourceType+" response contained no usable rows")
+		err := external.New(external.ErrEmptyData, p.sourceType+" response contained no usable rows")
+		p.logFetchError(err)
+		return nil, err
 	}
 	return items, nil
+}
+
+func (p *Provider) waitRateLimit(ctx context.Context) error {
+	if p.rateLimit <= 0 {
+		return nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	now := time.Now()
+	if !p.lastFetch.IsZero() {
+		wait := p.rateLimit - now.Sub(p.lastFetch)
+		if wait > 0 {
+			timer := time.NewTimer(wait)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return external.New(external.ErrTimeout, ctx.Err().Error())
+			case <-timer.C:
+			}
+		}
+	}
+	p.lastFetch = time.Now()
+	return nil
+}
+
+func (p *Provider) logFetchError(err error) {
+	code := external.Classify(err)
+	if code == "" {
+		code = "external_error"
+	}
+	log.Warn().Err(err).Str("source_type", p.sourceType).Str("endpoint", p.endpoint).Str("error_code", code).Msg("crypto social fetch failed")
 }
 
 func ParseResponse(body []byte, sourceType, platform, endpoint string, capturedAt time.Time) ([]model.Item, error) {

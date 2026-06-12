@@ -228,10 +228,15 @@
 - 2026-06-12：五期第二批文档复核：
   - 已同步 [docs/phase5-release-readiness.md](docs/phase5-release-readiness.md) 的二批检查结论、baseline 命名映射、恢复演练输出和最小验收命令。
   - 已同步 [docs/phase4-productionization.md](docs/phase4-productionization.md) 的五期二批对账/恢复说明，避免四期文档继续只描述单库健康检查。
+- 2026-06-12：五期第三批外部集成韧性标准化：
+  - crawler 与 scheduler 外部 HTTP 客户端统一使用 `YUQING_EXTERNAL_RETRY_COUNT`、`YUQING_EXTERNAL_RETRY_WAIT_MS`，仅对超时、HTTP `429` 和 `5xx` 重试。
+  - crypto social provider 新增 `YUQING_CRYPTO_SOCIAL_RATE_LIMIT_MS` 请求限流，禁用端点、非 200、坏 JSON、空数据和重复数据均有固定分类或结构化日志。
+  - 启动日志新增 `external_retry_count`、`external_retry_wait`、`crypto_social_rate_limit`，便于生产核对实际外部集成策略。
 
 ## 下一步
 
 - 五期上线验收闭环已落地：scheduler 实际触发切为 Java Quartz cron 等价调度，`ops-check --baseline` 支持 Java 导出基线对账和领域名映射，`restore-sqlite.ps1` 和 `release-check.ps1` 支持备份恢复与源/恢复库计数一致性检查。
 - 新增只读生产运行接口：`GET /api/v1/system/operations`、`GET /api/v1/system/alerts`，`/system?section=operations` 优先消费同一份 operations 数据。
+- 外部集成韧性已标准化；后续如接入真实第三方 SLA，可在现有错误分类基础上增加告警阈值和通知渠道。
 - legacy 注册表已无剩余 `proxy / preserve` 项；后续新增旧入口必须先更新注册表和文档，并给出明确下线门槛。
 - 后续若迁移状态变更，先更新本文件，再同步 `README.md` 摘要。
