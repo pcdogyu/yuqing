@@ -2085,6 +2085,36 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 				UnscrambleContent:   "解读内容",
 				ContentAnalysis:     "内容分析内容",
 			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/public-opinion/analysis":
+			writeEnvelope(http.StatusOK, "ok", model.PublicOpinionAnalysisView{
+				Status:  "ok",
+				Message: "analysis built from 2 articles",
+				Bundle: model.PublicOpinionAnalysisBundle{
+					EventName:           "AI 舆情研判",
+					EventKeywords:       "AI,大模型",
+					EventStopWords:      "无关词",
+					EventStartTime:      "2026-06-01 00:00:00",
+					EventEndTime:        "2026-06-04 23:59:59",
+					EmotionalIndex:      "0.76",
+					ArticleCount:        2,
+					BackAnalysis:        "回溯分析内容",
+					EventContext:        "事件脉络内容",
+					EventTrace:          "事件跟踪内容",
+					HotAnalysis:         "热点分析内容",
+					NetizensAnalysis:    "网民分析内容",
+					Statistics:          "统计内容",
+					PropagationAnalysis: "传播分析内容",
+					ThematicAnalysis:    "专题分析内容",
+					UnscrambleContent:   "解读内容",
+					ContentAnalysis:     "内容分析内容",
+				},
+				EventOverview: []model.EventOverview{{Keyword: "AI", Count: 2}},
+				Emotions:      model.EmotionAnalysis{ProjectID: 1, Total: 2, Buckets: []model.EmotionBucket{{Name: "positive", Count: 1, Ratio: 0.5}, {Name: "negative", Count: 1, Ratio: 0.5}}},
+				Propagation:   model.PropagationAnalysis{ProjectID: 1, SourceFlow: []model.PropagationNode{{Label: "headline", Count: 1}, {Label: "weibo", Count: 1}}},
+				Themes:        []model.ThemeInsight{{Name: "AI", Count: 2}},
+				Events:        []model.PublicOpinionEvent{{Title: "AI 舆情", Keyword: "AI", Count: 2}},
+				Reports:       []model.PublicOpinionReport{{Title: "AI 报告"}},
+			})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/admin/tasks/analysis/refresh":
 			writeEnvelope(http.StatusOK, "ok", model.DashboardSnapshot{})
 		default:

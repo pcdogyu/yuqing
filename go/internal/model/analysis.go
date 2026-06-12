@@ -71,3 +71,15 @@ type PublicOpinionAnalysisBundle struct {
 	UnscrambleContent   string `json:"unscramble_content"`
 	ContentAnalysis     string `json:"content_analysis"`
 }
+
+type PublicOpinionAnalysisView struct {
+	Status        string                      `json:"status"`
+	Message       string                      `json:"message"`
+	Bundle        PublicOpinionAnalysisBundle `json:"bundle"`
+	EventOverview []EventOverview             `json:"event_overview"`
+	Emotions      EmotionAnalysis             `json:"emotions"`
+	Propagation   PropagationAnalysis         `json:"propagation"`
+	Themes        []ThemeInsight              `json:"themes"`
+	Events        []PublicOpinionEvent        `json:"events"`
+	Reports       []PublicOpinionReport       `json:"reports"`
+}

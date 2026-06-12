@@ -1294,6 +1294,15 @@ func (s *Server) getPublicOpinionAnalysisBundle(option model.PublicOption) (mode
 	if option.Page > 0 {
 		query.Set("page", strconv.Itoa(option.Page))
 	}
+	var view model.PublicOpinionAnalysisView
+	if err := s.getJSON(s.cfg.AnalysisURL+"/api/v1/public-opinion/analysis?"+query.Encode(), &view); err == nil {
+		if strings.EqualFold(strings.TrimSpace(view.Status), "failed") {
+			return model.PublicOpinionAnalysisBundle{}, fmt.Errorf(strings.TrimSpace(view.Message))
+		}
+		if view.Bundle.EventName != "" || view.Bundle.ArticleCount > 0 || strings.EqualFold(strings.TrimSpace(view.Status), "empty") {
+			return view.Bundle, nil
+		}
+	}
 	var bundle model.PublicOpinionAnalysisBundle
 	err := s.getJSON(s.cfg.AnalysisURL+"/api/v1/public-opinion/enrich?"+query.Encode(), &bundle)
 	return bundle, err

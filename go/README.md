@@ -17,7 +17,7 @@ Go 版已经从早期 `jin10` 采集骨架收敛为一套可运行的一期多�
 
 - 搜索增强：`/api/v1/search/full`、`/api/v1/search/timely`、`/api/v1/search/full/facets`、`/api/v1/search/history`、`/api/v1/search/suggestions`、`/api/v1/search/hot-keywords`、`/api/v1/search/metadata/types`、`/api/v1/search/metadata/polymerizations`、`/api/v1/search/metadata/breadcrumbs`
 - 特殊详情：`/api/v1/search/details/{id}`、`/api/v1/search/special/{kind}`、`/api/v1/search/special/{kind}/options`、`/api/v1/search/special/{kind}/details/{id}`
-- 公共舆情分析：`/api/v1/public-opinion/enrich`
+- 公共舆情分析：`/api/v1/public-opinion/enrich`、`/api/v1/public-opinion/analysis`
 - NLP/OCR：`/api/v1/nlp/title`、`/api/v1/nlp/summarize`、`/api/v1/nlp/keywords`、`/api/v1/nlp/ocr`、`/api/v1/nlp/image`
 
 ## 迁移完成矩阵
@@ -42,7 +42,7 @@ Go 版已经从早期 `jin10` 采集骨架收敛为一套可运行的一期多�
 | 平台设置、公共选项、收藏/已读等操作 | `兼容完成` | Go 已承接主闭环，但旧 JSON 和兼容路由仍保留。 |
 | OCR 与外部平台集成 | `未完成` | 尚未形成完整 Go 替代。 |
 | Java 全量高级全文检索剩余能力 | `兼容完成` | 高级筛选、聚合面包屑、特殊类型列表/选项/详情已补到正式 Go API，但 legacy 搜索入口仍保留。 |
-| 复杂传播/情感/专题分析 | `未完成` | 复杂分析闭环仍未完成。 |
+| 复杂传播/情感/专题分析 | `兼容完成` | 已有统一聚合查询契约，`PublicOption` 页面优先消费正式分析接口，但兼容页面和旧返回格式仍保留。 |
 | legacy 路由清理与兼容层收口 | `未完成` | 代码中仍存在大量 legacy endpoints 和兼容页面。 |
 
 详细矩阵见 [MIGRATION.md](MIGRATION.md)。
@@ -147,6 +147,7 @@ http://127.0.0.1
 - `GET /api/v1/analysis/overview`
 - `GET /api/v1/analysis/trends`
 - `GET /api/v1/analysis/sources`
+- `GET /api/v1/public-opinion/analysis`
 - `GET /api/v1/public-opinion/enrich`
 - `GET|POST /api/v1/reports`
 - `GET /api/v1/reports/{id}`
@@ -178,8 +179,6 @@ http://127.0.0.1
 ## 暂未完全迁移
 
 - OCR 与外部平台集成
-- Java 全量高级全文检索的剩余高级能力
-- 复杂传播/情感/专题分析
 - legacy 路由清理与兼容层收口
 
 说明：具体模块状态以 [MIGRATION.md](MIGRATION.md) 的详细矩阵为准。

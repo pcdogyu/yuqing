@@ -251,3 +251,52 @@ func TestHandlePublicOpinionEnrich(t *testing.T) {
 		t.Fatalf("expected normalized time range, got %+v", payload.Data)
 	}
 }
+
+func TestHandlePublicOpinionAnalysis(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/search/full" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code": http.StatusOK,
+			"data": model.SearchResult{
+				Items: []model.Item{
+					{ID: 1, Title: "AI 上涨突破", Content: "利好增强", Summary: "摘要一", SourceType: "headline", FromText: "新闻", PublishTimeText: "2026-06-01 10:00:00"},
+					{ID: 2, Title: "AI 风险回落", Content: "利空扰动", Summary: "摘要二", SourceType: "weibo", FromText: "微博", PublishTimeText: "2026-06-02 11:00:00"},
+				},
+			},
+		})
+	}))
+	defer content.Close()
+
+	svc := NewService(config.Config{ContentURL: content.URL}, &stubStore{})
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/public-opinion/analysis?"+url.Values{
+		"eventname":      {"AI 舆情"},
+		"eventkeywords":  {"AI"},
+		"eventstopwords": {""},
+		"eventstarttime": {"2026-06-01"},
+		"eventendtime":   {"2026-06-04"},
+	}.Encode(), nil)
+
+	svc.handlePublicOpinionAnalysis(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", recorder.Code)
+	}
+	var payload struct {
+		Data model.PublicOpinionAnalysisView `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Data.Status != "ok" || payload.Data.Bundle.ArticleCount != 2 {
+		t.Fatalf("unexpected analysis view: %+v", payload.Data)
+	}
+	if len(payload.Data.Themes) == 0 || payload.Data.Themes[0].Name == "" {
+		t.Fatalf("expected theme insights, got %+v", payload.Data.Themes)
+	}
+	if len(payload.Data.Propagation.Trend) != 2 {
+		t.Fatalf("expected propagation trend, got %+v", payload.Data.Propagation)
+	}
+}

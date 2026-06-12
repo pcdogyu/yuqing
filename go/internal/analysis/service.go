@@ -69,6 +69,7 @@ func (s *Service) Router() http.Handler {
 	r.Get("/api/v1/analysis/propagation", s.handlePropagation)
 	r.Get("/api/v1/analysis/themes", s.handleThemes)
 	r.Get("/api/v1/public-opinion/enrich", s.handlePublicOpinionEnrich)
+	r.Get("/api/v1/public-opinion/analysis", s.handlePublicOpinionAnalysis)
 	r.Get("/api/v1/public-opinion/events", s.handlePublicOpinionEvents)
 	r.Get("/api/v1/public-opinion/reports", s.handlePublicOpinionReports)
 	r.Get("/api/v1/crypto/insights", s.handleCryptoInsights)
@@ -168,6 +169,10 @@ func (s *Service) handlePublicOpinionEnrich(w http.ResponseWriter, r *http.Reque
 	apiutil.WriteJSON(w, http.StatusOK, "ok", bundle)
 }
 
+func (s *Service) handlePublicOpinionAnalysis(w http.ResponseWriter, r *http.Request) {
+	apiutil.WriteJSON(w, http.StatusOK, "ok", s.buildPublicOpinionAnalysisView(r.Context(), r.URL.Query()))
+}
+
 func (s *Service) handlePublicOpinionEvents(w http.ResponseWriter, r *http.Request) {
 	data, err := s.store.BuildPublicOpinionEvents(r.Context(), queryProjectID(r))
 	if err != nil {
@@ -214,19 +219,50 @@ func queryProjectID(r *http.Request) int64 {
 }
 
 func (s *Service) buildPublicOpinionBundle(ctx context.Context, query url.Values) (model.PublicOpinionAnalysisBundle, error) {
-	criteria := model.PublicOpinionAnalysisBundle{
-		EventName:      strings.TrimSpace(query.Get("eventname")),
-		EventKeywords:  strings.TrimSpace(query.Get("eventkeywords")),
-		EventStopWords: strings.TrimSpace(query.Get("eventstopwords")),
-		EventStartTime: normalizeLegacyStartTime(query.Get("eventstarttime")),
-		EventEndTime:   normalizeLegacyEndTime(query.Get("eventendtime")),
-	}
+	criteria := publicOpinionCriteria(query)
 	page := intQueryValues(query, "page", 1)
 	pageSize := intQueryValues(query, "page_size", 50)
 	items, err := s.fetchPublicOpinionArticles(ctx, criteria, page, pageSize)
 	if err != nil {
 		return model.PublicOpinionAnalysisBundle{}, err
 	}
+	return buildPublicOpinionAnalysisViewFromItems(criteria, items).Bundle, nil
+}
+
+func (s *Service) buildPublicOpinionAnalysisView(ctx context.Context, query url.Values) model.PublicOpinionAnalysisView {
+	criteria := publicOpinionCriteria(query)
+	page := intQueryValues(query, "page", 1)
+	pageSize := intQueryValues(query, "page_size", 50)
+	items, err := s.fetchPublicOpinionArticles(ctx, criteria, page, pageSize)
+	if err != nil {
+		return model.PublicOpinionAnalysisView{
+			Status:  "failed",
+			Message: err.Error(),
+			Bundle:  criteria,
+		}
+	}
+	view := buildPublicOpinionAnalysisViewFromItems(criteria, items)
+	if len(items) == 0 {
+		view.Status = "empty"
+		view.Message = "no articles matched criteria"
+	} else {
+		view.Status = "ok"
+		view.Message = fmt.Sprintf("analysis built from %d articles", len(items))
+	}
+	return view
+}
+
+func publicOpinionCriteria(query url.Values) model.PublicOpinionAnalysisBundle {
+	return model.PublicOpinionAnalysisBundle{
+		EventName:      strings.TrimSpace(query.Get("eventname")),
+		EventKeywords:  strings.TrimSpace(query.Get("eventkeywords")),
+		EventStopWords: strings.TrimSpace(query.Get("eventstopwords")),
+		EventStartTime: normalizeLegacyStartTime(query.Get("eventstarttime")),
+		EventEndTime:   normalizeLegacyEndTime(query.Get("eventendtime")),
+	}
+}
+
+func buildPublicOpinionAnalysisViewFromItems(criteria model.PublicOpinionAnalysisBundle, items []model.Item) model.PublicOpinionAnalysisView {
 	back := map[string]any{
 		"summary":   summarizeText(strings.Join(articleTitles(items), "，")),
 		"keywords":  criteria.EventKeywords,
@@ -308,25 +344,37 @@ func (s *Service) buildPublicOpinionBundle(ctx context.Context, query url.Values
 		"media":   media[:minInt(len(media), 5)],
 		"netizen": figures[:minInt(len(figures), 5)],
 	}
-	return model.PublicOpinionAnalysisBundle{
-		EventName:           criteria.EventName,
-		EventKeywords:       criteria.EventKeywords,
-		EventStopWords:      criteria.EventStopWords,
-		EventStartTime:      criteria.EventStartTime,
-		EventEndTime:        criteria.EventEndTime,
-		EmotionalIndex:      "3",
-		ArticleCount:        len(items),
-		BackAnalysis:        mustJSONString(back),
-		EventContext:        mustJSONString(events),
-		EventTrace:          mustJSONString(trace),
-		HotAnalysis:         mustJSONString(hot),
-		NetizensAnalysis:    mustJSONString(netizens),
-		Statistics:          mustJSONString(stats),
-		PropagationAnalysis: mustJSONString(propagation),
-		ThematicAnalysis:    mustJSONString(thematic),
-		UnscrambleContent:   mustJSONString(map[string]any{"content": summarizeText(criteria.EventName + " " + criteria.EventKeywords)}),
-		ContentAnalysis:     summarizeText(strings.Join(articleTitles(items), "；")),
-	}, nil
+	eventOverview := buildEventOverviewFromItems(criteria, items)
+	emotions := buildEmotionAnalysisFromItems(items)
+	propagationSummary := buildPropagationAnalysisFromItems(items)
+	themes := buildThemeInsightsFromItems(criteria, items)
+	return model.PublicOpinionAnalysisView{
+		Bundle: model.PublicOpinionAnalysisBundle{
+			EventName:           criteria.EventName,
+			EventKeywords:       criteria.EventKeywords,
+			EventStopWords:      criteria.EventStopWords,
+			EventStartTime:      criteria.EventStartTime,
+			EventEndTime:        criteria.EventEndTime,
+			EmotionalIndex:      buildEmotionalIndex(emotions),
+			ArticleCount:        len(items),
+			BackAnalysis:        mustJSONString(back),
+			EventContext:        mustJSONString(events),
+			EventTrace:          mustJSONString(trace),
+			HotAnalysis:         mustJSONString(hot),
+			NetizensAnalysis:    mustJSONString(netizens),
+			Statistics:          mustJSONString(stats),
+			PropagationAnalysis: mustJSONString(propagation),
+			ThematicAnalysis:    mustJSONString(thematic),
+			UnscrambleContent:   mustJSONString(map[string]any{"content": summarizeText(criteria.EventName + " " + criteria.EventKeywords)}),
+			ContentAnalysis:     summarizeText(strings.Join(articleTitles(items), "；")),
+		},
+		EventOverview: eventOverview,
+		Emotions:      emotions,
+		Propagation:   propagationSummary,
+		Themes:        themes,
+		Events:        buildPublicOpinionEventsFromOverview(criteria, eventOverview),
+		Reports:       buildPublicOpinionReportsFromThemes(themes),
+	}
 }
 
 func (s *Service) fetchPublicOpinionArticles(ctx context.Context, criteria model.PublicOpinionAnalysisBundle, page int, pageSize int) ([]model.Item, error) {
@@ -489,6 +537,267 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func buildEventOverviewFromItems(criteria model.PublicOpinionAnalysisBundle, items []model.Item) []model.EventOverview {
+	keywords := candidateAnalysisKeywords(criteria, items)
+	result := make([]model.EventOverview, 0, len(keywords))
+	for _, keyword := range keywords {
+		overview := model.EventOverview{
+			ProjectName: strings.TrimSpace(criteria.EventName),
+			Keyword:     keyword,
+		}
+		for _, item := range items {
+			text := strings.ToLower(item.Title + " " + item.Summary + " " + item.Content)
+			if strings.Contains(text, strings.ToLower(keyword)) {
+				overview.Count++
+				if len(overview.LatestTitles) < 3 && strings.TrimSpace(item.Title) != "" {
+					overview.LatestTitles = append(overview.LatestTitles, strings.TrimSpace(item.Title))
+				}
+			}
+		}
+		if overview.Count > 0 {
+			result = append(result, overview)
+		}
+	}
+	if len(result) == 0 && len(items) > 0 {
+		result = append(result, model.EventOverview{
+			ProjectName:  strings.TrimSpace(criteria.EventName),
+			Keyword:      firstNonEmpty(criteria.EventName, criteria.EventKeywords, "舆情事件"),
+			Count:        len(items),
+			LatestTitles: articleTitles(items)[:minInt(len(items), 3)],
+		})
+	}
+	slices.SortFunc(result, func(a, b model.EventOverview) int {
+		if a.Count == b.Count {
+			return strings.Compare(a.Keyword, b.Keyword)
+		}
+		if a.Count > b.Count {
+			return -1
+		}
+		return 1
+	})
+	if len(result) > 8 {
+		result = result[:8]
+	}
+	return result
+}
+
+func buildEmotionAnalysisFromItems(items []model.Item) model.EmotionAnalysis {
+	counts := map[string]int{"positive": 0, "neutral": 0, "negative": 0}
+	for _, item := range items {
+		counts[classifyEmotion(item.Title+" "+item.Summary+" "+item.Content)]++
+	}
+	total := len(items)
+	buckets := make([]model.EmotionBucket, 0, 3)
+	for _, name := range []string{"positive", "neutral", "negative"} {
+		ratio := 0.0
+		if total > 0 {
+			ratio = float64(counts[name]) / float64(total)
+		}
+		buckets = append(buckets, model.EmotionBucket{Name: name, Count: counts[name], Ratio: ratio})
+	}
+	return model.EmotionAnalysis{Total: total, Buckets: buckets}
+}
+
+func buildPropagationAnalysisFromItems(items []model.Item) model.PropagationAnalysis {
+	sourceCounts := map[string]int{}
+	trendCounts := map[string]int{}
+	for _, item := range items {
+		source := strings.TrimSpace(item.SourceType)
+		if source == "" {
+			source = strings.TrimSpace(item.FromText)
+		}
+		if source == "" {
+			source = "unknown"
+		}
+		sourceCounts[source]++
+		label := strings.TrimSpace(firstNonEmpty(item.PublishTimeText, item.PublishTime))
+		if len(label) >= 10 {
+			label = label[:10]
+		}
+		if label == "" && !item.CapturedAt.IsZero() {
+			label = item.CapturedAt.UTC().Format("2006-01-02")
+		}
+		if label == "" {
+			label = "unknown"
+		}
+		trendCounts[label]++
+	}
+	flow := make([]model.PropagationNode, 0, len(sourceCounts))
+	for label, count := range sourceCounts {
+		flow = append(flow, model.PropagationNode{Label: label, Count: count})
+	}
+	slices.SortFunc(flow, func(a, b model.PropagationNode) int {
+		if a.Count == b.Count {
+			return strings.Compare(a.Label, b.Label)
+		}
+		if a.Count > b.Count {
+			return -1
+		}
+		return 1
+	})
+	trend := make([]model.TrendPoint, 0, len(trendCounts))
+	for label, count := range trendCounts {
+		trend = append(trend, model.TrendPoint{Label: label, Count: count})
+	}
+	slices.SortFunc(trend, func(a, b model.TrendPoint) int {
+		return strings.Compare(a.Label, b.Label)
+	})
+	return model.PropagationAnalysis{SourceFlow: flow, Trend: trend}
+}
+
+func buildThemeInsightsFromItems(criteria model.PublicOpinionAnalysisBundle, items []model.Item) []model.ThemeInsight {
+	keywords := candidateAnalysisKeywords(criteria, items)
+	result := make([]model.ThemeInsight, 0, len(keywords))
+	for _, keyword := range keywords {
+		insight := model.ThemeInsight{Name: keyword}
+		for _, item := range items {
+			text := strings.ToLower(item.Title + " " + item.Summary + " " + item.Content)
+			if strings.Contains(text, strings.ToLower(keyword)) {
+				insight.Count++
+				if len(insight.Samples) < 2 && strings.TrimSpace(item.Title) != "" {
+					insight.Samples = append(insight.Samples, strings.TrimSpace(item.Title))
+				}
+			}
+		}
+		if insight.Count > 0 {
+			result = append(result, insight)
+		}
+	}
+	if len(result) == 0 && len(items) > 0 {
+		result = append(result, model.ThemeInsight{
+			Name:    firstNonEmpty(criteria.EventName, criteria.EventKeywords, "事件主题"),
+			Count:   len(items),
+			Samples: articleTitles(items)[:minInt(len(items), 2)],
+		})
+	}
+	slices.SortFunc(result, func(a, b model.ThemeInsight) int {
+		if a.Count == b.Count {
+			return strings.Compare(a.Name, b.Name)
+		}
+		if a.Count > b.Count {
+			return -1
+		}
+		return 1
+	})
+	if len(result) > 10 {
+		result = result[:10]
+	}
+	return result
+}
+
+func buildPublicOpinionEventsFromOverview(criteria model.PublicOpinionAnalysisBundle, overview []model.EventOverview) []model.PublicOpinionEvent {
+	result := make([]model.PublicOpinionEvent, 0, len(overview))
+	for _, event := range overview {
+		summary := ""
+		if len(event.LatestTitles) > 0 {
+			summary = summarizeText(event.LatestTitles[0])
+		}
+		result = append(result, model.PublicOpinionEvent{
+			Title:       firstNonEmpty(criteria.EventName, "事件分析") + " - " + event.Keyword,
+			ProjectName: strings.TrimSpace(criteria.EventName),
+			Keyword:     event.Keyword,
+			Count:       event.Count,
+			Summary:     summary,
+		})
+	}
+	return result
+}
+
+func buildPublicOpinionReportsFromThemes(themes []model.ThemeInsight) []model.PublicOpinionReport {
+	result := make([]model.PublicOpinionReport, 0, len(themes))
+	for _, theme := range themes {
+		result = append(result, model.PublicOpinionReport{
+			Title:    "专题报告 - " + theme.Name,
+			Summary:  summarizeText(strings.Join(theme.Samples, "；")),
+			Keywords: append([]string{theme.Name}, theme.Samples...),
+		})
+	}
+	return result
+}
+
+func candidateAnalysisKeywords(criteria model.PublicOpinionAnalysisBundle, items []model.Item) []string {
+	keywords := dedupeStrings(splitLegacyLabels(criteria.EventKeywords))
+	if len(keywords) > 0 {
+		return keywords
+	}
+	replacer := strings.NewReplacer(" ", ",", "，", ",", "；", ",", ";", ",", "|", ",", "/", ",", "\n", ",", "\t", ",")
+	for _, item := range items {
+		for _, token := range splitLegacyLabels(replacer.Replace(item.Title)) {
+			if len([]rune(strings.TrimSpace(token))) < 2 {
+				continue
+			}
+			keywords = append(keywords, token)
+			if len(keywords) >= 8 {
+				return dedupeStrings(keywords)
+			}
+		}
+	}
+	return dedupeStrings(keywords)
+}
+
+func dedupeStrings(values []string) []string {
+	seen := map[string]struct{}{}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		key := strings.ToLower(trimmed)
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, trimmed)
+	}
+	return result
+}
+
+func buildEmotionalIndex(emotions model.EmotionAnalysis) string {
+	best := "2"
+	bestCount := -1
+	for _, bucket := range emotions.Buckets {
+		score := "2"
+		switch bucket.Name {
+		case "positive":
+			score = "1"
+		case "negative":
+			score = "3"
+		}
+		if bucket.Count > bestCount {
+			best = score
+			bestCount = bucket.Count
+		}
+	}
+	return best
+}
+
+func classifyEmotion(text string) string {
+	normalized := strings.ToLower(text)
+	positiveWords := []string{"上涨", "利好", "增长", "突破", "新高", "improve", "beat", "surge", "gain"}
+	negativeWords := []string{"下跌", "利空", "风险", "暴跌", "回落", "loss", "drop", "fall", "miss"}
+	positive := 0
+	negative := 0
+	for _, word := range positiveWords {
+		if strings.Contains(normalized, strings.ToLower(word)) {
+			positive++
+		}
+	}
+	for _, word := range negativeWords {
+		if strings.Contains(normalized, strings.ToLower(word)) {
+			negative++
+		}
+	}
+	switch {
+	case positive > negative:
+		return "positive"
+	case negative > positive:
+		return "negative"
+	default:
+		return "neutral"
+	}
 }
 
 func minInt(a, b int) int {
