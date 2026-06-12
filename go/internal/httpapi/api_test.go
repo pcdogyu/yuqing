@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/stonedt-yuqing/go-jin10/internal/provider"
+	"github.com/pcdogyu/yuqing/go/internal/provider"
 )
 
 func TestWriteJSON(t *testing.T) {

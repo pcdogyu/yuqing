@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/stonedt-yuqing/go-jin10/internal/model"
+	"github.com/pcdogyu/yuqing/go/internal/model"
 )
 
 func (s *Store) UpdateUserProfile(ctx context.Context, userID int64, update model.UserProfileUpdate) (model.User, error) {

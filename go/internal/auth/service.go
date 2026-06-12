@@ -11,10 +11,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/stonedt-yuqing/go-jin10/internal/apiutil"
-	"github.com/stonedt-yuqing/go-jin10/internal/config"
-	"github.com/stonedt-yuqing/go-jin10/internal/model"
-	sqlitestore "github.com/stonedt-yuqing/go-jin10/internal/store/sqlite"
+	"github.com/pcdogyu/yuqing/go/internal/apiutil"
+	"github.com/pcdogyu/yuqing/go/internal/config"
+	"github.com/pcdogyu/yuqing/go/internal/model"
+	sqlitestore "github.com/pcdogyu/yuqing/go/internal/store/sqlite"
 )
 
 type Store interface {

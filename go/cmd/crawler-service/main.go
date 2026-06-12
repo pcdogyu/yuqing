@@ -10,10 +10,10 @@ import (
 
 	"github.com/rs/zerolog/log"
 
-	"github.com/stonedt-yuqing/go-jin10/internal/app"
-	"github.com/stonedt-yuqing/go-jin10/internal/config"
-	"github.com/stonedt-yuqing/go-jin10/internal/crawlerapi"
-	"github.com/stonedt-yuqing/go-jin10/internal/logging"
+	"github.com/pcdogyu/yuqing/go/internal/app"
+	"github.com/pcdogyu/yuqing/go/internal/config"
+	"github.com/pcdogyu/yuqing/go/internal/crawlerapi"
+	"github.com/pcdogyu/yuqing/go/internal/logging"
 )
 
 func main() {

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stonedt-yuqing/go-jin10/internal/model"
+	"github.com/pcdogyu/yuqing/go/internal/model"
 )
 
 type legacyAnalysisBundle struct {

@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/stonedt-yuqing/go-jin10/internal/model"
+	"github.com/pcdogyu/yuqing/go/internal/model"
 )
 
 var ErrUnsupportedPair = errors.New("unsupported crypto pair")

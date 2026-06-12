@@ -13,7 +13,7 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 
-	"github.com/stonedt-yuqing/go-jin10/internal/model"
+	"github.com/pcdogyu/yuqing/go/internal/model"
 )
 
 type templateExecContext struct {

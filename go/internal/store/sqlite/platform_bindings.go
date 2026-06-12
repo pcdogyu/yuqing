@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stonedt-yuqing/go-jin10/internal/model"
+	"github.com/pcdogyu/yuqing/go/internal/model"
 )
 
 func (s *Store) GetPlatformBinding(ctx context.Context, userID int64, kind string) (model.PlatformBinding, error) {

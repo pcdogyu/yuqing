@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stonedt-yuqing/go-jin10/internal/apiutil"
-	"github.com/stonedt-yuqing/go-jin10/internal/cryptoutil"
-	"github.com/stonedt-yuqing/go-jin10/internal/model"
+	"github.com/pcdogyu/yuqing/go/internal/apiutil"
+	"github.com/pcdogyu/yuqing/go/internal/cryptoutil"
+	"github.com/pcdogyu/yuqing/go/internal/model"
 )
 
 func (s *Service) handleCryptoPairResolve(w http.ResponseWriter, r *http.Request) {

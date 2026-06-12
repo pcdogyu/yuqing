@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/stonedt-yuqing/go-jin10/internal/testutil"
+	"github.com/pcdogyu/yuqing/go/internal/testutil"
 )
 
 func TestMainWiresHTTPServer(t *testing.T) {

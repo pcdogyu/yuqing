@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stonedt-yuqing/go-jin10/internal/model"
+	"github.com/pcdogyu/yuqing/go/internal/model"
 )
 
 func (s *Store) CreateWechatChallenge(ctx context.Context, challenge model.WechatChallenge) (model.WechatChallenge, error) {

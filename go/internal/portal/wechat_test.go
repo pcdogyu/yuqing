@@ -10,7 +10,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 
-	"github.com/stonedt-yuqing/go-jin10/internal/config"
+	"github.com/pcdogyu/yuqing/go/internal/config"
 )
 
 func TestWechatProxyRoutes(t *testing.T) {

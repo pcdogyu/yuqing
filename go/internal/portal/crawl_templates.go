@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/stonedt-yuqing/go-jin10/internal/model"
-	"github.com/stonedt-yuqing/go-jin10/internal/provider"
+	"github.com/pcdogyu/yuqing/go/internal/model"
+	"github.com/pcdogyu/yuqing/go/internal/provider"
 )
 
 func (s *Server) handleCrawlTemplatesPage(w http.ResponseWriter, r *http.Request, user any) {

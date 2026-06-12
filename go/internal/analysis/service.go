@@ -14,9 +14,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-resty/resty/v2"
 
-	"github.com/stonedt-yuqing/go-jin10/internal/apiutil"
-	"github.com/stonedt-yuqing/go-jin10/internal/config"
-	"github.com/stonedt-yuqing/go-jin10/internal/model"
+	"github.com/pcdogyu/yuqing/go/internal/apiutil"
+	"github.com/pcdogyu/yuqing/go/internal/config"
+	"github.com/pcdogyu/yuqing/go/internal/model"
 )
 
 type Store interface {

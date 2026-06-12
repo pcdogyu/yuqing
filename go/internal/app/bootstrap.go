@@ -11,14 +11,14 @@ import (
 	"github.com/go-resty/resty/v2"
 	"github.com/rs/zerolog/log"
 
-	"github.com/stonedt-yuqing/go-jin10/internal/config"
-	"github.com/stonedt-yuqing/go-jin10/internal/provider"
-	"github.com/stonedt-yuqing/go-jin10/internal/provider/cryptosocial"
-	"github.com/stonedt-yuqing/go-jin10/internal/provider/jin10flash"
-	"github.com/stonedt-yuqing/go-jin10/internal/provider/jin10full"
-	"github.com/stonedt-yuqing/go-jin10/internal/provider/jin10xnews"
-	"github.com/stonedt-yuqing/go-jin10/internal/service"
-	sqlitestore "github.com/stonedt-yuqing/go-jin10/internal/store/sqlite"
+	"github.com/pcdogyu/yuqing/go/internal/config"
+	"github.com/pcdogyu/yuqing/go/internal/provider"
+	"github.com/pcdogyu/yuqing/go/internal/provider/cryptosocial"
+	"github.com/pcdogyu/yuqing/go/internal/provider/jin10flash"
+	"github.com/pcdogyu/yuqing/go/internal/provider/jin10full"
+	"github.com/pcdogyu/yuqing/go/internal/provider/jin10xnews"
+	"github.com/pcdogyu/yuqing/go/internal/service"
+	sqlitestore "github.com/pcdogyu/yuqing/go/internal/store/sqlite"
 )
 
 var (

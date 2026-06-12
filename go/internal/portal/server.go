@@ -18,11 +18,11 @@ import (
 
 	"github.com/go-resty/resty/v2"
 
-	"github.com/stonedt-yuqing/go-jin10/internal/app"
-	"github.com/stonedt-yuqing/go-jin10/internal/config"
-	"github.com/stonedt-yuqing/go-jin10/internal/cryptoutil"
-	"github.com/stonedt-yuqing/go-jin10/internal/model"
-	"github.com/stonedt-yuqing/go-jin10/internal/provider"
+	"github.com/pcdogyu/yuqing/go/internal/app"
+	"github.com/pcdogyu/yuqing/go/internal/config"
+	"github.com/pcdogyu/yuqing/go/internal/cryptoutil"
+	"github.com/pcdogyu/yuqing/go/internal/model"
+	"github.com/pcdogyu/yuqing/go/internal/provider"
 )
 
 const sessionCookieName = "stonedt_portal_session"

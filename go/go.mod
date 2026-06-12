@@ -1,4 +1,4 @@
-module github.com/stonedt-yuqing/go-jin10
+module github.com/pcdogyu/yuqing/go
 
 go 1.23.0
 

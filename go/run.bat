@@ -79,7 +79,7 @@ for /f "usebackq delims=" %%I in (`powershell -NoProfile -Command "(Get-Date).To
 if not defined YUQING_GIT_COMMIT set "YUQING_GIT_COMMIT=unknown"
 if not defined YUQING_GIT_BRANCH set "YUQING_GIT_BRANCH=unknown"
 if not defined YUQING_BUILD_TIME set "YUQING_BUILD_TIME=unknown"
-set "LDFLAGS=-X github.com/stonedt-yuqing/go-jin10/internal/app.Version=%YUQING_RUN_VERSION% -X github.com/stonedt-yuqing/go-jin10/internal/app.GitCommit=%YUQING_GIT_COMMIT% -X github.com/stonedt-yuqing/go-jin10/internal/app.BuildTime=%YUQING_BUILD_TIME% -X github.com/stonedt-yuqing/go-jin10/internal/app.BranchName=%YUQING_GIT_BRANCH%"
+set "LDFLAGS=-X github.com/pcdogyu/yuqing/go/internal/app.Version=%YUQING_RUN_VERSION% -X github.com/pcdogyu/yuqing/go/internal/app.GitCommit=%YUQING_GIT_COMMIT% -X github.com/pcdogyu/yuqing/go/internal/app.BuildTime=%YUQING_BUILD_TIME% -X github.com/pcdogyu/yuqing/go/internal/app.BranchName=%YUQING_GIT_BRANCH%"
 
 if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
 

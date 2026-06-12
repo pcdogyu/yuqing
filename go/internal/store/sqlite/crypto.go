@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"time"
 
-	"github.com/stonedt-yuqing/go-jin10/internal/model"
+	"github.com/pcdogyu/yuqing/go/internal/model"
 )
 
 func (s *Store) UpsertCryptoCandles(ctx context.Context, symbol, interval string, candles []model.CryptoPriceCandle) error {

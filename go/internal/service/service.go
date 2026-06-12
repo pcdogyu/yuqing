@@ -10,9 +10,9 @@ import (
 
 	"github.com/go-resty/resty/v2"
 
-	"github.com/stonedt-yuqing/go-jin10/internal/model"
-	"github.com/stonedt-yuqing/go-jin10/internal/provider"
-	sqlitestore "github.com/stonedt-yuqing/go-jin10/internal/store/sqlite"
+	"github.com/pcdogyu/yuqing/go/internal/model"
+	"github.com/pcdogyu/yuqing/go/internal/provider"
+	sqlitestore "github.com/pcdogyu/yuqing/go/internal/store/sqlite"
 )
 
 type Store interface {

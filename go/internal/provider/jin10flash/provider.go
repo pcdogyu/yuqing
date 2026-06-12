@@ -12,8 +12,8 @@ import (
 	"github.com/PuerkitoBio/goquery"
 	"github.com/go-resty/resty/v2"
 
-	"github.com/stonedt-yuqing/go-jin10/internal/model"
-	"github.com/stonedt-yuqing/go-jin10/internal/provider"
+	"github.com/pcdogyu/yuqing/go/internal/model"
+	"github.com/pcdogyu/yuqing/go/internal/provider"
 )
 
 var (

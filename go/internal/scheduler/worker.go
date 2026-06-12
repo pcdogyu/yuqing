@@ -12,9 +12,9 @@ import (
 	"github.com/go-resty/resty/v2"
 	"github.com/rs/zerolog/log"
 
-	"github.com/stonedt-yuqing/go-jin10/internal/config"
-	"github.com/stonedt-yuqing/go-jin10/internal/model"
-	sqlitestore "github.com/stonedt-yuqing/go-jin10/internal/store/sqlite"
+	"github.com/pcdogyu/yuqing/go/internal/config"
+	"github.com/pcdogyu/yuqing/go/internal/model"
+	sqlitestore "github.com/pcdogyu/yuqing/go/internal/store/sqlite"
 )
 
 type Worker struct {

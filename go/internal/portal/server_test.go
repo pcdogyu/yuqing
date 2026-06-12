@@ -19,9 +19,9 @@ import (
 
 	"github.com/go-resty/resty/v2"
 
-	"github.com/stonedt-yuqing/go-jin10/internal/config"
-	"github.com/stonedt-yuqing/go-jin10/internal/model"
-	"github.com/stonedt-yuqing/go-jin10/internal/nlp"
+	"github.com/pcdogyu/yuqing/go/internal/config"
+	"github.com/pcdogyu/yuqing/go/internal/model"
+	"github.com/pcdogyu/yuqing/go/internal/nlp"
 )
 
 var testLastCrawlRequest struct {
@@ -941,7 +941,7 @@ func TestPublicOptionCompatPages(t *testing.T) {
 
 func TestLegacyRouteRegistryStrategies(t *testing.T) {
 	detail, ok := legacyRouteSpecForPath("/publicoption/reportdetail/1")
-	if !ok || detail.Strategy != legacyStrategyRedirect || detail.RemovalGate != legacyRemovalGateUIMigrated {
+	if !ok || detail.Strategy != legacyStrategyGone || detail.RemovalGate != legacyRemovalGateUIMigrated {
 		t.Fatalf("unexpected publicoption detail legacy spec: %+v ok=%v", detail, ok)
 	}
 

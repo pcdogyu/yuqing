@@ -11,10 +11,10 @@ import (
 
 	"github.com/go-resty/resty/v2"
 
-	"github.com/stonedt-yuqing/go-jin10/internal/model"
-	"github.com/stonedt-yuqing/go-jin10/internal/provider"
-	"github.com/stonedt-yuqing/go-jin10/internal/provider/cryptosocial"
-	sqlitestore "github.com/stonedt-yuqing/go-jin10/internal/store/sqlite"
+	"github.com/pcdogyu/yuqing/go/internal/model"
+	"github.com/pcdogyu/yuqing/go/internal/provider"
+	"github.com/pcdogyu/yuqing/go/internal/provider/cryptosocial"
+	sqlitestore "github.com/pcdogyu/yuqing/go/internal/store/sqlite"
 )
 
 func TestCrawlerRunsCryptoSocialSourceWithDedup(t *testing.T) {

@@ -12,8 +12,8 @@ import (
 	"github.com/go-resty/resty/v2"
 	"golang.org/x/net/websocket"
 
-	"github.com/stonedt-yuqing/go-jin10/internal/config"
-	"github.com/stonedt-yuqing/go-jin10/internal/model"
+	"github.com/pcdogyu/yuqing/go/internal/config"
+	"github.com/pcdogyu/yuqing/go/internal/model"
 )
 
 func TestLegacySearchHistoryAndRedirect(t *testing.T) {

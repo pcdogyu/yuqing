@@ -13,10 +13,10 @@ import (
 	"github.com/PuerkitoBio/goquery"
 	"github.com/go-resty/resty/v2"
 
-	"github.com/stonedt-yuqing/go-jin10/internal/model"
-	"github.com/stonedt-yuqing/go-jin10/internal/provider"
-	"github.com/stonedt-yuqing/go-jin10/internal/provider/jin10flash"
-	"github.com/stonedt-yuqing/go-jin10/internal/provider/jin10xnews"
+	"github.com/pcdogyu/yuqing/go/internal/model"
+	"github.com/pcdogyu/yuqing/go/internal/provider"
+	"github.com/pcdogyu/yuqing/go/internal/provider/jin10flash"
+	"github.com/pcdogyu/yuqing/go/internal/provider/jin10xnews"
 )
 
 const (

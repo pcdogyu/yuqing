@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stonedt-yuqing/go-jin10/internal/model"
+	"github.com/pcdogyu/yuqing/go/internal/model"
 )
 
 func (s *Store) ListPublicOptions(ctx context.Context, userID int64, keyword string) ([]model.PublicOption, error) {

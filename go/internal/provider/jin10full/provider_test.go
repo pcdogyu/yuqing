@@ -9,7 +9,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 
-	"github.com/stonedt-yuqing/go-jin10/internal/provider"
+	"github.com/pcdogyu/yuqing/go/internal/provider"
 )
 
 type memoryStateStore struct {

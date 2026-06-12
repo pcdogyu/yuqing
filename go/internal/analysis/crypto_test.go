@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stonedt-yuqing/go-jin10/internal/config"
-	"github.com/stonedt-yuqing/go-jin10/internal/model"
+	"github.com/pcdogyu/yuqing/go/internal/config"
+	"github.com/pcdogyu/yuqing/go/internal/model"
 )
 
 func TestHandleCryptoInsightsUsesCachedSnapshot(t *testing.T) {
