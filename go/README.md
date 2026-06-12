@@ -13,6 +13,13 @@ Go 版已经从早期 `jin10` 采集骨架收敛为一套可运行的一期多�
 
 二期已经开始推进，重点是把剩余 Java 兼容入口和未迁移功能继续收口到 Go；旧兼容路由会逐步下线，以 Go 正式接口为准。
 
+当前二期已经补出的正式接口基线：
+
+- 搜索增强：`/api/v1/search/full`、`/api/v1/search/timely`、`/api/v1/search/full/facets`、`/api/v1/search/history`、`/api/v1/search/suggestions`、`/api/v1/search/hot-keywords`、`/api/v1/search/metadata/types`、`/api/v1/search/metadata/polymerizations`、`/api/v1/search/metadata/breadcrumbs`
+- 特殊详情：`/api/v1/search/details/{id}`、`/api/v1/search/special/{kind}`、`/api/v1/search/special/{kind}/options`、`/api/v1/search/special/{kind}/details/{id}`
+- 公共舆情分析：`/api/v1/public-opinion/enrich`
+- NLP/OCR：`/api/v1/nlp/title`、`/api/v1/nlp/summarize`、`/api/v1/nlp/keywords`、`/api/v1/nlp/ocr`、`/api/v1/nlp/image`
+
 ## 迁移完成矩阵
 
 状态定义：
@@ -32,13 +39,15 @@ Go 版已经从早期 `jin10` 采集骨架收敛为一套可运行的一期多�
 | 邮件配置、弹窗状态 | `兼容完成` | Go 已实现，旧接口格式仍在兼容。 |
 | 移动端、大屏、热点、声量、申请试用 | `兼容完成` | Go 已可承接页面和接口，但仍属于兼容层。 |
 | 全文搜索、即时搜索、LSearch 历史筛选接口 | `兼容完成` | Go 已可用，但 legacy 路由和旧返回格式仍在。 |
-| 平台设置、公共选项、收藏/已读等操作 | `部分完成` | 已迁移主闭环，但还未彻底收口。 |
+| 平台设置、公共选项、收藏/已读等操作 | `兼容完成` | Go 已承接主闭环，但旧 JSON 和兼容路由仍保留。 |
 | OCR 与外部平台集成 | `未完成` | 尚未形成完整 Go 替代。 |
-| Java 全量高级全文检索剩余能力 | `未完成` | 基础和部分高级检索已迁移，剩余能力未收口。 |
+| Java 全量高级全文检索剩余能力 | `兼容完成` | 高级筛选、聚合面包屑、特殊类型列表/选项/详情已补到正式 Go API，但 legacy 搜索入口仍保留。 |
 | 复杂传播/情感/专题分析 | `未完成` | 复杂分析闭环仍未完成。 |
 | legacy 路由清理与兼容层收口 | `未完成` | 代码中仍存在大量 legacy endpoints 和兼容页面。 |
 
 详细矩阵见 [MIGRATION.md](MIGRATION.md)。
+
+legacy 路由清单基线见 [docs/legacy-route-inventory.md](docs/legacy-route-inventory.md)。
 
 ## Crypto 社媒接入
 
@@ -122,9 +131,23 @@ http://127.0.0.1
 - `GET /api/v1/articles/{id}`
 - `GET /api/v1/articles/{id}/related`
 - `GET /api/v1/search/articles`
+- `GET /api/v1/search/full`
+- `GET /api/v1/search/timely`
+- `GET /api/v1/search/full/facets`
+- `GET /api/v1/search/history`
+- `GET /api/v1/search/suggestions`
+- `GET /api/v1/search/hot-keywords`
+- `GET /api/v1/search/metadata/types`
+- `GET /api/v1/search/metadata/polymerizations`
+- `GET /api/v1/search/metadata/breadcrumbs`
+- `GET /api/v1/search/details/{id}`
+- `GET /api/v1/search/special/{kind}`
+- `GET /api/v1/search/special/{kind}/options`
+- `GET /api/v1/search/special/{kind}/details/{id}`
 - `GET /api/v1/analysis/overview`
 - `GET /api/v1/analysis/trends`
 - `GET /api/v1/analysis/sources`
+- `GET /api/v1/public-opinion/enrich`
 - `GET|POST /api/v1/reports`
 - `GET /api/v1/reports/{id}`
 - `GET /api/v1/system/notices`
@@ -135,6 +158,11 @@ http://127.0.0.1
 - `POST /api/v1/admin/tasks/analysis/refresh`
 - `GET /api/v1/crypto/social`
 - `GET /api/v1/crypto/insights`
+- `POST /api/v1/nlp/title`
+- `POST /api/v1/nlp/summarize`
+- `POST /api/v1/nlp/keywords`
+- `POST /api/v1/nlp/ocr`
+- `POST /api/v1/nlp/image`
 
 ## 已完成的一期范围
 

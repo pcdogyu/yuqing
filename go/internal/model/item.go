@@ -168,3 +168,18 @@ type SearchWordStat struct {
 	UserID     int64  `json:"user_id"`
 	WordCount  int    `json:"wordCount"`
 }
+
+type SearchDetail struct {
+	ID              int64          `json:"id"`
+	SourceType      string         `json:"source_type"`
+	Title           string         `json:"title"`
+	Content         string         `json:"content"`
+	Summary         string         `json:"summary"`
+	PublishTime     string         `json:"publish_time"`
+	PublishTimeText string         `json:"publish_time_text"`
+	DetailURL       string         `json:"detail_url"`
+	SourceURL       string         `json:"source_url"`
+	SourceName      string         `json:"source_name"`
+	URL             string         `json:"url"`
+	Payload         map[string]any `json:"payload"`
+}

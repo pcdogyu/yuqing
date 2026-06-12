@@ -161,19 +161,17 @@ func (s *Server) handleSearchCompat(w http.ResponseWriter, r *http.Request, user
 		}
 		http.NotFound(w, r)
 	case "listFullTypeByFirst":
-		writeJSONText(w, legacySearchTypesForMode(mode))
+		s.handleLegacySearchTypes(w, r, mode, "1")
 	case "listFullTypeBySecond":
-		typeOneID, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("type_one_id")))
-		writeJSONText(w, legacySearchTypesBySecond(typeOneID))
+		s.handleLegacySearchTypes(w, r, mode, "2")
 	case "listFullTypeByThird":
-		typeTwoID, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("type_two_id")))
-		writeJSONText(w, legacySearchTypesByThird(typeTwoID))
+		s.handleLegacySearchTypes(w, r, mode, "3")
 	case "listFullTypeOneByIdList":
-		writeJSONText(w, legacySearchTypesByIDs(strings.TrimSpace(r.URL.Query().Get("id"))))
+		s.handleLegacySearchTypes(w, r, mode, "ids")
 	case "listFullPolymerization":
-		writeJSONText(w, legacySearchPolymerizations)
+		s.handleLegacySearchPolymerizations(w, r, mode)
 	case "getBreadCrumbs":
-		writeJSONText(w, legacySearchBreadcrumbs(r))
+		s.handleLegacySearchBreadcrumbs(w, r, mode)
 	case "hotList":
 		if mode == "full" || mode == "timely" {
 			s.handleLegacyHotList(w, r, user, mode)
@@ -350,6 +348,63 @@ func (s *Server) handleLegacySearchHistory(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	apiutil.WriteJSON(w, http.StatusOK, "ok", words)
+}
+
+func (s *Server) handleLegacySearchTypes(w http.ResponseWriter, r *http.Request, mode string, level string) {
+	query := url.Values{}
+	query.Set("mode", mode)
+	query.Set("level", level)
+	switch level {
+	case "2":
+		if value := strings.TrimSpace(r.URL.Query().Get("type_one_id")); value != "" {
+			query.Set("parent_id", value)
+		}
+	case "3":
+		if value := strings.TrimSpace(r.URL.Query().Get("type_two_id")); value != "" {
+			query.Set("parent_id", value)
+		}
+	case "ids":
+		if value := strings.TrimSpace(r.URL.Query().Get("id")); value != "" {
+			query.Set("ids", value)
+		}
+	}
+	var types []map[string]any
+	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/search/metadata/types?"+query.Encode(), &types); err == nil && len(types) > 0 {
+		writeJSONText(w, types)
+		return
+	}
+	switch level {
+	case "2":
+		typeOneID, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("type_one_id")))
+		writeJSONText(w, legacySearchTypesBySecond(typeOneID))
+	case "3":
+		typeTwoID, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("type_two_id")))
+		writeJSONText(w, legacySearchTypesByThird(typeTwoID))
+	case "ids":
+		writeJSONText(w, legacySearchTypesByIDs(strings.TrimSpace(r.URL.Query().Get("id"))))
+	default:
+		writeJSONText(w, legacySearchTypesForMode(mode))
+	}
+}
+
+func (s *Server) handleLegacySearchPolymerizations(w http.ResponseWriter, r *http.Request, mode string) {
+	var result []map[string]any
+	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/search/metadata/polymerizations?mode="+url.QueryEscape(mode), &result); err == nil && len(result) > 0 {
+		writeJSONText(w, result)
+		return
+	}
+	writeJSONText(w, legacySearchPolymerizations)
+}
+
+func (s *Server) handleLegacySearchBreadcrumbs(w http.ResponseWriter, r *http.Request, mode string) {
+	query := r.URL.Query()
+	query.Set("mode", mode)
+	var result []map[string]any
+	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/search/metadata/breadcrumbs?"+query.Encode(), &result); err == nil && len(result) > 0 {
+		writeJSONText(w, result)
+		return
+	}
+	writeJSONText(w, legacySearchBreadcrumbs(r))
 }
 
 func (s *Server) handleLegacySearchInformationList(w http.ResponseWriter, r *http.Request, user any, mode string) {
@@ -1062,6 +1117,10 @@ func (s *Server) handleTimelySearchTemplate(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) handleLegacySpecialList(w http.ResponseWriter, r *http.Request, _ any, kind string, mode string) {
+	if payload, ok := s.fetchLegacySpecialListAPI(r, kind, mode); ok {
+		writeJSONText(w, payload)
+		return
+	}
 	filter, pageSize := legacySearchFilterFromRequest(r, mode)
 	if page := apiutil.IntQuery(r, "pageNum", 0); page > 0 {
 		filter.Page = page
@@ -1117,6 +1176,10 @@ func (s *Server) handleLegacySpecialList(w http.ResponseWriter, r *http.Request,
 }
 
 func (s *Server) handleLegacySpecialDetailData(w http.ResponseWriter, r *http.Request, path string) {
+	if payload, ok := s.fetchLegacySpecialDetailAPI(r, path); ok {
+		writeJSONText(w, payload)
+		return
+	}
 	kind := map[string]string{
 		"lawyerDetailData":          "lawyer",
 		"executionPersonDetailData": "executionPerson",
@@ -1137,6 +1200,10 @@ func (s *Server) handleLegacySpecialDetailData(w http.ResponseWriter, r *http.Re
 }
 
 func (s *Server) handleLegacyCompanyDetailData(w http.ResponseWriter, r *http.Request) {
+	if payload, ok := s.fetchLegacySpecialDetailByKindAPI(r, "company"); ok {
+		writeJSONText(w, payload)
+		return
+	}
 	itemID := strings.TrimSpace(firstNonEmpty(r.FormValue("article_public_id"), r.URL.Query().Get("article_public_id"), r.FormValue("articleid"), r.URL.Query().Get("articleid")))
 	if itemID == "" {
 		writeJSONText(w, map[string]any{})
@@ -1151,6 +1218,10 @@ func (s *Server) handleLegacyCompanyDetailData(w http.ResponseWriter, r *http.Re
 }
 
 func (s *Server) handleLegacyReportDetailData(w http.ResponseWriter, r *http.Request) {
+	if payload, ok := s.fetchLegacySpecialDetailByKindAPI(r, "report"); ok {
+		writeJSONText(w, payload)
+		return
+	}
 	itemID := strings.TrimSpace(firstNonEmpty(r.FormValue("article_public_id"), r.URL.Query().Get("article_public_id"), r.FormValue("articleid"), r.URL.Query().Get("articleid")))
 	if itemID == "" {
 		writeJSONText(w, map[string]any{})
@@ -1165,6 +1236,10 @@ func (s *Server) handleLegacyReportDetailData(w http.ResponseWriter, r *http.Req
 }
 
 func (s *Server) handleLegacySpecialCategoryOptions(w http.ResponseWriter, r *http.Request, kind string, mode string) {
+	if payload, ok := s.fetchLegacySpecialOptionsAPI(r, kind, mode); ok {
+		writeJSONText(w, payload)
+		return
+	}
 	filter, _ := legacySearchFilterFromRequest(r, mode)
 	filter.Keyword = nonEmpty(
 		strings.TrimSpace(r.URL.Query().Get("searchWord")),
@@ -1182,6 +1257,118 @@ func (s *Server) handleLegacySpecialCategoryOptions(w http.ResponseWriter, r *ht
 		options = legacySearchCategoryOptions(r, kind)
 	}
 	writeJSONText(w, options)
+}
+
+func (s *Server) fetchLegacySpecialListAPI(r *http.Request, path string, mode string) (map[string]any, bool) {
+	kind := legacySpecialKindFromPath(path)
+	if kind == "" {
+		return nil, false
+	}
+	query := cloneValues(r.URL.Query())
+	query.Set("mode", mode)
+	query.Set("page", strconv.Itoa(max(apiutil.IntQuery(r, "page", apiutil.IntQuery(r, "pageNum", 1)), 1)))
+	query.Set("page_size", strconv.Itoa(max(apiutil.IntQuery(r, "page_size", apiutil.IntQuery(r, "pageSize", 25)), 1)))
+	if query.Get("q") == "" {
+		query.Set("q", nonEmpty(query.Get("searchWord"), query.Get("searchword"), query.Get("keyword")))
+	}
+	var payload map[string]any
+	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/search/special/"+url.PathEscape(kind)+"?"+query.Encode(), &payload); err != nil {
+		return nil, false
+	}
+	if _, ok := payload["list"]; !ok {
+		return nil, false
+	}
+	return payload, true
+}
+
+func (s *Server) fetchLegacySpecialOptionsAPI(r *http.Request, kind string, mode string) ([]map[string]any, bool) {
+	query := cloneValues(r.URL.Query())
+	query.Set("mode", mode)
+	if query.Get("q") == "" {
+		query.Set("q", nonEmpty(query.Get("searchWord"), query.Get("searchword"), query.Get("keyword")))
+	}
+	var payload []map[string]any
+	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/search/special/"+url.PathEscape(kind)+"/options?"+query.Encode(), &payload); err != nil {
+		return nil, false
+	}
+	if len(payload) == 0 {
+		return nil, false
+	}
+	return payload, true
+}
+
+func (s *Server) fetchLegacySpecialDetailAPI(r *http.Request, path string) (any, bool) {
+	kind := map[string]string{
+		"lawyerDetailData":          "lawyer",
+		"executionPersonDetailData": "executionPerson",
+		"professorDetailData":       "professor",
+		"doctorDetailData":          "doctor",
+	}[path]
+	if kind == "" {
+		return nil, false
+	}
+	return s.fetchLegacySpecialDetailByKindAPI(r, kind)
+}
+
+func (s *Server) fetchLegacySpecialDetailByKindAPI(r *http.Request, kind string) (any, bool) {
+	itemID := strings.TrimSpace(firstNonEmpty(r.FormValue("article_public_id"), r.URL.Query().Get("article_public_id"), r.FormValue("articleid"), r.URL.Query().Get("articleid")))
+	if itemID == "" {
+		return nil, false
+	}
+	var payload map[string]any
+	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/search/special/"+url.PathEscape(kind)+"/details/"+url.PathEscape(itemID), &payload); err != nil {
+		return nil, false
+	}
+	if len(payload) == 0 {
+		return nil, false
+	}
+	switch kind {
+	case "lawyer", "executionPerson", "professor", "doctor":
+		return map[string]any{"list": []map[string]any{payload}}, true
+	default:
+		return payload, true
+	}
+}
+
+func legacySpecialKindFromPath(path string) string {
+	switch strings.TrimSpace(path) {
+	case "lawyerList":
+		return "lawyer"
+	case "executionPersonList":
+		return "executionPerson"
+	case "professorList":
+		return "professor"
+	case "doctorList":
+		return "doctor"
+	case "biddingList":
+		return "bidding"
+	case "inviteList":
+		return "invite"
+	case "companyList":
+		return "company"
+	case "judgmentList":
+		return "judgment"
+	case "knowLedgeList":
+		return "knowledge"
+	case "investmentList":
+		return "investment"
+	case "baiduKnowsList":
+		return "baiduKnows"
+	case "thesisnList":
+		return "thesisn"
+	default:
+		return ""
+	}
+}
+
+func cloneValues(values url.Values) url.Values {
+	cloned := url.Values{}
+	for key, entries := range values {
+		for _, entry := range entries {
+			cloned.Add(key, entry)
+		}
+	}
+	return cloned
 }
 
 func (s *Server) handleLegacySpecialDetailPage(w http.ResponseWriter, r *http.Request, mode string, kind string, rawID string) {

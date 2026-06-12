@@ -7,6 +7,7 @@
 - `DatafavoriteContoller` 已完成 Go 主链路收口。
 - `PublicOptionContoller` 已完成 Go 工作台承接，旧 JSON / 路由兼容层仍保留，因此状态更新为“兼容完成”。
 - `PlatformController` 已完成 Go 工作台承接，旧 JSON / SSE / 路由兼容层仍保留，因此状态更新为“兼容完成”。
+- Java 全量高级全文检索剩余能力已补齐正式 Go API 承接面，但 legacy 路由与旧返回格式兼容层仍保留，因此状态更新为“兼容完成”。
 
 ## 状态定义
 
@@ -46,18 +47,50 @@
 | `PublicOptionContoller` | `兼容完成` | `portal-web /publicoption/*` + `content-service /api/v1/public-options` | `/publicoption` 已切到统一“事件分析工作台”；列表、详情、创建、更新、删除、分析视图均由 Go 页面承接；旧 `loadInformation`、旧 JSON 兼容接口仍保留。 |
 | `PlatformController` | `兼容完成` | `portal-web /platform/*` + `content-service /system-*` + `content-service /platform/bindings/*` | `/platform` 与 `/platform/bindings` 已切到统一“平台工作台”；绑定、公告、最近平台操作审计、OCR、图像识别、写作标题生成、写作报告预览均可由 Go 页面承接；旧 JSON / SSE 兼容接口仍保留。 |
 | OCR 与外部平台集成 | `未完成` | - | 仍未形成明确、稳定的 Go 对外承接面。 |
-| Java 全量高级全文检索剩余能力 | `未完成` | 部分在 `content-service` + `portal-web` | Go 已覆盖基础与部分高级检索，但还未完全替代旧 Java 全量能力。 |
+| Java 全量高级全文检索剩余能力 | `兼容完成` | `content-service /api/v1/search/metadata/*` + `content-service /api/v1/search/special/*` + `portal-web` | 高级筛选、聚合面包屑、特殊类型列表/选项/详情已补到正式 Go API；旧 `fullsearch` / `timelysearch` 兼容入口仍保留。 |
 | 复杂传播 / 情感 / 专题分析 | `未完成` | 部分在 `analysis-service` | 已有基础分析接口，但复杂分析闭环尚未完成。 |
 | legacy 路由清理与兼容层收口 | `未完成` | `gateway-web` + `portal-web` | 代码中仍存在大量 legacy endpoints 和兼容页面。 |
+
+## 二期接口基线
+
+- 搜索增强正式接口：
+  - `GET /api/v1/search/full`
+  - `GET /api/v1/search/timely`
+  - `GET /api/v1/search/full/facets`
+  - `GET /api/v1/search/history`
+  - `GET /api/v1/search/suggestions`
+  - `GET /api/v1/search/hot-keywords`
+  - `GET /api/v1/search/metadata/types`
+  - `GET /api/v1/search/metadata/polymerizations`
+  - `GET /api/v1/search/metadata/breadcrumbs`
+- 特殊类型详情正式接口：
+  - `GET /api/v1/search/details/{id}`
+  - `GET /api/v1/search/special/{kind}`
+  - `GET /api/v1/search/special/{kind}/options`
+  - `GET /api/v1/search/special/{kind}/details/{id}`
+- 公共舆情分析正式接口：
+  - `GET /api/v1/public-opinion/enrich`
+- NLP / OCR 正式接口：
+  - `POST /api/v1/nlp/title`
+  - `POST /api/v1/nlp/summarize`
+  - `POST /api/v1/nlp/keywords`
+  - `POST /api/v1/nlp/ocr`
+  - `POST /api/v1/nlp/image`
+
+说明：
+
+- `PublicOption` 工作台的分析富化已优先走 `analysis-service` 正式接口，`portal-web` 本地拼装只作为降级兜底。
+- 特殊详情数据不再只依赖 legacy `*detailData` 接口，`content-service` 已提供统一详情出口。
+- legacy `fullsearch` / `timelysearch` 的类型筛选、聚合、面包屑、特殊实体查询现已优先转发到 `content-service` 正式搜索接口，只有在正式接口不可用或返回空载荷时才回退旧兼容逻辑。
 
 ## 按状态汇总
 
 | 状态 | 项数 | 范围 |
 | --- | --- | --- |
 | `完成` | 9 | 登录、项目、监测、报告、基础分析、基础文章查询、主搜索入口、系统页核心能力、Datafavorite 主链路 |
-| `兼容完成` | 15 | 微信、邮件、弹窗、验证码、移动端、大屏、音量、热点、试用申请、用户资料、全文搜索、即时搜索、LSearch、PublicOption、Platform |
+| `兼容完成` | 16 | 微信、邮件、弹窗、验证码、移动端、大屏、音量、热点、试用申请、用户资料、全文搜索、即时搜索、LSearch、PublicOption、Platform、高级全文检索剩余能力 |
 | `部分完成` | 0 | - |
-| `未完成` | 4 | OCR/外部平台、高级全文检索剩余能力、复杂分析、legacy 收口 |
+| `未完成` | 3 | OCR/外部平台、复杂分析、legacy 收口 |
 
 ## 二期待办清单
 
@@ -66,9 +99,10 @@
 | 项目 | 当前缺口 | 建议动作 | 完成标准 |
 | --- | --- | --- | --- |
 | OCR 与外部平台集成 | `nlp-service` 内已有 OCR 处理代码线索，但尚未在迁移矩阵里形成明确、稳定的对外承接面。 | 确认 OCR 是否作为正式能力保留；补文档、鉴权、错误码和调用样例；梳理外部平台集成清单。 | OCR 与外部平台能力有明确接口、文档和启停策略，能独立上线验证。 |
-| Java 全量高级全文检索剩余能力 | 当前 Go 已覆盖全文搜索、即时搜索和部分筛选/详情，但高级筛选、历史词、特殊类型详情仍散落在兼容层。 | 列出高级检索子能力清单；逐项判断保留、合并或下线；把仍需保留的能力改成 `content-service` 正式接口。 | `fullsearch` / `timelysearch` 仅保留必要跳转或完全下线，剩余能力有正式 Go API。 |
 | 复杂传播 / 情感 / 专题分析 | 现有 `analysis-service` 已有 overview、emotions、propagation、themes 等接口和底层字段，但复杂分析闭环尚未明确。 | 先定义二期范围内必须保留的分析能力；按情感、传播、专题拆分输入输出；补快照刷新、查询和页面展示的联调验证。 | 分析能力边界清晰，复杂分析不再依赖旧 Java 页面拼装或隐式字段。 |
 | legacy 路由清理与兼容层收口 | `gateway-web`、`portal-web` 内仍有大量 legacy endpoints、旧页面和旧 JSON 包装。 | 建立 legacy 路由清单；为每条路由标注“保留 / 替换 / 删除”；分批让测试覆盖 301/302/404/新接口替代行为。 | 兼容路由数量持续下降，最终只保留明确声明的过渡入口。 |
+
+当前 legacy 路由清单基线见 [docs/legacy-route-inventory.md](docs/legacy-route-inventory.md)。
 
 ## 本次更新
 
@@ -94,6 +128,15 @@
   - 列表、详情、创建、更新、删除、分析视图已统一由 Go 页面承接。
   - 旧 `loadInformation`、旧 JSON 兼容接口仍保留，因此未提升为 `完成`。
   - 已补 `portal` 测试覆盖工作台页面与增改删主链路。
+- 2026-06-12：二期接口基线补充：
+  - `content-service` 新增 `GET /api/v1/search/details/{id}` 作为统一详情出口。
+  - `analysis-service` 新增 `GET /api/v1/public-opinion/enrich`，`PublicOption` 分析富化优先改为正式接口消费。
+  - `README.md` 与 `docs/legacy-route-inventory.md` 已同步正式接口与兼容清单基线。
+- 2026-06-12：`Java 全量高级全文检索剩余能力` 从 `未完成` 更新为 `兼容完成`。
+- 2026-06-12：文档同步反映以下已落地能力：
+  - `content-service` 新增 `GET /api/v1/search/metadata/types`、`/polymerizations`、`/breadcrumbs`。
+  - `content-service` 新增 `GET /api/v1/search/special/{kind}`、`/options`、`/details/{id}`。
+  - `portal-web` 兼容搜索入口已优先改为消费正式搜索增强接口，仅在正式接口缺失或返回空载荷时回退旧逻辑。
 
 ## 建议执行顺序
 

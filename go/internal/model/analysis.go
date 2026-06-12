@@ -51,3 +51,23 @@ type PublicOpinionReport struct {
 	Summary  string   `json:"summary"`
 	Keywords []string `json:"keywords"`
 }
+
+type PublicOpinionAnalysisBundle struct {
+	EventName           string `json:"eventname"`
+	EventKeywords       string `json:"eventkeywords"`
+	EventStopWords      string `json:"eventstopwords"`
+	EventStartTime      string `json:"eventstarttime"`
+	EventEndTime        string `json:"eventendtime"`
+	EmotionalIndex      string `json:"emotional_index"`
+	ArticleCount        int    `json:"article_count"`
+	BackAnalysis        string `json:"back_analysis"`
+	EventContext        string `json:"event_context"`
+	EventTrace          string `json:"event_trace"`
+	HotAnalysis         string `json:"hot_analysis"`
+	NetizensAnalysis    string `json:"netizens_analysis"`
+	Statistics          string `json:"statistics"`
+	PropagationAnalysis string `json:"propagation_analysis"`
+	ThematicAnalysis    string `json:"thematic_analysis"`
+	UnscrambleContent   string `json:"unscramble_content"`
+	ContentAnalysis     string `json:"content_analysis"`
+}

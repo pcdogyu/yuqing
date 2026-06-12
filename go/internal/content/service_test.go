@@ -206,6 +206,178 @@ func TestSearchSuggestionAndHotKeywordHandlers(t *testing.T) {
 	}
 }
 
+func TestSearchDetailHandler(t *testing.T) {
+	store := newContentSearchTestStore(t)
+	svc := NewService(config.Config{}, store)
+	ctx := context.Background()
+
+	now := time.Date(2026, 6, 12, 3, 0, 0, 0, time.UTC)
+	_, _, err := store.UpsertItems(ctx, []model.Item{{
+		SourceType:      "investment",
+		SourceKey:       "detail-key-1",
+		Title:           "Alpha AI 完成 A 轮融资",
+		Content:         "正文内容",
+		Summary:         "摘要内容",
+		DetailURL:       "https://example.com/detail/1",
+		SourceURL:       "https://example.com/source/1",
+		PublishTimeText: "2026-06-12 11:00:00",
+		RawPayload:      `{"companyName":"Alpha AI","historyArray":"[{\"history_rounds\":\"天使轮\"}]","detailUrl":"https://example.com/payload-detail/1"}`,
+		CapturedAt:      now,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}})
+	if err != nil {
+		t.Fatalf("UpsertItems error: %v", err)
+	}
+	list, err := store.ListItems(ctx, model.ArticleFilter{Page: 1, PageSize: 10})
+	if err != nil || len(list.Items) != 1 {
+		t.Fatalf("ListItems error: %v %+v", err, list)
+	}
+	itemID := list.Items[0].ID
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search/details/1", nil)
+	req = req.WithContext(contextWithRoute(req, routeContextWithID(itemID)))
+	rr := httptest.NewRecorder()
+	svc.handleSearchDetail(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected detail 200, got %d", rr.Code)
+	}
+	var envelope struct {
+		Code int                `json:"code"`
+		Data model.SearchDetail `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if envelope.Data.Payload["companyName"] != "Alpha AI" {
+		t.Fatalf("expected payload fields preserved, got %+v", envelope.Data.Payload)
+	}
+	if envelope.Data.DetailURL != "https://example.com/payload-detail/1" {
+		t.Fatalf("expected detail URL to prefer payload field, got %+v", envelope.Data)
+	}
+	if envelope.Data.URL != "https://example.com/source/1" {
+		t.Fatalf("expected canonical URL fallback, got %+v", envelope.Data)
+	}
+}
+
+func TestSearchMetadataAndSpecialHandlers(t *testing.T) {
+	store := newContentSearchTestStore(t)
+	svc := NewService(config.Config{}, store)
+	ctx := context.Background()
+
+	now := time.Date(2026, 6, 12, 3, 0, 0, 0, time.UTC)
+	_, _, err := store.UpsertItems(ctx, []model.Item{
+		{
+			SourceType:      "lawyer",
+			SourceKey:       "lawyer-1",
+			Title:           "张三律师",
+			Content:         "擅长公司法与投融资",
+			Summary:         "南京律师",
+			SourceURL:       "https://example.com/lawyer/1",
+			PublishTimeText: "2026-06-12 11:00:00",
+			RawPayload:      `{"name":"张三","lawfirm":"金陵律师事务所","goods":"公司法","city":"南京"}`,
+			CapturedAt:      now,
+			CreatedAt:       now,
+			UpdatedAt:       now,
+		},
+		{
+			SourceType:      "company",
+			SourceKey:       "company-1",
+			Title:           "星云科技有限公司",
+			Content:         "企业信息与股东结构",
+			Summary:         "高新技术企业",
+			SourceURL:       "https://example.com/company/1",
+			PublishTimeText: "2026-06-12 11:10:00",
+			RawPayload:      `{"name":"星云科技有限公司","industry_involved":"人工智能","legal_person":"李四","location":"上海市浦东新区"}`,
+			CapturedAt:      now.Add(time.Minute),
+			CreatedAt:       now.Add(time.Minute),
+			UpdatedAt:       now.Add(time.Minute),
+		},
+	})
+	if err != nil {
+		t.Fatalf("UpsertItems error: %v", err)
+	}
+
+	typeReq := httptest.NewRequest(http.MethodGet, "/api/v1/search/metadata/types?level=1", nil)
+	typeRR := httptest.NewRecorder()
+	svc.handleSearchMetadataTypes(typeRR, typeReq)
+	if typeRR.Code != http.StatusOK {
+		t.Fatalf("expected metadata types 200, got %d", typeRR.Code)
+	}
+	var typeEnvelope struct {
+		Data []map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(typeRR.Body.Bytes(), &typeEnvelope); err != nil {
+		t.Fatalf("decode metadata types: %v", err)
+	}
+	if len(typeEnvelope.Data) == 0 {
+		t.Fatalf("expected metadata types, got %+v", typeEnvelope.Data)
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/search/special/lawyer?q=%E5%BC%A0%E4%B8%89%E5%BE%8B%E5%B8%88&page=1&page_size=10", nil)
+	listRR := httptest.NewRecorder()
+	svc.handleSearchSpecialList(listRR, listReq)
+	if listRR.Code != http.StatusOK {
+		t.Fatalf("expected special list 200, got %d", listRR.Code)
+	}
+	var listEnvelope struct {
+		Data struct {
+			List []map[string]any `json:"list"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(listRR.Body.Bytes(), &listEnvelope); err != nil {
+		t.Fatalf("decode special list: %v", err)
+	}
+	if len(listEnvelope.Data.List) != 1 || listEnvelope.Data.List[0]["lawfirm"] != "金陵律师事务所" {
+		t.Fatalf("unexpected lawyer special list: %+v", listEnvelope.Data.List)
+	}
+
+	optionsReq := httptest.NewRequest(http.MethodGet, "/api/v1/search/special/company/options", nil)
+	optionsRR := httptest.NewRecorder()
+	svc.handleSearchSpecialOptions(optionsRR, optionsReq)
+	if optionsRR.Code != http.StatusOK {
+		t.Fatalf("expected special options 200, got %d", optionsRR.Code)
+	}
+	var optionsEnvelope struct {
+		Data []map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(optionsRR.Body.Bytes(), &optionsEnvelope); err != nil {
+		t.Fatalf("decode special options: %v", err)
+	}
+	if len(optionsEnvelope.Data) < 2 {
+		t.Fatalf("expected dynamic company options, got %+v", optionsEnvelope.Data)
+	}
+
+	list, err := store.ListItems(ctx, model.ArticleFilter{Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListItems error: %v", err)
+	}
+	var companyID int64
+	for _, item := range list.Items {
+		if item.SourceType == "company" {
+			companyID = item.ID
+			break
+		}
+	}
+	detailReq := httptest.NewRequest(http.MethodGet, "/api/v1/search/special/company/details/1", nil)
+	detailReq = detailReq.WithContext(contextWithRoute(detailReq, routeContextWithID(companyID)))
+	detailRR := httptest.NewRecorder()
+	svc.handleSearchSpecialDetail(detailRR, detailReq)
+	if detailRR.Code != http.StatusOK {
+		t.Fatalf("expected special detail 200, got %d", detailRR.Code)
+	}
+	var detailEnvelope struct {
+		Data map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(detailRR.Body.Bytes(), &detailEnvelope); err != nil {
+		t.Fatalf("decode special detail: %v", err)
+	}
+	if detailEnvelope.Data["name"] != "星云科技有限公司" || detailEnvelope.Data["industry_involved"] != "人工智能" {
+		t.Fatalf("unexpected company detail payload: %+v", detailEnvelope.Data)
+	}
+}
+
 func TestArticleEmotionDeleteAndShareHandlers(t *testing.T) {
 	store := newContentSearchTestStore(t)
 	svc := NewService(config.Config{}, store)

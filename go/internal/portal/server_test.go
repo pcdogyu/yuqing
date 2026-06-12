@@ -2065,6 +2065,26 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 			writeEnvelope(http.StatusOK, "ok", []model.PublicOpinionEvent{{Title: "AI 舆情", Keyword: "AI", Count: 2}})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/public-opinion/reports":
 			writeEnvelope(http.StatusOK, "ok", []model.PublicOpinionReport{{Title: "AI 报告"}})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/public-opinion/enrich":
+			writeEnvelope(http.StatusOK, "ok", model.PublicOpinionAnalysisBundle{
+				EventName:           "AI 舆情研判",
+				EventKeywords:       "AI,大模型",
+				EventStopWords:      "无关词",
+				EventStartTime:      "2026-06-01 00:00:00",
+				EventEndTime:        "2026-06-04 23:59:59",
+				EmotionalIndex:      "0.76",
+				ArticleCount:        2,
+				BackAnalysis:        "回溯分析内容",
+				EventContext:        "事件脉络内容",
+				EventTrace:          "事件跟踪内容",
+				HotAnalysis:         "热点分析内容",
+				NetizensAnalysis:    "网民分析内容",
+				Statistics:          "统计内容",
+				PropagationAnalysis: "传播分析内容",
+				ThematicAnalysis:    "专题分析内容",
+				UnscrambleContent:   "解读内容",
+				ContentAnalysis:     "内容分析内容",
+			})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/admin/tasks/analysis/refresh":
 			writeEnvelope(http.StatusOK, "ok", model.DashboardSnapshot{})
 		default:

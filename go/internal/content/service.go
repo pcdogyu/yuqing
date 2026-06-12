@@ -150,6 +150,13 @@ func (s *Service) Routes(r chi.Router) {
 	r.Get("/api/v1/search/articles", s.handleSearchArticles)
 	r.Get("/api/v1/search/full", s.handleSearchFull)
 	r.Get("/api/v1/search/timely", s.handleSearchTimely)
+	r.Get("/api/v1/search/details/{id}", s.handleSearchDetail)
+	r.Get("/api/v1/search/metadata/types", s.handleSearchMetadataTypes)
+	r.Get("/api/v1/search/metadata/polymerizations", s.handleSearchMetadataPolymerizations)
+	r.Get("/api/v1/search/metadata/breadcrumbs", s.handleSearchMetadataBreadcrumbs)
+	r.Get("/api/v1/search/special/{kind}", s.handleSearchSpecialList)
+	r.Get("/api/v1/search/special/{kind}/options", s.handleSearchSpecialOptions)
+	r.Get("/api/v1/search/special/{kind}/details/{id}", s.handleSearchSpecialDetail)
 	r.Get("/api/v1/search/full/facets", s.handleSearchFacets)
 	r.Get("/api/v1/search/options", s.handleSearchOptions)
 	r.Get("/api/v1/search/options/{kind}", s.handleSearchOptionKind)
@@ -732,6 +739,132 @@ func (s *Service) handleSearchTimely(w http.ResponseWriter, r *http.Request) {
 	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
 }
 
+func (s *Service) handleSearchDetail(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	item, err := s.store.GetItem(r.Context(), id)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusNotFound, "not found", nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", buildSearchDetail(item))
+}
+
+func (s *Service) handleSearchMetadataTypes(w http.ResponseWriter, r *http.Request) {
+	level := strings.TrimSpace(r.URL.Query().Get("level"))
+	parentID := apiutil.IntQuery(r, "parent_id", 0)
+	ids := strings.TrimSpace(r.URL.Query().Get("ids"))
+	var result []searchMetadataType
+	switch level {
+	case "", "1":
+		result = searchTypesForMode(strings.TrimSpace(r.URL.Query().Get("mode")))
+	case "2":
+		result = searchTypesBySecond(parentID)
+	case "3":
+		result = searchTypesByThird(parentID)
+	case "ids":
+		result = searchTypesByIDs(ids)
+	default:
+		apiutil.WriteJSON(w, http.StatusBadRequest, "unsupported metadata level", nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleSearchMetadataPolymerizations(w http.ResponseWriter, r *http.Request) {
+	apiutil.WriteJSON(w, http.StatusOK, "ok", searchPolymerizations)
+}
+
+func (s *Service) handleSearchMetadataBreadcrumbs(w http.ResponseWriter, r *http.Request) {
+	apiutil.WriteJSON(w, http.StatusOK, "ok", searchBreadcrumbs(r))
+}
+
+func (s *Service) handleSearchSpecialList(w http.ResponseWriter, r *http.Request) {
+	kind := normalizeSearchSpecialKind(searchKindParam(r))
+	if kind == "" {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "unsupported special search kind", nil)
+		return
+	}
+	filter, pageSize := searchSpecialFilterFromRequest(r)
+	items, err := s.searchCompatItems(r.Context(), filter, searchSpecialMode(r), 200)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	criteria := searchSpecialCriteriaFromRequest(r)
+	filtered := make([]model.Item, 0, len(items))
+	for _, item := range items {
+		if searchSpecialMatchesItem(kind, item, criteria) {
+			filtered = append(filtered, item)
+		}
+	}
+	page := max(filter.Page, 1)
+	size := max(filter.PageSize, pageSize)
+	start := (page - 1) * size
+	if start > len(filtered) {
+		start = len(filtered)
+	}
+	end := start + size
+	if end > len(filtered) {
+		end = len(filtered)
+	}
+	list := make([]map[string]any, 0, end-start)
+	for _, item := range filtered[start:end] {
+		list = append(list, searchSpecialListEntry(kind, item))
+	}
+	totalPages := 1
+	if size > 0 && len(filtered) > 0 {
+		totalPages = (len(filtered) + size - 1) / size
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]any{
+		"code":        "200",
+		"msg":         "success",
+		"list":        list,
+		"totalData":   len(filtered),
+		"totalPage":   totalPages,
+		"currentPage": page,
+	})
+}
+
+func (s *Service) handleSearchSpecialOptions(w http.ResponseWriter, r *http.Request) {
+	kind := normalizeSearchSpecialKind(searchKindParam(r))
+	if kind == "" {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "unsupported special search kind", nil)
+		return
+	}
+	filter, _ := searchSpecialFilterFromRequest(r)
+	items, err := s.searchCompatItems(r.Context(), filter, searchSpecialMode(r), 200)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusOK, "ok", searchSpecialCategoryOptions(kind))
+		return
+	}
+	options := searchDynamicCategoryOptions(kind, items)
+	if len(options) == 0 {
+		options = searchSpecialCategoryOptions(kind)
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", options)
+}
+
+func (s *Service) handleSearchSpecialDetail(w http.ResponseWriter, r *http.Request) {
+	kind := normalizeSearchSpecialKind(searchKindParam(r))
+	if kind == "" {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "unsupported special search kind", nil)
+		return
+	}
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	item, err := s.store.GetItem(r.Context(), id)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusNotFound, "not found", nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", searchSpecialDetailEntry(kind, item))
+}
+
 func (s *Service) handleSearchFacets(w http.ResponseWriter, r *http.Request) {
 	filter := articleFilterFromRequest(r)
 	filter.Keyword = nonEmpty(strings.TrimSpace(r.URL.Query().Get("q")), filter.Keyword)
@@ -741,6 +874,711 @@ func (s *Service) handleSearchFacets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	apiutil.WriteJSON(w, http.StatusOK, "ok", facets)
+}
+
+func buildSearchDetail(item model.Item) model.SearchDetail {
+	payload := map[string]any{}
+	if strings.TrimSpace(item.RawPayload) != "" {
+		_ = json.Unmarshal([]byte(item.RawPayload), &payload)
+	}
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	mergeSearchDetailDefaults(payload, item)
+	return model.SearchDetail{
+		ID:              item.ID,
+		SourceType:      item.SourceType,
+		Title:           nonEmpty(stringValue(payload["title"]), item.Title),
+		Content:         nonEmpty(stringValue(payload["content"]), item.Content),
+		Summary:         nonEmpty(stringValue(payload["summary"]), item.Summary),
+		PublishTime:     nonEmpty(stringValue(payload["publish_time"]), item.PublishTime),
+		PublishTimeText: nonEmpty(stringValue(payload["publish_time_text"]), item.PublishTimeText),
+		DetailURL:       nonEmpty(stringValue(payload["detail_url"]), stringValue(payload["detailUrl"]), item.DetailURL, item.SourceURL),
+		SourceURL:       nonEmpty(stringValue(payload["source_url"]), item.SourceURL, item.DetailURL),
+		SourceName:      nonEmpty(stringValue(payload["source_name"]), item.FromText, item.SourceType),
+		URL:             nonEmpty(stringValue(payload["url"]), stringValue(payload["source_url"]), item.SourceURL, stringValue(payload["detail_url"]), stringValue(payload["detailUrl"]), item.DetailURL),
+		Payload:         payload,
+	}
+}
+
+type searchMetadataType struct {
+	OnlyID     int    `json:"only_id"`
+	ID         int    `json:"id"`
+	CreateTime string `json:"create_time"`
+	Type       int    `json:"type"`
+	Name       string `json:"name"`
+	Value      string `json:"value"`
+	TypeOneID  int    `json:"type_one_id"`
+	TypeTwoID  int    `json:"type_two_id"`
+	Icon       string `json:"icon"`
+	IsShow     int    `json:"is_show"`
+	IsDefault  int    `json:"is_default"`
+}
+
+type searchMetadataPolymerization struct {
+	ID         int    `json:"id"`
+	CreateTime string `json:"create_time"`
+	Type       int    `json:"type"`
+	TypeName   string `json:"type_name"`
+	Name       string `json:"name"`
+	Value      string `json:"value"`
+	Icon       string `json:"icon"`
+	IsShow     int    `json:"is_show"`
+}
+
+var searchTypes = []searchMetadataType{
+	{OnlyID: 1, ID: 1, Type: 1, Name: "资讯", Icon: "mdi mdi-newspaper", IsShow: 0, IsDefault: 0},
+	{OnlyID: 8, ID: 8, Type: 1, Name: "热点", Icon: "mdi mdi-fire", IsShow: 0, IsDefault: 0},
+	{OnlyID: 23, ID: 23, Type: 1, Name: "投诉", Icon: "mdi mdi-alert", IsShow: 0, IsDefault: 0},
+	{OnlyID: 28, ID: 28, Type: 1, Name: "公告", Icon: "mdi mdi-bullhorn", IsShow: 0, IsDefault: 0},
+	{OnlyID: 35, ID: 35, Type: 1, Name: "研报", Icon: "mdi mdi-chart-line", IsShow: 0, IsDefault: 0},
+	{OnlyID: 36, ID: 36, Type: 1, Name: "招聘", Icon: "mdi mdi-account-plus", IsShow: 0, IsDefault: 0},
+	{OnlyID: 37, ID: 37, Type: 1, Name: "招标", Icon: "mdi mdi-clipboard-text", IsShow: 0, IsDefault: 0},
+	{OnlyID: 38, ID: 38, Type: 1, Name: "资讯聚合", Icon: "mdi mdi-view-list", IsShow: 0, IsDefault: 0},
+	{OnlyID: 39, ID: 39, Type: 1, Name: "工商", Icon: "mdi mdi-domain", IsShow: 0, IsDefault: 0},
+	{OnlyID: 40, ID: 40, Type: 1, Name: "投资融资", Icon: "mdi mdi-cash-multiple", IsShow: 0, IsDefault: 0},
+	{OnlyID: 41, ID: 41, Type: 1, Name: "百度知道", Icon: "mdi mdi-help-circle", IsShow: 0, IsDefault: 0},
+	{OnlyID: 42, ID: 42, Type: 1, Name: "法律文书", Icon: "mdi mdi-scale-balance", IsShow: 0, IsDefault: 0},
+	{OnlyID: 43, ID: 43, Type: 1, Name: "知识产权", Icon: "mdi mdi-lightbulb", IsShow: 0, IsDefault: 0},
+	{OnlyID: 45, ID: 45, Type: 1, Name: "学术", Icon: "mdi mdi-school", IsShow: 0, IsDefault: 0},
+	{OnlyID: 100, ID: 100, Type: 1, Name: "律师", Icon: "mdi mdi-account-tie", IsShow: 0, IsDefault: 0},
+	{OnlyID: 101, ID: 101, Type: 1, Name: "被执行人", Icon: "mdi mdi-account-alert", IsShow: 0, IsDefault: 0},
+	{OnlyID: 102, ID: 102, Type: 1, Name: "专家人才", Icon: "mdi mdi-account-star", IsShow: 0, IsDefault: 0},
+	{OnlyID: 103, ID: 103, Type: 1, Name: "医生", Icon: "mdi mdi-hospital", IsShow: 0, IsDefault: 0},
+}
+
+var searchPolymerizations = []searchMetadataPolymerization{
+	{ID: 1, Type: 0, TypeName: "竞争对手", Name: "竞争对手", Value: "1,100,101", Icon: "mdi mdi-account-group", IsShow: 0},
+	{ID: 2, Type: 0, TypeName: "领域范围", Name: "领域范围", Value: "8,102", Icon: "mdi mdi-sitemap", IsShow: 0},
+	{ID: 3, Type: 0, TypeName: "政策法规", Name: "政策法规", Value: "23,28", Icon: "mdi mdi-file-document", IsShow: 0},
+	{ID: 4, Type: 0, TypeName: "产业市场", Name: "产业市场", Value: "35,39", Icon: "mdi mdi-office-building", IsShow: 0},
+	{ID: 5, Type: 0, TypeName: "产品品牌", Name: "产品品牌", Value: "36,37,40,45", Icon: "mdi mdi-tag-multiple", IsShow: 0},
+	{ID: 6, Type: 0, TypeName: "技术人才", Name: "技术人才", Value: "41,42,43", Icon: "mdi mdi-flask", IsShow: 0},
+}
+
+type searchSpecialCriteria struct {
+	Keyword      string
+	MatchingMode string
+	KindFilter   string
+	SourceName   string
+	RType        string
+}
+
+func searchTypesForMode(_ string) []searchMetadataType {
+	return append([]searchMetadataType(nil), searchTypes...)
+}
+
+func searchTypesBySecond(typeOneID int) []searchMetadataType {
+	result := make([]searchMetadataType, 0)
+	for _, item := range searchTypes {
+		if item.TypeOneID == typeOneID {
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
+func searchTypesByThird(typeTwoID int) []searchMetadataType {
+	result := make([]searchMetadataType, 0)
+	for _, item := range searchTypes {
+		if item.TypeTwoID == typeTwoID {
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
+func searchTypesByIDs(raw string) []searchMetadataType {
+	idSet := map[int]struct{}{}
+	for _, part := range strings.Split(raw, ",") {
+		id, err := strconv.Atoi(strings.TrimSpace(part))
+		if err == nil && id > 0 {
+			idSet[id] = struct{}{}
+		}
+	}
+	result := make([]searchMetadataType, 0, len(idSet))
+	for _, item := range searchTypes {
+		if _, ok := idSet[item.OnlyID]; ok {
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
+func searchBreadcrumbs(r *http.Request) []map[string]any {
+	values := []string{}
+	if poly := strings.TrimSpace(r.URL.Query().Get("full_poly")); poly != "" {
+		values = append(values, "聚合:"+poly)
+	}
+	if fullType := strings.TrimSpace(r.URL.Query().Get("fulltype")); fullType != "" {
+		values = append(values, "类型:"+fullType)
+	}
+	if onlyID := strings.TrimSpace(r.URL.Query().Get("onlyid")); onlyID != "" {
+		values = append(values, "分类:"+onlyID)
+	}
+	if len(values) == 0 {
+		values = append(values, "全文搜索")
+	}
+	result := make([]map[string]any, 0, len(values))
+	for idx, item := range values {
+		result = append(result, map[string]any{"id": idx + 1, "name": item})
+	}
+	return result
+}
+
+func searchSpecialMode(r *http.Request) string {
+	mode := strings.TrimSpace(r.URL.Query().Get("mode"))
+	if mode != "timely" {
+		return "full"
+	}
+	return mode
+}
+
+func searchKindParam(r *http.Request) string {
+	if kind := strings.TrimSpace(chi.URLParam(r, "kind")); kind != "" {
+		return kind
+	}
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	for idx := range parts {
+		if parts[idx] == "special" && idx+1 < len(parts) {
+			return parts[idx+1]
+		}
+	}
+	return ""
+}
+
+func searchSpecialFilterFromRequest(r *http.Request) (model.ArticleFilter, int) {
+	page := apiutil.IntQuery(r, "page", apiutil.IntQuery(r, "pageNum", 1))
+	if page <= 0 {
+		page = 1
+	}
+	pageSize := apiutil.IntQuery(r, "page_size", apiutil.IntQuery(r, "pageSize", 25))
+	if pageSize <= 0 {
+		pageSize = 25
+	}
+	filter := model.ArticleFilter{
+		Page:       page,
+		PageSize:   pageSize,
+		Keyword:    nonEmpty(strings.TrimSpace(r.URL.Query().Get("q")), strings.TrimSpace(r.URL.Query().Get("searchWord")), strings.TrimSpace(r.URL.Query().Get("searchword")), strings.TrimSpace(r.URL.Query().Get("keyword"))),
+		SourceType: strings.TrimSpace(r.URL.Query().Get("source_type")),
+		Start:      strings.TrimSpace(r.URL.Query().Get("start")),
+		End:        strings.TrimSpace(r.URL.Query().Get("end")),
+		Industry:   strings.TrimSpace(r.URL.Query().Get("industry")),
+		Province:   strings.TrimSpace(r.URL.Query().Get("province")),
+		City:       strings.TrimSpace(r.URL.Query().Get("city")),
+		Read:       strings.TrimSpace(r.URL.Query().Get("read")),
+		Favorite:   strings.TrimSpace(r.URL.Query().Get("favorite")),
+	}
+	if projectID, err := strconv.ParseInt(strings.TrimSpace(nonEmpty(r.URL.Query().Get("project_id"), r.URL.Query().Get("projectid"))), 10, 64); err == nil {
+		filter.ProjectID = projectID
+	}
+	return filter, pageSize
+}
+
+func (s *Service) searchCompatItems(ctx context.Context, filter model.ArticleFilter, mode string, limit int) ([]model.Item, error) {
+	filter.Page = 1
+	filter.PageSize = max(limit, 50)
+	filter.Mode = mode
+	if mode == "timely" && filter.Start == "" {
+		filter.Start = time.Now().UTC().Add(-72 * time.Hour).Format("2006-01-02")
+	}
+	result, err := s.store.SearchItemsAdvanced(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	return result.Items, nil
+}
+
+func normalizeSearchSpecialKind(raw string) string {
+	switch strings.TrimSpace(raw) {
+	case "lawyer", "lawyerList":
+		return "lawyer"
+	case "executionPerson", "executionPersonList":
+		return "executionPerson"
+	case "professor", "professorList":
+		return "professor"
+	case "doctor", "doctorList":
+		return "doctor"
+	case "bidding", "biddingList":
+		return "bidding"
+	case "invite", "inviteList":
+		return "invite"
+	case "company", "companyList":
+		return "company"
+	case "judgment", "judgmentList":
+		return "judgment"
+	case "knowledge", "knowLedgeList":
+		return "knowledge"
+	case "investment", "investmentList":
+		return "investment"
+	case "baiduKnows", "baiduKnowsList":
+		return "baiduKnows"
+	case "thesisn", "thesisnList":
+		return "thesisn"
+	case "report":
+		return "report"
+	case "announcement":
+		return "announcement"
+	default:
+		return ""
+	}
+}
+
+func searchSpecialCriteriaFromRequest(r *http.Request) searchSpecialCriteria {
+	return searchSpecialCriteria{
+		Keyword:      nonEmpty(strings.TrimSpace(r.URL.Query().Get("searchWord")), strings.TrimSpace(r.URL.Query().Get("searchword")), strings.TrimSpace(r.URL.Query().Get("keyword")), strings.TrimSpace(r.URL.Query().Get("q"))),
+		MatchingMode: strings.TrimSpace(r.URL.Query().Get("matchingmode")),
+		KindFilter:   strings.TrimSpace(r.URL.Query().Get("kinds")),
+		SourceName:   strings.TrimSpace(r.URL.Query().Get("source_name")),
+		RType:        strings.TrimSpace(r.URL.Query().Get("rtype")),
+	}
+}
+
+func searchSpecialMatchesItem(kind string, item model.Item, criteria searchSpecialCriteria) bool {
+	payload := searchPayloadMap(item)
+	if criteria.KindFilter != "" && !searchPayloadContains(payload, criteria.KindFilter) && !searchItemBlobContains(item, criteria.KindFilter) {
+		return false
+	}
+	if criteria.SourceName != "" && criteria.SourceName != "全部" && criteria.SourceName != item.SourceType && criteria.SourceName != item.FromText {
+		if !searchPayloadContains(payload, criteria.SourceName) && !searchItemBlobContains(item, criteria.SourceName) {
+			return false
+		}
+	}
+	if criteria.RType != "" && criteria.RType != "全部" && !searchPayloadContains(payload, criteria.RType) && !searchItemBlobContains(item, criteria.RType) {
+		return false
+	}
+	if criteria.Keyword == "" {
+		return true
+	}
+	return searchSpecialKeywordMatch(kind, item, payload, criteria.Keyword, criteria.MatchingMode)
+}
+
+func searchSpecialKeywordMatch(kind string, item model.Item, payload map[string]any, keyword string, matchingMode string) bool {
+	fields := searchSpecialSearchFields(kind, matchingMode)
+	if len(fields) == 0 {
+		return searchItemBlobContains(item, keyword) || searchPayloadContains(payload, keyword)
+	}
+	for _, field := range fields {
+		if searchPayloadFieldContains(payload, field, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+func searchSpecialSearchFields(kind string, matchingMode string) []string {
+	switch kind {
+	case "lawyer":
+		switch matchingMode {
+		case "lawpace":
+			return []string{"lawfirm"}
+		case "lawyerAdept":
+			return []string{"goods", "adept"}
+		case "lawyerCity":
+			return []string{"city"}
+		default:
+			return []string{"name", "title"}
+		}
+	case "executionPerson":
+		switch matchingMode {
+		case "executionPersonArea":
+			return []string{"areaNameNew", "province", "city"}
+		default:
+			return []string{"iname", "name", "title"}
+		}
+	case "professor":
+		switch matchingMode {
+		case "professorAdept":
+			return []string{"field", "research_field"}
+		case "organization":
+			return []string{"institution", "source_name"}
+		default:
+			return []string{"title", "name"}
+		}
+	case "doctor":
+		switch matchingMode {
+		case "hospital":
+			return []string{"hospital"}
+		case "doctorAdept":
+			return []string{"adept"}
+		case "doctorDept":
+			return []string{"department"}
+		default:
+			return []string{"name", "title"}
+		}
+	case "judgment":
+		switch matchingMode {
+		case "parties":
+			return []string{"parties"}
+		case "court":
+			return []string{"court"}
+		case "text":
+			return []string{"content", "summary"}
+		case "area":
+			return []string{"province", "city", "area"}
+		default:
+			return []string{"title", "name"}
+		}
+	default:
+		return nil
+	}
+}
+
+func searchSpecialListEntry(kind string, item model.Item) map[string]any {
+	payload := searchPayloadMap(item)
+	base := map[string]any{
+		"article_public_id": strconv.FormatInt(item.ID, 10),
+		"title":             nonEmpty(searchPayloadString(payload, "title"), item.Title),
+		"content":           nonEmpty(searchPayloadString(payload, "content"), item.Content, item.Summary),
+		"source_name":       nonEmpty(searchPayloadString(payload, "source_name"), item.FromText, item.SourceType),
+		"publish_time":      nonEmpty(item.PublishTime, item.PublishTimeText, item.CapturedAt.Format("2006-01-02 15:04:05")),
+		"detailUrl":         nonEmpty(searchPayloadString(payload, "detailUrl"), searchPayloadString(payload, "detail_url"), searchPayloadString(payload, "detailurl"), item.SourceURL, item.DetailURL),
+		"url":               nonEmpty(searchPayloadString(payload, "url"), searchPayloadString(payload, "source_url"), item.SourceURL, item.DetailURL),
+	}
+	switch kind {
+	case "lawyer":
+		base["name"] = nonEmpty(searchPayloadString(payload, "name"), item.Title)
+		base["telephone"] = nonEmpty(searchPayloadString(payload, "telephone"), searchPayloadString(payload, "phone_number"))
+		base["kinds"] = searchPayloadString(payload, "kinds")
+		base["goods"] = nonEmpty(searchPayloadString(payload, "goods"), searchPayloadString(payload, "adept"))
+		base["educationbackground"] = searchPayloadString(payload, "educationbackground")
+		base["email"] = searchPayloadString(payload, "email")
+		base["certID"] = searchPayloadString(payload, "certID")
+		base["qualifitime"] = searchPayloadString(payload, "qualifitime")
+		base["lawfirm"] = searchPayloadString(payload, "lawfirm")
+		base["address"] = searchPayloadString(payload, "address")
+		base["city"] = searchPayloadString(payload, "city")
+	case "executionPerson":
+		base["iname"] = nonEmpty(searchPayloadString(payload, "iname"), searchPayloadString(payload, "name"), item.Title)
+		base["gistUnit"] = searchPayloadString(payload, "gistUnit")
+		base["cardNum"] = searchPayloadString(payload, "cardNum")
+		base["type"] = searchPayloadString(payload, "type")
+		base["caseCode"] = searchPayloadString(payload, "caseCode")
+		base["gistId"] = searchPayloadString(payload, "gistId")
+		base["areaNameNew"] = searchPayloadString(payload, "areaNameNew")
+		base["courtName"] = searchPayloadString(payload, "courtName")
+		base["duty"] = searchPayloadString(payload, "duty")
+		base["performance"] = searchPayloadString(payload, "performance")
+		base["disruptTypeName"] = searchPayloadString(payload, "disruptTypeName")
+	case "professor":
+		base["title"] = nonEmpty(searchPayloadString(payload, "title"), searchPayloadString(payload, "name"), item.Title)
+		base["avatar"] = nonEmpty(searchPayloadString(payload, "avatar"), searchPayloadString(payload, "profile"))
+		base["institution"] = searchPayloadString(payload, "institution")
+		base["field"] = searchPayloadJSONArrayString(payload, "field")
+		base["works"] = searchPayloadString(payload, "works")
+		base["times_cited"] = searchPayloadString(payload, "times_cited")
+	case "doctor":
+		base["name"] = nonEmpty(searchPayloadString(payload, "name"), item.Title)
+		base["profile"] = nonEmpty(searchPayloadString(payload, "profile"), searchPayloadString(payload, "avatar"))
+		base["hospital"] = searchPayloadString(payload, "hospital")
+		base["department"] = searchPayloadString(payload, "department")
+		base["province"] = searchPayloadString(payload, "province")
+		base["city"] = searchPayloadString(payload, "city")
+		base["area"] = searchPayloadString(payload, "area")
+		base["degree"] = searchPayloadString(payload, "degree")
+		base["adept"] = searchPayloadString(payload, "adept")
+	case "company":
+		base["name"] = nonEmpty(searchPayloadString(payload, "name"), item.Title)
+		base["legal_person"] = nonEmpty(searchPayloadString(payload, "legal_person"), searchPayloadString(payload, "legal_representative"))
+		base["status"] = searchPayloadString(payload, "status")
+		base["registered_capital_str"] = searchPayloadString(payload, "registered_capital_str")
+		base["industry_involved"] = nonEmpty(searchPayloadString(payload, "industry_involved"), searchPayloadString(payload, "industry"))
+		base["location"] = nonEmpty(searchPayloadString(payload, "location"), searchPayloadString(payload, "address"))
+	case "judgment":
+		base["caseTitle"] = nonEmpty(searchPayloadString(payload, "caseTitle"), item.Title)
+		base["court"] = searchPayloadString(payload, "court")
+		base["caseType"] = searchPayloadString(payload, "caseType")
+		base["parties"] = searchPayloadString(payload, "parties")
+	case "knowledge":
+		base["name"] = nonEmpty(searchPayloadString(payload, "name"), item.Title)
+		base["caseType"] = nonEmpty(searchPayloadString(payload, "caseType"), searchPayloadString(payload, "ip_type"))
+		base["owner"] = searchPayloadString(payload, "owner")
+	case "investment":
+		base["name"] = nonEmpty(searchPayloadString(payload, "name"), item.Title)
+		base["round"] = nonEmpty(searchPayloadString(payload, "round"), searchPayloadString(payload, "investment_type"))
+		base["company"] = searchPayloadString(payload, "company")
+	case "baiduKnows", "thesisn", "bidding", "invite":
+		base["name"] = nonEmpty(searchPayloadString(payload, "name"), item.Title)
+	}
+	for key, value := range payload {
+		if _, exists := base[key]; !exists {
+			base[key] = value
+		}
+	}
+	return base
+}
+
+func searchSpecialDetailEntry(kind string, item model.Item) map[string]any {
+	entry := searchSpecialListEntry(kind, item)
+	payload := searchPayloadMap(item)
+	entry["summary"] = nonEmpty(item.Summary, item.Content)
+	entry["source_url"] = nonEmpty(item.SourceURL, item.DetailURL)
+	entry["publish_time"] = nonEmpty(item.PublishTime, item.PublishTimeText, item.CapturedAt.Format("2006-01-02 15:04:05"))
+	entry["detailUrl"] = nonEmpty(searchString(entry["detailUrl"]), item.SourceURL, item.DetailURL)
+	entry["detail_url"] = nonEmpty(searchPayloadString(payload, "detail_url"), searchPayloadString(payload, "detailUrl"), searchPayloadString(payload, "detailurl"), item.SourceURL, item.DetailURL)
+	entry["detailurl"] = nonEmpty(searchPayloadString(payload, "detailurl"), searchString(entry["detail_url"]), searchString(entry["detailUrl"]))
+	entry["source_name"] = nonEmpty(searchString(entry["source_name"]), item.FromText, item.SourceType)
+	entry["source"] = nonEmpty(searchPayloadString(payload, "source"), item.SourceType)
+	switch kind {
+	case "company":
+		entry["name"] = nonEmpty(searchPayloadString(payload, "name"), item.Title)
+		entry["phone_number"] = nonEmpty(searchPayloadString(payload, "phone_number"), searchPayloadString(payload, "phone"))
+		entry["phone"] = nonEmpty(searchPayloadString(payload, "phone"), searchString(entry["phone_number"]))
+		entry["address"] = nonEmpty(searchPayloadString(payload, "address"), searchPayloadString(payload, "location"))
+		entry["location"] = nonEmpty(searchPayloadString(payload, "location"), searchString(entry["address"]))
+		entry["legal_representative"] = nonEmpty(searchPayloadString(payload, "legal_representative"), searchPayloadString(payload, "legal_person"))
+		entry["legal_person"] = nonEmpty(searchPayloadString(payload, "legal_person"), searchString(entry["legal_representative"]))
+		entry["uniformSocialCreditCode"] = nonEmpty(searchPayloadString(payload, "uniformSocialCreditCode"), searchPayloadString(payload, "taxpayer_identification"))
+		entry["taxpayer_identification"] = nonEmpty(searchPayloadString(payload, "taxpayer_identification"), searchString(entry["uniformSocialCreditCode"]))
+		entry["insured_num"] = nonEmpty(searchPayloadString(payload, "insured_num"), searchPayloadString(payload, "insureds"))
+		entry["insureds"] = nonEmpty(searchPayloadString(payload, "insureds"), searchString(entry["insured_num"]))
+		entry["registration"] = searchPayloadString(payload, "registration")
+		entry["enterprise_type"] = searchPayloadString(payload, "enterprise_type")
+		entry["registered_capital_str"] = searchPayloadString(payload, "registered_capital_str")
+		entry["industry_involved"] = nonEmpty(searchPayloadString(payload, "industry_involved"), searchPayloadString(payload, "industry"))
+		entry["business_scope"] = searchPayloadString(payload, "business_scope")
+		entry["establish_time"] = nonEmpty(searchPayloadString(payload, "establish_time"), item.PublishTime)
+		entry["key_person"] = searchJSONTextPayload(payload, "key_person")
+		entry["shareholder"] = searchJSONTextPayload(payload, "shareholder")
+		entry["change_record"] = searchJSONTextPayload(payload, "change_record")
+	case "report":
+		entry["title"] = item.Title
+		entry["reportDate"] = nonEmpty(item.PublishTime, item.PublishTimeText, item.CapturedAt.Format("2006-01-02 15:04:05"))
+		entry["url"] = nonEmpty(item.SourceURL, item.DetailURL)
+	case "lawyer":
+		entry["img"] = nonEmpty(searchPayloadString(payload, "img"), searchPayloadString(payload, "profile"), searchPayloadString(payload, "avatar"))
+		entry["telephone"] = nonEmpty(searchPayloadString(payload, "telephone"), searchPayloadString(payload, "phone_number"))
+		entry["detailurl"] = nonEmpty(searchPayloadString(payload, "detailurl"), searchString(entry["detail_url"]), searchString(entry["detailUrl"]))
+		entry["name"] = nonEmpty(searchPayloadString(payload, "name"), item.Title)
+		entry["goods"] = nonEmpty(searchPayloadString(payload, "goods"), searchPayloadString(payload, "adept"))
+		entry["WeChat"] = searchPayloadString(payload, "WeChat")
+		entry["microblog"] = searchPayloadString(payload, "microblog")
+		entry["tecent"] = searchPayloadString(payload, "tecent")
+		entry["status"] = searchPayloadString(payload, "status")
+		entry["language"] = searchPayloadString(payload, "language")
+		entry["sex"] = searchPayloadString(payload, "sex")
+		entry["achievements"] = searchPayloadString(payload, "achievements")
+	case "executionPerson":
+		entry["photo"] = nonEmpty(searchPayloadString(payload, "photo"), searchPayloadString(payload, "avatar"), searchPayloadString(payload, "img"))
+		entry["detailurl"] = nonEmpty(searchPayloadString(payload, "detailurl"), searchString(entry["detail_url"]), searchString(entry["detailUrl"]))
+		entry["address"] = searchPayloadString(payload, "address")
+		entry["iname"] = nonEmpty(searchPayloadString(payload, "iname"), searchPayloadString(payload, "name"), item.Title)
+	case "professor":
+		entry["avatar"] = nonEmpty(searchPayloadString(payload, "avatar"), searchPayloadString(payload, "profile"), searchPayloadString(payload, "img"))
+		entry["detail_url"] = nonEmpty(searchPayloadString(payload, "detail_url"), searchString(entry["detailUrl"]), searchString(entry["detailurl"]))
+		entry["views"] = searchPayloadString(payload, "views")
+		entry["field"] = searchPayloadJSONArrayString(payload, "field")
+		entry["H_index"] = nonEmpty(searchPayloadString(payload, "H_index"), searchPayloadString(payload, "h_index"))
+		entry["G_index"] = nonEmpty(searchPayloadString(payload, "G_index"), searchPayloadString(payload, "g_index"))
+		entry["cooperation_agency"] = searchJSONTextPayload(payload, "cooperation_agency")
+		entry["periodical"] = searchJSONTextPayload(payload, "periodical")
+	case "doctor":
+		entry["hospital_url"] = searchPayloadString(payload, "hospital_url")
+		entry["phone_number"] = nonEmpty(searchPayloadString(payload, "phone_number"), searchPayloadString(payload, "telephone"))
+		entry["location"] = nonEmpty(searchPayloadString(payload, "location"), strings.TrimSpace(strings.Join([]string{searchPayloadString(payload, "province"), searchPayloadString(payload, "city"), searchPayloadString(payload, "area")}, " ")))
+		entry["honor"] = searchPayloadString(payload, "honor")
+		entry["paper"] = searchPayloadString(payload, "paper")
+		entry["detailUrl"] = nonEmpty(searchPayloadString(payload, "detailUrl"), searchString(entry["detail_url"]), searchString(entry["detailurl"]))
+		entry["email"] = searchPayloadString(payload, "email")
+		entry["postcode"] = searchPayloadString(payload, "postcode")
+		entry["administrative_function"] = searchPayloadString(payload, "administrative_function")
+	}
+	for key, value := range payload {
+		if _, exists := entry[key]; !exists {
+			entry[key] = value
+		}
+	}
+	return entry
+}
+
+func searchDynamicCategoryOptions(kind string, items []model.Item) []map[string]any {
+	fieldSets := map[string][][]string{
+		"company":    {{"industry_involved", "industry", "industrylable"}},
+		"judgment":   {{"caseType", "case_type", "category"}},
+		"knowledge":  {{"caseType", "ip_type", "type"}},
+		"investment": {{"round", "investment_type", "type"}},
+	}
+	fields := fieldSets[kind]
+	if len(fields) == 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	result := []map[string]any{{"id": 0, "value": "", "name": "全部"}}
+	nextID := 1
+	for _, item := range items {
+		payload := searchPayloadMap(item)
+		for _, group := range fields {
+			value := ""
+			for _, field := range group {
+				value = searchPayloadString(payload, field)
+				if value != "" {
+					break
+				}
+			}
+			for _, part := range splitSearchLabels(value) {
+				if _, ok := seen[part]; ok || part == "" {
+					continue
+				}
+				seen[part] = struct{}{}
+				result = append(result, map[string]any{"id": nextID, "value": part, "name": part})
+				nextID++
+			}
+		}
+	}
+	return result
+}
+
+func searchSpecialCategoryOptions(kind string) []map[string]any {
+	switch kind {
+	case "announcement":
+		return []map[string]any{
+			{"value": "", "name": "全部"},
+			{"value": "公告", "name": "公告"},
+			{"value": "新闻", "name": "新闻"},
+		}
+	case "report":
+		return []map[string]any{
+			{"value": "", "name": "全部"},
+			{"value": "研报", "name": "研报"},
+			{"value": "公告", "name": "公告"},
+		}
+	default:
+		return []map[string]any{{"value": "", "name": "全部"}}
+	}
+}
+
+func searchPayloadMap(item model.Item) map[string]any {
+	payload := map[string]any{}
+	if strings.TrimSpace(item.RawPayload) != "" {
+		_ = json.Unmarshal([]byte(item.RawPayload), &payload)
+	}
+	if _, ok := payload["title"]; !ok {
+		payload["title"] = item.Title
+	}
+	if _, ok := payload["content"]; !ok {
+		payload["content"] = item.Content
+	}
+	if _, ok := payload["summary"]; !ok {
+		payload["summary"] = item.Summary
+	}
+	if _, ok := payload["source_name"]; !ok {
+		payload["source_name"] = nonEmpty(item.FromText, item.SourceType)
+	}
+	if _, ok := payload["source_url"]; !ok {
+		payload["source_url"] = nonEmpty(item.SourceURL, item.DetailURL)
+	}
+	if _, ok := payload["detailUrl"]; !ok {
+		payload["detailUrl"] = nonEmpty(item.DetailURL, item.SourceURL)
+	}
+	if _, ok := payload["publish_time"]; !ok {
+		payload["publish_time"] = nonEmpty(item.PublishTime, item.PublishTimeText, item.CapturedAt.Format("2006-01-02 15:04:05"))
+	}
+	return payload
+}
+
+func searchPayloadContains(payload map[string]any, needle string) bool {
+	for _, value := range payload {
+		if strings.Contains(strings.ToLower(searchString(value)), strings.ToLower(strings.TrimSpace(needle))) {
+			return true
+		}
+	}
+	return false
+}
+
+func searchPayloadFieldContains(payload map[string]any, field string, needle string) bool {
+	return strings.Contains(strings.ToLower(searchString(payload[field])), strings.ToLower(strings.TrimSpace(needle)))
+}
+
+func searchItemBlobContains(item model.Item, needle string) bool {
+	blob := strings.ToLower(strings.Join([]string{item.Title, item.Content, item.Summary, item.RawPayload, item.FromText, item.SourceType}, " "))
+	return strings.Contains(blob, strings.ToLower(strings.TrimSpace(needle)))
+}
+
+func searchPayloadString(payload map[string]any, key string) string {
+	return strings.TrimSpace(searchString(payload[key]))
+}
+
+func searchPayloadJSONArrayString(payload map[string]any, key string) string {
+	raw := strings.TrimSpace(searchString(payload[key]))
+	if raw == "" {
+		return ""
+	}
+	return raw
+}
+
+func searchJSONTextPayload(payload map[string]any, key string) string {
+	raw := strings.TrimSpace(searchString(payload[key]))
+	return raw
+}
+
+func searchString(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case []byte:
+		return string(typed)
+	default:
+		raw, _ := json.Marshal(typed)
+		return string(raw)
+	}
+}
+
+func splitSearchLabels(value string) []string {
+	parts := strings.FieldsFunc(value, func(r rune) bool {
+		return r == ',' || r == '，' || r == ';' || r == '；' || r == '|' || r == '/' || r == '\n' || r == '\t'
+	})
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			result = append(result, part)
+		}
+	}
+	return result
+}
+
+func mergeSearchDetailDefaults(payload map[string]any, item model.Item) {
+	if _, ok := payload["id"]; !ok {
+		payload["id"] = item.ID
+	}
+	if _, ok := payload["source_type"]; !ok {
+		payload["source_type"] = item.SourceType
+	}
+	if _, ok := payload["title"]; !ok {
+		payload["title"] = item.Title
+	}
+	if _, ok := payload["content"]; !ok {
+		payload["content"] = item.Content
+	}
+	if _, ok := payload["summary"]; !ok {
+		payload["summary"] = item.Summary
+	}
+	if _, ok := payload["publish_time"]; !ok {
+		payload["publish_time"] = nonEmpty(item.PublishTime, item.PublishTimeText)
+	}
+	if _, ok := payload["publish_time_text"]; !ok {
+		payload["publish_time_text"] = nonEmpty(item.PublishTimeText, item.PublishTime)
+	}
+	if _, ok := payload["detail_url"]; !ok && stringValue(payload["detailUrl"]) == "" {
+		payload["detail_url"] = nonEmpty(item.DetailURL, item.SourceURL)
+	}
+	if _, ok := payload["detailUrl"]; !ok {
+		payload["detailUrl"] = nonEmpty(item.DetailURL, item.SourceURL)
+	}
+	if _, ok := payload["source_url"]; !ok {
+		payload["source_url"] = nonEmpty(item.SourceURL, item.DetailURL)
+	}
+	if _, ok := payload["source_name"]; !ok {
+		payload["source_name"] = nonEmpty(item.FromText, item.SourceType)
+	}
+	if _, ok := payload["url"]; !ok {
+		payload["url"] = nonEmpty(item.SourceURL, item.DetailURL)
+	}
+}
+
+func stringValue(value any) string {
+	text, _ := value.(string)
+	return strings.TrimSpace(text)
 }
 
 func (s *Service) handleSearchOptions(w http.ResponseWriter, r *http.Request) {

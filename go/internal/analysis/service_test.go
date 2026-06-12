@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -195,5 +197,57 @@ func TestHandleRefreshRecordsSuccess(t *testing.T) {
 	}
 	if len(store.recordTaskRuns) != 1 || store.recordTaskRuns[0] != "analysis:refresh:success" {
 		t.Fatalf("expected success task run recorded, got %+v", store.recordTaskRuns)
+	}
+}
+
+func TestHandlePublicOpinionEnrich(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/search/full" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if got := strings.TrimSpace(r.URL.Query().Get("q")); got != "AI,大模型" {
+			t.Fatalf("expected keywords query, got %q", got)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code": http.StatusOK,
+			"data": model.SearchResult{
+				Items: []model.Item{
+					{ID: 1, Title: "AI 热点一", Content: "市场情绪升温", Summary: "摘要一", SourceType: "headline", FromText: "新闻", PublishTimeText: "2026-06-01 10:00:00"},
+					{ID: 2, Title: "无关词 命中", Content: "这条应该被过滤", Summary: "摘要二", SourceType: "weibo", FromText: "微博", PublishTimeText: "2026-06-01 11:00:00"},
+				},
+			},
+		})
+	}))
+	defer content.Close()
+
+	svc := NewService(config.Config{ContentURL: content.URL}, &stubStore{})
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/public-opinion/enrich?"+url.Values{
+		"eventname":      {"AI 舆情"},
+		"eventkeywords":  {"AI,大模型"},
+		"eventstopwords": {"无关词"},
+		"eventstarttime": {"2026-06-01"},
+		"eventendtime":   {"2026-06-04"},
+	}.Encode(), nil)
+
+	svc.handlePublicOpinionEnrich(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", recorder.Code)
+	}
+	var payload struct {
+		Data model.PublicOpinionAnalysisBundle `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Data.ArticleCount != 1 {
+		t.Fatalf("expected filtered article count 1, got %+v", payload.Data)
+	}
+	if !strings.Contains(payload.Data.BackAnalysis, "AI 热点一") {
+		t.Fatalf("expected back analysis to include kept article, got %s", payload.Data.BackAnalysis)
+	}
+	if payload.Data.EventStartTime != "2026-06-01 00:00:00" || payload.Data.EventEndTime != "2026-06-04 23:59:59" {
+		t.Fatalf("expected normalized time range, got %+v", payload.Data)
 	}
 }

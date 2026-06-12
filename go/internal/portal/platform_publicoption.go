@@ -1252,20 +1252,51 @@ func (s *Server) deletePublicOption(id int64) error {
 func (s *Server) enrichPublicOption(option *model.PublicOption) {
 	option.EventStartTime = normalizeLegacyStartTime(option.EventStartTime)
 	option.EventEndTime = normalizeLegacyEndTime(option.EventEndTime)
-	info := s.buildPublicOptionAnalyses(*option)
-	option.BackAnalysis = info["back_analysis"]
-	option.EventContext = info["event_context"]
-	option.EventTrace = info["event_trace"]
-	option.HotAnalysis = info["hot_analysis"]
-	option.NetizensAnalysis = info["netizens_analysis"]
-	option.Statistics = info["statistics"]
-	option.PropagationAnalysis = info["propagation_analysis"]
-	option.ThematicAnalysis = info["thematic_analysis"]
-	option.UnscrambleContent = info["unscramble_content"]
-	option.ContentAnalysis = info["content_analysis"]
+	if bundle, err := s.getPublicOpinionAnalysisBundle(*option); err == nil {
+		option.BackAnalysis = bundle.BackAnalysis
+		option.EventContext = bundle.EventContext
+		option.EventTrace = bundle.EventTrace
+		option.HotAnalysis = bundle.HotAnalysis
+		option.NetizensAnalysis = bundle.NetizensAnalysis
+		option.Statistics = bundle.Statistics
+		option.PropagationAnalysis = bundle.PropagationAnalysis
+		option.ThematicAnalysis = bundle.ThematicAnalysis
+		option.UnscrambleContent = bundle.UnscrambleContent
+		option.ContentAnalysis = bundle.ContentAnalysis
+		if strings.TrimSpace(option.EmotionalIndex) == "" {
+			option.EmotionalIndex = bundle.EmotionalIndex
+		}
+	} else {
+		info := s.buildPublicOptionAnalyses(*option)
+		option.BackAnalysis = info["back_analysis"]
+		option.EventContext = info["event_context"]
+		option.EventTrace = info["event_trace"]
+		option.HotAnalysis = info["hot_analysis"]
+		option.NetizensAnalysis = info["netizens_analysis"]
+		option.Statistics = info["statistics"]
+		option.PropagationAnalysis = info["propagation_analysis"]
+		option.ThematicAnalysis = info["thematic_analysis"]
+		option.UnscrambleContent = info["unscramble_content"]
+		option.ContentAnalysis = info["content_analysis"]
+	}
 	if option.EmotionalIndex == "" {
 		option.EmotionalIndex = "3"
 	}
+}
+
+func (s *Server) getPublicOpinionAnalysisBundle(option model.PublicOption) (model.PublicOpinionAnalysisBundle, error) {
+	query := url.Values{}
+	query.Set("eventname", option.EventName)
+	query.Set("eventkeywords", option.EventKeywords)
+	query.Set("eventstopwords", option.EventStopWords)
+	query.Set("eventstarttime", normalizeLegacyStartTime(option.EventStartTime))
+	query.Set("eventendtime", normalizeLegacyEndTime(option.EventEndTime))
+	if option.Page > 0 {
+		query.Set("page", strconv.Itoa(option.Page))
+	}
+	var bundle model.PublicOpinionAnalysisBundle
+	err := s.getJSON(s.cfg.AnalysisURL+"/api/v1/public-opinion/enrich?"+query.Encode(), &bundle)
+	return bundle, err
 }
 
 func (s *Server) buildLoadInformation(option model.PublicOption) (map[string]any, error) {
