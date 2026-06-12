@@ -42,6 +42,11 @@ func (s *Server) handleCrawlTemplatesPage(w http.ResponseWriter, r *http.Request
 		.template-card{border:1px solid #ece7dc;border-radius:14px;padding:16px;background:#faf8f2}
 		.template-card form{margin:0}
 		.template-meta{color:#6a6257;font-size:13px}
+		.param-panel{margin:12px 0;padding:12px;border:1px solid #e5dece;border-radius:10px;background:#fff}
+		.param-panel h3{font-size:16px;margin:0 0 10px}
+		.param-list{display:grid;grid-template-columns:minmax(86px,120px) minmax(0,1fr);gap:8px 12px;margin:0}
+		.param-list dt{color:#6a6257;font-size:13px}
+		.param-list dd{margin:0;word-break:break-all}
 		.template-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}
 		.template-actions button{width:auto;min-width:120px}
 		.template-actions .danger{background:#8f2d2d}
@@ -73,6 +78,7 @@ func (s *Server) handleCrawlTemplatesPage(w http.ResponseWriter, r *http.Request
 	} else {
 		body.WriteString(`<div class="template-grid">`)
 		for _, tpl := range templates {
+			params := crawlTemplateDisplayParams(tpl)
 			body.WriteString(`<div class="template-card"><form method="post"><input type="hidden" name="template_id" value="`)
 			body.WriteString(strconv.FormatInt(tpl.ID, 10))
 			body.WriteString(`"><input type="hidden" name="action" value="update"><label>模板名称</label><input name="name" value="`)
@@ -81,7 +87,9 @@ func (s *Server) handleCrawlTemplatesPage(w http.ResponseWriter, r *http.Request
 			body.WriteString(html.EscapeString(tpl.Website))
 			body.WriteString(`" placeholder="如 x.com / t.me / example.com"><label>来源类型</label><select class="js-source-type-input" name="source_type">`)
 			body.WriteString(crawlTemplateSourceOptions(tpl.SourceType))
-			body.WriteString(`</select><label>请求方式</label><select class="js-method-input" name="config_method"><option value="GET">GET</option><option value="POST">POST</option></select><label>页面地址</label><input class="js-base-url-input" name="config_base_url" placeholder="https://example.com"><label>列表选择器</label><input class="js-list-selector-input" name="config_list_selector" placeholder=".list-item"><label>详情链接字段</label><input class="js-detail-url-field-input" name="config_detail_url_field" placeholder="href"><label>配置 JSON</label><textarea class="js-config-json-input" name="config_json" rows="12">`)
+			body.WriteString(`</select>`)
+			body.WriteString(crawlTemplateParamsPanel(params))
+			body.WriteString(`<label>请求方式</label><select class="js-method-input" name="config_method"><option value="GET">GET</option><option value="POST">POST</option></select><label>页面地址</label><input class="js-base-url-input" name="config_base_url" placeholder="https://example.com"><label>列表选择器</label><input class="js-list-selector-input" name="config_list_selector" placeholder=".list-item"><label>详情链接字段</label><input class="js-detail-url-field-input" name="config_detail_url_field" placeholder="href"><label>配置 JSON</label><textarea class="js-config-json-input" name="config_json" rows="12">`)
 			body.WriteString(html.EscapeString(tpl.ConfigJSON))
 			body.WriteString(`</textarea><label style="display:flex;align-items:center;gap:8px;margin-top:6px"><input type="checkbox" name="enabled"`)
 			if tpl.Enabled {
@@ -250,6 +258,135 @@ func normalizeTemplateConfigJSON(raw string, website string, method string, base
 		return raw
 	}
 	return string(normalized)
+}
+
+type crawlTemplateParam struct {
+	Label string
+	Value string
+}
+
+func crawlTemplateDisplayParams(tpl model.CrawlTemplate) []crawlTemplateParam {
+	cfg, raw := parseCrawlTemplateConfig(tpl.ConfigJSON)
+	website := strings.TrimSpace(tpl.Website)
+	if website == "" {
+		website = stringMapValue(raw, "website")
+	}
+	method := strings.ToUpper(strings.TrimSpace(cfg.Method))
+	if method == "" {
+		method = "GET"
+	}
+	sourceType := strings.TrimSpace(tpl.SourceType)
+	if sourceType == "" {
+		sourceType = strings.TrimSpace(cfg.SourceType)
+	}
+	return []crawlTemplateParam{
+		{Label: "网站", Value: website},
+		{Label: "来源类型", Value: sourceType},
+		{Label: "请求方式", Value: method},
+		{Label: "URL", Value: cfg.BaseURL},
+		{Label: "抓取区域", Value: cfg.ListSelector},
+		{Label: "详情区域", Value: cfg.DetailSelector},
+		{Label: "href 字段", Value: cfg.DetailURLField},
+		{Label: "分页", Value: crawlTemplatePaginationText(cfg.Pagination)},
+		{Label: "字段映射", Value: crawlTemplateFieldsText(cfg.Fields)},
+	}
+}
+
+func crawlTemplateParamsPanel(params []crawlTemplateParam) string {
+	var b strings.Builder
+	b.WriteString(`<div class="param-panel"><h3>抓取参数</h3><dl class="param-list">`)
+	for _, param := range params {
+		b.WriteString(`<dt>`)
+		b.WriteString(html.EscapeString(param.Label))
+		b.WriteString(`</dt><dd>`)
+		b.WriteString(html.EscapeString(displayValue(param.Value)))
+		b.WriteString(`</dd>`)
+	}
+	b.WriteString(`</dl></div>`)
+	return b.String()
+}
+
+func parseCrawlTemplateConfig(raw string) (model.CrawlTemplateConfig, map[string]any) {
+	var cfg model.CrawlTemplateConfig
+	payload := map[string]any{}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return cfg, payload
+	}
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		return cfg, payload
+	}
+	_ = json.Unmarshal([]byte(raw), &payload)
+	return cfg, payload
+}
+
+func stringMapValue(values map[string]any, key string) string {
+	value, ok := values[key]
+	if !ok || value == nil {
+		return ""
+	}
+	switch v := value.(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case json.Number:
+		return strings.TrimSpace(v.String())
+	default:
+		return ""
+	}
+}
+
+func displayValue(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "--"
+	}
+	return value
+}
+
+func crawlTemplatePaginationText(p model.CrawlTemplatePagination) string {
+	if !p.Enabled {
+		return ""
+	}
+	parts := []string{"启用"}
+	if strings.TrimSpace(p.Param) != "" {
+		parts = append(parts, "参数 "+p.Param)
+	}
+	if p.End > 0 {
+		parts = append(parts, "范围 "+strconv.Itoa(p.Start)+"-"+strconv.Itoa(p.End))
+	}
+	if p.Step > 0 {
+		parts = append(parts, "步长 "+strconv.Itoa(p.Step))
+	}
+	return strings.Join(parts, "，")
+}
+
+func crawlTemplateFieldsText(fields []model.CrawlTemplateField) string {
+	if len(fields) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(fields))
+	for _, field := range fields {
+		name := strings.TrimSpace(field.Name)
+		if name == "" {
+			continue
+		}
+		target := strings.TrimSpace(field.Selector)
+		if strings.TrimSpace(field.Attr) != "" {
+			target += "@" + strings.TrimSpace(field.Attr)
+		}
+		if target == "" {
+			target = strings.TrimSpace(field.Value)
+		}
+		if target == "" {
+			target = strings.TrimSpace(field.From)
+		}
+		if target == "" {
+			parts = append(parts, name)
+			continue
+		}
+		parts = append(parts, name+": "+target)
+	}
+	return strings.Join(parts, "；")
 }
 
 func templateSummaryCard(label string, value int) string {

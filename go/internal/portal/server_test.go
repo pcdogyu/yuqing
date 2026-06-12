@@ -807,6 +807,11 @@ func TestCrawlTemplatesPage(t *testing.T) {
 	if !strings.Contains(body, `name="config_method"`) || !strings.Contains(body, `name="config_base_url"`) || !strings.Contains(body, `name="config_list_selector"`) || !strings.Contains(body, `name="config_detail_url_field"`) {
 		t.Fatalf("expected common config fields on template management page, got %s", body)
 	}
+	for _, expected := range []string{"抓取参数", "网站", "URL", "抓取区域", "href 字段", "x.com", "https://x.com/search?q=btc", ".tweet-card", "detail_url: a.tweet-link@href"} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("expected crawl template parameter %q to render, got %s", expected, body)
+		}
+	}
 
 	createForm := url.Values{
 		"action":                  {"create"},
@@ -832,6 +837,9 @@ func TestCrawlTemplatesPage(t *testing.T) {
 	srv.handleCrawlTemplatesPage(rr, req, map[string]any{"id": 7})
 	if !strings.Contains(rr.Body.String(), "BTC 资讯模板") || !strings.Contains(rr.Body.String(), `&#34;website&#34;:&#34;example.com&#34;`) || !strings.Contains(rr.Body.String(), `&#34;method&#34;:&#34;POST&#34;`) || !strings.Contains(rr.Body.String(), `&#34;base_url&#34;:&#34;https://example.com/feed&#34;`) || !strings.Contains(rr.Body.String(), `&#34;list_selector&#34;:&#34;.feed-item&#34;`) || !strings.Contains(rr.Body.String(), `&#34;detail_url_field&#34;:&#34;href&#34;`) {
 		t.Fatalf("expected created template to render, got %s", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "https://example.com/feed") || !strings.Contains(rr.Body.String(), ".feed-item") {
+		t.Fatalf("expected created template parameters to render, got %s", rr.Body.String())
 	}
 
 	updateForm := url.Values{
@@ -2063,18 +2071,20 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 		{
 			ID:         2,
 			Name:       "X BTC 热门账号模板",
+			Website:    "x.com",
 			SourceType: "crypto_x",
 			Enabled:    true,
-			ConfigJSON: `{"source_type":"crypto_x"}`,
+			ConfigJSON: `{"source_type":"crypto_x","website":"x.com","method":"GET","base_url":"https://x.com/search?q=btc","list_selector":".tweet-card","detail_selector":"a.tweet-link","detail_url_field":"href","fields":[{"name":"title","selector":".tweet-text","scope":"list","required":true},{"name":"detail_url","selector":"a.tweet-link","attr":"href","scope":"list"}]}`,
 			CreatedAt:  time.Now().UTC().Add(-48 * time.Hour),
 			UpdatedAt:  time.Now().UTC().Add(-12 * time.Hour),
 		},
 		{
 			ID:         3,
 			Name:       "Telegram 交易所公告模板",
+			Website:    "t.me",
 			SourceType: "crypto_telegram",
 			Enabled:    true,
-			ConfigJSON: `{"source_type":"crypto_telegram"}`,
+			ConfigJSON: `{"source_type":"crypto_telegram","website":"t.me","base_url":"https://t.me/s/exchange_news","list_selector":".tgme_widget_message","detail_url_field":"href"}`,
 			CreatedAt:  time.Now().UTC().Add(-24 * time.Hour),
 			UpdatedAt:  time.Now().UTC().Add(-2 * time.Hour),
 		},
