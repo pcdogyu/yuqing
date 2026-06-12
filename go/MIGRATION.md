@@ -239,6 +239,9 @@
   - `GET /api/v1/system/operations` 已补充 `scheduler_jobs`、`task_summary`、`audit_summary`、`legacy_route_probes`、结构化 `backup` 和 crypto social 最近抓取/入库统计。
   - `GET /api/v1/system/alerts` 已覆盖连续任务失败、审计过期、legacy 非 410、外部集成失败和 crypto social 长时间无入库。
   - `/system?section=operations` 的 scheduler 数据优先消费同一份 operations API，减少页面和脚本口径分叉。
+- 2026-06-12：五期第四批文档复核：
+  - 已同步 [docs/phase5-release-readiness.md](docs/phase5-release-readiness.md) 的 operations 页面/API 同源口径。
+  - 已同步 [docs/crypto-social-proxy.md](docs/crypto-social-proxy.md) 的 `external_integrations` 字段和 `crypto_social_no_recent_insert` 告警说明。
 
 ## 下一步
 

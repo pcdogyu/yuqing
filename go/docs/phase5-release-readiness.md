@@ -98,7 +98,7 @@ go test ./cmd/ops-check
 
 四批检查结论：
 
-- `operations.scheduler_jobs` 直接来自 scheduler API，页面不再单独解释 scheduler 运行态。
+- `operations.scheduler_jobs` 直接来自 scheduler API，`/system?section=operations` 优先消费同一份数据，页面与 JSON API 口径一致。
 - `operations.task_summary` 输出最近任务数、失败数和连续失败数，`alerts` 在连续失败达到 2 次时输出 `consecutive_task_failures`。
 - `operations.audit_summary` 输出最近审计数量、最后动作和距今秒数，超过 24 小时无新审计会输出 `recent_audit_stale`。
 - `operations.legacy_route_probes` 对关键旧入口执行 `410 Gone` 探测，非 410 会输出 `legacy_non_410`。

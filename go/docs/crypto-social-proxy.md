@@ -140,3 +140,14 @@ crypto social provider 复用全局外部 HTTP 超时和重试策略：
 - `YUQING_CRYPTO_SOCIAL_RATE_LIMIT_MS`
 
 重试只覆盖超时、HTTP `429` 和 `5xx`。禁用端点、非 200、坏 JSON、空数据会返回固定错误分类；重复数据会去重并记录 `external_duplicate_data` 结构化日志。最近抓取状态、抓取数、入库数和错误摘要会通过 `crawl_runs` 进入 operations 视图。
+
+五期第四批后，`GET /api/v1/system/operations` 的 `external_integrations` 会对 `crypto_x`、`crypto_telegram` 输出：
+
+- `last_fetch_at`
+- `fetched_count`
+- `inserted_count`
+- `updated_count`
+- `duplicate_count`
+- `message`
+
+当最近一次成功抓取超过 6 小时仍无入库时，`GET /api/v1/system/alerts` 会输出 `crypto_social_no_recent_insert`，用于上线验收和长期运行巡检。
