@@ -129,7 +129,7 @@ func (s *Service) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 			Description:     "根据正文生成标题。",
 			AuthMode:        "direct or via platform binding",
 			LegacyPaths:     []string{"/platform/xie/title/*"},
-			DegradeStrategy: "portal-workbench falls back to local title truncation only when the API is unavailable",
+			DegradeStrategy: "portal workbench falls back to local title truncation when this API is unavailable; legacy /platform/* routes are removed as 410 Gone",
 			Enabled:         true,
 		},
 		{
@@ -155,7 +155,7 @@ func (s *Service) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 			Description:     "图片 OCR 识别。",
 			AuthMode:        "direct upload or via platform binding",
 			LegacyPaths:     []string{"/platform/nlp/ocr"},
-			DegradeStrategy: "legacy platform route proxies this API during transition",
+			DegradeStrategy: "direct API only; legacy /platform/nlp/ocr is removed as 410 Gone",
 			Enabled:         true,
 		},
 		{
@@ -165,7 +165,7 @@ func (s *Service) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 			Description:     "图像标签识别。",
 			AuthMode:        "direct upload or via platform binding",
 			LegacyPaths:     []string{"/platform/nlp/image"},
-			DegradeStrategy: "legacy platform route proxies this API during transition",
+			DegradeStrategy: "direct API only; legacy /platform/nlp/image is removed as 410 Gone",
 			Enabled:         true,
 		},
 		{
@@ -175,7 +175,7 @@ func (s *Service) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 			Description:     "生成写作报告预览。",
 			AuthMode:        "direct or via platform binding",
 			LegacyPaths:     []string{"/platform/xie/report", "/platform/xie/report/*"},
-			DegradeStrategy: "legacy SSE routes stream chunks derived from this response during transition",
+			DegradeStrategy: "direct API only; legacy /platform/xie/report routes are removed as 410 Gone",
 			Enabled:         true,
 		},
 	})

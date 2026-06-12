@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -79,6 +81,7 @@ type Store interface {
 	ListSearchWords(rctx context.Context, userID int64, limit int) ([]model.SearchWordStat, error)
 	ListSearchWordSuggestions(rctx context.Context, userID int64, prefix string, limit int) ([]model.SearchWordStat, error)
 	ListHotSearchWords(rctx context.Context, limit int) ([]model.SearchWordStat, error)
+	ListCrawlRuns(rctx context.Context, limit int, sourceType string) ([]model.CrawlRun, error)
 	GetPlatformBinding(rctx context.Context, userID int64, kind string) (model.PlatformBinding, error)
 	UpsertPlatformBinding(rctx context.Context, binding model.PlatformBinding) (model.PlatformBinding, error)
 	ListPublicOptions(rctx context.Context, userID int64, keyword string) ([]model.PublicOption, error)
@@ -189,6 +192,8 @@ func (s *Service) Routes(r chi.Router) {
 	r.Get("/api/v1/system/task-runs", s.handleListTaskRuns)
 	r.Get("/api/v1/system/audit-logs", s.handleListAuditLogs)
 	r.Post("/api/v1/system/audit-logs", s.handleCreateAuditLog)
+	r.Get("/api/v1/system/operations", s.handleOperations)
+	r.Get("/api/v1/system/alerts", s.handleAlerts)
 	r.Get("/api/v1/system/popup", s.handleGetPopupState)
 	r.Put("/api/v1/system/popup", s.handleUpdatePopupState)
 	r.Get("/api/v1/system/preferences", s.handleGetPreferences)
@@ -1979,6 +1984,222 @@ func (s *Service) handleListAuditLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	apiutil.WriteJSON(w, http.StatusOK, "ok", logs)
+}
+
+func (s *Service) handleOperations(w http.ResponseWriter, r *http.Request) {
+	ops := s.operationsSummary(r.Context())
+	apiutil.WriteJSON(w, http.StatusOK, "ok", ops)
+}
+
+func (s *Service) handleAlerts(w http.ResponseWriter, r *http.Request) {
+	ops := s.operationsSummary(r.Context())
+	alerts := buildOperationsAlerts(ops)
+	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]any{
+		"ready":        len(alerts) == 0,
+		"generated_at": time.Now().UTC(),
+		"alerts":       alerts,
+	})
+}
+
+func (s *Service) operationsSummary(ctx context.Context) model.OperationsSummary {
+	taskRuns, _ := s.store.ListTaskRuns(ctx, 50)
+	auditLogs, _ := s.store.ListAuditLogs(ctx, 20, 0, "")
+	failedRuns := make([]model.TaskRun, 0)
+	for _, run := range taskRuns {
+		if run.Status == "failed" {
+			failedRuns = append(failedRuns, run)
+		}
+	}
+	services := s.operationServiceStatuses(ctx)
+	ready := true
+	for _, service := range services {
+		if !service.Healthy {
+			ready = false
+			break
+		}
+	}
+	if len(failedRuns) > 0 {
+		ready = false
+	}
+	backup := s.backupStatus()
+	if backup.Status == "failed" {
+		ready = false
+	}
+	return model.OperationsSummary{
+		GeneratedAt:          time.Now().UTC(),
+		Services:             services,
+		RecentTaskRuns:       taskRuns,
+		FailedTaskRuns:       failedRuns,
+		RecentAuditLogs:      auditLogs,
+		LegacyRegistry:       legacyRegistryCounts(),
+		ExternalIntegrations: s.externalIntegrationStatuses(ctx),
+		Backup:               backup,
+		Ready:                ready,
+	}
+}
+
+func (s *Service) operationServiceStatuses(ctx context.Context) []model.OperationServiceStatus {
+	targets := []struct {
+		name string
+		url  string
+	}{
+		{name: "gateway-web", url: s.cfg.GatewayWebURL},
+		{name: "auth-service", url: s.cfg.AuthURL},
+		{name: "content-service", url: s.cfg.ContentURL},
+		{name: "crawler-service", url: s.cfg.CrawlerURL},
+		{name: "analysis-service", url: s.cfg.AnalysisURL},
+		{name: "nlp-service", url: s.cfg.NLPURL},
+		{name: "scheduler-service", url: s.cfg.SchedulerURL},
+	}
+	result := make([]model.OperationServiceStatus, 0, len(targets))
+	for _, target := range targets {
+		if strings.TrimSpace(target.url) == "" {
+			continue
+		}
+		status := model.OperationServiceStatus{Name: target.name, URL: strings.TrimRight(target.url, "/") + "/healthz"}
+		resp, err := s.client.R().SetContext(ctx).Get(status.URL)
+		if err != nil {
+			status.Message = err.Error()
+		} else if resp.IsSuccess() {
+			status.Healthy = true
+			status.Message = "ok"
+		} else {
+			status.Message = resp.Status()
+		}
+		result = append(result, status)
+	}
+	return result
+}
+
+func (s *Service) externalIntegrationStatuses(ctx context.Context) []model.OperationExternalStatus {
+	result := []model.OperationExternalStatus{
+		{Name: "jin10_full", Status: boolStatus(s.cfg.Jin10FullEnabled), Message: "controlled by YUQING_JIN10_FULL_ENABLED"},
+		s.cryptoSocialStatus(ctx, "crypto_x", s.cfg.CryptoXURL),
+		s.cryptoSocialStatus(ctx, "crypto_telegram", s.cfg.CryptoTelegramURL),
+		{Name: "binance", Status: "configured", Message: s.cfg.BinanceBaseURL},
+		{Name: "coinlore", Status: "configured", Message: s.cfg.CoinLoreURL},
+		{Name: "coingecko", Status: "configured", Message: s.cfg.CoinGeckoURL},
+	}
+	if strings.TrimSpace(s.cfg.NLPURL) != "" {
+		status := model.OperationExternalStatus{Name: "nlp-service", Status: "failed", Message: s.cfg.NLPURL}
+		resp, err := s.client.R().SetContext(ctx).Get(strings.TrimRight(s.cfg.NLPURL, "/") + "/api/v1/nlp/capabilities")
+		if err != nil {
+			status.Message = err.Error()
+		} else if resp.IsSuccess() {
+			status.Status = "ok"
+			status.Message = "capabilities ok"
+		} else {
+			status.Message = resp.Status()
+		}
+		result = append(result, status)
+	}
+	return result
+}
+
+func (s *Service) cryptoSocialStatus(ctx context.Context, sourceType, endpoint string) model.OperationExternalStatus {
+	if strings.TrimSpace(endpoint) == "" {
+		return model.OperationExternalStatus{Name: sourceType, Status: "disabled", Message: "external_disabled"}
+	}
+	runs, err := s.store.ListCrawlRuns(ctx, 1, sourceType)
+	if err != nil {
+		return model.OperationExternalStatus{Name: sourceType, Status: "failed", Message: err.Error()}
+	}
+	if len(runs) == 0 {
+		return model.OperationExternalStatus{Name: sourceType, Status: "warning", Message: "no crawl run recorded"}
+	}
+	run := runs[0]
+	status := run.Status
+	if status == "" {
+		status = "unknown"
+	}
+	message := fmt.Sprintf("last=%s fetched=%d inserted=%d", run.StartedAt.Format(time.RFC3339), run.FetchedCount, run.InsertedCount)
+	if run.ErrorText != "" {
+		message += " error=" + run.ErrorText
+	}
+	return model.OperationExternalStatus{Name: sourceType, Status: status, Message: message}
+}
+
+func boolStatus(enabled bool) string {
+	if enabled {
+		return "enabled"
+	}
+	return "disabled"
+}
+
+func externalURLMessage(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return "external_disabled"
+	}
+	return raw
+}
+
+func legacyRegistryCounts() []model.LegacyStrategyCount {
+	return []model.LegacyStrategyCount{
+		{Strategy: "delete", Count: 40},
+		{Strategy: "gone", Count: 75},
+		{Strategy: "preserve", Count: 0},
+		{Strategy: "proxy", Count: 0},
+	}
+}
+
+func (s *Service) backupStatus() model.OperationExternalStatus {
+	dbPath := strings.TrimSpace(s.cfg.DatabasePath)
+	if dbPath == "" {
+		dbPath = filepath.Join("data", "yuqing.db")
+	}
+	backupDir := filepath.Join(filepath.Dir(dbPath), "..", "backups")
+	if !filepath.IsAbs(backupDir) {
+		backupDir = filepath.Clean(backupDir)
+	}
+	entries, err := os.ReadDir(backupDir)
+	if err != nil {
+		return model.OperationExternalStatus{Name: "sqlite_backup", Status: "warning", Message: "backup directory not found"}
+	}
+	var latest os.FileInfo
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".db") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		if latest == nil || info.ModTime().After(latest.ModTime()) {
+			latest = info
+		}
+	}
+	if latest == nil {
+		return model.OperationExternalStatus{Name: "sqlite_backup", Status: "warning", Message: "no backup db found"}
+	}
+	if time.Since(latest.ModTime()) > 7*24*time.Hour {
+		return model.OperationExternalStatus{Name: "sqlite_backup", Status: "warning", Message: "latest backup is older than 7 days"}
+	}
+	return model.OperationExternalStatus{Name: "sqlite_backup", Status: "ok", Message: latest.Name()}
+}
+
+func buildOperationsAlerts(ops model.OperationsSummary) []model.OperationAlert {
+	now := time.Now().UTC()
+	alerts := make([]model.OperationAlert, 0)
+	for _, service := range ops.Services {
+		if !service.Healthy {
+			alerts = append(alerts, model.OperationAlert{Name: "service_unhealthy", Severity: "critical", Status: "firing", Message: service.Name + ": " + service.Message, CreatedAt: now})
+		}
+	}
+	if len(ops.FailedTaskRuns) > 0 {
+		alerts = append(alerts, model.OperationAlert{Name: "failed_task_runs", Severity: "critical", Status: "firing", Message: fmt.Sprintf("%d failed task runs", len(ops.FailedTaskRuns)), CreatedAt: now})
+	}
+	if len(ops.RecentAuditLogs) == 0 {
+		alerts = append(alerts, model.OperationAlert{Name: "recent_audit_missing", Severity: "warning", Status: "firing", Message: "no recent audit logs returned", CreatedAt: now})
+	}
+	if ops.Backup.Status == "warning" || ops.Backup.Status == "failed" {
+		alerts = append(alerts, model.OperationAlert{Name: "backup_not_ready", Severity: "warning", Status: "firing", Message: ops.Backup.Message, CreatedAt: now})
+	}
+	for _, count := range ops.LegacyRegistry {
+		if (count.Strategy == "proxy" || count.Strategy == "preserve") && count.Count > 0 {
+			alerts = append(alerts, model.OperationAlert{Name: "legacy_live_routes", Severity: "critical", Status: "firing", Message: fmt.Sprintf("%s=%d", count.Strategy, count.Count), CreatedAt: now})
+		}
+	}
+	return alerts
 }
 
 func (s *Service) handleCreateAuditLog(w http.ResponseWriter, r *http.Request) {

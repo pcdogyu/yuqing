@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/go-resty/resty/v2"
+	"github.com/rs/zerolog/log"
 
+	"github.com/pcdogyu/yuqing/go/internal/external"
 	"github.com/pcdogyu/yuqing/go/internal/model"
 	"github.com/pcdogyu/yuqing/go/internal/provider"
 )
@@ -49,7 +51,7 @@ func (p *Provider) SourceType() string {
 
 func (p *Provider) Fetch(ctx context.Context) ([]model.Item, error) {
 	if strings.TrimSpace(p.endpoint) == "" {
-		return nil, nil
+		return nil, external.New(external.ErrDisabled, p.sourceType+" endpoint is empty")
 	}
 	req := p.client.R().SetContext(ctx)
 	if p.authToken != "" {
@@ -57,12 +59,25 @@ func (p *Provider) Fetch(ctx context.Context) ([]model.Item, error) {
 	}
 	resp, err := req.Get(p.endpoint)
 	if err != nil {
+		if code := external.Classify(err); code != "" {
+			return nil, external.New(code, err.Error())
+		}
 		return nil, err
 	}
 	if resp.IsError() {
-		return nil, fmt.Errorf("%s fetch failed: %s", p.sourceType, resp.Status())
+		return nil, external.HTTPStatus(p.sourceType+" fetch failed: "+resp.Status(), resp.StatusCode())
 	}
-	return ParseResponse(resp.Body(), p.sourceType, p.platform, p.endpoint, time.Now().UTC())
+	items, err := ParseResponse(resp.Body(), p.sourceType, p.platform, p.endpoint, time.Now().UTC())
+	if err != nil {
+		if code := external.Classify(err); code != "" {
+			return nil, external.New(code, err.Error())
+		}
+		return nil, err
+	}
+	if len(items) == 0 {
+		return nil, external.New(external.ErrEmptyData, p.sourceType+" response contained no usable rows")
+	}
+	return items, nil
 }
 
 func ParseResponse(body []byte, sourceType, platform, endpoint string, capturedAt time.Time) ([]model.Item, error) {
@@ -78,7 +93,11 @@ func ParseResponse(body []byte, sourceType, platform, endpoint string, capturedA
 		}
 		items = append(items, item)
 	}
-	return dedupe(items), nil
+	deduped := dedupe(items)
+	if len(deduped) < len(items) {
+		log.Warn().Str("source_type", sourceType).Int("input", len(items)).Int("deduped", len(deduped)).Str("error_code", external.ErrDuplicateData).Msg("crypto social duplicate rows removed")
+	}
+	return deduped, nil
 }
 
 func decodePayload(body []byte) ([]map[string]any, error) {

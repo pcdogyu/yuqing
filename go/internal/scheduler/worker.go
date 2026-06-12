@@ -11,9 +11,11 @@ import (
 	"time"
 
 	"github.com/go-resty/resty/v2"
+	"github.com/robfig/cron/v3"
 	"github.com/rs/zerolog/log"
 
 	"github.com/pcdogyu/yuqing/go/internal/config"
+	"github.com/pcdogyu/yuqing/go/internal/external"
 	"github.com/pcdogyu/yuqing/go/internal/model"
 	sqlitestore "github.com/pcdogyu/yuqing/go/internal/store/sqlite"
 )
@@ -40,19 +42,62 @@ func NewWorker(cfg config.Config) *Worker {
 func (w *Worker) Run(ctx context.Context) {
 	w.waitForDependencies(ctx)
 
+	location, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		log.Warn().Err(err).Msg("load scheduler timezone failed, falling back to local timezone")
+		location = time.Local
+	}
+	runner := cron.New(
+		cron.WithLocation(location),
+		cron.WithParser(cronParser()),
+		cron.WithChain(cron.Recover(cron.DefaultLogger)),
+	)
 	for _, job := range w.jobDefinitions() {
 		if !job.Enabled {
 			log.Info().Str("service", "scheduler-service").Str("task", job.Name).Msg("scheduler task disabled")
 			continue
 		}
 		current := job
-		log.Info().Str("service", "scheduler-service").Str("task", current.Name).Dur("interval", current.Interval).Msg("scheduler task registered")
-		go w.loop(ctx, current.Name, current.Interval, func() error {
-			return w.runJob(ctx, current)
-		})
+		if _, err := runner.AddFunc(quartzCronSpec(current.Cron), func() {
+			if err := w.runJob(ctx, current); err != nil {
+				log.Error().Err(err).Str("task", current.Name).Msg("scheduler cron task failed")
+			}
+		}); err != nil {
+			log.Error().Err(err).Str("service", "scheduler-service").Str("task", current.Name).Str("cron", current.Cron).Msg("scheduler cron registration failed")
+			continue
+		}
+		log.Info().Str("service", "scheduler-service").Str("task", current.Name).Str("cron", current.Cron).Msg("scheduler cron task registered")
 	}
+	runner.Start()
 	log.Info().Str("service", "scheduler-service").Msg("scheduler service ready")
 	<-ctx.Done()
+	stopCtx := runner.Stop()
+	select {
+	case <-stopCtx.Done():
+	case <-time.After(5 * time.Second):
+		log.Warn().Msg("scheduler cron shutdown timed out")
+	}
+}
+
+func (w *Worker) loop(ctx context.Context, name string, interval time.Duration, fn func() error) {
+	run := func() {
+		if err := fn(); err != nil {
+			log.Error().Err(err).Str("task", name).Msg("scheduler task failed")
+			return
+		}
+		log.Info().Str("task", name).Msg("scheduler task completed")
+	}
+	run()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			run()
+		}
+	}
 }
 
 func (w *Worker) waitForDependencies(ctx context.Context) {
@@ -92,27 +137,6 @@ func (w *Worker) waitForHealthy(ctx context.Context, name, url string, timeout t
 	}
 }
 
-func (w *Worker) loop(ctx context.Context, name string, interval time.Duration, fn func() error) {
-	run := func() {
-		if err := fn(); err != nil {
-			log.Error().Err(err).Str("task", name).Msg("scheduler task failed")
-			return
-		}
-		log.Info().Str("task", name).Msg("scheduler task completed")
-	}
-	run()
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			run()
-		}
-	}
-}
-
 func (w *Worker) Close() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -142,10 +166,13 @@ func (w *Worker) request(method, url string, body any) error {
 		return fmt.Errorf("unsupported scheduler request method %s", method)
 	}
 	if err != nil {
+		if code := external.Classify(err); code != "" {
+			return external.New(code, err.Error())
+		}
 		return err
 	}
 	if !resp.IsSuccess() {
-		return fmt.Errorf("%s %s failed: %s", method, url, resp.Status())
+		return external.HTTPStatus(fmt.Sprintf("%s %s failed: %s", method, url, resp.Status()), resp.StatusCode())
 	}
 	return nil
 }

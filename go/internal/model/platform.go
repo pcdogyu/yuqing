@@ -321,3 +321,41 @@ type NLPCapability struct {
 	DegradeStrategy string   `json:"degrade_strategy,omitempty"`
 	Enabled         bool     `json:"enabled"`
 }
+
+type OperationServiceStatus struct {
+	Name    string `json:"name"`
+	URL     string `json:"url"`
+	Healthy bool   `json:"healthy"`
+	Message string `json:"message"`
+}
+
+type OperationExternalStatus struct {
+	Name    string `json:"name"`
+	Status  string `json:"status"`
+	Message string `json:"message,omitempty"`
+}
+
+type LegacyStrategyCount struct {
+	Strategy string `json:"strategy"`
+	Count    int    `json:"count"`
+}
+
+type OperationsSummary struct {
+	GeneratedAt          time.Time                 `json:"generated_at"`
+	Services             []OperationServiceStatus  `json:"services"`
+	RecentTaskRuns       []TaskRun                 `json:"recent_task_runs"`
+	FailedTaskRuns       []TaskRun                 `json:"failed_task_runs"`
+	RecentAuditLogs      []AuditLog                `json:"recent_audit_logs"`
+	LegacyRegistry       []LegacyStrategyCount     `json:"legacy_registry"`
+	ExternalIntegrations []OperationExternalStatus `json:"external_integrations"`
+	Backup               OperationExternalStatus   `json:"backup"`
+	Ready                bool                      `json:"ready"`
+}
+
+type OperationAlert struct {
+	Name      string    `json:"name"`
+	Severity  string    `json:"severity"`
+	Status    string    `json:"status"`
+	Message   string    `json:"message"`
+	CreatedAt time.Time `json:"created_at"`
+}

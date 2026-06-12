@@ -167,6 +167,44 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	}
 }
 
+func TestSchedulerCronNextRunAndEnvOverrides(t *testing.T) {
+	next, err := nextCronRun("0 0/10 * * * ?", time.Date(2026, 6, 12, 8, 1, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("nextCronRun error: %v", err)
+	}
+	shanghai, _ := time.LoadLocation("Asia/Shanghai")
+	if got := next.In(shanghai).Format("15:04:05"); got != "16:10:00" {
+		t.Fatalf("expected next run at 16:10:00 Asia/Shanghai, got %s", got)
+	}
+
+	t.Setenv("YUQING_SCHEDULER_HOT_DATA_REFRESH_ENABLED", "false")
+	t.Setenv("YUQING_SCHEDULER_ANALYSIS_REFRESH_CRON", "0 30 9 * * ?")
+	worker := NewWorker(config.Config{
+		HTTPTimeout:           time.Second,
+		FlashInterval:         time.Hour,
+		HeadlineInterval:      time.Hour,
+		AnalysisInterval:      time.Hour,
+		WechatCleanupInterval: time.Hour,
+		WechatPushInterval:    time.Hour,
+	})
+	jobs := worker.Jobs()
+	var hotData, analysis Job
+	for _, job := range jobs {
+		switch job.Name {
+		case "hot-data-refresh":
+			hotData = job
+		case "analysis-refresh":
+			analysis = job
+		}
+	}
+	if hotData.Enabled {
+		t.Fatalf("expected hot-data-refresh to be disabled by env, got %+v", hotData)
+	}
+	if analysis.Cron != "0 30 9 * * ?" || analysis.NextRunAt == nil {
+		t.Fatalf("expected analysis cron override and next run, got %+v", analysis)
+	}
+}
+
 func TestSchedulerRunJobRejectsUnknownJob(t *testing.T) {
 	worker := NewWorker(config.Config{})
 	if err := worker.RunJobByName(context.Background(), "missing-job"); err == nil {

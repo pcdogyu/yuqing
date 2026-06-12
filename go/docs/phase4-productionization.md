@@ -1,6 +1,6 @@
 # Phase 4 Productionization
 
-四期目标是把三期 legacy 收口后的 Go 系统推进到可生产运行状态。本页记录当前已落地的调度、审计、健康检查和 Windows 运维能力。
+四期目标是把三期 legacy 收口后的 Go 系统推进到可生产运行状态。本页记录四期已落地的调度、审计、健康检查和 Windows 运维能力；五期上线验收闭环见 [phase5-release-readiness.md](phase5-release-readiness.md)。
 
 ## Scheduler
 
@@ -61,12 +61,14 @@ Query 中的 `token`、`password`、`secret`、`key` 会脱敏。
 .\scripts\smoke-test.ps1
 .\scripts\reconcile-production.ps1
 .\scripts\backup-sqlite.ps1
+.\scripts\restore-sqlite.ps1
+.\scripts\release-check.ps1
 .\scripts\stop-all.ps1
 ```
 
 脚本默认使用 `YUQING_DB_PATH`；未设置时使用 `data\yuqing.db`。
 
-`reconcile-production.ps1` 调用 `cmd/ops-check` 做 SQLite 只读对账，覆盖 `items`、`projects`、`reports`、`items_fts`、`task_runs`、`audit_logs`、`platform_bindings`、crypto social 来源、失败任务和最近审计。`backup-sqlite.ps1` 复制数据库后会对备份库执行同一套校验并输出 JSON。
+`reconcile-production.ps1` 调用 `cmd/ops-check` 做 SQLite 只读对账，覆盖 `items`、`projects`、`reports`、`items_fts`、`task_runs`、`audit_logs`、`platform_bindings`、crypto social 来源、失败任务和最近审计。五期后可通过 `-BaselinePath` 对 Java 导出的 JSON/CSV 基线做差异比较。`backup-sqlite.ps1` 复制数据库后会对备份库执行同一套校验并输出 JSON，`restore-sqlite.ps1` 会对备份执行临时恢复演练。
 
 ## Operations View
 
@@ -76,6 +78,8 @@ Query 中的 `token`、`password`、`secret`、`key` 会脱敏。
 - scheduler jobs 的 Java Quartz 对应关系、cron 描述、下次执行时间和最近结果
 - 最近失败任务、最近审计、抓取健康
 - legacy 注册表策略汇总；四期收尾后 `proxy / preserve` 均为 `0`
+
+五期后该页面优先消费 `GET /api/v1/system/operations`，脚本、页面和 JSON API 使用同一份运行数据。`GET /api/v1/system/alerts` 输出上线告警与 `ready` 标志。
 
 ## Verification
 

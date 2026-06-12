@@ -149,7 +149,7 @@
 - 2026-06-12：三期第一批搜索收口进展：
   - `fullsearch/result`、`/fullsearch/*Detail/*` 等旧页面型入口已统一跳转到 `/articles` 或 `/articles/{id}`。
   - `fullsearch` 兼容列表返回的详情链接已默认切到 `/articles/{id}`，不再把 legacy 详情页作为主目标。
-  - `timelysearch` 仍保留旧结果页与详情页入口，以继续保障模板执行和 `return_to` 上下文兼容。
+  - 当时 `timelysearch` 仍保留旧结果页与详情页入口，用于保障模板执行和 `return_to` 上下文兼容；四期收尾后该入口已下线为 `410 Gone`。
 - 2026-06-12：三期第二批 FullSearch 页面型旧入口收口：
   - `/fullsearch/result`、`/fullsearch/index`、`/fullsearch/*Detail/*` 已从跳转兼容推进到 `410 Gone` 下线。
   - `/articles?mode=full`、`/articles/{id}` 仍是全文搜索列表与详情正式主链路。
@@ -168,7 +168,7 @@
 - 2026-06-12：三期第三批 legacy 入口收口：
   - `gateway-web` 显式注册 `/fullsearch` 与 `/timelysearch`，并在鉴权前按注册表返回 `410 Gone` / `404 Not Found`，避免旧 URL 落入 dashboard。
   - `fullsearch` 剩余 JSON 兼容入口、LSearch 顶层聚合入口、`publicoption/loadInformation` 已推进到 `410 Gone`。
-  - 代码注册表收敛为 `proxy=3`、`preserve=6`、`gone=66`、`delete=40`；剩余 `proxy` 为 `timelysearch` 与 Platform/NLP 外部契约，剩余 `preserve` 为外部访问页面。
+  - 当时代码注册表收敛为 `proxy=3`、`preserve=6`、`gone=66`、`delete=40`；四期收尾后已推进到 `proxy=0`、`preserve=0`、`gone=75`、`delete=40`。
   - [docs/legacy-route-inventory.md](docs/legacy-route-inventory.md) 已按注册表同步存活、下线和删除分组。
 - 2026-06-12：四期收尾移除“兼容完成”旧入口：
   - `/timelysearch/*`、`/platform/nlp/*`、`/platform/xie/*`、`/mobile/*`、`/displayboard*`、`/volume*`、`/hot/*`、`/dist/*`、`/img/code` 已统一下线为 `410 Gone`。
@@ -179,7 +179,7 @@
 ## 建议执行顺序
 
 1. 四期核心已补齐 Quartz/AOP 等 Java 等价骨架，包括分析调度、预警调度、报表调度、声量/热点调度、微信调度、用户操作日志和系统访问日志。
-2. 后续深化聚焦 Java cron 绝对时刻 1:1、生产数据对账脚本、外部集成限流策略和更细粒度的告警看板。
+2. 五期已补齐 Java cron 实际调度、baseline 对账、备份恢复、外部错误分类和 operations/alerts API；后续深化聚焦生产实测阈值、告警通知渠道和真实 Java 导出基线沉淀。
 
 ## 当前 Go 服务职责
 
@@ -215,9 +215,15 @@
   - `backup-sqlite.ps1` 已扩展为备份后校验，输出备份路径、大小和校验 JSON。
   - `/system?section=operations` 已增加生产运行视图，展示服务健康、scheduler jobs、失败任务、审计、抓取健康和 legacy 注册表。
   - `smoke-test.ps1` 已扩展覆盖 scheduler 运行态、NLP capabilities、审计写入和 legacy 410 探测。
+- 2026-06-12：五期生产上线验收闭环：
+  - `scheduler-service` 改为使用 `robfig/cron/v3` 按 Java Quartz cron 实际调度，默认时区 `Asia/Shanghai`，支持 `YUQING_SCHEDULER_<JOB>_CRON` 和 `YUQING_SCHEDULER_<JOB>_ENABLED` 覆盖。
+  - `cmd/ops-check` 支持 `--baseline` JSON/CSV 基线对账，输出 `success`、`failed`、`diff`、`missing`、`extra`、`warnings`。
+  - 新增 `GET /api/v1/system/operations` 与 `GET /api/v1/system/alerts`，门户生产运行页优先消费同一份 operations 数据。
+  - 新增 `restore-sqlite.ps1` 与 `release-check.ps1`，`smoke-test.ps1` 扩展覆盖 operations/alerts、备份和恢复演练。
 
 ## 下一步
 
-- 深化四期：如需严格执行 Java cron 绝对时刻，可继续把当前 interval 触发切换为 cron 表达式驱动；生产数据对账、备份校验和告警看板骨架已落地。
+- 五期上线验收闭环已落地：scheduler 实际触发切为 Java Quartz cron 等价调度，`ops-check --baseline` 支持 Java 导出基线对账，`restore-sqlite.ps1` 和 `release-check.ps1` 支持备份恢复与发布验收。
+- 新增只读生产运行接口：`GET /api/v1/system/operations`、`GET /api/v1/system/alerts`，`/system?section=operations` 优先消费同一份 operations 数据。
 - legacy 注册表已无剩余 `proxy / preserve` 项；后续新增旧入口必须先更新注册表和文档，并给出明确下线门槛。
 - 后续若迁移状态变更，先更新本文件，再同步 `README.md` 摘要。

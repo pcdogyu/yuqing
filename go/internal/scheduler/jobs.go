@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
+	"github.com/robfig/cron/v3"
 	"github.com/rs/zerolog/log"
 
 	"github.com/pcdogyu/yuqing/go/internal/model"
@@ -62,16 +65,21 @@ func (w *Worker) Jobs() []Job {
 			job.LastMessage = run.Message
 			job.LastStartedAt = &run.StartedAt
 			job.LastFinishedAt = run.FinishedAt
-			if def.Enabled && def.Interval > 0 {
-				next := run.StartedAt.Add(def.Interval)
-				for next.Before(now) {
-					next = next.Add(def.Interval)
+			if def.Enabled {
+				if next, err := nextCronRun(def.Cron, now); err == nil {
+					job.NextRunAt = &next
+				} else {
+					job.LastStatus = "invalid_cron"
+					job.LastMessage = err.Error()
 				}
-				job.NextRunAt = &next
 			}
-		} else if def.Enabled && def.Interval > 0 {
-			next := now.Add(def.Interval)
-			job.NextRunAt = &next
+		} else if def.Enabled {
+			if next, err := nextCronRun(def.Cron, now); err == nil {
+				job.NextRunAt = &next
+			} else {
+				job.LastStatus = "invalid_cron"
+				job.LastMessage = err.Error()
+			}
 		}
 		jobs = append(jobs, job)
 	}
@@ -101,7 +109,62 @@ func (w *Worker) lastTaskRunsByName(ctx context.Context) map[string]model.TaskRu
 func withJobMeta(def jobDefinition, javaQuartzName, cron string) jobDefinition {
 	def.JavaQuartzName = javaQuartzName
 	def.Cron = cron
+	def.Cron = schedulerEnv(def.Name, "CRON", cron)
+	def.Enabled = schedulerEnvBool(def.Name, "ENABLED", def.Enabled)
 	return def
+}
+
+func schedulerEnv(jobName, suffix, fallback string) string {
+	key := "YUQING_SCHEDULER_" + strings.ToUpper(strings.ReplaceAll(jobName, "-", "_")) + "_" + suffix
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func schedulerEnvBool(jobName, suffix string, fallback bool) bool {
+	raw := schedulerEnv(jobName, suffix, "")
+	if raw == "" {
+		return fallback
+	}
+	switch strings.ToLower(raw) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return fallback
+	}
+}
+
+func quartzCronSpec(spec string) string {
+	fields := strings.Fields(strings.TrimSpace(spec))
+	if len(fields) == 6 {
+		for i, field := range fields {
+			if field == "?" {
+				fields[i] = "*"
+			}
+		}
+		return strings.Join(fields, " ")
+	}
+	return spec
+}
+
+func cronParser() cron.Parser {
+	return cron.NewParser(cron.Second | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
+}
+
+func nextCronRun(spec string, from time.Time) (time.Time, error) {
+	location, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		location = time.Local
+	}
+	schedule, err := cronParser().Parse(quartzCronSpec(spec))
+	if err != nil {
+		return time.Time{}, err
+	}
+	return schedule.Next(from.In(location)).UTC(), nil
 }
 
 func (w *Worker) jobDefinitions() []jobDefinition {

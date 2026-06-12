@@ -3,7 +3,7 @@
 Go 版已经从早期 `jin10` 采集骨架收敛为一套可运行的一期多服务系统，核心范围包括：
 
 - `gateway-web`：统一入口、搜索入口与兼容跳转
-- `portal-web`：SSR 门户与 legacy 页面兼容层
+- `portal-web`：SSR 门户、正式工作台页面与 legacy 下线拦截
 - `auth-service`：登录、会话、API Token、微信登录/绑定
 - `content-service`：项目组、项目、监测规则、文章、报告、公告、反馈、任务记录、偏好、弹窗、邮件配置
 - `crawler-service`：抓取执行与抓取运行记录
@@ -11,7 +11,7 @@ Go 版已经从早期 `jin10` 采集骨架收敛为一套可运行的一期多�
 - `scheduler-service`：定时触发抓取和分析刷新
 - `nlp-service`：轻量标题/摘要/关键词生成
 
-二期/三期已经把 Go 主链路和 legacy 收口推进到可运行状态；旧 `fullsearch` JSON、LSearch 顶层聚合和 `publicoption/loadInformation` 已下线为 `410 Gone`，剩余兼容入口仅保留 `timelysearch` 过渡流和外部契约页面。
+二期/三期已经把 Go 主链路和 legacy 收口推进到可运行状态；四期收尾已将剩余 legacy `proxy` / `preserve` 入口统一下线为 `410 Gone`，当前注册表为 `proxy=0`、`preserve=0`、`gone=75`、`delete=40`。
 
 当前二期已经补出的正式接口基线：
 
@@ -37,13 +37,13 @@ Go 版已经从早期 `jin10` 采集骨架收敛为一套可运行的一期多�
 | 系统公告、反馈、任务记录、偏好、预警子集 | `完成` | 核心系统页能力已在 Go 主链路。 |
 | 微信登录/绑定 | `兼容完成` | Go 已实现，但仍保留兼容入口。 |
 | 邮件配置、弹窗状态 | `兼容完成` | Go 已实现，旧接口格式仍在兼容。 |
-| 移动端、大屏、热点、声量、申请试用 | `兼容完成` | Go 已可承接页面和接口，但仍属于兼容层。 |
-| 全文搜索、即时搜索、LSearch 历史筛选接口 | `兼容完成` | `fullsearch` JSON 和 LSearch 顶层聚合已下线为 `410 Gone`；`timelysearch` 因模板执行和 `return_to` 兼容继续保留。 |
-| 平台设置、公共选项、收藏/已读等操作 | `兼容完成` | Go 已承接主闭环；`publicoption/loadInformation` 已下线为 `410 Gone`，Platform/NLP 外部契约入口仍保留。 |
-| OCR 与外部平台集成 | `兼容完成` | OCR、图像识别、标题生成、报告预览、能力清单均已有正式 Go API，但兼容平台入口仍保留。 |
+| 移动端、大屏、热点、声量、申请试用 | `完成` | 旧 `/mobile/*`、`/displayboard*`、`/volume*`、`/hot/*`、`/dist/*`、`/img/code` 已统一下线为 `410 Gone`，正式能力走 Go 门户与正式 API。 |
+| 全文搜索、即时搜索、LSearch 历史筛选接口 | `完成` | 旧 `fullsearch` JSON、LSearch 顶层聚合和 `timelysearch` 入口均已下线为 `410 Gone`，正式链路走 `/articles` 与 `/api/v1/search/*`。 |
+| 平台设置、公共选项、收藏/已读等操作 | `完成` | Go 已承接主闭环；`publicoption/loadInformation`、`/platform/nlp/*`、`/platform/xie/*` 等旧入口已下线为 `410 Gone`。 |
+| OCR 与外部平台集成 | `完成` | OCR、图像识别、标题生成、报告预览、能力清单均由正式 Go API 承接，旧兼容平台入口已下线。 |
 | Java 全量高级全文检索剩余能力 | `兼容完成` | 高级筛选、聚合面包屑、特殊类型列表/选项/详情已补到正式 Go API，旧 `fullsearch` JSON 已下线。 |
-| 复杂传播/情感/专题分析 | `兼容完成` | 已有统一聚合查询契约，`PublicOption` 页面优先消费正式分析接口，但兼容页面和旧返回格式仍保留。 |
-| legacy 路由清理与兼容层收口 | `兼容完成` | 注册表已收敛为 `proxy=3`、`preserve=6`、`gone=66`、`delete=40`；剩余入口均有过渡或外部契约标注。 |
+| 复杂传播/情感/专题分析 | `完成` | 已有统一聚合查询契约，`PublicOption` 页面优先消费正式分析接口，旧分析兼容入口已下线。 |
+| legacy 路由清理与兼容层收口 | `完成` | 注册表已收敛为 `proxy=0`、`preserve=0`、`gone=75`、`delete=40`；不再保留存活 legacy 业务入口。 |
 
 详细矩阵见 [MIGRATION.md](MIGRATION.md)。
 
@@ -207,7 +207,8 @@ http://127.0.0.1
 
 ## 后续深化
 
-- 若需要严格按 Java cron 执行，可继续把当前 interval 调度切换为 cron 表达式驱动。
-- Java 原系统直接数据库对账仍需生产数据导出后做跨库专项比较。
+- 五期已把 scheduler 实际触发切到 Java Quartz cron 等价调度，`next_run_at` 由 cron 表达式计算。
+- 五期已新增上线验收闭环：`/api/v1/system/operations`、`/api/v1/system/alerts`、baseline 对账、备份恢复演练和 `release-check.ps1`。
+- Java 原系统直接数据差异对账通过 `ops-check --baseline` 接收导出的 JSON/CSV 基线。
 
 说明：具体模块状态以 [MIGRATION.md](MIGRATION.md) 的详细矩阵为准。

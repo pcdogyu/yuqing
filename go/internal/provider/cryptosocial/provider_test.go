@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 
+	"github.com/pcdogyu/yuqing/go/internal/external"
 	"github.com/pcdogyu/yuqing/go/internal/provider"
 )
 
@@ -49,4 +50,42 @@ func TestProviderFetchAppliesBearerToken(t *testing.T) {
 	if len(items) != 1 || !strings.Contains(items[0].SourceURL, "t.me") {
 		t.Fatalf("unexpected fetched items: %+v", items)
 	}
+}
+
+func TestProviderFetchClassifiesExternalErrors(t *testing.T) {
+	t.Run("non 200", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "bad gateway", http.StatusBadGateway)
+		}))
+		defer server.Close()
+
+		_, err := NewXProvider(resty.New(), server.URL, "").Fetch(context.Background())
+		if got := external.Classify(err); got != external.ErrNon200 {
+			t.Fatalf("expected %s, got %q err=%v", external.ErrNon200, got, err)
+		}
+	})
+
+	t.Run("invalid json", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{bad`))
+		}))
+		defer server.Close()
+
+		_, err := NewXProvider(resty.New(), server.URL, "").Fetch(context.Background())
+		if got := external.Classify(err); got != external.ErrInvalidJSON {
+			t.Fatalf("expected %s, got %q err=%v", external.ErrInvalidJSON, got, err)
+		}
+	})
+
+	t.Run("empty data", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"items":[]}`))
+		}))
+		defer server.Close()
+
+		_, err := NewXProvider(resty.New(), server.URL, "").Fetch(context.Background())
+		if got := external.Classify(err); got != external.ErrEmptyData {
+			t.Fatalf("expected %s, got %q err=%v", external.ErrEmptyData, got, err)
+		}
+	})
 }

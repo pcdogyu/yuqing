@@ -148,6 +148,70 @@ func TestAuditMiddlewareWritesSanitizedAccessLog(t *testing.T) {
 	}
 }
 
+func TestOperationsAndAlertsAPI(t *testing.T) {
+	ctx := context.Background()
+	store := newContentSearchTestStore(t)
+	started := time.Now().UTC().Add(-time.Minute)
+	finished := time.Now().UTC()
+	if err := store.RecordTaskRun(ctx, "release-check", "failed", "boom", started, &finished); err != nil {
+		t.Fatalf("RecordTaskRun error: %v", err)
+	}
+	if _, err := store.CreateAuditLog(ctx, model.AuditLog{Username: "ops", Action: "ops.test", Resource: "/ops", DetailJSON: `{}`}); err != nil {
+		t.Fatalf("CreateAuditLog error: %v", err)
+	}
+	healthy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/healthz" && r.URL.Path != "/api/v1/nlp/capabilities" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"status":"ok"}}`))
+	}))
+	defer healthy.Close()
+
+	svc := NewService(config.Config{
+		DatabasePath:   filepath.Join(t.TempDir(), "yuqing.db"),
+		GatewayWebURL:  healthy.URL,
+		AuthURL:        healthy.URL,
+		ContentURL:     healthy.URL,
+		CrawlerURL:     healthy.URL,
+		AnalysisURL:    healthy.URL,
+		NLPURL:         healthy.URL,
+		SchedulerURL:   healthy.URL,
+		BinanceBaseURL: "https://binance.example.com",
+		CoinLoreURL:    "https://coinlore.example.com",
+		CoinGeckoURL:   "https://coingecko.example.com",
+		HTTPTimeout:    time.Second,
+	}, store)
+	router := svc.Router()
+
+	opsReq := httptest.NewRequest(http.MethodGet, "/api/v1/system/operations", nil)
+	opsRR := httptest.NewRecorder()
+	router.ServeHTTP(opsRR, opsReq)
+	if opsRR.Code != http.StatusOK {
+		t.Fatalf("expected operations 200, got %d body=%s", opsRR.Code, opsRR.Body.String())
+	}
+	var opsEnvelope struct {
+		Data model.OperationsSummary `json:"data"`
+	}
+	if err := json.Unmarshal(opsRR.Body.Bytes(), &opsEnvelope); err != nil {
+		t.Fatalf("unmarshal operations: %v", err)
+	}
+	if len(opsEnvelope.Data.Services) != 7 || len(opsEnvelope.Data.FailedTaskRuns) != 1 {
+		t.Fatalf("unexpected operations summary: %+v", opsEnvelope.Data)
+	}
+	if opsEnvelope.Data.LegacyRegistry[2].Strategy != "preserve" || opsEnvelope.Data.LegacyRegistry[2].Count != 0 {
+		t.Fatalf("expected preserve legacy count to be zero, got %+v", opsEnvelope.Data.LegacyRegistry)
+	}
+
+	alertReq := httptest.NewRequest(http.MethodGet, "/api/v1/system/alerts", nil)
+	alertRR := httptest.NewRecorder()
+	router.ServeHTTP(alertRR, alertReq)
+	if alertRR.Code != http.StatusOK || !strings.Contains(alertRR.Body.String(), "failed_task_runs") {
+		t.Fatalf("expected failed task alert, got status=%d body=%s", alertRR.Code, alertRR.Body.String())
+	}
+}
+
 func TestSummarizeTextAndNonEmpty(t *testing.T) {
 	short := " short text "
 	if got := summarizeText(short); got != "short text" {
