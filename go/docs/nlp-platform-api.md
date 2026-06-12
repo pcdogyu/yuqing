@@ -89,6 +89,9 @@ Invoke-RestMethod http://127.0.0.1:8085/api/v1/nlp/capabilities
   - 旧 `/platform/xie/report*` SSE 入口已下线，不再作为降级出口。
 - `portal-web` 不可用时：
   - 外部调用方仍可直接访问 `nlp-service` 正式接口。
+- 外部访问策略：
+  - 作为独立服务直接访问时，调用方自行控制超时和重试。
+  - 由 Go 平台内部工作台或任务链路访问时，遵循五期第三批统一外部 HTTP 策略：超时、`429`、`5xx` 可重试，普通 `4xx` 不重试。
 - 下线状态：
   1. 新联调路径统一改用 `nlp-service` 正式 API
   2. 旧 `/platform/nlp/*`、`/platform/xie/*` 已返回 `410 Gone`

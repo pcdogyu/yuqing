@@ -232,6 +232,9 @@
   - crawler 与 scheduler 外部 HTTP 客户端统一使用 `YUQING_EXTERNAL_RETRY_COUNT`、`YUQING_EXTERNAL_RETRY_WAIT_MS`，仅对超时、HTTP `429` 和 `5xx` 重试。
   - crypto social provider 新增 `YUQING_CRYPTO_SOCIAL_RATE_LIMIT_MS` 请求限流，禁用端点、非 200、坏 JSON、空数据和重复数据均有固定分类或结构化日志。
   - 启动日志新增 `external_retry_count`、`external_retry_wait`、`crypto_social_rate_limit`，便于生产核对实际外部集成策略。
+- 2026-06-12：五期第三批文档复核：
+  - 已同步 [docs/phase5-release-readiness.md](docs/phase5-release-readiness.md) 的三批最小验收命令和验收口径。
+  - 已同步 [docs/crypto-social-proxy.md](docs/crypto-social-proxy.md)、[docs/nlp-platform-api.md](docs/nlp-platform-api.md)、[docs/phase4-productionization.md](docs/phase4-productionization.md) 的外部访问韧性说明。
 
 ## 下一步
 

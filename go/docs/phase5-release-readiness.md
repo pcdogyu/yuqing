@@ -124,6 +124,20 @@ $env:YUQING_EXTERNAL_RETRY_WAIT_MS = "500"
 $env:YUQING_CRYPTO_SOCIAL_RATE_LIMIT_MS = "0"
 ```
 
+三批最小验收命令：
+
+```powershell
+cd D:\yuqing\go
+go test ./internal/external ./internal/config ./internal/app ./internal/provider/cryptosocial ./internal/scheduler
+```
+
+验收口径：
+
+- `external.ShouldRetryResponse` 覆盖超时、`429`、`5xx`，并排除普通 `4xx`。
+- `cryptosocial.Provider` 对禁用端点、非 200、坏 JSON、空数据返回可分类错误。
+- `cryptosocial.Provider` 在配置 `YUQING_CRYPTO_SOCIAL_RATE_LIMIT_MS` 后会限制连续请求间隔。
+- `scheduler.Worker` 与 `app.NewCrawler` 统一使用配置化 retry count / wait。
+
 ## Release Check
 
 发布前执行：

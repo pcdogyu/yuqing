@@ -81,6 +81,8 @@ Query 中的 `token`、`password`、`secret`、`key` 会脱敏。
 
 五期后该页面优先消费 `GET /api/v1/system/operations`，脚本、页面和 JSON API 使用同一份运行数据。`GET /api/v1/system/alerts` 输出上线告警与 `ready` 标志。
 
+五期第三批后，外部 HTTP 访问的超时、重试和 crypto social 限流配置已统一收口；具体参数和验收口径见 [phase5-release-readiness.md](phase5-release-readiness.md)。
+
 ## Verification
 
 四期代码变更后固定验证：
