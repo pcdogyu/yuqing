@@ -1,46 +1,52 @@
 # Legacy Route Inventory
 
-截至 `2026-06-12`，二期先建立收口基线，不在兼容层继续新增业务逻辑。
+截至 `2026-06-12`，三期开始按“代码注册表 + 文档执行清单”统一管理 legacy 路由。新增兼容入口必须先补注册表与本清单；禁止继续新增匿名 legacy handler。
 
-## 搜索与详情
+## 执行规则
 
-| Legacy 入口 | 当前作用 | 正式 Go 替代 | 策略 |
-| --- | --- | --- | --- |
-| `/fullsearch/*` | 旧全文搜索页面、筛选、详情跳转 | `content-service /api/v1/search/full` + `portal-web /articles?mode=search` | `替换`，逐步降级为跳转 |
-| `/timelysearch/*` | 旧即时搜索页面、模板执行、结果页 | `content-service /api/v1/search/timely` + `content-service /api/v1/crawl-templates` + `portal-web` SSR | `替换`，保留必要上下文跳转 |
-| `/timelysearch/stream` | legacy SSE 实时抓取回显 | `crawler-service` / 模板执行正式接口 | `保留` 过渡，后续替换 |
-| 各类 `*detailData` 旧详情 JSON | 特殊类型详情数据 | `content-service /api/v1/search/details/{id}` | `替换` |
+- `strategy` 只允许：`preserve`、`proxy`、`redirect`、`gone`、`delete`
+- `removal_gate` 只允许：`ui-migrated`、`client-migrated`、`usage-zero`、`external-contract`
+- 页面入口优先 `302`
+- 已过渡完成且仍被访问的 API 优先 `410`
+- 确认无调用方的入口直接删除
 
-## 平台与 NLP
+## 存活 legacy 路由
 
-| Legacy 入口 | 当前作用 | 正式 Go 替代 | 策略 |
-| --- | --- | --- | --- |
-| `/platform/nlp/ocr` | OCR 兼容 JSON | `nlp-service /api/v1/nlp/ocr` | `替换`，兼容层只做过渡 |
-| `/platform/nlp/image` | 图像识别兼容 JSON | `nlp-service /api/v1/nlp/image` | `替换` |
-| `/platform/xie/title/*` | 写作标题兼容入口 | `nlp-service /api/v1/nlp/title` | `替换` |
-| `/platform/xie/report*` | 写作报告预览 / SSE | `nlp-service /api/v1/nlp/report-preview` + `portal-web` SSE 兼容包装 | `保留` 过渡，默认联调改走正式报告接口 |
-| `/platform/notice` | 平台公告旧 JSON | `content-service /api/v1/system/notices` | `替换` |
+| legacy_path | owner_module | formal_target | current_behavior | strategy | removal_gate |
+| --- | --- | --- | --- | --- | --- |
+| `/fullsearch/*` | `FullSearchController` | `/articles?mode=full` | 旧全文搜索结果页与特殊详情页入口已改为跳转；筛选、类型、详情数据等兼容 JSON 仍保留 | `redirect` | `ui-migrated` |
+| `/timelysearch/*` | `TimelySearchController` | `/articles?mode=timely` | 旧即时搜索页面、结果页与兼容数据流 | `proxy` | `client-migrated` |
+| `/industry` | `LSearchController` | `/api/v1/search/metadata/types` | 行业聚合兼容 JSON | `proxy` | `client-migrated` |
+| `/getevent` | `LSearchController` | `/api/v1/search/metadata/breadcrumbs` | 事件聚合兼容 JSON | `proxy` | `client-migrated` |
+| `/getProvinceList` | `LSearchController` | `/api/v1/search/full/facets` | 省份聚合兼容 JSON | `proxy` | `client-migrated` |
+| `/getArticleCityList` | `LSearchController` | `/api/v1/search/full/facets` | 城市聚合兼容 JSON | `proxy` | `client-migrated` |
+| `/publicoption/reportdetail/*` | `PublicOptionContoller` | `/publicoption?id={id}` | 旧详情页入口，现仅保留跳转 | `redirect` | `ui-migrated` |
+| `/publicoption/backanalysis` | `PublicOptionContoller` | `/publicoption?id={id}&section=backanalysis` | 旧分析页入口，现仅保留跳转 | `redirect` | `ui-migrated` |
+| `/publicoption/eventContext` | `PublicOptionContoller` | `/publicoption?id={id}&section=eventContext` | 旧分析页入口，现仅保留跳转 | `redirect` | `ui-migrated` |
+| `/publicoption/eventTrace` | `PublicOptionContoller` | `/publicoption?id={id}&section=eventTrace` | 旧分析页入口，现仅保留跳转 | `redirect` | `ui-migrated` |
+| `/publicoption/hotAnalysis` | `PublicOptionContoller` | `/publicoption?id={id}&section=hotAnalysis` | 旧分析页入口，现仅保留跳转 | `redirect` | `ui-migrated` |
+| `/publicoption/netizensAnalysis` | `PublicOptionContoller` | `/publicoption?id={id}&section=netizensAnalysis` | 旧分析页入口，现仅保留跳转 | `redirect` | `ui-migrated` |
+| `/publicoption/statistics` | `PublicOptionContoller` | `/publicoption?id={id}&section=statistics` | 旧分析页入口，现仅保留跳转 | `redirect` | `ui-migrated` |
+| `/publicoption/propagationAnalysis` | `PublicOptionContoller` | `/publicoption?id={id}&section=propagationAnalysis` | 旧分析页入口，现仅保留跳转 | `redirect` | `ui-migrated` |
+| `/publicoption/thematicAnalysis` | `PublicOptionContoller` | `/publicoption?id={id}&section=thematicAnalysis` | 旧分析页入口，现仅保留跳转 | `redirect` | `ui-migrated` |
+| `/publicoption/unscrambleContent` | `PublicOptionContoller` | `/publicoption?id={id}&section=unscrambleContent` | 旧分析页入口，现仅保留跳转 | `redirect` | `ui-migrated` |
+| `/publicoption/popular_feelings_analys` | `PublicOptionContoller` | `/publicoption?id={id}&section=popular_feelings_analys` | 旧分析页入口，现仅保留跳转 | `redirect` | `ui-migrated` |
+| `/publicoption/loadInformation` | `PublicOptionContoller` | `/api/v1/search/full` | 旧任务文章列表 JSON | `proxy` | `client-migrated` |
+| `/platform/nlp/*` | `PlatformController` | `/api/v1/nlp/*` | OCR / 图像识别兼容入口 | `proxy` | `external-contract` |
+| `/platform/xie/*` | `PlatformController` | `/api/v1/nlp/*` | 标题 / 报告预览 / SSE 兼容入口 | `proxy` | `external-contract` |
+| `/mobile/*` | `MobileController` | `portal SSR pages` | 移动端兼容页 | `preserve` | `external-contract` |
+| `/displayboard*` | `DisplayBoardController` | `portal SSR pages` | 大屏兼容页 | `preserve` | `external-contract` |
+| `/volume*` | `VolumeController` | `portal SSR pages` | 声量兼容页 | `preserve` | `external-contract` |
+| `/hot/*` | `HotNewsController` | `portal SSR pages` | 热点兼容页 | `preserve` | `external-contract` |
+| `/dist/*` | `UserAuthController` | `portal SSR pages` | 试用申请兼容页 | `preserve` | `external-contract` |
+| `/img/code` | `ImageController` | `/login` | 验证码兼容入口 | `preserve` | `external-contract` |
 
-## 公共舆情与分析
+## 已下线 legacy 路由
 
-| Legacy 入口 | 当前作用 | 正式 Go 替代 | 策略 |
-| --- | --- | --- | --- |
-| `/publicoption/loadInformation` | 旧任务文章列表 | `content-service /api/v1/search/full` | `替换` |
-| `/publicoption/*analysis*` | 旧分析结果页面/JSON | `analysis-service /api/v1/public-opinion/enrich` | `替换` |
-| `/publicoption/reportdetail/*` | 旧详情工作台入口 | `portal-web /publicoption` Go 工作台 | `替换` |
-
-## 兼容页面
-
-| Legacy 入口 | 当前作用 | 正式 Go 替代 | 策略 |
-| --- | --- | --- | --- |
-| `/mobile/*` | 移动端兼容页 | `portal-web` 兼容 SSR | `保留`，三期评估是否继续长期支持 |
-| `/displayboard*` | 大屏兼容页 | `portal-web` 兼容 SSR | `保留` |
-| `/volume*` | 声量页兼容入口 | `portal-web` 兼容 SSR | `保留` |
-| `/hot/*` | 热点兼容页 | `portal-web` 兼容 SSR | `保留` |
-| `/img/code` | 验证码兼容入口 | Go 门户登录链路 | `保留`，直到旧登录页完全下线 |
-
-## 二期执行规则
-
-- 新增能力只落正式接口，不落 legacy handler。
-- legacy handler 允许做跳转、转发、兼容返回，不允许新增业务计算。
-- 文档、联调、测试默认优先使用正式 Go 接口。
+| legacy_path | owner_module | formal_target | current_behavior | strategy | removal_gate |
+| --- | --- | --- | --- | --- | --- |
+| `/jumpLogin` | `LoginController` | `/login` | 已移除旧登录跳转 | `delete` | `usage-zero` |
+| `/wechatJumpLogin` | `LoginController` | `/wechat/checkLogin` | 已移除旧微信登录跳转 | `delete` | `usage-zero` |
+| `/onlinestatistical` | `LoginController` | `/system?section=account` | 已移除旧在线统计入口 | `delete` | `usage-zero` |
+| `/user/save` | `UserController` | `/system?section=account` | 已移除旧用户保存入口 | `delete` | `usage-zero` |
+| `/user/getToken` | `UserController` | `/api/v1/auth/login` | 已移除旧 token 入口 | `delete` | `usage-zero` |

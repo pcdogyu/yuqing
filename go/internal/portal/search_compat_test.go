@@ -216,6 +216,9 @@ func TestLegacySearchInformationList(t *testing.T) {
 	if !strings.Contains(envelope.Data.Data[0].KeyWords, "钢铁") {
 		t.Fatalf("expected keyword in article keywords, got %+v", envelope.Data.Data[0])
 	}
+	if !strings.Contains(envelope.Data.Data[0].Url, "/articles/55?return_to=%2Farticles%3F") || !strings.Contains(envelope.Data.Data[0].Url, "mode%3Dfull") {
+		t.Fatalf("expected canonical article link in fullsearch list, got %+v", envelope.Data.Data[0])
+	}
 }
 
 func TestLegacyHotList(t *testing.T) {
@@ -594,24 +597,21 @@ func TestLegacySpecializedFullSearchEndpoints(t *testing.T) {
 	pageReq := httptest.NewRequest(http.MethodGet, "/fullsearch/lawyerDetail/101", nil)
 	pageRR := httptest.NewRecorder()
 	srv.handleSearchCompat(pageRR, pageReq, user, "full")
-	if pageRR.Code != http.StatusOK {
-		t.Fatalf("expected lawyerDetail page 200, got %d", pageRR.Code)
+	if pageRR.Code != http.StatusSeeOther {
+		t.Fatalf("expected lawyerDetail redirect, got %d", pageRR.Code)
 	}
-	if !strings.Contains(pageRR.Body.String(), "律师详情") || !strings.Contains(pageRR.Body.String(), "张三") {
-		t.Fatalf("unexpected lawyer detail page: %s", pageRR.Body.String())
+	if location := pageRR.Header().Get("Location"); location != "/articles/101?return_to=%2Farticles%3Fmode%3Dfull%26page%3D1" {
+		t.Fatalf("unexpected lawyer detail redirect: %q", location)
 	}
 
 	companyPageReq := httptest.NewRequest(http.MethodGet, "/fullsearch/companyDetail/202", nil)
 	companyPageRR := httptest.NewRecorder()
 	srv.handleSearchCompat(companyPageRR, companyPageReq, user, "full")
-	if companyPageRR.Code != http.StatusOK {
-		t.Fatalf("expected company detail page 200, got %d", companyPageRR.Code)
+	if companyPageRR.Code != http.StatusSeeOther {
+		t.Fatalf("expected company detail redirect, got %d", companyPageRR.Code)
 	}
-	if !strings.Contains(companyPageRR.Body.String(), "主要人员") || !strings.Contains(companyPageRR.Body.String(), "董事长") || !strings.Contains(companyPageRR.Body.String(), "人工智能软件开发") {
-		t.Fatalf("unexpected company detail page: %s", companyPageRR.Body.String())
-	}
-	if !strings.Contains(companyPageRR.Body.String(), "data-page='fullsearch/company'") {
-		t.Fatalf("expected fullsearch company page marker, got %s", companyPageRR.Body.String())
+	if location := companyPageRR.Header().Get("Location"); location != "/articles/202?return_to=%2Farticles%3Fmode%3Dfull%26page%3D1" {
+		t.Fatalf("unexpected company detail redirect: %q", location)
 	}
 
 	companyDetailReq := httptest.NewRequest(http.MethodGet, "/fullsearch/companyDetails?article_public_id=202", nil)
@@ -658,11 +658,11 @@ func TestLegacySpecializedFullSearchEndpoints(t *testing.T) {
 	investmentPageReq := httptest.NewRequest(http.MethodGet, "/fullsearch/investmentDetail/303", nil)
 	investmentPageRR := httptest.NewRecorder()
 	srv.handleSearchCompat(investmentPageRR, investmentPageReq, user, "full")
-	if investmentPageRR.Code != http.StatusOK {
-		t.Fatalf("expected investment detail page 200, got %d", investmentPageRR.Code)
+	if investmentPageRR.Code != http.StatusSeeOther {
+		t.Fatalf("expected investment detail redirect, got %d", investmentPageRR.Code)
 	}
-	if !strings.Contains(investmentPageRR.Body.String(), "融资历史") || !strings.Contains(investmentPageRR.Body.String(), "启明创投") || !strings.Contains(investmentPageRR.Body.String(), "智能风控平台") {
-		t.Fatalf("unexpected investment detail page: %s", investmentPageRR.Body.String())
+	if location := investmentPageRR.Header().Get("Location"); location != "/articles/303?return_to=%2Farticles%3Fmode%3Dfull%26page%3D1" {
+		t.Fatalf("unexpected investment detail redirect: %q", location)
 	}
 }
 

@@ -890,30 +890,66 @@ func TestPublicOptionCompatPages(t *testing.T) {
 	if !strings.Contains(listBody, "事件分析工作台") || !strings.Contains(listBody, "AI 舆情研判") {
 		t.Fatalf("expected publicoption list content, got %s", listBody)
 	}
-	if !strings.Contains(listBody, "/publicoption/reportdetail/1") {
+	if !strings.Contains(listBody, "/publicoption?id=1") {
 		t.Fatalf("expected detail link on publicoption list, got %s", listBody)
 	}
 
 	detailRR := httptest.NewRecorder()
 	detailReq := httptest.NewRequest(http.MethodGet, "/publicoption/reportdetail/1", nil)
 	srv.handlePublicOptionCompat(detailRR, detailReq, user)
-	if detailRR.Code != http.StatusOK {
-		t.Fatalf("expected publicoption detail 200, got %d", detailRR.Code)
+	if detailRR.Code != http.StatusSeeOther {
+		t.Fatalf("expected publicoption detail redirect, got %d", detailRR.Code)
 	}
-	detailBody := detailRR.Body.String()
+	if location := detailRR.Header().Get("Location"); location != "/publicoption?id=1" {
+		t.Fatalf("expected detail redirect target, got %q", location)
+	}
+
+	workbenchRR := httptest.NewRecorder()
+	workbenchReq := httptest.NewRequest(http.MethodGet, "/publicoption?id=1", nil)
+	srv.handlePublicOptionEntry(workbenchRR, workbenchReq, user)
+	if workbenchRR.Code != http.StatusOK {
+		t.Fatalf("expected publicoption workbench 200, got %d", workbenchRR.Code)
+	}
+	detailBody := workbenchRR.Body.String()
 	if !strings.Contains(detailBody, "任务总览") || !strings.Contains(detailBody, "事件脉络内容") {
 		t.Fatalf("expected publicoption detail content, got %s", detailBody)
 	}
 
 	analysisRR := httptest.NewRecorder()
-	analysisReq := httptest.NewRequest(http.MethodGet, "/publicoption/backanalysis", nil)
+	analysisReq := httptest.NewRequest(http.MethodGet, "/publicoption/backanalysis?id=1", nil)
 	srv.handlePublicOptionCompat(analysisRR, analysisReq, user)
-	if analysisRR.Code != http.StatusOK {
-		t.Fatalf("expected publicoption analysis 200, got %d", analysisRR.Code)
+	if analysisRR.Code != http.StatusSeeOther {
+		t.Fatalf("expected publicoption analysis redirect, got %d", analysisRR.Code)
 	}
-	analysisBody := analysisRR.Body.String()
+	if location := analysisRR.Header().Get("Location"); location != "/publicoption?id=1&section=backanalysis" {
+		t.Fatalf("expected analysis redirect target, got %q", location)
+	}
+
+	analysisPageRR := httptest.NewRecorder()
+	analysisPageReq := httptest.NewRequest(http.MethodGet, "/publicoption?id=1&section=backanalysis", nil)
+	srv.handlePublicOptionEntry(analysisPageRR, analysisPageReq, user)
+	if analysisPageRR.Code != http.StatusOK {
+		t.Fatalf("expected publicoption analysis page 200, got %d", analysisPageRR.Code)
+	}
+	analysisBody := analysisPageRR.Body.String()
 	if !strings.Contains(analysisBody, "分析结果") || !strings.Contains(analysisBody, "回溯分析内容") {
 		t.Fatalf("expected publicoption analysis content, got %s", analysisBody)
+	}
+}
+
+func TestLegacyRouteRegistryStrategies(t *testing.T) {
+	detail, ok := legacyRouteSpecForPath("/publicoption/reportdetail/1")
+	if !ok || detail.Strategy != legacyStrategyRedirect || detail.RemovalGate != legacyRemovalGateUIMigrated {
+		t.Fatalf("unexpected publicoption detail legacy spec: %+v ok=%v", detail, ok)
+	}
+
+	platform, ok := legacyRouteSpecForPath("/platform/xie/report")
+	if !ok || platform.Strategy != legacyStrategyProxy {
+		t.Fatalf("unexpected platform legacy spec: %+v ok=%v", platform, ok)
+	}
+
+	if !isRemovedLegacyPortalPath("/user/save") {
+		t.Fatalf("expected /user/save to be treated as removed")
 	}
 }
 

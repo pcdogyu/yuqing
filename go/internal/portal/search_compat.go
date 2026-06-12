@@ -454,6 +454,9 @@ func (s *Server) handleLegacySearchInformationList(w http.ResponseWriter, r *htt
 	articles := make([]legacySearchArticle, 0, len(result.Items))
 	articleIDs := make([]string, 0, len(result.Items))
 	returnPath := legacySearchResultPath(mode, r)
+	if mode == "full" {
+		returnPath = s.normalizeFullSearchReturnTarget(r, returnPath)
+	}
 	for _, item := range result.Items {
 		articles = append(articles, legacySearchArticleFromItem(item, filter.Keyword, s.legacySpecialDetailTarget(mode, item, returnPath)))
 		articleIDs = append(articleIDs, strconv.FormatInt(item.ID, 10))
@@ -1379,6 +1382,11 @@ func (s *Server) handleLegacySpecialDetailPage(w http.ResponseWriter, r *http.Re
 	}
 	if itemID == "" {
 		http.Redirect(w, r, s.legacySearchTarget(mode, r), http.StatusSeeOther)
+		return
+	}
+	if mode == "full" {
+		returnPath = s.normalizeFullSearchReturnTarget(r, returnPath)
+		http.Redirect(w, r, legacyFullSearchArticleTarget(itemID, returnPath), http.StatusSeeOther)
 		return
 	}
 	item, err := s.fetchLegacyItemByID(itemID, 0)
@@ -2547,6 +2555,9 @@ func (s *Server) legacyArticleDetailTarget(ctx context.Context, mode string, art
 }
 
 func (s *Server) legacySpecialDetailTarget(mode string, item model.Item, returnPath string) string {
+	if mode == "full" {
+		return legacyFullSearchArticleTarget(strconv.FormatInt(item.ID, 10), returnPath)
+	}
 	kind := legacySpecialKind(item)
 	if kind == "" {
 		return "/articles/" + url.PathEscape(strconv.FormatInt(item.ID, 10)) + "?return_to=" + url.QueryEscape(returnPath)
@@ -2558,6 +2569,25 @@ func (s *Server) legacySpecialDetailTarget(mode string, item model.Item, returnP
 	target := "/" + mode + "search/" + path + "/" + url.PathEscape(strconv.FormatInt(item.ID, 10))
 	if returnPath != "" {
 		target += "?return_to=" + url.QueryEscape(returnPath)
+	}
+	return target
+}
+
+func legacyFullSearchArticleTarget(articleID string, returnPath string) string {
+	target := "/articles/" + url.PathEscape(strings.TrimSpace(articleID))
+	if trimmed := strings.TrimSpace(returnPath); trimmed != "" {
+		target += "?return_to=" + url.QueryEscape(trimmed)
+	}
+	return target
+}
+
+func (s *Server) normalizeFullSearchReturnTarget(r *http.Request, raw string) string {
+	target := strings.TrimSpace(localRedirectTarget(raw))
+	if target == "" {
+		return s.legacySearchTarget("full", r)
+	}
+	if strings.HasPrefix(target, "/fullsearch") {
+		return s.legacySearchTarget("full", cloneRequestWithURL(r, target))
 	}
 	return target
 }

@@ -843,7 +843,8 @@ func (s *Server) handlePublicOptionEntry(w http.ResponseWriter, r *http.Request,
 		s.handlePublicOptionWorkbenchAction(w, r, user, 0)
 		return
 	}
-	s.renderPublicOptionListPage(w, r, user, "")
+	selectedID, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("id")), 10, 64)
+	s.renderPublicOptionWorkbench(w, r, user, selectedID, strings.TrimSpace(r.URL.Query().Get("section")), "")
 }
 
 func (s *Server) handlePublicOptionCompat(w http.ResponseWriter, r *http.Request, user any) {
@@ -864,7 +865,7 @@ func (s *Server) handlePublicOptionCompat(w http.ResponseWriter, r *http.Request
 			s.handlePublicOptionWorkbenchAction(w, r, user, value)
 			return
 		}
-		s.renderPublicOptionReportDetailPage(w, r, user, id)
+		s.redirectPublicOptionSection(w, r, id, "")
 	case path == "updatedatabyid":
 		s.handlePublicOptionUpdateJSON(w, r, user)
 	case path == "addpublicoptiondata":
@@ -874,25 +875,25 @@ func (s *Server) handlePublicOptionCompat(w http.ResponseWriter, r *http.Request
 	case path == "publicoptionreportlist":
 		s.handlePublicOptionReportListJSON(w, r, user)
 	case path == "backanalysis":
-		s.renderPublicOptionAnalysisPage(w, r, user, "backanalysis")
+		s.redirectPublicOptionSection(w, r, r.URL.Query().Get("id"), "backanalysis")
 	case path == "eventContext":
-		s.renderPublicOptionAnalysisPage(w, r, user, "eventContext")
+		s.redirectPublicOptionSection(w, r, r.URL.Query().Get("id"), "eventContext")
 	case path == "eventTrace":
-		s.renderPublicOptionAnalysisPage(w, r, user, "eventTrace")
+		s.redirectPublicOptionSection(w, r, r.URL.Query().Get("id"), "eventTrace")
 	case path == "hotAnalysis":
-		s.renderPublicOptionAnalysisPage(w, r, user, "hotAnalysis")
+		s.redirectPublicOptionSection(w, r, r.URL.Query().Get("id"), "hotAnalysis")
 	case path == "netizensAnalysis":
-		s.renderPublicOptionAnalysisPage(w, r, user, "netizensAnalysis")
+		s.redirectPublicOptionSection(w, r, r.URL.Query().Get("id"), "netizensAnalysis")
 	case path == "statistics":
-		s.renderPublicOptionAnalysisPage(w, r, user, "statistics")
+		s.redirectPublicOptionSection(w, r, r.URL.Query().Get("id"), "statistics")
 	case path == "propagationAnalysis":
-		s.renderPublicOptionAnalysisPage(w, r, user, "propagationAnalysis")
+		s.redirectPublicOptionSection(w, r, r.URL.Query().Get("id"), "propagationAnalysis")
 	case path == "thematicAnalysis":
-		s.renderPublicOptionAnalysisPage(w, r, user, "thematicAnalysis")
+		s.redirectPublicOptionSection(w, r, r.URL.Query().Get("id"), "thematicAnalysis")
 	case path == "unscrambleContent":
-		s.renderPublicOptionAnalysisPage(w, r, user, "unscrambleContent")
+		s.redirectPublicOptionSection(w, r, r.URL.Query().Get("id"), "unscrambleContent")
 	case path == "popular_feelings_analys":
-		s.renderPublicOptionAnalysisPage(w, r, user, "popular_feelings_analys")
+		s.redirectPublicOptionSection(w, r, r.URL.Query().Get("id"), "popular_feelings_analys")
 	case path == "loadInformation":
 		s.handlePublicOptionLoadInformation(w, r, user)
 	default:
@@ -923,7 +924,7 @@ func (s *Server) handlePublicOptionWorkbenchAction(w http.ResponseWriter, r *htt
 		s.enrichPublicOption(&option)
 		created, err := s.putPublicOptionCreate(option)
 		if err == nil && created.ID > 0 {
-			redirectTo = "/publicoption/reportdetail/" + strconv.FormatInt(created.ID, 10)
+			redirectTo = publicOptionWorkbenchTarget(created.ID, "")
 			message = "任务已创建"
 		}
 	case "update":
@@ -941,7 +942,7 @@ func (s *Server) handlePublicOptionWorkbenchAction(w http.ResponseWriter, r *htt
 		s.enrichPublicOption(&option)
 		updated, err := s.putPublicOptionUpdate(option)
 		if err == nil && updated.ID > 0 {
-			redirectTo = "/publicoption/reportdetail/" + strconv.FormatInt(updated.ID, 10)
+			redirectTo = publicOptionWorkbenchTarget(updated.ID, "")
 			message = "任务已更新"
 		}
 	case "delete":
@@ -1095,6 +1096,25 @@ func (s *Server) renderPublicOptionReportDetailPage(w http.ResponseWriter, r *ht
 func (s *Server) renderPublicOptionAnalysisPage(w http.ResponseWriter, r *http.Request, user any, section string) {
 	selectedID, _ := strconv.ParseInt(firstNonEmpty(r.URL.Query().Get("id"), r.FormValue("id")), 10, 64)
 	s.renderPublicOptionWorkbench(w, r, user, selectedID, section, "")
+}
+
+func (s *Server) redirectPublicOptionSection(w http.ResponseWriter, r *http.Request, id string, section string) {
+	selectedID, _ := strconv.ParseInt(strings.TrimSpace(id), 10, 64)
+	http.Redirect(w, r, publicOptionWorkbenchTarget(selectedID, section), http.StatusSeeOther)
+}
+
+func publicOptionWorkbenchTarget(id int64, section string) string {
+	query := url.Values{}
+	if id > 0 {
+		query.Set("id", strconv.FormatInt(id, 10))
+	}
+	if section = strings.TrimSpace(section); section != "" {
+		query.Set("section", section)
+	}
+	if encoded := query.Encode(); encoded != "" {
+		return "/publicoption?" + encoded
+	}
+	return "/publicoption"
 }
 
 func (s *Server) renderPublicOptionWorkbench(w http.ResponseWriter, r *http.Request, user any, selectedID int64, section string, message string) {

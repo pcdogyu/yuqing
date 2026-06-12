@@ -1693,68 +1693,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request, user an
 }
 
 func isRemovedLegacyPortalPath(path string) bool {
-	switch {
-	case path == "/api/getToken",
-		path == "/api/getArticle",
-		path == "/api/getMergeArticle",
-		path == "/api/detail",
-		path == "/jumpLogin",
-		path == "/wechatJumpLogin",
-		path == "/onlinestatistical",
-		path == "/monitor/exportarticle",
-		path == "/search",
-		path == "/search/",
-		path == "/fullsearch",
-		path == "/fullsearch/",
-		path == "/timelysearch",
-		path == "/timelysearch/",
-		path == "/project/names",
-		path == "/project/groupandproject",
-		path == "/project/mkdirgroup",
-		path == "/project/getProjectCountByGroupId",
-		path == "/project/editgroup",
-		path == "/project/listproject",
-		path == "/project/getGroupAndProject",
-		path == "/project/verifygroup",
-		path == "/project/getedit",
-		path == "/project/commitproject",
-		path == "/project/detail",
-		path == "/project/commiteditproject",
-		path == "/project/delProject",
-		path == "/project/updateSolutionGroupStatus",
-		path == "/project/batchUpdateProject",
-		path == "/project/keywords",
-		path == "/mail/saveMailConfig",
-		path == "/mail/checkMailConfig",
-		path == "/mail/getMailConfig",
-		path == "/user/save",
-		path == "/user/getToken",
-		path == "/user/detail",
-		path == "/user/edit",
-		path == "/user/getwechatqrcode",
-		path == "/industry",
-		path == "/industry/",
-		path == "/getevent",
-		path == "/getevent/",
-		path == "/getProvinceList",
-		path == "/getProvinceList/",
-		path == "/getArticleCityList",
-		path == "/getArticleCityList/",
-		path == "/popUp/needPopUp",
-		path == "/popUp/close",
-		path == "/popUp/needContact",
-		path == "/popUp/closeContact",
-		path == "/datamonitor/updateemtion",
-		path == "/datamonitor/addfavoritedata",
-		path == "/datamonitor/isread",
-		path == "/datamonitor/selectreadsign",
-		path == "/datamonitor/deletedata",
-		path == "/datamonitor/copytext",
-		path == "/datamonitor/sending":
-		return true
-	default:
-		return false
-	}
+	return legacyRouteHasStrategy(path, legacyStrategyGone, legacyStrategyDelete)
 }
 
 func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request, user any) {
@@ -4085,7 +4024,7 @@ const platformWorkbenchTemplateV3 = `
 `
 
 const publicOptionWorkbenchTemplate = `
-{{define "public_option_workbench"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.summary-card{padding:14px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.summary-card strong{display:block;font-size:24px;margin-top:6px}.grid2{display:grid;grid-template-columns:minmax(320px,1.2fr) minmax(360px,1fr);gap:16px}.stack{display:grid;gap:16px}.section-card{border:1px solid #ece7dc;border-radius:14px;background:#faf8f2;padding:16px}.compact td form{margin:0}.compact input,.compact textarea,.compact select,.compact button{margin:4px 0;padding:8px}.toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.toolbar a{padding:8px 12px;border-radius:999px;background:#efe9dc;color:#214e34;text-decoration:none}.toolbar a.active{background:#214e34;color:#fff}.muted{color:#6a6257}.analysis{white-space:pre-wrap;line-height:1.6;background:#fff;border:1px solid #ece7dc;border-radius:12px;padding:14px}.danger button{background:#8f2d2d}` + `</style></head><body><header><h1>事件分析工作台</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><form class="inline" method="get" action="/publicoption"><input name="keyword" placeholder="搜索任务名称或关键词" value="{{.FilterKeyword}}"><button type="submit">搜索</button>{{if .FilterKeyword}}<a class="inline" href="/publicoption">清空</a>{{end}}</form><div class="summary-grid"><div class="summary-card">分析任务<strong>{{len .PublicOptions}}</strong></div><div class="summary-card">当前任务<strong>{{if .PublicOption.ID}}{{.PublicOption.EventName}}{{else}}未选择{{end}}</strong></div><div class="summary-card">事件关键词<strong>{{if .PublicOption.EventKeywords}}{{.PublicOption.EventKeywords}}{{else}}未填写{{end}}</strong></div><div class="summary-card">情感指数<strong>{{if .PublicOption.EmotionalIndex}}{{.PublicOption.EmotionalIndex}}{{else}}--{{end}}</strong></div></div></section><section class="grid2"><div class="stack"><div class="section-card"><h2>新建分析任务</h2><form method="post" action="/publicoption"><input type="hidden" name="action" value="create"><input name="eventname" placeholder="事件名称"><input name="eventkeywords" placeholder="事件关键词，逗号分隔"><input name="eventstarttime" placeholder="开始时间，例如 2026-06-01 00:00:00"><input name="eventendtime" placeholder="结束时间，例如 2026-06-04 23:59:59"><input name="eventstopwords" placeholder="停用词"><button type="submit">创建任务</button></form></div><div class="section-card"><h2>任务列表</h2><table class="compact"><tr><th>ID</th><th>事件名称</th><th>关键词</th><th>更新时间</th><th>操作</th></tr>{{range .PublicOptions}}<tr><td>{{.ID}}</td><td>{{.EventName}}</td><td>{{.EventKeywords}}</td><td>{{if .Updatetime.IsZero}}--{{else}}{{.Updatetime.Format "2006-01-02 15:04"}}{{end}}</td><td><a class="inline" href="/publicoption/reportdetail/{{.ID}}">详情</a></td></tr>{{else}}<tr><td colspan="5">暂无分析任务</td></tr>{{end}}</table></div></div><div class="stack"><div class="section-card"><h2>{{if .PublicOption.ID}}编辑任务{{else}}任务详情{{end}}</h2>{{if .PublicOption.ID}}<form method="post" action="/publicoption/reportdetail/{{.PublicOption.ID}}"><input type="hidden" name="action" value="update"><input type="hidden" name="id" value="{{.PublicOption.ID}}"><input name="eventname" value="{{.PublicOption.EventName}}" placeholder="事件名称"><input name="eventkeywords" value="{{.PublicOption.EventKeywords}}" placeholder="事件关键词"><input name="eventstarttime" value="{{.PublicOption.EventStartTime}}" placeholder="开始时间"><input name="eventendtime" value="{{.PublicOption.EventEndTime}}" placeholder="结束时间"><input name="eventstopwords" value="{{.PublicOption.EventStopWords}}" placeholder="停用词"><button type="submit">保存任务</button></form><form class="danger" method="post" action="/publicoption/reportdetail/{{.PublicOption.ID}}"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="{{.PublicOption.ID}}"><button type="submit">删除任务</button></form>{{else}}<p class="muted">先创建任务，或从左侧任务列表选择一个任务。</p>{{end}}</div>{{if .PublicOption.ID}}<div class="section-card"><div class="toolbar"><a class="{{if eq .Section ""}}active{{end}}" href="/publicoption/reportdetail/{{.PublicOption.ID}}">总览</a><a class="{{if eq .Section "backanalysis"}}active{{end}}" href="/publicoption/backanalysis?id={{.PublicOption.ID}}">回溯分析</a><a class="{{if eq .Section "eventContext"}}active{{end}}" href="/publicoption/eventContext?id={{.PublicOption.ID}}">事件脉络</a><a class="{{if eq .Section "eventTrace"}}active{{end}}" href="/publicoption/eventTrace?id={{.PublicOption.ID}}">事件追踪</a><a class="{{if eq .Section "statistics"}}active{{end}}" href="/publicoption/statistics?id={{.PublicOption.ID}}">统计分析</a><a class="{{if eq .Section "propagationAnalysis"}}active{{end}}" href="/publicoption/propagationAnalysis?id={{.PublicOption.ID}}">传播分析</a><a class="{{if eq .Section "thematicAnalysis"}}active{{end}}" href="/publicoption/thematicAnalysis?id={{.PublicOption.ID}}">专题分析</a></div>{{if .Section}}<h2>分析结果</h2><div class="analysis">{{publicOptionAnalysisText .PublicOption .Section}}</div>{{else}}<h2>任务总览</h2><table><tr><th>字段</th><th>内容</th></tr><tr><td>事件名称</td><td>{{.PublicOption.EventName}}</td></tr><tr><td>关键词</td><td>{{.PublicOption.EventKeywords}}</td></tr><tr><td>停用词</td><td>{{.PublicOption.EventStopWords}}</td></tr><tr><td>时间范围</td><td>{{.PublicOption.EventStartTime}} 至 {{.PublicOption.EventEndTime}}</td></tr><tr><td>回溯分析</td><td>{{.PublicOption.BackAnalysis}}</td></tr><tr><td>事件脉络</td><td>{{.PublicOption.EventContext}}</td></tr><tr><td>事件追踪</td><td>{{.PublicOption.EventTrace}}</td></tr><tr><td>统计分析</td><td>{{.PublicOption.Statistics}}</td></tr><tr><td>传播分析</td><td>{{.PublicOption.PropagationAnalysis}}</td></tr><tr><td>专题分析</td><td>{{.PublicOption.ThematicAnalysis}}</td></tr></table>{{end}}</div>{{end}}</div></section></main></body></html>{{end}}
+{{define "public_option_workbench"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.summary-card{padding:14px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.summary-card strong{display:block;font-size:24px;margin-top:6px}.grid2{display:grid;grid-template-columns:minmax(320px,1.2fr) minmax(360px,1fr);gap:16px}.stack{display:grid;gap:16px}.section-card{border:1px solid #ece7dc;border-radius:14px;background:#faf8f2;padding:16px}.compact td form{margin:0}.compact input,.compact textarea,.compact select,.compact button{margin:4px 0;padding:8px}.toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.toolbar a{padding:8px 12px;border-radius:999px;background:#efe9dc;color:#214e34;text-decoration:none}.toolbar a.active{background:#214e34;color:#fff}.muted{color:#6a6257}.analysis{white-space:pre-wrap;line-height:1.6;background:#fff;border:1px solid #ece7dc;border-radius:12px;padding:14px}.danger button{background:#8f2d2d}` + `</style></head><body><header><h1>事件分析工作台</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><form class="inline" method="get" action="/publicoption"><input name="keyword" placeholder="搜索任务名称或关键词" value="{{.FilterKeyword}}"><button type="submit">搜索</button>{{if .FilterKeyword}}<a class="inline" href="/publicoption">清空</a>{{end}}</form><div class="summary-grid"><div class="summary-card">分析任务<strong>{{len .PublicOptions}}</strong></div><div class="summary-card">当前任务<strong>{{if .PublicOption.ID}}{{.PublicOption.EventName}}{{else}}未选择{{end}}</strong></div><div class="summary-card">事件关键词<strong>{{if .PublicOption.EventKeywords}}{{.PublicOption.EventKeywords}}{{else}}未填写{{end}}</strong></div><div class="summary-card">情感指数<strong>{{if .PublicOption.EmotionalIndex}}{{.PublicOption.EmotionalIndex}}{{else}}--{{end}}</strong></div></div></section><section class="grid2"><div class="stack"><div class="section-card"><h2>新建分析任务</h2><form method="post" action="/publicoption"><input type="hidden" name="action" value="create"><input name="eventname" placeholder="事件名称"><input name="eventkeywords" placeholder="事件关键词，逗号分隔"><input name="eventstarttime" placeholder="开始时间，例如 2026-06-01 00:00:00"><input name="eventendtime" placeholder="结束时间，例如 2026-06-04 23:59:59"><input name="eventstopwords" placeholder="停用词"><button type="submit">创建任务</button></form></div><div class="section-card"><h2>任务列表</h2><table class="compact"><tr><th>ID</th><th>事件名称</th><th>关键词</th><th>更新时间</th><th>操作</th></tr>{{range .PublicOptions}}<tr><td>{{.ID}}</td><td>{{.EventName}}</td><td>{{.EventKeywords}}</td><td>{{if .Updatetime.IsZero}}--{{else}}{{.Updatetime.Format "2006-01-02 15:04"}}{{end}}</td><td><a class="inline" href="/publicoption?id={{.ID}}">详情</a></td></tr>{{else}}<tr><td colspan="5">暂无分析任务</td></tr>{{end}}</table></div></div><div class="stack"><div class="section-card"><h2>{{if .PublicOption.ID}}编辑任务{{else}}任务详情{{end}}</h2>{{if .PublicOption.ID}}<form method="post" action="/publicoption"><input type="hidden" name="action" value="update"><input type="hidden" name="id" value="{{.PublicOption.ID}}"><input name="eventname" value="{{.PublicOption.EventName}}" placeholder="事件名称"><input name="eventkeywords" value="{{.PublicOption.EventKeywords}}" placeholder="事件关键词"><input name="eventstarttime" value="{{.PublicOption.EventStartTime}}" placeholder="开始时间"><input name="eventendtime" value="{{.PublicOption.EventEndTime}}" placeholder="结束时间"><input name="eventstopwords" value="{{.PublicOption.EventStopWords}}" placeholder="停用词"><button type="submit">保存任务</button></form><form class="danger" method="post" action="/publicoption"><input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="{{.PublicOption.ID}}"><button type="submit">删除任务</button></form>{{else}}<p class="muted">先创建任务，或从左侧任务列表选择一个任务。</p>{{end}}</div>{{if .PublicOption.ID}}<div class="section-card"><div class="toolbar"><a class="{{if eq .Section ""}}active{{end}}" href="/publicoption?id={{.PublicOption.ID}}">总览</a><a class="{{if eq .Section "backanalysis"}}active{{end}}" href="/publicoption?id={{.PublicOption.ID}}&section=backanalysis">回溯分析</a><a class="{{if eq .Section "eventContext"}}active{{end}}" href="/publicoption?id={{.PublicOption.ID}}&section=eventContext">事件脉络</a><a class="{{if eq .Section "eventTrace"}}active{{end}}" href="/publicoption?id={{.PublicOption.ID}}&section=eventTrace">事件追踪</a><a class="{{if eq .Section "statistics"}}active{{end}}" href="/publicoption?id={{.PublicOption.ID}}&section=statistics">统计分析</a><a class="{{if eq .Section "propagationAnalysis"}}active{{end}}" href="/publicoption?id={{.PublicOption.ID}}&section=propagationAnalysis">传播分析</a><a class="{{if eq .Section "thematicAnalysis"}}active{{end}}" href="/publicoption?id={{.PublicOption.ID}}&section=thematicAnalysis">专题分析</a></div>{{if .Section}}<h2>分析结果</h2><div class="analysis">{{publicOptionAnalysisText .PublicOption .Section}}</div>{{else}}<h2>任务总览</h2><table><tr><th>字段</th><th>内容</th></tr><tr><td>事件名称</td><td>{{.PublicOption.EventName}}</td></tr><tr><td>关键词</td><td>{{.PublicOption.EventKeywords}}</td></tr><tr><td>停用词</td><td>{{.PublicOption.EventStopWords}}</td></tr><tr><td>时间范围</td><td>{{.PublicOption.EventStartTime}} 至 {{.PublicOption.EventEndTime}}</td></tr><tr><td>回溯分析</td><td>{{.PublicOption.BackAnalysis}}</td></tr><tr><td>事件脉络</td><td>{{.PublicOption.EventContext}}</td></tr><tr><td>事件追踪</td><td>{{.PublicOption.EventTrace}}</td></tr><tr><td>统计分析</td><td>{{.PublicOption.Statistics}}</td></tr><tr><td>传播分析</td><td>{{.PublicOption.PropagationAnalysis}}</td></tr><tr><td>专题分析</td><td>{{.PublicOption.ThematicAnalysis}}</td></tr></table>{{end}}</div>{{end}}</div></section></main></body></html>{{end}}
 `
 
 const platformBindingsTemplate = `

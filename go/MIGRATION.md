@@ -5,7 +5,7 @@
 - 二期 Java -> Go 迁移截至 2026-06-12 仍未全部完成。
 - 当前更准确的判断标准不是“是否已经有 Go 代码”，而是“是否已经脱离 legacy 兼容层，并能由 Go 正式接口稳定承接”。
 - `DatafavoriteContoller` 已完成 Go 主链路收口。
-- `PublicOptionContoller` 已完成 Go 工作台承接，旧 JSON / 路由兼容层仍保留，因此状态更新为“兼容完成”。
+- `PublicOptionContoller` 已完成 Go 工作台承接，旧 JSON / 路由兼容层仍保留；其中旧详情页和分析页入口已降级为跳转，因此状态保持“兼容完成”。
 - `PlatformController` 已完成 Go 工作台承接，旧 JSON / SSE / 路由兼容层仍保留，因此状态更新为“兼容完成”。
 - Java 全量高级全文检索剩余能力已补齐正式 Go API 承接面，但 legacy 路由与旧返回格式兼容层仍保留，因此状态更新为“兼容完成”。
 - 复杂传播 / 情感 / 专题分析已补齐正式聚合查询契约，并由 `PublicOption` 工作台优先消费，因此状态更新为“兼容完成”。
@@ -43,15 +43,15 @@
 | `HotNewsController` | `兼容完成` | `portal-web /hot/*` | 热点页和热点列表已在 Go，但仍保留旧访问方式。 |
 | `UserAuthController` | `兼容完成` | `portal-web /dist/*` | 申请试用、跳转入口已在 Go 兼容层。 |
 | `UserController` | `兼容完成` | `content-service /system/preferences` + `gateway-web /system` | 用户资料、偏好已迁移，但仍通过部分兼容入口暴露。 |
-| `FullSearchController` | `兼容完成` | `gateway-web /fullsearch` + `content-service /api/v1/search/full` + `portal-web` | 全文搜索主能力已在 Go，但旧筛选、历史词和详情页兼容仍在。 |
+| `FullSearchController` | `兼容完成` | `gateway-web /fullsearch` + `content-service /api/v1/search/full` + `portal-web` | 全文搜索主能力已在 Go；旧结果页与特殊详情页入口已降级为跳转到 `/articles` / `/articles/{id}`，但旧筛选、历史词和部分 JSON 兼容仍在。 |
 | `TimelySearchController` | `兼容完成` | `gateway-web /timelysearch` + `content-service /api/v1/search/timely` + `portal-web` | 即时搜索和模板执行可用，但仍依赖兼容路由与旧返回格式。 |
 | `LSearchController` | `兼容完成` | `gateway-web` compatibility endpoints | `/industry` `/getevent` `/getProvinceList` `/getArticleCityList` 仍是兼容接口。 |
-| `PublicOptionContoller` | `兼容完成` | `portal-web /publicoption/*` + `content-service /api/v1/public-options` | `/publicoption` 已切到统一“事件分析工作台”；列表、详情、创建、更新、删除、分析视图均由 Go 页面承接；旧 `loadInformation`、旧 JSON 兼容接口仍保留。 |
+| `PublicOptionContoller` | `兼容完成` | `portal-web /publicoption/*` + `content-service /api/v1/public-options` | `/publicoption` 已切到统一“事件分析工作台”；列表、详情、创建、更新、删除、分析视图均由 Go 页面承接；旧 `reportdetail/*` 和 `*analysis*` 页面入口已降级为跳转；旧 `loadInformation`、旧 JSON 兼容接口仍保留。 |
 | `PlatformController` | `兼容完成` | `portal-web /platform/*` + `content-service /system-*` + `content-service /platform/bindings/*` | `/platform` 与 `/platform/bindings` 已切到统一“平台工作台”；绑定、公告、最近平台操作审计、OCR、图像识别、写作标题生成、写作报告预览均可由 Go 页面承接；旧 JSON / SSE 兼容接口仍保留。 |
 | OCR 与外部平台集成 | `兼容完成` | `nlp-service /api/v1/nlp/*` + `portal-web /platform/*` | OCR、图像识别、标题生成、报告预览、能力清单均已有正式 Go API；旧 `/platform/nlp/*`、`/platform/xie/*` 兼容入口仍保留。 |
 | Java 全量高级全文检索剩余能力 | `兼容完成` | `content-service /api/v1/search/metadata/*` + `content-service /api/v1/search/special/*` + `portal-web` | 高级筛选、聚合面包屑、特殊类型列表/选项/详情已补到正式 Go API；旧 `fullsearch` / `timelysearch` 兼容入口仍保留。 |
 | 复杂传播 / 情感 / 专题分析 | `兼容完成` | `analysis-service /api/v1/public-opinion/analysis` + `portal-web /publicoption/*` | 情感、传播、专题、事件概览、报告建议已形成统一聚合契约，`PublicOption` 页面优先消费正式接口；旧兼容页面与返回格式仍保留。 |
-| legacy 路由清理与兼容层收口 | `未完成` | `gateway-web` + `portal-web` | 代码中仍存在大量 legacy endpoints 和兼容页面。 |
+| legacy 路由清理与兼容层收口 | `未完成` | `gateway-web` + `portal-web` | 已建立集中式 legacy 路由注册表和执行清单，但代码中仍存在大量 legacy endpoints 和兼容页面。 |
 
 ## 二期接口基线
 
@@ -133,6 +133,10 @@
   - 列表、详情、创建、更新、删除、分析视图已统一由 Go 页面承接。
   - 旧 `loadInformation`、旧 JSON 兼容接口仍保留，因此未提升为 `完成`。
   - 已补 `portal` 测试覆盖工作台页面与增改删主链路。
+- 2026-06-12：三期收口基线开始落地：
+  - `portal-web` 已新增集中式 legacy 路由注册表，作为兼容策略真相源。
+  - [docs/legacy-route-inventory.md](docs/legacy-route-inventory.md) 已升级为包含 `legacy_path / owner_module / formal_target / current_behavior / strategy / removal_gate` 的执行清单。
+  - `/publicoption/reportdetail/*` 和各类 `publicoption/*analysis*` 旧页面入口已统一跳转到 `/publicoption?id=...&section=...`。
 - 2026-06-12：二期接口基线补充：
   - `content-service` 新增 `GET /api/v1/search/details/{id}` 作为统一详情出口。
   - `analysis-service` 新增 `GET /api/v1/public-opinion/enrich`，`PublicOption` 分析富化优先改为正式接口消费。
@@ -142,6 +146,10 @@
   - `content-service` 新增 `GET /api/v1/search/metadata/types`、`/polymerizations`、`/breadcrumbs`。
   - `content-service` 新增 `GET /api/v1/search/special/{kind}`、`/options`、`/details/{id}`。
   - `portal-web` 兼容搜索入口已优先改为消费正式搜索增强接口，仅在正式接口缺失或返回空载荷时回退旧逻辑。
+- 2026-06-12：三期第一批搜索收口进展：
+  - `fullsearch/result`、`/fullsearch/*Detail/*` 等旧页面型入口已统一跳转到 `/articles` 或 `/articles/{id}`。
+  - `fullsearch` 兼容列表返回的详情链接已默认切到 `/articles/{id}`，不再把 legacy 详情页作为主目标。
+  - `timelysearch` 仍保留旧结果页与详情页入口，以继续保障模板执行和 `return_to` 上下文兼容。
 - 2026-06-12：`复杂传播 / 情感 / 专题分析` 从 `未完成` 更新为 `兼容完成`。
 - 2026-06-12：文档同步反映以下已落地能力：
   - `analysis-service` 新增 `GET /api/v1/public-opinion/analysis` 聚合契约，统一返回情感、传播、专题、事件概览、报告建议和 legacy 字符串结果。
