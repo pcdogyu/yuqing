@@ -126,6 +126,13 @@ func (s *Server) handleTimelySearchCompat(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleSearchCompat(w http.ResponseWriter, r *http.Request, user any, mode string) {
+	if mode == "full" {
+		if status, ok := removedLegacyPortalStatus(r.URL.Path); ok {
+			writeRemovedLegacyPortalResponse(w, r, status)
+			return
+		}
+	}
+
 	path := strings.TrimPrefix(r.URL.Path, "/"+mode+"search/")
 	switch path {
 	case "":

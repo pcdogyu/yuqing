@@ -14,7 +14,13 @@
 
 | legacy_path | owner_module | formal_target | current_behavior | strategy | removal_gate |
 | --- | --- | --- | --- | --- | --- |
-| `/fullsearch/*` | `FullSearchController` | `/articles?mode=full` | 旧全文搜索结果页与特殊详情页入口已改为跳转；筛选、类型、详情数据等兼容 JSON 仍保留 | `redirect` | `ui-migrated` |
+| `/fullsearch/informationList*` | `FullSearchController` | `/api/v1/search/full` | 旧全文搜索文章列表 JSON | `proxy` | `client-migrated` |
+| `/fullsearch/search` | `FullSearchController` | `/api/v1/search/history` | 旧搜索历史词 JSON | `proxy` | `client-migrated` |
+| `/fullsearch/hotList` | `FullSearchController` | `/api/v1/search/full` | 旧热点列表 JSON | `proxy` | `client-migrated` |
+| `/fullsearch/*List` | `FullSearchController` | `/api/v1/search/special/{kind}` | 旧特殊类型列表 JSON，例如律师、工商、投融资、研报等 | `proxy` | `client-migrated` |
+| `/fullsearch/*DetailData`、`/fullsearch/companyDetails`、`/fullsearch/getresearch-report-detail` | `FullSearchController` | `/api/v1/search/special/{kind}/details/{id}` | 旧特殊类型详情数据 JSON | `proxy` | `client-migrated` |
+| `/fullsearch/listFullType*`、`/fullsearch/listFullPolymerization`、`/fullsearch/getBreadCrumbs` | `FullSearchController` | `/api/v1/search/metadata/*` | 旧类型、聚合、面包屑元数据 JSON | `proxy` | `client-migrated` |
+| `/fullsearch/*Industry`、`/fullsearch/*CaseType`、`/fullsearch/*Type`、`/fullsearch/announcementrtype` | `FullSearchController` | `/api/v1/search/special/{kind}/options` | 旧特殊类型选项 JSON | `proxy` | `client-migrated` |
 | `/timelysearch/*` | `TimelySearchController` | `/articles?mode=timely` | 旧即时搜索页面、结果页与兼容数据流 | `proxy` | `client-migrated` |
 | `/industry` | `LSearchController` | `/api/v1/search/metadata/types` | 行业聚合兼容 JSON | `proxy` | `client-migrated` |
 | `/getevent` | `LSearchController` | `/api/v1/search/metadata/breadcrumbs` | 事件聚合兼容 JSON | `proxy` | `client-migrated` |
@@ -39,6 +45,9 @@
 | `/onlinestatistical` | `LoginController` | `/system?section=account` | 已移除旧在线统计入口 | `delete` | `usage-zero` |
 | `/user/save` | `UserController` | `/system?section=account` | 已移除旧用户保存入口 | `delete` | `usage-zero` |
 | `/user/getToken` | `UserController` | `/api/v1/auth/login` | 已移除旧 token 入口 | `delete` | `usage-zero` |
+| `/fullsearch/result` | `FullSearchController` | `/articles?mode=full` | 已下线旧全文搜索结果页入口，访问返回 `410 Gone` | `gone` | `ui-migrated` |
+| `/fullsearch/index` | `FullSearchController` | `/articles?mode=full` | 已下线旧全文搜索首页入口，访问返回 `410 Gone` | `gone` | `ui-migrated` |
+| `/fullsearch/*Detail/*` | `FullSearchController` | `/articles/{id}` | 已下线旧特殊详情页入口，访问返回 `410 Gone`；详情主链路使用 `/articles/{id}` | `gone` | `ui-migrated` |
 | `/publicoption/reportdetail/*` | `PublicOptionContoller` | `/publicoption?id={id}` | 已下线旧详情页入口，访问返回 `410 Gone` | `gone` | `ui-migrated` |
 | `/publicoption/backanalysis` | `PublicOptionContoller` | `/publicoption?id={id}&section=backanalysis` | 已下线旧分析页入口，访问返回 `410 Gone` | `gone` | `ui-migrated` |
 | `/publicoption/eventContext` | `PublicOptionContoller` | `/publicoption?id={id}&section=eventContext` | 已下线旧分析页入口，访问返回 `410 Gone` | `gone` | `ui-migrated` |

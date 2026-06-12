@@ -3,6 +3,7 @@ package portal
 import (
 	"bytes"
 	"encoding/json"
+	"html"
 	"image"
 	"image/color"
 	"image/png"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 
+	"github.com/pcdogyu/yuqing/go/internal/app"
 	"github.com/pcdogyu/yuqing/go/internal/config"
 	"github.com/pcdogyu/yuqing/go/internal/model"
 	"github.com/pcdogyu/yuqing/go/internal/nlp"
@@ -528,6 +530,111 @@ func TestHotPageCompat(t *testing.T) {
 	}
 }
 
+func TestArticlesPagePresentationUsesShanghaiTimeAndNoFavoriteAction(t *testing.T) {
+	oldCommit, oldBuildTime, oldBranch := app.GitCommit, app.BuildTime, app.BranchName
+	app.GitCommit = "abcdef1"
+	app.BuildTime = "2026-06-12T06:17:25Z"
+	app.BranchName = "golang-jin10-sqlite"
+	t.Cleanup(func() {
+		app.GitCommit = oldCommit
+		app.BuildTime = oldBuildTime
+		app.BranchName = oldBranch
+	})
+
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/articles":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    http.StatusOK,
+				"message": "ok",
+				"data": model.ItemListResult{
+					Total:    1,
+					PageSize: 20,
+					Page:     1,
+					Items: []model.Item{
+						{
+							ID:         1,
+							Title:      "上海时间测试文章",
+							SourceType: "flash",
+							CapturedAt: time.Date(2026, 6, 12, 6, 17, 25, 0, time.UTC),
+							Read:       false,
+							Favorited:  true,
+						},
+					},
+				},
+			})
+		case "/api/v1/projects":
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusOK, "message": "ok", "data": []model.Project{}})
+		case "/api/v1/search/options":
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusOK, "message": "ok", "data": model.SearchOptions{}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL, HTTPTimeout: time.Second})
+	req := httptest.NewRequest(http.MethodGet, "/articles", nil)
+	rr := httptest.NewRecorder()
+
+	srv.handleArticles(rr, req, map[string]any{"id": int64(1), "username": "admin"})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, unexpected := range []string{
+		`class="col-status"`,
+		`name="action" value="favorite"`,
+		`<button type="submit">收藏</button>`,
+		`<button type="submit">取消收藏</button>`,
+	} {
+		if strings.Contains(body, unexpected) {
+			t.Fatalf("unexpected article list UI fragment %q in body: %s", unexpected, body)
+		}
+	}
+	renderedText := strings.ReplaceAll(html.UnescapeString(body), "&#43;", "+")
+	for _, expected := range []string{
+		`<th class="col-title">标题</th><th class="col-source">来源</th><th class="col-time">时间</th><th class="col-actions">操作</th>`,
+		`2026-06-12 14:17`,
+		`Code By Yuhao@jiansutech.com - 2026-06-12 14:17:25 UTC+8 - abcdef1 - golang-jin10-sqlite`,
+	} {
+		if !strings.Contains(renderedText, expected) {
+			t.Fatalf("expected article list UI fragment %q in body: %s", expected, body)
+		}
+	}
+}
+
+func TestPortalPageTemplatesUseCommonFooter(t *testing.T) {
+	templates := map[string]string{
+		"login":                   loginTemplate,
+		"dashboard":               dashboardTemplate,
+		"crawl_templates":         crawlTemplatesTemplate,
+		"projects":                projectsTemplate,
+		"project":                 projectTemplate,
+		"rules":                   rulesTemplate,
+		"rule":                    ruleTemplate,
+		"articles":                articlesTemplate,
+		"article":                 articleTemplate,
+		"reports":                 reportsTemplate,
+		"report":                  reportTemplate,
+		"system":                  systemTemplate,
+		"platform_bindings_work":  platformBindingsWorkbenchTemplate,
+		"platform_workbench_v3":   platformWorkbenchTemplateV3,
+		"public_option_workbench": publicOptionWorkbenchTemplate,
+		"platform_bindings":       platformBindingsTemplate,
+	}
+	for name, source := range templates {
+		if !strings.Contains(source, `{{template "footer" .}}`) {
+			t.Fatalf("expected %s template to include common footer", name)
+		}
+		if strings.Contains(source, `</main></body></html>{{end}}`) {
+			t.Fatalf("expected %s template to close through common footer", name)
+		}
+	}
+}
+
 func TestDisplayBoardCompat(t *testing.T) {
 	srv, cleanup := newPortalCompatServer(t)
 	defer cleanup()
@@ -940,6 +1047,21 @@ func TestPublicOptionCompatPages(t *testing.T) {
 }
 
 func TestLegacyRouteRegistryStrategies(t *testing.T) {
+	fullResult, ok := legacyRouteSpecForPath("/fullsearch/result")
+	if !ok || fullResult.Strategy != legacyStrategyGone || fullResult.RemovalGate != legacyRemovalGateUIMigrated {
+		t.Fatalf("unexpected fullsearch result legacy spec: %+v ok=%v", fullResult, ok)
+	}
+
+	fullDetail, ok := legacyRouteSpecForPath("/fullsearch/lawyerDetail/101")
+	if !ok || fullDetail.Strategy != legacyStrategyGone || fullDetail.RemovalGate != legacyRemovalGateUIMigrated {
+		t.Fatalf("unexpected fullsearch detail legacy spec: %+v ok=%v", fullDetail, ok)
+	}
+
+	fullJSON, ok := legacyRouteSpecForPath("/fullsearch/informationListpost")
+	if !ok || fullJSON.Strategy != legacyStrategyProxy || fullJSON.RemovalGate != legacyRemovalGateClientMigrated {
+		t.Fatalf("unexpected fullsearch JSON legacy spec: %+v ok=%v", fullJSON, ok)
+	}
+
 	detail, ok := legacyRouteSpecForPath("/publicoption/reportdetail/1")
 	if !ok || detail.Strategy != legacyStrategyGone || detail.RemovalGate != legacyRemovalGateUIMigrated {
 		t.Fatalf("unexpected publicoption detail legacy spec: %+v ok=%v", detail, ok)
@@ -1716,6 +1838,9 @@ func TestLegacyLoginCompatRoutes(t *testing.T) {
 	srv.Router().ServeHTTP(forgotRR, forgotReq)
 	if forgotRR.Code != http.StatusOK || !strings.Contains(forgotRR.Body.String(), "忘记密码") {
 		t.Fatalf("unexpected forgotpwd response: code=%d body=%s", forgotRR.Code, forgotRR.Body.String())
+	}
+	if !strings.Contains(forgotRR.Body.String(), "Code By Yuhao@jiansutech.com") {
+		t.Fatalf("expected forgotpwd simple page to include common footer, got %s", forgotRR.Body.String())
 	}
 }
 

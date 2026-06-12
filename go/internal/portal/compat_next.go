@@ -1384,7 +1384,8 @@ func (s *Server) writeSimplePage(w http.ResponseWriter, page string, title strin
 	if strings.TrimSpace(page) != "" {
 		bodyAttr = " data-page='" + html.EscapeString(strings.TrimSpace(page)) + "'"
 	}
-	_, err := fmt.Fprintf(w, "<!doctype html><html><head><meta charset='utf-8'><title>%s</title><style>%s a{color:#214e34;text-decoration:none}</style></head><body%s><header><h1>%s</h1>%s</header><main>%s</main></body></html>", html.EscapeString(title), baseStyles, bodyAttr, html.EscapeString(title), portalNavHTML, body)
+	footer := renderPortalFooter(pageData{})
+	_, err := fmt.Fprintf(w, "<!doctype html><html><head><meta charset='utf-8'><title>%s</title><style>%s a{color:#214e34;text-decoration:none}</style></head><body%s><header><h1>%s</h1>%s</header><main>%s</main>%s</body></html>", html.EscapeString(title), baseStyles, bodyAttr, html.EscapeString(title), portalNavHTML, body, footer)
 	return err
 }
 

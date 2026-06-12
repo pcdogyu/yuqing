@@ -594,24 +594,19 @@ func TestLegacySpecializedFullSearchEndpoints(t *testing.T) {
 		t.Fatalf("unexpected second type payload: %+v", secondTypes)
 	}
 
-	pageReq := httptest.NewRequest(http.MethodGet, "/fullsearch/lawyerDetail/101", nil)
-	pageRR := httptest.NewRecorder()
-	srv.handleSearchCompat(pageRR, pageReq, user, "full")
-	if pageRR.Code != http.StatusSeeOther {
-		t.Fatalf("expected lawyerDetail redirect, got %d", pageRR.Code)
-	}
-	if location := pageRR.Header().Get("Location"); location != "/articles/101?return_to=%2Farticles%3Fmode%3Dfull%26page%3D1" {
-		t.Fatalf("unexpected lawyer detail redirect: %q", location)
-	}
-
-	companyPageReq := httptest.NewRequest(http.MethodGet, "/fullsearch/companyDetail/202", nil)
-	companyPageRR := httptest.NewRecorder()
-	srv.handleSearchCompat(companyPageRR, companyPageReq, user, "full")
-	if companyPageRR.Code != http.StatusSeeOther {
-		t.Fatalf("expected company detail redirect, got %d", companyPageRR.Code)
-	}
-	if location := companyPageRR.Header().Get("Location"); location != "/articles/202?return_to=%2Farticles%3Fmode%3Dfull%26page%3D1" {
-		t.Fatalf("unexpected company detail redirect: %q", location)
+	for _, legacyPath := range []string{
+		"/fullsearch/result?searchword=AI",
+		"/fullsearch/index",
+		"/fullsearch/lawyerDetail/101",
+		"/fullsearch/companyDetail/202",
+		"/fullsearch/investmentDetail/303",
+	} {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, legacyPath, nil)
+		srv.handleSearchCompat(rr, req, user, "full")
+		if rr.Code != http.StatusGone {
+			t.Fatalf("expected %s 410 Gone, got %d", legacyPath, rr.Code)
+		}
 	}
 
 	companyDetailReq := httptest.NewRequest(http.MethodGet, "/fullsearch/companyDetails?article_public_id=202", nil)
@@ -653,16 +648,6 @@ func TestLegacySpecializedFullSearchEndpoints(t *testing.T) {
 	}
 	if !strings.Contains(timelyCompanyPageRR.Body.String(), "data-page='timelysearch/company'") || !strings.Contains(timelyCompanyPageRR.Body.String(), "/timelysearch/result?keyword=AI") {
 		t.Fatalf("unexpected timely company detail page: %s", timelyCompanyPageRR.Body.String())
-	}
-
-	investmentPageReq := httptest.NewRequest(http.MethodGet, "/fullsearch/investmentDetail/303", nil)
-	investmentPageRR := httptest.NewRecorder()
-	srv.handleSearchCompat(investmentPageRR, investmentPageReq, user, "full")
-	if investmentPageRR.Code != http.StatusSeeOther {
-		t.Fatalf("expected investment detail redirect, got %d", investmentPageRR.Code)
-	}
-	if location := investmentPageRR.Header().Get("Location"); location != "/articles/303?return_to=%2Farticles%3Fmode%3Dfull%26page%3D1" {
-		t.Fatalf("unexpected investment detail redirect: %q", location)
 	}
 }
 

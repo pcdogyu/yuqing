@@ -43,7 +43,7 @@
 | `HotNewsController` | `兼容完成` | `portal-web /hot/*` | 热点页和热点列表已在 Go，但仍保留旧访问方式。 |
 | `UserAuthController` | `兼容完成` | `portal-web /dist/*` | 申请试用、跳转入口已在 Go 兼容层。 |
 | `UserController` | `兼容完成` | `content-service /system/preferences` + `gateway-web /system` | 用户资料、偏好已迁移，但仍通过部分兼容入口暴露。 |
-| `FullSearchController` | `兼容完成` | `gateway-web /fullsearch` + `content-service /api/v1/search/full` + `portal-web` | 全文搜索主能力已在 Go；旧结果页与特殊详情页入口已降级为跳转到 `/articles` / `/articles/{id}`，但旧筛选、历史词和部分 JSON 兼容仍在。 |
+| `FullSearchController` | `兼容完成` | `gateway-web /fullsearch` + `content-service /api/v1/search/full` + `portal-web` | 全文搜索主能力已在 Go；旧结果页与特殊详情页页面入口已下线为 `410 Gone`，但旧筛选、历史词和部分 JSON 兼容仍在。 |
 | `TimelySearchController` | `兼容完成` | `gateway-web /timelysearch` + `content-service /api/v1/search/timely` + `portal-web` | 即时搜索和模板执行可用，但仍依赖兼容路由与旧返回格式。 |
 | `LSearchController` | `兼容完成` | `gateway-web` compatibility endpoints | `/industry` `/getevent` `/getProvinceList` `/getArticleCityList` 仍是兼容接口。 |
 | `PublicOptionContoller` | `兼容完成` | `portal-web /publicoption/*` + `content-service /api/v1/public-options` | `/publicoption` 已切到统一“事件分析工作台”；列表、详情、创建、更新、删除、分析视图均由 Go 页面承接；旧 `reportdetail/*` 和 `*analysis*` 页面入口已返回 `410 Gone`；旧 `loadInformation`、旧 JSON 兼容接口仍保留。 |
@@ -151,6 +151,11 @@
   - `fullsearch/result`、`/fullsearch/*Detail/*` 等旧页面型入口已统一跳转到 `/articles` 或 `/articles/{id}`。
   - `fullsearch` 兼容列表返回的详情链接已默认切到 `/articles/{id}`，不再把 legacy 详情页作为主目标。
   - `timelysearch` 仍保留旧结果页与详情页入口，以继续保障模板执行和 `return_to` 上下文兼容。
+- 2026-06-12：三期第二批 FullSearch 页面型旧入口收口：
+  - `/fullsearch/result`、`/fullsearch/index`、`/fullsearch/*Detail/*` 已从跳转兼容推进到 `410 Gone` 下线。
+  - `/articles?mode=full`、`/articles/{id}` 仍是全文搜索列表与详情正式主链路。
+  - `fullsearch` 的 `informationList*`、`hotList`、`*List`、`*DetailData`、类型/元数据等 JSON 兼容入口继续保留为 `proxy / client-migrated`。
+  - `timelysearch`、LSearch、Platform、移动端等 legacy 入口仍在，因此 `legacy 路由清理与兼容层收口` 仍保持 `未完成`。
 - 2026-06-12：`复杂传播 / 情感 / 专题分析` 从 `未完成` 更新为 `兼容完成`。
 - 2026-06-12：文档同步反映以下已落地能力：
   - `analysis-service` 新增 `GET /api/v1/public-opinion/analysis` 聚合契约，统一返回情感、传播、专题、事件概览、报告建议和 legacy 字符串结果。
