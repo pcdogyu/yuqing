@@ -13,12 +13,19 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "modernc.org/sqlite"
 )
 
 var tableLinePattern = regexp.MustCompile(`(?m)^CREATE TABLE IF NOT EXISTS ([A-Za-z0-9_]+) \(`)
+
+type columnInfo struct {
+	Name     string
+	DataType string
+	UDTName  string
+}
 
 func main() {
 	sqlitePath := flag.String("sqlite", filepath.Join("data", "yuqing.db"), "source SQLite database path")
@@ -109,21 +116,26 @@ func copyTable(ctx context.Context, source, target *sql.DB, table string, trunca
 	if len(columns) == 0 {
 		return 0, nil
 	}
+	columnNames := make([]string, len(columns))
+	for i, column := range columns {
+		columnNames[i] = column.Name
+	}
 	if truncate {
 		if _, err := target.ExecContext(ctx, `DELETE FROM `+quoteIdent(table)); err != nil {
 			return 0, err
 		}
 	}
 
-	selectSQL := `SELECT ` + quoteIdentList(columns) + ` FROM ` + quoteIdent(table)
+	selectSQL := `SELECT ` + quoteIdentList(columnNames) + ` FROM ` + quoteIdent(table)
 	rows, err := source.QueryContext(ctx, selectSQL)
 	if err != nil {
 		return 0, err
 	}
 	defer rows.Close()
 
-	insertSQL := postgresInsertSQL(table, columns)
+	insertSQL := postgresInsertSQL(table, columnNames)
 	count := 0
+	cleaned := 0
 	for rows.Next() {
 		values := make([]any, len(columns))
 		scans := make([]any, len(columns))
@@ -134,8 +146,10 @@ func copyTable(ctx context.Context, source, target *sql.DB, table string, trunca
 			return count, err
 		}
 		for i, value := range values {
-			if raw, ok := value.([]byte); ok {
-				values[i] = string(raw)
+			cleanValue, wasCleaned := normalizeSQLiteValue(value, columns[i])
+			values[i] = cleanValue
+			if wasCleaned {
+				cleaned++
 			}
 		}
 		tag, err := target.ExecContext(ctx, insertSQL, values...)
@@ -145,12 +159,15 @@ func copyTable(ctx context.Context, source, target *sql.DB, table string, trunca
 		affected, _ := tag.RowsAffected()
 		count += int(affected)
 	}
+	if cleaned > 0 {
+		fmt.Printf("cleaned invalid utf8 table=%s values=%d\n", table, cleaned)
+	}
 	return count, rows.Err()
 }
 
-func postgresColumns(ctx context.Context, db *sql.DB, table string) ([]string, error) {
+func postgresColumns(ctx context.Context, db *sql.DB, table string) ([]columnInfo, error) {
 	rows, err := db.QueryContext(ctx, `
-SELECT column_name
+SELECT column_name, data_type, udt_name
 FROM information_schema.columns
 WHERE table_schema = 'public' AND table_name = $1
 ORDER BY ordinal_position`, table)
@@ -158,15 +175,36 @@ ORDER BY ordinal_position`, table)
 		return nil, err
 	}
 	defer rows.Close()
-	var columns []string
+	var columns []columnInfo
 	for rows.Next() {
-		var column string
-		if err := rows.Scan(&column); err != nil {
+		var column columnInfo
+		if err := rows.Scan(&column.Name, &column.DataType, &column.UDTName); err != nil {
 			return nil, err
 		}
 		columns = append(columns, column)
 	}
 	return columns, rows.Err()
+}
+
+func normalizeSQLiteValue(value any, column columnInfo) (any, bool) {
+	switch v := value.(type) {
+	case string:
+		if utf8.ValidString(v) {
+			return v, false
+		}
+		return strings.ToValidUTF8(v, "\uFFFD"), true
+	case []byte:
+		if strings.EqualFold(column.DataType, "bytea") || strings.EqualFold(column.UDTName, "bytea") {
+			return v, false
+		}
+		text := string(v)
+		if utf8.ValidString(text) {
+			return text, false
+		}
+		return strings.ToValidUTF8(text, "\uFFFD"), true
+	default:
+		return value, false
+	}
 }
 
 func postgresInsertSQL(table string, columns []string) string {
