@@ -15,7 +15,7 @@ for %%I in ("%GO_DIR%\..") do set "REPO_ROOT=%%~fI"
 set "BIN_DIR=%GO_DIR%\bin"
 set "LOG_DIR=%GO_DIR%\runtime-logs"
 if not defined YUQING_GO_TEST_FLAGS (
-    set "GO_TEST_FLAGS=-count=1 -timeout 5m"
+    set "GO_TEST_FLAGS=-p 5 -count=1 -timeout 5m"
 ) else (
     set "GO_TEST_FLAGS=%YUQING_GO_TEST_FLAGS%"
 )
