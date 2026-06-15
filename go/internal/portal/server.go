@@ -3223,6 +3223,7 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) 
 		"warning":       "预警设置",
 		"feedback":      "反馈建议",
 		"operations":    "生产运行",
+		"opactions":     "运营操作",
 		"contracts":     "外部契约与审计",
 		"announcements": "公告与任务",
 		"database":      "数据库配置",
@@ -3664,6 +3665,8 @@ func normalizeSystemSection(section string) string {
 		return "feedback"
 	case "operations", "production":
 		return "operations"
+	case "opactions", "operation-actions", "operation_actions", "actions", "crawl-actions":
+		return "opactions"
 	case "contracts", "contract", "audit", "external", "external-contracts":
 		return "contracts"
 	case "announcements", "announcement", "notice", "notices", "tasks":
@@ -4485,7 +4488,7 @@ var systemTemplate = buildSystemTemplate()
 func buildSystemTemplate() string {
 	return strings.NewReplacer(
 		`<div class="tabs"><a class="{{if eq .SectionKey "account"}}active{{end}}" href="/system?section=account">账号安全</a><a class="{{if eq .SectionKey "preferences"}}active{{end}}" href="/system?section=preferences">偏好设置</a><a class="{{if eq .SectionKey "database"}}active{{end}}" href="/system?section=database">数据库配置</a><a class="{{if eq .SectionKey "favorites"}}active{{end}}" href="/system?section=favorites{{if .FavoriteProjectID}}&project_id={{.FavoriteProjectID}}{{end}}">收藏夹</a><a class="{{if eq .SectionKey "warningmsg"}}active{{end}}" href="/system?section=warningmsg{{if .WarningArticleProjectID}}&project_id={{.WarningArticleProjectID}}{{end}}{{if .WarningArticleKeyword}}&keyword={{.WarningArticleKeyword}}{{end}}">预警消息</a><a class="{{if eq .SectionKey "warning"}}active{{end}}" href="/system?section=warning{{if .WarningSetting.ProjectID}}&project_id={{.WarningSetting.ProjectID}}{{end}}">预警设置</a><a class="{{if eq .SectionKey "feedback"}}active{{end}}" href="/system?section=feedback">反馈建议</a><a class="{{if eq .SectionKey "operations"}}active{{end}}" href="/system?section=operations">生产运行</a></div>`,
-		`<div class="tabs"><a class="{{if eq .SectionKey "services"}}active{{end}}" href="/system?section=services">服务状态</a><a class="{{if eq .SectionKey "legacy"}}active{{end}}" href="/system?section=legacy">Legacy注册表</a><a class="{{if eq .SectionKey "account"}}active{{end}}" href="/system?section=account">账号安全</a><a class="{{if eq .SectionKey "preferences"}}active{{end}}" href="/system?section=preferences">偏好设置</a><a class="{{if eq .SectionKey "database"}}active{{end}}" href="/system?section=database">数据库配置</a><a class="{{if eq .SectionKey "favorites"}}active{{end}}" href="/system?section=favorites{{if .FavoriteProjectID}}&project_id={{.FavoriteProjectID}}{{end}}">收藏夹</a><a class="{{if eq .SectionKey "warningmsg"}}active{{end}}" href="/system?section=warningmsg{{if .WarningArticleProjectID}}&project_id={{.WarningArticleProjectID}}{{end}}{{if .WarningArticleKeyword}}&keyword={{.WarningArticleKeyword}}{{end}}">预警消息</a><a class="{{if eq .SectionKey "warning"}}active{{end}}" href="/system?section=warning{{if .WarningSetting.ProjectID}}&project_id={{.WarningSetting.ProjectID}}{{end}}">预警设置</a><a class="{{if eq .SectionKey "feedback"}}active{{end}}" href="/system?section=feedback">反馈建议</a><a class="{{if eq .SectionKey "operations"}}active{{end}}" href="/system?section=operations">生产运行</a><a class="{{if eq .SectionKey "contracts"}}active{{end}}" href="/system?section=contracts">外部契约与审计</a><a class="{{if eq .SectionKey "announcements"}}active{{end}}" href="/system?section=announcements">公告与任务</a></div>`,
+		`<div class="tabs"><a class="{{if eq .SectionKey "services"}}active{{end}}" href="/system?section=services">服务状态</a><a class="{{if eq .SectionKey "legacy"}}active{{end}}" href="/system?section=legacy">Legacy注册表</a><a class="{{if eq .SectionKey "account"}}active{{end}}" href="/system?section=account">账号安全</a><a class="{{if eq .SectionKey "preferences"}}active{{end}}" href="/system?section=preferences">偏好设置</a><a class="{{if eq .SectionKey "database"}}active{{end}}" href="/system?section=database">数据库配置</a><a class="{{if eq .SectionKey "favorites"}}active{{end}}" href="/system?section=favorites{{if .FavoriteProjectID}}&project_id={{.FavoriteProjectID}}{{end}}">收藏夹</a><a class="{{if eq .SectionKey "warningmsg"}}active{{end}}" href="/system?section=warningmsg{{if .WarningArticleProjectID}}&project_id={{.WarningArticleProjectID}}{{end}}{{if .WarningArticleKeyword}}&keyword={{.WarningArticleKeyword}}{{end}}">预警消息</a><a class="{{if eq .SectionKey "warning"}}active{{end}}" href="/system?section=warning{{if .WarningSetting.ProjectID}}&project_id={{.WarningSetting.ProjectID}}{{end}}">预警设置</a><a class="{{if eq .SectionKey "feedback"}}active{{end}}" href="/system?section=feedback">反馈建议</a><a class="{{if eq .SectionKey "operations"}}active{{end}}" href="/system?section=operations">生产运行</a><a class="{{if eq .SectionKey "opactions"}}active{{end}}" href="/system?section=opactions">运营操作</a><a class="{{if eq .SectionKey "contracts"}}active{{end}}" href="/system?section=contracts">外部契约与审计</a><a class="{{if eq .SectionKey "announcements"}}active{{end}}" href="/system?section=announcements">公告与任务</a></div>`,
 		`</section><section><h2>服务状态</h2>`,
 		`</section>{{if eq .SectionKey "services"}}<section><h2>服务状态</h2>`,
 		`name="section" value="{{$.SectionKey}}"`,
@@ -4497,9 +4500,9 @@ func buildSystemTemplate() string {
 		`</div></section><section class="section-block"><h2>外部契约与审计</h2>`,
 		`</div></section>{{end}}{{if eq .SectionKey "contracts"}}<section class="section-block"><h2>外部契约与审计</h2>`,
 		`<section class="section-block"><h2>运营操作</h2>`,
-		`{{if eq .SectionKey "operations"}}<section class="section-block"><h2>运营操作</h2>`,
+		`{{if eq .SectionKey "opactions"}}<section class="section-block"><h2>运营操作</h2>`,
 		`name="section" value="{{.SectionKey}}"`,
-		`name="section" value="operations"`,
+		`name="section" value="opactions"`,
 		`</div></section><section class="section-block"><h2>公告与任务</h2>`,
 		`</div></section>{{end}}{{if eq .SectionKey "announcements"}}<section class="section-block"><h2>公告与任务</h2>`,
 		`</div></section></main>{{template "footer" .}}</body></html>{{end}}`,
