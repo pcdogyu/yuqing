@@ -1,6 +1,7 @@
 package logging
 
 import (
+	"io"
 	"testing"
 
 	"github.com/rs/zerolog"
@@ -10,9 +11,17 @@ import (
 func TestSetupSetsExpectedGlobalLevel(t *testing.T) {
 	originalLevel := zerolog.GlobalLevel()
 	originalLogger := log.Logger
+	originalOutput := consoleWriterOutput
+	originalFileWriterFactory := fileWriterFactory
+	consoleWriterOutput = io.Discard
+	fileWriterFactory = func(string) (zerolog.ConsoleWriter, func() error, error) {
+		return zerolog.ConsoleWriter{Out: io.Discard}, func() error { return nil }, nil
+	}
 	t.Cleanup(func() {
 		zerolog.SetGlobalLevel(originalLevel)
 		log.Logger = originalLogger
+		consoleWriterOutput = originalOutput
+		fileWriterFactory = originalFileWriterFactory
 	})
 
 	cases := []struct {

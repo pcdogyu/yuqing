@@ -2,6 +2,7 @@ package logging
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,14 +12,19 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+var (
+	consoleWriterOutput io.Writer = os.Stdout
+	fileWriterFactory             = newFileWriter
+)
+
 func Setup(level, serviceName string) {
 	consoleOutput := zerolog.ConsoleWriter{
-		Out:        os.Stdout,
+		Out:        consoleWriterOutput,
 		TimeFormat: time.RFC3339,
 	}
 	zerolog.TimeFieldFormat = time.RFC3339
 	writer := zerolog.MultiLevelWriter(consoleOutput)
-	if fileWriter, cleanup, err := newFileWriter(serviceName); err == nil {
+	if fileWriter, cleanup, err := fileWriterFactory(serviceName); err == nil {
 		writer = zerolog.MultiLevelWriter(consoleOutput, fileWriter)
 		log.Logger = zerolog.New(writer).With().Timestamp().Logger()
 		log.Debug().Str("service", serviceName).Msg("file logging enabled")
