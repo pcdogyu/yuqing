@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -3434,6 +3435,8 @@ func (s *Server) loadServiceLog(serviceName string) (string, string) {
 
 const serviceLogPageSize = 50
 
+var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
+
 type serviceLogEntry struct {
 	Time    string
 	Level   string
@@ -3454,16 +3457,13 @@ func parseServiceLogEntries(text string) []serviceLogEntry {
 			entries = append(entries, entry)
 			continue
 		}
-		if len(entries) == 0 {
-			entries = append(entries, serviceLogEntry{Message: line})
-			continue
-		}
-		entries[len(entries)-1].Message = strings.TrimSpace(entries[len(entries)-1].Message + "\n" + line)
+		entries = append(entries, serviceLogEntry{Message: stripANSI(line)})
 	}
 	return entries
 }
 
 func parseServiceLogLine(line string) (serviceLogEntry, bool) {
+	line = stripANSI(line)
 	fields := strings.Fields(line)
 	if len(fields) < 2 {
 		return serviceLogEntry{Message: line}, false
@@ -3484,6 +3484,10 @@ func parseServiceLogLine(line string) (serviceLogEntry, bool) {
 		}, true
 	}
 	return serviceLogEntry{Message: line}, false
+}
+
+func stripANSI(value string) string {
+	return strings.TrimSpace(ansiEscapePattern.ReplaceAllString(value, ""))
 }
 
 func isLogLevel(value string) bool {

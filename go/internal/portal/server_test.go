@@ -753,22 +753,35 @@ func TestParseServiceLogEntries(t *testing.T) {
 		`continuation detail`,
 		`2026/06/15 09:46:05.014134 WARN RESTY Post "http://127.0.0.1:8083": context deadline exceeded`,
 		`retry detail`,
+		"\x1b[90m2026-06-15T14:22:38+08:00\x1b[0m \x1b[36mDBG\x1b[0m startup debug info \x1b[36mservice=\x1b[0mauth-service",
 	}, "\n"))
 
-	if len(entries) != 2 {
-		t.Fatalf("expected 2 entries, got %d", len(entries))
+	if len(entries) != 5 {
+		t.Fatalf("expected 5 entries, got %d", len(entries))
 	}
 	if entries[0].Time != "2026-06-15T09:45:20+08:00" || entries[0].Level != "INF" {
 		t.Fatalf("unexpected first entry metadata: %+v", entries[0])
 	}
-	if !strings.Contains(entries[0].Message, "scheduler service ready") || !strings.Contains(entries[0].Message, "continuation detail") {
+	if !strings.Contains(entries[0].Message, "scheduler service ready") {
 		t.Fatalf("unexpected first entry message: %q", entries[0].Message)
 	}
-	if entries[1].Time != "2026/06/15 09:46:05.014134" || entries[1].Level != "WARN" {
-		t.Fatalf("unexpected second entry metadata: %+v", entries[1])
+	if entries[1].Time != "" || entries[1].Level != "" || entries[1].Message != "continuation detail" {
+		t.Fatalf("expected standalone second line entry, got %+v", entries[1])
 	}
-	if !strings.Contains(entries[1].Message, "context deadline exceeded") || !strings.Contains(entries[1].Message, "retry detail") {
-		t.Fatalf("unexpected second entry message: %q", entries[1].Message)
+	if entries[2].Time != "2026/06/15 09:46:05.014134" || entries[2].Level != "WARN" {
+		t.Fatalf("unexpected third entry metadata: %+v", entries[2])
+	}
+	if !strings.Contains(entries[2].Message, "context deadline exceeded") {
+		t.Fatalf("unexpected third entry message: %q", entries[2].Message)
+	}
+	if entries[3].Message != "retry detail" {
+		t.Fatalf("expected standalone fourth line entry, got %+v", entries[3])
+	}
+	if entries[4].Time != "2026-06-15T14:22:38+08:00" || entries[4].Level != "DBG" {
+		t.Fatalf("unexpected ANSI entry metadata: %+v", entries[4])
+	}
+	if strings.Contains(entries[4].Message, "\x1b") || !strings.Contains(entries[4].Message, "service=auth-service") {
+		t.Fatalf("unexpected ANSI entry message: %q", entries[4].Message)
 	}
 }
 
