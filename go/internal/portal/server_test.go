@@ -704,11 +704,12 @@ func TestSystemTemplateIncludesServiceRestartActions(t *testing.T) {
 	for _, expected := range []string{
 		`<th>操作</th>`,
 		`class="service-actions"`,
+		`.service-actions .service-button{display:inline-flex;align-items:center;justify-content:center;width:42px;min-width:42px;max-width:42px`,
 		`name="form_type" value="restart_service"`,
 		`name="service_name" value="{{.Name}}"`,
-		`<button type="submit">重启</button>`,
-		`<form method="get" action="/system/logs" class="inline">`,
-		`<button type="submit">日志</button>`,
+		`<button class="service-button" type="submit">重启</button>`,
+		`<form method="get" action="/system/logs" class="service-action-form">`,
+		`<button class="service-button" type="submit">日志</button>`,
 	} {
 		if !strings.Contains(systemTemplate, expected) {
 			t.Fatalf("expected system template to include %q", expected)
