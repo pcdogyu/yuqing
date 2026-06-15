@@ -23,9 +23,16 @@ func (s *Server) handleCrawlTemplatesPage(w http.ResponseWriter, r *http.Request
 
 	templates := s.loadAllCrawlTemplates()
 	enabledCount := 0
+	selectedTemplateID, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("template_id")), 10, 64)
+	var selectedTemplate model.CrawlTemplate
+	selectedTemplateFound := false
 	for _, tpl := range templates {
 		if tpl.Enabled {
 			enabledCount++
+		}
+		if selectedTemplateID > 0 && tpl.ID == selectedTemplateID {
+			selectedTemplate = tpl
+			selectedTemplateFound = true
 		}
 	}
 
@@ -49,6 +56,8 @@ func (s *Server) handleCrawlTemplatesPage(w http.ResponseWriter, r *http.Request
 		.param-list dd{margin:0;word-break:break-all}
 		.template-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}
 		.template-actions button{width:auto;min-width:120px}
+		.template-actions a{display:inline-flex;align-items:center;justify-content:center;padding:10px 14px;border-radius:10px;background:#214e34;color:#fff;text-decoration:none;font-weight:700}
+		.template-actions a.secondary{background:#efe9dc;color:#214e34}
 		.template-actions .danger{background:#8f2d2d}
 	</style>`)
 	body.WriteString(`<section><p class="subtle">欢迎，用户 `)
@@ -67,18 +76,33 @@ func (s *Server) handleCrawlTemplatesPage(w http.ResponseWriter, r *http.Request
 	body.WriteString(templateSummaryCard("已停用", len(templates)-enabledCount))
 	body.WriteString(`</div></section>`)
 
+	if selectedTemplateID > 0 {
+		body.WriteString(`<section><h2>模板详情</h2>`)
+		if selectedTemplateFound {
+			body.WriteString(crawlTemplateDetailPanel(selectedTemplate))
+		} else {
+			body.WriteString(`<p class="subtle">未找到模板 #`)
+			body.WriteString(strconv.FormatInt(selectedTemplateID, 10))
+			body.WriteString(`，请从下方模板列表重新选择。</p>`)
+		}
+		body.WriteString(`</section>`)
+	}
+
 	body.WriteString(`<section><h2>新建模板</h2><form method="post"><input type="hidden" name="action" value="create"><div class="template-grid">`)
 	body.WriteString(`<div class="template-card"><label>模板名称</label><input name="name" placeholder="X BTC 热门账号模板"><label>网站参数</label><input class="js-website-input" name="website" list="crawl-template-website-options" placeholder="如 x.com / t.me / example.com"><label>来源类型</label><select class="js-source-type-input" name="source_type">`)
 	body.WriteString(crawlTemplateSourceOptions("custom"))
 	body.WriteString(`</select><label>请求方式</label><select class="js-method-input" name="config_method"><option value="GET">GET</option><option value="POST">POST</option></select><label>页面地址</label><input class="js-base-url-input" name="config_base_url" placeholder="https://example.com"><label>列表选择器</label><input class="js-list-selector-input" name="config_list_selector" placeholder=".list-item"><label>详情链接字段</label><input class="js-detail-url-field-input" name="config_detail_url_field" placeholder="href"><label>配置 JSON</label><textarea class="js-config-json-input" name="config_json" rows="12" placeholder='{"source_type":"crypto_x","base_url":"https://example.com"}'>{}</textarea><p class="template-meta">常用字段可直接填写，上面的值会自动同步回配置 JSON；如果需要停用，可在下方列表保存后切换。</p><div class="template-actions"><button type="submit">创建模板</button></div></div></div></form></section>`)
 
-	body.WriteString(`<section><h2>模板列表</h2>`)
+	body.WriteString(`<section><h2>模板列表（共 `)
+	body.WriteString(strconv.Itoa(len(templates)))
+	body.WriteString(` 个）</h2>`)
 	if len(templates) == 0 {
 		body.WriteString(`<p class="subtle">暂无模板，先创建一个预置模板吧。</p>`)
 	} else {
 		body.WriteString(`<div class="template-grid">`)
 		for _, tpl := range templates {
 			params := crawlTemplateDisplayParams(tpl)
+			detailURL := "/crawl-templates/manage?template_id=" + strconv.FormatInt(tpl.ID, 10)
 			body.WriteString(`<div class="template-card"><form method="post"><input type="hidden" name="template_id" value="`)
 			body.WriteString(strconv.FormatInt(tpl.ID, 10))
 			body.WriteString(`"><input type="hidden" name="action" value="update"><label>模板名称</label><input name="name" value="`)
@@ -101,7 +125,9 @@ func (s *Server) handleCrawlTemplatesPage(w http.ResponseWriter, r *http.Request
 			body.WriteString(html.EscapeString(tpl.CreatedAt.Format("2006-01-02 15:04")))
 			body.WriteString(` | 更新于 `)
 			body.WriteString(html.EscapeString(tpl.UpdatedAt.Format("2006-01-02 15:04")))
-			body.WriteString(`</div><div class="template-actions"><button type="submit">保存模板</button></div></form><form method="post"><input type="hidden" name="action" value="delete"><input type="hidden" name="template_id" value="`)
+			body.WriteString(`</div><div class="template-actions"><a class="secondary" href="`)
+			body.WriteString(html.EscapeString(detailURL))
+			body.WriteString(`">查看抓取页面</a><button type="submit">保存模板</button></div></form><form method="post"><input type="hidden" name="action" value="delete"><input type="hidden" name="template_id" value="`)
 			body.WriteString(strconv.FormatInt(tpl.ID, 10))
 			body.WriteString(`"><div class="template-actions"><button class="danger" type="submit" onclick="return confirm('确认删除模板：`)
 			body.WriteString(html.EscapeString(tpl.Name))
@@ -303,6 +329,44 @@ func crawlTemplateParamsPanel(params []crawlTemplateParam) string {
 		b.WriteString(`</dd>`)
 	}
 	b.WriteString(`</dl></div>`)
+	return b.String()
+}
+
+func crawlTemplateDetailPanel(tpl model.CrawlTemplate) string {
+	cfg, raw := parseCrawlTemplateConfig(tpl.ConfigJSON)
+	pageURL := strings.TrimSpace(cfg.BaseURL)
+	if pageURL == "" {
+		pageURL = stringMapValue(raw, "url")
+	}
+	if pageURL == "" {
+		pageURL = stringMapValue(raw, "page_url")
+	}
+	var b strings.Builder
+	b.WriteString(`<div class="template-card"><h3>`)
+	b.WriteString(html.EscapeString(tpl.Name))
+	b.WriteString(`</h3><div class="param-panel"><h3>抓取页面</h3><dl class="param-list"><dt>页面地址</dt><dd>`)
+	if pageURL == "" {
+		b.WriteString(`--`)
+	} else {
+		b.WriteString(`<a class="inline" href="`)
+		b.WriteString(html.EscapeString(pageURL))
+		b.WriteString(`" target="_blank" rel="noreferrer">`)
+		b.WriteString(html.EscapeString(pageURL))
+		b.WriteString(`</a>`)
+	}
+	b.WriteString(`</dd><dt>模板 ID</dt><dd>`)
+	b.WriteString(strconv.FormatInt(tpl.ID, 10))
+	b.WriteString(`</dd><dt>网站</dt><dd>`)
+	b.WriteString(html.EscapeString(displayValue(firstNonEmpty(tpl.Website, stringMapValue(raw, "website")))))
+	b.WriteString(`</dd><dt>来源类型</dt><dd>`)
+	b.WriteString(html.EscapeString(displayValue(firstNonEmpty(tpl.SourceType, cfg.SourceType))))
+	b.WriteString(`</dd><dt>请求方式</dt><dd>`)
+	b.WriteString(html.EscapeString(displayValue(firstNonEmpty(strings.ToUpper(strings.TrimSpace(cfg.Method)), "GET"))))
+	b.WriteString(`</dd><dt>列表选择器</dt><dd>`)
+	b.WriteString(html.EscapeString(displayValue(cfg.ListSelector)))
+	b.WriteString(`</dd><dt>详情链接字段</dt><dd>`)
+	b.WriteString(html.EscapeString(displayValue(cfg.DetailURLField)))
+	b.WriteString(`</dd></dl></div><div class="template-actions"><a class="secondary" href="/crawl-templates/manage">返回模板列表</a></div></div>`)
 	return b.String()
 }
 

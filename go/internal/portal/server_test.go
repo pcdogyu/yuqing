@@ -997,6 +997,21 @@ func TestCrawlTemplatesPage(t *testing.T) {
 			t.Fatalf("expected crawl template parameter %q to render, got %s", expected, body)
 		}
 	}
+	for _, expected := range []string{"模板列表（共 3 个）", "/crawl-templates/manage?template_id=2", "查看抓取页面"} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("expected crawl template list entry %q to render, got %s", expected, body)
+		}
+	}
+
+	detailReq := httptest.NewRequest(http.MethodGet, "/crawl-templates/manage?template_id=2", nil)
+	detailRR := httptest.NewRecorder()
+	srv.handleCrawlTemplatesPage(detailRR, detailReq, map[string]any{"id": 7})
+	detailBody := detailRR.Body.String()
+	for _, expected := range []string{"模板详情", "抓取页面", `href="https://x.com/search?q=btc"`, "X BTC 热门账号模板"} {
+		if !strings.Contains(detailBody, expected) {
+			t.Fatalf("expected crawl template detail %q to render, got %s", expected, detailBody)
+		}
+	}
 
 	createForm := url.Values{
 		"action":                  {"create"},
