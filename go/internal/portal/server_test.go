@@ -604,7 +604,7 @@ func TestArticlesPagePresentationUsesShanghaiTimeAndNoFavoriteAction(t *testing.
 				"code":    http.StatusOK,
 				"message": "ok",
 				"data": model.ItemListResult{
-					Total:    1,
+					Total:    4,
 					PageSize: 20,
 					Page:     1,
 					Items: []model.Item{
@@ -615,6 +615,25 @@ func TestArticlesPagePresentationUsesShanghaiTimeAndNoFavoriteAction(t *testing.
 							CapturedAt: time.Date(2026, 6, 12, 6, 17, 25, 0, time.UTC),
 							Read:       false,
 							Favorited:  true,
+						},
+						{
+							ID:         2,
+							Title:      "PANews 测试文章",
+							SourceType: "panews_newsflash",
+							CapturedAt: time.Date(2026, 6, 12, 7, 17, 25, 0, time.UTC),
+							Read:       true,
+						},
+						{
+							ID:         3,
+							Title:      "CoinDesk 测试文章",
+							SourceType: "coindesk_zh_latest",
+							CapturedAt: time.Date(2026, 6, 12, 8, 17, 25, 0, time.UTC),
+						},
+						{
+							ID:         4,
+							Title:      "Foresight 测试文章",
+							SourceType: "foresight_newsflash",
+							CapturedAt: time.Date(2026, 6, 12, 9, 17, 25, 0, time.UTC),
 						},
 					},
 				},
@@ -652,6 +671,10 @@ func TestArticlesPagePresentationUsesShanghaiTimeAndNoFavoriteAction(t *testing.
 	renderedText := strings.ReplaceAll(html.UnescapeString(body), "&#43;", "+")
 	for _, expected := range []string{
 		`<th class="col-title">标题</th><th class="col-source">来源</th><th class="col-time">时间</th><th class="col-actions">操作</th>`,
+		`金十`,
+		`PANews`,
+		`CoinDesk`,
+		`Foresight`,
 		`2026-06-12 14:17`,
 		`Code By Yuhao@jiansutech.com - 2026-06-12 14:17:25 UTC+8 - abcdef1 - golang-jin10-sqlite`,
 	} {

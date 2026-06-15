@@ -2479,7 +2479,8 @@ func (s *Server) handleArticles(w http.ResponseWriter, r *http.Request, user any
 	readCount := 0
 	unreadCount := 0
 	flaggedCount := 0
-	for _, item := range articles.Items {
+	for index, item := range articles.Items {
+		articles.Items[index].SourceType = articleSourceSiteLabel(item)
 		if item.Read {
 			readCount++
 		} else {
@@ -3619,6 +3620,32 @@ func nonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func articleSourceSiteLabel(item model.Item) string {
+	switch strings.ToLower(strings.TrimSpace(item.SourceType)) {
+	case "flash", "headline", "jin10_full":
+		return "金十"
+	case "panews_newsflash":
+		return "PANews"
+	case "coindesk_zh_latest":
+		return "CoinDesk"
+	case "foresight_newsflash":
+		return "Foresight"
+	}
+	sourceBlob := strings.ToLower(strings.Join([]string{item.FromText, item.ExternalSourceHost, item.SourceURL, item.DetailURL}, " "))
+	switch {
+	case strings.Contains(sourceBlob, "panews") || strings.Contains(sourceBlob, "panewslab"):
+		return "PANews"
+	case strings.Contains(sourceBlob, "coindesk"):
+		return "CoinDesk"
+	case strings.Contains(sourceBlob, "foresight"):
+		return "Foresight"
+	case strings.Contains(sourceBlob, "jin10") || strings.Contains(sourceBlob, "金十"):
+		return "金十"
+	default:
+		return nonEmpty(item.FromText, item.ExternalSourceHost, item.SourceType, "未知来源")
+	}
 }
 
 func (s *Server) loadCrawlTemplates() []model.CrawlTemplate {
