@@ -719,15 +719,18 @@ func TestSystemTemplateIncludesServiceRestartActions(t *testing.T) {
 
 func TestSystemTemplateGroupsRepeatedPanelsBySection(t *testing.T) {
 	serviceTab := `href="/system?section=services">服务状态</a><a class="{{if eq .SectionKey "legacy"}}active{{end}}" href="/system?section=legacy">Legacy注册表`
-	announcementTab := `href="/system?section=operations">生产运行</a><a class="{{if eq .SectionKey "announcements"}}active{{end}}" href="/system?section=announcements">公告与任务`
+	contractsTab := `href="/system?section=operations">生产运行</a><a class="{{if eq .SectionKey "contracts"}}active{{end}}" href="/system?section=contracts">外部契约与审计`
+	announcementTab := `href="/system?section=contracts">外部契约与审计</a><a class="{{if eq .SectionKey "announcements"}}active{{end}}" href="/system?section=announcements">公告与任务`
 	for _, expected := range []string{
 		serviceTab,
+		contractsTab,
 		announcementTab,
 		`{{if eq .SectionKey "services"}}<section><h2>服务状态</h2>`,
 		`{{if eq .SectionKey "legacy"}}<section class="section-block"><h2>Legacy 注册表</h2>`,
 		`name="section" value="services"`,
 		`{{if eq .SectionKey "operations"}}<section class="section-block"><h2>运营操作</h2>`,
 		`name="section" value="operations"`,
+		`{{if eq .SectionKey "contracts"}}<section class="section-block"><h2>外部契约与审计</h2>`,
 		`{{if eq .SectionKey "announcements"}}<section class="section-block"><h2>公告与任务</h2>`,
 	} {
 		if !strings.Contains(systemTemplate, expected) {
@@ -742,6 +745,9 @@ func TestSystemTemplateGroupsRepeatedPanelsBySection(t *testing.T) {
 	}
 	if strings.Contains(systemTemplate, `<div><h3>Legacy 注册表</h3>`) {
 		t.Fatal("expected legacy registry card to move out of operations grid")
+	}
+	if strings.Contains(systemTemplate, `</section><section class="section-block"><h2>外部契约与审计</h2>`) {
+		t.Fatal("expected external contract audit panel to move out of operations section")
 	}
 }
 
