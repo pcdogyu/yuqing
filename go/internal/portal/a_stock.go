@@ -24,6 +24,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 
 	var b strings.Builder
 	b.WriteString(`<style>
+		body[data-page='a-stock'] header,body[data-page='a-stock'] main,body[data-page='a-stock'] .site-footer{max-width:1534px}
 		.astock-hero{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(280px,.7fr);gap:16px;align-items:stretch}
 		.astock-card{padding:18px;border:1px solid #ece7dc;border-radius:14px;background:#fff}
 		.astock-soft{background:#faf8f2}
