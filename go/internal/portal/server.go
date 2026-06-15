@@ -3213,14 +3213,16 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) 
 		currentPage = totalPages
 	}
 	sectionLabel := map[string]string{
-		"account":     "账号安全",
-		"preferences": "偏好设置",
-		"favorites":   "收藏夹",
-		"warningmsg":  "预警消息",
-		"warning":     "预警设置",
-		"feedback":    "反馈建议",
-		"operations":  "生产运行",
-		"database":    "数据库配置",
+		"services":      "服务状态",
+		"account":       "账号安全",
+		"preferences":   "偏好设置",
+		"favorites":     "收藏夹",
+		"warningmsg":    "预警消息",
+		"warning":       "预警设置",
+		"feedback":      "反馈建议",
+		"operations":    "生产运行",
+		"announcements": "公告与任务",
+		"database":      "数据库配置",
 	}[sectionKey]
 	_ = s.render(w, "system", pageData{
 		Title:                    "系统设置",
@@ -3640,6 +3642,8 @@ func applyManualCrawlTemplate(req *resty.Request, value string) bool {
 
 func normalizeSystemSection(section string) string {
 	switch strings.TrimSpace(section) {
+	case "services", "service", "status":
+		return "services"
 	case "preferences", "preference":
 		return "preferences"
 	case "favorites", "favorite":
@@ -3652,6 +3656,8 @@ func normalizeSystemSection(section string) string {
 		return "feedback"
 	case "operations", "production":
 		return "operations"
+	case "announcements", "announcement", "notice", "notices", "tasks":
+		return "announcements"
 	case "database", "postgres", "postgresql":
 		return "database"
 	default:
