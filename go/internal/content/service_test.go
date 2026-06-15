@@ -936,6 +936,88 @@ func TestHandleCryptoSocial(t *testing.T) {
 	}
 }
 
+func TestCryptoNewsAndSocialFallbackMatchesETHInRawFields(t *testing.T) {
+	store := newContentSearchTestStore(t)
+	svc := NewService(config.Config{}, store)
+	now := time.Now().UTC()
+	_, _, err := store.UpsertItems(context.Background(), []model.Item{
+		{
+			SourceType: "headline", SourceKey: "eth-raw-news", Title: "ETF flow watch",
+			Summary: "institution desk update", Content: "approval chatter grows",
+			SourceURL:  "https://example.com/eth-news",
+			RawPayload: `{"symbols":["ETHUSDT"],"asset":"Ethereum","cn":"以太坊"}`,
+			CapturedAt: now.Add(-30 * time.Minute), CreatedAt: now.Add(-30 * time.Minute), UpdatedAt: now.Add(-30 * time.Minute),
+		},
+		{
+			SourceType: "foresight_newsflash", SourceKey: "eth-foresight-tags", Title: "链上资金异动",
+			Summary: "资金流入增强", Content: "巨鲸买入推动市场情绪回暖",
+			SourceURL:  "https://foresightnews.pro/news/detail/1",
+			TagFlags:   "以太坊/ETH",
+			RawPayload: `{"tags":[{"name":"ETH"}],"wikis":[{"symbol":"ETHUSDT"}]}`,
+			CapturedAt: now.Add(-25 * time.Minute), CreatedAt: now.Add(-25 * time.Minute), UpdatedAt: now.Add(-25 * time.Minute),
+		},
+		{
+			SourceType: "coindesk_zh_latest", SourceKey: "eth-coindesk-title", Title: "华尔街正逐步深入布局以太坊",
+			Summary: "ETH 基础设施已基本建立", Content: "采用规模扩大",
+			SourceURL:  "https://www.coindesk.com/zh/markets/2026/06/15/ethereum-wall-street",
+			CapturedAt: now.Add(-22 * time.Minute), CreatedAt: now.Add(-22 * time.Minute), UpdatedAt: now.Add(-22 * time.Minute),
+		},
+		{
+			SourceType: "panews_newsflash", SourceKey: "eth-panews-rss", Title: "巨鲸以5倍杠杆开设以太坊多单",
+			Summary: "PANews 快讯", Content: "链上资金流入增强",
+			SourceURL:  "https://www.panewslab.com/zh/articles/eth-long",
+			RawPayload: `{"guid":"eth-long","description":"ETH 多头仓位"}`,
+			CapturedAt: now.Add(-18 * time.Minute), CreatedAt: now.Add(-18 * time.Minute), UpdatedAt: now.Add(-18 * time.Minute),
+		},
+		{
+			SourceType: "crypto_x", SourceKey: "eth-raw-social", Title: "Whale transfer alert",
+			Content: "large wallet movement with bullish sentiment", Summary: "on-chain alert",
+			SourceURL: "https://x.com/example/eth", ExternalSourceHost: "x.com", FromText: "@onchain",
+			TagFlags:   "ETH,USDT",
+			RawPayload: `{"tickers":["ETHUSDT"],"message":"Ethereum whale inflow"}`,
+			CapturedAt: now.Add(-20 * time.Minute), CreatedAt: now.Add(-20 * time.Minute), UpdatedAt: now.Add(-20 * time.Minute),
+		},
+	})
+	if err != nil {
+		t.Fatalf("UpsertItems error: %v", err)
+	}
+
+	newsReq := httptest.NewRequest(http.MethodGet, "/api/v1/crypto/news?pair=eth&page=1&page_size=10", nil)
+	newsRR := httptest.NewRecorder()
+	svc.handleCryptoNews(newsRR, newsReq)
+	if newsRR.Code != http.StatusOK {
+		t.Fatalf("expected news 200, got %d body=%s", newsRR.Code, newsRR.Body.String())
+	}
+	var newsEnvelope struct {
+		Data model.CryptoNewsResult `json:"data"`
+	}
+	if err := json.Unmarshal(newsRR.Body.Bytes(), &newsEnvelope); err != nil {
+		t.Fatalf("unmarshal crypto news response: %v", err)
+	}
+	if newsEnvelope.Data.Resolution.Pair != "ETHUSDT" || newsEnvelope.Data.Total < 4 {
+		t.Fatalf("expected ETH fallback news match, got %+v", newsEnvelope.Data)
+	}
+
+	socialReq := httptest.NewRequest(http.MethodGet, "/api/v1/crypto/social?pair=eth&page=1&page_size=10", nil)
+	socialRR := httptest.NewRecorder()
+	svc.handleCryptoSocial(socialRR, socialReq)
+	if socialRR.Code != http.StatusOK {
+		t.Fatalf("expected social 200, got %d body=%s", socialRR.Code, socialRR.Body.String())
+	}
+	var socialEnvelope struct {
+		Data model.CryptoSocialResult `json:"data"`
+	}
+	if err := json.Unmarshal(socialRR.Body.Bytes(), &socialEnvelope); err != nil {
+		t.Fatalf("unmarshal crypto social response: %v", err)
+	}
+	if socialEnvelope.Data.Resolution.Pair != "ETHUSDT" || socialEnvelope.Data.Total != 1 {
+		t.Fatalf("expected one ETH fallback social match, got %+v", socialEnvelope.Data)
+	}
+	if socialEnvelope.Data.Items[0].Platform != "X" {
+		t.Fatalf("expected X platform fallback match, got %+v", socialEnvelope.Data.Items[0])
+	}
+}
+
 func contextWithRoute(req *http.Request, rctx *chi.Context) context.Context {
 	return context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
 }

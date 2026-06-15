@@ -14,6 +14,13 @@
       "created_at": "2026-06-04 10:12:00",
       "tags": ["BTC", "ETF", "FLOW"],
       "photo": true
+    },
+    {
+      "url": "https://t.me/eth_alpha/5003",
+      "message": "Ethereum whale inflow and ETF demand keep ETHUSDT sentiment bullish.",
+      "channel": "eth_alpha",
+      "created_at": "2026-06-04 10:18:00",
+      "tickers": ["ETH", "ETHUSDT", "USDT"]
     }
   ]
 }

@@ -31,6 +31,9 @@ func TestLoadUsesDefaults(t *testing.T) {
 	t.Setenv("YUQING_CRYPTO_X_TOKEN", "")
 	t.Setenv("YUQING_CRYPTO_TELEGRAM_URL", "")
 	t.Setenv("YUQING_CRYPTO_TELEGRAM_TOKEN", "")
+	unsetEnv(t, "YUQING_FORESIGHT_NEWSFLASH_URL")
+	unsetEnv(t, "YUQING_COINDESK_ZH_LATEST_URL")
+	unsetEnv(t, "YUQING_PANEWS_NEWSFLASH_URL")
 	t.Setenv("YUQING_JIN10_FULL_BACKFILL_DAYS", "")
 	t.Setenv("YUQING_JIN10_FULL_MAX_PAGES_PER_RUN", "")
 	t.Setenv("YUQING_JIN10_FULL_RATE_LIMIT_MS", "")
@@ -77,6 +80,12 @@ func TestLoadUsesDefaults(t *testing.T) {
 	if cfg.CryptoXURL != "" || cfg.CryptoTelegramURL != "" {
 		t.Fatalf("expected empty crypto social urls by default, got x=%q tg=%q", cfg.CryptoXURL, cfg.CryptoTelegramURL)
 	}
+	if cfg.ForesightNewsflashURL != "https://foresightnews.pro/news" || cfg.CoinDeskZHLatestURL != "https://www.coindesk.com/zh/latest-crypto-news" {
+		t.Fatalf("expected default crypto news urls, got foresight=%q coindesk=%q", cfg.ForesightNewsflashURL, cfg.CoinDeskZHLatestURL)
+	}
+	if cfg.PANewsNewsflashURL != "https://www.panewslab.com/rss.xml?lang=zh&type=NEWS" {
+		t.Fatalf("expected default panews url, got %q", cfg.PANewsNewsflashURL)
+	}
 	if cfg.Jin10FullBackfillDays != 30 || cfg.Jin10FullMaxPages != 20 {
 		t.Fatalf("expected default jin10 full backfill/pages, got days=%d pages=%d", cfg.Jin10FullBackfillDays, cfg.Jin10FullMaxPages)
 	}
@@ -94,6 +103,12 @@ func TestLoadUsesDefaults(t *testing.T) {
 	}
 	if cfg.CryptoXInterval != 90*time.Second || cfg.CryptoTelegramInterval != 90*time.Second {
 		t.Fatalf("expected default social intervals, got x=%s tg=%s", cfg.CryptoXInterval, cfg.CryptoTelegramInterval)
+	}
+	if cfg.ForesightNewsflashInterval != 120*time.Second || cfg.CoinDeskZHLatestInterval != 300*time.Second {
+		t.Fatalf("expected default crypto news intervals, got foresight=%s coindesk=%s", cfg.ForesightNewsflashInterval, cfg.CoinDeskZHLatestInterval)
+	}
+	if cfg.PANewsNewsflashInterval != 120*time.Second {
+		t.Fatalf("expected default panews interval, got %s", cfg.PANewsNewsflashInterval)
 	}
 	if cfg.LogLevel != "info" {
 		t.Fatalf("expected default log level, got %q", cfg.LogLevel)
@@ -125,6 +140,9 @@ func TestLoadPrefersPrimaryAndAliasEnv(t *testing.T) {
 	t.Setenv("YUQING_CRYPTO_X_TOKEN", "x-token")
 	t.Setenv("YUQING_CRYPTO_TELEGRAM_URL", "https://social.example.com/tg")
 	t.Setenv("YUQING_CRYPTO_TELEGRAM_TOKEN", "tg-token")
+	t.Setenv("YUQING_FORESIGHT_NEWSFLASH_URL", "https://foresight.example.com/news")
+	t.Setenv("YUQING_COINDESK_ZH_LATEST_URL", "https://coindesk.example.com/zh/latest")
+	t.Setenv("YUQING_PANEWS_NEWSFLASH_URL", "https://panews.example.com/rss.xml")
 	t.Setenv("YUQING_HTTP_TIMEOUT_SEC", "45")
 	t.Setenv("YUQING_SCHEDULER_CRAWL_TIMEOUT_SEC", "180")
 	t.Setenv("YUQING_EXTERNAL_RETRY_COUNT", "3")
@@ -141,6 +159,9 @@ func TestLoadPrefersPrimaryAndAliasEnv(t *testing.T) {
 	t.Setenv("YUQING_JIN10_FULL_INTERVAL_SEC", "600")
 	t.Setenv("YUQING_CRYPTO_X_INTERVAL_SEC", "77")
 	t.Setenv("YUQING_CRYPTO_TELEGRAM_INTERVAL_SEC", "88")
+	t.Setenv("YUQING_FORESIGHT_NEWSFLASH_INTERVAL_SEC", "121")
+	t.Setenv("YUQING_COINDESK_ZH_LATEST_INTERVAL_SEC", "301")
+	t.Setenv("YUQING_PANEWS_NEWSFLASH_INTERVAL_SEC", "122")
 
 	cfg := Load()
 
@@ -186,8 +207,33 @@ func TestLoadPrefersPrimaryAndAliasEnv(t *testing.T) {
 	if cfg.CryptoTelegramURL != "https://social.example.com/tg" || cfg.CryptoTelegramToken != "tg-token" {
 		t.Fatalf("expected telegram config loaded, got url=%q token=%q", cfg.CryptoTelegramURL, cfg.CryptoTelegramToken)
 	}
+	if cfg.ForesightNewsflashURL != "https://foresight.example.com/news" || cfg.CoinDeskZHLatestURL != "https://coindesk.example.com/zh/latest" {
+		t.Fatalf("expected crypto news urls loaded, got foresight=%q coindesk=%q", cfg.ForesightNewsflashURL, cfg.CoinDeskZHLatestURL)
+	}
+	if cfg.PANewsNewsflashURL != "https://panews.example.com/rss.xml" {
+		t.Fatalf("expected panews url loaded, got %q", cfg.PANewsNewsflashURL)
+	}
 	if cfg.CryptoXInterval != 77*time.Second || cfg.CryptoTelegramInterval != 88*time.Second {
 		t.Fatalf("expected social intervals loaded, got x=%s tg=%s", cfg.CryptoXInterval, cfg.CryptoTelegramInterval)
+	}
+	if cfg.ForesightNewsflashInterval != 121*time.Second || cfg.CoinDeskZHLatestInterval != 301*time.Second {
+		t.Fatalf("expected crypto news intervals loaded, got foresight=%s coindesk=%s", cfg.ForesightNewsflashInterval, cfg.CoinDeskZHLatestInterval)
+	}
+	if cfg.PANewsNewsflashInterval != 122*time.Second {
+		t.Fatalf("expected panews interval loaded, got %s", cfg.PANewsNewsflashInterval)
+	}
+}
+
+func TestCryptoNewsURLsCanBeDisabledWithExplicitEmptyEnv(t *testing.T) {
+	t.Setenv("YUQING_DB_CONFIG_PATH", filepath.Join(t.TempDir(), "missing-database-config.json"))
+	t.Setenv("YUQING_FORESIGHT_NEWSFLASH_URL", "")
+	t.Setenv("YUQING_COINDESK_ZH_LATEST_URL", "")
+	t.Setenv("YUQING_PANEWS_NEWSFLASH_URL", "")
+
+	cfg := Load()
+
+	if cfg.ForesightNewsflashURL != "" || cfg.CoinDeskZHLatestURL != "" || cfg.PANewsNewsflashURL != "" {
+		t.Fatalf("expected explicit empty crypto news URLs to disable providers, got foresight=%q coindesk=%q panews=%q", cfg.ForesightNewsflashURL, cfg.CoinDeskZHLatestURL, cfg.PANewsNewsflashURL)
 	}
 }
 
@@ -242,4 +288,19 @@ func TestEnvDurationSecondsFallsBackOnInvalidValues(t *testing.T) {
 	if got := envDurationSeconds(12, "TEST_DURATION_B"); got != 12*time.Second {
 		t.Fatalf("expected fallback on non-positive value, got %s", got)
 	}
+}
+
+func unsetEnv(t *testing.T, key string) {
+	t.Helper()
+	old, existed := os.LookupEnv(key)
+	if err := os.Unsetenv(key); err != nil {
+		t.Fatalf("unset %s: %v", key, err)
+	}
+	t.Cleanup(func() {
+		if existed {
+			_ = os.Setenv(key, old)
+		} else {
+			_ = os.Unsetenv(key)
+		}
+	})
 }

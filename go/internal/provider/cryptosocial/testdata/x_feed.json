@@ -15,6 +15,14 @@
       "created_at": "2026-06-04T10:06:00Z",
       "symbols": ["BTCUSDT", "BTC"],
       "summary": "Whale inflow alert"
+    },
+    {
+      "url": "https://x.com/ethdesk/status/1003",
+      "content": "Ethereum ETF inflow watch stays active while ETH traders look for a breakout.",
+      "author": "@ethdesk",
+      "created_at": "2026-06-04T10:14:00Z",
+      "symbols": ["ETHUSDT", "ETH"],
+      "summary": "ETH ETF flow watch"
     }
   ]
 }

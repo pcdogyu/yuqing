@@ -14,5 +14,8 @@ func TestMainWiresWorkerLoops(t *testing.T) {
 		`runLoop(ctx, crawler, provider.SourceTypeJin10Full, cfg.Jin10FullInterval)`,
 		`runLoop(ctx, crawler, provider.SourceTypeCryptoX, cfg.CryptoXInterval)`,
 		`runLoop(ctx, crawler, provider.SourceTypeCryptoTelegram, cfg.CryptoTelegramInterval)`,
+		`runLoop(ctx, crawler, provider.SourceTypeForesightNewsflash, cfg.ForesightNewsflashInterval)`,
+		`runLoop(ctx, crawler, provider.SourceTypeCoinDeskZHLatest, cfg.CoinDeskZHLatestInterval)`,
+		`runLoop(ctx, crawler, provider.SourceTypePANewsNewsflash, cfg.PANewsNewsflashInterval)`,
 	)
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/pcdogyu/yuqing/go/internal/config"
 	"github.com/pcdogyu/yuqing/go/internal/logging"
 	"github.com/pcdogyu/yuqing/go/internal/provider"
+	"github.com/pcdogyu/yuqing/go/internal/provider/cryptonews"
 	"github.com/pcdogyu/yuqing/go/internal/provider/cryptosocial"
 	"github.com/pcdogyu/yuqing/go/internal/provider/jin10flash"
 	"github.com/pcdogyu/yuqing/go/internal/provider/jin10full"
@@ -55,6 +56,15 @@ func main() {
 	if cfg.CryptoTelegramURL != "" {
 		registry.CryptoTelegram = cryptosocial.NewTelegramProvider(httpClient, cfg.CryptoTelegramURL, cfg.CryptoTelegramToken)
 	}
+	if cfg.ForesightNewsflashURL != "" {
+		registry.ForesightNewsflash = cryptonews.NewForesightNewsflashProvider(httpClient, cfg.ForesightNewsflashURL)
+	}
+	if cfg.CoinDeskZHLatestURL != "" {
+		registry.CoinDeskZHLatest = cryptonews.NewCoinDeskZHLatestProvider(httpClient, cfg.CoinDeskZHLatestURL)
+	}
+	if cfg.PANewsNewsflashURL != "" {
+		registry.PANewsNewsflash = cryptonews.NewPANewsNewsflashProvider(httpClient, cfg.PANewsNewsflashURL)
+	}
 	crawler := service.NewCrawler(store, registry, nil)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -70,6 +80,15 @@ func main() {
 	}
 	if cfg.CryptoTelegramURL != "" {
 		go runLoop(ctx, crawler, provider.SourceTypeCryptoTelegram, cfg.CryptoTelegramInterval)
+	}
+	if cfg.ForesightNewsflashURL != "" {
+		go runLoop(ctx, crawler, provider.SourceTypeForesightNewsflash, cfg.ForesightNewsflashInterval)
+	}
+	if cfg.CoinDeskZHLatestURL != "" {
+		go runLoop(ctx, crawler, provider.SourceTypeCoinDeskZHLatest, cfg.CoinDeskZHLatestInterval)
+	}
+	if cfg.PANewsNewsflashURL != "" {
+		go runLoop(ctx, crawler, provider.SourceTypePANewsNewsflash, cfg.PANewsNewsflashInterval)
 	}
 
 	app.LogServiceReady("worker", "")

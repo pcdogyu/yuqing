@@ -68,7 +68,7 @@ paths:
           schema: { type: string }
         - in: query
           name: source_type
-          schema: { type: string, enum: [flash, headline, crypto_x, crypto_telegram] }
+          schema: { type: string, enum: [flash, headline, crypto_x, crypto_telegram, foresight_newsflash, coindesk_zh_latest, panews_newsflash] }
       responses:
         '200': { description: 文章列表 }
   /api/v1/search/articles:
@@ -163,6 +163,6 @@ paths:
         parameters:
           - in: query
             name: source_type
-            schema: { type: string, enum: [flash, headline, crypto_x, crypto_telegram] }
+            schema: { type: string, enum: [flash, headline, crypto_x, crypto_telegram, foresight_newsflash, coindesk_zh_latest, panews_newsflash] }
         responses:
           '200': { description: 触发成功 }

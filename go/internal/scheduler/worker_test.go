@@ -156,18 +156,40 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	if err := json.Unmarshal(listRR.Body.Bytes(), &listEnvelope); err != nil {
 		t.Fatalf("unmarshal jobs list: %v", err)
 	}
-	if len(listEnvelope.Data) != 16 {
-		t.Fatalf("expected 16 scheduler jobs, got %d", len(listEnvelope.Data))
+	if len(listEnvelope.Data) != 21 {
+		t.Fatalf("expected 21 scheduler jobs, got %d", len(listEnvelope.Data))
 	}
-	var hotJob Job
+	var hotJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob Job
 	for _, job := range listEnvelope.Data {
-		if job.Name == "hot-data-refresh" {
+		switch job.Name {
+		case "hot-data-refresh":
 			hotJob = job
-			break
+		case "crypto-x-crawl":
+			cryptoXJob = job
+		case "crypto-telegram-crawl":
+			cryptoTelegramJob = job
+		case "foresight-newsflash-crawl":
+			foresightJob = job
+		case "coindesk-zh-latest-crawl":
+			coindeskJob = job
+		case "panews-newsflash-crawl":
+			panewsJob = job
 		}
 	}
 	if hotJob.JavaQuartzName != "HotDataSchedule" || hotJob.Cron == "" || hotJob.NextRunAt == nil {
 		t.Fatalf("expected hot job runtime metadata, got %+v", hotJob)
+	}
+	if cryptoXJob.Name == "" || cryptoTelegramJob.Name == "" {
+		t.Fatalf("expected crypto scheduler jobs, got %+v", listEnvelope.Data)
+	}
+	if foresightJob.Name == "" || coindeskJob.Name == "" {
+		t.Fatalf("expected crypto news scheduler jobs, got %+v", listEnvelope.Data)
+	}
+	if panewsJob.Name == "" {
+		t.Fatalf("expected panews scheduler job, got %+v", listEnvelope.Data)
+	}
+	if cryptoXJob.Enabled || cryptoTelegramJob.Enabled || foresightJob.Enabled || coindeskJob.Enabled || panewsJob.Enabled {
+		t.Fatalf("expected crypto jobs disabled without endpoint urls, got x=%+v telegram=%+v foresight=%+v coindesk=%+v panews=%+v", cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob)
 	}
 
 	runReq := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/jobs/hot-data-refresh/run", nil)
@@ -199,6 +221,59 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 		if job.Name == "hot-data-refresh" && (job.LastStatus != "success" || job.LastStartedAt == nil || job.LastFinishedAt == nil) {
 			t.Fatalf("expected last run metadata after manual trigger, got %+v", job)
 		}
+	}
+}
+
+func TestSchedulerCryptoJobsEnabledWhenEndpointsConfigured(t *testing.T) {
+	worker := NewWorker(config.Config{
+		HTTPTimeout:                time.Second,
+		CryptoXURL:                 "https://crypto.example.com/x",
+		CryptoTelegramURL:          "https://crypto.example.com/telegram",
+		ForesightNewsflashURL:      "https://foresight.example.com/news",
+		CoinDeskZHLatestURL:        "https://coindesk.example.com/zh/latest",
+		PANewsNewsflashURL:         "https://panews.example.com/rss.xml",
+		CryptoXInterval:            2 * time.Minute,
+		CryptoTelegramInterval:     3 * time.Minute,
+		ForesightNewsflashInterval: 4 * time.Minute,
+		CoinDeskZHLatestInterval:   5 * time.Minute,
+		PANewsNewsflashInterval:    6 * time.Minute,
+		WechatCleanupInterval:      time.Hour,
+		WechatPushInterval:         time.Hour,
+		FlashInterval:              time.Hour,
+		HeadlineInterval:           time.Hour,
+		AnalysisInterval:           time.Hour,
+	})
+
+	var cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob Job
+	for _, job := range worker.Jobs() {
+		switch job.Name {
+		case "crypto-x-crawl":
+			cryptoXJob = job
+		case "crypto-telegram-crawl":
+			cryptoTelegramJob = job
+		case "foresight-newsflash-crawl":
+			foresightJob = job
+		case "coindesk-zh-latest-crawl":
+			coindeskJob = job
+		case "panews-newsflash-crawl":
+			panewsJob = job
+		}
+	}
+
+	if !cryptoXJob.Enabled || cryptoXJob.IntervalSec != 120 || cryptoXJob.NextRunAt == nil {
+		t.Fatalf("expected enabled crypto x job with runtime metadata, got %+v", cryptoXJob)
+	}
+	if !cryptoTelegramJob.Enabled || cryptoTelegramJob.IntervalSec != 180 || cryptoTelegramJob.NextRunAt == nil {
+		t.Fatalf("expected enabled crypto telegram job with runtime metadata, got %+v", cryptoTelegramJob)
+	}
+	if !foresightJob.Enabled || foresightJob.IntervalSec != 240 || foresightJob.NextRunAt == nil {
+		t.Fatalf("expected enabled foresight job with runtime metadata, got %+v", foresightJob)
+	}
+	if !coindeskJob.Enabled || coindeskJob.IntervalSec != 300 || coindeskJob.NextRunAt == nil {
+		t.Fatalf("expected enabled coindesk job with runtime metadata, got %+v", coindeskJob)
+	}
+	if !panewsJob.Enabled || panewsJob.IntervalSec != 360 || panewsJob.NextRunAt == nil {
+		t.Fatalf("expected enabled panews job with runtime metadata, got %+v", panewsJob)
 	}
 }
 

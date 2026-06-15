@@ -14,6 +14,9 @@ func TestMainWiresHTTPServer(t *testing.T) {
 		`jin10xnews.NewProvider(httpClient, cfg.HeadlineURL)`,
 		`cryptosocial.NewXProvider(httpClient, cfg.CryptoXURL, cfg.CryptoXToken)`,
 		`cryptosocial.NewTelegramProvider(httpClient, cfg.CryptoTelegramURL, cfg.CryptoTelegramToken)`,
+		`cryptonews.NewForesightNewsflashProvider(httpClient, cfg.ForesightNewsflashURL)`,
+		`cryptonews.NewCoinDeskZHLatestProvider(httpClient, cfg.CoinDeskZHLatestURL)`,
+		`cryptonews.NewPANewsNewsflashProvider(httpClient, cfg.PANewsNewsflashURL)`,
 		`httpapi.NewServer(cfg, crawler, store)`,
 	)
 }

@@ -389,6 +389,169 @@ func TestCryptoPageQueriesRequestedPairOnly(t *testing.T) {
 	}
 }
 
+func TestCryptoPageEmptyStateIncludesOperationsDiagnostics(t *testing.T) {
+	analysis := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/crypto/insights" || r.URL.Query().Get("pair") != "eth" {
+			t.Fatalf("unexpected analysis request: %s?%s", r.URL.Path, r.URL.RawQuery)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    200,
+			"message": "ok",
+			"data": model.CryptoInsightResponse{
+				Pair:       "ETHUSDT",
+				BaseAsset:  "ETH",
+				QuoteAsset: "USDT",
+				Signals: model.CryptoSignalSet{
+					H4:  model.CryptoSignal{Horizon: "4h", Direction: "neutral"},
+					H24: model.CryptoSignal{Horizon: "24h", Direction: "neutral"},
+				},
+				SocialSentiment: model.CryptoSocialSentiment{Direction: "neutral", Neutral: 1},
+				AIExplanation:   "ETH/USDT 当前证据不足。",
+				UpdatedAt:       time.Date(2026, 6, 15, 8, 0, 0, 0, time.UTC),
+				CacheTTLSeconds: 300,
+			},
+		})
+	}))
+	defer analysis.Close()
+
+	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/admin/tasks/crawl/runs" {
+			t.Fatalf("unexpected crawler request: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		sourceType := r.URL.Query().Get("source_type")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    200,
+			"message": "ok",
+			"data": []model.CrawlRun{{
+				SourceType:    sourceType,
+				Status:        "failed",
+				FetchedCount:  0,
+				InsertedCount: 0,
+				ErrorText:     "endpoint empty",
+				StartedAt:     time.Date(2026, 6, 15, 7, 0, 0, 0, time.UTC),
+			}},
+		})
+	}))
+	defer crawler.Close()
+
+	scheduler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/scheduler/jobs" {
+			t.Fatalf("unexpected scheduler request: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    200,
+			"message": "ok",
+			"data": []model.OperationSchedulerJob{
+				{Name: "crypto-x-crawl", Enabled: false, LastStatus: "disabled", LastMessage: "endpoint empty"},
+				{Name: "crypto-telegram-crawl", Enabled: true, LastStatus: "success", NextRunAt: ptrTime(time.Date(2026, 6, 15, 9, 0, 0, 0, time.UTC))},
+				{Name: "foresight-newsflash-crawl", Enabled: true, LastStatus: "failed", LastMessage: "parse empty"},
+				{Name: "coindesk-zh-latest-crawl", Enabled: true, LastStatus: "success", NextRunAt: ptrTime(time.Date(2026, 6, 15, 9, 5, 0, 0, time.UTC))},
+				{Name: "panews-newsflash-crawl", Enabled: true, LastStatus: "success", NextRunAt: ptrTime(time.Date(2026, 6, 15, 9, 6, 0, 0, time.UTC))},
+			},
+		})
+	}))
+	defer scheduler.Close()
+
+	srv := NewServer(config.Config{
+		AnalysisURL:           analysis.URL,
+		CrawlerURL:            crawler.URL,
+		SchedulerURL:          scheduler.URL,
+		CryptoTelegramURL:     "https://crypto.example.com/tg",
+		ForesightNewsflashURL: "https://foresightnews.pro/news",
+		CoinDeskZHLatestURL:   "https://www.coindesk.com/zh/latest-crypto-news",
+		PANewsNewsflashURL:    "https://www.panewslab.com/rss.xml?lang=zh&type=NEWS",
+		ServiceToken:          "test-token",
+		HTTPTimeout:           time.Second,
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/crypto?pair=eth", nil)
+	rr := httptest.NewRecorder()
+	srv.handleCryptoPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"抓取 X", "抓取 Telegram", "抓取 Foresight", "抓取 CoinDesk 中文", "抓取 PANews", "刷新分析", "数据诊断", "X 未配置 / Telegram 已配置 / Foresight 已配置 / CoinDesk 中文 已配置 / PANews 已配置", "crypto-x-crawl", "foresight-newsflash-crawl", "coindesk-zh-latest-crawl", "panews-newsflash-crawl", "暂无相关新闻命中", "endpoint empty", "parse empty"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected crypto empty state to contain %q, got %s", want, body)
+		}
+	}
+}
+
+func TestCryptoPagePostActionsTriggerBackendsAndPreservePair(t *testing.T) {
+	var crawlSources []string
+	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Service-Token") != "test-token" {
+			t.Fatalf("expected service token header, got %q", r.Header.Get("X-Service-Token"))
+		}
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/admin/tasks/crawl" {
+			t.Fatalf("unexpected crawler request: %s %s", r.Method, r.URL.Path)
+		}
+		crawlSources = append(crawlSources, r.URL.Query().Get("source_type"))
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "message": "ok", "data": map[string]any{}})
+	}))
+	defer crawler.Close()
+
+	var analysisRefreshes int
+	analysis := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Service-Token") != "test-token" {
+			t.Fatalf("expected service token header, got %q", r.Header.Get("X-Service-Token"))
+		}
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/admin/tasks/analysis/refresh" {
+			t.Fatalf("unexpected analysis request: %s %s", r.Method, r.URL.Path)
+		}
+		analysisRefreshes++
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "message": "ok", "data": map[string]any{}})
+	}))
+	defer analysis.Close()
+
+	srv := NewServer(config.Config{
+		CrawlerURL:   crawler.URL,
+		AnalysisURL:  analysis.URL,
+		ServiceToken: "test-token",
+		HTTPTimeout:  time.Second,
+	})
+	actions := []struct {
+		action     string
+		wantSource string
+		wantMsg    string
+	}{
+		{action: "crawl_x", wantSource: "crypto_x", wantMsg: "Crypto X 抓取已触发"},
+		{action: "crawl_telegram", wantSource: "crypto_telegram", wantMsg: "Crypto Telegram 抓取已触发"},
+		{action: "crawl_foresight_newsflash", wantSource: "foresight_newsflash", wantMsg: "Foresight News 抓取已触发"},
+		{action: "crawl_coindesk_zh_latest", wantSource: "coindesk_zh_latest", wantMsg: "CoinDesk 中文抓取已触发"},
+		{action: "crawl_panews_newsflash", wantSource: "panews_newsflash", wantMsg: "PANews 抓取已触发"},
+		{action: "analysis", wantMsg: "分析刷新已触发"},
+	}
+	for _, tc := range actions {
+		form := url.Values{"pair": {"eth"}, "action": {tc.action}}
+		req := httptest.NewRequest(http.MethodPost, "/crypto", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rr := httptest.NewRecorder()
+		srv.handleCryptoPage(rr, req, map[string]any{"id": 1})
+		if rr.Code != http.StatusSeeOther {
+			t.Fatalf("expected redirect for %s, got %d", tc.action, rr.Code)
+		}
+		loc := rr.Header().Get("Location")
+		if !strings.Contains(loc, "pair=eth") || !strings.Contains(loc, url.QueryEscape(tc.wantMsg)) {
+			t.Fatalf("expected pair-preserving redirect with message, got %s", loc)
+		}
+		if tc.wantSource != "" && crawlSources[len(crawlSources)-1] != tc.wantSource {
+			t.Fatalf("expected crawl source %q, got %+v", tc.wantSource, crawlSources)
+		}
+	}
+	if len(crawlSources) != 5 || analysisRefreshes != 1 {
+		t.Fatalf("unexpected backend calls: crawl=%+v analysis=%d", crawlSources, analysisRefreshes)
+	}
+}
+
+func ptrTime(value time.Time) *time.Time {
+	return &value
+}
+
 func TestLegacySearchTarget(t *testing.T) {
 	s := &Server{}
 	req := httptest.NewRequest(http.MethodGet, "/fullsearch/result?searchword=钢铁&project_id=7&source_type=headline&industry=能源&province=上海&city=浦东&read=read&favorite=favorited&start=2026-01-01&end=2026-01-31", nil)

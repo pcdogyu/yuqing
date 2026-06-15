@@ -63,6 +63,17 @@ func TestResolvePair(t *testing.T) {
 			wantBaseCN:   "比特币",
 			wantTerms:    []string{"BTC", "Bitcoin", "比特币", "BTCUSDT", "BTC/USDT"},
 		},
+		{
+			name:         "base symbol defaults eth to usdt",
+			input:        "eth",
+			wantPair:     "ETHUSDT",
+			wantDisplay:  "ETH/USDT",
+			wantBase:     "ETH",
+			wantQuote:    "USDT",
+			wantBaseName: "Ethereum",
+			wantBaseCN:   "以太坊",
+			wantTerms:    []string{"ETH", "Ethereum", "以太坊", "ETHUSDT", "ETH/USDT"},
+		},
 	}
 
 	for _, tt := range tests {

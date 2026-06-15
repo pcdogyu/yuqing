@@ -20,8 +20,24 @@ type cryptoDefaultCard struct {
 	UpdatedAt string
 }
 
+type cryptoDiagnostics struct {
+	CrawlRuns           []model.CrawlRun
+	SchedulerJobs       []model.OperationSchedulerJob
+	CryptoXConfigured   bool
+	TelegramConfigured  bool
+	ForesightConfigured bool
+	CoinDeskConfigured  bool
+	PANewsConfigured    bool
+}
+
 func (s *Server) handleCryptoPage(w http.ResponseWriter, r *http.Request, user any) {
+	if r.Method == http.MethodPost {
+		s.handleCryptoPageAction(w, r)
+		return
+	}
+
 	pair := strings.TrimSpace(r.URL.Query().Get("pair"))
+	message := strings.TrimSpace(r.URL.Query().Get("msg"))
 
 	var b strings.Builder
 	b.WriteString(`<section><p>欢迎，用户 `)
@@ -36,6 +52,9 @@ func (s *Server) handleCryptoPage(w http.ResponseWriter, r *http.Request, user a
 		.crypto-signal-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
 		.crypto-pill{display:inline-block;padding:6px 10px;margin:4px 6px 4px 0;border-radius:999px;background:#eef4ec;color:#214e34;font-size:13px}
 		.crypto-news-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+		.crypto-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+		.crypto-actions form{width:auto;margin:0}
+		.crypto-actions button{margin:0}
 		.crypto-muted{color:#6a6257}
 		.crypto-bullish{color:#176b3a}
 		.crypto-bearish{color:#9b2d2d}
@@ -46,6 +65,12 @@ func (s *Server) handleCryptoPage(w http.ResponseWriter, r *http.Request, user a
 	</style><form method="get" class="crypto-search"><div><label>币对</label><input name="pair" value="`)
 	b.WriteString(html.EscapeString(pair))
 	b.WriteString(`" placeholder="BTCUSDT / BTC-USDT / ETH-USD"></div><div><button type="submit">查询</button></div></form><p style="color:#6a6257">默认展示 BTC 和 ETH 价格信息；输入其他币对后点击查询。</p></section>`)
+	if message != "" {
+		b.WriteString(`<section><p style="color:#214e34">`)
+		b.WriteString(html.EscapeString(message))
+		b.WriteString(`</p></section>`)
+	}
+	renderCryptoActions(&b, pair)
 
 	if pair == "" {
 		renderDefaultCryptoCards(&b, s.loadDefaultCryptoCards())
@@ -99,6 +124,9 @@ func (s *Server) handleCryptoPage(w http.ResponseWriter, r *http.Request, user a
 
 	renderRelatedSearch(&b, insight)
 	renderSimilarClues(&b, insight)
+	if cryptoInsightIsEmpty(insight) {
+		renderCryptoDiagnostics(&b, s.loadCryptoDiagnostics())
+	}
 
 	b.WriteString(`<section><h2>Top Reasons</h2><table><tr><th>分类</th><th>方向</th><th>分数</th><th>证据数</th><th>摘要</th></tr>`)
 	for _, reason := range insight.TopReasons {
@@ -186,6 +214,174 @@ func (s *Server) handleCryptoPage(w http.ResponseWriter, r *http.Request, user a
 	b.WriteString(` 秒。</p></section>`)
 
 	_ = s.writeSimplePage(w, "crypto", "Crypto Insights", b.String())
+}
+
+func (s *Server) handleCryptoPageAction(w http.ResponseWriter, r *http.Request) {
+	_ = r.ParseForm()
+	pair := strings.TrimSpace(r.FormValue("pair"))
+	action := strings.TrimSpace(r.FormValue("action"))
+	message := "不支持的操作"
+	switch action {
+	case "crawl_x":
+		message = s.triggerCryptoCrawl("crypto_x", "Crypto X 抓取已触发", "Crypto X 抓取触发失败")
+	case "crawl_telegram":
+		message = s.triggerCryptoCrawl("crypto_telegram", "Crypto Telegram 抓取已触发", "Crypto Telegram 抓取触发失败")
+	case "crawl_foresight_newsflash":
+		message = s.triggerCryptoCrawl("foresight_newsflash", "Foresight News 抓取已触发", "Foresight News 抓取触发失败")
+	case "crawl_coindesk_zh_latest":
+		message = s.triggerCryptoCrawl("coindesk_zh_latest", "CoinDesk 中文抓取已触发", "CoinDesk 中文抓取触发失败")
+	case "crawl_panews_newsflash":
+		message = s.triggerCryptoCrawl("panews_newsflash", "PANews 抓取已触发", "PANews 抓取触发失败")
+	case "analysis":
+		resp, err := s.client.R().Post(s.cfg.AnalysisURL + "/api/v1/admin/tasks/analysis/refresh")
+		if err != nil || !resp.IsSuccess() {
+			message = "分析刷新触发失败"
+		} else {
+			message = "分析刷新已触发"
+		}
+	}
+	target := "/crypto"
+	query := url.Values{}
+	if pair != "" {
+		query.Set("pair", pair)
+	}
+	query.Set("msg", message)
+	if encoded := query.Encode(); encoded != "" {
+		target += "?" + encoded
+	}
+	http.Redirect(w, r, target, http.StatusSeeOther)
+}
+
+func (s *Server) triggerCryptoCrawl(sourceType, successMessage, failureMessage string) string {
+	resp, err := s.client.R().
+		SetQueryParam("source_type", sourceType).
+		Post(s.cfg.CrawlerURL + "/api/v1/admin/tasks/crawl")
+	if err != nil || !resp.IsSuccess() {
+		return failureMessage
+	}
+	return successMessage
+}
+
+func renderCryptoActions(b *strings.Builder, pair string) {
+	b.WriteString(`<section><h2>数据操作</h2><div class="crypto-actions">`)
+	writeCryptoActionForm(b, pair, "crawl_x", "抓取 X")
+	writeCryptoActionForm(b, pair, "crawl_telegram", "抓取 Telegram")
+	writeCryptoActionForm(b, pair, "crawl_foresight_newsflash", "抓取 Foresight")
+	writeCryptoActionForm(b, pair, "crawl_coindesk_zh_latest", "抓取 CoinDesk 中文")
+	writeCryptoActionForm(b, pair, "crawl_panews_newsflash", "抓取 PANews")
+	writeCryptoActionForm(b, pair, "analysis", "刷新分析")
+	b.WriteString(`</div></section>`)
+}
+
+func writeCryptoActionForm(b *strings.Builder, pair, action, label string) {
+	b.WriteString(`<form method="post"><input type="hidden" name="pair" value="`)
+	b.WriteString(html.EscapeString(pair))
+	b.WriteString(`"><input type="hidden" name="action" value="`)
+	b.WriteString(html.EscapeString(action))
+	b.WriteString(`"><button type="submit">`)
+	b.WriteString(html.EscapeString(label))
+	b.WriteString(`</button></form>`)
+}
+
+func cryptoInsightIsEmpty(insight model.CryptoInsightResponse) bool {
+	return len(insight.EvidenceArticles) == 0 && len(insight.SocialPosts) == 0 && len(insight.TopReasons) == 0
+}
+
+func (s *Server) loadCryptoDiagnostics() cryptoDiagnostics {
+	diag := cryptoDiagnostics{
+		CryptoXConfigured:   strings.TrimSpace(s.cfg.CryptoXURL) != "",
+		TelegramConfigured:  strings.TrimSpace(s.cfg.CryptoTelegramURL) != "",
+		ForesightConfigured: strings.TrimSpace(s.cfg.ForesightNewsflashURL) != "",
+		CoinDeskConfigured:  strings.TrimSpace(s.cfg.CoinDeskZHLatestURL) != "",
+		PANewsConfigured:    strings.TrimSpace(s.cfg.PANewsNewsflashURL) != "",
+	}
+	if strings.TrimSpace(s.cfg.CrawlerURL) != "" {
+		for _, sourceType := range []string{"crypto_x", "crypto_telegram", "foresight_newsflash", "coindesk_zh_latest", "panews_newsflash"} {
+			runs := []model.CrawlRun{}
+			if err := s.getJSON(s.cfg.CrawlerURL+"/api/v1/admin/tasks/crawl/runs?limit=5&source_type="+url.QueryEscape(sourceType), &runs); err == nil {
+				diag.CrawlRuns = append(diag.CrawlRuns, runs...)
+			}
+		}
+	}
+	if strings.TrimSpace(s.cfg.SchedulerURL) != "" {
+		jobs := []model.OperationSchedulerJob{}
+		if err := s.getJSON(s.cfg.SchedulerURL+"/api/v1/scheduler/jobs", &jobs); err == nil {
+			for _, job := range jobs {
+				if job.Name == "crypto-x-crawl" || job.Name == "crypto-telegram-crawl" || job.Name == "foresight-newsflash-crawl" || job.Name == "coindesk-zh-latest-crawl" || job.Name == "panews-newsflash-crawl" {
+					diag.SchedulerJobs = append(diag.SchedulerJobs, job)
+				}
+			}
+		}
+	}
+	return diag
+}
+
+func renderCryptoDiagnostics(b *strings.Builder, diag cryptoDiagnostics) {
+	b.WriteString(`<section><h2>数据诊断</h2><div class="crypto-card crypto-soft">`)
+	b.WriteString(`<p>外部源配置：X `)
+	b.WriteString(configStatusText(diag.CryptoXConfigured))
+	b.WriteString(` / Telegram `)
+	b.WriteString(configStatusText(diag.TelegramConfigured))
+	b.WriteString(` / Foresight `)
+	b.WriteString(configStatusText(diag.ForesightConfigured))
+	b.WriteString(` / CoinDesk 中文 `)
+	b.WriteString(configStatusText(diag.CoinDeskConfigured))
+	b.WriteString(` / PANews `)
+	b.WriteString(configStatusText(diag.PANewsConfigured))
+	b.WriteString(`。</p>`)
+	b.WriteString(`<p class="crypto-muted">若当前币对无新闻或社媒证据，通常是未配置源、未抓取、抓取失败，或最近抓取内容未命中该币对。</p></div>`)
+	b.WriteString(`<h3>Crypto Scheduler</h3><table><tr><th>任务</th><th>启用</th><th>最近状态</th><th>下次执行</th><th>说明</th></tr>`)
+	for _, job := range diag.SchedulerJobs {
+		b.WriteString(`<tr><td>`)
+		b.WriteString(html.EscapeString(job.Name))
+		b.WriteString(`</td><td>`)
+		if job.Enabled {
+			b.WriteString(`是`)
+		} else {
+			b.WriteString(`否`)
+		}
+		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(job.LastStatus))
+		b.WriteString(`</td><td>`)
+		if job.NextRunAt != nil {
+			b.WriteString(html.EscapeString(job.NextRunAt.Format("2006-01-02 15:04")))
+		} else {
+			b.WriteString(`--`)
+		}
+		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(job.LastMessage))
+		b.WriteString(`</td></tr>`)
+	}
+	if len(diag.SchedulerJobs) == 0 {
+		b.WriteString(`<tr><td colspan="5">暂无 scheduler crypto 任务数据</td></tr>`)
+	}
+	b.WriteString(`</table><h3>最近 Crypto 抓取</h3><table><tr><th>来源</th><th>状态</th><th>抓取</th><th>入库</th><th>更新</th><th>错误</th></tr>`)
+	for _, run := range diag.CrawlRuns {
+		b.WriteString(`<tr><td>`)
+		b.WriteString(html.EscapeString(run.SourceType))
+		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(run.Status))
+		b.WriteString(`</td><td>`)
+		b.WriteString(fmt.Sprintf("%d", run.FetchedCount))
+		b.WriteString(`</td><td>`)
+		b.WriteString(fmt.Sprintf("%d", run.InsertedCount))
+		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(run.StartedAt.Format("2006-01-02 15:04")))
+		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(run.ErrorText))
+		b.WriteString(`</td></tr>`)
+	}
+	if len(diag.CrawlRuns) == 0 {
+		b.WriteString(`<tr><td colspan="6">暂无 crypto 抓取记录</td></tr>`)
+	}
+	b.WriteString(`</table></section>`)
+}
+
+func configStatusText(configured bool) string {
+	if configured {
+		return "已配置"
+	}
+	return "未配置"
 }
 
 func (s *Server) fetchCryptoInsight(pair string) (model.CryptoInsightResponse, string) {

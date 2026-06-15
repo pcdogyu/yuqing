@@ -18,6 +18,34 @@ $env:YUQING_CRYPTO_TELEGRAM_INTERVAL_SEC = "90"
 
 未配置 URL 时，对应抓取源不会启动。
 
+`scheduler-service` 会把这两个来源注册为管理任务：
+
+- `crypto-x-crawl`：仅当 `YUQING_CRYPTO_X_URL` 非空时启用。
+- `crypto-telegram-crawl`：仅当 `YUQING_CRYPTO_TELEGRAM_URL` 非空时启用。
+
+两个任务都会出现在 `GET /api/v1/scheduler/jobs`。未配置 URL 时任务显示为 disabled，配置后会按 cron 定时调用 `crawler-service /api/v1/admin/tasks/crawl?source_type=crypto_x|crypto_telegram`。
+
+## 内置新闻源
+
+除社媒代理外，Crypto 页面还内置两个新闻类数据源：
+
+```powershell
+$env:YUQING_FORESIGHT_NEWSFLASH_URL = "https://foresightnews.pro/news"
+$env:YUQING_FORESIGHT_NEWSFLASH_INTERVAL_SEC = "120"
+
+$env:YUQING_COINDESK_ZH_LATEST_URL = "https://www.coindesk.com/zh/latest-crypto-news"
+$env:YUQING_COINDESK_ZH_LATEST_INTERVAL_SEC = "300"
+
+$env:YUQING_PANEWS_NEWSFLASH_URL = "https://www.panewslab.com/rss.xml?lang=zh&type=NEWS"
+$env:YUQING_PANEWS_NEWSFLASH_INTERVAL_SEC = "120"
+```
+
+- `foresight_newsflash` 对应 scheduler 任务 `foresight-newsflash-crawl`。
+- `coindesk_zh_latest` 对应 scheduler 任务 `coindesk-zh-latest-crawl`。
+- `panews_newsflash` 对应 scheduler 任务 `panews-newsflash-crawl`。
+- 两个 URL 默认启用；显式设为空可禁用对应 provider 和 scheduler job。
+- 手动触发使用 `crawler-service /api/v1/admin/tasks/crawl?source_type=foresight_newsflash|coindesk_zh_latest|panews_newsflash`。
+
 ## 请求约定
 
 - 方法：`GET`
@@ -160,3 +188,11 @@ crypto social provider 复用全局外部 HTTP 超时和重试策略：
 - `/mock/duplicate`：返回重复 URL 数据
 
 设置 `YUQING_CRYPTO_MOCK_URL=http://127.0.0.1:19090` 后，`smoke-test.ps1` 和 `release-check.ps1` 会把这些异常样本纳入发布验收探测。
+
+mock 正常样本同时包含 BTC 与 ETH 数据，可用于验证：
+
+```text
+http://127.0.0.1/crypto?pair=eth
+```
+
+即使币种只出现在 `tags`、`symbols`、`tickers` 或原始 payload 中，crypto news/social API 也会在近 48 小时回退扫描中召回相关证据。

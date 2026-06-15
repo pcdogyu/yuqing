@@ -54,6 +54,23 @@ NLP / OCR 正式接口说明见 [docs/nlp-platform-api.md](docs/nlp-platform-api
 ## Crypto 社媒接入
 
 系统已支持 `crypto_x` 和 `crypto_telegram` 两个外部社媒抓取源。你可以接自己的代理层，也可以先用仓库内 mock 服务联调。
+配置 `YUQING_CRYPTO_X_URL` 或 `YUQING_CRYPTO_TELEGRAM_URL` 后，`scheduler-service` 会分别启用 `crypto-x-crawl`、`crypto-telegram-crawl` 定时任务；未配置 URL 时任务会保留在 `/api/v1/scheduler/jobs` 但处于 disabled 状态。
+
+## Crypto 新闻源
+
+`/crypto` 也会抓取新闻证据源：
+
+- `foresight_newsflash`：默认 `YUQING_FORESIGHT_NEWSFLASH_URL=https://foresightnews.pro/news`，scheduler 任务为 `foresight-newsflash-crawl`，默认间隔 `120s`。
+- `coindesk_zh_latest`：默认 `YUQING_COINDESK_ZH_LATEST_URL=https://www.coindesk.com/zh/latest-crypto-news`，scheduler 任务为 `coindesk-zh-latest-crawl`，默认间隔 `300s`。
+- `panews_newsflash`：默认 `YUQING_PANEWS_NEWSFLASH_URL=https://www.panewslab.com/rss.xml?lang=zh&type=NEWS`，scheduler 任务为 `panews-newsflash-crawl`，默认间隔 `120s`。
+
+这两个源默认启用；如果需要禁用，把对应 URL 环境变量显式设为空。手动触发：
+
+```powershell
+Invoke-WebRequest -Method Post "http://127.0.0.1:8083/api/v1/admin/tasks/crawl?source_type=foresight_newsflash" -Headers @{"X-Service-Token"="stonedt-internal-token"}
+Invoke-WebRequest -Method Post "http://127.0.0.1:8083/api/v1/admin/tasks/crawl?source_type=coindesk_zh_latest" -Headers @{"X-Service-Token"="stonedt-internal-token"}
+Invoke-WebRequest -Method Post "http://127.0.0.1:8083/api/v1/admin/tasks/crawl?source_type=panews_newsflash" -Headers @{"X-Service-Token"="stonedt-internal-token"}
+```
 
 快速联调：
 
@@ -77,6 +94,15 @@ $env:YUQING_CRYPTO_TELEGRAM_INTERVAL_SEC = "90"
 Invoke-WebRequest -Method Post "http://127.0.0.1:8083/api/v1/admin/tasks/crawl?source_type=crypto_x" -Headers @{"X-Service-Token"="stonedt-internal-token"}
 Invoke-WebRequest -Method Post "http://127.0.0.1:8083/api/v1/admin/tasks/crawl?source_type=crypto_telegram" -Headers @{"X-Service-Token"="stonedt-internal-token"}
 ```
+
+联调完成后可打开：
+
+```text
+http://127.0.0.1/crypto?pair=eth
+```
+
+页面会显示 ETH/USDT 的价格、相关新闻、社媒证据和空态诊断；如无证据，可直接在页面触发 X/Telegram 抓取或刷新分析。
+页面也可直接触发 Foresight、CoinDesk 中文与 PANews 抓取。
 
 对接字段和返回格式说明见 [docs/crypto-social-proxy.md](docs/crypto-social-proxy.md)。
 

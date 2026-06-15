@@ -2,6 +2,7 @@ package content
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -56,44 +57,32 @@ func (s *Service) buildCryptoNews(r *http.Request, pair string) (model.CryptoNew
 	start := now.Add(-48 * time.Hour).Format(time.RFC3339)
 
 	scored := map[int64]model.CryptoEvidenceArticle{}
-	for _, term := range resolution.SearchTerms {
-		search, searchErr := s.store.SearchItemsFTS(r.Context(), model.ArticleFilter{
-			Page:     1,
-			PageSize: 60,
-			Keyword:  term,
-			Start:    start,
-			End:      now.Format(time.RFC3339),
-			UserID:   filterUserID(r),
-		})
-		if searchErr != nil {
+	for _, candidate := range s.cryptoNewsCandidates(r, resolution, start, now.Format(time.RFC3339)) {
+		item, term := candidate.item, candidate.term
+		score := cryptoArticleScore(item, term, resolution, now)
+		if score <= 0 {
 			continue
 		}
-		for _, item := range search.Items {
-			score := cryptoArticleScore(item, term, resolution, now)
-			if score <= 0 {
-				continue
-			}
-			text := strings.TrimSpace(item.Title + " " + item.Summary + " " + item.Content)
-			category, label := cryptoutil.DetectReason(text)
-			direction := cryptoutil.DirectionLabel(cryptoutil.ScoreDirection(text))
-			article := model.CryptoEvidenceArticle{
-				ID:             item.ID,
-				Title:          item.Title,
-				Summary:        cryptoSummary(item),
-				SourceType:     item.SourceType,
-				SourceURL:      item.SourceURL,
-				DetailURL:      item.DetailURL,
-				PublishTime:    nonEmpty(item.PublishTime, item.PublishTimeText, item.CapturedAt.Format("2006-01-02 15:04")),
-				CapturedAt:     item.CapturedAt,
-				Direction:      direction,
-				ReasonCategory: category,
-				ReasonLabel:    label,
-				RelevanceScore: cryptoutil.Round2(score),
-			}
-			existing, ok := scored[item.ID]
-			if !ok || article.RelevanceScore > existing.RelevanceScore {
-				scored[item.ID] = article
-			}
+		text := cryptoItemText(item)
+		category, label := cryptoutil.DetectReason(text)
+		direction := cryptoutil.DirectionLabel(cryptoutil.ScoreDirection(text))
+		article := model.CryptoEvidenceArticle{
+			ID:             item.ID,
+			Title:          item.Title,
+			Summary:        cryptoSummary(item),
+			SourceType:     item.SourceType,
+			SourceURL:      item.SourceURL,
+			DetailURL:      item.DetailURL,
+			PublishTime:    nonEmpty(item.PublishTime, item.PublishTimeText, item.CapturedAt.Format("2006-01-02 15:04")),
+			CapturedAt:     item.CapturedAt,
+			Direction:      direction,
+			ReasonCategory: category,
+			ReasonLabel:    label,
+			RelevanceScore: cryptoutil.Round2(score),
+		}
+		existing, ok := scored[item.ID]
+		if !ok || article.RelevanceScore > existing.RelevanceScore {
+			scored[item.ID] = article
 		}
 	}
 
@@ -126,6 +115,59 @@ func (s *Service) buildCryptoNews(r *http.Request, pair string) (model.CryptoNew
 	}, nil
 }
 
+type cryptoItemCandidate struct {
+	item model.Item
+	term string
+}
+
+func (s *Service) cryptoNewsCandidates(r *http.Request, resolution model.CryptoPairResolution, start, end string) []cryptoItemCandidate {
+	candidates := make([]cryptoItemCandidate, 0)
+	seen := map[string]struct{}{}
+	for _, term := range resolution.SearchTerms {
+		search, searchErr := s.store.SearchItemsFTS(r.Context(), model.ArticleFilter{
+			Page:     1,
+			PageSize: 60,
+			Keyword:  term,
+			Start:    start,
+			End:      end,
+			UserID:   filterUserID(r),
+		})
+		if searchErr != nil {
+			continue
+		}
+		for _, item := range search.Items {
+			key := strconvFormatItemTerm(item.ID, term)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			candidates = append(candidates, cryptoItemCandidate{item: item, term: term})
+		}
+	}
+
+	fallback, err := s.store.ListItems(r.Context(), model.ArticleFilter{
+		Page:     1,
+		PageSize: 200,
+		Start:    start,
+		End:      end,
+		UserID:   filterUserID(r),
+	})
+	if err == nil {
+		for _, item := range fallback.Items {
+			for _, term := range resolution.SearchTerms {
+				key := strconvFormatItemTerm(item.ID, term)
+				if _, ok := seen[key]; ok {
+					continue
+				}
+				seen[key] = struct{}{}
+				candidates = append(candidates, cryptoItemCandidate{item: item, term: term})
+			}
+		}
+	}
+
+	return candidates
+}
+
 func (s *Service) buildCryptoSocial(r *http.Request, pair string) (model.CryptoSocialResult, error) {
 	resolution, err := cryptoutil.ResolvePair(pair)
 	if err != nil {
@@ -141,55 +183,37 @@ func (s *Service) buildCryptoSocial(r *http.Request, pair string) (model.CryptoS
 	start := now.Add(-48 * time.Hour).Format(time.RFC3339)
 
 	scored := map[int64]model.CryptoSocialPost{}
-	for _, term := range resolution.SearchTerms {
-		search, searchErr := s.store.SearchItemsFTS(r.Context(), model.ArticleFilter{
-			Page:     1,
-			PageSize: 80,
-			Keyword:  term,
-			Start:    start,
-			End:      now.Format(time.RFC3339),
-			UserID:   filterUserID(r),
-		})
-		if searchErr != nil {
+	for _, candidate := range s.cryptoSocialCandidates(r, resolution, start, now.Format(time.RFC3339)) {
+		item, term := candidate.item, candidate.term
+		if !isCryptoSocialCandidate(item) {
 			continue
 		}
-		for _, item := range search.Items {
-			if !isCryptoSocialCandidate(item) {
-				continue
-			}
-			score := cryptoSocialScore(item, term, resolution, now)
-			if score <= 0 {
-				continue
-			}
-			text := strings.TrimSpace(strings.Join([]string{
-				item.Title,
-				item.Summary,
-				item.Content,
-				item.FromText,
-				item.ExternalSourceHost,
-			}, " "))
-			category, label := cryptoutil.DetectReason(text)
-			post := model.CryptoSocialPost{
-				ID:             item.ID,
-				Platform:       detectCryptoSocialPlatform(item),
-				Author:         nonEmpty(item.FromText, item.ExternalSourceHost, item.SourceType),
-				Title:          summarizeText(nonEmpty(item.Title, item.Summary, item.Content)),
-				Content:        summarizeText(nonEmpty(item.Content, item.Summary, item.Title)),
-				SourceType:     item.SourceType,
-				SourceURL:      item.SourceURL,
-				DetailURL:      item.DetailURL,
-				PublishTime:    nonEmpty(item.PublishTime, item.PublishTimeText, item.CapturedAt.Format("2006-01-02 15:04")),
-				CapturedAt:     item.CapturedAt,
-				Direction:      cryptoutil.DirectionLabel(cryptoutil.ScoreDirection(text)),
-				ReasonCategory: category,
-				ReasonLabel:    label,
-				RelevanceScore: cryptoutil.Round2(score),
-				HeatScore:      cryptoutil.Round2(cryptoSocialHeatScore(item, now)),
-			}
-			existing, ok := scored[item.ID]
-			if !ok || post.RelevanceScore > existing.RelevanceScore {
-				scored[item.ID] = post
-			}
+		score := cryptoSocialScore(item, term, resolution, now)
+		if score <= 0 {
+			continue
+		}
+		text := cryptoItemText(item)
+		category, label := cryptoutil.DetectReason(text)
+		post := model.CryptoSocialPost{
+			ID:             item.ID,
+			Platform:       detectCryptoSocialPlatform(item),
+			Author:         nonEmpty(item.FromText, item.ExternalSourceHost, item.SourceType),
+			Title:          summarizeText(nonEmpty(item.Title, item.Summary, item.Content)),
+			Content:        summarizeText(nonEmpty(item.Content, item.Summary, item.Title)),
+			SourceType:     item.SourceType,
+			SourceURL:      item.SourceURL,
+			DetailURL:      item.DetailURL,
+			PublishTime:    nonEmpty(item.PublishTime, item.PublishTimeText, item.CapturedAt.Format("2006-01-02 15:04")),
+			CapturedAt:     item.CapturedAt,
+			Direction:      cryptoutil.DirectionLabel(cryptoutil.ScoreDirection(text)),
+			ReasonCategory: category,
+			ReasonLabel:    label,
+			RelevanceScore: cryptoutil.Round2(score),
+			HeatScore:      cryptoutil.Round2(cryptoSocialHeatScore(item, now)),
+		}
+		existing, ok := scored[item.ID]
+		if !ok || post.RelevanceScore > existing.RelevanceScore {
+			scored[item.ID] = post
 		}
 	}
 
@@ -225,12 +249,64 @@ func (s *Service) buildCryptoSocial(r *http.Request, pair string) (model.CryptoS
 	}, nil
 }
 
+func (s *Service) cryptoSocialCandidates(r *http.Request, resolution model.CryptoPairResolution, start, end string) []cryptoItemCandidate {
+	candidates := make([]cryptoItemCandidate, 0)
+	seen := map[string]struct{}{}
+	for _, term := range resolution.SearchTerms {
+		search, searchErr := s.store.SearchItemsFTS(r.Context(), model.ArticleFilter{
+			Page:     1,
+			PageSize: 80,
+			Keyword:  term,
+			Start:    start,
+			End:      end,
+			UserID:   filterUserID(r),
+		})
+		if searchErr != nil {
+			continue
+		}
+		for _, item := range search.Items {
+			key := strconvFormatItemTerm(item.ID, term)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			candidates = append(candidates, cryptoItemCandidate{item: item, term: term})
+		}
+	}
+
+	for _, sourceType := range []string{"crypto_x", "crypto_telegram"} {
+		result, err := s.store.ListItems(r.Context(), model.ArticleFilter{
+			Page:       1,
+			PageSize:   120,
+			SourceType: sourceType,
+			Start:      start,
+			End:        end,
+			UserID:     filterUserID(r),
+		})
+		if err != nil {
+			continue
+		}
+		for _, item := range result.Items {
+			for _, term := range resolution.SearchTerms {
+				key := strconvFormatItemTerm(item.ID, term)
+				if _, ok := seen[key]; ok {
+					continue
+				}
+				seen[key] = struct{}{}
+				candidates = append(candidates, cryptoItemCandidate{item: item, term: term})
+			}
+		}
+	}
+
+	return candidates
+}
+
 func cryptoSummary(item model.Item) string {
 	return summarizeText(nonEmpty(item.Summary, item.Content, item.Title))
 }
 
 func cryptoArticleScore(item model.Item, term string, resolution model.CryptoPairResolution, now time.Time) float64 {
-	text := strings.ToLower(strings.Join([]string{item.Title, item.Summary, item.Content}, " "))
+	text := strings.ToLower(cryptoItemText(item))
 	termScore := 0.0
 	targets := []struct {
 		term   string
@@ -248,6 +324,9 @@ func cryptoArticleScore(item model.Item, term string, resolution model.CryptoPai
 		if normalized != "" && strings.Contains(text, normalized) {
 			termScore += target.weight
 		}
+	}
+	if termScore <= 0 {
+		return 0
 	}
 	recencyHours := now.Sub(item.CapturedAt.UTC()).Hours()
 	recencyScore := 0.0
@@ -267,6 +346,8 @@ func cryptoArticleScore(item model.Item, term string, resolution model.CryptoPai
 		sourceScore = 1.5
 	case "flash":
 		sourceScore = 1.2
+	case "foresight_newsflash", "coindesk_zh_latest", "panews_newsflash":
+		sourceScore = 1.4
 	}
 	return termScore + recencyScore + sourceScore
 }
@@ -306,6 +387,24 @@ func cryptoSocialHeatScore(item model.Item, now time.Time) float64 {
 		heat += 0.4
 	}
 	return heat
+}
+
+func cryptoItemText(item model.Item) string {
+	return strings.TrimSpace(strings.Join([]string{
+		item.Title,
+		item.Summary,
+		item.Content,
+		item.TagFlags,
+		item.FromText,
+		item.ExternalSourceHost,
+		item.RawPayload,
+		item.SourceURL,
+		item.DetailURL,
+	}, " "))
+}
+
+func strconvFormatItemTerm(id int64, term string) string {
+	return fmt.Sprintf("%d|%s", id, strings.ToUpper(strings.TrimSpace(term)))
 }
 
 func isCryptoSocialCandidate(item model.Item) bool {

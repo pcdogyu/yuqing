@@ -117,6 +117,14 @@ func BuildSearchTerms(base, quote assetDef) []string {
 		base.symbol + quote.symbol,
 		base.symbol + "/" + quote.symbol,
 	}
+	terms = append(terms, base.aliases...)
+	for _, alias := range base.aliases {
+		alias = strings.TrimSpace(alias)
+		if alias == "" {
+			continue
+		}
+		terms = append(terms, alias+quote.symbol, alias+"/"+quote.symbol)
+	}
 	seen := map[string]struct{}{}
 	result := make([]string, 0, len(terms))
 	for _, term := range terms {

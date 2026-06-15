@@ -25,7 +25,10 @@ func TestRegistryResolve(t *testing.T) {
 	jin10Full := stubProvider{sourceType: SourceTypeJin10Full}
 	cryptoX := stubProvider{sourceType: SourceTypeCryptoX}
 	telegram := stubProvider{sourceType: SourceTypeCryptoTelegram}
-	registry := Registry{Flash: flash, Headline: headline, Jin10Full: jin10Full, CryptoX: cryptoX, CryptoTelegram: telegram}
+	foresight := stubProvider{sourceType: SourceTypeForesightNewsflash}
+	coindesk := stubProvider{sourceType: SourceTypeCoinDeskZHLatest}
+	panews := stubProvider{sourceType: SourceTypePANewsNewsflash}
+	registry := Registry{Flash: flash, Headline: headline, Jin10Full: jin10Full, CryptoX: cryptoX, CryptoTelegram: telegram, ForesightNewsflash: foresight, CoinDeskZHLatest: coindesk, PANewsNewsflash: panews}
 
 	if got := registry.Resolve(SourceTypeFlash); got != flash {
 		t.Fatalf("expected flash provider, got %#v", got)
@@ -42,6 +45,15 @@ func TestRegistryResolve(t *testing.T) {
 	if got := registry.Resolve(SourceTypeCryptoTelegram); got != telegram {
 		t.Fatalf("expected crypto telegram provider, got %#v", got)
 	}
+	if got := registry.Resolve(SourceTypeForesightNewsflash); got != foresight {
+		t.Fatalf("expected foresight provider, got %#v", got)
+	}
+	if got := registry.Resolve(SourceTypeCoinDeskZHLatest); got != coindesk {
+		t.Fatalf("expected coindesk provider, got %#v", got)
+	}
+	if got := registry.Resolve(SourceTypePANewsNewsflash); got != panews {
+		t.Fatalf("expected panews provider, got %#v", got)
+	}
 	if got := registry.Resolve("unknown"); got != nil {
 		t.Fatalf("expected nil for unknown source type, got %#v", got)
 	}
@@ -52,8 +64,8 @@ func TestRegistryAllPreservesSlots(t *testing.T) {
 	registry := Registry{Flash: flash}
 
 	all := registry.All()
-	if len(all) != 5 {
-		t.Fatalf("expected 5 providers, got %d", len(all))
+	if len(all) != 8 {
+		t.Fatalf("expected 8 providers, got %d", len(all))
 	}
 	if all[0] != flash {
 		t.Fatalf("expected flash provider in first slot, got %#v", all[0])
@@ -61,7 +73,7 @@ func TestRegistryAllPreservesSlots(t *testing.T) {
 	if all[1] != nil {
 		t.Fatalf("expected nil second slot when headline provider missing, got %#v", all[1])
 	}
-	if all[2] != nil || all[3] != nil || all[4] != nil {
-		t.Fatalf("expected nil full/social slots when providers missing, got %#v %#v %#v", all[2], all[3], all[4])
+	if all[2] != nil || all[3] != nil || all[4] != nil || all[5] != nil || all[6] != nil || all[7] != nil {
+		t.Fatalf("expected nil full/social/news slots when providers missing, got %#v %#v %#v %#v %#v %#v", all[2], all[3], all[4], all[5], all[6], all[7])
 	}
 }

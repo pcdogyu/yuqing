@@ -14,6 +14,7 @@ import (
 	"github.com/pcdogyu/yuqing/go/internal/config"
 	"github.com/pcdogyu/yuqing/go/internal/external"
 	"github.com/pcdogyu/yuqing/go/internal/provider"
+	"github.com/pcdogyu/yuqing/go/internal/provider/cryptonews"
 	"github.com/pcdogyu/yuqing/go/internal/provider/cryptosocial"
 	"github.com/pcdogyu/yuqing/go/internal/provider/jin10flash"
 	"github.com/pcdogyu/yuqing/go/internal/provider/jin10full"
@@ -64,6 +65,15 @@ func NewCrawler(cfg config.Config, store *sqlitestore.Store) *service.Crawler {
 	if cfg.CryptoTelegramURL != "" {
 		registry.CryptoTelegram = cryptosocial.NewTelegramProviderWithOptions(httpClient, cfg.CryptoTelegramURL, cfg.CryptoTelegramToken, cryptosocial.Options{RateLimit: cfg.CryptoSocialRateLimit})
 	}
+	if cfg.ForesightNewsflashURL != "" {
+		registry.ForesightNewsflash = cryptonews.NewForesightNewsflashProvider(httpClient, cfg.ForesightNewsflashURL)
+	}
+	if cfg.CoinDeskZHLatestURL != "" {
+		registry.CoinDeskZHLatest = cryptonews.NewCoinDeskZHLatestProvider(httpClient, cfg.CoinDeskZHLatestURL)
+	}
+	if cfg.PANewsNewsflashURL != "" {
+		registry.PANewsNewsflash = cryptonews.NewPANewsNewsflashProvider(httpClient, cfg.PANewsNewsflashURL)
+	}
 	return service.NewCrawler(store, registry, nil)
 }
 
@@ -100,6 +110,9 @@ func LogStartup(serviceName, listenAddr string, cfg config.Config) {
 		Dur("crypto_social_rate_limit", cfg.CryptoSocialRateLimit).
 		Dur("crypto_x_interval", cfg.CryptoXInterval).
 		Dur("crypto_telegram_interval", cfg.CryptoTelegramInterval).
+		Dur("foresight_newsflash_interval", cfg.ForesightNewsflashInterval).
+		Dur("coindesk_zh_latest_interval", cfg.CoinDeskZHLatestInterval).
+		Dur("panews_newsflash_interval", cfg.PANewsNewsflashInterval).
 		Dur("analysis_interval", cfg.AnalysisInterval).
 		Dur("session_ttl", cfg.SessionTTL).
 		Str("database_driver", cfg.DatabaseDriver).
@@ -120,6 +133,9 @@ func LogStartup(serviceName, listenAddr string, cfg config.Config) {
 		Str("coingecko_url", cfg.CoinGeckoURL).
 		Str("crypto_x_url", cfg.CryptoXURL).
 		Str("crypto_telegram_url", cfg.CryptoTelegramURL).
+		Str("foresight_newsflash_url", cfg.ForesightNewsflashURL).
+		Str("coindesk_zh_latest_url", cfg.CoinDeskZHLatestURL).
+		Str("panews_newsflash_url", cfg.PANewsNewsflashURL).
 		Str("gateway_web_url", cfg.GatewayWebURL).
 		Str("auth_url", cfg.AuthURL).
 		Str("content_url", cfg.ContentURL).

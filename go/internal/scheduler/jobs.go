@@ -210,6 +210,56 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 			},
 		}, "HeadlineCrawlerQuartz", "0 0/1 * * * ?"),
 		withJobMeta(jobDefinition{
+			Name:        "crypto-x-crawl",
+			Group:       "crawl",
+			Description: "Crypto X 社媒抓取，补充币对社媒证据",
+			Interval:    w.cfg.CryptoXInterval,
+			Enabled:     strings.TrimSpace(w.cfg.CryptoXURL) != "",
+			Run: func(ctx context.Context) error {
+				return w.runCrawl(ctx, "crypto_x")
+			},
+		}, "CryptoXSocialCrawler", "0 0/2 * * * ?"),
+		withJobMeta(jobDefinition{
+			Name:        "crypto-telegram-crawl",
+			Group:       "crawl",
+			Description: "Crypto Telegram 社媒抓取，补充币对社媒证据",
+			Interval:    w.cfg.CryptoTelegramInterval,
+			Enabled:     strings.TrimSpace(w.cfg.CryptoTelegramURL) != "",
+			Run: func(ctx context.Context) error {
+				return w.runCrawl(ctx, "crypto_telegram")
+			},
+		}, "CryptoTelegramSocialCrawler", "0 1/2 * * * ?"),
+		withJobMeta(jobDefinition{
+			Name:        "foresight-newsflash-crawl",
+			Group:       "crawl",
+			Description: "Foresight News 快讯抓取，补充币对新闻证据",
+			Interval:    w.cfg.ForesightNewsflashInterval,
+			Enabled:     strings.TrimSpace(w.cfg.ForesightNewsflashURL) != "",
+			Run: func(ctx context.Context) error {
+				return w.runCrawl(ctx, "foresight_newsflash")
+			},
+		}, "ForesightNewsflashCrawler", "0 0/2 * * * ?"),
+		withJobMeta(jobDefinition{
+			Name:        "coindesk-zh-latest-crawl",
+			Group:       "crawl",
+			Description: "CoinDesk 中文最新新闻抓取，补充币对新闻证据",
+			Interval:    w.cfg.CoinDeskZHLatestInterval,
+			Enabled:     strings.TrimSpace(w.cfg.CoinDeskZHLatestURL) != "",
+			Run: func(ctx context.Context) error {
+				return w.runCrawl(ctx, "coindesk_zh_latest")
+			},
+		}, "CoinDeskZHLatestCrawler", "0 0/5 * * * ?"),
+		withJobMeta(jobDefinition{
+			Name:        "panews-newsflash-crawl",
+			Group:       "crawl",
+			Description: "PANews 快讯抓取，补充币对新闻证据",
+			Interval:    w.cfg.PANewsNewsflashInterval,
+			Enabled:     strings.TrimSpace(w.cfg.PANewsNewsflashURL) != "",
+			Run: func(ctx context.Context) error {
+				return w.runCrawl(ctx, "panews_newsflash")
+			},
+		}, "PANewsNewsflashCrawler", "0 1/2 * * * ?"),
+		withJobMeta(jobDefinition{
 			Name:        "analysis-refresh",
 			Group:       "analysis",
 			Description: "AnalysisQuartz 等价的系统分析快照刷新",

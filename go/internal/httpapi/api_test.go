@@ -64,6 +64,15 @@ func TestValidSourceType(t *testing.T) {
 	if got := validSourceType(provider.SourceTypeCryptoTelegram); got != provider.SourceTypeCryptoTelegram {
 		t.Fatalf("expected crypto telegram source type, got %q", got)
 	}
+	if got := validSourceType(provider.SourceTypeForesightNewsflash); got != provider.SourceTypeForesightNewsflash {
+		t.Fatalf("expected foresight source type, got %q", got)
+	}
+	if got := validSourceType(provider.SourceTypeCoinDeskZHLatest); got != provider.SourceTypeCoinDeskZHLatest {
+		t.Fatalf("expected coindesk source type, got %q", got)
+	}
+	if got := validSourceType(provider.SourceTypePANewsNewsflash); got != provider.SourceTypePANewsNewsflash {
+		t.Fatalf("expected panews source type, got %q", got)
+	}
 	if got := validSourceType("other"); got != "" {
 		t.Fatalf("expected empty string for invalid source type, got %q", got)
 	}

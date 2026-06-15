@@ -8,11 +8,14 @@ import (
 )
 
 const (
-	SourceTypeFlash          = "flash"
-	SourceTypeHeadline       = "headline"
-	SourceTypeJin10Full      = "jin10_full"
-	SourceTypeCryptoX        = "crypto_x"
-	SourceTypeCryptoTelegram = "crypto_telegram"
+	SourceTypeFlash              = "flash"
+	SourceTypeHeadline           = "headline"
+	SourceTypeJin10Full          = "jin10_full"
+	SourceTypeCryptoX            = "crypto_x"
+	SourceTypeCryptoTelegram     = "crypto_telegram"
+	SourceTypeForesightNewsflash = "foresight_newsflash"
+	SourceTypeCoinDeskZHLatest   = "coindesk_zh_latest"
+	SourceTypePANewsNewsflash    = "panews_newsflash"
 )
 
 func ValidSourceType(value string) string {
@@ -27,6 +30,12 @@ func ValidSourceType(value string) string {
 		return SourceTypeCryptoX
 	case SourceTypeCryptoTelegram:
 		return SourceTypeCryptoTelegram
+	case SourceTypeForesightNewsflash:
+		return SourceTypeForesightNewsflash
+	case SourceTypeCoinDeskZHLatest:
+		return SourceTypeCoinDeskZHLatest
+	case SourceTypePANewsNewsflash:
+		return SourceTypePANewsNewsflash
 	default:
 		return ""
 	}
@@ -38,11 +47,14 @@ type Provider interface {
 }
 
 type Registry struct {
-	Flash          Provider
-	Headline       Provider
-	Jin10Full      Provider
-	CryptoX        Provider
-	CryptoTelegram Provider
+	Flash              Provider
+	Headline           Provider
+	Jin10Full          Provider
+	CryptoX            Provider
+	CryptoTelegram     Provider
+	ForesightNewsflash Provider
+	CoinDeskZHLatest   Provider
+	PANewsNewsflash    Provider
 }
 
 func (r Registry) Resolve(sourceType string) Provider {
@@ -57,11 +69,17 @@ func (r Registry) Resolve(sourceType string) Provider {
 		return r.CryptoX
 	case SourceTypeCryptoTelegram:
 		return r.CryptoTelegram
+	case SourceTypeForesightNewsflash:
+		return r.ForesightNewsflash
+	case SourceTypeCoinDeskZHLatest:
+		return r.CoinDeskZHLatest
+	case SourceTypePANewsNewsflash:
+		return r.PANewsNewsflash
 	default:
 		return nil
 	}
 }
 
 func (r Registry) All() []Provider {
-	return []Provider{r.Flash, r.Headline, r.Jin10Full, r.CryptoX, r.CryptoTelegram}
+	return []Provider{r.Flash, r.Headline, r.Jin10Full, r.CryptoX, r.CryptoTelegram, r.ForesightNewsflash, r.CoinDeskZHLatest, r.PANewsNewsflash}
 }

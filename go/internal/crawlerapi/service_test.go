@@ -33,6 +33,15 @@ func TestValidSourceType(t *testing.T) {
 	if got := validSourceType("crypto_telegram"); got != "crypto_telegram" {
 		t.Fatalf("expected crypto_telegram, got %q", got)
 	}
+	if got := validSourceType("foresight_newsflash"); got != "foresight_newsflash" {
+		t.Fatalf("expected foresight_newsflash, got %q", got)
+	}
+	if got := validSourceType("coindesk_zh_latest"); got != "coindesk_zh_latest" {
+		t.Fatalf("expected coindesk_zh_latest, got %q", got)
+	}
+	if got := validSourceType("panews_newsflash"); got != "panews_newsflash" {
+		t.Fatalf("expected panews_newsflash, got %q", got)
+	}
 	if got := validSourceType("other"); got != "" {
 		t.Fatalf("expected empty source type, got %q", got)
 	}
