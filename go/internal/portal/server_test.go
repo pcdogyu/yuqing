@@ -690,6 +690,40 @@ func TestPortalPageTemplatesUseCommonFooter(t *testing.T) {
 	}
 }
 
+func TestPortalNavPositionsLogoutTopRight(t *testing.T) {
+	if !strings.Contains(portalNavHTML, `class="logout-link" href="/logout"`) {
+		t.Fatalf("expected logout link to use fixed-position class")
+	}
+	if !strings.Contains(baseStyles, `.logout-link{position:fixed;top:14px;right:18px;`) {
+		t.Fatalf("expected logout link to be positioned at top right")
+	}
+}
+
+func TestSystemTemplateIncludesServiceRestartActions(t *testing.T) {
+	for _, expected := range []string{
+		`<th>操作</th>`,
+		`name="form_type" value="restart_service"`,
+		`name="service_name" value="{{.Name}}"`,
+		`<button type="submit">重启</button>`,
+	} {
+		if !strings.Contains(systemTemplate, expected) {
+			t.Fatalf("expected system template to include %q", expected)
+		}
+	}
+}
+
+func TestPortalFooterAddsSystemServiceLogLinks(t *testing.T) {
+	for _, expected := range []string{
+		`service-log-link`,
+		`/system/logs?service=`,
+		`input[name="service_name"]`,
+	} {
+		if !strings.Contains(portalFooterHTML, expected) {
+			t.Fatalf("expected portal footer to include service log link script fragment %q", expected)
+		}
+	}
+}
+
 func TestDisplayBoardCompat(t *testing.T) {
 	srv, cleanup := newPortalCompatServer(t)
 	defer cleanup()

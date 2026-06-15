@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -194,6 +195,8 @@ func (s *Service) Routes(r chi.Router) {
 	r.Post("/api/v1/system/audit-logs", s.handleCreateAuditLog)
 	r.Get("/api/v1/system/operations", s.handleOperations)
 	r.Get("/api/v1/system/alerts", s.handleAlerts)
+	r.Get("/api/v1/system/services/{name}/logs", s.handleServiceLogs)
+	r.Post("/api/v1/system/services/{name}/restart", s.handleRestartService)
 	r.Get("/api/v1/system/popup", s.handleGetPopupState)
 	r.Put("/api/v1/system/popup", s.handleUpdatePopupState)
 	r.Get("/api/v1/system/preferences", s.handleGetPreferences)
@@ -2001,6 +2004,53 @@ func (s *Service) handleAlerts(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Service) handleRestartService(w http.ResponseWriter, r *http.Request) {
+	if strings.TrimSpace(r.Header.Get("X-Service-Token")) != strings.TrimSpace(s.cfg.ServiceToken) {
+		apiutil.WriteJSON(w, http.StatusUnauthorized, "unauthorized", nil)
+		return
+	}
+	name := strings.TrimSpace(chi.URLParam(r, "name"))
+	spec, ok := s.serviceRestartSpec(name)
+	if !ok {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "unsupported service", nil)
+		return
+	}
+	if err := startServiceRestart(spec); err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusAccepted, "restart submitted", map[string]string{"service": spec.Name})
+}
+
+func (s *Service) handleServiceLogs(w http.ResponseWriter, r *http.Request) {
+	if strings.TrimSpace(r.Header.Get("X-Service-Token")) != strings.TrimSpace(s.cfg.ServiceToken) {
+		apiutil.WriteJSON(w, http.StatusUnauthorized, "unauthorized", nil)
+		return
+	}
+	name := strings.TrimSpace(chi.URLParam(r, "name"))
+	spec, ok := s.serviceRestartSpec(name)
+	if !ok {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "unsupported service", nil)
+		return
+	}
+	lines := apiutil.IntQuery(r, "lines", 200)
+	if lines <= 0 {
+		lines = 200
+	}
+	if lines > 1000 {
+		lines = 1000
+	}
+	logText, err := readServiceLogTail(spec, lines)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusNotFound, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]string{
+		"service": spec.Name,
+		"log":     logText,
+	})
+}
+
 func (s *Service) operationsSummary(ctx context.Context) model.OperationsSummary {
 	taskRuns, _ := s.store.ListTaskRuns(ctx, 50)
 	auditLogs, _ := s.store.ListAuditLogs(ctx, 20, 0, "")
@@ -2026,6 +2076,102 @@ func (s *Service) operationsSummary(ctx context.Context) model.OperationsSummary
 	}
 	ops.Ready = len(buildOperationsAlerts(ops)) == 0
 	return ops
+}
+
+type serviceRestartSpec struct {
+	Name string
+	Path string
+	Port int
+	Root string
+}
+
+func (s *Service) serviceRestartSpec(name string) (serviceRestartSpec, bool) {
+	services := map[string]struct {
+		path string
+		addr string
+	}{
+		"auth-service":      {path: ".\\cmd\\auth-service", addr: s.cfg.AuthAddr},
+		"content-service":   {path: ".\\cmd\\content-service", addr: s.cfg.ContentAddr},
+		"crawler-service":   {path: ".\\cmd\\crawler-service", addr: s.cfg.CrawlerAddr},
+		"analysis-service":  {path: ".\\cmd\\analysis-service", addr: s.cfg.AnalysisAddr},
+		"nlp-service":       {path: ".\\cmd\\nlp-service", addr: s.cfg.NLPAddr},
+		"scheduler-service": {path: ".\\cmd\\scheduler-service", addr: s.cfg.SchedulerAddr},
+		"gateway-web":       {path: ".\\cmd\\gateway-web", addr: s.cfg.GatewayWebAddr},
+	}
+	def, ok := services[name]
+	if !ok {
+		return serviceRestartSpec{}, false
+	}
+	port := portFromAddr(def.addr)
+	if port <= 0 {
+		return serviceRestartSpec{}, false
+	}
+	root, err := os.Getwd()
+	if err != nil {
+		root = "."
+	}
+	return serviceRestartSpec{Name: name, Path: def.path, Port: port, Root: root}, true
+}
+
+func portFromAddr(addr string) int {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return 0
+	}
+	if idx := strings.LastIndex(addr, ":"); idx >= 0 {
+		addr = addr[idx+1:]
+	}
+	port, err := strconv.Atoi(addr)
+	if err != nil || port <= 0 {
+		return 0
+	}
+	return port
+}
+
+var startServiceRestart = func(spec serviceRestartSpec) error {
+	script := fmt.Sprintf(`
+$ErrorActionPreference = "SilentlyContinue"
+Start-Sleep -Seconds 1
+$root = %q
+$name = %q
+$servicePath = %q
+$port = %d
+$pidDir = Join-Path $root "runtime-pids"
+New-Item -ItemType Directory -Force -Path $pidDir | Out-Null
+$pidFile = Join-Path $pidDir ($name + ".pid")
+if (Test-Path $pidFile) {
+    $oldPid = Get-Content $pidFile -ErrorAction SilentlyContinue
+    if ($oldPid) {
+        Stop-Process -Id $oldPid -Force -ErrorAction SilentlyContinue
+    }
+    Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
+}
+Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object {
+    Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue
+}
+Start-Sleep -Milliseconds 500
+$process = Start-Process -FilePath "go" -ArgumentList @("run", $servicePath) -WorkingDirectory $root -PassThru -WindowStyle Hidden
+Set-Content -Path $pidFile -Value $process.Id
+`, spec.Root, spec.Name, spec.Path, spec.Port)
+	return exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script).Start()
+}
+
+func readServiceLogTail(spec serviceRestartSpec, lines int) (string, error) {
+	logPath := filepath.Join(spec.Root, "runtime-logs", spec.Name+".out.log")
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		return "", err
+	}
+	text := strings.ReplaceAll(string(data), "\r\n", "\n")
+	text = strings.TrimRight(text, "\n")
+	if text == "" {
+		return "", nil
+	}
+	parts := strings.Split(text, "\n")
+	if len(parts) > lines {
+		parts = parts[len(parts)-lines:]
+	}
+	return strings.Join(parts, "\n"), nil
 }
 
 func (s *Service) operationServiceStatuses(ctx context.Context) []model.OperationServiceStatus {

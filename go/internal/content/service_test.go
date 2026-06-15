@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -235,6 +236,87 @@ func TestOperationsAndAlertsAPI(t *testing.T) {
 	router.ServeHTTP(alertRR, alertReq)
 	if alertRR.Code != http.StatusOK || !strings.Contains(alertRR.Body.String(), "failed_task_runs") || !strings.Contains(alertRR.Body.String(), "consecutive_task_failures") || !strings.Contains(alertRR.Body.String(), "crypto_social_no_recent_insert") {
 		t.Fatalf("expected failed task alert, got status=%d body=%s", alertRR.Code, alertRR.Body.String())
+	}
+}
+
+func TestRestartServiceAPIRequiresTokenAndSubmitsKnownService(t *testing.T) {
+	store := newContentSearchTestStore(t)
+	var restarted serviceRestartSpec
+	previous := startServiceRestart
+	startServiceRestart = func(spec serviceRestartSpec) error {
+		restarted = spec
+		return nil
+	}
+	t.Cleanup(func() { startServiceRestart = previous })
+
+	svc := NewService(config.Config{
+		ServiceToken: "secret",
+		CrawlerAddr:  ":8083",
+		HTTPTimeout:  time.Second,
+	}, store)
+	router := svc.Router()
+
+	unauthorizedReq := httptest.NewRequest(http.MethodPost, "/api/v1/system/services/crawler-service/restart", nil)
+	unauthorizedRR := httptest.NewRecorder()
+	router.ServeHTTP(unauthorizedRR, unauthorizedReq)
+	if unauthorizedRR.Code != http.StatusUnauthorized {
+		t.Fatalf("expected unauthorized restart to be rejected, got %d", unauthorizedRR.Code)
+	}
+
+	unknownReq := httptest.NewRequest(http.MethodPost, "/api/v1/system/services/unknown/restart", nil)
+	unknownReq.Header.Set("X-Service-Token", "secret")
+	unknownRR := httptest.NewRecorder()
+	router.ServeHTTP(unknownRR, unknownReq)
+	if unknownRR.Code != http.StatusBadRequest {
+		t.Fatalf("expected unknown service to be rejected, got %d", unknownRR.Code)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/services/crawler-service/restart", nil)
+	req.Header.Set("X-Service-Token", "secret")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("expected restart accepted, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if restarted.Name != "crawler-service" || restarted.Port != 8083 || restarted.Path != ".\\cmd\\crawler-service" {
+		t.Fatalf("unexpected restart spec: %+v", restarted)
+	}
+}
+
+func TestServiceLogsAPIRequiresTokenAndReadsTail(t *testing.T) {
+	store := newContentSearchTestStore(t)
+	root := t.TempDir()
+	t.Chdir(root)
+	if err := os.MkdirAll(filepath.Join(root, "runtime-logs"), 0o755); err != nil {
+		t.Fatalf("MkdirAll error: %v", err)
+	}
+	logPath := filepath.Join(root, "runtime-logs", "crawler-service.out.log")
+	if err := os.WriteFile(logPath, []byte("line1\nline2\nline3\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile error: %v", err)
+	}
+	svc := NewService(config.Config{
+		ServiceToken: "secret",
+		CrawlerAddr:  ":8083",
+		HTTPTimeout:  time.Second,
+	}, store)
+	router := svc.Router()
+
+	unauthorizedReq := httptest.NewRequest(http.MethodGet, "/api/v1/system/services/crawler-service/logs", nil)
+	unauthorizedRR := httptest.NewRecorder()
+	router.ServeHTTP(unauthorizedRR, unauthorizedReq)
+	if unauthorizedRR.Code != http.StatusUnauthorized {
+		t.Fatalf("expected unauthorized logs request to be rejected, got %d", unauthorizedRR.Code)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/services/crawler-service/logs?lines=2", nil)
+	req.Header.Set("X-Service-Token", "secret")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected logs 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"service":"crawler-service"`) || !strings.Contains(rr.Body.String(), "line2\\nline3") || strings.Contains(rr.Body.String(), "line1") {
+		t.Fatalf("unexpected log body: %s", rr.Body.String())
 	}
 }
 
