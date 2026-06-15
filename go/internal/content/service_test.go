@@ -239,6 +239,43 @@ func TestOperationsAndAlertsAPI(t *testing.T) {
 	}
 }
 
+func TestDatabaseConfigAPI(t *testing.T) {
+	store := newContentSearchTestStore(t)
+	dbPath := filepath.Join(t.TempDir(), "yuqing.db")
+	svc := NewService(config.Config{
+		DatabaseDriver:   "sqlite",
+		DatabasePath:     dbPath,
+		DatabaseURL:      "postgres://dbuser:secret@127.0.0.1:5432/yuqing?sslmode=disable",
+		PostgresHost:     "127.0.0.1",
+		PostgresPort:     "5432",
+		PostgresDatabase: "yuqing",
+		PostgresUser:     "dbuser",
+		PostgresSSLMode:  "disable",
+		HTTPTimeout:      time.Second,
+	}, store)
+	router := svc.Router()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/database-config", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected database config 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), "secret") || !strings.Contains(rr.Body.String(), "redacted") || !strings.Contains(rr.Body.String(), `"driver":"sqlite"`) {
+		t.Fatalf("expected masked sqlite database config, got %s", rr.Body.String())
+	}
+
+	missingSvc := NewService(config.Config{DatabaseDriver: "sqlite", DatabasePath: dbPath, HTTPTimeout: time.Second}, store)
+	missingRouter := missingSvc.Router()
+	checkReq := httptest.NewRequest(http.MethodPost, "/api/v1/system/database-config/check", strings.NewReader(`{"driver":"postgres"}`))
+	checkReq.Header.Set("Content-Type", "application/json")
+	checkRR := httptest.NewRecorder()
+	missingRouter.ServeHTTP(checkRR, checkReq)
+	if checkRR.Code != http.StatusOK || !strings.Contains(checkRR.Body.String(), "PostgreSQL config is incomplete") {
+		t.Fatalf("expected incomplete postgres config warning, got status=%d body=%s", checkRR.Code, checkRR.Body.String())
+	}
+}
+
 func TestRestartServiceAPIRequiresTokenAndSubmitsKnownService(t *testing.T) {
 	store := newContentSearchTestStore(t)
 	var restarted serviceRestartSpec

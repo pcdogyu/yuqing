@@ -389,6 +389,21 @@ type OperationBackupStatus struct {
 	AgeHours     float64    `json:"age_hours,omitempty"`
 }
 
+type DatabaseConfigStatus struct {
+	Driver             string `json:"driver"`
+	RuntimeDriver      string `json:"runtime_driver"`
+	Status             string `json:"status"`
+	Message            string `json:"message,omitempty"`
+	SQLitePath         string `json:"sqlite_path,omitempty"`
+	PostgresHost       string `json:"postgres_host,omitempty"`
+	PostgresPort       string `json:"postgres_port,omitempty"`
+	PostgresDatabase   string `json:"postgres_database,omitempty"`
+	PostgresUser       string `json:"postgres_user,omitempty"`
+	PostgresSSLMode    string `json:"postgres_sslmode,omitempty"`
+	PostgresConfigured bool   `json:"postgres_configured"`
+	PostgresDSN        string `json:"postgres_dsn,omitempty"`
+}
+
 type OperationLegacyRouteStatus struct {
 	Path       string `json:"path"`
 	Expected   int    `json:"expected"`
@@ -411,6 +426,7 @@ type OperationsSummary struct {
 	LegacyRouteProbes    []OperationLegacyRouteStatus `json:"legacy_route_probes"`
 	ExternalIntegrations []OperationExternalStatus    `json:"external_integrations"`
 	Backup               OperationBackupStatus        `json:"backup"`
+	Database             DatabaseConfigStatus         `json:"database"`
 	Ready                bool                         `json:"ready"`
 }
 

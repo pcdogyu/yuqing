@@ -102,10 +102,17 @@ func LogStartup(serviceName, listenAddr string, cfg config.Config) {
 		Dur("crypto_telegram_interval", cfg.CryptoTelegramInterval).
 		Dur("analysis_interval", cfg.AnalysisInterval).
 		Dur("session_ttl", cfg.SessionTTL).
+		Str("database_driver", cfg.DatabaseDriver).
 		Str("database_path", cfg.DatabasePath).
 		Str("database_path_abs", dbPath).
 		Bool("database_path_resolved", dbPathErr == nil).
 		Bool("database_file_exists", fileExists(cfg.DatabasePath)).
+		Bool("database_url_configured", strings.TrimSpace(cfg.DatabaseURL) != "").
+		Str("postgres_host", cfg.PostgresHost).
+		Str("postgres_port", cfg.PostgresPort).
+		Str("postgres_database", cfg.PostgresDatabase).
+		Str("postgres_user", cfg.PostgresUser).
+		Str("postgres_sslmode", cfg.PostgresSSLMode).
 		Str("flash_url", cfg.FlashURL).
 		Str("headline_url", cfg.HeadlineURL).
 		Str("binance_base_url", cfg.BinanceBaseURL).

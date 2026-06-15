@@ -155,6 +155,7 @@ type pageData struct {
 	LegacyRouteSummary         []legacyRouteSummary
 	LegacyLiveRoutes           []legacyRouteSpec
 	Operations                 model.OperationsSummary
+	DatabaseConfig             model.DatabaseConfigStatus
 	PublicOptions              []model.PublicOption
 	PublicOption               model.PublicOption
 	Preferences                model.UserPreference
@@ -166,6 +167,11 @@ type pageData struct {
 	Message                    string
 	ServiceLogName             string
 	ServiceLogText             string
+	ServiceLogEntries          []serviceLogEntry
+	ServiceLogPage             int
+	ServiceLogPrev             int
+	ServiceLogNext             int
+	ServiceLogTotalPages       int
 	Reference                  string
 	ReturnTo                   string
 	ReturnURL                  string
@@ -260,6 +266,7 @@ func NewServer(cfg config.Config) *Server {
 	template.Must(tpl.New("reports").Parse(reportsTemplate))
 	template.Must(tpl.New("report").Parse(reportTemplate))
 	template.Must(tpl.New("system").Parse(systemTemplate))
+	template.Must(tpl.New("system_logs").Parse(systemLogsTemplate))
 	template.Must(tpl.New("platform_bindings").Parse(platformBindingsTemplate))
 	template.Must(tpl.New("platform_bindings_v2").Parse(platformWorkbenchTemplateV3))
 	template.Must(tpl.New("public_option_workbench").Parse(publicOptionWorkbenchTemplate))
@@ -2977,6 +2984,25 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) 
 			} else {
 				message = "邮件配置已保存"
 			}
+		case "database_check":
+			resp, err := s.client.R().SetBody(map[string]any{
+				"driver":            r.FormValue("driver"),
+				"sqlite_path":       r.FormValue("sqlite_path"),
+				"postgres_dsn":      r.FormValue("postgres_dsn"),
+				"postgres_host":     r.FormValue("postgres_host"),
+				"postgres_port":     r.FormValue("postgres_port"),
+				"postgres_database": r.FormValue("postgres_database"),
+				"postgres_user":     r.FormValue("postgres_user"),
+				"postgres_password": r.FormValue("postgres_password"),
+				"postgres_sslmode":  r.FormValue("postgres_sslmode"),
+			}).Post(s.cfg.ContentURL + "/api/v1/system/database-config/check")
+			if err != nil {
+				message = "数据库连接检测失败"
+			} else if resp.IsSuccess() {
+				message = "数据库连接检测通过"
+			} else {
+				message = "数据库连接检测失败：" + responseErrorMessage(resp, nil)
+			}
 		case "warning":
 			selectedProjectID, _ := strconv.ParseInt(nonEmpty(r.FormValue("project_id"), projectID), 10, 64)
 			if selectedProjectID <= 0 {
@@ -3077,6 +3103,7 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) 
 	preferences := model.UserPreference{}
 	popupState := model.PopupState{}
 	mailConfig := model.MailConfig{}
+	databaseConfig := model.DatabaseConfigStatus{}
 	warningSetting := model.WarningSetting{}
 	projects := []model.Project{}
 	groups := []model.ProjectGroup{}
@@ -3100,6 +3127,7 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) 
 		taskRuns = operations.RecentTaskRuns
 		auditLogs = operations.RecentAuditLogs
 		schedulerJobs = operations.SchedulerJobs
+		databaseConfig = operations.Database
 	}
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/projects", &projects)
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/project-groups", &groups)
@@ -3139,6 +3167,9 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) 
 		}
 	}
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/system/mail-config", &mailConfig)
+	if databaseConfig.Driver == "" {
+		_ = s.getJSON(s.cfg.ContentURL+"/api/v1/system/database-config", &databaseConfig)
+	}
 	selectedProjectID := int64(0)
 	if parsedProjectID, err := strconv.ParseInt(projectID, 10, 64); err == nil {
 		selectedProjectID = parsedProjectID
@@ -3189,6 +3220,7 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) 
 		"warning":     "预警设置",
 		"feedback":    "反馈建议",
 		"operations":  "生产运行",
+		"database":    "数据库配置",
 	}[sectionKey]
 	_ = s.render(w, "system", pageData{
 		Title:                    "系统设置",
@@ -3206,6 +3238,7 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) 
 		GroupNames:               groupNames,
 		Services:                 chooseServiceStatuses(operations.Services, s.collectServiceStatuses()),
 		Operations:               operations,
+		DatabaseConfig:           databaseConfig,
 		Preferences:              preferences,
 		PopupState:               popupState,
 		MailConfig:               mailConfig,
@@ -3238,17 +3271,37 @@ func (s *Server) handleSystemLogs(w http.ResponseWriter, r *http.Request, _ any)
 		http.Redirect(w, r, "/system", http.StatusSeeOther)
 		return
 	}
+	page := parsePositiveInt(r.URL.Query().Get("page"), 1)
 	name, logText := s.loadServiceLog(serviceName)
 	if name == "" {
 		name = serviceName
 		logText = "日志读取失败"
 	}
-	body := `<section><p><a class="inline" href="/system">返回系统工作台</a></p><h2>` +
-		template.HTMLEscapeString(name) +
-		` 日志</h2><pre>` +
-		template.HTMLEscapeString(logText) +
-		`</pre></section>`
-	_ = s.writeSimplePage(w, "system_logs", name+" 日志", body)
+	entries := parseServiceLogEntries(logText)
+	entries = reverseLogEntries(entries)
+	totalPages := 1
+	if len(entries) > 0 {
+		totalPages = (len(entries) + serviceLogPageSize - 1) / serviceLogPageSize
+	}
+	if page > totalPages {
+		page = totalPages
+	}
+	start := (page - 1) * serviceLogPageSize
+	end := minInt(start+serviceLogPageSize, len(entries))
+	if start > len(entries) {
+		start = len(entries)
+		end = len(entries)
+	}
+	data := pageData{
+		Title:                name + " 日志",
+		ServiceLogName:       name,
+		ServiceLogEntries:    entries[start:end],
+		ServiceLogPage:       page,
+		ServiceLogPrev:       maxInt(page-1, 1),
+		ServiceLogNext:       minInt(page+1, totalPages),
+		ServiceLogTotalPages: totalPages,
+	}
+	_ = s.render(w, "system_logs", data)
 }
 
 func (s *Server) requireSession(next func(http.ResponseWriter, *http.Request, any)) http.HandlerFunc {
@@ -3363,7 +3416,7 @@ func (s *Server) loadServiceLog(serviceName string) (string, string) {
 	resp, err := s.client.R().
 		SetHeader("X-Service-Token", s.cfg.ServiceToken).
 		SetResult(&envelope).
-		Get(s.cfg.ContentURL + "/api/v1/system/services/" + url.PathEscape(serviceName) + "/logs?lines=200")
+		Get(s.cfg.ContentURL + "/api/v1/system/services/" + url.PathEscape(serviceName) + "/logs?lines=1000")
 	if err != nil || !resp.IsSuccess() || len(envelope.Data) == 0 {
 		return "", ""
 	}
@@ -3375,6 +3428,77 @@ func (s *Server) loadServiceLog(serviceName string) (string, string) {
 		return "", ""
 	}
 	return payload.Service, payload.Log
+}
+
+const serviceLogPageSize = 50
+
+type serviceLogEntry struct {
+	Time    string
+	Level   string
+	Message string
+}
+
+func parseServiceLogEntries(text string) []serviceLogEntry {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	lines := strings.Split(text, "\n")
+	entries := make([]serviceLogEntry, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		entry, ok := parseServiceLogLine(line)
+		if ok {
+			entries = append(entries, entry)
+			continue
+		}
+		if len(entries) == 0 {
+			entries = append(entries, serviceLogEntry{Message: line})
+			continue
+		}
+		entries[len(entries)-1].Message = strings.TrimSpace(entries[len(entries)-1].Message + "\n" + line)
+	}
+	return entries
+}
+
+func parseServiceLogLine(line string) (serviceLogEntry, bool) {
+	fields := strings.Fields(line)
+	if len(fields) < 2 {
+		return serviceLogEntry{Message: line}, false
+	}
+	if isLogLevel(fields[1]) && strings.Contains(fields[0], "T") {
+		return serviceLogEntry{
+			Time:    fields[0],
+			Level:   fields[1],
+			Message: strings.TrimSpace(strings.TrimPrefix(line, fields[0]+" "+fields[1])),
+		}, true
+	}
+	if len(fields) >= 3 && isLogLevel(fields[2]) && strings.Contains(fields[0], "/") {
+		prefix := fields[0] + " " + fields[1] + " " + fields[2]
+		return serviceLogEntry{
+			Time:    fields[0] + " " + fields[1],
+			Level:   fields[2],
+			Message: strings.TrimSpace(strings.TrimPrefix(line, prefix)),
+		}, true
+	}
+	return serviceLogEntry{Message: line}, false
+}
+
+func isLogLevel(value string) bool {
+	switch strings.ToUpper(strings.TrimSpace(value)) {
+	case "DBG", "DEBUG", "INF", "INFO", "WRN", "WARN", "ERR", "ERROR", "FATAL", "PANIC":
+		return true
+	default:
+		return false
+	}
+}
+
+func reverseLogEntries(entries []serviceLogEntry) []serviceLogEntry {
+	result := append([]serviceLogEntry(nil), entries...)
+	for left, right := 0, len(result)-1; left < right; left, right = left+1, right-1 {
+		result[left], result[right] = result[right], result[left]
+	}
+	return result
 }
 
 func (s *Server) render(w http.ResponseWriter, name string, data pageData) error {
@@ -3528,6 +3652,8 @@ func normalizeSystemSection(section string) string {
 		return "feedback"
 	case "operations", "production":
 		return "operations"
+	case "database", "postgres", "postgresql":
+		return "database"
 	default:
 		return "account"
 	}
@@ -4273,7 +4399,7 @@ const portalFooterHTML = `<footer class="site-footer"><div>Code By Yuhao@jiansut
 
 const portalRulesFormEnhancementScript = `<script>(function(){if(location.pathname!=="/monitor-rules"){return}var headings=[].slice.call(document.querySelectorAll("h2"));var heading=headings.find(function(node){return node.textContent.trim()==="新建规则"});if(!heading){return}var section=heading.closest("section");var form=section&&section.querySelector("form");if(!form){return}var project=form.querySelector('select[name="project_id"]');if(project&&project.options.length===0){var option=document.createElement("option");option.value="";option.textContent="无可选项目，提交时自动创建项目";project.appendChild(option)}if(project&&!form.querySelector('input[name="project_name"]')){var input=document.createElement("input");input.name="project_name";input.placeholder="新项目名称（可选，未选择项目时使用）";project.insertAdjacentElement("afterend",input)}var channels=form.querySelector('input[name="channels"]');if(channels){channels.setAttribute("list","monitor-rule-channel-options");if(!document.getElementById("monitor-rule-channel-options")){var list=document.createElement("datalist");list.id="monitor-rule-channel-options";["flash","headline","crypto_x","crypto_telegram","flash,headline","all"].forEach(function(value){var option=document.createElement("option");option.value=value;list.appendChild(option)});document.body.appendChild(list)}}var name=form.querySelector('input[name="name"]');var include=form.querySelector('input[name="include_keywords"]');form.addEventListener("submit",function(){if(name&&include&&!name.value.trim()&&include.value.trim()){name.value="关键词监测："+include.value.trim()}})})();</script>`
 
-const portalSystemServiceLogsScript = `<script>(function(){if(location.pathname!=="/system"){return}document.querySelectorAll('form input[name="form_type"][value="restart_service"]').forEach(function(input){var form=input.closest("form");var cell=form&&form.closest("td");var service=form&&form.querySelector('input[name="service_name"]');if(!cell||!service||cell.querySelector(".service-log-link")){return}var link=document.createElement("a");link.className="inline service-log-link";link.href="/system/logs?service="+encodeURIComponent(service.value);link.textContent="日志";link.style.marginLeft="8px";cell.appendChild(link)})})();</script>`
+const portalSystemServiceLogsScript = ``
 
 const layoutTemplate = `
 {{define "nav"}}` + portalNavHTML + `{{end}}
@@ -4330,8 +4456,12 @@ const reportTemplate = `
 {{define "report"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.toolbar{display:flex;gap:12px;flex-wrap:wrap}.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.summary-card{padding:14px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.summary-card strong{display:block;font-size:24px;margin-top:6px}.crawl-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}.crawl-card{border:1px solid #ece7dc;border-radius:14px;padding:16px;background:#faf8f2}` + `</style></head><body><header><h1>报告详情</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><div class="toolbar"><a class="inline" href="{{.ReturnURL}}">返回筛选结果</a><a class="inline" href="/reports">返回报告中心</a>{{if .Project.ID}}<a class="inline" href="/projects/{{.Project.ID}}">返回所属项目</a><a class="inline" href="/reports?project_id={{.Project.ID}}">查看项目全部报告</a><a class="inline" href="/articles?project_id={{.Project.ID}}">查看项目文章</a>{{end}}</div><h2>{{.Report.Title}}</h2><p>状态：{{.Report.Status}} | 更新时间：{{.Report.UpdatedAt.Format "2006-01-02 15:04"}}</p>{{if .Project.ID}}<p>所属项目：<a class="inline" href="/projects/{{.Project.ID}}">{{.Project.Name}}</a></p><div class="summary-grid"><div class="summary-card">其他报告<strong>{{len .Reports}}</strong></div><div class="summary-card">draft<strong>{{.CountDraft}}</strong></div><div class="summary-card">generated<strong>{{.CountGenerated}}</strong></div><div class="summary-card">archived<strong>{{.CountArchived}}</strong></div><div class="summary-card">最近文章<strong>{{len .Articles.Items}}</strong></div></div>{{end}}<h3>摘要</h3><pre>{{.Report.Summary}}</pre><h3>正文</h3><pre>{{.Report.Content}}</pre></section>{{if .Project.ID}}<section><h2>同项目最近报告</h2><table><tr><th>ID</th><th>标题</th><th>状态</th><th>更新时间</th></tr>{{range .Reports}}<tr><td>{{.ID}}</td><td><a class="inline" href="/reports/{{.ID}}?return_to=%2Freports%3Fproject_id%3D{{$.Project.ID}}">{{.Title}}</a></td><td>{{.Status}}</td><td>{{.UpdatedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="4">除当前报告外暂无同项目报告</td></tr>{{end}}</table></section><section><h2>报告任务</h2><div class="crawl-grid"><div class="crawl-card"><h3>按来源抓取</h3><form class="inline" method="post"><input type="hidden" name="form_type" value="crawl"><select name="source_type">` + portalSourceOptions + `</select><button type="submit">立即抓取</button></form></div><div class="crawl-card"><h3>按模板抓取</h3><form class="inline" method="post"><input type="hidden" name="form_type" value="crawl"><select name="template_id"><option value="">选择模板</option>{{range .CrawlTemplates}}<option value="{{.ID}}">{{.Name}} [{{.SourceType}}]</option>{{else}}<option value="">暂无可用模板</option>{{end}}</select><input name="keyword" placeholder="模板关键词（可选）"><button type="submit">模板抓取</button></form></div></div></section><section><h2>最近任务记录</h2><table><tr><th>任务</th><th>状态</th><th>时间</th><th>说明</th></tr>{{range .TaskRuns}}<tr><td>{{.TaskName}}</td><td>{{.Status}}</td><td>{{.StartedAt.Format "2006-01-02 15:04"}}</td><td>{{.Message}}</td></tr>{{else}}<tr><td colspan="4">暂无任务记录</td></tr>{{end}}</table></section><section><h2>最近抓取状态</h2><table><tr><th>来源</th><th>状态</th><th>抓取数</th><th>入库数</th><th>开始时间</th></tr>{{range .CrawlRuns}}<tr><td>{{.SourceType}}</td><td>{{.Status}}</td><td>{{.FetchedCount}}</td><td>{{.InsertedCount}}</td><td>{{.StartedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="5">暂无抓取记录</td></tr>{{end}}</table></section><section><h2>所属项目最近文章</h2><table><tr><th>标题</th><th>来源</th><th>时间</th></tr>{{range .Articles.Items}}<tr><td><a class="inline" href="/articles/{{.ID}}?return_to=%2Farticles%3Fproject_id%3D{{$.Project.ID}}">{{.Title}}</a></td><td>{{.SourceType}}</td><td>{{.CapturedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="3">暂无关联文章</td></tr>{{end}}</table></section>{{end}}<section><h2>重新生成报告</h2><form method="post"><input name="title" value="{{.Report.Title}} 重生成" placeholder="新报告标题"><textarea name="content" placeholder="可修改正文后重新生成">{{.Report.Content}}</textarea><button type="submit">重新生成</button></form></section></main>{{template "footer" .}}</body></html>{{end}}
 `
 
+const systemLogsTemplate = `
+{{define "system_logs"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.log-table{table-layout:fixed}.log-time{width:230px}.log-level{width:90px}.log-message{white-space:pre-wrap;word-break:break-word}.page-nav{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0}.page-nav a{padding:6px 10px;border:1px solid #d0c8b8;border-radius:8px;text-decoration:none;color:#214e34}` + `</style></head><body><header><h1>{{.ServiceLogName}} 日志</h1>{{template "nav" .}}</header><main><section><p><a class="inline" href="/system">返回系统工作台</a></p><div class="page-nav">{{if gt .ServiceLogTotalPages 1}}<a href="/system/logs?service={{urlquery .ServiceLogName}}&page={{.ServiceLogPrev}}">上一页</a><span>第 {{.ServiceLogPage}} / {{.ServiceLogTotalPages}} 页</span><a href="/system/logs?service={{urlquery .ServiceLogName}}&page={{.ServiceLogNext}}">下一页</a>{{else}}<span>共 {{len .ServiceLogEntries}} 条日志</span>{{end}}</div><table class="log-table"><tr><th class="log-time">时间</th><th class="log-level">Level</th><th>具体内容</th></tr>{{range .ServiceLogEntries}}<tr><td class="log-time">{{.Time}}</td><td class="log-level">{{.Level}}</td><td class="log-message">{{.Message}}</td></tr>{{else}}<tr><td colspan="3">暂无日志</td></tr>{{end}}</table></section></main>{{template "footer" .}}</body></html>{{end}}
+`
+
 const systemTemplate = `
-{{define "system"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}.ok{color:#214e34;font-weight:700}.bad{color:#8f2d2d;font-weight:700}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}.tabs{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}.tabs a{padding:8px 12px;border-radius:999px;background:#efe9dc;color:#214e34;text-decoration:none}.tabs a.active{background:#214e34;color:#fff}.muted{color:#6a6257}.page-nav{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.page-nav a{padding:6px 10px;border:1px solid #d0c8b8;border-radius:8px;text-decoration:none;color:#214e34}.favorite-card,.warning-card{display:grid;grid-template-columns:2.2fr 1fr 1fr 1fr 1fr;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid #ece7dc}.warning-card{grid-template-columns:2.2fr 1fr 1fr 1fr 1fr 1fr}.section-block{margin-top:20px}.crawl-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}.crawl-card{border:1px solid #ece7dc;border-radius:14px;padding:16px;background:#faf8f2}` + `</style></head><body><header><h1>系统工作台</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><div class="tabs"><a class="{{if eq .SectionKey "account"}}active{{end}}" href="/system?section=account">账号安全</a><a class="{{if eq .SectionKey "preferences"}}active{{end}}" href="/system?section=preferences">偏好设置</a><a class="{{if eq .SectionKey "favorites"}}active{{end}}" href="/system?section=favorites{{if .FavoriteProjectID}}&project_id={{.FavoriteProjectID}}{{end}}">收藏夹</a><a class="{{if eq .SectionKey "warningmsg"}}active{{end}}" href="/system?section=warningmsg{{if .WarningArticleProjectID}}&project_id={{.WarningArticleProjectID}}{{end}}{{if .WarningArticleKeyword}}&keyword={{.WarningArticleKeyword}}{{end}}">预警消息</a><a class="{{if eq .SectionKey "warning"}}active{{end}}" href="/system?section=warning{{if .WarningSetting.ProjectID}}&project_id={{.WarningSetting.ProjectID}}{{end}}">预警设置</a><a class="{{if eq .SectionKey "feedback"}}active{{end}}" href="/system?section=feedback">反馈建议</a><a class="{{if eq .SectionKey "operations"}}active{{end}}" href="/system?section=operations">生产运行</a></div><div class="muted">当前视图：{{.Section}}</div></section><section><h2>服务状态</h2><table><tr><th>服务</th><th>状态</th><th>健康检查</th><th>操作</th></tr>{{range .Services}}<tr><td>{{.Name}}</td><td>{{if .Healthy}}<span class="ok">正常</span>{{else}}<span class="bad">异常</span>{{end}}</td><td>{{.Message}}</td><td><form method="post" class="inline" onsubmit="return confirm('确认重启 {{.Name}}？')"><input type="hidden" name="form_type" value="restart_service"><input type="hidden" name="section" value="{{$.SectionKey}}"><input type="hidden" name="service_name" value="{{.Name}}"><button type="submit">重启</button></form></td></tr>{{else}}<tr><td colspan="4">暂无服务状态</td></tr>{{end}}</table></section>{{if eq .SectionKey "operations"}}<section class="section-block"><h2>生产运行</h2><div class="grid"><div><h3>Scheduler Jobs</h3><table><tr><th>任务</th><th>Java Quartz</th><th>状态</th><th>下次执行</th></tr>{{range .SchedulerJobs}}<tr><td>{{.Name}}</td><td>{{.JavaQuartzName}}</td><td>{{if .Enabled}}{{if eq .LastStatus "failed"}}<span class="bad">{{.LastStatus}}</span>{{else}}{{.LastStatus}}{{end}}{{else}}disabled{{end}}</td><td>{{if .NextRunAt}}{{.NextRunAt.Format "2006-01-02 15:04"}}{{else}}--{{end}}</td></tr>{{else}}<tr><td colspan="4">暂无 scheduler 数据</td></tr>{{end}}</table></div><div><h3>失败任务</h3><table><tr><th>任务</th><th>时间</th><th>说明</th></tr>{{range .TaskRuns}}{{if eq .Status "failed"}}<tr><td>{{.TaskName}}</td><td>{{.StartedAt.Format "2006-01-02 15:04"}}</td><td>{{.Message}}</td></tr>{{end}}{{else}}<tr><td colspan="3">暂无任务记录</td></tr>{{end}}</table></div><div><h3>Legacy 注册表</h3><table><tr><th>策略</th><th>数量</th></tr>{{range .LegacyRouteSummary}}<tr><td>{{.Strategy}}</td><td>{{.Count}}</td></tr>{{else}}<tr><td colspan="2">暂无注册表数据</td></tr>{{end}}</table></div></div></section><section class="section-block"><h2>外部契约与审计</h2><div class="grid"><div><h3>存活 legacy 路由</h3><table><tr><th>入口</th><th>策略</th><th>下线门槛</th></tr>{{range .LegacyLiveRoutes}}<tr><td>{{.LegacyPath}}</td><td>{{.Strategy}}</td><td>{{.RemovalGate}}</td></tr>{{else}}<tr><td colspan="3">无存活 legacy 路由</td></tr>{{end}}</table></div><div><h3>最近审计</h3><table><tr><th>动作</th><th>资源</th><th>时间</th></tr>{{range .AuditLogs}}<tr><td>{{.Action}}</td><td>{{.Resource}}</td><td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="3">暂无审计日志</td></tr>{{end}}</table></div><div><h3>抓取健康</h3><table><tr><th>来源</th><th>状态</th><th>抓取</th><th>入库</th></tr>{{range .CrawlRuns}}<tr><td>{{.SourceType}}</td><td>{{if eq .Status "failed"}}<span class="bad">{{.Status}}</span>{{else}}{{.Status}}{{end}}</td><td>{{.FetchedCount}}</td><td>{{.InsertedCount}}</td></tr>{{else}}<tr><td colspan="4">暂无抓取记录</td></tr>{{end}}</table></div></div></section>{{end}}{{if eq .SectionKey "account"}}<section class="section-block"><h2>账号安全</h2><div class="grid"><div><h3>个人资料</h3><form method="post"><input type="hidden" name="form_type" value="profile"><input type="hidden" name="section" value="account"><input name="display_name" placeholder="显示名" value="{{index .User "display_name"}}"><input name="email" placeholder="邮箱" value="{{index .User "email"}}"><button type="submit">保存资料</button></form></div><div><h3>修改密码</h3><form method="post"><input type="hidden" name="form_type" value="password"><input type="hidden" name="section" value="account"><input type="password" name="old_password" placeholder="旧密码"><input type="password" name="new_password" placeholder="新密码"><button type="submit">修改密码</button></form></div></div></section>{{end}}{{if eq .SectionKey "preferences"}}<section class="section-block"><h2>偏好设置</h2><div class="grid"><div><h3>用户偏好</h3><form method="post"><input type="hidden" name="form_type" value="preferences"><input type="hidden" name="section" value="preferences"><input name="language" placeholder="语言" value="{{.Preferences.Language}}"><input name="theme" placeholder="主题" value="{{.Preferences.Theme}}"><input name="default_search_mode" placeholder="默认搜索模式" value="{{.Preferences.DefaultSearchMode}}"><input name="article_page_size" placeholder="文章分页大小" value="{{.Preferences.ArticlePageSize}}"><label><input type="checkbox" name="email_notifications" {{if .Preferences.EmailNotifications}}checked{{end}}> 邮件通知</label><button type="submit">保存偏好</button></form></div><div><h3>弹窗状态</h3><form method="post"><input type="hidden" name="form_type" value="popup"><input type="hidden" name="section" value="preferences"><input name="key" value="{{.PopupState.Key}}"><label><input type="checkbox" name="dismissed" {{if .PopupState.Dismissed}}checked{{end}}> 已关闭</label><button type="submit">保存弹窗状态</button></form></div><div><h3>邮件配置</h3><form method="post"><input type="hidden" name="form_type" value="mail"><input type="hidden" name="section" value="preferences"><label><input type="checkbox" name="enabled" {{if .MailConfig.Enabled}}checked{{end}}> 启用</label><input name="smtp_host" placeholder="SMTP Host" value="{{.MailConfig.SMTPHost}}"><input name="smtp_port" placeholder="SMTP Port" value="{{.MailConfig.SMTPPort}}"><input name="username" placeholder="用户名" value="{{.MailConfig.Username}}"><input name="password" placeholder="密码" value="{{.MailConfig.Password}}"><input name="sender_name" placeholder="发件人名称" value="{{.MailConfig.SenderName}}"><input name="sender_email" placeholder="发件人邮箱" value="{{.MailConfig.SenderEmail}}"><button type="submit">保存邮件配置</button></form></div></div></section>{{end}}{{if eq .SectionKey "favorites"}}<section class="section-block"><h2>收藏夹</h2><form class="inline" method="get"><input type="hidden" name="section" value="favorites"><select name="project_id">{{if not .FavoriteProjectID}}<option value="">全部项目</option>{{end}}{{range .Projects}}<option value="{{.ID}}" {{if eq (printf "%d" .ID) $.FavoriteProjectID}}selected{{end}}>{{.Name}}</option>{{end}}</select><button type="submit">筛选</button></form><div class="page-nav">{{if gt .FavoriteTotalPages 1}}<a href="/system?section=favorites{{if .FavoriteProjectID}}&project_id={{.FavoriteProjectID}}{{end}}&page={{.FavoritePagePrev}}">上一页</a><span>第 {{.FavoritePage}} / {{.FavoriteTotalPages}} 页</span><a href="/system?section=favorites{{if .FavoriteProjectID}}&project_id={{.FavoriteProjectID}}{{end}}&page={{.FavoritePageNext}}">下一页</a>{{else}}<span>共 {{len .FavoriteItems.Items}} 条收藏</span>{{end}}</div><div>{{range .FavoriteItems.Items}}<div class="favorite-card"><div><a class="inline" href="/monitor/detail/{{if .SourceKey}}{{.SourceKey}}{{else}}{{.ID}}{{end}}?groupid={{index $.GroupNames (firstProjectGroupID . $.Projects)}}&projectid={{firstProjectIDForItem . $.Projects}}">{{.Title}}</a></div><div>{{or .FromText .SourceType}}</div><div>{{index $.GroupNames (firstProjectGroupID . $.Projects)}}</div><div>{{index $.ProjectNames (firstProjectIDForItem . $.Projects)}}</div><div>{{.CapturedAt.Format "2006-01-02 15:04"}}</div></div>{{else}}<p class="muted">暂无收藏文章</p>{{end}}</div></section>{{end}}{{if eq .SectionKey "warningmsg"}}<section class="section-block"><h2>预警消息</h2><form class="inline" method="get"><input type="hidden" name="section" value="warningmsg"><select name="project_id"><option value="">全部项目</option>{{range .Projects}}<option value="{{.ID}}" {{if eq (printf "%d" .ID) $.WarningArticleProjectID}}selected{{end}}>{{.Name}}</option>{{end}}</select><input name="keyword" placeholder="关键词" value="{{.WarningArticleKeyword}}"><select name="openFlag"><option value="0" {{if eq .WarningArticleOpenFlag 0}}selected{{end}}>全部</option><option value="1" {{if eq .WarningArticleOpenFlag 1}}selected{{end}}>仅开启预警</option></select><button type="submit">筛选</button></form><div class="page-nav">{{if gt .WarningArticleTotalPages 1}}<a href="/system?section=warningmsg{{if .WarningArticleProjectID}}&project_id={{.WarningArticleProjectID}}{{end}}{{if .WarningArticleKeyword}}&keyword={{.WarningArticleKeyword}}{{end}}{{if ne .WarningArticleOpenFlag 0}}&openFlag={{.WarningArticleOpenFlag}}{{end}}&page={{.WarningArticlePrev}}">上一页</a><span>第 {{.WarningArticlePage}} / {{.WarningArticleTotalPages}} 页</span><a href="/system?section=warningmsg{{if .WarningArticleProjectID}}&project_id={{.WarningArticleProjectID}}{{end}}{{if .WarningArticleKeyword}}&keyword={{.WarningArticleKeyword}}{{end}}{{if ne .WarningArticleOpenFlag 0}}&openFlag={{.WarningArticleOpenFlag}}{{end}}&page={{.WarningArticleNext}}">下一页</a>{{else}}<span>共 {{len .WarningArticles}} 条消息</span>{{end}}</div><div>{{range .WarningArticles}}<div class="warning-card"><div><a class="inline" href="/monitor/detail/{{.ArticleID}}?groupid={{.GroupID}}&projectid={{.ProjectID}}" target="_blank">{{.ArticleTitle}}</a></div><div>{{.GroupName}}</div><div>{{.ProjectName}}</div><div>{{.ArticleTime}}</div><div>{{.GroupID}}</div><div>{{.ProjectID}}</div></div>{{else}}<p class="muted">暂无预警消息</p>{{end}}</div></section>{{end}}{{if eq .SectionKey "warning"}}<section class="section-block"><h2>预警设置</h2><form method="post"><input type="hidden" name="form_type" value="warning"><input type="hidden" name="section" value="warning"><select name="project_id">{{range .Projects}}<option value="{{.ID}}" {{if eq .ID $.WarningSetting.ProjectID}}selected{{end}}>{{.Name}}</option>{{end}}</select><label><input type="checkbox" name="enabled" {{if .WarningSetting.Enabled}}checked{{end}}> 启用</label><input name="channels" placeholder="` + portalChannelPlaceholder + `" value="{{.WarningSetting.Channels}}"><input name="threshold" placeholder="阈值" value="{{.WarningSetting.Threshold}}"><input name="recipients" placeholder="接收人" value="{{.WarningSetting.Recipients}}"><textarea name="description" placeholder="说明">{{.WarningSetting.Description}}</textarea><button type="submit">保存预警设置</button></form></section>{{end}}{{if eq .SectionKey "feedback"}}<section class="section-block"><h2>反馈建议</h2><form method="post"><input type="hidden" name="form_type" value="feedback"><input type="hidden" name="section" value="feedback"><input name="title" placeholder="标题"><textarea name="content" placeholder="问题描述或需求"></textarea><button type="submit">提交</button></form></section>{{end}}<section class="section-block"><h2>运营操作</h2><div class="crawl-grid"><div class="crawl-card"><h3>按来源抓取</h3><form class="inline" method="post"><input type="hidden" name="form_type" value="crawl"><input type="hidden" name="section" value="{{.SectionKey}}"><select name="source_type">` + portalSourceOptions + `</select><button type="submit">立即抓取</button></form></div><div class="crawl-card"><h3>按模板抓取</h3><form class="inline" method="post"><input type="hidden" name="form_type" value="crawl"><input type="hidden" name="section" value="{{.SectionKey}}"><select name="template_id"><option value="">选择模板</option>{{range .CrawlTemplates}}<option value="{{.ID}}">{{.Name}} [{{.SourceType}}]</option>{{else}}<option value="">暂无可用模板</option>{{end}}</select><input name="keyword" placeholder="模板关键词（可选）"><button type="submit">模板抓取</button></form></div><div class="crawl-card"><h3>分析刷新</h3><form method="post"><input type="hidden" name="form_type" value="analysis"><input type="hidden" name="section" value="{{.SectionKey}}"><button type="submit">刷新分析快照</button></form></div></div></section><section class="section-block"><h2>公告与任务</h2><div class="grid"><div><h3>公告</h3><table><tr><th>标题</th><th>时间</th></tr>{{range .Notices}}<tr><td>{{.Title}}</td><td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="2">暂无公告</td></tr>{{end}}</table></div><div><h3>任务记录</h3><table><tr><th>任务</th><th>状态</th><th>说明</th></tr>{{range .TaskRuns}}<tr><td>{{.TaskName}}</td><td>{{.Status}}</td><td>{{.Message}}</td></tr>{{else}}<tr><td colspan="3">暂无任务记录</td></tr>{{end}}</table></div><div><h3>抓取记录</h3><table><tr><th>来源</th><th>状态</th><th>抓取数</th><th>入库数</th><th>开始时间</th></tr>{{range .CrawlRuns}}<tr><td>{{.SourceType}}</td><td>{{.Status}}</td><td>{{.FetchedCount}}</td><td>{{.InsertedCount}}</td><td>{{.StartedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="5">暂无抓取记录</td></tr>{{end}}</table></div></div></section></main>{{template "footer" .}}</body></html>{{end}}
+{{define "system"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}.ok{color:#214e34;font-weight:700}.bad{color:#8f2d2d;font-weight:700}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}.tabs{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}.tabs a{padding:8px 12px;border-radius:999px;background:#efe9dc;color:#214e34;text-decoration:none}.tabs a.active{background:#214e34;color:#fff}.muted{color:#6a6257}.page-nav{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.page-nav a{padding:6px 10px;border:1px solid #d0c8b8;border-radius:8px;text-decoration:none;color:#214e34}.favorite-card,.warning-card{display:grid;grid-template-columns:2.2fr 1fr 1fr 1fr 1fr;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid #ece7dc}.warning-card{grid-template-columns:2.2fr 1fr 1fr 1fr 1fr 1fr}.section-block{margin-top:20px}.crawl-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}.crawl-card{border:1px solid #ece7dc;border-radius:14px;padding:16px;background:#faf8f2}.config-line{font-family:Consolas,monospace;font-size:13px;background:#faf8f2;border:1px solid #ece7dc;border-radius:8px;padding:10px;overflow:auto}.status-table td:first-child{width:180px;color:#6a6257}.service-actions{display:flex;gap:8px;align-items:center}.service-actions form{margin:0}.service-actions button{width:auto;min-width:84px;margin:0;padding:10px 14px}` + `</style></head><body><header><h1>系统工作台</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><div class="tabs"><a class="{{if eq .SectionKey "account"}}active{{end}}" href="/system?section=account">账号安全</a><a class="{{if eq .SectionKey "preferences"}}active{{end}}" href="/system?section=preferences">偏好设置</a><a class="{{if eq .SectionKey "database"}}active{{end}}" href="/system?section=database">数据库配置</a><a class="{{if eq .SectionKey "favorites"}}active{{end}}" href="/system?section=favorites{{if .FavoriteProjectID}}&project_id={{.FavoriteProjectID}}{{end}}">收藏夹</a><a class="{{if eq .SectionKey "warningmsg"}}active{{end}}" href="/system?section=warningmsg{{if .WarningArticleProjectID}}&project_id={{.WarningArticleProjectID}}{{end}}{{if .WarningArticleKeyword}}&keyword={{.WarningArticleKeyword}}{{end}}">预警消息</a><a class="{{if eq .SectionKey "warning"}}active{{end}}" href="/system?section=warning{{if .WarningSetting.ProjectID}}&project_id={{.WarningSetting.ProjectID}}{{end}}">预警设置</a><a class="{{if eq .SectionKey "feedback"}}active{{end}}" href="/system?section=feedback">反馈建议</a><a class="{{if eq .SectionKey "operations"}}active{{end}}" href="/system?section=operations">生产运行</a></div><div class="muted">当前视图：{{.Section}}</div></section><section><h2>服务状态</h2><table><tr><th>服务</th><th>状态</th><th>健康检查</th><th>操作</th></tr>{{range .Services}}<tr><td>{{.Name}}</td><td>{{if .Healthy}}<span class="ok">正常</span>{{else}}<span class="bad">异常</span>{{end}}</td><td>{{.Message}}</td><td><div class="service-actions"><form method="post" class="inline" onsubmit="return confirm('确认重启 {{.Name}}？')"><input type="hidden" name="form_type" value="restart_service"><input type="hidden" name="section" value="{{$.SectionKey}}"><input type="hidden" name="service_name" value="{{.Name}}"><button type="submit">重启</button></form><form method="get" action="/system/logs" class="inline"><input type="hidden" name="service" value="{{.Name}}"><button type="submit">日志</button></form></div></td></tr>{{else}}<tr><td colspan="4">暂无服务状态</td></tr>{{end}}</table></section>{{if eq .SectionKey "database"}}<section class="section-block"><h2>数据库配置</h2><div class="grid"><div><h3>当前状态</h3><table class="status-table"><tr><td>当前驱动</td><td>{{.DatabaseConfig.Driver}}</td></tr><tr><td>运行 Store</td><td>{{.DatabaseConfig.RuntimeDriver}}</td></tr><tr><td>状态</td><td>{{if eq .DatabaseConfig.Status "ok"}}<span class="ok">{{.DatabaseConfig.Status}}</span>{{else}}<span class="bad">{{.DatabaseConfig.Status}}</span>{{end}}</td></tr><tr><td>说明</td><td>{{.DatabaseConfig.Message}}</td></tr><tr><td>SQLite 路径</td><td>{{.DatabaseConfig.SQLitePath}}</td></tr><tr><td>PostgreSQL DSN</td><td>{{if .DatabaseConfig.PostgresDSN}}{{.DatabaseConfig.PostgresDSN}}{{else}}未配置{{end}}</td></tr></table></div><div><h3>PostgreSQL 连接检测</h3><form method="post"><input type="hidden" name="form_type" value="database_check"><input type="hidden" name="section" value="database"><select name="driver"><option value="postgres" selected>PostgreSQL</option><option value="sqlite">SQLite</option></select><input name="postgres_dsn" placeholder="postgres://user:password@127.0.0.1:5432/yuqing?sslmode=disable"><input name="postgres_host" placeholder="Host" value="{{.DatabaseConfig.PostgresHost}}"><input name="postgres_port" placeholder="Port" value="{{if .DatabaseConfig.PostgresPort}}{{.DatabaseConfig.PostgresPort}}{{else}}5432{{end}}"><input name="postgres_database" placeholder="Database" value="{{.DatabaseConfig.PostgresDatabase}}"><input name="postgres_user" placeholder="User" value="{{.DatabaseConfig.PostgresUser}}"><input type="password" name="postgres_password" placeholder="Password"><select name="postgres_sslmode"><option value="disable" {{if eq .DatabaseConfig.PostgresSSLMode "disable"}}selected{{end}}>disable</option><option value="require" {{if eq .DatabaseConfig.PostgresSSLMode "require"}}selected{{end}}>require</option><option value="verify-ca" {{if eq .DatabaseConfig.PostgresSSLMode "verify-ca"}}selected{{end}}>verify-ca</option><option value="verify-full" {{if eq .DatabaseConfig.PostgresSSLMode "verify-full"}}selected{{end}}>verify-full</option></select><button type="submit">测试连接</button></form></div><div><h3>PowerShell 配置</h3><div class="config-line">$env:YUQING_DB_DRIVER='postgres'<br>$env:YUQING_POSTGRES_HOST='127.0.0.1'<br>$env:YUQING_POSTGRES_PORT='5432'<br>$env:YUQING_POSTGRES_DB='yuqing'<br>$env:YUQING_POSTGRES_USER='postgres'<br>$env:YUQING_POSTGRES_PASSWORD='&lt;password&gt;'<br>$env:YUQING_POSTGRES_SSLMODE='disable'</div><p class="muted">当前版本已支持 PostgreSQL 配置和连接检测；业务数据层仍运行 SQLite store，完整切换需要 PostgreSQL schema 与查询方言迁移。</p></div></div></section>{{end}}{{if eq .SectionKey "operations"}}<section class="section-block"><h2>生产运行</h2><div class="grid"><div><h3>Scheduler Jobs</h3><table><tr><th>任务</th><th>Java Quartz</th><th>状态</th><th>下次执行</th></tr>{{range .SchedulerJobs}}<tr><td>{{.Name}}</td><td>{{.JavaQuartzName}}</td><td>{{if .Enabled}}{{if eq .LastStatus "failed"}}<span class="bad">{{.LastStatus}}</span>{{else}}{{.LastStatus}}{{end}}{{else}}disabled{{end}}</td><td>{{if .NextRunAt}}{{.NextRunAt.Format "2006-01-02 15:04"}}{{else}}--{{end}}</td></tr>{{else}}<tr><td colspan="4">暂无 scheduler 数据</td></tr>{{end}}</table></div><div><h3>失败任务</h3><table><tr><th>任务</th><th>时间</th><th>说明</th></tr>{{range .TaskRuns}}{{if eq .Status "failed"}}<tr><td>{{.TaskName}}</td><td>{{.StartedAt.Format "2006-01-02 15:04"}}</td><td>{{.Message}}</td></tr>{{end}}{{else}}<tr><td colspan="3">暂无任务记录</td></tr>{{end}}</table></div><div><h3>Legacy 注册表</h3><table><tr><th>策略</th><th>数量</th></tr>{{range .LegacyRouteSummary}}<tr><td>{{.Strategy}}</td><td>{{.Count}}</td></tr>{{else}}<tr><td colspan="2">暂无注册表数据</td></tr>{{end}}</table></div></div></section><section class="section-block"><h2>外部契约与审计</h2><div class="grid"><div><h3>存活 legacy 路由</h3><table><tr><th>入口</th><th>策略</th><th>下线门槛</th></tr>{{range .LegacyLiveRoutes}}<tr><td>{{.LegacyPath}}</td><td>{{.Strategy}}</td><td>{{.RemovalGate}}</td></tr>{{else}}<tr><td colspan="3">无存活 legacy 路由</td></tr>{{end}}</table></div><div><h3>最近审计</h3><table><tr><th>动作</th><th>资源</th><th>时间</th></tr>{{range .AuditLogs}}<tr><td>{{.Action}}</td><td>{{.Resource}}</td><td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="3">暂无审计日志</td></tr>{{end}}</table></div><div><h3>抓取健康</h3><table><tr><th>来源</th><th>状态</th><th>抓取</th><th>入库</th></tr>{{range .CrawlRuns}}<tr><td>{{.SourceType}}</td><td>{{if eq .Status "failed"}}<span class="bad">{{.Status}}</span>{{else}}{{.Status}}{{end}}</td><td>{{.FetchedCount}}</td><td>{{.InsertedCount}}</td></tr>{{else}}<tr><td colspan="4">暂无抓取记录</td></tr>{{end}}</table></div></div></section>{{end}}{{if eq .SectionKey "account"}}<section class="section-block"><h2>账号安全</h2><div class="grid"><div><h3>个人资料</h3><form method="post"><input type="hidden" name="form_type" value="profile"><input type="hidden" name="section" value="account"><input name="display_name" placeholder="显示名" value="{{index .User "display_name"}}"><input name="email" placeholder="邮箱" value="{{index .User "email"}}"><button type="submit">保存资料</button></form></div><div><h3>修改密码</h3><form method="post"><input type="hidden" name="form_type" value="password"><input type="hidden" name="section" value="account"><input type="password" name="old_password" placeholder="旧密码"><input type="password" name="new_password" placeholder="新密码"><button type="submit">修改密码</button></form></div></div></section>{{end}}{{if eq .SectionKey "preferences"}}<section class="section-block"><h2>偏好设置</h2><div class="grid"><div><h3>用户偏好</h3><form method="post"><input type="hidden" name="form_type" value="preferences"><input type="hidden" name="section" value="preferences"><input name="language" placeholder="语言" value="{{.Preferences.Language}}"><input name="theme" placeholder="主题" value="{{.Preferences.Theme}}"><input name="default_search_mode" placeholder="默认搜索模式" value="{{.Preferences.DefaultSearchMode}}"><input name="article_page_size" placeholder="文章分页大小" value="{{.Preferences.ArticlePageSize}}"><label><input type="checkbox" name="email_notifications" {{if .Preferences.EmailNotifications}}checked{{end}}> 邮件通知</label><button type="submit">保存偏好</button></form></div><div><h3>弹窗状态</h3><form method="post"><input type="hidden" name="form_type" value="popup"><input type="hidden" name="section" value="preferences"><input name="key" value="{{.PopupState.Key}}"><label><input type="checkbox" name="dismissed" {{if .PopupState.Dismissed}}checked{{end}}> 已关闭</label><button type="submit">保存弹窗状态</button></form></div><div><h3>邮件配置</h3><form method="post"><input type="hidden" name="form_type" value="mail"><input type="hidden" name="section" value="preferences"><label><input type="checkbox" name="enabled" {{if .MailConfig.Enabled}}checked{{end}}> 启用</label><input name="smtp_host" placeholder="SMTP Host" value="{{.MailConfig.SMTPHost}}"><input name="smtp_port" placeholder="SMTP Port" value="{{.MailConfig.SMTPPort}}"><input name="username" placeholder="用户名" value="{{.MailConfig.Username}}"><input name="password" placeholder="密码" value="{{.MailConfig.Password}}"><input name="sender_name" placeholder="发件人名称" value="{{.MailConfig.SenderName}}"><input name="sender_email" placeholder="发件人邮箱" value="{{.MailConfig.SenderEmail}}"><button type="submit">保存邮件配置</button></form></div></div></section>{{end}}{{if eq .SectionKey "favorites"}}<section class="section-block"><h2>收藏夹</h2><form class="inline" method="get"><input type="hidden" name="section" value="favorites"><select name="project_id">{{if not .FavoriteProjectID}}<option value="">全部项目</option>{{end}}{{range .Projects}}<option value="{{.ID}}" {{if eq (printf "%d" .ID) $.FavoriteProjectID}}selected{{end}}>{{.Name}}</option>{{end}}</select><button type="submit">筛选</button></form><div class="page-nav">{{if gt .FavoriteTotalPages 1}}<a href="/system?section=favorites{{if .FavoriteProjectID}}&project_id={{.FavoriteProjectID}}{{end}}&page={{.FavoritePagePrev}}">上一页</a><span>第 {{.FavoritePage}} / {{.FavoriteTotalPages}} 页</span><a href="/system?section=favorites{{if .FavoriteProjectID}}&project_id={{.FavoriteProjectID}}{{end}}&page={{.FavoritePageNext}}">下一页</a>{{else}}<span>共 {{len .FavoriteItems.Items}} 条收藏</span>{{end}}</div><div>{{range .FavoriteItems.Items}}<div class="favorite-card"><div><a class="inline" href="/monitor/detail/{{if .SourceKey}}{{.SourceKey}}{{else}}{{.ID}}{{end}}?groupid={{index $.GroupNames (firstProjectGroupID . $.Projects)}}&projectid={{firstProjectIDForItem . $.Projects}}">{{.Title}}</a></div><div>{{or .FromText .SourceType}}</div><div>{{index $.GroupNames (firstProjectGroupID . $.Projects)}}</div><div>{{index $.ProjectNames (firstProjectIDForItem . $.Projects)}}</div><div>{{.CapturedAt.Format "2006-01-02 15:04"}}</div></div>{{else}}<p class="muted">暂无收藏文章</p>{{end}}</div></section>{{end}}{{if eq .SectionKey "warningmsg"}}<section class="section-block"><h2>预警消息</h2><form class="inline" method="get"><input type="hidden" name="section" value="warningmsg"><select name="project_id"><option value="">全部项目</option>{{range .Projects}}<option value="{{.ID}}" {{if eq (printf "%d" .ID) $.WarningArticleProjectID}}selected{{end}}>{{.Name}}</option>{{end}}</select><input name="keyword" placeholder="关键词" value="{{.WarningArticleKeyword}}"><select name="openFlag"><option value="0" {{if eq .WarningArticleOpenFlag 0}}selected{{end}}>全部</option><option value="1" {{if eq .WarningArticleOpenFlag 1}}selected{{end}}>仅开启预警</option></select><button type="submit">筛选</button></form><div class="page-nav">{{if gt .WarningArticleTotalPages 1}}<a href="/system?section=warningmsg{{if .WarningArticleProjectID}}&project_id={{.WarningArticleProjectID}}{{end}}{{if .WarningArticleKeyword}}&keyword={{.WarningArticleKeyword}}{{end}}{{if ne .WarningArticleOpenFlag 0}}&openFlag={{.WarningArticleOpenFlag}}{{end}}&page={{.WarningArticlePrev}}">上一页</a><span>第 {{.WarningArticlePage}} / {{.WarningArticleTotalPages}} 页</span><a href="/system?section=warningmsg{{if .WarningArticleProjectID}}&project_id={{.WarningArticleProjectID}}{{end}}{{if .WarningArticleKeyword}}&keyword={{.WarningArticleKeyword}}{{end}}{{if ne .WarningArticleOpenFlag 0}}&openFlag={{.WarningArticleOpenFlag}}{{end}}&page={{.WarningArticleNext}}">下一页</a>{{else}}<span>共 {{len .WarningArticles}} 条消息</span>{{end}}</div><div>{{range .WarningArticles}}<div class="warning-card"><div><a class="inline" href="/monitor/detail/{{.ArticleID}}?groupid={{.GroupID}}&projectid={{.ProjectID}}" target="_blank">{{.ArticleTitle}}</a></div><div>{{.GroupName}}</div><div>{{.ProjectName}}</div><div>{{.ArticleTime}}</div><div>{{.GroupID}}</div><div>{{.ProjectID}}</div></div>{{else}}<p class="muted">暂无预警消息</p>{{end}}</div></section>{{end}}{{if eq .SectionKey "warning"}}<section class="section-block"><h2>预警设置</h2><form method="post"><input type="hidden" name="form_type" value="warning"><input type="hidden" name="section" value="warning"><select name="project_id">{{range .Projects}}<option value="{{.ID}}" {{if eq .ID $.WarningSetting.ProjectID}}selected{{end}}>{{.Name}}</option>{{end}}</select><label><input type="checkbox" name="enabled" {{if .WarningSetting.Enabled}}checked{{end}}> 启用</label><input name="channels" placeholder="` + portalChannelPlaceholder + `" value="{{.WarningSetting.Channels}}"><input name="threshold" placeholder="阈值" value="{{.WarningSetting.Threshold}}"><input name="recipients" placeholder="接收人" value="{{.WarningSetting.Recipients}}"><textarea name="description" placeholder="说明">{{.WarningSetting.Description}}</textarea><button type="submit">保存预警设置</button></form></section>{{end}}{{if eq .SectionKey "feedback"}}<section class="section-block"><h2>反馈建议</h2><form method="post"><input type="hidden" name="form_type" value="feedback"><input type="hidden" name="section" value="feedback"><input name="title" placeholder="标题"><textarea name="content" placeholder="问题描述或需求"></textarea><button type="submit">提交</button></form></section>{{end}}<section class="section-block"><h2>运营操作</h2><div class="crawl-grid"><div class="crawl-card"><h3>按来源抓取</h3><form class="inline" method="post"><input type="hidden" name="form_type" value="crawl"><input type="hidden" name="section" value="{{.SectionKey}}"><select name="source_type">` + portalSourceOptions + `</select><button type="submit">立即抓取</button></form></div><div class="crawl-card"><h3>按模板抓取</h3><form class="inline" method="post"><input type="hidden" name="form_type" value="crawl"><input type="hidden" name="section" value="{{.SectionKey}}"><select name="template_id"><option value="">选择模板</option>{{range .CrawlTemplates}}<option value="{{.ID}}">{{.Name}} [{{.SourceType}}]</option>{{else}}<option value="">暂无可用模板</option>{{end}}</select><input name="keyword" placeholder="模板关键词（可选）"><button type="submit">模板抓取</button></form></div><div class="crawl-card"><h3>分析刷新</h3><form method="post"><input type="hidden" name="form_type" value="analysis"><input type="hidden" name="section" value="{{.SectionKey}}"><button type="submit">刷新分析快照</button></form></div></div></section><section class="section-block"><h2>公告与任务</h2><div class="grid"><div><h3>公告</h3><table><tr><th>标题</th><th>时间</th></tr>{{range .Notices}}<tr><td>{{.Title}}</td><td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="2">暂无公告</td></tr>{{end}}</table></div><div><h3>任务记录</h3><table><tr><th>任务</th><th>状态</th><th>说明</th></tr>{{range .TaskRuns}}<tr><td>{{.TaskName}}</td><td>{{.Status}}</td><td>{{.Message}}</td></tr>{{else}}<tr><td colspan="3">暂无任务记录</td></tr>{{end}}</table></div><div><h3>抓取记录</h3><table><tr><th>来源</th><th>状态</th><th>抓取数</th><th>入库数</th><th>开始时间</th></tr>{{range .CrawlRuns}}<tr><td>{{.SourceType}}</td><td>{{.Status}}</td><td>{{.FetchedCount}}</td><td>{{.InsertedCount}}</td><td>{{.StartedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="5">暂无抓取记录</td></tr>{{end}}</table></div></div></section></main>{{template "footer" .}}</body></html>{{end}}
 `
 
 const platformBindingsWorkbenchTemplate = `

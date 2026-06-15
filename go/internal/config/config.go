@@ -12,7 +12,15 @@ const defaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/
 
 type Config struct {
 	ListenAddr              string
+	DatabaseDriver          string
 	DatabasePath            string
+	DatabaseURL             string
+	PostgresHost            string
+	PostgresPort            string
+	PostgresDatabase        string
+	PostgresUser            string
+	PostgresPassword        string
+	PostgresSSLMode         string
 	FlashURL                string
 	HeadlineURL             string
 	BinanceBaseURL          string
@@ -79,10 +87,19 @@ func Load() Config {
 	if dbPath == "" {
 		dbPath = filepath.Join("data", "yuqing.db")
 	}
+	databaseURL := firstEnv("YUQING_DATABASE_URL", "YUQING_POSTGRES_DSN", "JIN10_DATABASE_URL")
 
 	return Config{
 		ListenAddr:              envOrDefault("YUQING_LISTEN_ADDR", ":8090"),
+		DatabaseDriver:          normalizeDatabaseDriver(envOrDefaultWithAliases("YUQING_DB_DRIVER", "sqlite", "JIN10_DB_DRIVER")),
 		DatabasePath:            dbPath,
+		DatabaseURL:             databaseURL,
+		PostgresHost:            envOrDefault("YUQING_POSTGRES_HOST", "127.0.0.1"),
+		PostgresPort:            envOrDefault("YUQING_POSTGRES_PORT", "5432"),
+		PostgresDatabase:        envOrDefault("YUQING_POSTGRES_DB", "yuqing"),
+		PostgresUser:            envOrDefault("YUQING_POSTGRES_USER", "postgres"),
+		PostgresPassword:        envOrDefault("YUQING_POSTGRES_PASSWORD", ""),
+		PostgresSSLMode:         envOrDefault("YUQING_POSTGRES_SSLMODE", "disable"),
 		FlashURL:                envOrDefaultWithAliases("YUQING_FLASH_URL", "https://www.jin10.com/", "JIN10_FLASH_URL"),
 		HeadlineURL:             envOrDefaultWithAliases("YUQING_HEADLINE_URL", "https://xnews.jin10.com/", "JIN10_HEADLINE_URL"),
 		BinanceBaseURL:          envOrDefault("YUQING_BINANCE_BASE_URL", "https://api.binance.com"),
@@ -141,6 +158,17 @@ func Load() Config {
 
 		DefaultAdminUser: envOrDefaultWithAliases("YUQING_DEFAULT_ADMIN_USER", "admin", "JIN10_DEFAULT_ADMIN_USER"),
 		DefaultAdminPass: envOrDefaultWithAliases("YUQING_DEFAULT_ADMIN_PASS", "admin123", "JIN10_DEFAULT_ADMIN_PASS"),
+	}
+}
+
+func normalizeDatabaseDriver(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "sqlite", "sqlite3":
+		return "sqlite"
+	case "postgres", "postgresql", "pg":
+		return "postgres"
+	default:
+		return strings.ToLower(strings.TrimSpace(value))
 	}
 }
 

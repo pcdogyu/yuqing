@@ -195,6 +195,8 @@ func (s *Service) Routes(r chi.Router) {
 	r.Post("/api/v1/system/audit-logs", s.handleCreateAuditLog)
 	r.Get("/api/v1/system/operations", s.handleOperations)
 	r.Get("/api/v1/system/alerts", s.handleAlerts)
+	r.Get("/api/v1/system/database-config", s.handleDatabaseConfig)
+	r.Post("/api/v1/system/database-config/check", s.handleDatabaseCheck)
 	r.Get("/api/v1/system/services/{name}/logs", s.handleServiceLogs)
 	r.Post("/api/v1/system/services/{name}/restart", s.handleRestartService)
 	r.Get("/api/v1/system/popup", s.handleGetPopupState)
@@ -2073,6 +2075,7 @@ func (s *Service) operationsSummary(ctx context.Context) model.OperationsSummary
 		LegacyRouteProbes:    s.legacyRouteProbeStatuses(ctx),
 		ExternalIntegrations: s.externalIntegrationStatuses(ctx),
 		Backup:               s.backupStatus(),
+		Database:             s.databaseConfigStatus(ctx, databaseConfigRequest{}),
 	}
 	ops.Ready = len(buildOperationsAlerts(ops)) == 0
 	return ops

@@ -9,6 +9,17 @@ import (
 func TestLoadUsesDefaults(t *testing.T) {
 	t.Setenv("YUQING_DB_PATH", "")
 	t.Setenv("JIN10_DB_PATH", "")
+	t.Setenv("YUQING_DB_DRIVER", "")
+	t.Setenv("JIN10_DB_DRIVER", "")
+	t.Setenv("YUQING_DATABASE_URL", "")
+	t.Setenv("YUQING_POSTGRES_DSN", "")
+	t.Setenv("JIN10_DATABASE_URL", "")
+	t.Setenv("YUQING_POSTGRES_HOST", "")
+	t.Setenv("YUQING_POSTGRES_PORT", "")
+	t.Setenv("YUQING_POSTGRES_DB", "")
+	t.Setenv("YUQING_POSTGRES_USER", "")
+	t.Setenv("YUQING_POSTGRES_PASSWORD", "")
+	t.Setenv("YUQING_POSTGRES_SSLMODE", "")
 	t.Setenv("YUQING_LISTEN_ADDR", "")
 	t.Setenv("YUQING_FLASH_URL", "")
 	t.Setenv("JIN10_FLASH_URL", "")
@@ -39,6 +50,12 @@ func TestLoadUsesDefaults(t *testing.T) {
 
 	if cfg.DatabasePath != filepath.Join("data", "yuqing.db") {
 		t.Fatalf("expected default database path, got %q", cfg.DatabasePath)
+	}
+	if cfg.DatabaseDriver != "sqlite" || cfg.DatabaseURL != "" {
+		t.Fatalf("expected default sqlite database config, got driver=%q url=%q", cfg.DatabaseDriver, cfg.DatabaseURL)
+	}
+	if cfg.PostgresHost != "127.0.0.1" || cfg.PostgresPort != "5432" || cfg.PostgresDatabase != "yuqing" || cfg.PostgresUser != "postgres" || cfg.PostgresSSLMode != "disable" {
+		t.Fatalf("unexpected default postgres config: host=%q port=%q db=%q user=%q ssl=%q", cfg.PostgresHost, cfg.PostgresPort, cfg.PostgresDatabase, cfg.PostgresUser, cfg.PostgresSSLMode)
 	}
 	if cfg.ListenAddr != ":8090" {
 		t.Fatalf("expected default listen addr, got %q", cfg.ListenAddr)
@@ -87,6 +104,14 @@ func TestLoadUsesDefaults(t *testing.T) {
 func TestLoadPrefersPrimaryAndAliasEnv(t *testing.T) {
 	t.Setenv("YUQING_DB_PATH", "")
 	t.Setenv("JIN10_DB_PATH", "alias.db")
+	t.Setenv("YUQING_DB_DRIVER", "postgresql")
+	t.Setenv("YUQING_DATABASE_URL", "postgres://dbuser:secret@db.example.com:5432/yuqing?sslmode=require")
+	t.Setenv("YUQING_POSTGRES_HOST", "db.example.com")
+	t.Setenv("YUQING_POSTGRES_PORT", "6543")
+	t.Setenv("YUQING_POSTGRES_DB", "yuqing_prod")
+	t.Setenv("YUQING_POSTGRES_USER", "yuqing_user")
+	t.Setenv("YUQING_POSTGRES_PASSWORD", "secret")
+	t.Setenv("YUQING_POSTGRES_SSLMODE", "require")
 	t.Setenv("YUQING_FLASH_URL", "")
 	t.Setenv("JIN10_FLASH_URL", "https://flash.example.com")
 	t.Setenv("YUQING_HEADLINE_URL", "https://headline.example.com")
@@ -118,6 +143,12 @@ func TestLoadPrefersPrimaryAndAliasEnv(t *testing.T) {
 
 	if cfg.DatabasePath != "alias.db" {
 		t.Fatalf("expected alias db path, got %q", cfg.DatabasePath)
+	}
+	if cfg.DatabaseDriver != "postgres" || cfg.DatabaseURL == "" {
+		t.Fatalf("expected postgres database config loaded, got driver=%q url=%q", cfg.DatabaseDriver, cfg.DatabaseURL)
+	}
+	if cfg.PostgresHost != "db.example.com" || cfg.PostgresPort != "6543" || cfg.PostgresDatabase != "yuqing_prod" || cfg.PostgresUser != "yuqing_user" || cfg.PostgresPassword != "secret" || cfg.PostgresSSLMode != "require" {
+		t.Fatalf("unexpected postgres config loaded: host=%q port=%q db=%q user=%q password=%q ssl=%q", cfg.PostgresHost, cfg.PostgresPort, cfg.PostgresDatabase, cfg.PostgresUser, cfg.PostgresPassword, cfg.PostgresSSLMode)
 	}
 	if cfg.FlashURL != "https://flash.example.com" {
 		t.Fatalf("expected alias flash url, got %q", cfg.FlashURL)

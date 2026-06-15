@@ -674,6 +674,7 @@ func TestPortalPageTemplatesUseCommonFooter(t *testing.T) {
 		"article":                 articleTemplate,
 		"reports":                 reportsTemplate,
 		"report":                  reportTemplate,
+		"system_logs":             systemLogsTemplate,
 		"system":                  systemTemplate,
 		"platform_bindings_work":  platformBindingsWorkbenchTemplate,
 		"platform_workbench_v3":   platformWorkbenchTemplateV3,
@@ -702,9 +703,12 @@ func TestPortalNavPositionsLogoutTopRight(t *testing.T) {
 func TestSystemTemplateIncludesServiceRestartActions(t *testing.T) {
 	for _, expected := range []string{
 		`<th>操作</th>`,
+		`class="service-actions"`,
 		`name="form_type" value="restart_service"`,
 		`name="service_name" value="{{.Name}}"`,
 		`<button type="submit">重启</button>`,
+		`<form method="get" action="/system/logs" class="inline">`,
+		`<button type="submit">日志</button>`,
 	} {
 		if !strings.Contains(systemTemplate, expected) {
 			t.Fatalf("expected system template to include %q", expected)
@@ -712,15 +716,82 @@ func TestSystemTemplateIncludesServiceRestartActions(t *testing.T) {
 	}
 }
 
-func TestPortalFooterAddsSystemServiceLogLinks(t *testing.T) {
-	for _, expected := range []string{
-		`service-log-link`,
-		`/system/logs?service=`,
-		`input[name="service_name"]`,
-	} {
-		if !strings.Contains(portalFooterHTML, expected) {
-			t.Fatalf("expected portal footer to include service log link script fragment %q", expected)
+func TestPortalFooterDoesNotAppendSystemServiceLogLinks(t *testing.T) {
+	if strings.Contains(portalFooterHTML, `service-log-link`) {
+		t.Fatal("expected service log buttons to be rendered by system template, not appended by footer script")
+	}
+}
+
+func TestParseServiceLogEntries(t *testing.T) {
+	entries := parseServiceLogEntries(strings.Join([]string{
+		`2026-06-15T09:45:20+08:00 INF scheduler service ready service=scheduler-service`,
+		`continuation detail`,
+		`2026/06/15 09:46:05.014134 WARN RESTY Post "http://127.0.0.1:8083": context deadline exceeded`,
+		`retry detail`,
+	}, "\n"))
+
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(entries))
+	}
+	if entries[0].Time != "2026-06-15T09:45:20+08:00" || entries[0].Level != "INF" {
+		t.Fatalf("unexpected first entry metadata: %+v", entries[0])
+	}
+	if !strings.Contains(entries[0].Message, "scheduler service ready") || !strings.Contains(entries[0].Message, "continuation detail") {
+		t.Fatalf("unexpected first entry message: %q", entries[0].Message)
+	}
+	if entries[1].Time != "2026/06/15 09:46:05.014134" || entries[1].Level != "WARN" {
+		t.Fatalf("unexpected second entry metadata: %+v", entries[1])
+	}
+	if !strings.Contains(entries[1].Message, "context deadline exceeded") || !strings.Contains(entries[1].Message, "retry detail") {
+		t.Fatalf("unexpected second entry message: %q", entries[1].Message)
+	}
+}
+
+func TestSystemLogsPageRendersTableAndPagination(t *testing.T) {
+	lines := make([]string, 0, 60)
+	for i := 0; i < 60; i++ {
+		lines = append(lines, `2026-06-15T09:45:20+08:00 INF entry-`+strconv.Itoa(i))
+	}
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/system/services/content-service/logs" {
+			http.NotFound(w, r)
+			return
 		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    http.StatusOK,
+			"message": "ok",
+			"data": map[string]string{
+				"service": "content-service",
+				"log":     strings.Join(lines, "\n"),
+			},
+		})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL, ServiceToken: "test-token", HTTPTimeout: time.Second})
+	req := httptest.NewRequest(http.MethodGet, "/system/logs?service=content-service&page=2", nil)
+	rr := httptest.NewRecorder()
+
+	srv.handleSystemLogs(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, expected := range []string{
+		`<th class="log-time">时间</th>`,
+		`<th class="log-level">Level</th>`,
+		`<th>具体内容</th>`,
+		`第 2 / 2 页`,
+		`entry-9`,
+	} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("expected logs page to include %q, got %s", expected, body)
+		}
+	}
+	if strings.Contains(body, `entry-10`) {
+		t.Fatalf("expected second page to omit first page entries, got %s", body)
 	}
 }
 
@@ -2149,6 +2220,24 @@ func TestLegacyReportCompat(t *testing.T) {
 	})
 }
 
+func TestSystemDatabaseSectionRendersPostgresConfig(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/system?section=database", nil)
+	rr := httptest.NewRecorder()
+	srv.handleSystem(rr, req, map[string]any{"id": int64(1), "username": "admin"})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected system database page 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, snippet := range []string{"数据库配置", "PostgreSQL 连接检测", "YUQING_DB_DRIVER", "postgres_dsn"} {
+		if !strings.Contains(body, snippet) {
+			t.Fatalf("expected database section to contain %q, got %s", snippet, body)
+		}
+	}
+}
+
 func assertLastCrawlRequest(t *testing.T, srv *Server, wantTemplateID, wantSourceType, wantKeyword string) {
 	t.Helper()
 	_ = srv
@@ -2971,6 +3060,21 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 			mailCfg = cfg
 			mu.Unlock()
 			writeEnvelope(http.StatusOK, "ok", cfg)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/system/database-config":
+			writeEnvelope(http.StatusOK, "ok", model.DatabaseConfigStatus{
+				Driver:           "sqlite",
+				RuntimeDriver:    "sqlite",
+				Status:           "ok",
+				Message:          "sqlite ready: data/yuqing.db",
+				SQLitePath:       "data/yuqing.db",
+				PostgresHost:     "127.0.0.1",
+				PostgresPort:     "5432",
+				PostgresDatabase: "yuqing",
+				PostgresUser:     "postgres",
+				PostgresSSLMode:  "disable",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/system/database-config/check":
+			writeEnvelope(http.StatusOK, "postgresql connection ok", model.DatabaseConfigStatus{Driver: "postgres", Status: "ok", Message: "postgresql connection ok"})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/system/popup":
 			userID := parseTestInt64(r.URL.Query().Get("user_id"))
 			key := r.URL.Query().Get("key")
