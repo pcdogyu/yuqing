@@ -215,6 +215,57 @@ func TestCryptoPageUsesSharedNavAndFriendlyFallback(t *testing.T) {
 	}
 }
 
+func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
+	srv := NewServer(config.Config{})
+
+	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-15", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	aStockIndex := strings.Index(body, `href="/a-stock"`)
+	cryptoIndex := strings.Index(body, `href="/crypto"`)
+	if aStockIndex < 0 || cryptoIndex < 0 || aStockIndex > cryptoIndex {
+		t.Fatalf("expected A股 nav link before Crypto, got %s", body)
+	}
+	for _, want := range []string{
+		"A股策略工作台",
+		"09:00-09:25",
+		"热点归纳",
+		"推荐股票",
+		"当日开盘价",
+		"T+1 收盘价",
+		"T+2 收盘价",
+		"T+3 收盘价",
+		"T+4 收盘价",
+		"T+5 收盘价",
+		"暂无数据",
+		"仅供策略研究和回测，不构成投资建议",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
+		}
+	}
+}
+
+func TestAStockRouteRequiresSession(t *testing.T) {
+	srv := NewServer(config.Config{})
+
+	req := httptest.NewRequest(http.MethodGet, "/a-stock", nil)
+	rr := httptest.NewRecorder()
+	srv.Router().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect for unauthenticated A股 route, got %d", rr.Code)
+	}
+	if loc := rr.Header().Get("Location"); loc != "/login" {
+		t.Fatalf("expected redirect to /login, got %q", loc)
+	}
+}
+
 func TestCryptoPageDefaultsToBTCAndETHCards(t *testing.T) {
 	var requested []string
 	analysis := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
