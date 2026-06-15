@@ -14,7 +14,11 @@ for %%I in ("%GO_DIR%.") do set "GO_DIR=%%~fI"
 for %%I in ("%GO_DIR%\..") do set "REPO_ROOT=%%~fI"
 set "BIN_DIR=%GO_DIR%\bin"
 set "LOG_DIR=%GO_DIR%\runtime-logs"
-set "GO_TEST_FLAGS=-count=1 -timeout 5m -v"
+if not defined YUQING_GO_TEST_FLAGS (
+    set "GO_TEST_FLAGS=-count=1 -timeout 5m"
+) else (
+    set "GO_TEST_FLAGS=%YUQING_GO_TEST_FLAGS%"
+)
 set "GO_TEST_LOG=%LOG_DIR%\go-test.log"
 set "SERVICE_PORTS=80 8081 8082 8083 8084 8085"
 set "SERVICE_NAMES=auth-service content-service crawler-service analysis-service nlp-service gateway-web scheduler-service"
@@ -86,7 +90,10 @@ if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
 
 echo [3/6] Run go test ./...
 powershell -NoProfile -Command "& { Set-Location '%GO_DIR%'; if (Test-Path '%GO_TEST_LOG%') { Remove-Item '%GO_TEST_LOG%' -Force -ErrorAction SilentlyContinue }; Write-Host ('Go test flags: %GO_TEST_FLAGS%'); Write-Host ('Go test log: %GO_TEST_LOG%'); cmd /d /c 'go test ./... %GO_TEST_FLAGS% 2>&1' | Tee-Object -FilePath '%GO_TEST_LOG%'; exit $LASTEXITCODE }"
-if errorlevel 1 goto :fail
+if errorlevel 1 (
+    call :print_go_test_failures
+    goto :fail
+)
 
 echo [4/6] Stop processes occupying service ports...
 for %%P in (%SERVICE_PORTS%) do (
@@ -255,6 +262,16 @@ if exist "%ERR_LOG%" (
     for %%I in ("%ERR_LOG%") do if %%~zI GTR 0 type "%ERR_LOG%"
 )
 echo ---- end %LOG_SERVICE% log ----
+exit /b 0
+
+:print_go_test_failures
+if exist "%GO_TEST_LOG%" (
+    echo ---- go test failure summary ----
+    powershell -NoProfile -Command "Select-String -Path '%GO_TEST_LOG%' -Pattern '^FAIL|--- FAIL|panic:|build failed|\[build failed\]|WaitDelay|Test I/O incomplete' -Context 4,8 | ForEach-Object { $_.ToString() }"
+    echo ---- end go test failure summary ----
+) else (
+    echo Go test log not found: %GO_TEST_LOG%
+)
 exit /b 0
 
 :configure_scheduler_port
