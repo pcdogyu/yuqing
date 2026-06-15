@@ -717,6 +717,30 @@ func TestSystemTemplateIncludesServiceRestartActions(t *testing.T) {
 	}
 }
 
+func TestSystemTemplateGroupsRepeatedPanelsBySection(t *testing.T) {
+	serviceTab := `href="/system?section=services">服务状态</a><a class="{{if eq .SectionKey "account"}}active{{end}}" href="/system?section=account">账号安全`
+	announcementTab := `href="/system?section=operations">生产运行</a><a class="{{if eq .SectionKey "announcements"}}active{{end}}" href="/system?section=announcements">公告与任务`
+	for _, expected := range []string{
+		serviceTab,
+		announcementTab,
+		`{{if eq .SectionKey "services"}}<section><h2>服务状态</h2>`,
+		`name="section" value="services"`,
+		`{{if eq .SectionKey "operations"}}<section class="section-block"><h2>运营操作</h2>`,
+		`name="section" value="operations"`,
+		`{{if eq .SectionKey "announcements"}}<section class="section-block"><h2>公告与任务</h2>`,
+	} {
+		if !strings.Contains(systemTemplate, expected) {
+			t.Fatalf("expected system template to include grouped fragment %q", expected)
+		}
+	}
+	if strings.Contains(systemTemplate, `</section><section><h2>服务状态</h2>`) {
+		t.Fatal("expected service status panel to be scoped to services section")
+	}
+	if strings.Contains(systemTemplate, `{{end}}<section class="section-block"><h2>运营操作</h2>`) {
+		t.Fatal("expected operations action panel to be scoped to operations section")
+	}
+}
+
 func TestPortalFooterDoesNotAppendSystemServiceLogLinks(t *testing.T) {
 	if strings.Contains(portalFooterHTML, `service-log-link`) {
 		t.Fatal("expected service log buttons to be rendered by system template, not appended by footer script")
