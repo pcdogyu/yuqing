@@ -197,6 +197,7 @@ func (s *Service) Routes(r chi.Router) {
 	r.Get("/api/v1/system/alerts", s.handleAlerts)
 	r.Get("/api/v1/system/database-config", s.handleDatabaseConfig)
 	r.Post("/api/v1/system/database-config/check", s.handleDatabaseCheck)
+	r.Post("/api/v1/system/database-config/switch", s.handleDatabaseSwitch)
 	r.Get("/api/v1/system/services/{name}/logs", s.handleServiceLogs)
 	r.Post("/api/v1/system/services/{name}/restart", s.handleRestartService)
 	r.Get("/api/v1/system/popup", s.handleGetPopupState)

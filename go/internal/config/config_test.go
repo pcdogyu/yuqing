@@ -1,12 +1,14 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
 )
 
 func TestLoadUsesDefaults(t *testing.T) {
+	t.Setenv("YUQING_DB_CONFIG_PATH", filepath.Join(t.TempDir(), "missing-database-config.json"))
 	t.Setenv("YUQING_DB_PATH", "")
 	t.Setenv("JIN10_DB_PATH", "")
 	t.Setenv("YUQING_DB_DRIVER", "")
@@ -102,6 +104,7 @@ func TestLoadUsesDefaults(t *testing.T) {
 }
 
 func TestLoadPrefersPrimaryAndAliasEnv(t *testing.T) {
+	t.Setenv("YUQING_DB_CONFIG_PATH", filepath.Join(t.TempDir(), "missing-database-config.json"))
 	t.Setenv("YUQING_DB_PATH", "")
 	t.Setenv("JIN10_DB_PATH", "alias.db")
 	t.Setenv("YUQING_DB_DRIVER", "postgresql")
@@ -185,6 +188,47 @@ func TestLoadPrefersPrimaryAndAliasEnv(t *testing.T) {
 	}
 	if cfg.CryptoXInterval != 77*time.Second || cfg.CryptoTelegramInterval != 88*time.Second {
 		t.Fatalf("expected social intervals loaded, got x=%s tg=%s", cfg.CryptoXInterval, cfg.CryptoTelegramInterval)
+	}
+}
+
+func TestLoadUsesRuntimeDatabaseConfigFile(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "database-config.json")
+	if err := os.WriteFile(configPath, []byte(`{
+  "driver": "postgresql",
+  "sqlite_path": "data/custom.db",
+  "postgres_dsn": "postgres://fileuser:filepass@10.15.0.19:5432/yuqing?sslmode=disable",
+  "postgres_host": "10.15.0.19",
+  "postgres_port": "5432",
+  "postgres_database": "yuqing",
+  "postgres_user": "admin",
+  "postgres_password": "AdminAdmin",
+  "postgres_sslmode": "disable"
+}`), 0o600); err != nil {
+		t.Fatalf("write runtime database config: %v", err)
+	}
+	t.Setenv("YUQING_DB_CONFIG_PATH", configPath)
+	t.Setenv("YUQING_DB_PATH", "")
+	t.Setenv("JIN10_DB_PATH", "")
+	t.Setenv("YUQING_DB_DRIVER", "")
+	t.Setenv("JIN10_DB_DRIVER", "")
+	t.Setenv("YUQING_DATABASE_URL", "")
+	t.Setenv("YUQING_POSTGRES_DSN", "")
+	t.Setenv("JIN10_DATABASE_URL", "")
+	t.Setenv("YUQING_POSTGRES_HOST", "")
+	t.Setenv("YUQING_POSTGRES_PORT", "")
+	t.Setenv("YUQING_POSTGRES_DB", "")
+	t.Setenv("YUQING_POSTGRES_USER", "")
+	t.Setenv("YUQING_POSTGRES_PASSWORD", "")
+	t.Setenv("YUQING_POSTGRES_SSLMODE", "")
+
+	cfg := Load()
+
+	if cfg.DatabaseConfigPath != configPath || cfg.DatabaseDriver != "postgres" || cfg.DatabasePath != "data/custom.db" {
+		t.Fatalf("expected runtime database config file values, got path=%q driver=%q sqlite=%q", cfg.DatabaseConfigPath, cfg.DatabaseDriver, cfg.DatabasePath)
+	}
+	if cfg.DatabaseURL == "" || cfg.PostgresHost != "10.15.0.19" || cfg.PostgresUser != "admin" || cfg.PostgresPassword != "AdminAdmin" {
+		t.Fatalf("expected postgres runtime config loaded, got url=%q host=%q user=%q password=%q", cfg.DatabaseURL, cfg.PostgresHost, cfg.PostgresUser, cfg.PostgresPassword)
 	}
 }
 

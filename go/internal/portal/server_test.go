@@ -2320,10 +2320,34 @@ func TestSystemDatabaseSectionRendersPostgresConfig(t *testing.T) {
 		t.Fatalf("expected system database page 200, got %d body=%s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	for _, snippet := range []string{"数据库配置", "PostgreSQL 连接检测", "YUQING_DB_DRIVER", "postgres_dsn"} {
+	for _, snippet := range []string{"数据库配置", "数据库连接检测与切换", "已选择驱动", "切换数据库", "database_switch", "YUQING_DB_DRIVER", "postgres_dsn"} {
 		if !strings.Contains(body, snippet) {
 			t.Fatalf("expected database section to contain %q, got %s", snippet, body)
 		}
+	}
+}
+
+func TestSystemDatabaseSwitchRedirectsWithSuccess(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+
+	form := url.Values{}
+	form.Set("section", "database")
+	form.Set("form_type", "database_switch")
+	form.Set("driver", "sqlite")
+	form.Set("sqlite_path", "data/yuqing.db")
+	req := httptest.NewRequest(http.MethodPost, "/system?section=database", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+
+	srv.handleSystem(rr, req, map[string]any{"id": int64(1), "username": "admin"})
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect after database switch, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	location := rr.Header().Get("Location")
+	if !strings.Contains(location, "section=database") || !strings.Contains(location, url.QueryEscape("数据库切换配置已保存，请重启服务后生效")) {
+		t.Fatalf("expected database switch success redirect, got %q", location)
 	}
 }
 
@@ -3152,9 +3176,11 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/system/database-config":
 			writeEnvelope(http.StatusOK, "ok", model.DatabaseConfigStatus{
 				Driver:           "sqlite",
+				ConfiguredDriver: "sqlite",
 				RuntimeDriver:    "sqlite",
 				Status:           "ok",
 				Message:          "sqlite ready: data/yuqing.db",
+				ConfigPath:       "data/database-config.json",
 				SQLitePath:       "data/yuqing.db",
 				PostgresHost:     "127.0.0.1",
 				PostgresPort:     "5432",
@@ -3164,6 +3190,16 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/system/database-config/check":
 			writeEnvelope(http.StatusOK, "postgresql connection ok", model.DatabaseConfigStatus{Driver: "postgres", Status: "ok", Message: "postgresql connection ok"})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/system/database-config/switch":
+			writeEnvelope(http.StatusOK, "database switch saved; restart services to apply", model.DatabaseConfigStatus{
+				Driver:           "sqlite",
+				ConfiguredDriver: "sqlite",
+				RuntimeDriver:    "sqlite",
+				Status:           "ok",
+				Message:          "database switch saved; restart services to apply",
+				ConfigPath:       "data/database-config.json",
+				RestartRequired:  true,
+			})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/system/popup":
 			userID := parseTestInt64(r.URL.Query().Get("user_id"))
 			key := r.URL.Query().Get("key")

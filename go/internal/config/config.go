@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -15,6 +16,7 @@ type Config struct {
 	DatabaseDriver          string
 	DatabasePath            string
 	DatabaseURL             string
+	DatabaseConfigPath      string
 	PostgresHost            string
 	PostgresPort            string
 	PostgresDatabase        string
@@ -83,23 +85,27 @@ type Config struct {
 }
 
 func Load() Config {
-	dbPath := firstEnv("YUQING_DB_PATH", "JIN10_DB_PATH")
+	databaseConfigPath := envOrDefault("YUQING_DB_CONFIG_PATH", filepath.Join("data", "database-config.json"))
+	databaseConfig := loadRuntimeDatabaseConfig(databaseConfigPath)
+	dbPath := firstNonEmpty(firstEnv("YUQING_DB_PATH", "JIN10_DB_PATH"), databaseConfig.SQLitePath)
 	if dbPath == "" {
 		dbPath = filepath.Join("data", "yuqing.db")
 	}
-	databaseURL := firstEnv("YUQING_DATABASE_URL", "YUQING_POSTGRES_DSN", "JIN10_DATABASE_URL")
+	databaseURL := firstNonEmpty(firstEnv("YUQING_DATABASE_URL", "YUQING_POSTGRES_DSN", "JIN10_DATABASE_URL"), databaseConfig.PostgresDSN)
+	databaseDriver := firstNonEmpty(firstEnv("YUQING_DB_DRIVER", "JIN10_DB_DRIVER"), databaseConfig.Driver, "sqlite")
 
 	return Config{
 		ListenAddr:              envOrDefault("YUQING_LISTEN_ADDR", ":8090"),
-		DatabaseDriver:          normalizeDatabaseDriver(envOrDefaultWithAliases("YUQING_DB_DRIVER", "sqlite", "JIN10_DB_DRIVER")),
+		DatabaseDriver:          normalizeDatabaseDriver(databaseDriver),
 		DatabasePath:            dbPath,
 		DatabaseURL:             databaseURL,
-		PostgresHost:            envOrDefault("YUQING_POSTGRES_HOST", "127.0.0.1"),
-		PostgresPort:            envOrDefault("YUQING_POSTGRES_PORT", "5432"),
-		PostgresDatabase:        envOrDefault("YUQING_POSTGRES_DB", "yuqing"),
-		PostgresUser:            envOrDefault("YUQING_POSTGRES_USER", "postgres"),
-		PostgresPassword:        envOrDefault("YUQING_POSTGRES_PASSWORD", ""),
-		PostgresSSLMode:         envOrDefault("YUQING_POSTGRES_SSLMODE", "disable"),
+		DatabaseConfigPath:      databaseConfigPath,
+		PostgresHost:            firstNonEmpty(os.Getenv("YUQING_POSTGRES_HOST"), databaseConfig.PostgresHost, "127.0.0.1"),
+		PostgresPort:            firstNonEmpty(os.Getenv("YUQING_POSTGRES_PORT"), databaseConfig.PostgresPort, "5432"),
+		PostgresDatabase:        firstNonEmpty(os.Getenv("YUQING_POSTGRES_DB"), databaseConfig.PostgresDatabase, "yuqing"),
+		PostgresUser:            firstNonEmpty(os.Getenv("YUQING_POSTGRES_USER"), databaseConfig.PostgresUser, "postgres"),
+		PostgresPassword:        firstNonEmpty(os.Getenv("YUQING_POSTGRES_PASSWORD"), databaseConfig.PostgresPassword),
+		PostgresSSLMode:         firstNonEmpty(os.Getenv("YUQING_POSTGRES_SSLMODE"), databaseConfig.PostgresSSLMode, "disable"),
 		FlashURL:                envOrDefaultWithAliases("YUQING_FLASH_URL", "https://www.jin10.com/", "JIN10_FLASH_URL"),
 		HeadlineURL:             envOrDefaultWithAliases("YUQING_HEADLINE_URL", "https://xnews.jin10.com/", "JIN10_HEADLINE_URL"),
 		BinanceBaseURL:          envOrDefault("YUQING_BINANCE_BASE_URL", "https://api.binance.com"),
@@ -172,6 +178,35 @@ func normalizeDatabaseDriver(value string) string {
 	}
 }
 
+type runtimeDatabaseConfig struct {
+	Driver           string `json:"driver"`
+	SQLitePath       string `json:"sqlite_path"`
+	PostgresDSN      string `json:"postgres_dsn"`
+	PostgresHost     string `json:"postgres_host"`
+	PostgresPort     string `json:"postgres_port"`
+	PostgresDatabase string `json:"postgres_database"`
+	PostgresUser     string `json:"postgres_user"`
+	PostgresPassword string `json:"postgres_password"`
+	PostgresSSLMode  string `json:"postgres_sslmode"`
+}
+
+func loadRuntimeDatabaseConfig(path string) runtimeDatabaseConfig {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return runtimeDatabaseConfig{}
+	}
+	payload, err := os.ReadFile(path)
+	if err != nil {
+		return runtimeDatabaseConfig{}
+	}
+	var cfg runtimeDatabaseConfig
+	if err := json.Unmarshal(payload, &cfg); err != nil {
+		return runtimeDatabaseConfig{}
+	}
+	cfg.Driver = normalizeDatabaseDriver(cfg.Driver)
+	return cfg
+}
+
 func envInt(fallback int, keys ...string) int {
 	raw := strconv.Itoa(fallback)
 	for _, key := range keys {
@@ -221,6 +256,15 @@ func envBool(fallback bool, keys ...string) bool {
 func firstEnv(keys ...string) string {
 	for _, key := range keys {
 		if value := os.Getenv(key); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
 			return value
 		}
 	}

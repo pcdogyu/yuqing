@@ -5,6 +5,27 @@ param(
 $ErrorActionPreference = "Stop"
 Set-Location $Root
 
+$dbConfigPath = if ($env:YUQING_DB_CONFIG_PATH) { $env:YUQING_DB_CONFIG_PATH } else { Join-Path $Root "data\database-config.json" }
+$env:YUQING_DB_CONFIG_PATH = $dbConfigPath
+$dbRuntimeConfig = $null
+if (Test-Path $dbConfigPath) {
+    try {
+        $dbRuntimeConfig = Get-Content -Raw -Path $dbConfigPath | ConvertFrom-Json
+    } catch {
+        Write-Warning "failed to read database config '$dbConfigPath': $($_.Exception.Message)"
+    }
+}
+if ($dbRuntimeConfig) {
+    if (-not $env:YUQING_DB_DRIVER -and $dbRuntimeConfig.driver) { $env:YUQING_DB_DRIVER = $dbRuntimeConfig.driver }
+    if (-not $env:YUQING_DB_PATH -and $dbRuntimeConfig.sqlite_path) { $env:YUQING_DB_PATH = $dbRuntimeConfig.sqlite_path }
+    if (-not $env:YUQING_DATABASE_URL -and $dbRuntimeConfig.postgres_dsn) { $env:YUQING_DATABASE_URL = $dbRuntimeConfig.postgres_dsn }
+    if (-not $env:YUQING_POSTGRES_HOST -and $dbRuntimeConfig.postgres_host) { $env:YUQING_POSTGRES_HOST = $dbRuntimeConfig.postgres_host }
+    if (-not $env:YUQING_POSTGRES_PORT -and $dbRuntimeConfig.postgres_port) { $env:YUQING_POSTGRES_PORT = $dbRuntimeConfig.postgres_port }
+    if (-not $env:YUQING_POSTGRES_DB -and $dbRuntimeConfig.postgres_database) { $env:YUQING_POSTGRES_DB = $dbRuntimeConfig.postgres_database }
+    if (-not $env:YUQING_POSTGRES_USER -and $dbRuntimeConfig.postgres_user) { $env:YUQING_POSTGRES_USER = $dbRuntimeConfig.postgres_user }
+    if (-not $env:YUQING_POSTGRES_PASSWORD -and $dbRuntimeConfig.postgres_password) { $env:YUQING_POSTGRES_PASSWORD = $dbRuntimeConfig.postgres_password }
+    if (-not $env:YUQING_POSTGRES_SSLMODE -and $dbRuntimeConfig.postgres_sslmode) { $env:YUQING_POSTGRES_SSLMODE = $dbRuntimeConfig.postgres_sslmode }
+}
 $env:YUQING_DB_PATH = if ($env:YUQING_DB_PATH) { $env:YUQING_DB_PATH } else { Join-Path $Root "data\yuqing.db" }
 
 $services = @(

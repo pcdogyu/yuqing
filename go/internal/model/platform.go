@@ -391,9 +391,12 @@ type OperationBackupStatus struct {
 
 type DatabaseConfigStatus struct {
 	Driver             string `json:"driver"`
+	ConfiguredDriver   string `json:"configured_driver,omitempty"`
 	RuntimeDriver      string `json:"runtime_driver"`
 	Status             string `json:"status"`
 	Message            string `json:"message,omitempty"`
+	ConfigPath         string `json:"config_path,omitempty"`
+	RestartRequired    bool   `json:"restart_required"`
 	SQLitePath         string `json:"sqlite_path,omitempty"`
 	PostgresHost       string `json:"postgres_host,omitempty"`
 	PostgresPort       string `json:"postgres_port,omitempty"`

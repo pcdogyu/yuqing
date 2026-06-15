@@ -32,6 +32,19 @@ type databaseConfigRequest struct {
 	PostgresSSLMode  string `json:"postgres_sslmode"`
 }
 
+type runtimeDatabaseConfigFile struct {
+	Driver           string `json:"driver"`
+	SQLitePath       string `json:"sqlite_path,omitempty"`
+	PostgresDSN      string `json:"postgres_dsn,omitempty"`
+	PostgresHost     string `json:"postgres_host,omitempty"`
+	PostgresPort     string `json:"postgres_port,omitempty"`
+	PostgresDatabase string `json:"postgres_database,omitempty"`
+	PostgresUser     string `json:"postgres_user,omitempty"`
+	PostgresPassword string `json:"postgres_password,omitempty"`
+	PostgresSSLMode  string `json:"postgres_sslmode,omitempty"`
+	UpdatedAt        string `json:"updated_at,omitempty"`
+}
+
 func (s *Service) handleDatabaseConfig(w http.ResponseWriter, r *http.Request) {
 	apiutil.WriteJSON(w, http.StatusOK, "ok", s.databaseConfigStatus(r.Context(), databaseConfigRequest{}))
 }
@@ -50,16 +63,72 @@ func (s *Service) handleDatabaseCheck(w http.ResponseWriter, r *http.Request) {
 	apiutil.WriteJSON(w, code, status.Message, status)
 }
 
-func (s *Service) databaseConfigStatus(ctx context.Context, override databaseConfigRequest) model.DatabaseConfigStatus {
-	cfg := s.databaseConfigFromRequest(override)
+func (s *Service) handleDatabaseSwitch(w http.ResponseWriter, r *http.Request) {
+	var req databaseConfigRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+	cfg := s.databaseConfigFromRequest(req)
+	configPath := runtimeDatabaseConfigPath(s.cfg.DatabaseConfigPath)
 	driver := normalizeDatabaseDriver(cfg.Driver)
 	if driver == "" {
 		driver = "sqlite"
 	}
+	cfg.Driver = driver
+	switch driver {
+	case "sqlite":
+		if strings.TrimSpace(cfg.SQLitePath) == "" {
+			cfg.SQLitePath = filepath.Join("data", "yuqing.db")
+		}
+	case "postgres":
+		status, message := checkPostgres(r.Context(), cfg)
+		if status != "ok" {
+			apiutil.WriteJSON(w, http.StatusBadGateway, message, model.DatabaseConfigStatus{
+				Driver:           driver,
+				ConfiguredDriver: currentConfiguredDatabaseDriver(configPath),
+				RuntimeDriver:    "sqlite",
+				Status:           status,
+				Message:          message,
+				ConfigPath:       configPath,
+				RestartRequired:  true,
+			})
+			return
+		}
+	default:
+		apiutil.WriteJSON(w, http.StatusBadRequest, "unsupported database driver: "+driver, nil)
+		return
+	}
+	if err := writeRuntimeDatabaseConfig(configPath, cfg); err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	status := s.databaseConfigStatus(r.Context(), databaseConfigRequest{})
+	status.ConfiguredDriver = driver
+	status.ConfigPath = configPath
+	status.RestartRequired = true
+	status.Message = "database switch saved; restart services to apply"
+	apiutil.WriteJSON(w, http.StatusOK, status.Message, status)
+}
+
+func (s *Service) databaseConfigStatus(ctx context.Context, override databaseConfigRequest) model.DatabaseConfigStatus {
+	cfg := s.databaseConfigFromRequest(override)
+	configPath := runtimeDatabaseConfigPath(s.cfg.DatabaseConfigPath)
+	driver := normalizeDatabaseDriver(cfg.Driver)
+	if driver == "" {
+		driver = "sqlite"
+	}
+	configuredDriver := currentConfiguredDatabaseDriver(configPath)
+	if configuredDriver == "" {
+		configuredDriver = driver
+	}
 	status := model.DatabaseConfigStatus{
 		Driver:             driver,
+		ConfiguredDriver:   configuredDriver,
 		RuntimeDriver:      "sqlite",
 		SQLitePath:         cfg.SQLitePath,
+		ConfigPath:         configPath,
+		RestartRequired:    configuredDriver != driver,
 		PostgresHost:       cfg.PostgresHost,
 		PostgresPort:       cfg.PostgresPort,
 		PostgresDatabase:   cfg.PostgresDatabase,
@@ -262,4 +331,61 @@ func databaseEnvExample(cfg model.DatabaseConfigStatus) string {
 		sslMode = "disable"
 	}
 	return fmt.Sprintf("$env:YUQING_DB_DRIVER='postgres'; $env:YUQING_POSTGRES_HOST='%s'; $env:YUQING_POSTGRES_PORT='%s'; $env:YUQING_POSTGRES_DB='%s'; $env:YUQING_POSTGRES_USER='%s'; $env:YUQING_POSTGRES_PASSWORD='<password>'; $env:YUQING_POSTGRES_SSLMODE='%s'", host, port, database, user, sslMode)
+}
+
+func currentConfiguredDatabaseDriver(path string) string {
+	cfg, err := readRuntimeDatabaseConfig(path)
+	if err != nil {
+		return ""
+	}
+	return normalizeDatabaseDriver(cfg.Driver)
+}
+
+func runtimeDatabaseConfigPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return filepath.Join("data", "database-config.json")
+	}
+	return path
+}
+
+func readRuntimeDatabaseConfig(path string) (runtimeDatabaseConfigFile, error) {
+	path = runtimeDatabaseConfigPath(path)
+	if path == "" {
+		return runtimeDatabaseConfigFile{}, os.ErrNotExist
+	}
+	payload, err := os.ReadFile(path)
+	if err != nil {
+		return runtimeDatabaseConfigFile{}, err
+	}
+	var cfg runtimeDatabaseConfigFile
+	if err := json.Unmarshal(payload, &cfg); err != nil {
+		return runtimeDatabaseConfigFile{}, err
+	}
+	return cfg, nil
+}
+
+func writeRuntimeDatabaseConfig(path string, cfg databaseConfigRequest) error {
+	path = runtimeDatabaseConfigPath(path)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	payload := runtimeDatabaseConfigFile{
+		Driver:           normalizeDatabaseDriver(cfg.Driver),
+		SQLitePath:       strings.TrimSpace(cfg.SQLitePath),
+		PostgresDSN:      strings.TrimSpace(cfg.PostgresDSN),
+		PostgresHost:     strings.TrimSpace(cfg.PostgresHost),
+		PostgresPort:     strings.TrimSpace(cfg.PostgresPort),
+		PostgresDatabase: strings.TrimSpace(cfg.PostgresDatabase),
+		PostgresUser:     strings.TrimSpace(cfg.PostgresUser),
+		PostgresPassword: strings.TrimSpace(cfg.PostgresPassword),
+		PostgresSSLMode:  strings.TrimSpace(cfg.PostgresSSLMode),
+		UpdatedAt:        time.Now().UTC().Format(time.RFC3339),
+	}
+	data, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	return os.WriteFile(path, data, 0o600)
 }

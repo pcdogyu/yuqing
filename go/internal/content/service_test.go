@@ -276,6 +276,43 @@ func TestDatabaseConfigAPI(t *testing.T) {
 	}
 }
 
+func TestDatabaseSwitchAPISavesRuntimeConfig(t *testing.T) {
+	store := newContentSearchTestStore(t)
+	configPath := filepath.Join(t.TempDir(), "database-config.json")
+	dbPath := filepath.Join(t.TempDir(), "local.db")
+	svc := NewService(config.Config{
+		DatabaseDriver:     "sqlite",
+		DatabasePath:       dbPath,
+		DatabaseConfigPath: configPath,
+		PostgresHost:       "10.15.0.19",
+		PostgresPort:       "5432",
+		PostgresDatabase:   "yuqing",
+		PostgresUser:       "admin",
+		PostgresSSLMode:    "disable",
+		HTTPTimeout:        time.Second,
+	}, store)
+	router := svc.Router()
+
+	switchReq := httptest.NewRequest(http.MethodPost, "/api/v1/system/database-config/switch", strings.NewReader(`{"driver":"sqlite","sqlite_path":"data/local.db"}`))
+	switchReq.Header.Set("Content-Type", "application/json")
+	switchRR := httptest.NewRecorder()
+	router.ServeHTTP(switchRR, switchReq)
+	if switchRR.Code != http.StatusOK {
+		t.Fatalf("expected database switch 200, got status=%d body=%s", switchRR.Code, switchRR.Body.String())
+	}
+	body := switchRR.Body.String()
+	if !strings.Contains(body, `"configured_driver":"sqlite"`) || !strings.Contains(body, `"restart_required":true`) {
+		t.Fatalf("expected switch response to include selected sqlite and restart hint, got %s", body)
+	}
+	payload, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("expected runtime database config file: %v", err)
+	}
+	if !strings.Contains(string(payload), `"driver": "sqlite"`) || !strings.Contains(string(payload), `"sqlite_path": "data/local.db"`) {
+		t.Fatalf("unexpected runtime database config payload: %s", payload)
+	}
+}
+
 func TestRestartServiceAPIRequiresTokenAndSubmitsKnownService(t *testing.T) {
 	store := newContentSearchTestStore(t)
 	var restarted serviceRestartSpec
