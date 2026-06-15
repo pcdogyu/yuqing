@@ -700,6 +700,18 @@ func TestPortalNavPositionsLogoutTopRight(t *testing.T) {
 	}
 }
 
+func TestDashboardTemplateOmitsServiceStatusTable(t *testing.T) {
+	for _, unexpected := range []string{
+		`<h2>服务状态</h2>`,
+		`{{range .Services}}`,
+		`暂无服务状态`,
+	} {
+		if strings.Contains(dashboardTemplate, unexpected) {
+			t.Fatalf("expected dashboard template to omit service status fragment %q", unexpected)
+		}
+	}
+}
+
 func TestSystemTemplateIncludesServiceRestartActions(t *testing.T) {
 	for _, expected := range []string{
 		`<th>操作</th>`,
