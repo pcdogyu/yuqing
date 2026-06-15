@@ -735,6 +735,8 @@ func TestSystemTemplateGroupsRepeatedPanelsBySection(t *testing.T) {
 		`name="section" value="opactions"`,
 		`{{if eq .SectionKey "contracts"}}<section class="section-block"><h2>外部契约与审计</h2>`,
 		`{{if eq .SectionKey "announcements"}}<section class="section-block"><h2>公告与任务</h2>`,
+		`.feedback-textarea{min-height:168px;resize:vertical}`,
+		`<textarea class="feedback-textarea" name="content" placeholder="问题描述或需求"></textarea>`,
 	} {
 		if !strings.Contains(systemTemplate, expected) {
 			t.Fatalf("expected system template to include grouped fragment %q", expected)
@@ -760,6 +762,12 @@ func TestSystemTemplateGroupsRepeatedPanelsBySection(t *testing.T) {
 func TestPortalFooterDoesNotAppendSystemServiceLogLinks(t *testing.T) {
 	if strings.Contains(portalFooterHTML, `service-log-link`) {
 		t.Fatal("expected service log buttons to be rendered by system template, not appended by footer script")
+	}
+	if !strings.Contains(portalFooterHTML, `{{.FooterBranch}} - <a class="footer-feedback-link" href="/system?section=feedback">反馈建议</a>`) {
+		t.Fatal("expected footer to link to feedback after branch")
+	}
+	if !strings.Contains(baseStyles, `.site-footer a{color:#214e34;font-weight:600;text-decoration:none}`) {
+		t.Fatal("expected footer feedback link styling")
 	}
 }
 
