@@ -21,8 +21,9 @@ $SchemaPath = (Resolve-Path $SchemaPath).Path
 
 $psql = Get-Command psql -ErrorAction SilentlyContinue
 $docker = Get-Command docker -ErrorAction SilentlyContinue
-if (-not $psql -and -not $docker) {
-    throw "Neither psql nor docker was found. Install PostgreSQL client tools, then rerun this script."
+$go = Get-Command go -ErrorAction SilentlyContinue
+if (-not $psql -and -not $docker -and -not $go) {
+    throw "Neither psql, docker, nor go was found. Install PostgreSQL client tools or Go, then rerun this script."
 }
 
 function Invoke-Psql {
@@ -69,6 +70,27 @@ $oldPassword = $env:PGPASSWORD
 try {
     if ($Password) {
         $env:PGPASSWORD = $Password
+    }
+
+    if (-not $psql -and -not $docker) {
+        $moduleRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+        Push-Location $moduleRoot
+        try {
+            & $go.Source run .\cmd\apply-postgres-schema `
+                -host $HostName `
+                -port ([string]$Port) `
+                -database $Database `
+                -user $User `
+                -password $Password `
+                -schema $SchemaPath
+            if ($LASTEXITCODE -ne 0) {
+                throw "failed to apply schema with go fallback"
+            }
+        }
+        finally {
+            Pop-Location
+        }
+        return
     }
 
     $exitCode = Invoke-Psql -DbName $Database -ExtraArgs @("-c", "SELECT 1;")
