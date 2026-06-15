@@ -29,6 +29,7 @@ type Config struct {
 	CryptoTelegramURL       string
 	CryptoTelegramToken     string
 	HTTPTimeout             time.Duration
+	SchedulerCrawlTimeout   time.Duration
 	ExternalRetryCount      int
 	ExternalRetryWait       time.Duration
 	FlashInterval           time.Duration
@@ -98,6 +99,7 @@ func Load() Config {
 		CryptoTelegramURL:       envOrDefault("YUQING_CRYPTO_TELEGRAM_URL", ""),
 		CryptoTelegramToken:     envOrDefault("YUQING_CRYPTO_TELEGRAM_TOKEN", ""),
 		HTTPTimeout:             envDurationSeconds(20, "YUQING_HTTP_TIMEOUT_SEC", "JIN10_HTTP_TIMEOUT_SEC"),
+		SchedulerCrawlTimeout:   envDurationSeconds(120, "YUQING_SCHEDULER_CRAWL_TIMEOUT_SEC"),
 		ExternalRetryCount:      envIntAllowZero(2, "YUQING_EXTERNAL_RETRY_COUNT"),
 		ExternalRetryWait:       envDurationMillis(500, "YUQING_EXTERNAL_RETRY_WAIT_MS"),
 		FlashInterval:           envDurationSeconds(15, "YUQING_FLASH_INTERVAL_SEC", "JIN10_FLASH_INTERVAL_SEC"),

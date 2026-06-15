@@ -21,13 +21,18 @@ import (
 )
 
 type Worker struct {
-	cfg    config.Config
-	client *resty.Client
-	store  *sqlitestore.Store
-	mu     sync.Mutex
+	cfg         config.Config
+	client      *resty.Client
+	crawlClient *resty.Client
+	store       *sqlitestore.Store
+	mu          sync.Mutex
 }
 
 func NewWorker(cfg config.Config) *Worker {
+	crawlTimeout := cfg.SchedulerCrawlTimeout
+	if crawlTimeout <= 0 {
+		crawlTimeout = maxDuration(cfg.HTTPTimeout*6, cfg.HTTPTimeout)
+	}
 	return &Worker{
 		cfg: cfg,
 		client: resty.New().
@@ -36,6 +41,9 @@ func NewWorker(cfg config.Config) *Worker {
 			SetRetryWaitTime(cfg.ExternalRetryWait).
 			SetRetryMaxWaitTime(maxDuration(cfg.ExternalRetryWait*6, cfg.ExternalRetryWait)).
 			AddRetryCondition(external.ShouldRetryResponse).
+			SetHeader("X-Service-Token", cfg.ServiceToken),
+		crawlClient: resty.New().
+			SetTimeout(crawlTimeout).
 			SetHeader("X-Service-Token", cfg.ServiceToken),
 	}
 }
@@ -58,7 +66,7 @@ func (w *Worker) Run(ctx context.Context) {
 	runner := cron.New(
 		cron.WithLocation(location),
 		cron.WithParser(cronParser()),
-		cron.WithChain(cron.Recover(cron.DefaultLogger)),
+		cron.WithChain(cron.SkipIfStillRunning(cron.DefaultLogger), cron.Recover(cron.DefaultLogger)),
 	)
 	for _, job := range w.jobDefinitions() {
 		if !job.Enabled {

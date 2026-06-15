@@ -25,6 +25,41 @@ func TestNewWorkerSetsTokenHeader(t *testing.T) {
 	if got := worker.client.Header.Get("X-Service-Token"); got != "secret-token" {
 		t.Fatalf("expected service token header, got %q", got)
 	}
+	if got := worker.crawlClient.Header.Get("X-Service-Token"); got != "secret-token" {
+		t.Fatalf("expected crawl service token header, got %q", got)
+	}
+}
+
+func TestRunCrawlUsesDedicatedTimeout(t *testing.T) {
+	var sawToken atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/admin/tasks/crawl" || r.URL.Query().Get("source_type") != "headline" {
+			t.Fatalf("unexpected crawl request: path=%s query=%s", r.URL.Path, r.URL.RawQuery)
+		}
+		if r.Header.Get("X-Service-Token") == "secret-token" {
+			sawToken.Store(true)
+		}
+		time.Sleep(50 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	worker := NewWorker(config.Config{
+		CrawlerURL:            server.URL,
+		HTTPTimeout:           10 * time.Millisecond,
+		SchedulerCrawlTimeout: 250 * time.Millisecond,
+		ServiceToken:          "secret-token",
+		ExternalRetryWait:     time.Millisecond,
+		WechatCleanupInterval: time.Hour,
+		WechatPushInterval:    time.Hour,
+	})
+
+	if err := worker.runCrawl(context.Background(), "headline"); err != nil {
+		t.Fatalf("expected crawl request to use dedicated timeout, got %v", err)
+	}
+	if !sawToken.Load() {
+		t.Fatal("expected crawl request to include service token")
+	}
 }
 
 func TestLoopRunsImmediatelyAndStopsOnCancel(t *testing.T) {

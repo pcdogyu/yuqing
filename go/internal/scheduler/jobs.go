@@ -196,7 +196,7 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 			Interval:    w.cfg.FlashInterval,
 			Enabled:     true,
 			Run: func(ctx context.Context) error {
-				return w.runCrawl("flash")
+				return w.runCrawl(ctx, "flash")
 			},
 		}, "FlashCrawlerQuartz", "0/15 * * * * ?"),
 		withJobMeta(jobDefinition{
@@ -206,7 +206,7 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 			Interval:    w.cfg.HeadlineInterval,
 			Enabled:     true,
 			Run: func(ctx context.Context) error {
-				return w.runCrawl("headline")
+				return w.runCrawl(ctx, "headline")
 			},
 		}, "HeadlineCrawlerQuartz", "0 0/1 * * * ?"),
 		withJobMeta(jobDefinition{
@@ -387,8 +387,9 @@ func (w *Worker) recordTaskRun(ctx context.Context, name, status, message string
 	return store.RecordTaskRun(ctx, name, status, message, startedAt, finishedAt)
 }
 
-func (w *Worker) runCrawl(sourceType string) error {
-	resp, err := w.client.R().
+func (w *Worker) runCrawl(ctx context.Context, sourceType string) error {
+	resp, err := w.crawlClient.R().
+		SetContext(ctx).
 		SetQueryParam("source_type", sourceType).
 		Post(w.cfg.CrawlerURL + "/api/v1/admin/tasks/crawl")
 	if err != nil {

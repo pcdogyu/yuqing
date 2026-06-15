@@ -15,6 +15,8 @@ import (
 	"github.com/pcdogyu/yuqing/go/internal/model"
 )
 
+const busyTimeoutMillis = 30000
+
 type Store struct {
 	db *sql.DB
 }
@@ -28,6 +30,10 @@ func New(path string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
+	if _, err := db.ExecContext(context.Background(), fmt.Sprintf("PRAGMA busy_timeout=%d", busyTimeoutMillis)); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 
 	store := &Store{db: db}
 	if err := store.migrate(context.Background()); err != nil {

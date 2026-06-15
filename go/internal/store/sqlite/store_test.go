@@ -45,6 +45,19 @@ func TestUpsertAndListItems(t *testing.T) {
 	}
 }
 
+func TestNewStoreSetsBusyTimeout(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	var timeout int
+	if err := store.db.QueryRowContext(ctx, `PRAGMA busy_timeout`).Scan(&timeout); err != nil {
+		t.Fatalf("query busy_timeout: %v", err)
+	}
+	if timeout != busyTimeoutMillis {
+		t.Fatalf("expected busy_timeout %d, got %d", busyTimeoutMillis, timeout)
+	}
+}
+
 func TestPreferencesPopupAndMailConfig(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
