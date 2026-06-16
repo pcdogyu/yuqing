@@ -892,6 +892,9 @@ func buildAStockRecommendations(hotspots []aStockHotspot) []aStockRecommendation
 	for _, rule := range aStockTopicRules() {
 		ruleByName[rule.Name] = rule
 	}
+	if len(hotspots) > 3 {
+		hotspots = hotspots[:3]
+	}
 	recommendations := make([]aStockRecommendation, 0)
 	seen := make(map[string]struct{})
 	for _, hotspot := range hotspots {

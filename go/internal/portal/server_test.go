@@ -347,6 +347,36 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 	}
 }
 
+func TestAStockRecommendationsUseTopThreeHotspotIndustries(t *testing.T) {
+	recommendations := buildAStockRecommendations([]aStockHotspot{
+		{Name: "黄金有色", Keywords: []string{"黄金"}, Score: 32, Evidence: 2},
+		{Name: "消费电子", Keywords: []string{"华为"}, Score: 26, Evidence: 2},
+		{Name: "新能源", Keywords: []string{"储能"}, Score: 25, Evidence: 1},
+		{Name: "医药生物", Keywords: []string{"医药"}, Score: 19, Evidence: 1},
+	})
+
+	if len(recommendations) != 9 {
+		t.Fatalf("expected 9 recommendations from top 3 industries, got %d", len(recommendations))
+	}
+	for _, rec := range recommendations {
+		if rec.Hotspot == "医药生物" {
+			t.Fatalf("expected fourth industry to be excluded, got %+v", rec)
+		}
+	}
+	for _, want := range []string{"黄金有色", "消费电子", "新能源"} {
+		found := false
+		for _, rec := range recommendations {
+			if rec.Hotspot == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected recommendations to include hotspot %q, got %+v", want, recommendations)
+		}
+	}
+}
+
 func TestAStockCrawlActionTriggersFlashAndHeadline(t *testing.T) {
 	var sources []string
 	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
