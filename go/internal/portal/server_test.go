@@ -253,6 +253,8 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		"09:00-09:25",
 		"热点归纳",
 		"推荐股票",
+		"收盘价",
+		"涨跌幅",
 		"当日开盘价",
 		"T+1 收盘价",
 		"T+2 收盘价",
@@ -272,6 +274,36 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 }
 
 func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
+	market := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("date") != "2026-06-16" {
+			t.Fatalf("unexpected market date: %s", r.URL.RawQuery)
+		}
+		if !strings.Contains(r.URL.Query().Get("codes"), "002230") || !strings.Contains(r.URL.Query().Get("codes"), "688981") {
+			t.Fatalf("unexpected market codes: %s", r.URL.RawQuery)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    200,
+			"message": "ok",
+			"data": map[string]any{
+				"items": []map[string]any{
+					{"code": "002230", "date": "2026-06-15", "open": 10.10, "close": 10.50, "pct": 1.25},
+					{"code": "002230", "date": "2026-06-16", "open": 10.60, "close": 10.90, "pct": 3.81},
+					{"code": "002230", "date": "2026-06-17", "open": 10.95, "close": 11.00, "pct": 0.92},
+					{"code": "002230", "date": "2026-06-18", "open": 11.05, "close": 10.80, "pct": -1.82},
+					{"code": "002230", "date": "2026-06-19", "open": 10.82, "close": 11.20, "pct": 3.70},
+					{"code": "002230", "date": "2026-06-22", "open": 11.25, "close": 11.40, "pct": 1.79},
+					{"code": "002230", "date": "2026-06-23", "open": 11.42, "close": 11.10, "pct": -2.63},
+					{"code": "688981", "date": "2026-06-15", "open": 51.00, "close": 50.20, "pct": -0.60},
+					{"code": "688981", "date": "2026-06-16", "open": 50.10, "close": 50.60, "pct": 0.80},
+					{"code": "688981", "date": "2026-06-17", "open": 50.70, "close": 51.00, "pct": 0.79},
+				},
+			},
+		})
+	}))
+	defer market.Close()
+	t.Setenv("YUQING_ASTOCK_MARKET_URL", market.URL)
+
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path != "/api/v1/articles" {
@@ -305,10 +337,13 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"AI 算力政策加码", "半导体先进封装景气度提升", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数"} {
+	for _, want := range []string{"AI 算力政策加码", "半导体先进封装景气度提升", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "10.50", "+1.25%", "50.20", "-0.60%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}
+	}
+	if !strings.Contains(body, `class="astock-up"`) || !strings.Contains(body, `class="astock-down"`) {
+		t.Fatalf("expected A股 page to color上涨/下跌 percentages, got %s", body)
 	}
 }
 

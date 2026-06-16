@@ -1,12 +1,16 @@
 package portal
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"html"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pcdogyu/yuqing/go/internal/model"
@@ -19,7 +23,9 @@ type aStockContext struct {
 	Articles        []model.Item
 	Hotspots        []aStockHotspot
 	Recommendations []aStockRecommendation
+	Backtests       []aStockBacktestRow
 	LoadMessage     string
+	BacktestStatus  string
 }
 
 type aStockHotspot struct {
@@ -31,11 +37,37 @@ type aStockHotspot struct {
 }
 
 type aStockRecommendation struct {
-	Rank    int
-	Hotspot string
-	Code    string
-	Name    string
-	Reason  string
+	Rank         int
+	Hotspot      string
+	Code         string
+	Name         string
+	PrevClose    string
+	PrevPct      string
+	PrevPctClass string
+	Reason       string
+}
+
+type aStockMarketBar struct {
+	Code  string
+	Date  string
+	Open  float64
+	Close float64
+	Pct   float64
+}
+
+type aStockBacktestCell struct {
+	Close       string
+	Return      string
+	ReturnClass string
+}
+
+type aStockBacktestRow struct {
+	Stock           string
+	EntryOpen       string
+	Days            []aStockBacktestCell
+	BestReturn      string
+	BestReturnClass string
+	Status          string
 }
 
 type aStockTopicRule struct {
@@ -82,6 +114,9 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-source-list{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 		.astock-table{min-width:960px}
 		.astock-scroll{overflow:auto}
+		.astock-up{color:#b3261e;font-weight:700}
+		.astock-down{color:#1b7f3a;font-weight:700}
+		.astock-flat{color:#6a6257}
 		@media (max-width: 760px){.astock-hero{grid-template-columns:1fr}}
 	</style>`)
 	if message != "" {
@@ -102,7 +137,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 	writeAStockMetric(&b, "财经新闻数", fmt.Sprintf("%d", len(ctx.Articles)))
 	writeAStockMetric(&b, "候选热点数", fmt.Sprintf("%d", len(ctx.Hotspots)))
 	writeAStockMetric(&b, "推荐股票数", fmt.Sprintf("%d", len(ctx.Recommendations)))
-	writeAStockMetric(&b, "回测状态", "等待 Tushare")
+	writeAStockMetric(&b, "回测状态", ctx.BacktestStatus)
 	b.WriteString(`</div></section>`)
 
 	b.WriteString(`<section><h2>操作区</h2><div class="astock-actions">`)
@@ -112,7 +147,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 	}{
 		{Name: "crawl", Label: "抓取 A 股新闻"},
 		{Name: "generate", Label: "生成今日热点"},
-		{Name: "sync_market", Label: "同步 Tushare 行情"},
+		{Name: "sync_market", Label: "同步行情"},
 		{Name: "refresh_backtest", Label: "刷新回测结果"},
 	} {
 		b.WriteString(`<form method="post"><input type="hidden" name="date" value="`)
@@ -123,12 +158,14 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		b.WriteString(html.EscapeString(action.Label))
 		b.WriteString(`</button></form>`)
 	}
-	b.WriteString(`</div><p class="astock-muted">已接入已有新闻抓取链路：抓取按钮会触发金十快讯和金十资讯，页面按策略日期 09:00-09:25 聚合财经新闻。Tushare 行情和真实回测仍需配置行情源后接入。</p><div class="astock-source-list"><span class="astock-badge">flash: https://www.jin10.com/</span><span class="astock-badge">headline: https://xnews.jin10.com/</span></div></section>`)
+	b.WriteString(`</div><p class="astock-muted">已接入已有新闻抓取链路：抓取按钮会触发金十快讯和金十资讯，页面按策略日期 09:00-09:25 聚合财经新闻。行情接口读取 `)
+	b.WriteString(aStockMarketConfigHint())
+	b.WriteString(`，用于展示昨日收盘价、昨日涨跌幅和消息回测。</p><div class="astock-source-list"><span class="astock-badge">flash: https://www.jin10.com/</span><span class="astock-badge">headline: https://xnews.jin10.com/</span></div></section>`)
 
 	renderAStockNewsSection(&b, ctx)
 	renderAStockHotspotSection(&b, ctx.Hotspots)
 	renderAStockRecommendationSection(&b, ctx.Recommendations)
-	renderAStockBacktestSection(&b)
+	renderAStockBacktestSection(&b, ctx.Backtests)
 
 	_ = s.writeSimplePage(w, "a-stock", "A股策略工作台", b.String())
 }
@@ -145,9 +182,9 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request) 
 	case "generate":
 		query.Set("msg", "热点已按当前新闻窗口重新计算。")
 	case "sync_market":
-		query.Set("msg", "Tushare 行情同步接口待配置，当前先展示新闻和热点。")
+		query.Set("msg", "行情已按当前策略日期刷新，页面已重新计算收盘价、涨跌幅和回测。")
 	case "refresh_backtest":
-		query.Set("msg", "回测需要 Tushare 行情数据，当前先展示待接入状态。")
+		query.Set("msg", "消息回测已按当前推荐股票和行情数据刷新。")
 	default:
 		query.Set("msg", "未知操作")
 	}
@@ -215,10 +252,10 @@ func renderAStockHotspotSection(b *strings.Builder, hotspots []aStockHotspot) {
 func renderAStockRecommendationSection(b *strings.Builder, recommendations []aStockRecommendation) {
 	b.WriteString(`<section><h2>推荐股票</h2>`)
 	if len(recommendations) == 0 {
-		b.WriteString(`<div class="astock-empty">暂无数据：当前新闻窗口未生成热点映射股票。</div><table><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>推荐理由</th></tr><tr><td colspan="5">暂无推荐股票</td></tr></table></section>`)
+		b.WriteString(`<div class="astock-empty">暂无数据：当前新闻窗口未生成热点映射股票。</div><table><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>收盘价</th><th>涨跌幅</th><th>推荐理由</th></tr><tr><td colspan="7">暂无推荐股票</td></tr></table></section>`)
 		return
 	}
-	b.WriteString(`<table><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>推荐理由</th></tr>`)
+	b.WriteString(`<table><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>收盘价</th><th>涨跌幅</th><th>推荐理由</th></tr>`)
 	for _, rec := range recommendations {
 		b.WriteString(`<tr><td>`)
 		b.WriteString(fmt.Sprintf("%d", rec.Rank))
@@ -229,22 +266,63 @@ func renderAStockRecommendationSection(b *strings.Builder, recommendations []aSt
 		b.WriteString(`</td><td>`)
 		b.WriteString(html.EscapeString(rec.Name))
 		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(rec.PrevClose))
+		b.WriteString(`</td><td><span class="`)
+		b.WriteString(html.EscapeString(rec.PrevPctClass))
+		b.WriteString(`">`)
+		b.WriteString(html.EscapeString(rec.PrevPct))
+		b.WriteString(`</span>`)
+		b.WriteString(`</td><td>`)
 		b.WriteString(html.EscapeString(rec.Reason))
 		b.WriteString(`</td></tr>`)
 	}
 	b.WriteString(`</table></section>`)
 }
 
-func renderAStockBacktestSection(b *strings.Builder) {
-	b.WriteString(`<section><h2>消息回测</h2><p class="astock-muted">买入价采用当日开盘价；T+1 到 T+5 按后续交易日收盘价计算收益，并展示五日内最高收益。</p><div class="astock-scroll"><table class="astock-table"><tr><th>股票</th><th>当日开盘价</th><th>T+1 收盘价</th><th>T+1 收益</th><th>T+2 收盘价</th><th>T+2 收益</th><th>T+3 收盘价</th><th>T+3 收益</th><th>T+4 收盘价</th><th>T+4 收益</th><th>T+5 收盘价</th><th>T+5 收益</th><th>五日内最高收益</th><th>命中状态</th></tr><tr><td colspan="14">暂无回测结果，等待 Tushare 行情同步。</td></tr></table></div></section>`)
+func renderAStockBacktestSection(b *strings.Builder, rows []aStockBacktestRow) {
+	b.WriteString(`<section><h2>消息回测</h2><p class="astock-muted">买入价采用当日开盘价；T+1 到 T+5 按后续交易日收盘价计算收益，并展示五日内最高收益。</p><div class="astock-scroll"><table class="astock-table"><tr><th>股票</th><th>当日开盘价</th><th>T+1 收盘价</th><th>T+1 收益</th><th>T+2 收盘价</th><th>T+2 收益</th><th>T+3 收盘价</th><th>T+3 收益</th><th>T+4 收盘价</th><th>T+4 收益</th><th>T+5 收盘价</th><th>T+5 收益</th><th>五日内最高收益</th><th>命中状态</th></tr>`)
+	if len(rows) == 0 {
+		b.WriteString(`<tr><td colspan="14">暂无回测结果，等待行情同步。</td></tr>`)
+		b.WriteString(`</table></div></section>`)
+		return
+	}
+	for _, row := range rows {
+		b.WriteString(`<tr><td>`)
+		b.WriteString(html.EscapeString(row.Stock))
+		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(row.EntryOpen))
+		b.WriteString(`</td>`)
+		for i := 0; i < 5; i++ {
+			cell := aStockBacktestCell{Close: "--", Return: "--", ReturnClass: "astock-flat"}
+			if i < len(row.Days) {
+				cell = row.Days[i]
+			}
+			b.WriteString(`<td>`)
+			b.WriteString(html.EscapeString(cell.Close))
+			b.WriteString(`</td><td><span class="`)
+			b.WriteString(html.EscapeString(cell.ReturnClass))
+			b.WriteString(`">`)
+			b.WriteString(html.EscapeString(cell.Return))
+			b.WriteString(`</span></td>`)
+		}
+		b.WriteString(`<td><span class="`)
+		b.WriteString(html.EscapeString(row.BestReturnClass))
+		b.WriteString(`">`)
+		b.WriteString(html.EscapeString(row.BestReturn))
+		b.WriteString(`</span></td><td>`)
+		b.WriteString(html.EscapeString(row.Status))
+		b.WriteString(`</td></tr>`)
+	}
+	b.WriteString(`</table></div></section>`)
 }
 
 func (s *Server) loadAStockContext(strategyDate string) aStockContext {
 	start, end := aStockWindow(strategyDate)
 	ctx := aStockContext{
-		Date:        strategyDate,
-		WindowStart: start,
-		WindowEnd:   end,
+		Date:           strategyDate,
+		WindowStart:    start,
+		WindowEnd:      end,
+		BacktestStatus: "等待行情接口",
 	}
 	result := model.ItemListResult{}
 	query := "/api/v1/articles?page=1&page_size=200&start=" + url.QueryEscape(start.UTC().Format(time.RFC3339)) + "&end=" + url.QueryEscape(end.UTC().Format(time.RFC3339))
@@ -255,7 +333,462 @@ func (s *Server) loadAStockContext(strategyDate string) aStockContext {
 	ctx.Articles = filterAStockNews(result.Items)
 	ctx.Hotspots = buildAStockHotspots(ctx.Articles)
 	ctx.Recommendations = buildAStockRecommendations(ctx.Hotspots)
+	ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus = s.loadAStockMarketView(strategyDate, ctx.Recommendations)
 	return ctx
+}
+
+func (s *Server) loadAStockMarketView(strategyDate string, recommendations []aStockRecommendation) ([]aStockRecommendation, []aStockBacktestRow, string) {
+	recommendations = initializeAStockRecommendationMarket(recommendations)
+	if len(recommendations) == 0 {
+		return recommendations, nil, "无推荐股票"
+	}
+	endpoint := aStockMarketEndpoint()
+	codes := make([]string, 0, len(recommendations))
+	for _, rec := range recommendations {
+		codes = append(codes, rec.Code)
+	}
+	bars, err := s.loadAStockMarketBars(strategyDate, codes, endpoint)
+	if err != nil {
+		return recommendations, buildAStockBacktestRows(strategyDate, recommendations, nil), "行情读取失败"
+	}
+	return applyAStockMarketBars(strategyDate, recommendations, bars)
+}
+
+func (s *Server) loadAStockMarketBars(strategyDate string, codes []string, endpoint string) ([]aStockMarketBar, error) {
+	if endpoint != "" {
+		resp, err := s.client.R().
+			SetQueryParam("date", strategyDate).
+			SetQueryParam("codes", strings.Join(codes, ",")).
+			Get(endpoint)
+		if err != nil {
+			return nil, err
+		}
+		if !resp.IsSuccess() {
+			return nil, fmt.Errorf("market endpoint status %d", resp.StatusCode())
+		}
+		return decodeAStockMarketBars(resp.Body())
+	}
+	return s.loadEastmoneyAStockBars(strategyDate, codes)
+}
+
+func (s *Server) loadEastmoneyAStockBars(strategyDate string, codes []string) ([]aStockMarketBar, error) {
+	endDate := aStockMarketEndDate(strategyDate)
+	var wg sync.WaitGroup
+	barCh := make(chan []aStockMarketBar, len(codes))
+	for _, code := range codes {
+		code := code
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
+			defer cancel()
+			resp, err := s.client.R().
+				SetContext(ctx).
+				SetQueryParam("secid", eastmoneyAStockSecID(code)).
+				SetQueryParam("klt", "101").
+				SetQueryParam("fqt", "1").
+				SetQueryParam("end", endDate).
+				SetQueryParam("lmt", "16").
+				SetQueryParam("fields1", "f1,f2,f3,f4,f5,f6").
+				SetQueryParam("fields2", "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61").
+				Get("https://push2his.eastmoney.com/api/qt/stock/kline/get")
+			if err != nil || !resp.IsSuccess() {
+				return
+			}
+			bars, err := decodeAStockMarketBars(resp.Body())
+			if err != nil {
+				return
+			}
+			for i := range bars {
+				if bars[i].Code == "" {
+					bars[i].Code = code
+				}
+			}
+			barCh <- bars
+		}()
+	}
+	wg.Wait()
+	close(barCh)
+	bars := make([]aStockMarketBar, 0)
+	for chunk := range barCh {
+		bars = append(bars, chunk...)
+	}
+	if len(bars) == 0 {
+		return nil, fmt.Errorf("no eastmoney market bars")
+	}
+	return bars, nil
+}
+
+func initializeAStockRecommendationMarket(recommendations []aStockRecommendation) []aStockRecommendation {
+	for i := range recommendations {
+		recommendations[i].PrevClose = "--"
+		recommendations[i].PrevPct = "--"
+		recommendations[i].PrevPctClass = "astock-flat"
+	}
+	return recommendations
+}
+
+func applyAStockMarketBars(strategyDate string, recommendations []aStockRecommendation, bars []aStockMarketBar) ([]aStockRecommendation, []aStockBacktestRow, string) {
+	byCode := groupAStockMarketBars(bars)
+	withPrev := 0
+	for i := range recommendations {
+		if prev, ok := previousAStockBar(byCode[recommendations[i].Code], strategyDate); ok {
+			recommendations[i].PrevClose = formatAStockPrice(prev.Close)
+			recommendations[i].PrevPct = formatAStockPct(prev.Pct)
+			recommendations[i].PrevPctClass = aStockPctClass(prev.Pct)
+			withPrev++
+		}
+	}
+	rows := buildAStockBacktestRows(strategyDate, recommendations, byCode)
+	completed := 0
+	for _, row := range rows {
+		if row.Status == "已回测" || strings.HasPrefix(row.Status, "已回测") {
+			completed++
+		}
+	}
+	status := fmt.Sprintf("已回测 %d/%d", completed, len(recommendations))
+	if withPrev == 0 && completed == 0 {
+		status = "无匹配行情"
+	}
+	return recommendations, rows, status
+}
+
+func groupAStockMarketBars(bars []aStockMarketBar) map[string][]aStockMarketBar {
+	grouped := make(map[string][]aStockMarketBar)
+	for _, bar := range bars {
+		bar.Code = normalizeAStockCode(bar.Code)
+		bar.Date = normalizeAStockMarketDate(bar.Date)
+		if bar.Code == "" || bar.Date == "" {
+			continue
+		}
+		grouped[bar.Code] = append(grouped[bar.Code], bar)
+	}
+	for code := range grouped {
+		sort.SliceStable(grouped[code], func(i, j int) bool {
+			return grouped[code][i].Date < grouped[code][j].Date
+		})
+	}
+	return grouped
+}
+
+func previousAStockBar(bars []aStockMarketBar, strategyDate string) (aStockMarketBar, bool) {
+	var found aStockMarketBar
+	ok := false
+	for _, bar := range bars {
+		if bar.Date >= strategyDate {
+			break
+		}
+		found = bar
+		ok = true
+	}
+	return found, ok
+}
+
+func buildAStockBacktestRows(strategyDate string, recommendations []aStockRecommendation, byCode map[string][]aStockMarketBar) []aStockBacktestRow {
+	rows := make([]aStockBacktestRow, 0, len(recommendations))
+	for _, rec := range recommendations {
+		row := aStockBacktestRow{
+			Stock:           rec.Code + " " + rec.Name,
+			EntryOpen:       "--",
+			Days:            make([]aStockBacktestCell, 5),
+			BestReturn:      "--",
+			BestReturnClass: "astock-flat",
+			Status:          "等待行情接口配置",
+		}
+		for i := range row.Days {
+			row.Days[i] = aStockBacktestCell{Close: "--", Return: "--", ReturnClass: "astock-flat"}
+		}
+		bars := byCode[rec.Code]
+		if len(bars) == 0 {
+			if byCode != nil {
+				row.Status = "无行情数据"
+			}
+			rows = append(rows, row)
+			continue
+		}
+		entryIdx := -1
+		for i, bar := range bars {
+			if bar.Date >= strategyDate {
+				entryIdx = i
+				break
+			}
+		}
+		if entryIdx < 0 || bars[entryIdx].Open <= 0 {
+			row.Status = "等待当日开盘价"
+			rows = append(rows, row)
+			continue
+		}
+		entry := bars[entryIdx]
+		row.EntryOpen = formatAStockPrice(entry.Open)
+		bestSet := false
+		bestReturn := 0.0
+		filled := 0
+		for day := 1; day <= 5; day++ {
+			barIdx := entryIdx + day
+			if barIdx >= len(bars) {
+				break
+			}
+			bar := bars[barIdx]
+			ret := (bar.Close/entry.Open - 1) * 100
+			row.Days[day-1] = aStockBacktestCell{
+				Close:       formatAStockPrice(bar.Close),
+				Return:      formatAStockPct(ret),
+				ReturnClass: aStockPctClass(ret),
+			}
+			if !bestSet || ret > bestReturn {
+				bestSet = true
+				bestReturn = ret
+			}
+			filled++
+		}
+		switch {
+		case filled == 0:
+			row.Status = "等待T+1行情"
+		case filled < 5:
+			row.Status = fmt.Sprintf("已回测T+%d", filled)
+		default:
+			row.Status = "已回测"
+		}
+		if bestSet {
+			row.BestReturn = formatAStockPct(bestReturn)
+			row.BestReturnClass = aStockPctClass(bestReturn)
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+func decodeAStockMarketBars(body []byte) ([]aStockMarketBar, error) {
+	decoder := json.NewDecoder(strings.NewReader(string(body)))
+	decoder.UseNumber()
+	var payload any
+	if err := decoder.Decode(&payload); err != nil {
+		return nil, err
+	}
+	return collectAStockMarketBars(payload, nil), nil
+}
+
+func collectAStockMarketBars(value any, fields []string) []aStockMarketBar {
+	switch typed := value.(type) {
+	case map[string]any:
+		if data, ok := typed["data"]; ok {
+			return collectAStockMarketBars(data, fields)
+		}
+		if rawFields, ok := typed["fields"].([]any); ok {
+			fields = make([]string, 0, len(rawFields))
+			for _, field := range rawFields {
+				fields = append(fields, strings.ToLower(strings.TrimSpace(fmt.Sprint(field))))
+			}
+		}
+		if items, ok := typed["items"]; ok {
+			return withAStockParentCode(collectAStockMarketBars(items, fields), typed)
+		}
+		if klines, ok := typed["klines"]; ok {
+			return withAStockParentCode(collectAStockMarketBars(klines, fields), typed)
+		}
+		if bar, ok := mapToAStockMarketBar(typed); ok {
+			return []aStockMarketBar{bar}
+		}
+	case []any:
+		bars := make([]aStockMarketBar, 0, len(typed))
+		for _, item := range typed {
+			switch row := item.(type) {
+			case map[string]any:
+				if bar, ok := mapToAStockMarketBar(row); ok {
+					bars = append(bars, bar)
+				}
+			case []any:
+				if bar, ok := arrayToAStockMarketBar(row, fields); ok {
+					bars = append(bars, bar)
+				}
+			case string:
+				if bar, ok := eastmoneyKlineToAStockMarketBar(row); ok {
+					bars = append(bars, bar)
+				}
+			}
+		}
+		return bars
+	}
+	return nil
+}
+
+func withAStockParentCode(bars []aStockMarketBar, parent map[string]any) []aStockMarketBar {
+	parentCode := normalizeAStockCode(firstString(parent, "code", "stock_code", "symbol", "ts_code"))
+	if parentCode == "" {
+		return bars
+	}
+	for i := range bars {
+		if bars[i].Code == "" {
+			bars[i].Code = parentCode
+		}
+	}
+	return bars
+}
+
+func mapToAStockMarketBar(row map[string]any) (aStockMarketBar, bool) {
+	code := normalizeAStockCode(firstString(row, "code", "stock_code", "symbol", "ts_code"))
+	date := normalizeAStockMarketDate(firstString(row, "date", "trade_date", "day"))
+	open, _ := firstFloat(row, "open", "open_price")
+	closeValue, ok := firstFloat(row, "close", "close_price", "pre_close")
+	pct, _ := firstFloat(row, "pct", "pct_chg", "change_pct")
+	if code == "" || date == "" || !ok {
+		return aStockMarketBar{}, false
+	}
+	return aStockMarketBar{Code: code, Date: date, Open: open, Close: closeValue, Pct: pct}, true
+}
+
+func arrayToAStockMarketBar(row []any, fields []string) (aStockMarketBar, bool) {
+	if len(fields) == 0 {
+		return aStockMarketBar{}, false
+	}
+	values := make(map[string]any, len(fields))
+	for i, field := range fields {
+		if i < len(row) {
+			values[field] = row[i]
+		}
+	}
+	return mapToAStockMarketBar(values)
+}
+
+func eastmoneyKlineToAStockMarketBar(raw string) (aStockMarketBar, bool) {
+	parts := strings.Split(raw, ",")
+	if len(parts) < 9 {
+		return aStockMarketBar{}, false
+	}
+	open := parseAStockFloat(parts[1])
+	closeValue := parseAStockFloat(parts[2])
+	pct := parseAStockFloat(parts[8])
+	return aStockMarketBar{Date: normalizeAStockMarketDate(parts[0]), Open: open, Close: closeValue, Pct: pct}, true
+}
+
+func firstString(row map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := row[key]; ok {
+			text := strings.TrimSpace(fmt.Sprint(value))
+			if text != "" && text != "<nil>" {
+				return text
+			}
+		}
+	}
+	return ""
+}
+
+func firstFloat(row map[string]any, keys ...string) (float64, bool) {
+	for _, key := range keys {
+		if value, ok := row[key]; ok {
+			if number, ok := aStockFloat(value); ok {
+				return number, true
+			}
+		}
+	}
+	return 0, false
+}
+
+func aStockFloat(value any) (float64, bool) {
+	switch typed := value.(type) {
+	case json.Number:
+		number, err := typed.Float64()
+		return number, err == nil
+	case float64:
+		return typed, true
+	case float32:
+		return float64(typed), true
+	case int:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	case string:
+		text := strings.TrimSpace(strings.TrimSuffix(typed, "%"))
+		if text == "" || text == "--" {
+			return 0, false
+		}
+		var number float64
+		if _, err := fmt.Sscanf(text, "%f", &number); err == nil {
+			return number, true
+		}
+	}
+	return 0, false
+}
+
+func parseAStockFloat(raw string) float64 {
+	number, _ := aStockFloat(strings.TrimSpace(raw))
+	return number
+}
+
+func normalizeAStockCode(raw string) string {
+	raw = strings.TrimSpace(strings.ToUpper(raw))
+	raw = strings.TrimSuffix(strings.TrimPrefix(raw, "SH"), ".SH")
+	raw = strings.TrimSuffix(strings.TrimPrefix(raw, "SZ"), ".SZ")
+	raw = strings.TrimPrefix(raw, "1.")
+	raw = strings.TrimPrefix(raw, "0.")
+	if len(raw) >= 6 {
+		return raw[:6]
+	}
+	return raw
+}
+
+func normalizeAStockMarketDate(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if len(raw) >= 10 && raw[4] == '-' && raw[7] == '-' {
+		return raw[:10]
+	}
+	if len(raw) == 8 {
+		return raw[:4] + "-" + raw[4:6] + "-" + raw[6:8]
+	}
+	return raw
+}
+
+func formatAStockPrice(value float64) string {
+	if value <= 0 {
+		return "--"
+	}
+	return fmt.Sprintf("%.2f", value)
+}
+
+func formatAStockPct(value float64) string {
+	return fmt.Sprintf("%+.2f%%", value)
+}
+
+func aStockPctClass(value float64) string {
+	switch {
+	case value > 0:
+		return "astock-up"
+	case value < 0:
+		return "astock-down"
+	default:
+		return "astock-flat"
+	}
+}
+
+func aStockMarketEndpoint() string {
+	return strings.TrimSpace(os.Getenv("YUQING_ASTOCK_MARKET_URL"))
+}
+
+func aStockMarketConfigHint() string {
+	if aStockMarketEndpoint() == "" {
+		return "默认东方财富日 K；也可用 YUQING_ASTOCK_MARKET_URL 覆盖"
+	}
+	return "YUQING_ASTOCK_MARKET_URL"
+}
+
+func aStockMarketEndDate(strategyDate string) string {
+	day, err := time.Parse("2006-01-02", strategyDate)
+	if err != nil {
+		return time.Now().Format("20060102")
+	}
+	return day.AddDate(0, 0, 14).Format("20060102")
+}
+
+func eastmoneyAStockSecID(code string) string {
+	code = normalizeAStockCode(code)
+	market := "0"
+	if strings.HasPrefix(code, "6") || strings.HasPrefix(code, "9") || strings.HasPrefix(code, "5") {
+		market = "1"
+	}
+	return market + "." + code
 }
 
 func (s *Server) triggerAStockCrawl() string {
