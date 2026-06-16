@@ -63,6 +63,31 @@ func TestRunCrawlUsesDedicatedTimeout(t *testing.T) {
 	}
 }
 
+func TestRunCrawlIncludesCrawlerErrorMessage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/admin/tasks/crawl" || r.URL.Query().Get("source_type") != "foresight_newsflash" {
+			t.Fatalf("unexpected crawl request: path=%s query=%s", r.URL.Path, r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"code":502,"message":"foresight_newsflash fetch failed: 567 ","data":null}`))
+	}))
+	defer server.Close()
+
+	worker := NewWorker(config.Config{
+		CrawlerURL:            server.URL,
+		HTTPTimeout:           time.Second,
+		SchedulerCrawlTimeout: time.Second,
+		ServiceToken:          "secret-token",
+		ExternalRetryWait:     time.Millisecond,
+	})
+
+	err := worker.runCrawl(context.Background(), "foresight_newsflash")
+	if err == nil || !strings.Contains(err.Error(), "foresight_newsflash fetch failed: 567") {
+		t.Fatalf("expected crawler response message in error, got %v", err)
+	}
+}
+
 func TestLoopRunsImmediatelyAndStopsOnCancel(t *testing.T) {
 	worker := NewWorker(config.Config{})
 	ctx, cancel := context.WithCancel(context.Background())

@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -280,6 +281,16 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 			},
 		}, "AStockAfternoonRecommendation", "0 50 12 * * ?"),
 		withJobMeta(jobDefinition{
+			Name:        "a-stock-auction-crawl",
+			Group:       "a-stock",
+			Description: "A股集合竞价金额：09:30 通过 AKShare 抓取全市场 09:25 集合竞价成交金额",
+			Interval:    24 * time.Hour,
+			Enabled:     strings.TrimSpace(w.cfg.AStockAuctionURL) != "",
+			Run: func(ctx context.Context) error {
+				return w.runAStockAuctionCrawl(ctx)
+			},
+		}, "AStockAuctionCrawl", "0 30 9 * * ?"),
+		withJobMeta(jobDefinition{
 			Name:        "analysis-refresh",
 			Group:       "analysis",
 			Description: "AnalysisQuartz 等价的系统分析快照刷新",
@@ -466,7 +477,17 @@ func (w *Worker) runCrawl(ctx context.Context, sourceType string) error {
 		return err
 	}
 	if !resp.IsSuccess() {
-		return fmt.Errorf("crawl %s failed: %s", sourceType, resp.Status())
+		detail := strings.TrimSpace(resp.String())
+		var envelope struct {
+			Message string `json:"message"`
+		}
+		if err := json.Unmarshal(resp.Body(), &envelope); err == nil && strings.TrimSpace(envelope.Message) != "" {
+			detail = strings.TrimSpace(envelope.Message)
+		}
+		if detail == "" {
+			detail = resp.Status()
+		}
+		return fmt.Errorf("crawl %s failed: %s", sourceType, detail)
 	}
 	return nil
 }

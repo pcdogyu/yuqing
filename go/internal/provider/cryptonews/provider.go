@@ -123,7 +123,7 @@ func shouldTryForesightFallback(resp *resty.Response, err error) bool {
 	if resp == nil {
 		return false
 	}
-	return resp.StatusCode() == 502 || resp.StatusCode() == 503 || resp.StatusCode() == 504
+	return resp.StatusCode() >= 500
 }
 
 func foresightFallbackURL(pageURL string) string {
