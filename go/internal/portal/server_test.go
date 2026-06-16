@@ -268,6 +268,78 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 	}
 }
 
+func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/articles" {
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+		if !strings.Contains(r.URL.Query().Get("start"), "2026-06-16T01:00:00Z") || !strings.Contains(r.URL.Query().Get("end"), "2026-06-16T01:25:59Z") {
+			t.Fatalf("unexpected A股 window query: %s", r.URL.RawQuery)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    200,
+			"message": "ok",
+			"data": model.ItemListResult{
+				Items: []model.Item{
+					{ID: 501, SourceType: "flash", Title: "AI 算力政策加码", Summary: "人工智能产业链活跃", CapturedAt: time.Date(2026, 6, 16, 1, 5, 0, 0, time.UTC)},
+					{ID: 502, SourceType: "headline", Title: "半导体先进封装景气度提升", Summary: "芯片设备需求回暖", CapturedAt: time.Date(2026, 6, 16, 1, 12, 0, 0, time.UTC)},
+				},
+				Page:     1,
+				PageSize: 200,
+				Total:    2,
+			},
+		})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-16", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"AI 算力政策加码", "半导体先进封装景气度提升", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
+		}
+	}
+}
+
+func TestAStockCrawlActionTriggersFlashAndHeadline(t *testing.T) {
+	var sources []string
+	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/admin/tasks/crawl" {
+			t.Fatalf("unexpected crawler request: %s %s", r.Method, r.URL.String())
+		}
+		sources = append(sources, r.URL.Query().Get("source_type"))
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "message": "ok", "data": model.CrawlSummary{SourceType: r.URL.Query().Get("source_type")}})
+	}))
+	defer crawler.Close()
+
+	srv := NewServer(config.Config{CrawlerURL: crawler.URL})
+	form := url.Values{"date": {"2026-06-16"}, "action": {"crawl"}}
+	req := httptest.NewRequest(http.MethodPost, "/a-stock", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d", rr.Code)
+	}
+	sort.Strings(sources)
+	if strings.Join(sources, ",") != "flash,headline" {
+		t.Fatalf("expected flash and headline crawl, got %v", sources)
+	}
+	if loc := rr.Header().Get("Location"); !strings.Contains(loc, "/a-stock?") || !strings.Contains(loc, "date=2026-06-16") {
+		t.Fatalf("unexpected redirect location: %q", loc)
+	}
+}
+
 func TestAStockRouteRequiresSession(t *testing.T) {
 	srv := NewServer(config.Config{})
 
@@ -2574,7 +2646,7 @@ func TestSystemDatabaseSectionRendersPostgresConfig(t *testing.T) {
 		t.Fatalf("expected system database page 200, got %d body=%s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	for _, snippet := range []string{"数据库配置", "数据库连接检测与切换", "已选择驱动", "切换数据库", "database_switch", "YUQING_DB_DRIVER", "postgres_dsn"} {
+	for _, snippet := range []string{"数据库配置", "数据库连接检测与切换", "已选择驱动", "切换到 PostgreSQL", "切回 SQLite", "database_switch_postgres", "database_switch_sqlite", "YUQING_DB_DRIVER", "postgres_dsn"} {
 		if !strings.Contains(body, snippet) {
 			t.Fatalf("expected database section to contain %q, got %s", snippet, body)
 		}
@@ -2587,7 +2659,7 @@ func TestSystemDatabaseSwitchRedirectsWithSuccess(t *testing.T) {
 
 	form := url.Values{}
 	form.Set("section", "database")
-	form.Set("form_type", "database_switch")
+	form.Set("form_type", "database_switch_postgres")
 	form.Set("driver", "sqlite")
 	form.Set("sqlite_path", "data/yuqing.db")
 	req := httptest.NewRequest(http.MethodPost, "/system?section=database", strings.NewReader(form.Encode()))
@@ -2602,6 +2674,15 @@ func TestSystemDatabaseSwitchRedirectsWithSuccess(t *testing.T) {
 	location := rr.Header().Get("Location")
 	if !strings.Contains(location, "section=database") || !strings.Contains(location, url.QueryEscape("数据库切换配置已保存，请重启服务后生效")) {
 		t.Fatalf("expected database switch success redirect, got %q", location)
+	}
+
+	form.Set("form_type", "database_switch_sqlite")
+	req = httptest.NewRequest(http.MethodPost, "/system?section=database", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr = httptest.NewRecorder()
+	srv.handleSystem(rr, req, map[string]any{"id": int64(1), "username": "admin"})
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect after sqlite switch, got %d body=%s", rr.Code, rr.Body.String())
 	}
 }
 
