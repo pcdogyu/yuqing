@@ -206,9 +206,6 @@ func parseDetailHTML(html string) (title string, content string, publishTime str
 
 	body := doc.Find(".content-title div").Eq(1)
 	content = cleanText(body.Text())
-	if content == "" {
-		content = title
-	}
 
 	nuxtTitle, nuxtContent := parseNuxtFlashContent(html)
 	switch {

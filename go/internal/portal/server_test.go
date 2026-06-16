@@ -64,6 +64,23 @@ func TestNonEmpty(t *testing.T) {
 	}
 }
 
+func TestArticleBodyTextSkipsTitleOnlyContent(t *testing.T) {
+	item := model.Item{
+		Title:   "金十图示：2026年06月16日（周二）亚盘市场行情",
+		Summary: "金十图示：2026年06月16日（周二）亚盘市场行情",
+		Content: "",
+	}
+
+	if got := articleBodyText(item); got != "" {
+		t.Fatalf("expected empty body for title-only article, got %q", got)
+	}
+
+	item.Content = "真实正文内容"
+	if got := articleBodyText(item); got != "真实正文内容" {
+		t.Fatalf("expected real content, got %q", got)
+	}
+}
+
 func TestMonitorCompatGetArticle(t *testing.T) {
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

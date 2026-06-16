@@ -82,6 +82,22 @@ func TestParseDetailHTMLFallsBackToNuxtContent(t *testing.T) {
 	}
 }
 
+func TestParseDetailHTMLDoesNotUseTitleAsContent(t *testing.T) {
+	html := `<html><head><title>金十图示：2026年06月16日（周二）亚盘市场行情 - 金十数据</title></head><body><div class="content-title"><div class="flash-title">金十图示：2026年06月16日（周二）亚盘市场行情</div><div></div></div></body></html>`
+
+	title, content, publishTime, sourceURL, fromText := parseDetailHTML(html)
+
+	if title != "金十图示：2026年06月16日（周二）亚盘市场行情" {
+		t.Fatalf("unexpected title: %q", title)
+	}
+	if content != "" {
+		t.Fatalf("expected empty content when detail body is missing, got %q", content)
+	}
+	if publishTime != "" || sourceURL != "" || fromText != "" {
+		t.Fatalf("expected empty metadata, got publishTime=%q sourceURL=%q fromText=%q", publishTime, sourceURL, fromText)
+	}
+}
+
 func mustReadFixture(t *testing.T, name string) string {
 	t.Helper()
 	path := filepath.Join("testdata", name)
