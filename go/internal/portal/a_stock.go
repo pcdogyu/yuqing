@@ -107,7 +107,10 @@ const (
 	aStockNewsPageSize            = 10
 )
 
-var aStockNow = time.Now
+var (
+	aStockNow               = time.Now
+	aStockEastmoneyKlineURL = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+)
 
 func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user any) {
 	if r.Method == http.MethodPost {
@@ -157,6 +160,18 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-flat{color:#6a6257}
 		@media (max-width: 760px){.astock-hero{grid-template-columns:1fr}}
 	</style>`)
+	b.WriteString(`<script>
+	(function(){
+		var key="astock-scroll-y";
+		window.addEventListener("DOMContentLoaded",function(){
+			var y=sessionStorage.getItem(key);
+			if(y!==null){sessionStorage.removeItem(key);var n=parseInt(y,10);if(!isNaN(n)){window.scrollTo(0,n);}}
+			document.querySelectorAll("[data-preserve-scroll='1']").forEach(function(el){
+				el.addEventListener("click",function(){sessionStorage.setItem(key,String(window.scrollY||0));});
+			});
+		});
+	})();
+	</script>`)
 	if message != "" {
 		b.WriteString(`<section><p style="color:#214e34">`)
 		b.WriteString(html.EscapeString(message))
@@ -472,7 +487,7 @@ func writeAStockDateTab(b *strings.Builder, label string, date string, period st
 	if active {
 		b.WriteString(` active`)
 	}
-	b.WriteString(`" href="/a-stock?date=`)
+	b.WriteString(`" data-preserve-scroll="1" href="/a-stock?date=`)
 	b.WriteString(url.QueryEscape(date))
 	b.WriteString(`&period=`)
 	b.WriteString(url.QueryEscape(period))
@@ -556,13 +571,22 @@ func (s *Server) loadAStockMarketBars(strategyDate string, codes []string, endpo
 			SetQueryParam("date", strategyDate).
 			SetQueryParam("codes", strings.Join(codes, ",")).
 			Get(endpoint)
+		if err == nil && resp.IsSuccess() {
+			bars, decodeErr := decodeAStockMarketBars(resp.Body())
+			if decodeErr == nil && len(bars) > 0 {
+				return bars, nil
+			}
+		}
+		if bars, fallbackErr := s.loadEastmoneyAStockBars(strategyDate, codes); fallbackErr == nil && len(bars) > 0 {
+			return bars, nil
+		}
 		if err != nil {
 			return nil, err
 		}
 		if !resp.IsSuccess() {
 			return nil, fmt.Errorf("market endpoint status %d", resp.StatusCode())
 		}
-		return decodeAStockMarketBars(resp.Body())
+		return nil, fmt.Errorf("market endpoint returned no bars")
 	}
 	return s.loadEastmoneyAStockBars(strategyDate, codes)
 }
@@ -587,7 +611,7 @@ func (s *Server) loadEastmoneyAStockBars(strategyDate string, codes []string) ([
 				SetQueryParam("lmt", "100").
 				SetQueryParam("fields1", "f1,f2,f3,f4,f5,f6").
 				SetQueryParam("fields2", "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61").
-				Get("https://push2his.eastmoney.com/api/qt/stock/kline/get")
+				Get(aStockEastmoneyKlineURL)
 			if err != nil || !resp.IsSuccess() {
 				return
 			}

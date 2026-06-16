@@ -412,6 +412,15 @@ func setAStockNowForTest(t *testing.T, now time.Time) {
 	})
 }
 
+func setAStockEastmoneyKlineURLForTest(t *testing.T, rawURL string) {
+	t.Helper()
+	previous := aStockEastmoneyKlineURL
+	aStockEastmoneyKlineURL = rawURL
+	t.Cleanup(func() {
+		aStockEastmoneyKlineURL = previous
+	})
+}
+
 func TestAStockNewsSectionPaginatesTenItems(t *testing.T) {
 	items := make([]model.Item, 0, 12)
 	for i := 1; i <= 12; i++ {
@@ -580,6 +589,7 @@ func TestAStockRecommendationHistoryRendersDateTabs(t *testing.T) {
 		`/a-stock?date=2026-06-16&period=afternoon`,
 		`/a-stock?date=2026-06-15&period=morning`,
 		`/a-stock?date=2026-06-15&period=afternoon`,
+		`data-preserve-scroll="1"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected history tabs to contain %q, got %s", want, body)
@@ -639,6 +649,40 @@ func TestAStockMarketViewFiltersDeepDrawdownsAndPenalizesSector(t *testing.T) {
 	}
 	if !strings.Contains(status, "过滤回撤股票 1") || !strings.Contains(status, "过滤无当日行情股票 1") {
 		t.Fatalf("expected status to mention drawdown and missing price filtering, got %q", status)
+	}
+}
+
+func TestAStockMarketBarsFallbackToEastmoneyWhenCustomEndpointEmpty(t *testing.T) {
+	custom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": map[string]any{"items": []any{}}})
+	}))
+	defer custom.Close()
+
+	eastmoney := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("secid") != "0.000001" {
+			t.Fatalf("unexpected eastmoney secid: %s", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{
+				"klines": []string{
+					"2026-06-15,10.00,11.00,0,0,0,0,0,1.00",
+					"2026-06-16,12.00,13.00,0,0,0,0,0,2.00",
+				},
+			},
+		})
+	}))
+	defer eastmoney.Close()
+	setAStockEastmoneyKlineURLForTest(t, eastmoney.URL)
+
+	srv := NewServer(config.Config{})
+	bars, err := srv.loadAStockMarketBars("2026-06-16", []string{"000001"}, custom.URL)
+	if err != nil {
+		t.Fatalf("expected fallback market bars, got error: %v", err)
+	}
+	if len(bars) != 2 || bars[1].Code != "000001" || bars[1].Open != 12 || bars[1].Close != 13 {
+		t.Fatalf("unexpected fallback bars: %+v", bars)
 	}
 }
 
