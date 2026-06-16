@@ -44,6 +44,8 @@ type aStockRecommendation struct {
 	Hotspot       string
 	Code          string
 	Name          string
+	HotspotScore  int
+	MarketScore   int
 	PrevClose     string
 	PrevPct       string
 	PrevPctClass  string
@@ -93,6 +95,11 @@ type aStockPeriod struct {
 	Label       string
 	WindowLabel string
 }
+
+const (
+	aStockDrawdownFilterThreshold = -15.0
+	aStockSectorDrawdownPenalty   = 15
+)
 
 func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user any) {
 	if r.Method == http.MethodPost {
@@ -306,7 +313,7 @@ func renderAStockHotspotSection(b *strings.Builder, hotspots []aStockHotspot) {
 func renderAStockRecommendationSection(b *strings.Builder, recommendations []aStockRecommendation) {
 	b.WriteString(`<section><h2>推荐股票</h2>`)
 	if len(recommendations) == 0 {
-		b.WriteString(`<div class="astock-empty">暂无数据：当前新闻窗口未生成热点映射股票。</div><table><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>收盘价</th><th>涨跌幅</th><th>30天涨跌幅</th><th>60天涨跌幅</th><th>推荐理由</th></tr><tr><td colspan="9">暂无推荐股票</td></tr></table></section>`)
+		b.WriteString(`<div class="astock-empty">暂无数据：当前新闻窗口未生成热点映射股票，或候选股票回撤超过过滤阈值。</div><table><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>收盘价</th><th>涨跌幅</th><th>30天涨跌幅</th><th>60天涨跌幅</th><th>推荐理由</th></tr><tr><td colspan="9">暂无推荐股票</td></tr></table></section>`)
 		return
 	}
 	b.WriteString(`<table><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>收盘价</th><th>涨跌幅</th><th>30天涨跌幅</th><th>60天涨跌幅</th><th>推荐理由</th></tr>`)
@@ -533,7 +540,11 @@ func initializeAStockRecommendationMarket(recommendations []aStockRecommendation
 func applyAStockMarketBars(strategyDate string, recommendations []aStockRecommendation, bars []aStockMarketBar) ([]aStockRecommendation, []aStockBacktestRow, string) {
 	byCode := groupAStockMarketBars(bars)
 	withPrev := 0
+	sectorPenalties := make(map[string]int)
+	filteredCount := 0
+	filtered := make([]aStockRecommendation, 0, len(recommendations))
 	for i := range recommendations {
+		blockedByDrawdown := false
 		if prev, ok := previousAStockBar(byCode[recommendations[i].Code], strategyDate); ok {
 			recommendations[i].PrevClose = formatAStockPrice(prev.Close)
 			recommendations[i].PrevPct = formatAStockPct(prev.Pct)
@@ -541,13 +552,49 @@ func applyAStockMarketBars(strategyDate string, recommendations []aStockRecommen
 			if change, ok := aStockLookbackChange(byCode[recommendations[i].Code], strategyDate, 30, prev.Close); ok {
 				recommendations[i].Change30 = formatAStockPct(change)
 				recommendations[i].Change30Class = aStockPctClass(change)
+				if change <= aStockDrawdownFilterThreshold {
+					blockedByDrawdown = true
+				}
 			}
 			if change, ok := aStockLookbackChange(byCode[recommendations[i].Code], strategyDate, 60, prev.Close); ok {
 				recommendations[i].Change60 = formatAStockPct(change)
 				recommendations[i].Change60Class = aStockPctClass(change)
+				if change <= aStockDrawdownFilterThreshold {
+					blockedByDrawdown = true
+				}
 			}
 			withPrev++
 		}
+		if blockedByDrawdown {
+			sectorPenalties[recommendations[i].Hotspot] += aStockSectorDrawdownPenalty
+			filteredCount++
+			continue
+		}
+		filtered = append(filtered, recommendations[i])
+	}
+	recommendations = filtered
+	for i := range recommendations {
+		penalty := sectorPenalties[recommendations[i].Hotspot]
+		baseScore := recommendations[i].HotspotScore
+		if baseScore == 0 {
+			baseScore = recommendations[i].MarketScore
+		}
+		recommendations[i].MarketScore = baseScore - penalty
+		if penalty > 0 {
+			recommendations[i].Reason = fmt.Sprintf("%s，板块回撤减分 %d，调整分 %d", recommendations[i].Reason, penalty, recommendations[i].MarketScore)
+		}
+	}
+	sort.SliceStable(recommendations, func(i, j int) bool {
+		if recommendations[i].MarketScore == recommendations[j].MarketScore {
+			if recommendations[i].Hotspot == recommendations[j].Hotspot {
+				return recommendations[i].Code < recommendations[j].Code
+			}
+			return recommendations[i].Hotspot < recommendations[j].Hotspot
+		}
+		return recommendations[i].MarketScore > recommendations[j].MarketScore
+	})
+	for i := range recommendations {
+		recommendations[i].Rank = i + 1
 	}
 	rows := buildAStockBacktestRows(strategyDate, recommendations, byCode)
 	completed := 0
@@ -557,6 +604,12 @@ func applyAStockMarketBars(strategyDate string, recommendations []aStockRecommen
 		}
 	}
 	status := fmt.Sprintf("已回测 %d/%d", completed, len(recommendations))
+	if filteredCount > 0 {
+		status = fmt.Sprintf("%s，过滤回撤股票 %d", status, filteredCount)
+	}
+	if len(recommendations) == 0 && filteredCount > 0 {
+		status = fmt.Sprintf("回撤过滤后无推荐股票，过滤回撤股票 %d", filteredCount)
+	}
 	if withPrev == 0 && completed == 0 {
 		status = "无匹配行情"
 	}
@@ -1059,11 +1112,13 @@ func buildAStockRecommendations(hotspots []aStockHotspot) []aStockRecommendation
 			}
 			seen[stock.Code] = struct{}{}
 			recommendations = append(recommendations, aStockRecommendation{
-				Rank:    len(recommendations) + 1,
-				Hotspot: hotspot.Name,
-				Code:    stock.Code,
-				Name:    stock.Name,
-				Reason:  fmt.Sprintf("命中 %s，证据新闻 %d 条，热度分 %d", strings.Join(hotspot.Keywords, "、"), hotspot.Evidence, hotspot.Score),
+				Rank:         len(recommendations) + 1,
+				Hotspot:      hotspot.Name,
+				Code:         stock.Code,
+				Name:         stock.Name,
+				HotspotScore: hotspot.Score,
+				MarketScore:  hotspot.Score,
+				Reason:       fmt.Sprintf("命中 %s，证据新闻 %d 条，热度分 %d", strings.Join(hotspot.Keywords, "、"), hotspot.Evidence, hotspot.Score),
 			})
 			if len(recommendations) >= 12 {
 				return recommendations

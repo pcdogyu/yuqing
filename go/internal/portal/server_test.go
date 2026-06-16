@@ -451,6 +451,48 @@ func TestAStockRecommendationHistoryRendersDateTabs(t *testing.T) {
 	}
 }
 
+func TestAStockMarketViewFiltersDeepDrawdownsAndPenalizesSector(t *testing.T) {
+	recommendations := initializeAStockRecommendationMarket([]aStockRecommendation{
+		{Rank: 1, Hotspot: "人工智能", Code: "000001", Name: "回撤过滤", HotspotScore: 80, MarketScore: 80, Reason: "热度分 80"},
+		{Rank: 2, Hotspot: "人工智能", Code: "000002", Name: "保留扣分", HotspotScore: 80, MarketScore: 80, Reason: "热度分 80"},
+		{Rank: 3, Hotspot: "金融券商", Code: "000003", Name: "正常板块", HotspotScore: 75, MarketScore: 75, Reason: "热度分 75"},
+	})
+	bars := []aStockMarketBar{
+		{Code: "000001", Date: "2026-04-17", Close: 100},
+		{Code: "000001", Date: "2026-05-16", Close: 100},
+		{Code: "000001", Date: "2026-06-15", Close: 84, Pct: -1},
+		{Code: "000002", Date: "2026-04-17", Close: 100},
+		{Code: "000002", Date: "2026-05-16", Close: 100},
+		{Code: "000002", Date: "2026-06-15", Close: 92, Pct: 1},
+		{Code: "000003", Date: "2026-04-17", Close: 100},
+		{Code: "000003", Date: "2026-05-16", Close: 100},
+		{Code: "000003", Date: "2026-06-15", Close: 98, Pct: 2},
+	}
+
+	filtered, rows, status := applyAStockMarketBars("2026-06-16", recommendations, bars)
+
+	if len(filtered) != 2 {
+		t.Fatalf("expected one deep-drawdown recommendation to be filtered, got %+v", filtered)
+	}
+	for _, rec := range filtered {
+		if rec.Code == "000001" {
+			t.Fatalf("expected 30/60 day drawdown stock to be filtered, got %+v", filtered)
+		}
+	}
+	if filtered[0].Code != "000003" || filtered[0].Rank != 1 {
+		t.Fatalf("expected unpenalized sector to rank first, got %+v", filtered)
+	}
+	if filtered[1].Code != "000002" || filtered[1].MarketScore != 65 || !strings.Contains(filtered[1].Reason, "板块回撤减分 15") {
+		t.Fatalf("expected remaining AI stock to carry sector penalty, got %+v", filtered[1])
+	}
+	if len(rows) != 2 || strings.Contains(rows[0].Stock+rows[1].Stock, "000001") {
+		t.Fatalf("expected backtest rows to follow filtered recommendations, got %+v", rows)
+	}
+	if !strings.Contains(status, "过滤回撤股票 1") {
+		t.Fatalf("expected status to mention drawdown filtering, got %q", status)
+	}
+}
+
 func TestAStockRecommendationsUseTopThreeHotspotIndustries(t *testing.T) {
 	recommendations := buildAStockRecommendations([]aStockHotspot{
 		{Name: "黄金有色", Keywords: []string{"黄金"}, Score: 32, Evidence: 2},
