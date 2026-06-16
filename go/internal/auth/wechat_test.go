@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -15,16 +14,12 @@ import (
 
 	"github.com/pcdogyu/yuqing/go/internal/config"
 	"github.com/pcdogyu/yuqing/go/internal/model"
-	sqlitestore "github.com/pcdogyu/yuqing/go/internal/store/sqlite"
 )
 
 func TestWechatLegacyFlow(t *testing.T) {
-	store := newAuthTestStore(t)
+	store := newFakeAuthStore()
 	ctx := context.Background()
-	if err := store.EnsureDefaultAdmin(ctx, "admin", "admin123"); err != nil {
-		t.Fatalf("EnsureDefaultAdmin error: %v", err)
-	}
-	user, err := store.AuthenticateUser(ctx, "admin", "admin123")
+	user, err := store.AuthenticateUser(ctx, "bob", "admin-secret")
 	if err != nil {
 		t.Fatalf("AuthenticateUser error: %v", err)
 	}
@@ -119,12 +114,9 @@ func TestWechatLegacyFlow(t *testing.T) {
 }
 
 func TestWechatPendingLoginAndBind(t *testing.T) {
-	store := newAuthTestStore(t)
+	store := newFakeAuthStore()
 	ctx := context.Background()
-	if err := store.EnsureDefaultAdmin(ctx, "admin", "admin123"); err != nil {
-		t.Fatalf("EnsureDefaultAdmin error: %v", err)
-	}
-	user, err := store.AuthenticateUser(ctx, "admin", "admin123")
+	user, err := store.AuthenticateUser(ctx, "bob", "admin-secret")
 	if err != nil {
 		t.Fatalf("AuthenticateUser error: %v", err)
 	}
@@ -174,17 +166,4 @@ func decodeBody(t *testing.T, body []byte, target any) {
 	if err := json.Unmarshal(body, target); err != nil {
 		t.Fatalf("decode body error: %v body=%s", err, string(body))
 	}
-}
-
-func newAuthTestStore(t *testing.T) *sqlitestore.Store {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "auth.db")
-	store, err := sqlitestore.New(path)
-	if err != nil {
-		t.Fatalf("New store error: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = store.Close()
-	})
-	return store
 }

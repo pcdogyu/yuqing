@@ -152,13 +152,15 @@ func TestHandleCreateToken(t *testing.T) {
 }
 
 type fakeAuthStore struct {
-	users      map[int64]model.User
-	sessions   map[string]model.Session
-	passwords  map[string]string
-	apiTokens  map[int64]model.APIToken
-	updateErr  error
-	lastUpdate int64
-	nextID     int64
+	users            map[int64]model.User
+	sessions         map[string]model.Session
+	passwords        map[string]string
+	apiTokens        map[int64]model.APIToken
+	wechatChallenges map[string]model.WechatChallenge
+	wechatBindings   map[int64]model.WechatBinding
+	updateErr        error
+	lastUpdate       int64
+	nextID           int64
 }
 
 func newFakeAuthStore() *fakeAuthStore {
@@ -175,8 +177,10 @@ func newFakeAuthStore() *fakeAuthStore {
 			"alice": "old-secret",
 			"bob":   "admin-secret",
 		},
-		apiTokens: map[int64]model.APIToken{},
-		nextID:    3,
+		apiTokens:        map[int64]model.APIToken{},
+		wechatChallenges: map[string]model.WechatChallenge{},
+		wechatBindings:   map[int64]model.WechatBinding{},
+		nextID:           3,
 	}
 }
 
@@ -217,8 +221,11 @@ func (f *fakeAuthStore) CreateUser(_ context.Context, user model.User, password 
 	f.passwords[user.Username] = password
 	return user, nil
 }
-func (f *fakeAuthStore) CreateSession(context.Context, int64, time.Duration) (model.Session, error) {
-	return model.Session{}, errors.New("unused")
+func (f *fakeAuthStore) CreateSession(_ context.Context, userID int64, ttl time.Duration) (model.Session, error) {
+	token := "session-" + strconv.FormatInt(userID, 10) + "-" + strconv.FormatInt(int64(len(f.sessions)+1), 10)
+	session := model.Session{Token: token, UserID: userID, ExpiresAt: time.Now().Add(ttl), CreatedAt: time.Now().UTC()}
+	f.sessions[token] = session
+	return session, nil
 }
 func (f *fakeAuthStore) GetSession(_ context.Context, token string) (model.Session, error) {
 	session, ok := f.sessions[token]
@@ -266,27 +273,55 @@ func (f *fakeAuthStore) CreateCaptcha(context.Context, time.Duration) (model.Cap
 func (f *fakeAuthStore) VerifyCaptcha(context.Context, string, string) error {
 	return errors.New("unused")
 }
-func (f *fakeAuthStore) CreateWechatChallenge(context.Context, model.WechatChallenge) (model.WechatChallenge, error) {
-	return model.WechatChallenge{}, errors.New("unused")
+func (f *fakeAuthStore) CreateWechatChallenge(_ context.Context, challenge model.WechatChallenge) (model.WechatChallenge, error) {
+	f.wechatChallenges[challenge.SceneStr] = challenge
+	return challenge, nil
 }
-func (f *fakeAuthStore) GetWechatChallenge(context.Context, string) (model.WechatChallenge, error) {
-	return model.WechatChallenge{}, errors.New("unused")
+func (f *fakeAuthStore) GetWechatChallenge(_ context.Context, sceneStr string) (model.WechatChallenge, error) {
+	challenge, ok := f.wechatChallenges[sceneStr]
+	if !ok {
+		return model.WechatChallenge{}, errors.New("not found")
+	}
+	return challenge, nil
 }
-func (f *fakeAuthStore) UpdateWechatChallenge(context.Context, model.WechatChallenge) (model.WechatChallenge, error) {
-	return model.WechatChallenge{}, errors.New("unused")
+func (f *fakeAuthStore) UpdateWechatChallenge(_ context.Context, challenge model.WechatChallenge) (model.WechatChallenge, error) {
+	if _, ok := f.wechatChallenges[challenge.SceneStr]; !ok {
+		return model.WechatChallenge{}, errors.New("not found")
+	}
+	f.wechatChallenges[challenge.SceneStr] = challenge
+	return challenge, nil
 }
-func (f *fakeAuthStore) DeleteWechatChallenge(context.Context, string) error {
-	return errors.New("unused")
+func (f *fakeAuthStore) DeleteWechatChallenge(_ context.Context, sceneStr string) error {
+	delete(f.wechatChallenges, sceneStr)
+	return nil
 }
-func (f *fakeAuthStore) UpsertWechatBinding(context.Context, model.WechatBinding) (model.WechatBinding, error) {
-	return model.WechatBinding{}, errors.New("unused")
+func (f *fakeAuthStore) UpsertWechatBinding(_ context.Context, binding model.WechatBinding) (model.WechatBinding, error) {
+	if binding.BoundAt.IsZero() {
+		binding.BoundAt = time.Now().UTC()
+	}
+	binding.UpdatedAt = time.Now().UTC()
+	f.wechatBindings[binding.UserID] = binding
+	return binding, nil
 }
-func (f *fakeAuthStore) GetWechatBindingByUserID(context.Context, int64) (model.WechatBinding, error) {
-	return model.WechatBinding{}, errors.New("unused")
+func (f *fakeAuthStore) GetWechatBindingByUserID(_ context.Context, userID int64) (model.WechatBinding, error) {
+	binding, ok := f.wechatBindings[userID]
+	if !ok {
+		return model.WechatBinding{}, errors.New("not found")
+	}
+	return binding, nil
 }
-func (f *fakeAuthStore) GetWechatBindingByOpenID(context.Context, string) (model.WechatBinding, error) {
-	return model.WechatBinding{}, errors.New("unused")
+func (f *fakeAuthStore) GetWechatBindingByOpenID(_ context.Context, openID string) (model.WechatBinding, error) {
+	for _, binding := range f.wechatBindings {
+		if binding.OpenID == openID {
+			return binding, nil
+		}
+	}
+	return model.WechatBinding{}, errors.New("not found")
 }
-func (f *fakeAuthStore) GetUserByOpenID(context.Context, string) (model.User, error) {
-	return model.User{}, errors.New("unused")
+func (f *fakeAuthStore) GetUserByOpenID(ctx context.Context, openID string) (model.User, error) {
+	binding, err := f.GetWechatBindingByOpenID(ctx, openID)
+	if err != nil {
+		return model.User{}, err
+	}
+	return f.GetUserByID(ctx, binding.UserID)
 }
