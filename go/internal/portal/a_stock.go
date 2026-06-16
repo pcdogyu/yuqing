@@ -394,10 +394,10 @@ func renderAStockRecommendationSection(b *strings.Builder, ctx aStockContext) {
 		}
 		b.WriteString(`<div class="astock-empty">`)
 		b.WriteString(html.EscapeString(reason))
-		b.WriteString(`</div><table><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>昨日收盘价</th><th>涨跌幅</th><th>30天涨跌幅</th><th>60天涨跌幅</th><th>现价</th><th>今日跌幅</th><th>推荐理由</th></tr><tr><td colspan="11">暂无推荐股票</td></tr></table></section>`)
+		b.WriteString(`</div><table><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>昨日收盘价</th><th>昨日涨跌幅</th><th>30天涨跌幅</th><th>60天涨跌幅</th><th>现价</th><th>今日跌幅</th><th>推荐理由</th></tr><tr><td colspan="11">暂无推荐股票</td></tr></table></section>`)
 		return
 	}
-	b.WriteString(`<table><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>昨日收盘价</th><th>涨跌幅</th><th>30天涨跌幅</th><th>60天涨跌幅</th><th>现价</th><th>今日跌幅</th><th>推荐理由</th></tr>`)
+	b.WriteString(`<table><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>昨日收盘价</th><th>昨日涨跌幅</th><th>30天涨跌幅</th><th>60天涨跌幅</th><th>现价</th><th>今日跌幅</th><th>推荐理由</th></tr>`)
 	for _, rec := range recommendations {
 		b.WriteString(`<tr><td>`)
 		b.WriteString(fmt.Sprintf("%d", rec.Rank))
