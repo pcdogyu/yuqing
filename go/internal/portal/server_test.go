@@ -274,8 +274,8 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		"T+5 收益",
 		`colspan="10"`,
 		"抓取全部财经信息",
-		"上午股票生成",
-		"下午股票生成",
+		"重新生成上午推荐",
+		"重新生成下午推荐",
 		"金十全站信息",
 		"jin10_full",
 		"东方财富网",
@@ -299,22 +299,124 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 
 func TestAStockStockGenerateActionsSelectPeriod(t *testing.T) {
 	srv := NewServer(config.Config{})
-	form := url.Values{"date": {"2026-06-16"}, "period": {"morning"}, "action": {"generate_afternoon_stock"}}
-	req := httptest.NewRequest(http.MethodPost, "/a-stock", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	tests := []struct {
+		name       string
+		fromPeriod string
+		action     string
+		wantPeriod string
+		wantMsg    string
+	}{
+		{
+			name:       "switch to afternoon",
+			fromPeriod: "morning",
+			action:     "generate_afternoon_stock",
+			wantPeriod: "afternoon",
+			wantMsg:    "已切换到下午窗口，按 09:26-12:50 历史新闻重新计算推荐。",
+		},
+		{
+			name:       "regenerate morning from afternoon",
+			fromPeriod: "afternoon",
+			action:     "generate_morning_stock",
+			wantPeriod: "morning",
+			wantMsg:    "已切换到上午窗口，按 09:00-09:25 历史新闻重新计算推荐。",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			form := url.Values{"date": {"2026-06-16"}, "period": {tc.fromPeriod}, "action": {tc.action}}
+			req := httptest.NewRequest(http.MethodPost, "/a-stock", strings.NewReader(form.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			rr := httptest.NewRecorder()
+			srv.handleAStockPage(rr, req, map[string]any{"id": 1})
+
+			if rr.Code != http.StatusSeeOther {
+				t.Fatalf("expected redirect, got %d", rr.Code)
+			}
+			loc := rr.Header().Get("Location")
+			if !strings.Contains(loc, "date=2026-06-16") || !strings.Contains(loc, "period="+tc.wantPeriod) {
+				t.Fatalf("expected %s redirect, got %q", tc.wantPeriod, loc)
+			}
+			decoded, _ := url.QueryUnescape(loc)
+			if !strings.Contains(decoded, tc.wantMsg) {
+				t.Fatalf("expected generation message %q, got %q", tc.wantMsg, decoded)
+			}
+		})
+	}
+}
+
+func TestAStockPageExplainsMorningNoNews(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/articles" {
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+		if !strings.Contains(r.URL.Query().Get("start"), "2026-06-16T01:00:00Z") || !strings.Contains(r.URL.Query().Get("end"), "2026-06-16T01:25:59Z") {
+			t.Fatalf("unexpected A股 morning window query: %s", r.URL.RawQuery)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    200,
+			"message": "ok",
+			"data": model.ItemListResult{
+				Items:    []model.Item{},
+				Page:     1,
+				PageSize: 200,
+				Total:    0,
+			},
+		})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-16&period=morning", nil)
 	rr := httptest.NewRecorder()
 	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
 
-	if rr.Code != http.StatusSeeOther {
-		t.Fatalf("expected redirect, got %d", rr.Code)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
 	}
-	loc := rr.Header().Get("Location")
-	if !strings.Contains(loc, "date=2026-06-16") || !strings.Contains(loc, "period=afternoon") {
-		t.Fatalf("expected afternoon redirect, got %q", loc)
+	body := rr.Body.String()
+	for _, want := range []string{"上午推荐", "09:00-09:25", "没有历史新闻", "请先抓取或补抓财经信息"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected no-news explanation %q, got %s", want, body)
+		}
 	}
-	decoded, _ := url.QueryUnescape(loc)
-	if !strings.Contains(decoded, "下午股票推荐已按") {
-		t.Fatalf("expected afternoon generation message, got %q", decoded)
+}
+
+func TestAStockPageExplainsNewsWithoutHotspots(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/articles" {
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    200,
+			"message": "ok",
+			"data": model.ItemListResult{
+				Items: []model.Item{
+					{ID: 901, SourceType: "flash", Title: "普通市场消息", Summary: "未匹配词典", CapturedAt: time.Date(2026, 6, 16, 1, 10, 0, 0, time.UTC)},
+				},
+				Page:     1,
+				PageSize: 200,
+				Total:    1,
+			},
+		})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-16&period=morning", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"有 1 条新闻", "未命中 A股热点关键词"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected no-hotspot explanation %q, got %s", want, body)
+		}
 	}
 }
 

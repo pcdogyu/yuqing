@@ -34,6 +34,7 @@ type aStockContext struct {
 	Backtests       []aStockBacktestRow
 	LoadMessage     string
 	BacktestStatus  string
+	EmptyReason     string
 }
 
 type aStockHotspot struct {
@@ -224,8 +225,8 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		Period string
 	}{
 		{Name: "crawl", Label: "抓取全部财经信息", Period: ctx.Period},
-		{Name: "generate_morning_stock", Label: "上午股票生成", Period: "morning"},
-		{Name: "generate_afternoon_stock", Label: "下午股票生成", Period: "afternoon"},
+		{Name: "generate_morning_stock", Label: "重新生成上午推荐", Period: "morning"},
+		{Name: "generate_afternoon_stock", Label: "重新生成下午推荐", Period: "afternoon"},
 		{Name: "generate", Label: "生成今日热点", Period: ctx.Period},
 		{Name: "sync_market", Label: "同步行情", Period: ctx.Period},
 		{Name: "refresh_backtest", Label: "刷新回测结果", Period: ctx.Period},
@@ -246,7 +247,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 
 	renderAStockNewsSection(&b, ctx)
 	renderAStockHotspotSection(&b, ctx.Hotspots)
-	renderAStockRecommendationSection(&b, ctx.Recommendations)
+	renderAStockRecommendationSection(&b, ctx)
 	renderAStockBacktestSection(&b, ctx.Date, ctx.Period, ctx.Recommendations, ctx.Backtests)
 
 	_ = s.writeSimplePage(w, "a-stock", "A股策略工作台", b.String())
@@ -266,11 +267,11 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request) 
 	case "generate_morning_stock":
 		period = normalizeAStockPeriod("morning")
 		query.Set("period", period.Key)
-		query.Set("msg", "上午股票推荐已按 09:00-09:25 新闻窗口生成。")
+		query.Set("msg", "已切换到上午窗口，按 09:00-09:25 历史新闻重新计算推荐。")
 	case "generate_afternoon_stock":
 		period = normalizeAStockPeriod("afternoon")
 		query.Set("period", period.Key)
-		query.Set("msg", "下午股票推荐已按 09:26-12:50 新闻窗口生成。")
+		query.Set("msg", "已切换到下午窗口，按 09:26-12:50 历史新闻重新计算推荐。")
 	case "generate":
 		query.Set("msg", period.Label+"热点已按当前新闻窗口重新计算。")
 	case "sync_market":
@@ -383,10 +384,17 @@ func renderAStockHotspotSection(b *strings.Builder, hotspots []aStockHotspot) {
 	b.WriteString(`</table></section>`)
 }
 
-func renderAStockRecommendationSection(b *strings.Builder, recommendations []aStockRecommendation) {
+func renderAStockRecommendationSection(b *strings.Builder, ctx aStockContext) {
 	b.WriteString(`<section><h2>推荐股票</h2>`)
+	recommendations := ctx.Recommendations
 	if len(recommendations) == 0 {
-		b.WriteString(`<div class="astock-empty">暂无数据：当前新闻窗口未生成热点映射股票，或候选股票回撤超过过滤阈值。</div><table><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>昨日收盘价</th><th>涨跌幅</th><th>30天涨跌幅</th><th>60天涨跌幅</th><th>现价</th><th>今日跌幅</th><th>推荐理由</th></tr><tr><td colspan="11">暂无推荐股票</td></tr></table></section>`)
+		reason := strings.TrimSpace(ctx.EmptyReason)
+		if reason == "" {
+			reason = "暂无数据：当前新闻窗口未生成热点映射股票，或候选股票被行情、当日开盘价、30/60天跌幅过滤。"
+		}
+		b.WriteString(`<div class="astock-empty">`)
+		b.WriteString(html.EscapeString(reason))
+		b.WriteString(`</div><table><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>昨日收盘价</th><th>涨跌幅</th><th>30天涨跌幅</th><th>60天涨跌幅</th><th>现价</th><th>今日跌幅</th><th>推荐理由</th></tr><tr><td colspan="11">暂无推荐股票</td></tr></table></section>`)
 		return
 	}
 	b.WriteString(`<table><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>昨日收盘价</th><th>涨跌幅</th><th>30天涨跌幅</th><th>60天涨跌幅</th><th>现价</th><th>今日跌幅</th><th>推荐理由</th></tr>`)
@@ -536,7 +544,21 @@ func (s *Server) loadAStockContext(strategyDate string, periodKey string, newsPa
 	ctx.Hotspots = buildAStockHotspots(ctx.Articles)
 	ctx.Recommendations = buildAStockRecommendations(ctx.Hotspots)
 	ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus = s.loadAStockMarketView(strategyDate, ctx.Recommendations)
+	ctx.EmptyReason = aStockRecommendationEmptyReason(ctx)
 	return ctx
+}
+
+func aStockRecommendationEmptyReason(ctx aStockContext) string {
+	if len(ctx.Recommendations) > 0 {
+		return ""
+	}
+	if ctx.NewsTotal == 0 {
+		return fmt.Sprintf("暂无推荐股票：%s %s 没有历史新闻，请先抓取或补抓财经信息。", ctx.PeriodLabel, ctx.WindowLabel)
+	}
+	if len(ctx.Hotspots) == 0 {
+		return fmt.Sprintf("暂无推荐股票：%s %s 有 %d 条新闻，但未命中 A股热点关键词。", ctx.PeriodLabel, ctx.WindowLabel, ctx.NewsTotal)
+	}
+	return fmt.Sprintf("暂无推荐股票：%s %s 已命中 %d 个热点，但候选股票可能被行情、当日开盘价、30/60天跌幅过滤。", ctx.PeriodLabel, ctx.WindowLabel, len(ctx.Hotspots))
 }
 
 func paginateAStockNews(items []model.Item, page int, pageSize int) ([]model.Item, int, int) {
