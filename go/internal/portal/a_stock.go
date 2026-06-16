@@ -447,19 +447,22 @@ func renderAStockRecommendationHistoryTabs(b *strings.Builder, strategyDate stri
 	b.WriteString(`<h3>推荐历史</h3><div class="astock-date-tabs">`)
 	normalizedPeriod := normalizeAStockPeriod(period).Key
 	today := aStockTodayDate()
-	writeAStockDateTab(b, "今天 "+today, today, normalizedPeriod, strategyDate == today)
-	day, err := time.Parse("2006-01-02", strategyDate)
+	day, err := time.Parse("2006-01-02", today)
 	if err != nil {
 		b.WriteString(`<span class="astock-muted">暂无推荐历史日期</span></div>`)
 		return
 	}
 	for offset := 0; offset <= 5; offset++ {
 		date := day.AddDate(0, 0, -offset).Format("2006-01-02")
-		label := "当日"
+		label := "今日"
 		if offset > 0 {
 			label = fmt.Sprintf("前%d日", offset)
 		}
-		writeAStockDateTab(b, label+" "+date, date, normalizedPeriod, offset == 0 && strategyDate != today)
+		for _, option := range aStockPeriods() {
+			periodLabel := strings.TrimSuffix(option.Label, "推荐")
+			active := strategyDate == date && normalizedPeriod == option.Key
+			writeAStockDateTab(b, label+" "+date+" "+periodLabel, date, option.Key, active)
+		}
 	}
 	b.WriteString(`</div>`)
 }
@@ -630,9 +633,14 @@ func applyAStockMarketBars(strategyDate string, recommendations []aStockRecommen
 	withPrev := 0
 	sectorPenalties := make(map[string]int)
 	filteredCount := 0
+	noEntryPriceCount := 0
 	filtered := make([]aStockRecommendation, 0, len(recommendations))
 	for i := range recommendations {
 		blockedByDrawdown := false
+		if _, ok := aStockEntryBar(byCode[recommendations[i].Code], strategyDate); !ok {
+			noEntryPriceCount++
+			continue
+		}
 		if prev, ok := previousAStockBar(byCode[recommendations[i].Code], strategyDate); ok {
 			recommendations[i].PrevClose = formatAStockPrice(prev.Close)
 			recommendations[i].PrevPct = formatAStockPct(prev.Pct)
@@ -695,10 +703,19 @@ func applyAStockMarketBars(strategyDate string, recommendations []aStockRecommen
 	if filteredCount > 0 {
 		status = fmt.Sprintf("%s，过滤回撤股票 %d", status, filteredCount)
 	}
+	if noEntryPriceCount > 0 {
+		status = fmt.Sprintf("%s，过滤无当日行情股票 %d", status, noEntryPriceCount)
+	}
 	if len(recommendations) == 0 && filteredCount > 0 {
 		status = fmt.Sprintf("回撤过滤后无推荐股票，过滤回撤股票 %d", filteredCount)
 	}
-	if withPrev == 0 && completed == 0 {
+	if len(recommendations) == 0 && noEntryPriceCount > 0 {
+		status = fmt.Sprintf("无当日行情可推荐，过滤无当日行情股票 %d", noEntryPriceCount)
+		if filteredCount > 0 {
+			status = fmt.Sprintf("%s，过滤回撤股票 %d", status, filteredCount)
+		}
+	}
+	if withPrev == 0 && completed == 0 && filteredCount == 0 && noEntryPriceCount == 0 {
 		status = "无匹配行情"
 	}
 	return recommendations, rows, status
@@ -763,6 +780,15 @@ func latestAStockBarOnOrBefore(bars []aStockMarketBar, targetDate string) (aStoc
 	return found, ok
 }
 
+func aStockEntryBar(bars []aStockMarketBar, strategyDate string) (aStockMarketBar, bool) {
+	for _, bar := range bars {
+		if bar.Date == strategyDate && bar.Open > 0 {
+			return bar, true
+		}
+	}
+	return aStockMarketBar{}, false
+}
+
 func buildAStockBacktestRows(strategyDate string, recommendations []aStockRecommendation, byCode map[string][]aStockMarketBar) []aStockBacktestRow {
 	rows := make([]aStockBacktestRow, 0, len(recommendations))
 	for _, rec := range recommendations {
@@ -785,14 +811,8 @@ func buildAStockBacktestRows(strategyDate string, recommendations []aStockRecomm
 			rows = append(rows, row)
 			continue
 		}
-		entryIdx := -1
-		for i, bar := range bars {
-			if bar.Date >= strategyDate {
-				entryIdx = i
-				break
-			}
-		}
-		if entryIdx < 0 || bars[entryIdx].Open <= 0 {
+		entryIdx := aStockEntryBarIndex(bars, strategyDate)
+		if entryIdx < 0 {
 			row.Status = "等待当日开盘价"
 			rows = append(rows, row)
 			continue
@@ -835,6 +855,15 @@ func buildAStockBacktestRows(strategyDate string, recommendations []aStockRecomm
 		rows = append(rows, row)
 	}
 	return rows
+}
+
+func aStockEntryBarIndex(bars []aStockMarketBar, strategyDate string) int {
+	for i, bar := range bars {
+		if bar.Date == strategyDate && bar.Open > 0 {
+			return i
+		}
+	}
+	return -1
 }
 
 func decodeAStockMarketBars(body []byte) ([]aStockMarketBar, error) {

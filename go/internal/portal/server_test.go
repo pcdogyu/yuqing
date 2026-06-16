@@ -390,9 +390,10 @@ func TestAStockPageOffersTodayNavigationAndAfterAlias(t *testing.T) {
 	for _, want := range []string{
 		"下午推荐",
 		"回到今天",
-		"今天 2026-06-16",
+		"今日 2026-06-16 上午",
+		"今日 2026-06-16 下午",
 		`href="/a-stock?date=2026-06-16&period=afternoon"`,
-		"当日 2026-06-11",
+		"前5日 2026-06-11 下午",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
@@ -545,7 +546,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"AI 算力政策加码", "半导体先进封装景气度提升", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "30天涨跌幅", "60天涨跌幅", "推荐历史", "当日 2026-06-16", "前1日 2026-06-15", "前5日 2026-06-11", "10.50", "+1.25%", "+5.00%", "-12.50%", "50.20", "-0.60%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
+	for _, want := range []string{"AI 算力政策加码", "半导体先进封装景气度提升", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "30天涨跌幅", "60天涨跌幅", "推荐历史", "今日 2026-06-16 上午", "今日 2026-06-16 下午", "前1日 2026-06-15 上午", "前1日 2026-06-15 下午", "前5日 2026-06-11 上午", "前5日 2026-06-11 下午", "10.50", "+1.25%", "+5.00%", "-12.50%", "50.20", "-0.60%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}
@@ -569,12 +570,16 @@ func TestAStockRecommendationHistoryRendersDateTabs(t *testing.T) {
 	body := b.String()
 	for _, want := range []string{
 		"推荐历史",
-		"今天 2026-06-16",
-		"当日 2026-06-18",
-		"前1日 2026-06-17",
-		"前5日 2026-06-13",
+		"今日 2026-06-16 上午",
+		"今日 2026-06-16 下午",
+		"前1日 2026-06-15 上午",
+		"前1日 2026-06-15 下午",
+		"前5日 2026-06-11 上午",
+		"前5日 2026-06-11 下午",
+		`/a-stock?date=2026-06-16&period=morning`,
 		`/a-stock?date=2026-06-16&period=afternoon`,
-		`/a-stock?date=2026-06-17&period=afternoon`,
+		`/a-stock?date=2026-06-15&period=morning`,
+		`/a-stock?date=2026-06-15&period=afternoon`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected history tabs to contain %q, got %s", want, body)
@@ -590,17 +595,24 @@ func TestAStockMarketViewFiltersDeepDrawdownsAndPenalizesSector(t *testing.T) {
 		{Rank: 1, Hotspot: "人工智能", Code: "000001", Name: "回撤过滤", HotspotScore: 80, MarketScore: 80, Reason: "热度分 80"},
 		{Rank: 2, Hotspot: "人工智能", Code: "000002", Name: "保留扣分", HotspotScore: 80, MarketScore: 80, Reason: "热度分 80"},
 		{Rank: 3, Hotspot: "金融券商", Code: "000003", Name: "正常板块", HotspotScore: 75, MarketScore: 75, Reason: "热度分 75"},
+		{Rank: 4, Hotspot: "金融券商", Code: "000004", Name: "停牌过滤", HotspotScore: 75, MarketScore: 75, Reason: "热度分 75"},
 	})
 	bars := []aStockMarketBar{
 		{Code: "000001", Date: "2026-04-17", Close: 100},
 		{Code: "000001", Date: "2026-05-16", Close: 100},
 		{Code: "000001", Date: "2026-06-15", Close: 84, Pct: -1},
+		{Code: "000001", Date: "2026-06-16", Open: 84, Close: 85, Pct: 1},
 		{Code: "000002", Date: "2026-04-17", Close: 100},
 		{Code: "000002", Date: "2026-05-16", Close: 100},
 		{Code: "000002", Date: "2026-06-15", Close: 92, Pct: 1},
+		{Code: "000002", Date: "2026-06-16", Open: 93, Close: 94, Pct: 2},
 		{Code: "000003", Date: "2026-04-17", Close: 100},
 		{Code: "000003", Date: "2026-05-16", Close: 100},
 		{Code: "000003", Date: "2026-06-15", Close: 98, Pct: 2},
+		{Code: "000003", Date: "2026-06-16", Open: 99, Close: 100, Pct: 1},
+		{Code: "000004", Date: "2026-04-17", Close: 100},
+		{Code: "000004", Date: "2026-05-16", Close: 100},
+		{Code: "000004", Date: "2026-06-15", Close: 98, Pct: 2},
 	}
 
 	filtered, rows, status := applyAStockMarketBars("2026-06-16", recommendations, bars)
@@ -612,6 +624,9 @@ func TestAStockMarketViewFiltersDeepDrawdownsAndPenalizesSector(t *testing.T) {
 		if rec.Code == "000001" {
 			t.Fatalf("expected 30/60 day drawdown stock to be filtered, got %+v", filtered)
 		}
+		if rec.Code == "000004" {
+			t.Fatalf("expected stock without entry price to be filtered, got %+v", filtered)
+		}
 	}
 	if filtered[0].Code != "000003" || filtered[0].Rank != 1 {
 		t.Fatalf("expected unpenalized sector to rank first, got %+v", filtered)
@@ -619,11 +634,11 @@ func TestAStockMarketViewFiltersDeepDrawdownsAndPenalizesSector(t *testing.T) {
 	if filtered[1].Code != "000002" || filtered[1].MarketScore != 65 || !strings.Contains(filtered[1].Reason, "板块回撤减分 15") {
 		t.Fatalf("expected remaining AI stock to carry sector penalty, got %+v", filtered[1])
 	}
-	if len(rows) != 2 || strings.Contains(rows[0].Stock+rows[1].Stock, "000001") {
+	if len(rows) != 2 || strings.Contains(rows[0].Stock+rows[1].Stock, "000001") || strings.Contains(rows[0].Stock+rows[1].Stock, "000004") {
 		t.Fatalf("expected backtest rows to follow filtered recommendations, got %+v", rows)
 	}
-	if !strings.Contains(status, "过滤回撤股票 1") {
-		t.Fatalf("expected status to mention drawdown filtering, got %q", status)
+	if !strings.Contains(status, "过滤回撤股票 1") || !strings.Contains(status, "过滤无当日行情股票 1") {
+		t.Fatalf("expected status to mention drawdown and missing price filtering, got %q", status)
 	}
 }
 
