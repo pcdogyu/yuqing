@@ -263,6 +263,9 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		"T+3 收盘价",
 		"T+4 收盘价",
 		"T+5 收盘价",
+		"抓取全部金十信息",
+		"金十全站信息",
+		"jin10_full",
 		"暂无数据",
 		"仅供策略研究和回测，不构成投资建议",
 	} {
@@ -404,7 +407,7 @@ func TestAStockRecommendationsUseTopThreeHotspotIndustries(t *testing.T) {
 	}
 }
 
-func TestAStockCrawlActionTriggersFlashAndHeadline(t *testing.T) {
+func TestAStockCrawlActionTriggersAllJin10Sources(t *testing.T) {
 	var sources []string
 	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -427,8 +430,8 @@ func TestAStockCrawlActionTriggersFlashAndHeadline(t *testing.T) {
 		t.Fatalf("expected redirect, got %d", rr.Code)
 	}
 	sort.Strings(sources)
-	if strings.Join(sources, ",") != "flash,headline" {
-		t.Fatalf("expected flash and headline crawl, got %v", sources)
+	if strings.Join(sources, ",") != "flash,headline,jin10_full" {
+		t.Fatalf("expected flash, headline and jin10_full crawl, got %v", sources)
 	}
 	if loc := rr.Header().Get("Location"); !strings.Contains(loc, "/a-stock?") || !strings.Contains(loc, "date=2026-06-16") {
 		t.Fatalf("unexpected redirect location: %q", loc)
@@ -1096,6 +1099,7 @@ func TestPortalPageTemplatesUseCommonFooter(t *testing.T) {
 		"reports":                 reportsTemplate,
 		"report":                  reportTemplate,
 		"system_logs":             systemLogsTemplate,
+		"logs":                    logsTemplate,
 		"system":                  systemTemplate,
 		"platform_bindings_work":  platformBindingsWorkbenchTemplate,
 		"platform_workbench_v3":   platformWorkbenchTemplateV3,
@@ -1118,6 +1122,9 @@ func TestPortalNavPositionsLogoutTopRight(t *testing.T) {
 	}
 	if !strings.Contains(baseStyles, `.logout-link{position:fixed;top:14px;right:18px;`) {
 		t.Fatalf("expected logout link to be positioned at top right")
+	}
+	if !strings.Contains(portalNavHTML, `<a href="/system">系统</a><a href="/logs">日志</a>`) {
+		t.Fatalf("expected logs menu to appear immediately after system menu")
 	}
 }
 
@@ -1302,6 +1309,61 @@ func TestSystemLogsPageRendersTableAndPagination(t *testing.T) {
 	}
 	if strings.Contains(body, `entry-10`) {
 		t.Fatalf("expected second page to omit first page entries, got %s", body)
+	}
+}
+
+func TestLogsPageSummarizesServiceLogs(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		service := strings.TrimPrefix(r.URL.Path, "/api/v1/system/services/")
+		service = strings.TrimSuffix(service, "/logs")
+		if service == r.URL.Path {
+			http.NotFound(w, r)
+			return
+		}
+		logText := ""
+		if service == "crawler-service" {
+			logText = strings.Join([]string{
+				`2026-06-16T08:58:01+08:00 ERR crawler failed`,
+				`2026-06-16T08:59:01+08:00 INF crawler ready`,
+			}, "\n")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    http.StatusOK,
+			"message": "ok",
+			"data": map[string]string{
+				"service": service,
+				"log":     logText,
+			},
+		})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL, ServiceToken: "test-token", HTTPTimeout: time.Second})
+	req := httptest.NewRequest(http.MethodGet, "/logs", nil)
+	rr := httptest.NewRecorder()
+
+	srv.handleLogsPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, expected := range []string{
+		`日志中心`,
+		`gateway-web`,
+		`crawler-service`,
+		`查看详情`,
+		`/system/logs?service=crawler-service`,
+		`crawler ready`,
+		`<th class="log-time">时间</th>`,
+		`<th class="log-level">Level</th>`,
+		`<th>具体内容</th>`,
+		`暂无日志或读取失败`,
+	} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("expected logs page to include %q, got %s", expected, body)
+		}
 	}
 }
 

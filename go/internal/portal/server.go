@@ -169,6 +169,7 @@ type pageData struct {
 	ServiceLogName             string
 	ServiceLogText             string
 	ServiceLogEntries          []serviceLogEntry
+	ServiceLogSummaries        []serviceLogSummary
 	ServiceLogPage             int
 	ServiceLogPrev             int
 	ServiceLogNext             int
@@ -241,6 +242,12 @@ type serviceStatus struct {
 	Message string
 }
 
+type serviceLogSummary struct {
+	Service string
+	Entries []serviceLogEntry
+	Message string
+}
+
 type legacyRouteSummary struct {
 	Strategy string
 	Count    int
@@ -269,6 +276,7 @@ func NewServer(cfg config.Config) *Server {
 	template.Must(tpl.New("report").Parse(reportTemplate))
 	template.Must(tpl.New("system").Parse(systemTemplate))
 	template.Must(tpl.New("system_logs").Parse(systemLogsTemplate))
+	template.Must(tpl.New("logs").Parse(logsTemplate))
 	template.Must(tpl.New("platform_bindings").Parse(platformBindingsTemplate))
 	template.Must(tpl.New("platform_bindings_v2").Parse(platformWorkbenchTemplateV3))
 	template.Must(tpl.New("public_option_workbench").Parse(publicOptionWorkbenchTemplate))
@@ -331,6 +339,7 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/timelysearch/", s.requireSessionUnlessRemoved(s.handleTimelySearchCompat))
 	mux.HandleFunc("/publicoption", s.requireSession(s.handlePublicOptionEntry))
 	mux.HandleFunc("/publicoption/", s.requireSession(s.handlePublicOptionCompat))
+	mux.HandleFunc("/logs", s.requireSession(s.handleLogsPage))
 	mux.HandleFunc("/logout", s.handleLogout)
 	mux.HandleFunc("/system/productmanual/online", s.requireSession(s.handleSystemProductManualOnline))
 	mux.HandleFunc("/system/uploadProductManual", s.requireSession(s.handleSystemUploadProductManual))
@@ -3339,6 +3348,18 @@ func (s *Server) handleSystemLogs(w http.ResponseWriter, r *http.Request, _ any)
 	_ = s.render(w, "system_logs", data)
 }
 
+func (s *Server) handleLogsPage(w http.ResponseWriter, r *http.Request, _ any) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	data := pageData{
+		Title:               "日志中心",
+		ServiceLogSummaries: s.collectServiceLogSummaries(),
+	}
+	_ = s.render(w, "logs", data)
+}
+
 func (s *Server) requireSession(next func(http.ResponseWriter, *http.Request, any)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		cookie, err := r.Cookie(sessionCookieName)
@@ -3463,6 +3484,40 @@ func (s *Server) loadServiceLog(serviceName string) (string, string) {
 		return "", ""
 	}
 	return payload.Service, payload.Log
+}
+
+func (s *Server) collectServiceLogSummaries() []serviceLogSummary {
+	services := []string{
+		"gateway-web",
+		"auth-service",
+		"wechat-service",
+		"content-service",
+		"crawler-service",
+		"analysis-service",
+		"nlp-service",
+		"scheduler-service",
+	}
+	summaries := make([]serviceLogSummary, 0, len(services))
+	for _, service := range services {
+		name, logText := s.loadServiceLog(service)
+		if name == "" {
+			name = service
+		}
+		entries := reverseLogEntries(parseServiceLogEntries(logText))
+		message := ""
+		if len(entries) == 0 {
+			message = "暂无日志或读取失败"
+		}
+		if len(entries) > 8 {
+			entries = entries[:8]
+		}
+		summaries = append(summaries, serviceLogSummary{
+			Service: name,
+			Entries: entries,
+			Message: message,
+		})
+	}
+	return summaries
 }
 
 const serviceLogPageSize = 50
@@ -4483,7 +4538,7 @@ func collectLegacyLiveRoutes() []legacyRouteSpec {
 	return result
 }
 
-const portalNavHTML = `<nav><a href="/">总览</a><a href="/projects">项目</a><a href="/monitor-rules">规则</a><a href="/articles">文章</a><a href="/reports">报告</a><a href="/crawl-templates">模板中心</a><a href="/crawl-templates/manage">模板管理</a><a href="/a-stock">A股</a><a href="/crypto">Crypto</a><a href="/system">系统</a><a class="logout-link" href="/logout">退出</a></nav>`
+const portalNavHTML = `<nav><a href="/">总览</a><a href="/projects">项目</a><a href="/monitor-rules">规则</a><a href="/articles">文章</a><a href="/reports">报告</a><a href="/crawl-templates">模板中心</a><a href="/crawl-templates/manage">模板管理</a><a href="/a-stock">A股</a><a href="/crypto">Crypto</a><a href="/system">系统</a><a href="/logs">日志</a><a class="logout-link" href="/logout">退出</a></nav>`
 const portalFooterHTML = `<footer class="site-footer"><div>Code By Yuhao@jiansutech.com - {{.FooterBuildTime}} - {{.FooterCommit}} - {{.FooterBranch}} - <a class="footer-feedback-link" href="/system?section=feedback">反馈建议</a></div></footer>` + portalRulesFormEnhancementScript + portalSystemServiceLogsScript
 
 const portalRulesFormEnhancementScript = `<script>(function(){if(location.pathname!=="/monitor-rules"){return}var headings=[].slice.call(document.querySelectorAll("h2"));var heading=headings.find(function(node){return node.textContent.trim()==="新建规则"});if(!heading){return}var section=heading.closest("section");var form=section&&section.querySelector("form");if(!form){return}var project=form.querySelector('select[name="project_id"]');if(project&&project.options.length===0){var option=document.createElement("option");option.value="";option.textContent="无可选项目，提交时自动创建项目";project.appendChild(option)}if(project&&!form.querySelector('input[name="project_name"]')){var input=document.createElement("input");input.name="project_name";input.placeholder="新项目名称（可选，未选择项目时使用）";project.insertAdjacentElement("afterend",input)}var channels=form.querySelector('input[name="channels"]');if(channels){channels.setAttribute("list","monitor-rule-channel-options");if(!document.getElementById("monitor-rule-channel-options")){var list=document.createElement("datalist");list.id="monitor-rule-channel-options";["flash","headline","crypto_x","crypto_telegram","flash,headline","all"].forEach(function(value){var option=document.createElement("option");option.value=value;list.appendChild(option)});document.body.appendChild(list)}}var name=form.querySelector('input[name="name"]');var include=form.querySelector('input[name="include_keywords"]');form.addEventListener("submit",function(){if(name&&include&&!name.value.trim()&&include.value.trim()){name.value="关键词监测："+include.value.trim()}})})();</script>`
@@ -4547,6 +4602,10 @@ const reportTemplate = `
 
 const systemLogsTemplate = `
 {{define "system_logs"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.log-table{table-layout:fixed}.log-time{width:230px}.log-level{width:90px}.log-message{white-space:pre-wrap;word-break:break-word}.page-nav{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0}.page-nav a{padding:6px 10px;border:1px solid #d0c8b8;border-radius:8px;text-decoration:none;color:#214e34}` + `</style></head><body><header><h1>{{.ServiceLogName}} 日志</h1>{{template "nav" .}}</header><main><section><p><a class="inline" href="/system">返回系统工作台</a></p><div class="page-nav">{{if gt .ServiceLogTotalPages 1}}<a href="/system/logs?service={{urlquery .ServiceLogName}}&page={{.ServiceLogPrev}}">上一页</a><span>第 {{.ServiceLogPage}} / {{.ServiceLogTotalPages}} 页</span><a href="/system/logs?service={{urlquery .ServiceLogName}}&page={{.ServiceLogNext}}">下一页</a>{{else}}<span>共 {{len .ServiceLogEntries}} 条日志</span>{{end}}</div><table class="log-table"><tr><th class="log-time">时间</th><th class="log-level">Level</th><th>具体内容</th></tr>{{range .ServiceLogEntries}}<tr><td class="log-time">{{.Time}}</td><td class="log-level">{{.Level}}</td><td class="log-message">{{.Message}}</td></tr>{{else}}<tr><td colspan="3">暂无日志</td></tr>{{end}}</table></section></main>{{template "footer" .}}</body></html>{{end}}
+`
+
+const logsTemplate = `
+{{define "logs"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.logs-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(520px,1fr));gap:16px}.log-card{background:#fff;border-radius:16px;padding:18px;box-shadow:0 8px 24px rgba(0,0,0,.06)}.log-card h2{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-top:0}.log-card h2 a{font-size:14px;color:#214e34;text-decoration:none}.log-table{table-layout:fixed}.log-time{width:210px}.log-level{width:80px}.log-message{white-space:pre-wrap;word-break:break-word}.muted{color:#6a6257}@media (max-width:760px){.logs-grid{grid-template-columns:1fr}.log-time{width:auto}.log-level{width:auto}}` + `</style></head><body><header><h1>日志中心</h1>{{template "nav" .}}</header><main><section><p class="muted">显示各服务最近日志，详情页保留 50 条分页查看。</p></section><div class="logs-grid">{{range .ServiceLogSummaries}}<section class="log-card"><h2><span>{{.Service}}</span><a href="/system/logs?service={{urlquery .Service}}">查看详情</a></h2>{{if .Message}}<p class="muted">{{.Message}}</p>{{end}}<table class="log-table"><tr><th class="log-time">时间</th><th class="log-level">Level</th><th>具体内容</th></tr>{{range .Entries}}<tr><td class="log-time">{{.Time}}</td><td class="log-level">{{.Level}}</td><td class="log-message">{{.Message}}</td></tr>{{else}}<tr><td colspan="3">暂无日志</td></tr>{{end}}</table></section>{{else}}<section><p>暂无服务日志</p></section>{{end}}</div></main>{{template "footer" .}}</body></html>{{end}}
 `
 
 const systemTemplateRaw = `

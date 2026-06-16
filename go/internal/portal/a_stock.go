@@ -158,7 +158,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		Name  string
 		Label string
 	}{
-		{Name: "crawl", Label: "抓取 A 股新闻"},
+		{Name: "crawl", Label: "抓取全部金十信息"},
 		{Name: "generate", Label: "生成今日热点"},
 		{Name: "sync_market", Label: "同步行情"},
 		{Name: "refresh_backtest", Label: "刷新回测结果"},
@@ -171,9 +171,9 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		b.WriteString(html.EscapeString(action.Label))
 		b.WriteString(`</button></form>`)
 	}
-	b.WriteString(`</div><p class="astock-muted">已接入已有新闻抓取链路：抓取按钮会触发金十快讯和金十资讯，页面按策略日期 09:00-09:25 聚合财经新闻。行情接口读取 `)
+	b.WriteString(`</div><p class="astock-muted">已接入已有新闻抓取链路：抓取按钮会触发金十快讯、金十资讯和金十全站信息，页面按策略日期 09:00-09:25 聚合财经新闻。行情接口读取 `)
 	b.WriteString(aStockMarketConfigHint())
-	b.WriteString(`，用于展示昨日收盘价、昨日涨跌幅和消息回测。</p><div class="astock-source-list"><span class="astock-badge">flash: https://www.jin10.com/</span><span class="astock-badge">headline: https://xnews.jin10.com/</span></div></section>`)
+	b.WriteString(`，用于展示昨日收盘价、昨日涨跌幅和消息回测。</p><div class="astock-source-list"><span class="astock-badge">flash: https://www.jin10.com/</span><span class="astock-badge">headline: https://xnews.jin10.com/</span><span class="astock-badge">jin10_full: 金十全站</span></div></section>`)
 
 	renderAStockNewsSection(&b, ctx)
 	renderAStockHotspotSection(&b, ctx.Hotspots)
@@ -900,7 +900,7 @@ func eastmoneyAStockSecID(code string) string {
 }
 
 func (s *Server) triggerAStockCrawl() string {
-	sources := []string{"flash", "headline"}
+	sources := []string{"flash", "headline", "jin10_full"}
 	ok := 0
 	failures := make([]string, 0)
 	for _, sourceType := range sources {
@@ -916,7 +916,7 @@ func (s *Server) triggerAStockCrawl() string {
 	if len(failures) > 0 {
 		return fmt.Sprintf("A股新闻抓取部分触发：成功 %d 个，失败 %s", ok, strings.Join(failures, "、"))
 	}
-	return "A股新闻抓取已触发：金十快讯、金十资讯"
+	return "A股新闻抓取已触发：金十快讯、金十资讯、金十全站信息"
 }
 
 func aStockWindow(strategyDate string) (time.Time, time.Time) {
