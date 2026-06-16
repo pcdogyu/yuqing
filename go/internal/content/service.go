@@ -2095,6 +2095,7 @@ func (s *Service) serviceRestartSpec(name string) (serviceRestartSpec, bool) {
 		addr string
 	}{
 		"auth-service":      {path: ".\\cmd\\auth-service", addr: s.cfg.AuthAddr},
+		"wechat-service":    {path: ".\\cmd\\wechat-service", addr: s.cfg.WechatAddr},
 		"content-service":   {path: ".\\cmd\\content-service", addr: s.cfg.ContentAddr},
 		"crawler-service":   {path: ".\\cmd\\crawler-service", addr: s.cfg.CrawlerAddr},
 		"analysis-service":  {path: ".\\cmd\\analysis-service", addr: s.cfg.AnalysisAddr},
@@ -2185,6 +2186,7 @@ func (s *Service) operationServiceStatuses(ctx context.Context) []model.Operatio
 	}{
 		{name: "gateway-web", url: s.cfg.GatewayWebURL},
 		{name: "auth-service", url: s.cfg.AuthURL},
+		{name: "wechat-service", url: s.cfg.WechatURL},
 		{name: "content-service", url: s.cfg.ContentURL},
 		{name: "crawler-service", url: s.cfg.CrawlerURL},
 		{name: "analysis-service", url: s.cfg.AnalysisURL},

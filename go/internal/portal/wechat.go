@@ -128,7 +128,11 @@ func (s *Server) proxyWechatPlain(w http.ResponseWriter, r *http.Request, path s
 }
 
 func (s *Server) wechatAuthURL(r *http.Request, path string, sessionToken string) (string, error) {
-	base, err := url.Parse(strings.TrimRight(s.cfg.AuthURL, "/") + "/api/v1/wechat" + path)
+	baseURL := strings.TrimSpace(s.cfg.WechatURL)
+	if baseURL == "" {
+		baseURL = s.cfg.AuthURL
+	}
+	base, err := url.Parse(strings.TrimRight(baseURL, "/") + "/api/v1/wechat" + path)
 	if err != nil {
 		return "", err
 	}

@@ -327,7 +327,11 @@ func (s *Service) createWechatChallenge(ctx context.Context, purpose string, use
 }
 
 func (s *Service) wechatQRCodeDataURL(sceneStr string) string {
-	svg := pseudoQRCodeSVG(s.cfg.AuthURL + "/api/v1/wechat/mock/scan?sceneStr=" + url.QueryEscape(sceneStr))
+	baseURL := strings.TrimSpace(s.cfg.WechatURL)
+	if baseURL == "" {
+		baseURL = s.cfg.AuthURL
+	}
+	svg := pseudoQRCodeSVG(strings.TrimRight(baseURL, "/") + "/api/v1/wechat/mock/scan?sceneStr=" + url.QueryEscape(sceneStr))
 	return "data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString([]byte(svg))
 }
 

@@ -30,6 +30,7 @@ $env:YUQING_DB_PATH = if ($env:YUQING_DB_PATH) { $env:YUQING_DB_PATH } else { Jo
 
 $services = @(
     @{ Name = "auth-service"; Path = ".\cmd\auth-service" },
+    @{ Name = "wechat-service"; Path = ".\cmd\wechat-service" },
     @{ Name = "content-service"; Path = ".\cmd\content-service" },
     @{ Name = "crawler-service"; Path = ".\cmd\crawler-service" },
     @{ Name = "analysis-service"; Path = ".\cmd\analysis-service" },

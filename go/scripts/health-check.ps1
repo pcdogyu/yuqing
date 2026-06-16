@@ -1,6 +1,7 @@
 param(
     [string]$GatewayUrl = "http://127.0.0.1",
     [string]$AuthUrl = "http://127.0.0.1:8081",
+    [string]$WechatUrl = "http://127.0.0.1:8087",
     [string]$ContentUrl = "http://127.0.0.1:8082",
     [string]$CrawlerUrl = "http://127.0.0.1:8083",
     [string]$AnalysisUrl = "http://127.0.0.1:8084",
@@ -12,6 +13,7 @@ $ErrorActionPreference = "Stop"
 $targets = @(
     @{ Name = "gateway-web"; Url = "$GatewayUrl/healthz" },
     @{ Name = "auth-service"; Url = "$AuthUrl/healthz" },
+    @{ Name = "wechat-service"; Url = "$WechatUrl/healthz" },
     @{ Name = "content-service"; Url = "$ContentUrl/healthz" },
     @{ Name = "crawler-service"; Url = "$CrawlerUrl/healthz" },
     @{ Name = "analysis-service"; Url = "$AnalysisUrl/healthz" },

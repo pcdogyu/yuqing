@@ -68,6 +68,7 @@ type Config struct {
 
 	GatewayWebAddr string
 	AuthAddr       string
+	WechatAddr     string
 	ContentAddr    string
 	CrawlerAddr    string
 	AnalysisAddr   string
@@ -76,6 +77,7 @@ type Config struct {
 
 	GatewayWebURL string
 	AuthURL       string
+	WechatURL     string
 	ContentURL    string
 	CrawlerURL    string
 	AnalysisURL   string
@@ -157,6 +159,7 @@ func Load() Config {
 
 		GatewayWebAddr: envOrDefaultWithAliases("YUQING_GATEWAY_ADDR", ":80", "JIN10_PORTAL_WEB_ADDR"),
 		AuthAddr:       envOrDefault("YUQING_AUTH_ADDR", ":8081"),
+		WechatAddr:     envOrDefault("YUQING_WECHAT_ADDR", ":8087"),
 		ContentAddr:    envOrDefaultWithAliases("YUQING_CONTENT_ADDR", ":8082", "JIN10_CONTENT_ADDR"),
 		CrawlerAddr:    envOrDefaultWithAliases("YUQING_CRAWLER_ADDR", ":8083", "JIN10_CRAWLER_ADDR"),
 		AnalysisAddr:   envOrDefault("YUQING_ANALYSIS_ADDR", ":8084"),
@@ -165,6 +168,7 @@ func Load() Config {
 
 		GatewayWebURL: envOrDefaultWithAliases("YUQING_GATEWAY_URL", "http://127.0.0.1", "JIN10_PORTAL_WEB_URL"),
 		AuthURL:       envOrDefault("YUQING_AUTH_URL", "http://127.0.0.1:8081"),
+		WechatURL:     envOrDefault("YUQING_WECHAT_URL", "http://127.0.0.1:8087"),
 		ContentURL:    envOrDefaultWithAliases("YUQING_CONTENT_URL", "http://127.0.0.1:8082", "JIN10_CONTENT_URL"),
 		CrawlerURL:    envOrDefaultWithAliases("YUQING_CRAWLER_URL", "http://127.0.0.1:8083", "JIN10_CRAWLER_URL"),
 		AnalysisURL:   envOrDefault("YUQING_ANALYSIS_URL", "http://127.0.0.1:8084"),

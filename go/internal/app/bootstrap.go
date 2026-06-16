@@ -138,6 +138,7 @@ func LogStartup(serviceName, listenAddr string, cfg config.Config) {
 		Str("panews_newsflash_url", cfg.PANewsNewsflashURL).
 		Str("gateway_web_url", cfg.GatewayWebURL).
 		Str("auth_url", cfg.AuthURL).
+		Str("wechat_url", cfg.WechatURL).
 		Str("content_url", cfg.ContentURL).
 		Str("crawler_url", cfg.CrawlerURL).
 		Str("analysis_url", cfg.AnalysisURL).

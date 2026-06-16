@@ -4,6 +4,7 @@ param(
     [string]$OutputPath = "",
     [string]$GatewayUrl = "http://127.0.0.1",
     [string]$AuthUrl = "http://127.0.0.1:8081",
+    [string]$WechatUrl = "http://127.0.0.1:8087",
     [string]$ContentUrl = "http://127.0.0.1:8082",
     [string]$CrawlerUrl = "http://127.0.0.1:8083",
     [string]$AnalysisUrl = "http://127.0.0.1:8084",
@@ -86,7 +87,7 @@ function Find-FreePort([int]$startPort) {
             return $port
         }
     }
-    throw "no free scheduler port found from $startPort"
+    throw "no free port found from $startPort"
 }
 
 $gatewayPort = Get-UrlPort $GatewayUrl
@@ -95,6 +96,14 @@ if ($GatewayUrl -eq "http://127.0.0.1" -and (Test-PortInUse $gatewayPort)) {
     $GatewayUrl = "http://127.0.0.1:$gatewayPort"
 }
 $env:YUQING_GATEWAY_ADDR = ":$gatewayPort"
+
+$wechatPort = Get-UrlPort $WechatUrl
+if ($WechatUrl -eq "http://127.0.0.1:8087" -and (Test-PortInUse $wechatPort)) {
+    $wechatPort = Find-FreePort 18087
+    $WechatUrl = "http://127.0.0.1:$wechatPort"
+}
+$env:YUQING_WECHAT_ADDR = ":$wechatPort"
+$env:YUQING_WECHAT_URL = $WechatUrl
 
 $schedulerPort = Get-UrlPort $SchedulerUrl
 if ($SchedulerUrl -eq "http://127.0.0.1:8086" -and (Test-PortInUse $schedulerPort)) {
@@ -107,6 +116,7 @@ $env:YUQING_SCHEDULER_URL = $SchedulerUrl
 Push-Location $repoRoot
 try {
     Add-Step "gateway_endpoint" "ok" "gateway $GatewayUrl"
+    Add-Step "wechat_endpoint" "ok" "wechat api $WechatUrl"
     Add-Step "scheduler_endpoint" "ok" "scheduler api $SchedulerUrl"
 
     Invoke-ReleaseStep "go_test" {
@@ -127,6 +137,7 @@ try {
                 Invoke-ChildPowerShell (Join-Path $PSScriptRoot "health-check.ps1") @(
                     "-GatewayUrl", $GatewayUrl,
                     "-AuthUrl", $AuthUrl,
+                    "-WechatUrl", $WechatUrl,
                     "-ContentUrl", $ContentUrl,
                     "-CrawlerUrl", $CrawlerUrl,
                     "-AnalysisUrl", $AnalysisUrl,
@@ -146,6 +157,7 @@ try {
         Invoke-ChildPowerShell (Join-Path $PSScriptRoot "smoke-test.ps1") @(
             "-GatewayUrl", $GatewayUrl,
             "-AuthUrl", $AuthUrl,
+            "-WechatUrl", $WechatUrl,
             "-ContentUrl", $ContentUrl,
             "-CrawlerUrl", $CrawlerUrl,
             "-AnalysisUrl", $AnalysisUrl,

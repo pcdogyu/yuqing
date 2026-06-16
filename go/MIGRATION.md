@@ -34,7 +34,7 @@
 | `SearchController` | `完成` | `gateway-web /search` + `gateway-web /articles?mode=search` | 主搜索入口已切到 Go。 |
 | `SystemController` 公告/反馈/任务记录/偏好/预警子集 | `完成` | `content-service / system-*` + `gateway-web /system` | 核心系统页能力已在 Go 主链路。 |
 | `DatafavoriteContoller` | `完成` | `portal-web /articles` + `content-service /articles` | 已读、收藏、分享、情感标记、删除均已走正式 Go 动作；旧 `datamonitor/*` 特殊兼容返回不再作为主链路。 |
-| `WechatController` | `兼容完成` | `portal-web /wechat/*` + `auth-service /api/v1/wechat/*` | Go 已实现登录、绑定、token 等能力，但仍保留兼容入口。 |
+| `WechatController` | `兼容完成` | `portal-web /wechat/*` + `wechat-service /api/v1/wechat/*` | Go 已实现登录、绑定、token 等能力，但仍保留兼容入口。 |
 | `MailController` | `兼容完成` | `gateway-web /mail/*` + `content-service /system/mail-config` | 邮件配置已落到 Go，但旧接口格式仍在兼容。 |
 | `PopUpController` | `兼容完成` | `gateway-web /popUp/*` + `content-service /system/popup` | 弹窗状态由 Go 存取，但旧入口仍保留。 |
 | `ImageController` | `完成` | `/login` | 旧 `/img/code` 验证码兼容入口已下线为 `410 Gone`。 |
@@ -188,7 +188,9 @@
 - `portal-web`
   - SSR 门户、正式工作台页面、legacy 入口下线拦截
 - `auth-service`
-  - 登录、登出、session、token、微信登录 / 绑定
+  - 登录、登出、session、token
+- `wechat-service`
+  - 微信登录 / 绑定、微信 token、公众号回调兼容接口
 - `content-service`
   - 业务主数据与后台接口，包括偏好、弹窗、邮件配置等系统能力
 - `crawler-service`

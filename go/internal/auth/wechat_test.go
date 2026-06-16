@@ -33,9 +33,10 @@ func TestWechatLegacyFlow(t *testing.T) {
 		WechatPrivateKey:  "wechat-private-key",
 		WechatAccountName: "Go 舆情系统",
 		AuthURL:           "http://127.0.0.1:8081",
+		WechatURL:         "http://127.0.0.1:8087",
 		GatewayWebURL:     "http://127.0.0.1",
 	}, store)
-	router := svc.Router()
+	router := svc.WechatRouter()
 
 	getBindReq := httptest.NewRequest(http.MethodGet, "/api/v1/wechat/getBindQrCode?session_token="+session.Token, nil)
 	getBindRR := httptest.NewRecorder()
@@ -130,9 +131,10 @@ func TestWechatPendingLoginAndBind(t *testing.T) {
 		WechatPrivateKey:  "wechat-private-key",
 		WechatAccountName: "Go 舆情系统",
 		AuthURL:           "http://127.0.0.1:8081",
+		WechatURL:         "http://127.0.0.1:8087",
 		GatewayWebURL:     "http://127.0.0.1",
 	}, store)
-	router := svc.Router()
+	router := svc.WechatRouter()
 
 	loginReq := httptest.NewRequest(http.MethodGet, "/api/v1/wechat/checkLogin?sceneStr=missing", nil)
 	loginRR := httptest.NewRecorder()

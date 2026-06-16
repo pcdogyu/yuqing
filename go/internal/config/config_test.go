@@ -68,6 +68,9 @@ func TestLoadUsesDefaults(t *testing.T) {
 	if cfg.GatewayWebAddr != ":80" {
 		t.Fatalf("expected default gateway addr, got %q", cfg.GatewayWebAddr)
 	}
+	if cfg.WechatAddr != ":8087" {
+		t.Fatalf("expected default wechat addr, got %q", cfg.WechatAddr)
+	}
 	if cfg.FlashURL != "https://www.jin10.com/" {
 		t.Fatalf("expected default flash url, got %q", cfg.FlashURL)
 	}
@@ -116,6 +119,9 @@ func TestLoadUsesDefaults(t *testing.T) {
 	if cfg.GatewayWebURL != "http://127.0.0.1" {
 		t.Fatalf("expected default gateway url, got %q", cfg.GatewayWebURL)
 	}
+	if cfg.WechatURL != "http://127.0.0.1:8087" {
+		t.Fatalf("expected default wechat url, got %q", cfg.WechatURL)
+	}
 }
 
 func TestLoadPrefersPrimaryAndAliasEnv(t *testing.T) {
@@ -162,6 +168,8 @@ func TestLoadPrefersPrimaryAndAliasEnv(t *testing.T) {
 	t.Setenv("YUQING_FORESIGHT_NEWSFLASH_INTERVAL_SEC", "121")
 	t.Setenv("YUQING_COINDESK_ZH_LATEST_INTERVAL_SEC", "301")
 	t.Setenv("YUQING_PANEWS_NEWSFLASH_INTERVAL_SEC", "122")
+	t.Setenv("YUQING_WECHAT_ADDR", ":18087")
+	t.Setenv("YUQING_WECHAT_URL", "http://127.0.0.1:18087")
 
 	cfg := Load()
 
@@ -221,6 +229,9 @@ func TestLoadPrefersPrimaryAndAliasEnv(t *testing.T) {
 	}
 	if cfg.PANewsNewsflashInterval != 122*time.Second {
 		t.Fatalf("expected panews interval loaded, got %s", cfg.PANewsNewsflashInterval)
+	}
+	if cfg.WechatAddr != ":18087" || cfg.WechatURL != "http://127.0.0.1:18087" {
+		t.Fatalf("expected wechat service config loaded, got addr=%q url=%q", cfg.WechatAddr, cfg.WechatURL)
 	}
 }
 

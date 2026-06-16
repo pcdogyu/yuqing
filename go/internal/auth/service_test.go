@@ -151,6 +151,16 @@ func TestHandleCreateToken(t *testing.T) {
 	}
 }
 
+func TestAuthRouterDoesNotServeWechatRoutes(t *testing.T) {
+	svc := NewService(config.Config{SessionTTL: time.Hour}, newFakeAuthStore())
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/wechat/checkLogin?sceneStr=scene-1", nil)
+	rr := httptest.NewRecorder()
+	svc.Router().ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected auth router to leave wechat routes unserved, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
 type fakeAuthStore struct {
 	users            map[int64]model.User
 	sessions         map[string]model.Session

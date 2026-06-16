@@ -14,7 +14,7 @@ import (
 )
 
 func TestWechatProxyRoutes(t *testing.T) {
-	auth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	wechat := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/wechat/checkLogin":
 			if r.URL.Query().Get("sceneStr") != "scene-1" {
@@ -53,11 +53,11 @@ func TestWechatProxyRoutes(t *testing.T) {
 			t.Fatalf("unexpected upstream path: %s", r.URL.Path)
 		}
 	}))
-	defer auth.Close()
+	defer wechat.Close()
 
 	svc := &Server{
 		cfg: config.Config{
-			AuthURL: auth.URL,
+			WechatURL: wechat.URL,
 		},
 		client: resty.New(),
 	}
@@ -96,7 +96,7 @@ func TestWechatProxyRoutes(t *testing.T) {
 }
 
 func TestWechatAuthURLPreservesQuery(t *testing.T) {
-	svc := &Server{cfg: config.Config{AuthURL: "http://127.0.0.1:8081"}}
+	svc := &Server{cfg: config.Config{WechatURL: "http://127.0.0.1:8087"}}
 	req := httptest.NewRequest(http.MethodGet, "/wechat/checkLogin?sceneStr=scene-1&foo=bar", nil)
 	target, err := svc.wechatAuthURL(req, "/checkLogin", "session-abc")
 	if err != nil {
@@ -108,5 +108,8 @@ func TestWechatAuthURLPreservesQuery(t *testing.T) {
 	}
 	if parsed.Query().Get("sceneStr") != "scene-1" || parsed.Query().Get("foo") != "bar" || parsed.Query().Get("session_token") != "session-abc" {
 		t.Fatalf("unexpected target url: %s", target)
+	}
+	if parsed.Host != "127.0.0.1:8087" {
+		t.Fatalf("expected wechat-service host, got %s", parsed.Host)
 	}
 }

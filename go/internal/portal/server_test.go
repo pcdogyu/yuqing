@@ -3964,7 +3964,7 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusNotFound, "message": "not found", "data": nil})
 	}))
 
-	srv := &Server{cfg: config.Config{ContentURL: content.URL, AuthURL: auth.URL, NLPURL: nlpServer.URL, GatewayWebURL: ocrImage.URL, AnalysisURL: analysis.URL, CrawlerURL: crawler.URL, ServiceToken: "test-token"}, client: resty.New().SetHeader("X-Service-Token", "test-token"), templates: NewServer(config.Config{}).templates}
+	srv := &Server{cfg: config.Config{ContentURL: content.URL, AuthURL: auth.URL, WechatURL: auth.URL, NLPURL: nlpServer.URL, GatewayWebURL: ocrImage.URL, AnalysisURL: analysis.URL, CrawlerURL: crawler.URL, ServiceToken: "test-token"}, client: resty.New().SetHeader("X-Service-Token", "test-token"), templates: NewServer(config.Config{}).templates}
 	return srv, func() {
 		ocrImage.Close()
 		nlpServer.Close()

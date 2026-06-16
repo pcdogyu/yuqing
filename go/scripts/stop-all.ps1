@@ -24,6 +24,7 @@ Get-ChildItem -Path $pidDir -Filter "*.pid" | ForEach-Object {
 
 foreach ($name in @(
     "auth-service",
+    "wechat-service",
     "content-service",
     "crawler-service",
     "analysis-service",

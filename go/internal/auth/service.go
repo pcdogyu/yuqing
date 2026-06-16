@@ -64,6 +64,15 @@ func (s *Service) Router() http.Handler {
 	return r
 }
 
+func (s *Service) WechatRouter() http.Handler {
+	r := chi.NewRouter()
+	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]string{"status": "ok"})
+	})
+	s.WechatRoutes(r)
+	return r
+}
+
 func (s *Service) Routes(r chi.Router) {
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]string{"status": "ok"})
@@ -80,6 +89,9 @@ func (s *Service) Routes(r chi.Router) {
 	r.Get("/api/v1/users/{id}", s.handleGetUser)
 	r.Put("/api/v1/users/{id}", s.handleUpdateUser)
 	r.Put("/api/v1/users/{id}/password", s.handleUpdateUserPassword)
+}
+
+func (s *Service) WechatRoutes(r chi.Router) {
 	r.Get("/api/v1/wechat/getQrCode", s.handleWechatGetQRCode)
 	r.Get("/api/v1/wechat/getBindQrCode", s.handleWechatGetBindQRCode)
 	r.Get("/api/v1/wechat/checkBind", s.handleWechatCheckBind)

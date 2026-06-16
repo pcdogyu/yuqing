@@ -190,6 +190,7 @@ func TestOperationsAndAlertsAPI(t *testing.T) {
 		DatabasePath:   filepath.Join(t.TempDir(), "yuqing.db"),
 		GatewayWebURL:  healthy.URL,
 		AuthURL:        healthy.URL,
+		WechatURL:      healthy.URL,
 		ContentURL:     healthy.URL,
 		CrawlerURL:     healthy.URL,
 		AnalysisURL:    healthy.URL,
@@ -215,7 +216,7 @@ func TestOperationsAndAlertsAPI(t *testing.T) {
 	if err := json.Unmarshal(opsRR.Body.Bytes(), &opsEnvelope); err != nil {
 		t.Fatalf("unmarshal operations: %v", err)
 	}
-	if len(opsEnvelope.Data.Services) != 7 || len(opsEnvelope.Data.FailedTaskRuns) != 2 {
+	if len(opsEnvelope.Data.Services) != 8 || len(opsEnvelope.Data.FailedTaskRuns) != 2 {
 		t.Fatalf("unexpected operations summary: %+v", opsEnvelope.Data)
 	}
 	if len(opsEnvelope.Data.SchedulerJobs) != 1 || opsEnvelope.Data.SchedulerJobs[0].Name != "analysis-refresh" {

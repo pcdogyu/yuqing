@@ -4,7 +4,8 @@ Go 版已经从早期 `jin10` 采集骨架收敛为一套可运行的一期多�
 
 - `gateway-web`：统一入口、搜索入口与兼容跳转
 - `portal-web`：SSR 门户、正式工作台页面与 legacy 下线拦截
-- `auth-service`：登录、会话、API Token、微信登录/绑定
+- `auth-service`：登录、会话、API Token
+- `wechat-service`：微信登录、绑定、token 与公众号回调兼容接口
 - `content-service`：项目组、项目、监测规则、文章、报告、公告、反馈、任务记录、偏好、弹窗、邮件配置
 - `crawler-service`：抓取执行与抓取运行记录
 - `analysis-service`：总览、趋势、来源分布、关键词热点、分析刷新
@@ -110,6 +111,7 @@ http://127.0.0.1/crypto?pair=eth
 
 - `gateway-web`: `80`
 - `auth-service`: `8081`
+- `wechat-service`: `8087`
 - `content-service`: `8082`
 - `crawler-service`: `8083`
 - `analysis-service`: `8084`
@@ -129,6 +131,7 @@ Windows PowerShell:
 ```powershell
 cd D:\yuqing\go
 go run .\cmd\auth-service
+go run .\cmd\wechat-service
 go run .\cmd\content-service
 go run .\cmd\crawler-service
 go run .\cmd\analysis-service
