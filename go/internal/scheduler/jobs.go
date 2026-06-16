@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -42,6 +43,12 @@ type jobDefinition struct {
 	Interval       time.Duration
 	Enabled        bool
 	Run            func(context.Context) error
+}
+
+type crawlLinkHeartbeatSite struct {
+	SourceType string
+	Name       string
+	URL        string
 }
 
 func (w *Worker) Jobs() []Job {
@@ -190,6 +197,14 @@ func parseCronSchedule(spec string) (cron.Schedule, error) {
 
 func (w *Worker) jobDefinitions() []jobDefinition {
 	return []jobDefinition{
+		withJobMeta(jobDefinition{
+			Name:        "crawl-link-heartbeat",
+			Group:       "crawl",
+			Description: "所有抓取站点链接心跳检测，每 300 秒验证一次已配置站点可访问性",
+			Interval:    5 * time.Minute,
+			Enabled:     true,
+			Run:         w.runCrawlLinkHeartbeat,
+		}, "CrawlLinkHeartbeat", "0 0/5 * * * ?"),
 		withJobMeta(jobDefinition{
 			Name:        "flash-crawl",
 			Group:       "crawl",
@@ -488,6 +503,99 @@ func (w *Worker) runCrawl(ctx context.Context, sourceType string) error {
 			detail = resp.Status()
 		}
 		return fmt.Errorf("crawl %s failed: %s", sourceType, detail)
+	}
+	return nil
+}
+
+func (w *Worker) runCrawlLinkHeartbeat(ctx context.Context) error {
+	return w.runCrawlLinkHeartbeatForSites(ctx, w.crawlLinkHeartbeatSites())
+}
+
+func (w *Worker) crawlLinkHeartbeatSites() []crawlLinkHeartbeatSite {
+	sites := []crawlLinkHeartbeatSite{
+		{SourceType: "flash", Name: "金十快讯", URL: "https://www.jin10.com/"},
+		{SourceType: "headline", Name: "金十头条", URL: "https://xnews.jin10.com/"},
+	}
+	if w.cfg.Jin10FullEnabled {
+		sites = append(sites, crawlLinkHeartbeatSite{SourceType: "jin10_full", Name: "金十全站", URL: "https://www.jin10.com/"})
+	}
+	sites = append(sites,
+		crawlLinkHeartbeatSite{SourceType: "eastmoney_kuaixun", Name: "东方财富快讯", URL: w.cfg.EastMoneyKuaixunURL},
+		crawlLinkHeartbeatSite{SourceType: "foresight_newsflash", Name: "Foresight News 快讯", URL: w.cfg.ForesightNewsflashURL},
+		crawlLinkHeartbeatSite{SourceType: "coindesk_zh_latest", Name: "CoinDesk 中文最新", URL: w.cfg.CoinDeskZHLatestURL},
+		crawlLinkHeartbeatSite{SourceType: "panews_newsflash", Name: "PANews 快讯", URL: w.cfg.PANewsNewsflashURL},
+		crawlLinkHeartbeatSite{SourceType: "crypto_x", Name: "Crypto X", URL: w.cfg.CryptoXURL},
+		crawlLinkHeartbeatSite{SourceType: "crypto_telegram", Name: "Crypto Telegram", URL: w.cfg.CryptoTelegramURL},
+		crawlLinkHeartbeatSite{SourceType: "a_stock_auction", Name: "A股集合竞价行情", URL: w.cfg.AStockAuctionURL},
+	)
+	return slices.DeleteFunc(sites, func(site crawlLinkHeartbeatSite) bool {
+		return strings.TrimSpace(site.URL) == ""
+	})
+}
+
+func (w *Worker) runCrawlLinkHeartbeatForSites(ctx context.Context, sites []crawlLinkHeartbeatSite) error {
+	startedAt := time.Now().UTC()
+	okCount := 0
+	failed := make([]string, 0)
+	for _, site := range sites {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		site.URL = strings.TrimSpace(site.URL)
+		begin := time.Now()
+		resp, err := w.client.R().
+			SetContext(ctx).
+			SetHeader("Accept", "*/*").
+			SetHeader("User-Agent", "yuqing-crawl-heartbeat/1.0").
+			Get(site.URL)
+		elapsed := time.Since(begin)
+		if err != nil {
+			failed = append(failed, fmt.Sprintf("%s: %v", site.SourceType, err))
+			log.Warn().
+				Err(err).
+				Str("service", "scheduler-service").
+				Str("task", "crawl-link-heartbeat").
+				Str("source_type", site.SourceType).
+				Str("site", site.Name).
+				Str("url", site.URL).
+				Dur("duration", elapsed).
+				Msg("crawl link heartbeat failed")
+			continue
+		}
+		if resp.StatusCode() < http.StatusOK || resp.StatusCode() >= http.StatusBadRequest {
+			failed = append(failed, fmt.Sprintf("%s: %s", site.SourceType, resp.Status()))
+			log.Warn().
+				Str("service", "scheduler-service").
+				Str("task", "crawl-link-heartbeat").
+				Str("source_type", site.SourceType).
+				Str("site", site.Name).
+				Str("url", site.URL).
+				Int("status", resp.StatusCode()).
+				Dur("duration", elapsed).
+				Msg("crawl link heartbeat failed")
+			continue
+		}
+		okCount++
+		log.Info().
+			Str("service", "scheduler-service").
+			Str("task", "crawl-link-heartbeat").
+			Str("source_type", site.SourceType).
+			Str("site", site.Name).
+			Str("url", site.URL).
+			Int("status", resp.StatusCode()).
+			Dur("duration", elapsed).
+			Msg("crawl link heartbeat ok")
+	}
+
+	finishedAt := time.Now().UTC()
+	status := "success"
+	message := fmt.Sprintf("crawl link heartbeat ok=%d failed=%d", okCount, len(failed))
+	if len(failed) > 0 {
+		status = "failed"
+		message = message + "; " + strings.Join(failed, "; ")
+	}
+	if recordErr := w.recordTaskRun(ctx, "crawl-link-heartbeat", status, message, startedAt, &finishedAt); recordErr != nil {
+		log.Warn().Err(recordErr).Str("task", "crawl-link-heartbeat").Msg("record scheduler task run failed")
 	}
 	return nil
 }

@@ -182,12 +182,14 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	if err := json.Unmarshal(listRR.Body.Bytes(), &listEnvelope); err != nil {
 		t.Fatalf("unmarshal jobs list: %v", err)
 	}
-	if len(listEnvelope.Data) != 23 {
-		t.Fatalf("expected 23 scheduler jobs, got %d", len(listEnvelope.Data))
+	if len(listEnvelope.Data) != 25 {
+		t.Fatalf("expected 25 scheduler jobs, got %d", len(listEnvelope.Data))
 	}
-	var hotJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, aStockMorningJob, aStockAfternoonJob Job
+	var heartbeatJob, hotJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, aStockMorningJob, aStockAfternoonJob Job
 	for _, job := range listEnvelope.Data {
 		switch job.Name {
+		case "crawl-link-heartbeat":
+			heartbeatJob = job
 		case "hot-data-refresh":
 			hotJob = job
 		case "crypto-x-crawl":
@@ -208,6 +210,9 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	}
 	if hotJob.JavaQuartzName != "HotDataSchedule" || hotJob.Cron == "" || hotJob.NextRunAt == nil {
 		t.Fatalf("expected hot job runtime metadata, got %+v", hotJob)
+	}
+	if heartbeatJob.JavaQuartzName != "CrawlLinkHeartbeat" || heartbeatJob.Cron != "0 0/5 * * * ?" || heartbeatJob.IntervalSec != 300 || heartbeatJob.NextRunAt == nil {
+		t.Fatalf("expected crawl link heartbeat metadata, got %+v", heartbeatJob)
 	}
 	if cryptoXJob.Name == "" || cryptoTelegramJob.Name == "" {
 		t.Fatalf("expected crypto scheduler jobs, got %+v", listEnvelope.Data)
@@ -299,6 +304,60 @@ func TestRunAStockRecommendationCrawlsSourcesAndQueriesWindow(t *testing.T) {
 	sort.Strings(sources)
 	if strings.Join(sources, ",") != "eastmoney_kuaixun,flash,headline,jin10_full" {
 		t.Fatalf("expected all A股 sources to be crawled, got %v", sources)
+	}
+}
+
+func TestRunCrawlLinkHeartbeatRecordsFailures(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "scheduler-heartbeat.db")
+	store, err := sqlitestore.New(dbPath)
+	if err != nil {
+		t.Fatalf("New store error: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/ok":
+			w.WriteHeader(http.StatusOK)
+		case "/redirect":
+			w.WriteHeader(http.StatusFound)
+		case "/bad":
+			http.Error(w, "bad upstream", http.StatusBadGateway)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	worker := NewWorker(config.Config{
+		DatabasePath:      dbPath,
+		HTTPTimeout:       time.Second,
+		ExternalRetryWait: time.Millisecond,
+	})
+	defer func() { _ = worker.Close() }()
+
+	err = worker.runCrawlLinkHeartbeatForSites(ctx, []crawlLinkHeartbeatSite{
+		{SourceType: "ok_site", Name: "OK site", URL: server.URL + "/ok"},
+		{SourceType: "redirect_site", Name: "Redirect site", URL: server.URL + "/redirect"},
+		{SourceType: "bad_site", Name: "Bad site", URL: server.URL + "/bad"},
+	})
+	if err != nil {
+		t.Fatalf("runCrawlLinkHeartbeatForSites error: %v", err)
+	}
+
+	runs, err := store.ListTaskRuns(ctx, 1)
+	if err != nil {
+		t.Fatalf("ListTaskRuns error: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected one heartbeat task run, got %+v", runs)
+	}
+	if runs[0].TaskName != "crawl-link-heartbeat" || runs[0].Status != "failed" {
+		t.Fatalf("expected failed heartbeat task run, got %+v", runs[0])
+	}
+	if !strings.Contains(runs[0].Message, "ok=2 failed=1") || !strings.Contains(runs[0].Message, "bad_site") {
+		t.Fatalf("expected heartbeat failure summary, got %q", runs[0].Message)
 	}
 }
 
