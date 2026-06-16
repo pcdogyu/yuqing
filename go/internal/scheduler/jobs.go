@@ -260,6 +260,26 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 			},
 		}, "PANewsNewsflashCrawler", "0 1/2 * * * ?"),
 		withJobMeta(jobDefinition{
+			Name:        "a-stock-morning-recommendation",
+			Group:       "a-stock",
+			Description: "A股上午推荐：09:25 抓取 09:00-09:25 财经新闻并生成相关股票推荐",
+			Interval:    24 * time.Hour,
+			Enabled:     true,
+			Run: func(ctx context.Context) error {
+				return w.runAStockRecommendation(ctx, "morning")
+			},
+		}, "AStockMorningRecommendation", "0 25 9 * * ?"),
+		withJobMeta(jobDefinition{
+			Name:        "a-stock-afternoon-recommendation",
+			Group:       "a-stock",
+			Description: "A股下午推荐：12:50 抓取 09:26-12:50 财经新闻并生成相关股票推荐",
+			Interval:    24 * time.Hour,
+			Enabled:     true,
+			Run: func(ctx context.Context) error {
+				return w.runAStockRecommendation(ctx, "afternoon")
+			},
+		}, "AStockAfternoonRecommendation", "0 50 12 * * ?"),
+		withJobMeta(jobDefinition{
 			Name:        "analysis-refresh",
 			Group:       "analysis",
 			Description: "AnalysisQuartz 等价的系统分析快照刷新",

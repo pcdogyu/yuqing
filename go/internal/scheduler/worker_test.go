@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -156,10 +157,10 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	if err := json.Unmarshal(listRR.Body.Bytes(), &listEnvelope); err != nil {
 		t.Fatalf("unmarshal jobs list: %v", err)
 	}
-	if len(listEnvelope.Data) != 21 {
-		t.Fatalf("expected 21 scheduler jobs, got %d", len(listEnvelope.Data))
+	if len(listEnvelope.Data) != 23 {
+		t.Fatalf("expected 23 scheduler jobs, got %d", len(listEnvelope.Data))
 	}
-	var hotJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob Job
+	var hotJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, aStockMorningJob, aStockAfternoonJob Job
 	for _, job := range listEnvelope.Data {
 		switch job.Name {
 		case "hot-data-refresh":
@@ -174,6 +175,10 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 			coindeskJob = job
 		case "panews-newsflash-crawl":
 			panewsJob = job
+		case "a-stock-morning-recommendation":
+			aStockMorningJob = job
+		case "a-stock-afternoon-recommendation":
+			aStockAfternoonJob = job
 		}
 	}
 	if hotJob.JavaQuartzName != "HotDataSchedule" || hotJob.Cron == "" || hotJob.NextRunAt == nil {
@@ -187,6 +192,12 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	}
 	if panewsJob.Name == "" {
 		t.Fatalf("expected panews scheduler job, got %+v", listEnvelope.Data)
+	}
+	if aStockMorningJob.Cron != "0 25 9 * * ?" || aStockMorningJob.NextRunAt == nil {
+		t.Fatalf("expected A股 morning recommendation cron metadata, got %+v", aStockMorningJob)
+	}
+	if aStockAfternoonJob.Cron != "0 50 12 * * ?" || aStockAfternoonJob.NextRunAt == nil {
+		t.Fatalf("expected A股 afternoon recommendation cron metadata, got %+v", aStockAfternoonJob)
 	}
 	if cryptoXJob.Enabled || cryptoTelegramJob.Enabled || foresightJob.Enabled || coindeskJob.Enabled || panewsJob.Enabled {
 		t.Fatalf("expected crypto jobs disabled without endpoint urls, got x=%+v telegram=%+v foresight=%+v coindesk=%+v panews=%+v", cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob)
@@ -221,6 +232,48 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 		if job.Name == "hot-data-refresh" && (job.LastStatus != "success" || job.LastStartedAt == nil || job.LastFinishedAt == nil) {
 			t.Fatalf("expected last run metadata after manual trigger, got %+v", job)
 		}
+	}
+}
+
+func TestRunAStockRecommendationCrawlsSourcesAndQueriesWindow(t *testing.T) {
+	var sources []string
+	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/admin/tasks/crawl" {
+			t.Fatalf("unexpected crawler request: %s %s", r.Method, r.URL.String())
+		}
+		if r.Header.Get("X-Service-Token") != "secret-token" {
+			t.Fatalf("expected service token header, got %q", r.Header.Get("X-Service-Token"))
+		}
+		sources = append(sources, r.URL.Query().Get("source_type"))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer crawler.Close()
+
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/articles" {
+			t.Fatalf("unexpected content request: %s", r.URL.String())
+		}
+		if r.URL.Query().Get("start") != "2026-06-16T01:26:00Z" || r.URL.Query().Get("end") != "2026-06-16T04:50:59Z" {
+			t.Fatalf("unexpected A股 afternoon window query: %s", r.URL.RawQuery)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer content.Close()
+
+	worker := NewWorker(config.Config{
+		CrawlerURL:            crawler.URL,
+		ContentURL:            content.URL,
+		HTTPTimeout:           time.Second,
+		SchedulerCrawlTimeout: time.Second,
+		ServiceToken:          "secret-token",
+	})
+
+	if err := worker.runAStockRecommendationForDate(context.Background(), "2026-06-16", "afternoon"); err != nil {
+		t.Fatalf("runAStockRecommendationForDate error: %v", err)
+	}
+	sort.Strings(sources)
+	if strings.Join(sources, ",") != "eastmoney_kuaixun,flash,headline,jin10_full" {
+		t.Fatalf("expected all A股 sources to be crawled, got %v", sources)
 	}
 }
 

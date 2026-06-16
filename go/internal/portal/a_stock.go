@@ -18,6 +18,9 @@ import (
 
 type aStockContext struct {
 	Date            string
+	Period          string
+	PeriodLabel     string
+	WindowLabel     string
 	WindowStart     time.Time
 	WindowEnd       time.Time
 	Articles        []model.Item
@@ -90,6 +93,12 @@ type aStockStockPick struct {
 	Name string
 }
 
+type aStockPeriod struct {
+	Key         string
+	Label       string
+	WindowLabel string
+}
+
 func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user any) {
 	if r.Method == http.MethodPost {
 		s.handleAStockPageAction(w, r)
@@ -101,7 +110,8 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 	}
 
 	strategyDate := normalizeAStockStrategyDate(r.URL.Query().Get("date"))
-	ctx := s.loadAStockContext(strategyDate)
+	period := normalizeAStockPeriod(r.URL.Query().Get("period"))
+	ctx := s.loadAStockContext(strategyDate, period.Key)
 	message := strings.TrimSpace(r.URL.Query().Get("msg"))
 	if message == "" {
 		message = ctx.LoadMessage
@@ -127,6 +137,9 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-history-card{min-width:220px;padding:12px;border:1px solid #ece7dc;border-radius:8px;background:#faf8f2}
 		.astock-history-date{font-weight:700;margin-bottom:8px}
 		.astock-history-stocks{display:flex;flex-direction:column;gap:5px;color:#223}
+		.astock-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+		.astock-tab{display:inline-flex;align-items:center;padding:8px 12px;border:1px solid #d6ccbb;border-radius:8px;color:#214e34;text-decoration:none;background:#fff}
+		.astock-tab.active{background:#214e34;color:#fff;border-color:#214e34}
 		.astock-up{color:#b3261e;font-weight:700}
 		.astock-down{color:#1b7f3a;font-weight:700}
 		.astock-flat{color:#6a6257}
@@ -140,13 +153,28 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 
 	b.WriteString(`<section class="astock-hero"><div class="astock-card astock-soft"><h2>A股策略工作台</h2><p>`)
 	b.WriteString(fmt.Sprintf(`欢迎，用户 %d。`, userIDFromMap(user)))
-	b.WriteString(`本页用于承载 09:00-09:25 财经新闻热点归纳、推荐股票和消息回测结果。</p><p class="astock-muted">仅供策略研究和回测，不构成投资建议。</p></div><div class="astock-card"><form method="get"><label>策略日期</label><input type="date" name="date" value="`)
+	b.WriteString(`本页用于承载上午、下午财经新闻热点归纳、推荐股票和消息回测结果。</p><p class="astock-muted">每日 09:25 自动抓取 09:00-09:25 新闻生成上午推荐；12:50 自动抓取 09:26-12:50 新闻生成下午推荐。仅供策略研究和回测，不构成投资建议。</p>`)
+	renderAStockPeriodTabs(&b, ctx.Date, ctx.Period)
+	b.WriteString(`</div><div class="astock-card"><form method="get"><label>策略日期</label><input type="date" name="date" value="`)
 	b.WriteString(html.EscapeString(strategyDate))
-	b.WriteString(`"><button type="submit">查看日期</button></form></div></section>`)
+	b.WriteString(`"><label>推荐窗口</label><select name="period">`)
+	for _, option := range aStockPeriods() {
+		b.WriteString(`<option value="`)
+		b.WriteString(html.EscapeString(option.Key))
+		b.WriteString(`"`)
+		if option.Key == ctx.Period {
+			b.WriteString(` selected`)
+		}
+		b.WriteString(`>`)
+		b.WriteString(html.EscapeString(option.Label))
+		b.WriteString(`</option>`)
+	}
+	b.WriteString(`</select><button type="submit">查看日期</button></form></div></section>`)
 
 	b.WriteString(`<section><h2>顶部概览</h2><div class="astock-grid">`)
 	writeAStockMetric(&b, "策略日期", ctx.Date)
-	writeAStockMetric(&b, "新闻窗口", "09:00-09:25")
+	writeAStockMetric(&b, "推荐窗口", ctx.PeriodLabel)
+	writeAStockMetric(&b, "新闻窗口", ctx.WindowLabel)
 	writeAStockMetric(&b, "财经新闻数", fmt.Sprintf("%d", len(ctx.Articles)))
 	writeAStockMetric(&b, "候选热点数", fmt.Sprintf("%d", len(ctx.Hotspots)))
 	writeAStockMetric(&b, "推荐股票数", fmt.Sprintf("%d", len(ctx.Recommendations)))
@@ -165,13 +193,15 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 	} {
 		b.WriteString(`<form method="post"><input type="hidden" name="date" value="`)
 		b.WriteString(html.EscapeString(ctx.Date))
+		b.WriteString(`"><input type="hidden" name="period" value="`)
+		b.WriteString(html.EscapeString(ctx.Period))
 		b.WriteString(`"><input type="hidden" name="action" value="`)
 		b.WriteString(html.EscapeString(action.Name))
 		b.WriteString(`"><button type="submit">`)
 		b.WriteString(html.EscapeString(action.Label))
 		b.WriteString(`</button></form>`)
 	}
-	b.WriteString(`</div><p class="astock-muted">已接入已有新闻抓取链路：抓取按钮会触发金十快讯、金十资讯、金十全站信息和东方财富网快讯，页面按策略日期 09:00-09:25 聚合财经新闻。行情接口读取 `)
+	b.WriteString(`</div><p class="astock-muted">已接入已有新闻抓取链路：抓取按钮会触发金十快讯、金十资讯、金十全站信息和东方财富网快讯，页面按策略日期和推荐窗口聚合财经新闻。行情接口读取 `)
 	b.WriteString(aStockMarketConfigHint())
 	b.WriteString(`，用于展示昨日收盘价、昨日涨跌幅和消息回测。</p><div class="astock-source-list"><span class="astock-badge">flash: https://www.jin10.com/</span><span class="astock-badge">headline: https://xnews.jin10.com/</span><span class="astock-badge">jin10_full: 金十全站</span><span class="astock-badge">eastmoney_kuaixun: 东方财富网</span></div></section>`)
 
@@ -189,11 +219,13 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request) 
 	if date := normalizeAStockStrategyDate(r.FormValue("date")); date != "" {
 		query.Set("date", date)
 	}
+	period := normalizeAStockPeriod(r.FormValue("period"))
+	query.Set("period", period.Key)
 	switch strings.TrimSpace(r.FormValue("action")) {
 	case "crawl":
 		query.Set("msg", s.triggerAStockCrawl())
 	case "generate":
-		query.Set("msg", "热点已按当前新闻窗口重新计算。")
+		query.Set("msg", period.Label+"热点已按当前新闻窗口重新计算。")
 	case "sync_market":
 		query.Set("msg", "行情已按当前策略日期刷新，页面已重新计算收盘价、涨跌幅和回测。")
 	case "refresh_backtest":
@@ -213,19 +245,25 @@ func writeAStockMetric(b *strings.Builder, label string, value string) {
 }
 
 func renderAStockNewsSection(b *strings.Builder, ctx aStockContext) {
-	b.WriteString(`<section><h2>09:00-09:25 财经新闻</h2>`)
+	b.WriteString(`<section><h2>`)
+	b.WriteString(html.EscapeString(ctx.WindowLabel))
+	b.WriteString(` 财经新闻</h2>`)
 	if len(ctx.Articles) == 0 {
 		b.WriteString(`<div class="astock-empty">暂无数据：请点击“抓取 A 股新闻”，或确认 `)
 		b.WriteString(html.EscapeString(ctx.Date))
-		b.WriteString(` 09:00-09:25 窗口内已有财经新闻源入库。</div><table><tr><th>标题</th><th>来源</th><th>时间</th><th>命中关键词</th></tr><tr><td colspan="4">暂无 09:00-09:25 新闻</td></tr></table></section>`)
+		b.WriteString(` `)
+		b.WriteString(html.EscapeString(ctx.WindowLabel))
+		b.WriteString(` 窗口内已有财经新闻源入库。</div><table><tr><th>标题</th><th>来源</th><th>时间</th><th>命中关键词</th></tr><tr><td colspan="4">暂无 `)
+		b.WriteString(html.EscapeString(ctx.WindowLabel))
+		b.WriteString(` 新闻</td></tr></table></section>`)
 		return
 	}
 	b.WriteString(`<table><tr><th>标题</th><th>来源</th><th>时间</th><th>命中关键词</th></tr>`)
 	for _, item := range ctx.Articles {
 		b.WriteString(`<tr><td><a class="inline" href="/articles/`)
 		b.WriteString(fmt.Sprintf("%d", item.ID))
-		b.WriteString(`?return_to=%2Fa-stock%3Fdate%3D`)
-		b.WriteString(url.QueryEscape(ctx.Date))
+		b.WriteString(`?return_to=`)
+		b.WriteString(url.QueryEscape("/a-stock?date=" + ctx.Date + "&period=" + ctx.Period))
 		b.WriteString(`">`)
 		b.WriteString(html.EscapeString(item.Title))
 		b.WriteString(`</a></td><td>`)
@@ -376,10 +414,14 @@ func buildAStockRecommendationHistory(strategyDate string, recommendations []aSt
 	return []aStockRecommendationHistory{{Date: strategyDate, Stocks: stocks}}
 }
 
-func (s *Server) loadAStockContext(strategyDate string) aStockContext {
-	start, end := aStockWindow(strategyDate)
+func (s *Server) loadAStockContext(strategyDate string, periodKey string) aStockContext {
+	period := normalizeAStockPeriod(periodKey)
+	start, end := aStockWindow(strategyDate, period.Key)
 	ctx := aStockContext{
 		Date:           strategyDate,
+		Period:         period.Key,
+		PeriodLabel:    period.Label,
+		WindowLabel:    period.WindowLabel,
 		WindowStart:    start,
 		WindowEnd:      end,
 		BacktestStatus: "等待行情接口",
@@ -919,7 +961,7 @@ func (s *Server) triggerAStockCrawl() string {
 	return "A股新闻抓取已触发：金十快讯、金十资讯、金十全站信息、东方财富网"
 }
 
-func aStockWindow(strategyDate string) (time.Time, time.Time) {
+func aStockWindow(strategyDate string, periodKey string) (time.Time, time.Time) {
 	location, err := time.LoadLocation("Asia/Shanghai")
 	if err != nil {
 		location = time.FixedZone("UTC+8", 8*60*60)
@@ -928,8 +970,13 @@ func aStockWindow(strategyDate string) (time.Time, time.Time) {
 	if err != nil {
 		day = time.Now().In(location)
 	}
-	start := time.Date(day.Year(), day.Month(), day.Day(), 9, 0, 0, 0, location)
-	end := time.Date(day.Year(), day.Month(), day.Day(), 9, 25, 59, 0, location)
+	period := normalizeAStockPeriod(periodKey)
+	startHour, startMinute, endHour, endMinute := 9, 0, 9, 25
+	if period.Key == "afternoon" {
+		startHour, startMinute, endHour, endMinute = 9, 26, 12, 50
+	}
+	start := time.Date(day.Year(), day.Month(), day.Day(), startHour, startMinute, 0, 0, location)
+	end := time.Date(day.Year(), day.Month(), day.Day(), endHour, endMinute, 59, 0, location)
 	return start, end
 }
 
@@ -1076,4 +1123,39 @@ func normalizeAStockStrategyDate(raw string) string {
 		location = time.Local
 	}
 	return time.Now().In(location).Format("2006-01-02")
+}
+
+func aStockPeriods() []aStockPeriod {
+	return []aStockPeriod{
+		{Key: "morning", Label: "上午推荐", WindowLabel: "09:00-09:25"},
+		{Key: "afternoon", Label: "下午推荐", WindowLabel: "09:26-12:50"},
+	}
+}
+
+func normalizeAStockPeriod(raw string) aStockPeriod {
+	raw = strings.ToLower(strings.TrimSpace(raw))
+	for _, period := range aStockPeriods() {
+		if period.Key == raw {
+			return period
+		}
+	}
+	return aStockPeriods()[0]
+}
+
+func renderAStockPeriodTabs(b *strings.Builder, strategyDate string, selected string) {
+	b.WriteString(`<div class="astock-tabs">`)
+	for _, period := range aStockPeriods() {
+		b.WriteString(`<a class="astock-tab`)
+		if period.Key == selected {
+			b.WriteString(` active`)
+		}
+		b.WriteString(`" href="/a-stock?date=`)
+		b.WriteString(url.QueryEscape(strategyDate))
+		b.WriteString(`&period=`)
+		b.WriteString(url.QueryEscape(period.Key))
+		b.WriteString(`">`)
+		b.WriteString(html.EscapeString(period.Label))
+		b.WriteString(`</a>`)
+	}
+	b.WriteString(`</div>`)
 }

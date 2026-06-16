@@ -251,6 +251,11 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 	for _, want := range []string{
 		"A股策略工作台",
 		"09:00-09:25",
+		"09:26-12:50",
+		"每日 09:25",
+		"12:50 自动抓取",
+		"上午推荐",
+		"下午推荐",
 		"热点归纳",
 		"推荐股票",
 		"收盘价",
@@ -277,6 +282,46 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 	}
 	if strings.Contains(body, `body[data-page='a-stock'] header`) {
 		t.Fatalf("expected A股 page to keep shared header width, got %s", body)
+	}
+}
+
+func TestAStockPageLoadsAfternoonWindow(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/articles" {
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+		if !strings.Contains(r.URL.Query().Get("start"), "2026-06-16T01:26:00Z") || !strings.Contains(r.URL.Query().Get("end"), "2026-06-16T04:50:59Z") {
+			t.Fatalf("unexpected A股 afternoon window query: %s", r.URL.RawQuery)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    200,
+			"message": "ok",
+			"data": model.ItemListResult{
+				Items: []model.Item{
+					{ID: 601, SourceType: "eastmoney_kuaixun", Title: "午间低空经济订单增加", Summary: "无人机产业链升温", CapturedAt: time.Date(2026, 6, 16, 4, 42, 0, 0, time.UTC)},
+				},
+				Page:     1,
+				PageSize: 200,
+				Total:    1,
+			},
+		})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-16&period=afternoon", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"下午推荐", "09:26-12:50 财经新闻", "午间低空经济订单增加", "万丰奥威"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected A股 afternoon page to contain %q, got %s", want, body)
+		}
 	}
 }
 
