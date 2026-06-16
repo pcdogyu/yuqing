@@ -269,6 +269,8 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		"T+4 收盘价",
 		"T+5 收盘价",
 		"抓取全部财经信息",
+		"上午股票生成",
+		"下午股票生成",
 		"金十全站信息",
 		"jin10_full",
 		"东方财富网",
@@ -282,6 +284,27 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 	}
 	if strings.Contains(body, `body[data-page='a-stock'] header`) {
 		t.Fatalf("expected A股 page to keep shared header width, got %s", body)
+	}
+}
+
+func TestAStockStockGenerateActionsSelectPeriod(t *testing.T) {
+	srv := NewServer(config.Config{})
+	form := url.Values{"date": {"2026-06-16"}, "period": {"morning"}, "action": {"generate_afternoon_stock"}}
+	req := httptest.NewRequest(http.MethodPost, "/a-stock", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d", rr.Code)
+	}
+	loc := rr.Header().Get("Location")
+	if !strings.Contains(loc, "date=2026-06-16") || !strings.Contains(loc, "period=afternoon") {
+		t.Fatalf("expected afternoon redirect, got %q", loc)
+	}
+	decoded, _ := url.QueryUnescape(loc)
+	if !strings.Contains(decoded, "下午股票推荐已按") {
+		t.Fatalf("expected afternoon generation message, got %q", decoded)
 	}
 }
 

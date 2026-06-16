@@ -183,18 +183,21 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 
 	b.WriteString(`<section><h2>操作区</h2><div class="astock-actions">`)
 	for _, action := range []struct {
-		Name  string
-		Label string
+		Name   string
+		Label  string
+		Period string
 	}{
-		{Name: "crawl", Label: "抓取全部财经信息"},
-		{Name: "generate", Label: "生成今日热点"},
-		{Name: "sync_market", Label: "同步行情"},
-		{Name: "refresh_backtest", Label: "刷新回测结果"},
+		{Name: "crawl", Label: "抓取全部财经信息", Period: ctx.Period},
+		{Name: "generate_morning_stock", Label: "上午股票生成", Period: "morning"},
+		{Name: "generate_afternoon_stock", Label: "下午股票生成", Period: "afternoon"},
+		{Name: "generate", Label: "生成今日热点", Period: ctx.Period},
+		{Name: "sync_market", Label: "同步行情", Period: ctx.Period},
+		{Name: "refresh_backtest", Label: "刷新回测结果", Period: ctx.Period},
 	} {
 		b.WriteString(`<form method="post"><input type="hidden" name="date" value="`)
 		b.WriteString(html.EscapeString(ctx.Date))
 		b.WriteString(`"><input type="hidden" name="period" value="`)
-		b.WriteString(html.EscapeString(ctx.Period))
+		b.WriteString(html.EscapeString(action.Period))
 		b.WriteString(`"><input type="hidden" name="action" value="`)
 		b.WriteString(html.EscapeString(action.Name))
 		b.WriteString(`"><button type="submit">`)
@@ -224,6 +227,14 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request) 
 	switch strings.TrimSpace(r.FormValue("action")) {
 	case "crawl":
 		query.Set("msg", s.triggerAStockCrawl())
+	case "generate_morning_stock":
+		period = normalizeAStockPeriod("morning")
+		query.Set("period", period.Key)
+		query.Set("msg", "上午股票推荐已按 09:00-09:25 新闻窗口生成。")
+	case "generate_afternoon_stock":
+		period = normalizeAStockPeriod("afternoon")
+		query.Set("period", period.Key)
+		query.Set("msg", "下午股票推荐已按 09:26-12:50 新闻窗口生成。")
 	case "generate":
 		query.Set("msg", period.Label+"热点已按当前新闻窗口重新计算。")
 	case "sync_market":
