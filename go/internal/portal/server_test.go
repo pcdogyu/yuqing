@@ -414,36 +414,40 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"AI 算力政策加码", "半导体先进封装景气度提升", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "30天涨跌幅", "60天涨跌幅", "推荐历史", "10.50", "+1.25%", "+5.00%", "-12.50%", "50.20", "-0.60%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
+	for _, want := range []string{"AI 算力政策加码", "半导体先进封装景气度提升", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "30天涨跌幅", "60天涨跌幅", "推荐历史", "当日 2026-06-16", "前1日 2026-06-15", "前5日 2026-06-11", "10.50", "+1.25%", "+5.00%", "-12.50%", "50.20", "-0.60%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}
 	}
-	historyDate := strings.Index(body, `<div class="astock-history-date">2026-06-16</div>`)
-	if historyDate < 0 {
-		t.Fatalf("expected recommendation history date, got %s", body)
+	if strings.Contains(body, "astock-history-card") || strings.Contains(body, "astock-history-stocks") {
+		t.Fatalf("expected old recommendation history stock card to be removed, got %s", body)
 	}
-	historyStock := strings.Index(body[historyDate:], `<span>002230 科大讯飞</span>`)
-	if historyStock < 0 {
-		t.Fatalf("expected recommendation history to show date above stocks, got %s", body)
+	if !strings.Contains(body, `/a-stock?date=2026-06-15&period=morning`) {
+		t.Fatalf("expected recommendation history tab to link previous day, got %s", body)
 	}
 	if !strings.Contains(body, `class="astock-up"`) || !strings.Contains(body, `class="astock-down"`) {
 		t.Fatalf("expected A股 page to color上涨/下跌 percentages, got %s", body)
 	}
 }
 
-func TestAStockRecommendationHistoryRendersOldestDateFirst(t *testing.T) {
+func TestAStockRecommendationHistoryRendersDateTabs(t *testing.T) {
 	var b strings.Builder
-	renderAStockRecommendationHistory(&b, []aStockRecommendationHistory{
-		{Date: "2026-06-18", Stocks: []string{"600000 后一天"}},
-		{Date: "2026-06-16", Stocks: []string{"600547 山东黄金"}},
-	})
+	renderAStockRecommendationHistoryTabs(&b, "2026-06-18", "afternoon")
 
 	body := b.String()
-	first := strings.Index(body, "2026-06-16")
-	second := strings.Index(body, "2026-06-18")
-	if first < 0 || second < 0 || first > second {
-		t.Fatalf("expected oldest date to render first, got %s", body)
+	for _, want := range []string{
+		"推荐历史",
+		"当日 2026-06-18",
+		"前1日 2026-06-17",
+		"前5日 2026-06-13",
+		`/a-stock?date=2026-06-17&period=afternoon`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected history tabs to contain %q, got %s", want, body)
+		}
+	}
+	if strings.Contains(body, "astock-history-card") || strings.Contains(body, "山东黄金") {
+		t.Fatalf("expected history stock table/card to be removed, got %s", body)
 	}
 }
 
