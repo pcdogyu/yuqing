@@ -442,6 +442,104 @@ func TestAStockStockGenerateActionsSelectPeriod(t *testing.T) {
 	}
 }
 
+func TestAStockPageShowsBackfillCurrentWindowAction(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    200,
+			"message": "ok",
+			"data": model.ItemListResult{
+				Items:    []model.Item{},
+				Page:     1,
+				PageSize: 200,
+				Total:    0,
+			},
+		})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-16&period=morning", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"补抓当前窗口新闻", `name="action" value="backfill_window_news"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected backfill action %q, got %s", want, body)
+		}
+	}
+}
+
+func TestAStockBackfillWindowActionPassesMorningWindow(t *testing.T) {
+	var mu sync.Mutex
+	seen := map[string]bool{}
+	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/admin/tasks/crawl" {
+			t.Fatalf("unexpected crawler request: %s %s", r.Method, r.URL.String())
+		}
+		if r.URL.Query().Get("start") != "2026-06-16 09:00:00" || r.URL.Query().Get("end") != "2026-06-16 09:25:59" || r.URL.Query().Get("time_field") != "publish_time" {
+			t.Fatalf("unexpected backfill window query: %s", r.URL.RawQuery)
+		}
+		mu.Lock()
+		seen[r.URL.Query().Get("source_type")] = true
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "message": "ok"})
+	}))
+	defer crawler.Close()
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/articles" {
+			t.Fatalf("unexpected content request: %s", r.URL.String())
+		}
+		if r.URL.Query().Get("start") != "2026-06-16 09:00:00" || r.URL.Query().Get("end") != "2026-06-16 09:25:59" {
+			t.Fatalf("unexpected content window query: %s", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    200,
+			"message": "ok",
+			"data": model.ItemListResult{
+				Items: []model.Item{{
+					ID:         1,
+					SourceType: "flash",
+					Title:      "上午财经新闻",
+					CapturedAt: time.Date(2026, 6, 16, 1, 5, 0, 0, time.UTC),
+				}},
+				Page:     1,
+				PageSize: 200,
+				Total:    1,
+			},
+		})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{CrawlerURL: crawler.URL, ContentURL: content.URL})
+	form := url.Values{"date": {"2026-06-16"}, "period": {"morning"}, "action": {"backfill_window_news"}}
+	req := httptest.NewRequest(http.MethodPost, "/a-stock", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d", rr.Code)
+	}
+	for _, sourceType := range []string{"flash", "headline", "jin10_full", "eastmoney_kuaixun"} {
+		if !seen[sourceType] {
+			t.Fatalf("expected source %s to be backfilled, got %+v", sourceType, seen)
+		}
+	}
+	loc, _ := url.QueryUnescape(rr.Header().Get("Location"))
+	for _, want := range []string{"date=2026-06-16", "period=morning", "已补抓 2026-06-16 上午 09:00-09:25", "当前窗口已有 1 条财经新闻"} {
+		if !strings.Contains(loc, want) {
+			t.Fatalf("expected redirect message %q, got %q", want, loc)
+		}
+	}
+}
+
 func TestAStockPageExplainsMorningNoNews(t *testing.T) {
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

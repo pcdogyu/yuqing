@@ -225,6 +225,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		Period string
 	}{
 		{Name: "crawl", Label: "抓取全部财经信息", Period: ctx.Period},
+		{Name: "backfill_window_news", Label: "补抓当前窗口新闻", Period: ctx.Period},
 		{Name: "generate_morning_stock", Label: "重新生成上午推荐", Period: "morning"},
 		{Name: "generate_afternoon_stock", Label: "重新生成下午推荐", Period: "afternoon"},
 		{Name: "generate", Label: "生成今日热点", Period: ctx.Period},
@@ -264,6 +265,9 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request) 
 	switch strings.TrimSpace(r.FormValue("action")) {
 	case "crawl":
 		query.Set("msg", s.triggerAStockCrawl())
+	case "backfill_window_news":
+		date := normalizeAStockStrategyDate(r.FormValue("date"))
+		query.Set("msg", s.triggerAStockWindowCrawl(date, period.Key))
 	case "generate_morning_stock":
 		period = normalizeAStockPeriod("morning")
 		query.Set("period", period.Key)
@@ -1328,6 +1332,46 @@ func (s *Server) triggerAStockCrawl() string {
 		return fmt.Sprintf("A股新闻抓取部分触发：成功 %d 个，失败 %s", ok, strings.Join(failures, "、"))
 	}
 	return "A股新闻抓取已触发：金十快讯、金十资讯、金十全站信息、东方财富网"
+}
+
+func (s *Server) triggerAStockWindowCrawl(strategyDate string, periodKey string) string {
+	period := normalizeAStockPeriod(periodKey)
+	start, end := aStockWindow(strategyDate, period.Key)
+	sources := []string{"flash", "headline", "jin10_full", "eastmoney_kuaixun"}
+	ok := 0
+	failures := make([]string, 0)
+	for _, sourceType := range sources {
+		resp, err := s.client.R().
+			SetQueryParam("source_type", sourceType).
+			SetQueryParam("start", formatAStockPublishTime(start)).
+			SetQueryParam("end", formatAStockPublishTime(end)).
+			SetQueryParam("time_field", "publish_time").
+			Post(s.cfg.CrawlerURL + "/api/v1/admin/tasks/crawl")
+		if err != nil || !resp.IsSuccess() {
+			failures = append(failures, sourceType)
+			continue
+		}
+		ok++
+	}
+
+	countText := ""
+	if count, err := s.countAStockWindowNews(start, end); err == nil {
+		countText = fmt.Sprintf("当前窗口已有 %d 条财经新闻。", count)
+	}
+	windowText := fmt.Sprintf("%s %s %s", normalizeAStockStrategyDate(strategyDate), strings.TrimSuffix(period.Label, "推荐"), period.WindowLabel)
+	if len(failures) > 0 {
+		return fmt.Sprintf("已补抓 %s：成功 %d 个来源，失败 %s。%s", windowText, ok, strings.Join(failures, "、"), countText)
+	}
+	return fmt.Sprintf("已补抓 %s：金十快讯、金十资讯、金十全站信息、东方财富网。%s", windowText, countText)
+}
+
+func (s *Server) countAStockWindowNews(start time.Time, end time.Time) (int, error) {
+	result := model.ItemListResult{}
+	query := "/api/v1/articles?page=1&page_size=200&time_field=publish_time&start=" + url.QueryEscape(formatAStockPublishTime(start)) + "&end=" + url.QueryEscape(formatAStockPublishTime(end))
+	if err := s.getJSON(s.cfg.ContentURL+query, &result); err != nil {
+		return 0, err
+	}
+	return len(filterAStockNews(result.Items)), nil
 }
 
 func aStockWindow(strategyDate string, periodKey string) (time.Time, time.Time) {
