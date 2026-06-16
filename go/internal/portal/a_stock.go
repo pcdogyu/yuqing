@@ -110,6 +110,7 @@ const (
 var (
 	aStockNow               = time.Now
 	aStockEastmoneyKlineURL = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+	aStockYahooChartURL     = "https://query1.finance.yahoo.com/v8/finance/chart/"
 )
 
 func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user any) {
@@ -577,7 +578,7 @@ func (s *Server) loadAStockMarketBars(strategyDate string, codes []string, endpo
 				return bars, nil
 			}
 		}
-		if bars, fallbackErr := s.loadEastmoneyAStockBars(strategyDate, codes); fallbackErr == nil && len(bars) > 0 {
+		if bars, fallbackErr := s.loadDefaultAStockBars(strategyDate, codes); fallbackErr == nil && len(bars) > 0 {
 			return bars, nil
 		}
 		if err != nil {
@@ -588,7 +589,17 @@ func (s *Server) loadAStockMarketBars(strategyDate string, codes []string, endpo
 		}
 		return nil, fmt.Errorf("market endpoint returned no bars")
 	}
-	return s.loadEastmoneyAStockBars(strategyDate, codes)
+	return s.loadDefaultAStockBars(strategyDate, codes)
+}
+
+func (s *Server) loadDefaultAStockBars(strategyDate string, codes []string) ([]aStockMarketBar, error) {
+	if bars, err := s.loadEastmoneyAStockBars(strategyDate, codes); err == nil && len(bars) > 0 {
+		return bars, nil
+	}
+	if bars, err := s.loadYahooAStockBars(strategyDate, codes); err == nil && len(bars) > 0 {
+		return bars, nil
+	}
+	return nil, fmt.Errorf("no market bars")
 }
 
 func (s *Server) loadEastmoneyAStockBars(strategyDate string, codes []string) ([]aStockMarketBar, error) {
@@ -635,6 +646,57 @@ func (s *Server) loadEastmoneyAStockBars(strategyDate string, codes []string) ([
 	}
 	if len(bars) == 0 {
 		return nil, fmt.Errorf("no eastmoney market bars")
+	}
+	return bars, nil
+}
+
+func (s *Server) loadYahooAStockBars(strategyDate string, codes []string) ([]aStockMarketBar, error) {
+	day, err := time.ParseInLocation("2006-01-02", strategyDate, aStockLocation())
+	if err != nil {
+		return nil, err
+	}
+	period1 := day.AddDate(0, 0, -90).Unix()
+	period2 := day.AddDate(0, 0, 15).Unix()
+	baseURL := strings.TrimRight(aStockYahooChartURL, "/")
+	var wg sync.WaitGroup
+	barCh := make(chan []aStockMarketBar, len(codes))
+	for _, code := range codes {
+		code := normalizeAStockCode(code)
+		if code == "" {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), 3500*time.Millisecond)
+			defer cancel()
+			resp, err := s.client.R().
+				SetContext(ctx).
+				SetHeader("User-Agent", "Mozilla/5.0").
+				SetQueryParam("period1", fmt.Sprint(period1)).
+				SetQueryParam("period2", fmt.Sprint(period2)).
+				SetQueryParam("interval", "1d").
+				SetQueryParam("events", "history").
+				SetQueryParam("includeAdjustedClose", "true").
+				Get(baseURL + "/" + url.PathEscape(yahooAStockSymbol(code)))
+			if err != nil || !resp.IsSuccess() {
+				return
+			}
+			bars, err := decodeYahooAStockBars(resp.Body(), code)
+			if err != nil || len(bars) == 0 {
+				return
+			}
+			barCh <- bars
+		}()
+	}
+	wg.Wait()
+	close(barCh)
+	bars := make([]aStockMarketBar, 0)
+	for chunk := range barCh {
+		bars = append(bars, chunk...)
+	}
+	if len(bars) == 0 {
+		return nil, fmt.Errorf("no yahoo market bars")
 	}
 	return bars, nil
 }
@@ -890,6 +952,59 @@ func aStockEntryBarIndex(bars []aStockMarketBar, strategyDate string) int {
 	return -1
 }
 
+func decodeYahooAStockBars(body []byte, code string) ([]aStockMarketBar, error) {
+	var payload struct {
+		Chart struct {
+			Result []struct {
+				Timestamp  []int64 `json:"timestamp"`
+				Indicators struct {
+					Quote []struct {
+						Open  []*float64 `json:"open"`
+						Close []*float64 `json:"close"`
+					} `json:"quote"`
+				} `json:"indicators"`
+			} `json:"result"`
+			Error any `json:"error"`
+		} `json:"chart"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, err
+	}
+	if len(payload.Chart.Result) == 0 || len(payload.Chart.Result[0].Indicators.Quote) == 0 {
+		return nil, fmt.Errorf("empty yahoo chart")
+	}
+	result := payload.Chart.Result[0]
+	quote := result.Indicators.Quote[0]
+	bars := make([]aStockMarketBar, 0, len(result.Timestamp))
+	location := aStockLocation()
+	code = normalizeAStockCode(code)
+	for i, ts := range result.Timestamp {
+		if i >= len(quote.Open) || i >= len(quote.Close) || quote.Open[i] == nil || quote.Close[i] == nil {
+			continue
+		}
+		open := *quote.Open[i]
+		closeValue := *quote.Close[i]
+		if open <= 0 || closeValue <= 0 {
+			continue
+		}
+		bars = append(bars, aStockMarketBar{
+			Code:  code,
+			Date:  time.Unix(ts, 0).In(location).Format("2006-01-02"),
+			Open:  open,
+			Close: closeValue,
+		})
+	}
+	sort.SliceStable(bars, func(i, j int) bool {
+		return bars[i].Date < bars[j].Date
+	})
+	for i := 1; i < len(bars); i++ {
+		if bars[i-1].Close > 0 {
+			bars[i].Pct = (bars[i].Close/bars[i-1].Close - 1) * 100
+		}
+	}
+	return bars, nil
+}
+
 func decodeAStockMarketBars(body []byte) ([]aStockMarketBar, error) {
 	decoder := json.NewDecoder(strings.NewReader(string(body)))
 	decoder.UseNumber()
@@ -1101,9 +1216,9 @@ func aStockMarketEndpoint() string {
 
 func aStockMarketConfigHint() string {
 	if aStockMarketEndpoint() == "" {
-		return "默认东方财富日 K；也可用 YUQING_ASTOCK_MARKET_URL 覆盖"
+		return "默认东方财富日 K，失败后使用 Yahoo Finance 日线；也可用 YUQING_ASTOCK_MARKET_URL 覆盖"
 	}
-	return "YUQING_ASTOCK_MARKET_URL"
+	return "YUQING_ASTOCK_MARKET_URL，失败后回退东方财富日 K / Yahoo Finance 日线"
 }
 
 func aStockMarketEndDate(strategyDate string) string {
@@ -1131,6 +1246,22 @@ func eastmoneyAStockSecID(code string) string {
 	return market + "." + code
 }
 
+func yahooAStockSymbol(code string) string {
+	code = normalizeAStockCode(code)
+	if strings.HasPrefix(code, "6") || strings.HasPrefix(code, "9") || strings.HasPrefix(code, "5") {
+		return code + ".SS"
+	}
+	return code + ".SZ"
+}
+
+func aStockLocation() *time.Location {
+	location, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		return time.FixedZone("UTC+8", 8*60*60)
+	}
+	return location
+}
+
 func (s *Server) triggerAStockCrawl() string {
 	sources := []string{"flash", "headline", "jin10_full", "eastmoney_kuaixun"}
 	ok := 0
@@ -1152,10 +1283,7 @@ func (s *Server) triggerAStockCrawl() string {
 }
 
 func aStockWindow(strategyDate string, periodKey string) (time.Time, time.Time) {
-	location, err := time.LoadLocation("Asia/Shanghai")
-	if err != nil {
-		location = time.FixedZone("UTC+8", 8*60*60)
-	}
+	location := aStockLocation()
 	day, err := time.ParseInLocation("2006-01-02", strategyDate, location)
 	if err != nil {
 		day = time.Now().In(location)
@@ -1303,11 +1431,7 @@ func aStockTopicRules() []aStockTopicRule {
 }
 
 func aStockTodayDate() string {
-	location, err := time.LoadLocation("Asia/Shanghai")
-	if err != nil {
-		location = time.Local
-	}
-	return aStockNow().In(location).Format("2006-01-02")
+	return aStockNow().In(aStockLocation()).Format("2006-01-02")
 }
 
 func normalizeAStockStrategyDate(raw string) string {

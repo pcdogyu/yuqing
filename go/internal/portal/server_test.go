@@ -421,6 +421,15 @@ func setAStockEastmoneyKlineURLForTest(t *testing.T, rawURL string) {
 	})
 }
 
+func setAStockYahooChartURLForTest(t *testing.T, rawURL string) {
+	t.Helper()
+	previous := aStockYahooChartURL
+	aStockYahooChartURL = rawURL
+	t.Cleanup(func() {
+		aStockYahooChartURL = previous
+	})
+}
+
 func TestAStockNewsSectionPaginatesTenItems(t *testing.T) {
 	items := make([]model.Item, 0, 12)
 	for i := 1; i <= 12; i++ {
@@ -683,6 +692,57 @@ func TestAStockMarketBarsFallbackToEastmoneyWhenCustomEndpointEmpty(t *testing.T
 	}
 	if len(bars) != 2 || bars[1].Code != "000001" || bars[1].Open != 12 || bars[1].Close != 13 {
 		t.Fatalf("unexpected fallback bars: %+v", bars)
+	}
+}
+
+func TestAStockMarketBarsFallbackToYahooWhenEastmoneyUnavailable(t *testing.T) {
+	custom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": map[string]any{"items": []any{}}})
+	}))
+	defer custom.Close()
+
+	eastmoney := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "eastmoney unavailable", http.StatusBadGateway)
+	}))
+	defer eastmoney.Close()
+	setAStockEastmoneyKlineURLForTest(t, eastmoney.URL)
+
+	location := aStockLocation()
+	unixDay := func(day string) int64 {
+		parsed, err := time.ParseInLocation("2006-01-02", day, location)
+		if err != nil {
+			t.Fatalf("parse test date: %v", err)
+		}
+		return parsed.Unix()
+	}
+	yahoo := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/002230.SZ" {
+			t.Fatalf("unexpected yahoo path: %s", r.URL.String())
+		}
+		if r.URL.Query().Get("interval") != "1d" || r.URL.Query().Get("period1") == "" || r.URL.Query().Get("period2") == "" {
+			t.Fatalf("unexpected yahoo query: %s", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"chart":{"result":[{"timestamp":[%d,%d,%d,%d],"indicators":{"quote":[{"open":[10,11,12,13],"close":[10.5,11.5,13,14]}]}}],"error":null}}`,
+			unixDay("2026-06-14"), unixDay("2026-06-15"), unixDay("2026-06-16"), unixDay("2026-06-17"))
+	}))
+	defer yahoo.Close()
+	setAStockYahooChartURLForTest(t, yahoo.URL)
+
+	srv := NewServer(config.Config{})
+	bars, err := srv.loadAStockMarketBars("2026-06-16", []string{"002230"}, custom.URL)
+	if err != nil {
+		t.Fatalf("expected yahoo fallback market bars, got error: %v", err)
+	}
+	if len(bars) != 4 {
+		t.Fatalf("expected four yahoo bars, got %+v", bars)
+	}
+	if bars[2].Code != "002230" || bars[2].Date != "2026-06-16" || bars[2].Open != 12 || bars[2].Close != 13 {
+		t.Fatalf("unexpected yahoo strategy day bar: %+v", bars[2])
+	}
+	if bars[2].Pct < 13.03 || bars[2].Pct > 13.05 {
+		t.Fatalf("expected yahoo fallback to compute pct change, got %+v", bars[2])
 	}
 }
 
