@@ -19,7 +19,6 @@ import (
 	"github.com/pcdogyu/yuqing/go/internal/provider/jin10full"
 	"github.com/pcdogyu/yuqing/go/internal/provider/jin10xnews"
 	"github.com/pcdogyu/yuqing/go/internal/service"
-	sqlitestore "github.com/pcdogyu/yuqing/go/internal/store/sqlite"
 )
 
 func main() {
@@ -27,9 +26,9 @@ func main() {
 	logging.Setup(cfg.LogLevel, "worker")
 	app.LogStartup("worker", "", cfg)
 
-	store, err := sqlitestore.New(cfg.DatabasePath)
+	store, err := app.NewStore(cfg)
 	if err != nil {
-		log.Fatal().Err(err).Msg("open sqlite store")
+		log.Fatal().Err(err).Msg("open store")
 	}
 	defer store.Close()
 

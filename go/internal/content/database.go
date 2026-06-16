@@ -103,11 +103,15 @@ func (s *Service) handleDatabaseSwitch(w http.ResponseWriter, r *http.Request) {
 		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
 		return
 	}
+	restartErr := startAllServicesRestart()
 	status := s.databaseConfigStatus(r.Context(), databaseConfigRequest{})
 	status.ConfiguredDriver = driver
 	status.ConfigPath = configPath
 	status.RestartRequired = true
-	status.Message = "database switch saved; restart services to apply"
+	status.Message = "database switch saved; restarting all services to apply"
+	if restartErr != nil {
+		status.Message = "database switch saved; failed to submit service restart: " + restartErr.Error()
+	}
 	apiutil.WriteJSON(w, http.StatusOK, status.Message, status)
 }
 
@@ -118,6 +122,10 @@ func (s *Service) databaseConfigStatus(ctx context.Context, override databaseCon
 	if driver == "" {
 		driver = "sqlite"
 	}
+	runtimeDriver := normalizeDatabaseDriver(s.cfg.DatabaseDriver)
+	if runtimeDriver == "" {
+		runtimeDriver = "sqlite"
+	}
 	configuredDriver := currentConfiguredDatabaseDriver(configPath)
 	if configuredDriver == "" {
 		configuredDriver = driver
@@ -125,10 +133,10 @@ func (s *Service) databaseConfigStatus(ctx context.Context, override databaseCon
 	status := model.DatabaseConfigStatus{
 		Driver:             driver,
 		ConfiguredDriver:   configuredDriver,
-		RuntimeDriver:      "sqlite",
+		RuntimeDriver:      runtimeDriver,
 		SQLitePath:         cfg.SQLitePath,
 		ConfigPath:         configPath,
-		RestartRequired:    configuredDriver != driver,
+		RestartRequired:    configuredDriver != runtimeDriver,
 		PostgresHost:       cfg.PostgresHost,
 		PostgresPort:       cfg.PostgresPort,
 		PostgresDatabase:   cfg.PostgresDatabase,
@@ -145,7 +153,11 @@ func (s *Service) databaseConfigStatus(ctx context.Context, override databaseCon
 	case "postgres":
 		status.Status, status.Message = checkPostgres(ctx, cfg)
 		if status.Status == "ok" {
-			status.Message += "; runtime store remains sqlite"
+			if runtimeDriver == "postgres" {
+				status.Message += "; runtime store is postgres"
+			} else {
+				status.Message += "; runtime store remains " + runtimeDriver
+			}
 		}
 	default:
 		status.Status = "failed"

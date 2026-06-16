@@ -2161,6 +2161,28 @@ Set-Content -Path $pidFile -Value $process.Id
 	return exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script).Start()
 }
 
+var startAllServicesRestart = func() error {
+	root, err := os.Getwd()
+	if err != nil {
+		root = "."
+	}
+	script := fmt.Sprintf(`
+$ErrorActionPreference = "SilentlyContinue"
+Start-Sleep -Seconds 1
+$root = %q
+$stopScript = Join-Path $root "scripts\stop-all.ps1"
+$startScript = Join-Path $root "scripts\start-all.ps1"
+if (Test-Path $stopScript) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $stopScript -Root $root
+}
+Start-Sleep -Seconds 1
+if (Test-Path $startScript) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $startScript -Root $root
+}
+`, root)
+	return exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-Command", script).Start()
+}
+
 func readServiceLogTail(spec serviceRestartSpec, lines int) (string, error) {
 	logPath := filepath.Join(spec.Root, "runtime-logs", spec.Name+".out.log")
 	data, err := os.ReadFile(logPath)

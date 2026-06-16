@@ -14,6 +14,7 @@ import (
 	"github.com/robfig/cron/v3"
 	"github.com/rs/zerolog/log"
 
+	"github.com/pcdogyu/yuqing/go/internal/app"
 	"github.com/pcdogyu/yuqing/go/internal/config"
 	"github.com/pcdogyu/yuqing/go/internal/external"
 	"github.com/pcdogyu/yuqing/go/internal/model"
@@ -289,10 +290,10 @@ func (w *Worker) ensureStore() (*sqlitestore.Store, error) {
 	if w.store != nil {
 		return w.store, nil
 	}
-	if strings.TrimSpace(w.cfg.DatabasePath) == "" {
+	if w.cfg.DatabaseDriver != "postgres" && strings.TrimSpace(w.cfg.DatabasePath) == "" {
 		return nil, errStoreDisabled
 	}
-	store, err := sqlitestore.New(w.cfg.DatabasePath)
+	store, err := app.NewStore(w.cfg)
 	if err != nil {
 		return nil, err
 	}

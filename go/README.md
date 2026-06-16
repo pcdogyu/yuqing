@@ -120,8 +120,9 @@ http://127.0.0.1/crypto?pair=eth
 
 ## 数据
 
-- 主数据库：SQLite
-- 默认路径：`go/data/yuqing.db`
+- 主数据库：默认 SQLite，可在 `/system?section=database` 切换到 PostgreSQL
+- 默认 SQLite 路径：`go/data/yuqing.db`
+- PostgreSQL 切换按钮会保存 `go/data/database-config.json` 并自动重启全部服务；重启后业务 Store 按 `YUQING_DB_DRIVER` 选择 SQLite 或 PostgreSQL
 - 默认管理员：`admin / admin123`
 
 ## 启动

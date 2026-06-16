@@ -388,6 +388,9 @@ func (s *Store) DeleteMonitorRule(ctx context.Context, id int64) error {
 }
 
 func (s *Store) SearchItemsFTS(ctx context.Context, filter model.ArticleFilter) (model.SearchResult, error) {
+	if s.Driver() == "postgres" {
+		return s.searchItemsLike(ctx, filter)
+	}
 	filter.Page = max(filter.Page, 1)
 	filter.PageSize = max(filter.PageSize, 1)
 	filter.Keyword = strings.TrimSpace(filter.Keyword)
@@ -434,6 +437,67 @@ FROM items_fts f
 ` + joins + where + `
 ORDER BY bm25(items_fts), i.captured_at DESC
 LIMIT ? OFFSET ?`
+	queryArgs := append(args, filter.PageSize, offset)
+	rows, err := s.db.QueryContext(ctx, query, queryArgs...)
+	if err != nil {
+		return model.SearchResult{}, err
+	}
+	defer rows.Close()
+	items, err := scanItems(rows)
+	if err != nil {
+		return model.SearchResult{}, err
+	}
+	if err := s.attachProjectIDs(ctx, items); err != nil {
+		return model.SearchResult{}, err
+	}
+	return model.SearchResult{Items: items, Keyword: filter.Keyword, Total: total, Page: filter.Page, PageSize: filter.PageSize}, nil
+}
+
+func (s *Store) searchItemsLike(ctx context.Context, filter model.ArticleFilter) (model.SearchResult, error) {
+	filter.Page = max(filter.Page, 1)
+	filter.PageSize = max(filter.PageSize, 1)
+	filter.Keyword = strings.TrimSpace(filter.Keyword)
+	if filter.Keyword == "" {
+		list, err := s.ListItems(ctx, filter)
+		if err != nil {
+			return model.SearchResult{}, err
+		}
+		return model.SearchResult{Items: list.Items, Keyword: "", Total: list.Total, Page: filter.Page, PageSize: filter.PageSize}, nil
+	}
+
+	whereParts := []string{"NOT EXISTS (SELECT 1 FROM item_tags WHERE item_tags.item_id = items.id AND item_tags.tag = 'deleted')"}
+	args := []any{}
+	joins := ""
+	if filter.ProjectID > 0 {
+		joins += " JOIN item_relations ir ON ir.item_id = items.id"
+		whereParts = append(whereParts, "ir.project_id = ?")
+		args = append(args, filter.ProjectID)
+	}
+	if filter.SourceType != "" {
+		whereParts = append(whereParts, "items.source_type = ?")
+		args = append(args, filter.SourceType)
+	}
+	like := "%" + escapeLike(filter.Keyword) + "%"
+	whereParts = append(whereParts, "(items.title LIKE ? ESCAPE '\\' OR items.content LIKE ? ESCAPE '\\' OR items.summary LIKE ? ESCAPE '\\')")
+	args = append(args, like, like, like)
+	if filter.Start != "" {
+		whereParts = append(whereParts, "items.captured_at >= ?")
+		args = append(args, filter.Start)
+	}
+	if filter.End != "" {
+		whereParts = append(whereParts, "items.captured_at <= ?")
+		args = append(args, filter.End)
+	}
+	where := " WHERE " + strings.Join(whereParts, " AND ")
+
+	var total int
+	countQuery := "SELECT COUNT(DISTINCT items.id) FROM items " + joins + where
+	if err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+		return model.SearchResult{}, err
+	}
+
+	offset := (filter.Page - 1) * filter.PageSize
+	query := "SELECT DISTINCT items.id, items.source_type, items.source_key, items.title, items.content, items.summary, items.publish_time, items.publish_time_text, items.detail_url, items.source_url, items.tag_flags, items.from_text, items.external_source_host, items.is_vip, items.has_image, items.raw_payload, items.captured_at, items.created_at, items.updated_at FROM items " + joins + where + " ORDER BY items.captured_at DESC, items.id DESC LIMIT ? OFFSET ?"
 	queryArgs := append(args, filter.PageSize, offset)
 	rows, err := s.db.QueryContext(ctx, query, queryArgs...)
 	if err != nil {

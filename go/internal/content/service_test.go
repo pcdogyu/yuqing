@@ -279,6 +279,13 @@ func TestDatabaseConfigAPI(t *testing.T) {
 
 func TestDatabaseSwitchAPISavesRuntimeConfig(t *testing.T) {
 	store := newContentSearchTestStore(t)
+	restartSubmitted := false
+	previousRestartAll := startAllServicesRestart
+	startAllServicesRestart = func() error {
+		restartSubmitted = true
+		return nil
+	}
+	t.Cleanup(func() { startAllServicesRestart = previousRestartAll })
 	configPath := filepath.Join(t.TempDir(), "database-config.json")
 	dbPath := filepath.Join(t.TempDir(), "local.db")
 	svc := NewService(config.Config{
@@ -302,8 +309,11 @@ func TestDatabaseSwitchAPISavesRuntimeConfig(t *testing.T) {
 		t.Fatalf("expected database switch 200, got status=%d body=%s", switchRR.Code, switchRR.Body.String())
 	}
 	body := switchRR.Body.String()
-	if !strings.Contains(body, `"configured_driver":"sqlite"`) || !strings.Contains(body, `"restart_required":true`) {
+	if !strings.Contains(body, `"configured_driver":"sqlite"`) || !strings.Contains(body, `"restart_required":true`) || !strings.Contains(body, "restarting all services") {
 		t.Fatalf("expected switch response to include selected sqlite and restart hint, got %s", body)
+	}
+	if !restartSubmitted {
+		t.Fatal("expected database switch to submit all-services restart")
 	}
 	payload, err := os.ReadFile(configPath)
 	if err != nil {

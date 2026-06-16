@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "modernc.org/sqlite"
 
 	"github.com/pcdogyu/yuqing/go/internal/model"
@@ -18,7 +19,8 @@ import (
 const busyTimeoutMillis = 30000
 
 type Store struct {
-	db *sql.DB
+	db     *DB
+	driver string
 }
 
 func New(path string) (*Store, error) {
@@ -35,12 +37,41 @@ func New(path string) (*Store, error) {
 		return nil, err
 	}
 
-	store := &Store{db: db}
+	store := &Store{db: newDB(db, "sqlite"), driver: "sqlite"}
 	if err := store.migrate(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
 	return store, nil
+}
+
+func NewPostgres(dsn string) (*Store, error) {
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(12)
+	db.SetMaxIdleConns(4)
+	db.SetConnMaxLifetime(30 * time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	store := &Store{db: newDB(db, "postgres"), driver: "postgres"}
+	if err := store.migratePostgres(ctx); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return store, nil
+}
+
+func (s *Store) Driver() string {
+	if s == nil || s.driver == "" {
+		return "sqlite"
+	}
+	return s.driver
 }
 
 func (s *Store) Close() error {
@@ -557,6 +588,18 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_action_created_at ON audit_logs(action
 	return nil
 }
 
+func (s *Store) migratePostgres(ctx context.Context) error {
+	schemaPath := filepath.Join("db", "postgres_schema.sql")
+	schema, err := os.ReadFile(schemaPath)
+	if err != nil {
+		return fmt.Errorf("read postgres schema %s: %w", schemaPath, err)
+	}
+	if _, err := s.db.ExecContext(ctx, string(schema)); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (s *Store) StartCrawlRun(ctx context.Context, sourceType string, startedAt time.Time) (int64, error) {
 	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO crawl_runs (source_type, template_id, template_name, template_snapshot, started_at, status, fetched_count, inserted_count, updated_count) VALUES (?, 0, '', '', ?, 'running', 0, 0, 0)`,
@@ -841,7 +884,7 @@ func (s *Store) LinkItemsToProjects(ctx context.Context, sourceKeys []string, pr
 var ErrNotFound = errors.New("not found")
 var ErrConflict = errors.New("conflict")
 
-func (s *Store) sourceKeyExistsTx(ctx context.Context, tx *sql.Tx, sourceKey string) (bool, error) {
+func (s *Store) sourceKeyExistsTx(ctx context.Context, tx *Tx, sourceKey string) (bool, error) {
 	var count int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(1) FROM items WHERE source_key = ?`, sourceKey).Scan(&count); err != nil {
 		return false, err
@@ -849,7 +892,7 @@ func (s *Store) sourceKeyExistsTx(ctx context.Context, tx *sql.Tx, sourceKey str
 	return count > 0, nil
 }
 
-func (s *Store) itemIDBySourceKeyTx(ctx context.Context, tx *sql.Tx, sourceKey string) (int64, error) {
+func (s *Store) itemIDBySourceKeyTx(ctx context.Context, tx *Tx, sourceKey string) (int64, error) {
 	var itemID int64
 	if err := tx.QueryRowContext(ctx, `SELECT id FROM items WHERE source_key = ?`, sourceKey).Scan(&itemID); err != nil {
 		return 0, err

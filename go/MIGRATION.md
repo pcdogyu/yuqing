@@ -254,6 +254,9 @@
 - 2026-06-12：五期第五批文档复核：
   - 已同步 [docs/phase4-productionization.md](docs/phase4-productionization.md) 的 gateway `/healthz`、发布验收端口自适应和 `/fullsearch/getSearchResult` 旧入口下线说明。
   - 已同步 [docs/phase5-release-readiness.md](docs/phase5-release-readiness.md) 的第五批复核结论，明确 release-check、备份恢复、scheduler 与 legacy 410 抽样口径一致。
+- 2026-06-16：数据库切换闭环：
+  - `app.NewStore` 已按 `YUQING_DB_DRIVER` 接入 SQLite / PostgreSQL Store，PostgreSQL 启动时会应用 `db/postgres_schema.sql`。
+  - `/system?section=database` 的切换按钮保存运行配置后会提交全服务自动重启，重启后左侧“运行 Store”反映实际业务 Store。
 
 ## 下一步
 

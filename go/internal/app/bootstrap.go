@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -31,6 +33,21 @@ var (
 )
 
 func NewStore(cfg config.Config) (*sqlitestore.Store, error) {
+	if cfg.DatabaseDriver == "postgres" {
+		store, err := sqlitestore.NewPostgres(postgresDSN(cfg))
+		if err != nil {
+			return nil, err
+		}
+		if err := store.EnsureDefaultAdmin(context.Background(), cfg.DefaultAdminUser, cfg.DefaultAdminPass); err != nil {
+			_ = store.Close()
+			return nil, err
+		}
+		if err := store.EnsureSeedData(context.Background()); err != nil {
+			_ = store.Close()
+			return nil, err
+		}
+		return store, nil
+	}
 	store, err := sqlitestore.New(cfg.DatabasePath)
 	if err != nil {
 		return nil, err
@@ -44,6 +61,42 @@ func NewStore(cfg config.Config) (*sqlitestore.Store, error) {
 		return nil, err
 	}
 	return store, nil
+}
+
+func postgresDSN(cfg config.Config) string {
+	if strings.TrimSpace(cfg.DatabaseURL) != "" {
+		return strings.TrimSpace(cfg.DatabaseURL)
+	}
+	host := strings.TrimSpace(cfg.PostgresHost)
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	port := strings.TrimSpace(cfg.PostgresPort)
+	if port == "" {
+		port = "5432"
+	}
+	database := strings.TrimSpace(cfg.PostgresDatabase)
+	if database == "" {
+		database = "yuqing"
+	}
+	user := strings.TrimSpace(cfg.PostgresUser)
+	if user == "" {
+		user = "postgres"
+	}
+	sslMode := strings.TrimSpace(cfg.PostgresSSLMode)
+	if sslMode == "" {
+		sslMode = "disable"
+	}
+	u := url.URL{Scheme: "postgres", Host: net.JoinHostPort(host, port), Path: "/" + database}
+	if strings.TrimSpace(cfg.PostgresPassword) != "" {
+		u.User = url.UserPassword(user, cfg.PostgresPassword)
+	} else {
+		u.User = url.User(user)
+	}
+	q := u.Query()
+	q.Set("sslmode", sslMode)
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 func NewCrawler(cfg config.Config, store *sqlitestore.Store) *service.Crawler {

@@ -2725,7 +2725,7 @@ func TestSystemDatabaseSwitchRedirectsWithSuccess(t *testing.T) {
 		t.Fatalf("expected redirect after database switch, got %d body=%s", rr.Code, rr.Body.String())
 	}
 	location := rr.Header().Get("Location")
-	if !strings.Contains(location, "section=database") || !strings.Contains(location, url.QueryEscape("数据库切换配置已保存，请重启服务后生效")) {
+	if !strings.Contains(location, "section=database") || !strings.Contains(location, url.QueryEscape("数据库切换配置已保存，正在自动重启全部服务")) {
 		t.Fatalf("expected database switch success redirect, got %q", location)
 	}
 
@@ -3579,12 +3579,12 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/system/database-config/check":
 			writeEnvelope(http.StatusOK, "postgresql connection ok", model.DatabaseConfigStatus{Driver: "postgres", Status: "ok", Message: "postgresql connection ok"})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/system/database-config/switch":
-			writeEnvelope(http.StatusOK, "database switch saved; restart services to apply", model.DatabaseConfigStatus{
+			writeEnvelope(http.StatusOK, "database switch saved; restarting all services to apply", model.DatabaseConfigStatus{
 				Driver:           "sqlite",
 				ConfiguredDriver: "sqlite",
 				RuntimeDriver:    "sqlite",
 				Status:           "ok",
-				Message:          "database switch saved; restart services to apply",
+				Message:          "database switch saved; restarting all services to apply",
 				ConfigPath:       "data/database-config.json",
 				RestartRequired:  true,
 			})
