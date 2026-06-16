@@ -3,6 +3,7 @@ package portal
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"html"
 	"image"
 	"image/color"
@@ -308,6 +309,12 @@ func TestAStockStockGenerateActionsSelectPeriod(t *testing.T) {
 	}
 }
 
+func TestNormalizeAStockPeriodAcceptsAfterAlias(t *testing.T) {
+	if got := normalizeAStockPeriod("after"); got.Key != "afternoon" || got.Label != "下午推荐" {
+		t.Fatalf("expected after alias to normalize to afternoon, got %+v", got)
+	}
+}
+
 func TestAStockPageLoadsAfternoonWindow(t *testing.T) {
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -345,6 +352,130 @@ func TestAStockPageLoadsAfternoonWindow(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 afternoon page to contain %q, got %s", want, body)
 		}
+	}
+}
+
+func TestAStockPageOffersTodayNavigationAndAfterAlias(t *testing.T) {
+	setAStockNowForTest(t, time.Date(2026, 6, 16, 9, 30, 0, 0, time.FixedZone("CST", 8*3600)))
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/articles" {
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+		if !strings.Contains(r.URL.Query().Get("start"), "2026-06-11T01:26:00Z") || !strings.Contains(r.URL.Query().Get("end"), "2026-06-11T04:50:59Z") {
+			t.Fatalf("expected after alias to use afternoon window, got query: %s", r.URL.RawQuery)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    200,
+			"message": "ok",
+			"data": model.ItemListResult{
+				Items:    []model.Item{{ID: 701, SourceType: "flash", Title: "普通财经新闻", CapturedAt: time.Date(2026, 6, 11, 2, 0, 0, 0, time.UTC)}},
+				Page:     1,
+				PageSize: 200,
+				Total:    1,
+			},
+		})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-11&period=after", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		"下午推荐",
+		"回到今天",
+		"今天 2026-06-16",
+		`href="/a-stock?date=2026-06-16&period=afternoon"`,
+		"当日 2026-06-11",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
+		}
+	}
+}
+
+func setAStockNowForTest(t *testing.T, now time.Time) {
+	t.Helper()
+	previous := aStockNow
+	aStockNow = func() time.Time {
+		return now
+	}
+	t.Cleanup(func() {
+		aStockNow = previous
+	})
+}
+
+func TestAStockNewsSectionPaginatesTenItems(t *testing.T) {
+	items := make([]model.Item, 0, 12)
+	for i := 1; i <= 12; i++ {
+		items = append(items, model.Item{
+			ID:         int64(700 + i),
+			SourceType: "flash",
+			Title:      fmt.Sprintf("分页新闻%02d", i),
+			Summary:    "普通财经新闻",
+			CapturedAt: time.Date(2026, 6, 11, 1, 26+i, 0, 0, time.UTC),
+		})
+	}
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/articles" {
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+		if !strings.Contains(r.URL.Query().Get("start"), "2026-06-11T01:26:00Z") || !strings.Contains(r.URL.Query().Get("end"), "2026-06-11T04:50:59Z") {
+			t.Fatalf("unexpected A股 afternoon window query: %s", r.URL.RawQuery)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    200,
+			"message": "ok",
+			"data": model.ItemListResult{
+				Items:    items,
+				Page:     1,
+				PageSize: 200,
+				Total:    12,
+			},
+		})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	firstReq := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-11&period=afternoon", nil)
+	firstRR := httptest.NewRecorder()
+	srv.handleAStockPage(firstRR, firstReq, map[string]any{"id": 1})
+	if firstRR.Code != http.StatusOK {
+		t.Fatalf("expected first page 200, got %d", firstRR.Code)
+	}
+	firstBody := firstRR.Body.String()
+	for _, want := range []string{"分页新闻01", "分页新闻10", "新闻分页：1/2，共12条", `/a-stock?date=2026-06-11&period=afternoon&news_page=2`, `<strong style="display:block;margin-top:8px;font-size:24px">12</strong>`} {
+		if !strings.Contains(firstBody, want) {
+			t.Fatalf("expected first news page to contain %q, got %s", want, firstBody)
+		}
+	}
+	for _, notWant := range []string{"分页新闻11", "分页新闻12"} {
+		if strings.Contains(firstBody, notWant) {
+			t.Fatalf("expected first news page not to contain %q, got %s", notWant, firstBody)
+		}
+	}
+
+	secondReq := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-11&period=afternoon&news_page=2", nil)
+	secondRR := httptest.NewRecorder()
+	srv.handleAStockPage(secondRR, secondReq, map[string]any{"id": 1})
+	if secondRR.Code != http.StatusOK {
+		t.Fatalf("expected second page 200, got %d", secondRR.Code)
+	}
+	secondBody := secondRR.Body.String()
+	for _, want := range []string{"分页新闻11", "分页新闻12", "新闻分页：2/2，共12条"} {
+		if !strings.Contains(secondBody, want) {
+			t.Fatalf("expected second news page to contain %q, got %s", want, secondBody)
+		}
+	}
+	if strings.Contains(secondBody, "分页新闻10") {
+		t.Fatalf("expected second news page not to contain page one item, got %s", secondBody)
 	}
 }
 
@@ -431,15 +562,18 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 }
 
 func TestAStockRecommendationHistoryRendersDateTabs(t *testing.T) {
+	setAStockNowForTest(t, time.Date(2026, 6, 16, 9, 30, 0, 0, time.FixedZone("CST", 8*3600)))
 	var b strings.Builder
 	renderAStockRecommendationHistoryTabs(&b, "2026-06-18", "afternoon")
 
 	body := b.String()
 	for _, want := range []string{
 		"推荐历史",
+		"今天 2026-06-16",
 		"当日 2026-06-18",
 		"前1日 2026-06-17",
 		"前5日 2026-06-13",
+		`/a-stock?date=2026-06-16&period=afternoon`,
 		`/a-stock?date=2026-06-17&period=afternoon`,
 	} {
 		if !strings.Contains(body, want) {

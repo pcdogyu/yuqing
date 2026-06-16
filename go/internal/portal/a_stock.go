@@ -21,9 +21,14 @@ type aStockContext struct {
 	Period          string
 	PeriodLabel     string
 	WindowLabel     string
+	NewsPage        int
+	NewsPageSize    int
+	NewsTotal       int
+	NewsTotalPages  int
 	WindowStart     time.Time
 	WindowEnd       time.Time
 	Articles        []model.Item
+	PagedArticles   []model.Item
 	Hotspots        []aStockHotspot
 	Recommendations []aStockRecommendation
 	Backtests       []aStockBacktestRow
@@ -99,7 +104,10 @@ type aStockPeriod struct {
 const (
 	aStockDrawdownFilterThreshold = -15.0
 	aStockSectorDrawdownPenalty   = 15
+	aStockNewsPageSize            = 10
 )
+
+var aStockNow = time.Now
 
 func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user any) {
 	if r.Method == http.MethodPost {
@@ -113,7 +121,8 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 
 	strategyDate := normalizeAStockStrategyDate(r.URL.Query().Get("date"))
 	period := normalizeAStockPeriod(r.URL.Query().Get("period"))
-	ctx := s.loadAStockContext(strategyDate, period.Key)
+	newsPage := normalizeAStockNewsPage(r.URL.Query().Get("news_page"))
+	ctx := s.loadAStockContext(strategyDate, period.Key, newsPage)
 	message := strings.TrimSpace(r.URL.Query().Get("msg"))
 	if message == "" {
 		message = ctx.LoadMessage
@@ -129,6 +138,8 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
 		.astock-actions form{margin:0}
 		.astock-actions button{margin:0}
+		.astock-form-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+		.astock-button-link{display:inline-flex;align-items:center;justify-content:center;min-height:42px;border-radius:8px;background:#214e34;color:#fff;text-decoration:none;font-weight:700}
 		.astock-muted{color:#6a6257}
 		.astock-empty{padding:18px;border:1px dashed #d0c8b8;border-radius:12px;background:#fff;color:#6a6257}
 		.astock-badge{display:inline-flex;align-items:center;padding:5px 9px;border-radius:999px;background:#eef4ec;color:#214e34;font-size:13px;margin-right:6px}
@@ -139,6 +150,8 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 		.astock-tab{display:inline-flex;align-items:center;padding:8px 12px;border:1px solid #d6ccbb;border-radius:8px;color:#214e34;text-decoration:none;background:#fff}
 		.astock-tab.active{background:#214e34;color:#fff;border-color:#214e34}
+		.astock-tab.disabled{color:#9a9388;border-color:#ece7dc;background:#faf8f2;pointer-events:none}
+		.astock-pagination{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:14px}
 		.astock-up{color:#b3261e;font-weight:700}
 		.astock-down{color:#1b7f3a;font-weight:700}
 		.astock-flat{color:#6a6257}
@@ -168,7 +181,12 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		b.WriteString(html.EscapeString(option.Label))
 		b.WriteString(`</option>`)
 	}
-	b.WriteString(`</select><button type="submit">查看日期</button></form></div></section>`)
+	today := aStockTodayDate()
+	b.WriteString(`</select><div class="astock-form-actions"><button type="submit">查看日期</button><a class="astock-button-link" href="/a-stock?date=`)
+	b.WriteString(url.QueryEscape(today))
+	b.WriteString(`&period=`)
+	b.WriteString(url.QueryEscape(ctx.Period))
+	b.WriteString(`">回到今天</a></div></form></div></section>`)
 
 	b.WriteString(`<section><h2>顶部概览</h2><div class="astock-grid">`)
 	writeAStockMetric(&b, "策略日期", ctx.Date)
@@ -269,11 +287,11 @@ func renderAStockNewsSection(b *strings.Builder, ctx aStockContext) {
 		return
 	}
 	b.WriteString(`<table><tr><th>标题</th><th>来源</th><th>时间</th><th>命中关键词</th></tr>`)
-	for _, item := range ctx.Articles {
+	for _, item := range ctx.PagedArticles {
 		b.WriteString(`<tr><td><a class="inline" href="/articles/`)
 		b.WriteString(fmt.Sprintf("%d", item.ID))
 		b.WriteString(`?return_to=`)
-		b.WriteString(url.QueryEscape("/a-stock?date=" + ctx.Date + "&period=" + ctx.Period))
+		b.WriteString(url.QueryEscape(aStockPageHref(ctx.Date, ctx.Period, ctx.NewsPage)))
 		b.WriteString(`">`)
 		b.WriteString(html.EscapeString(item.Title))
 		b.WriteString(`</a></td><td>`)
@@ -286,7 +304,43 @@ func renderAStockNewsSection(b *strings.Builder, ctx aStockContext) {
 		b.WriteString(html.EscapeString(strings.Join(aStockMatchedKeywords(item), "、")))
 		b.WriteString(`</td></tr>`)
 	}
-	b.WriteString(`</table></section>`)
+	b.WriteString(`</table>`)
+	renderAStockNewsPagination(b, ctx)
+	b.WriteString(`</section>`)
+}
+
+func renderAStockNewsPagination(b *strings.Builder, ctx aStockContext) {
+	if ctx.NewsTotalPages <= 1 {
+		return
+	}
+	b.WriteString(`<div class="astock-pagination"><span class="astock-muted">新闻分页：`)
+	b.WriteString(fmt.Sprintf("%d/%d，共%d条", ctx.NewsPage, ctx.NewsTotalPages, ctx.NewsTotal))
+	b.WriteString(`</span>`)
+	renderAStockNewsPageLink(b, ctx, ctx.NewsPage-1, "上一页", ctx.NewsPage <= 1)
+	for page := 1; page <= ctx.NewsTotalPages; page++ {
+		renderAStockNewsPageLink(b, ctx, page, fmt.Sprintf("%d", page), false)
+	}
+	renderAStockNewsPageLink(b, ctx, ctx.NewsPage+1, "下一页", ctx.NewsPage >= ctx.NewsTotalPages)
+	b.WriteString(`</div>`)
+}
+
+func renderAStockNewsPageLink(b *strings.Builder, ctx aStockContext, page int, label string, disabled bool) {
+	b.WriteString(`<a class="astock-tab`)
+	if page == ctx.NewsPage && !disabled {
+		b.WriteString(` active`)
+	}
+	if disabled {
+		b.WriteString(` disabled`)
+	}
+	b.WriteString(`" href="`)
+	if disabled {
+		b.WriteString(`#`)
+	} else {
+		b.WriteString(aStockPageHref(ctx.Date, ctx.Period, page))
+	}
+	b.WriteString(`">`)
+	b.WriteString(html.EscapeString(label))
+	b.WriteString(`</a>`)
 }
 
 func renderAStockHotspotSection(b *strings.Builder, hotspots []aStockHotspot) {
@@ -391,6 +445,9 @@ func renderAStockBacktestSection(b *strings.Builder, strategyDate string, period
 
 func renderAStockRecommendationHistoryTabs(b *strings.Builder, strategyDate string, period string) {
 	b.WriteString(`<h3>推荐历史</h3><div class="astock-date-tabs">`)
+	normalizedPeriod := normalizeAStockPeriod(period).Key
+	today := aStockTodayDate()
+	writeAStockDateTab(b, "今天 "+today, today, normalizedPeriod, strategyDate == today)
 	day, err := time.Parse("2006-01-02", strategyDate)
 	if err != nil {
 		b.WriteString(`<span class="astock-muted">暂无推荐历史日期</span></div>`)
@@ -402,22 +459,26 @@ func renderAStockRecommendationHistoryTabs(b *strings.Builder, strategyDate stri
 		if offset > 0 {
 			label = fmt.Sprintf("前%d日", offset)
 		}
-		b.WriteString(`<a class="astock-tab`)
-		if offset == 0 {
-			b.WriteString(` active`)
-		}
-		b.WriteString(`" href="/a-stock?date=`)
-		b.WriteString(url.QueryEscape(date))
-		b.WriteString(`&period=`)
-		b.WriteString(url.QueryEscape(normalizeAStockPeriod(period).Key))
-		b.WriteString(`">`)
-		b.WriteString(html.EscapeString(label + " " + date))
-		b.WriteString(`</a>`)
+		writeAStockDateTab(b, label+" "+date, date, normalizedPeriod, offset == 0 && strategyDate != today)
 	}
 	b.WriteString(`</div>`)
 }
 
-func (s *Server) loadAStockContext(strategyDate string, periodKey string) aStockContext {
+func writeAStockDateTab(b *strings.Builder, label string, date string, period string, active bool) {
+	b.WriteString(`<a class="astock-tab`)
+	if active {
+		b.WriteString(` active`)
+	}
+	b.WriteString(`" href="/a-stock?date=`)
+	b.WriteString(url.QueryEscape(date))
+	b.WriteString(`&period=`)
+	b.WriteString(url.QueryEscape(period))
+	b.WriteString(`">`)
+	b.WriteString(html.EscapeString(label))
+	b.WriteString(`</a>`)
+}
+
+func (s *Server) loadAStockContext(strategyDate string, periodKey string, newsPage int) aStockContext {
 	period := normalizeAStockPeriod(periodKey)
 	start, end := aStockWindow(strategyDate, period.Key)
 	ctx := aStockContext{
@@ -425,6 +486,8 @@ func (s *Server) loadAStockContext(strategyDate string, periodKey string) aStock
 		Period:         period.Key,
 		PeriodLabel:    period.Label,
 		WindowLabel:    period.WindowLabel,
+		NewsPage:       newsPage,
+		NewsPageSize:   aStockNewsPageSize,
 		WindowStart:    start,
 		WindowEnd:      end,
 		BacktestStatus: "等待行情接口",
@@ -436,10 +499,35 @@ func (s *Server) loadAStockContext(strategyDate string, periodKey string) aStock
 		return ctx
 	}
 	ctx.Articles = filterAStockNews(result.Items)
+	ctx.NewsTotal = len(ctx.Articles)
+	ctx.PagedArticles, ctx.NewsPage, ctx.NewsTotalPages = paginateAStockNews(ctx.Articles, newsPage, aStockNewsPageSize)
 	ctx.Hotspots = buildAStockHotspots(ctx.Articles)
 	ctx.Recommendations = buildAStockRecommendations(ctx.Hotspots)
 	ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus = s.loadAStockMarketView(strategyDate, ctx.Recommendations)
 	return ctx
+}
+
+func paginateAStockNews(items []model.Item, page int, pageSize int) ([]model.Item, int, int) {
+	if pageSize <= 0 {
+		pageSize = aStockNewsPageSize
+	}
+	if page < 1 {
+		page = 1
+	}
+	total := len(items)
+	if total == 0 {
+		return nil, 1, 0
+	}
+	totalPages := (total + pageSize - 1) / pageSize
+	if page > totalPages {
+		page = totalPages
+	}
+	start := (page - 1) * pageSize
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+	return items[start:end], page, totalPages
 }
 
 func (s *Server) loadAStockMarketView(strategyDate string, recommendations []aStockRecommendation) ([]aStockRecommendation, []aStockBacktestRow, string) {
@@ -1161,6 +1249,14 @@ func aStockTopicRules() []aStockTopicRule {
 	}
 }
 
+func aStockTodayDate() string {
+	location, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		location = time.Local
+	}
+	return aStockNow().In(location).Format("2006-01-02")
+}
+
 func normalizeAStockStrategyDate(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw != "" {
@@ -1169,11 +1265,27 @@ func normalizeAStockStrategyDate(raw string) string {
 		}
 		return raw
 	}
-	location, err := time.LoadLocation("Asia/Shanghai")
-	if err != nil {
-		location = time.Local
+	return aStockTodayDate()
+}
+
+func normalizeAStockNewsPage(raw string) int {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 1
 	}
-	return time.Now().In(location).Format("2006-01-02")
+	var page int
+	if _, err := fmt.Sscanf(raw, "%d", &page); err != nil || page < 1 {
+		return 1
+	}
+	return page
+}
+
+func aStockPageHref(strategyDate string, period string, newsPage int) string {
+	href := "/a-stock?date=" + url.QueryEscape(normalizeAStockStrategyDate(strategyDate)) + "&period=" + url.QueryEscape(normalizeAStockPeriod(period).Key)
+	if newsPage > 1 {
+		href += "&news_page=" + url.QueryEscape(fmt.Sprintf("%d", newsPage))
+	}
+	return href
 }
 
 func aStockPeriods() []aStockPeriod {
@@ -1185,6 +1297,9 @@ func aStockPeriods() []aStockPeriod {
 
 func normalizeAStockPeriod(raw string) aStockPeriod {
 	raw = strings.ToLower(strings.TrimSpace(raw))
+	if raw == "after" || raw == "pm" {
+		raw = "afternoon"
+	}
 	for _, period := range aStockPeriods() {
 		if period.Key == raw {
 			return period
