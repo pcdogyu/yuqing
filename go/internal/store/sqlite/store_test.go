@@ -45,6 +45,53 @@ func TestUpsertAndListItems(t *testing.T) {
 	}
 }
 
+func TestListItemsCanFilterByPublishTime(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	morning := sampleItem("flash", "flash-key-morning", "上午 AI 新闻")
+	morning.PublishTime = "2026-06-16 09:10:00"
+	morning.CapturedAt = time.Date(2026, 6, 16, 8, 30, 0, 0, time.UTC)
+	morning.CreatedAt = morning.CapturedAt
+	morning.UpdatedAt = morning.CapturedAt
+	afternoon := sampleItem("flash", "flash-key-afternoon", "下午 AI 新闻")
+	afternoon.PublishTime = "2026-06-16 15:10:00"
+	afternoon.CapturedAt = morning.CapturedAt
+	afternoon.CreatedAt = morning.CapturedAt
+	afternoon.UpdatedAt = morning.CapturedAt
+
+	if _, _, err := store.UpsertItems(ctx, []model.Item{morning, afternoon}); err != nil {
+		t.Fatalf("UpsertItems error: %v", err)
+	}
+
+	list, err := store.ListItems(ctx, model.ArticleFilter{
+		Page:      1,
+		PageSize:  10,
+		TimeField: "publish_time",
+		Start:     "2026-06-16 09:00:00",
+		End:       "2026-06-16 09:25:59",
+	})
+	if err != nil {
+		t.Fatalf("ListItems by publish_time error: %v", err)
+	}
+	if list.Total != 1 || len(list.Items) != 1 || list.Items[0].SourceKey != "flash-key-morning" {
+		t.Fatalf("expected only morning publish_time item, got %+v", list)
+	}
+
+	defaultList, err := store.ListItems(ctx, model.ArticleFilter{
+		Page:     1,
+		PageSize: 10,
+		Start:    "2026-06-16 09:00:00",
+		End:      "2026-06-16 09:25:59",
+	})
+	if err != nil {
+		t.Fatalf("ListItems by default captured_at error: %v", err)
+	}
+	if defaultList.Total != 0 {
+		t.Fatalf("expected default filter to keep using captured_at, got %+v", defaultList)
+	}
+}
+
 func TestNewStoreSetsBusyTimeout(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()

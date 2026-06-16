@@ -134,6 +134,7 @@ type ArticleFilter struct {
 	UserID     int64  `json:"user_id"`
 	Start      string `json:"start"`
 	End        string `json:"end"`
+	TimeField  string `json:"time_field"`
 	Industry   string `json:"industry"`
 	Province   string `json:"province"`
 	City       string `json:"city"`

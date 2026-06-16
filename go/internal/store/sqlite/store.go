@@ -918,18 +918,28 @@ func buildItemFilter(filter model.ArticleFilter) (where string, args []any, join
 		like := "%" + filter.Keyword + "%"
 		args = append(args, like, like, like)
 	}
+	timeColumn := itemFilterTimeColumn(filter.TimeField)
 	if filter.Start != "" {
-		filters = append(filters, "items.captured_at >= ?")
+		filters = append(filters, "items."+timeColumn+" >= ?")
 		args = append(args, filter.Start)
 	}
 	if filter.End != "" {
-		filters = append(filters, "items.captured_at <= ?")
+		filters = append(filters, "items."+timeColumn+" <= ?")
 		args = append(args, filter.End)
 	}
 	if len(filters) == 0 {
 		return "", args, joins
 	}
 	return "WHERE " + strings.Join(filters, " AND "), args, joins
+}
+
+func itemFilterTimeColumn(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "publish_time", "published_at":
+		return "publish_time"
+	default:
+		return "captured_at"
+	}
 }
 
 func (s *Store) attachProjectIDs(ctx context.Context, items []model.Item) error {

@@ -2694,6 +2694,7 @@ func articleFilterFromRequest(r *http.Request) model.ArticleFilter {
 		UserID:     filterUserID(r),
 		Start:      strings.TrimSpace(r.URL.Query().Get("start")),
 		End:        strings.TrimSpace(r.URL.Query().Get("end")),
+		TimeField:  strings.TrimSpace(r.URL.Query().Get("time_field")),
 		Industry:   strings.TrimSpace(r.URL.Query().Get("industry")),
 		Province:   strings.TrimSpace(r.URL.Query().Get("province")),
 		City:       strings.TrimSpace(r.URL.Query().Get("city")),

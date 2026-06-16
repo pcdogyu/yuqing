@@ -533,7 +533,7 @@ func (s *Server) loadAStockContext(strategyDate string, periodKey string, newsPa
 		BacktestStatus: "等待行情接口",
 	}
 	result := model.ItemListResult{}
-	query := "/api/v1/articles?page=1&page_size=200&start=" + url.QueryEscape(start.UTC().Format(time.RFC3339)) + "&end=" + url.QueryEscape(end.UTC().Format(time.RFC3339))
+	query := "/api/v1/articles?page=1&page_size=200&time_field=publish_time&start=" + url.QueryEscape(formatAStockPublishTime(start)) + "&end=" + url.QueryEscape(formatAStockPublishTime(end))
 	if err := s.getJSON(s.cfg.ContentURL+query, &result); err != nil {
 		ctx.LoadMessage = "A股新闻读取失败：" + err.Error()
 		return ctx
@@ -546,6 +546,10 @@ func (s *Server) loadAStockContext(strategyDate string, periodKey string, newsPa
 	ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus = s.loadAStockMarketView(strategyDate, ctx.Recommendations)
 	ctx.EmptyReason = aStockRecommendationEmptyReason(ctx)
 	return ctx
+}
+
+func formatAStockPublishTime(value time.Time) string {
+	return value.In(aStockLocation()).Format("2006-01-02 15:04:05")
 }
 
 func aStockRecommendationEmptyReason(ctx aStockContext) string {
