@@ -74,6 +74,11 @@ type aStockBacktestRow struct {
 	Status          string
 }
 
+type aStockRecommendationHistory struct {
+	Date   string
+	Stocks []string
+}
+
 type aStockTopicRule struct {
 	Name     string
 	Keywords []string
@@ -118,6 +123,10 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-source-list{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 		.astock-table{min-width:960px}
 		.astock-scroll{overflow:auto}
+		.astock-history{display:flex;gap:12px;overflow:auto;margin:14px 0 18px}
+		.astock-history-card{min-width:220px;padding:12px;border:1px solid #ece7dc;border-radius:8px;background:#faf8f2}
+		.astock-history-date{font-weight:700;margin-bottom:8px}
+		.astock-history-stocks{display:flex;flex-direction:column;gap:5px;color:#223}
 		.astock-up{color:#b3261e;font-weight:700}
 		.astock-down{color:#1b7f3a;font-weight:700}
 		.astock-flat{color:#6a6257}
@@ -169,7 +178,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 	renderAStockNewsSection(&b, ctx)
 	renderAStockHotspotSection(&b, ctx.Hotspots)
 	renderAStockRecommendationSection(&b, ctx.Recommendations)
-	renderAStockBacktestSection(&b, ctx.Backtests)
+	renderAStockBacktestSection(&b, ctx.Date, ctx.Recommendations, ctx.Backtests)
 
 	_ = s.writeSimplePage(w, "a-stock", "A股策略工作台", b.String())
 }
@@ -293,8 +302,10 @@ func renderAStockRecommendationSection(b *strings.Builder, recommendations []aSt
 	b.WriteString(`</table></section>`)
 }
 
-func renderAStockBacktestSection(b *strings.Builder, rows []aStockBacktestRow) {
-	b.WriteString(`<section><h2>消息回测</h2><p class="astock-muted">买入价采用当日开盘价；T+1 到 T+5 按后续交易日收盘价计算收益，并展示五日内最高收益。</p><div class="astock-scroll"><table class="astock-table"><tr><th>股票</th><th>当日开盘价</th><th>T+1 收盘价</th><th>T+1 收益</th><th>T+2 收盘价</th><th>T+2 收益</th><th>T+3 收盘价</th><th>T+3 收益</th><th>T+4 收盘价</th><th>T+4 收益</th><th>T+5 收盘价</th><th>T+5 收益</th><th>五日内最高收益</th><th>命中状态</th></tr>`)
+func renderAStockBacktestSection(b *strings.Builder, strategyDate string, recommendations []aStockRecommendation, rows []aStockBacktestRow) {
+	b.WriteString(`<section><h2>消息回测</h2><p class="astock-muted">买入价采用当日开盘价；T+1 到 T+5 按后续交易日收盘价计算收益，并展示五日内最高收益。</p>`)
+	renderAStockRecommendationHistory(b, buildAStockRecommendationHistory(strategyDate, recommendations))
+	b.WriteString(`<div class="astock-scroll"><table class="astock-table"><tr><th>股票</th><th>当日开盘价</th><th>T+1 收盘价</th><th>T+1 收益</th><th>T+2 收盘价</th><th>T+2 收益</th><th>T+3 收盘价</th><th>T+3 收益</th><th>T+4 收盘价</th><th>T+4 收益</th><th>T+5 收盘价</th><th>T+5 收益</th><th>五日内最高收益</th><th>命中状态</th></tr>`)
 	if len(rows) == 0 {
 		b.WriteString(`<tr><td colspan="14">暂无回测结果，等待行情同步。</td></tr>`)
 		b.WriteString(`</table></div></section>`)
@@ -328,6 +339,41 @@ func renderAStockBacktestSection(b *strings.Builder, rows []aStockBacktestRow) {
 		b.WriteString(`</td></tr>`)
 	}
 	b.WriteString(`</table></div></section>`)
+}
+
+func renderAStockRecommendationHistory(b *strings.Builder, histories []aStockRecommendationHistory) {
+	b.WriteString(`<h3>推荐历史</h3><div class="astock-history">`)
+	if len(histories) == 0 {
+		b.WriteString(`<div class="astock-empty">暂无推荐历史</div></div>`)
+		return
+	}
+	histories = append([]aStockRecommendationHistory(nil), histories...)
+	sort.SliceStable(histories, func(i, j int) bool {
+		return histories[i].Date < histories[j].Date
+	})
+	for _, history := range histories {
+		b.WriteString(`<div class="astock-history-card"><div class="astock-history-date">`)
+		b.WriteString(html.EscapeString(history.Date))
+		b.WriteString(`</div><div class="astock-history-stocks">`)
+		for _, stock := range history.Stocks {
+			b.WriteString(`<span>`)
+			b.WriteString(html.EscapeString(stock))
+			b.WriteString(`</span>`)
+		}
+		b.WriteString(`</div></div>`)
+	}
+	b.WriteString(`</div>`)
+}
+
+func buildAStockRecommendationHistory(strategyDate string, recommendations []aStockRecommendation) []aStockRecommendationHistory {
+	if len(recommendations) == 0 {
+		return nil
+	}
+	stocks := make([]string, 0, len(recommendations))
+	for _, rec := range recommendations {
+		stocks = append(stocks, rec.Code+" "+rec.Name)
+	}
+	return []aStockRecommendationHistory{{Date: strategyDate, Stocks: stocks}}
 }
 
 func (s *Server) loadAStockContext(strategyDate string) aStockContext {
