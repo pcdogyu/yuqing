@@ -76,6 +76,9 @@ func (p *Provider) Fetch(ctx context.Context) ([]model.Item, error) {
 			resp, err = p.fetchPage(ctx, fallbackURL)
 		}
 	}
+	if p.sourceType == provider.SourceTypeForesightNewsflash && shouldTryForesightFallback(resp, err) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}

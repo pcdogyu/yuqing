@@ -78,6 +78,27 @@ func TestForesightProviderFallsBackToHomeOnBadGateway(t *testing.T) {
 	}
 }
 
+func TestForesightProviderSkipsTemporaryGatewayFailure(t *testing.T) {
+	var hits int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		http.Error(w, "bad gateway", http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	prov := NewForesightNewsflashProvider(resty.New().SetRetryCount(0), server.URL+"/news")
+	items, err := prov.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("expected temporary Foresight gateway failure to be skipped, got %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("expected no items on skipped gateway failure, got %+v", items)
+	}
+	if hits != 2 {
+		t.Fatalf("expected /news and / fallback attempts, got %d", hits)
+	}
+}
+
 func TestParseCoinDeskHTML(t *testing.T) {
 	html := `<html><body>
 <div class="flex flex-col">
