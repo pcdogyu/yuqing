@@ -245,8 +245,9 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 	}
 	body := rr.Body.String()
 	aStockIndex := strings.Index(body, `href="/a-stock"`)
+	auctionIndex := strings.Index(body, `href="/a-stock/auction"`)
 	cryptoIndex := strings.Index(body, `href="/crypto"`)
-	if aStockIndex < 0 || cryptoIndex < 0 || aStockIndex > cryptoIndex {
+	if aStockIndex < 0 || auctionIndex < 0 || cryptoIndex < 0 || aStockIndex > auctionIndex || auctionIndex > cryptoIndex {
 		t.Fatalf("expected A股 nav link before Crypto, got %s", body)
 	}
 	for _, want := range []string{
@@ -259,6 +260,7 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		"下午推荐",
 		"热点归纳",
 		"推荐股票",
+		"集合竞价",
 		"昨日收盘价",
 		"涨跌幅",
 		"30天涨跌幅",
@@ -294,6 +296,68 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 	}
 	if strings.Contains(body, `body[data-page='a-stock'] header`) {
 		t.Fatalf("expected A股 page to keep shared header width, got %s", body)
+	}
+}
+
+func TestAStockAuctionPageLoadsSummaryAndRows(t *testing.T) {
+	fetchedAt := time.Date(2026, 6, 16, 1, 30, 0, 0, time.UTC)
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/a-stock/auction" {
+			t.Fatalf("unexpected auction content path: %s", r.URL.String())
+		}
+		if r.URL.Query().Get("date") != "2026-06-16" || r.URL.Query().Get("keyword") != "科" {
+			t.Fatalf("unexpected auction query: %s", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    200,
+			"message": "ok",
+			"data": model.AStockAuctionListResult{
+				Date:         "2026-06-16",
+				Keyword:      "科",
+				LatestDate:   "2026-06-16",
+				Dates:        []string{"2026-06-16", "2026-06-15"},
+				SummaryCount: 2,
+				Total:        1,
+				Page:         1,
+				PageSize:     50,
+				TotalAmount:  151000000,
+				MaxItem: &model.AStockAuctionAmount{
+					TradeDate:     "2026-06-16",
+					Code:          "002230",
+					Name:          "科大讯飞",
+					AuctionAmount: 100000000,
+					FetchedAt:     fetchedAt,
+				},
+				FetchedAt: &fetchedAt,
+				Items: []model.AStockAuctionAmount{{
+					TradeDate:     "2026-06-16",
+					Code:          "002230",
+					Name:          "科大讯飞",
+					AuctionPrice:  41.2,
+					AuctionVolume: 123400,
+					AuctionAmount: 5084080,
+					Source:        "akshare_pre_min",
+					Status:        "ok",
+					FetchedAt:     fetchedAt,
+				}},
+			},
+		})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	req := httptest.NewRequest(http.MethodGet, "/a-stock/auction?date=2026-06-16&keyword=科", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAStockAuctionPage(rr, req, map[string]any{"id": 1})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected auction page 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"集合竞价", "当日汇总", "2026-06-16", "科大讯飞", "股票数", "2", "1.51亿", "508.41万", "12.34万", "akshare_pre_min", `value="科"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected auction page to contain %q, got %s", want, body)
+		}
 	}
 }
 

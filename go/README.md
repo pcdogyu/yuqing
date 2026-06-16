@@ -77,6 +77,8 @@ Invoke-WebRequest -Method Post "http://127.0.0.1:8083/api/v1/admin/tasks/crawl?s
 
 A 股策略工作台 `/a-stock` 默认按 `Asia/Shanghai` 增加两个推荐任务：`a-stock-morning-recommendation` 每日 `09:25` 抓取 `09:00-09:25` 财经新闻并生成上午推荐，`a-stock-afternoon-recommendation` 每日 `12:50` 抓取 `09:26-12:50` 财经新闻并生成下午推荐。两个任务会触发 `flash`、`headline`、`jin10_full`、`eastmoney_kuaixun` 四个新闻源，可用 `YUQING_SCHEDULER_A_STOCK_MORNING_RECOMMENDATION_CRON` 和 `YUQING_SCHEDULER_A_STOCK_AFTERNOON_RECOMMENDATION_CRON` 覆盖执行时间。
 
+集合竞价页面 `/a-stock/auction` 展示全市场 A 股 09:25 开盘集合竞价金额。配置 `YUQING_ASTOCK_AUCTION_URL` 指向 AKShare HTTP 服务后，`a-stock-auction-crawl` 会在每日 `09:30` 抓取 `/api/a-stock/auction?date=YYYY-MM-DD` 并通过 content-service 写入当前 `YUQING_DB_DRIVER` 对应的业务库；生产建议使用 PostgreSQL 配置。可用 `YUQING_SCHEDULER_A_STOCK_AUCTION_CRAWL_CRON` 覆盖执行时间。
+
 快速联调：
 
 ```powershell

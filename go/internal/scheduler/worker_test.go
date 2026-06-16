@@ -185,7 +185,7 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	if len(listEnvelope.Data) != 25 {
 		t.Fatalf("expected 25 scheduler jobs, got %d", len(listEnvelope.Data))
 	}
-	var heartbeatJob, hotJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, aStockMorningJob, aStockAfternoonJob Job
+	var heartbeatJob, hotJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, aStockMorningJob, aStockAfternoonJob, aStockAuctionJob Job
 	for _, job := range listEnvelope.Data {
 		switch job.Name {
 		case "crawl-link-heartbeat":
@@ -206,6 +206,8 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 			aStockMorningJob = job
 		case "a-stock-afternoon-recommendation":
 			aStockAfternoonJob = job
+		case "a-stock-auction-crawl":
+			aStockAuctionJob = job
 		}
 	}
 	if hotJob.JavaQuartzName != "HotDataSchedule" || hotJob.Cron == "" || hotJob.NextRunAt == nil {
@@ -228,6 +230,9 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	}
 	if aStockAfternoonJob.Cron != "0 50 12 * * ?" || aStockAfternoonJob.NextRunAt == nil {
 		t.Fatalf("expected A股 afternoon recommendation cron metadata, got %+v", aStockAfternoonJob)
+	}
+	if aStockAuctionJob.Cron != "0 30 9 * * ?" || aStockAuctionJob.Enabled {
+		t.Fatalf("expected A股 auction crawl disabled by default with 09:30 cron, got %+v", aStockAuctionJob)
 	}
 	if cryptoXJob.Enabled || cryptoTelegramJob.Enabled || foresightJob.Enabled || coindeskJob.Enabled || panewsJob.Enabled {
 		t.Fatalf("expected crypto jobs disabled without endpoint urls, got x=%+v telegram=%+v foresight=%+v coindesk=%+v panews=%+v", cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob)
@@ -304,6 +309,48 @@ func TestRunAStockRecommendationCrawlsSourcesAndQueriesWindow(t *testing.T) {
 	sort.Strings(sources)
 	if strings.Join(sources, ",") != "eastmoney_kuaixun,flash,headline,jin10_full" {
 		t.Fatalf("expected all A股 sources to be crawled, got %v", sources)
+	}
+}
+
+func TestRunAStockAuctionCrawlFetchesAkshareAndWritesContent(t *testing.T) {
+	var contentPayload struct {
+		Date  string                      `json:"date"`
+		Items []model.AStockAuctionAmount `json:"items"`
+	}
+	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/a-stock/auction" || r.URL.Query().Get("date") != "2026-06-16" {
+			t.Fatalf("unexpected akshare request: %s", r.URL.String())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"date":"2026-06-16","items":[{"code":"002230","name":"科大讯飞","auction_price":41.2,"auction_volume":123400,"auction_amount":5084080,"source":"akshare_pre_min","status":"ok"},{"code":"000001","name":"平安银行","auction_price":12,"auction_volume":0,"auction_amount":0,"source":"akshare_pre_min","status":"no_auction_data"}]}`))
+	}))
+	defer akshare.Close()
+
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/admin/a-stock/auction" {
+			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
+		}
+		if r.Header.Get("X-Service-Token") != "secret-token" {
+			t.Fatalf("expected service token header, got %q", r.Header.Get("X-Service-Token"))
+		}
+		if err := json.NewDecoder(r.Body).Decode(&contentPayload); err != nil {
+			t.Fatalf("decode content payload: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer content.Close()
+
+	worker := NewWorker(config.Config{
+		AStockAuctionURL: akshare.URL,
+		ContentURL:       content.URL,
+		HTTPTimeout:      time.Second,
+		ServiceToken:     "secret-token",
+	})
+	if err := worker.runAStockAuctionCrawlForDate(context.Background(), "2026-06-16"); err != nil {
+		t.Fatalf("runAStockAuctionCrawlForDate error: %v", err)
+	}
+	if contentPayload.Date != "2026-06-16" || len(contentPayload.Items) != 2 || contentPayload.Items[0].Code != "002230" || contentPayload.Items[1].Status != "no_auction_data" {
+		t.Fatalf("unexpected content payload: %+v", contentPayload)
 	}
 }
 
@@ -411,6 +458,28 @@ func TestSchedulerCryptoJobsEnabledWhenEndpointsConfigured(t *testing.T) {
 	}
 	if !panewsJob.Enabled || panewsJob.IntervalSec != 360 || panewsJob.NextRunAt == nil {
 		t.Fatalf("expected enabled panews job with runtime metadata, got %+v", panewsJob)
+	}
+}
+
+func TestSchedulerAStockAuctionJobEnabledWhenEndpointConfigured(t *testing.T) {
+	worker := NewWorker(config.Config{
+		HTTPTimeout:           time.Second,
+		AStockAuctionURL:      "http://127.0.0.1:19091",
+		FlashInterval:         time.Hour,
+		HeadlineInterval:      time.Hour,
+		AnalysisInterval:      time.Hour,
+		WechatCleanupInterval: time.Hour,
+		WechatPushInterval:    time.Hour,
+	})
+	var auctionJob Job
+	for _, job := range worker.Jobs() {
+		if job.Name == "a-stock-auction-crawl" {
+			auctionJob = job
+			break
+		}
+	}
+	if !auctionJob.Enabled || auctionJob.Cron != "0 30 9 * * ?" || auctionJob.NextRunAt == nil {
+		t.Fatalf("expected enabled A股 auction crawl with 09:30 cron, got %+v", auctionJob)
 	}
 }
 

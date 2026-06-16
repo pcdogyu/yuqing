@@ -90,6 +90,8 @@ type Store interface {
 	CreatePublicOption(rctx context.Context, option model.PublicOption) (model.PublicOption, error)
 	UpdatePublicOption(rctx context.Context, option model.PublicOption) (model.PublicOption, error)
 	DeletePublicOption(rctx context.Context, id int64) error
+	UpsertAStockAuctionAmounts(rctx context.Context, tradeDate string, items []model.AStockAuctionAmount) (model.AStockAuctionUpsertResult, error)
+	ListAStockAuctionAmounts(rctx context.Context, filter model.AStockAuctionFilter) (model.AStockAuctionListResult, error)
 }
 
 type Service struct {
@@ -152,6 +154,8 @@ func (s *Service) Routes(r chi.Router) {
 	r.Delete("/api/v1/articles/{id}/read", s.handleUnmarkArticleRead)
 	r.Post("/api/v1/articles/{id}/favorite", s.handleToggleFavorite)
 	r.Post("/api/v1/articles/{id}/share", s.handleShareArticle)
+	r.Get("/api/v1/a-stock/auction", s.handleListAStockAuctionAmounts)
+	r.Post("/api/v1/admin/a-stock/auction", s.handleUpsertAStockAuctionAmounts)
 	r.Get("/api/v1/search/articles", s.handleSearchArticles)
 	r.Get("/api/v1/search/full", s.handleSearchFull)
 	r.Get("/api/v1/search/timely", s.handleSearchTimely)
@@ -529,6 +533,48 @@ func syncTemplateWebsiteConfig(rawConfig, website string) string {
 func (s *Service) handleListArticles(w http.ResponseWriter, r *http.Request) {
 	filter := articleFilterFromRequest(r)
 	result, err := s.store.ListItems(r.Context(), filter)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleListAStockAuctionAmounts(w http.ResponseWriter, r *http.Request) {
+	filter := model.AStockAuctionFilter{
+		Date:     strings.TrimSpace(r.URL.Query().Get("date")),
+		Keyword:  strings.TrimSpace(nonEmpty(r.URL.Query().Get("keyword"), r.URL.Query().Get("code"))),
+		Page:     apiutil.IntQuery(r, "page", 1),
+		PageSize: apiutil.IntQuery(r, "page_size", 50),
+	}
+	result, err := s.store.ListAStockAuctionAmounts(r.Context(), filter)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleUpsertAStockAuctionAmounts(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		Date  string                      `json:"date"`
+		Items []model.AStockAuctionAmount `json:"items"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid json", nil)
+		return
+	}
+	payload.Date = strings.TrimSpace(payload.Date)
+	if payload.Date == "" {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "date required", nil)
+		return
+	}
+	for i := range payload.Items {
+		if strings.TrimSpace(payload.Items[i].TradeDate) == "" {
+			payload.Items[i].TradeDate = payload.Date
+		}
+	}
+	result, err := s.store.UpsertAStockAuctionAmounts(r.Context(), payload.Date, payload.Items)
 	if err != nil {
 		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
 		return

@@ -482,6 +482,21 @@ CREATE TABLE IF NOT EXISTS crypto_insight_snapshots (
 	PRIMARY KEY (pair, horizon_set)
 );
 
+CREATE TABLE IF NOT EXISTS a_stock_auction_amounts (
+	trade_date TEXT NOT NULL,
+	code TEXT NOT NULL,
+	name TEXT NOT NULL DEFAULT '',
+	auction_price REAL NOT NULL DEFAULT 0,
+	auction_volume REAL NOT NULL DEFAULT 0,
+	auction_amount REAL NOT NULL DEFAULT 0,
+	source TEXT NOT NULL DEFAULT '',
+	status TEXT NOT NULL DEFAULT 'ok',
+	fetched_at TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	PRIMARY KEY (trade_date, code)
+);
+
 CREATE TABLE IF NOT EXISTS task_runs (
 	id INTEGER PRIMARY KEY,
 	task_name TEXT NOT NULL,
@@ -537,6 +552,8 @@ CREATE INDEX IF NOT EXISTS idx_items_title ON items(title);
 CREATE INDEX IF NOT EXISTS idx_crawl_runs_source_type_started_at ON crawl_runs(source_type, started_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_crawl_states_updated ON crawl_states(source_type, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_crawl_templates_enabled_updated ON crawl_templates(enabled, updated_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_a_stock_auction_date_amount ON a_stock_auction_amounts(trade_date DESC, auction_amount DESC);
+CREATE INDEX IF NOT EXISTS idx_a_stock_auction_code ON a_stock_auction_amounts(code);
 CREATE INDEX IF NOT EXISTS idx_projects_group_id ON projects(group_id);
 CREATE INDEX IF NOT EXISTS idx_monitor_rules_project_id ON monitor_rules(project_id);
 CREATE INDEX IF NOT EXISTS idx_reports_project_id ON reports(project_id);

@@ -316,6 +316,7 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/monitor/wxGroup", s.requireSession(s.handleMonitorWxGroup))
 	mux.HandleFunc("/volume", s.requireSessionUnlessRemoved(s.handleVolume))
 	mux.HandleFunc("/volume/", s.requireSessionUnlessRemoved(s.handleVolume))
+	mux.HandleFunc("/a-stock/auction", s.requireSession(s.handleAStockAuctionPage))
 	mux.HandleFunc("/a-stock", s.requireSession(s.handleAStockPage))
 	mux.HandleFunc("/a-stock/", s.requireSession(s.handleAStockPage))
 	mux.HandleFunc("/crypto", s.requireSession(s.handleCryptoPage))
@@ -4542,7 +4543,7 @@ func collectLegacyLiveRoutes() []legacyRouteSpec {
 	return result
 }
 
-const portalNavHTML = `<nav><a href="/">总览</a><a href="/projects">项目</a><a href="/monitor-rules">规则</a><a href="/articles">文章</a><a href="/reports">报告</a><a href="/crawl-templates">模板中心</a><a href="/crawl-templates/manage">模板管理</a><a href="/a-stock">A股</a><a href="/crypto">Crypto</a><a href="/system">系统</a><a href="/logs">日志</a><a class="logout-link" href="/logout">退出</a></nav>`
+const portalNavHTML = `<nav><a href="/">总览</a><a href="/projects">项目</a><a href="/monitor-rules">规则</a><a href="/articles">文章</a><a href="/reports">报告</a><a href="/crawl-templates">模板中心</a><a href="/crawl-templates/manage">模板管理</a><a href="/a-stock">A股</a><a href="/a-stock/auction">集合竞价</a><a href="/crypto">Crypto</a><a href="/system">系统</a><a href="/logs">日志</a><a class="logout-link" href="/logout">退出</a></nav>`
 const portalFooterHTML = `<footer class="site-footer"><div>Code By Yuhao@jiansutech.com - {{.FooterBuildTime}} - {{.FooterCommit}} - {{.FooterBranch}} - <a class="footer-feedback-link" href="/system?section=feedback">反馈建议</a></div></footer>` + portalRulesFormEnhancementScript + portalSystemServiceLogsScript
 
 const portalRulesFormEnhancementScript = `<script>(function(){if(location.pathname!=="/monitor-rules"){return}var headings=[].slice.call(document.querySelectorAll("h2"));var heading=headings.find(function(node){return node.textContent.trim()==="新建规则"});if(!heading){return}var section=heading.closest("section");var form=section&&section.querySelector("form");if(!form){return}var project=form.querySelector('select[name="project_id"]');if(project&&project.options.length===0){var option=document.createElement("option");option.value="";option.textContent="无可选项目，提交时自动创建项目";project.appendChild(option)}if(project&&!form.querySelector('input[name="project_name"]')){var input=document.createElement("input");input.name="project_name";input.placeholder="新项目名称（可选，未选择项目时使用）";project.insertAdjacentElement("afterend",input)}var channels=form.querySelector('input[name="channels"]');if(channels){channels.setAttribute("list","monitor-rule-channel-options");if(!document.getElementById("monitor-rule-channel-options")){var list=document.createElement("datalist");list.id="monitor-rule-channel-options";["flash","headline","crypto_x","crypto_telegram","flash,headline","all"].forEach(function(value){var option=document.createElement("option");option.value=value;list.appendChild(option)});document.body.appendChild(list)}}var name=form.querySelector('input[name="name"]');var include=form.querySelector('input[name="include_keywords"]');form.addEventListener("submit",function(){if(name&&include&&!name.value.trim()&&include.value.trim()){name.value="关键词监测："+include.value.trim()}})})();</script>`

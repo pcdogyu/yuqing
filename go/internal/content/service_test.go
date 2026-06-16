@@ -113,6 +113,39 @@ func TestParseID(t *testing.T) {
 	})
 }
 
+func TestAStockAuctionAmountAPIUpsertsAndLists(t *testing.T) {
+	store := newContentSearchTestStore(t)
+	svc := NewService(config.Config{}, store)
+	router := svc.Router()
+
+	payload := `{"date":"2026-06-16","items":[{"code":"002230","name":"科大讯飞","auction_price":41.2,"auction_volume":123400,"auction_amount":5084080,"source":"akshare_pre_min","status":"ok"},{"code":"600000","name":"浦发银行","auction_price":8.8,"auction_volume":90000,"auction_amount":792000,"source":"akshare_pre_min","status":"ok"}]}`
+	postReq := httptest.NewRequest(http.MethodPost, "/api/v1/admin/a-stock/auction", strings.NewReader(payload))
+	postRR := httptest.NewRecorder()
+	router.ServeHTTP(postRR, postReq)
+	if postRR.Code != http.StatusOK {
+		t.Fatalf("expected auction upsert 200, got %d body=%s", postRR.Code, postRR.Body.String())
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/auction?date=2026-06-16&keyword=讯飞&page=1&page_size=10", nil)
+	listRR := httptest.NewRecorder()
+	router.ServeHTTP(listRR, listReq)
+	if listRR.Code != http.StatusOK {
+		t.Fatalf("expected auction list 200, got %d body=%s", listRR.Code, listRR.Body.String())
+	}
+	var envelope struct {
+		Data model.AStockAuctionListResult `json:"data"`
+	}
+	if err := json.Unmarshal(listRR.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal auction list: %v", err)
+	}
+	if envelope.Data.Date != "2026-06-16" || envelope.Data.Total != 1 || len(envelope.Data.Items) != 1 || envelope.Data.Items[0].Code != "002230" {
+		t.Fatalf("unexpected auction list payload: %+v", envelope.Data)
+	}
+	if envelope.Data.TotalAmount != 5876080 || envelope.Data.MaxItem == nil || envelope.Data.MaxItem.Code != "002230" {
+		t.Fatalf("expected date summary independent of keyword filter, got %+v", envelope.Data)
+	}
+}
+
 func TestAuditMiddlewareWritesSanitizedAccessLog(t *testing.T) {
 	store := newContentSearchTestStore(t)
 	svc := NewService(config.Config{}, store)

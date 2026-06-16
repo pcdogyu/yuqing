@@ -92,6 +92,61 @@ func TestListItemsCanFilterByPublishTime(t *testing.T) {
 	}
 }
 
+func TestAStockAuctionAmountsUpsertAndList(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	fetchedAt := time.Date(2026, 6, 16, 1, 30, 0, 0, time.UTC)
+
+	first, err := store.UpsertAStockAuctionAmounts(ctx, "2026-06-16", []model.AStockAuctionAmount{
+		{Code: "002230", Name: "科大讯飞", AuctionPrice: 41.2, AuctionVolume: 123400, AuctionAmount: 5084080, Source: "akshare_pre_min", Status: "ok", FetchedAt: fetchedAt},
+		{Code: "600000", Name: "浦发银行", AuctionPrice: 8.8, AuctionVolume: 90000, AuctionAmount: 792000, Source: "akshare_pre_min", Status: "ok", FetchedAt: fetchedAt},
+	})
+	if err != nil {
+		t.Fatalf("UpsertAStockAuctionAmounts insert error: %v", err)
+	}
+	if first.Inserted != 2 || first.Updated != 0 {
+		t.Fatalf("unexpected insert result: %+v", first)
+	}
+
+	second, err := store.UpsertAStockAuctionAmounts(ctx, "2026-06-16", []model.AStockAuctionAmount{
+		{Code: "002230", Name: "科大讯飞", AuctionPrice: 42, AuctionVolume: 100000, AuctionAmount: 4200000, Source: "akshare_pre_min", Status: "ok", FetchedAt: fetchedAt},
+	})
+	if err != nil {
+		t.Fatalf("UpsertAStockAuctionAmounts update error: %v", err)
+	}
+	if second.Inserted != 0 || second.Updated != 1 {
+		t.Fatalf("unexpected update result: %+v", second)
+	}
+
+	if _, err := store.UpsertAStockAuctionAmounts(ctx, "2026-06-15", []model.AStockAuctionAmount{
+		{Code: "000001", Name: "平安银行", AuctionPrice: 12, AuctionVolume: 10000, AuctionAmount: 120000, Source: "akshare_pre_min", Status: "ok", FetchedAt: fetchedAt.AddDate(0, 0, -1)},
+	}); err != nil {
+		t.Fatalf("UpsertAStockAuctionAmounts previous day error: %v", err)
+	}
+
+	latest, err := store.ListAStockAuctionAmounts(ctx, model.AStockAuctionFilter{Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListAStockAuctionAmounts latest error: %v", err)
+	}
+	if latest.Date != "2026-06-16" || latest.LatestDate != "2026-06-16" || latest.Total != 2 || len(latest.Items) != 2 {
+		t.Fatalf("unexpected latest auction list: %+v", latest)
+	}
+	if latest.Items[0].Code != "002230" || latest.Items[0].AuctionAmount != 4200000 || latest.TotalAmount != 4992000 {
+		t.Fatalf("expected updated highest amount row and total amount, got %+v", latest)
+	}
+	if latest.MaxItem == nil || latest.MaxItem.Code != "002230" {
+		t.Fatalf("expected max item, got %+v", latest.MaxItem)
+	}
+
+	filtered, err := store.ListAStockAuctionAmounts(ctx, model.AStockAuctionFilter{Date: "2026-06-16", Keyword: "浦发", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListAStockAuctionAmounts filtered error: %v", err)
+	}
+	if filtered.Total != 1 || len(filtered.Items) != 1 || filtered.Items[0].Code != "600000" {
+		t.Fatalf("expected keyword filtered row, got %+v", filtered)
+	}
+}
+
 func TestNewStoreSetsBusyTimeout(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
