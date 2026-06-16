@@ -1,9 +1,14 @@
 package cryptonews
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/go-resty/resty/v2"
 
 	"github.com/pcdogyu/yuqing/go/internal/provider"
 )
@@ -38,6 +43,38 @@ func TestParseForesightHTMLSkipsBrokenObjects(t *testing.T) {
 	}
 	if len(items) != 0 {
 		t.Fatalf("expected broken objects to be skipped, got %+v", items)
+	}
+}
+
+func TestForesightProviderFallsBackToHomeOnBadGateway(t *testing.T) {
+	var newsHits, homeHits int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Accept-Language") == "" || r.Header.Get("Referer") == "" {
+			t.Fatalf("expected browser headers, got %+v", r.Header)
+		}
+		switch r.URL.Path {
+		case "/news":
+			newsHits++
+			http.Error(w, "bad gateway", http.StatusBadGateway)
+		case "/":
+			homeHits++
+			_, _ = w.Write([]byte(`<html><script>window.__NUXT__=(function(){return {data:[{list:[{news:[{id:106002,title:"Foresight 首页快讯",brief:"首页降级",content:"ETH news",published_at:1781513172}]}]}]}})</script></html>`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	prov := NewForesightNewsflashProvider(resty.New().SetRetryCount(0), server.URL+"/news")
+	items, err := prov.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch error: %v", err)
+	}
+	if newsHits != 1 || homeHits != 1 {
+		t.Fatalf("expected /news then / fallback, got news=%d home=%d", newsHits, homeHits)
+	}
+	if len(items) != 1 || items[0].Title != "Foresight 首页快讯" {
+		t.Fatalf("unexpected fallback items: %+v", items)
 	}
 }
 

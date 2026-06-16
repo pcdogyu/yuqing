@@ -21,6 +21,13 @@ import (
 
 const coindeskRSSURL = "https://www.coindesk.com/arc/outboundfeeds/rss/?outputType=xml"
 
+var browserHeaders = map[string]string{
+	"Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+	"Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+	"Cache-Control":   "no-cache",
+	"Pragma":          "no-cache",
+}
+
 type Provider struct {
 	client     *resty.Client
 	sourceType string
@@ -63,7 +70,12 @@ func (p *Provider) Fetch(ctx context.Context) ([]model.Item, error) {
 	if strings.TrimSpace(p.pageURL) == "" {
 		return nil, fmt.Errorf("%s endpoint is empty", p.sourceType)
 	}
-	resp, err := p.client.R().SetContext(ctx).Get(p.pageURL)
+	resp, err := p.fetchPage(ctx, p.pageURL)
+	if p.sourceType == provider.SourceTypeForesightNewsflash && shouldTryForesightFallback(resp, err) {
+		if fallbackURL := foresightFallbackURL(p.pageURL); fallbackURL != "" {
+			resp, err = p.fetchPage(ctx, fallbackURL)
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -88,6 +100,38 @@ func (p *Provider) Fetch(ctx context.Context) ([]model.Item, error) {
 	default:
 		return nil, fmt.Errorf("unsupported crypto news source_type %s", p.sourceType)
 	}
+}
+
+func (p *Provider) fetchPage(ctx context.Context, targetURL string) (*resty.Response, error) {
+	req := p.client.R().SetContext(ctx)
+	for key, value := range browserHeaders {
+		req.SetHeader(key, value)
+	}
+	if p.sourceType == provider.SourceTypeForesightNewsflash {
+		req.SetHeader("Referer", "https://foresightnews.pro/")
+	}
+	return req.Get(targetURL)
+}
+
+func shouldTryForesightFallback(resp *resty.Response, err error) bool {
+	if err != nil {
+		return true
+	}
+	if resp == nil {
+		return false
+	}
+	return resp.StatusCode() == 502 || resp.StatusCode() == 503 || resp.StatusCode() == 504
+}
+
+func foresightFallbackURL(pageURL string) string {
+	parsed, err := url.Parse(strings.TrimSpace(pageURL))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return ""
+	}
+	parsed.Path = "/"
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String()
 }
 
 func (p *Provider) fetchCoinDeskRSSFallback(ctx context.Context, capturedAt time.Time) ([]model.Item, error) {
