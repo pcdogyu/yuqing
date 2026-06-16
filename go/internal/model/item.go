@@ -55,6 +55,12 @@ type CrawlSummary struct {
 	ErrorText     string `json:"error_text,omitempty"`
 }
 
+type CrawlOptions struct {
+	Start     string `json:"start,omitempty"`
+	End       string `json:"end,omitempty"`
+	TimeField string `json:"time_field,omitempty"`
+}
+
 type CrawlTemplate struct {
 	ID         int64     `json:"id"`
 	Name       string    `json:"name"`

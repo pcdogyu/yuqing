@@ -83,12 +83,20 @@ func (s *Service) handleRunCrawl(w http.ResponseWriter, r *http.Request) {
 		apiutil.WriteJSON(w, http.StatusOK, "ok", summaries)
 		return
 	}
-	summary, err := s.crawler.Run(r.Context(), sourceType)
+	summary, err := s.crawler.RunWithOptions(r.Context(), sourceType, crawlOptionsFromRequest(r))
 	if err != nil {
 		apiutil.WriteJSON(w, http.StatusBadGateway, err.Error(), summary)
 		return
 	}
 	apiutil.WriteJSON(w, http.StatusOK, "ok", summary)
+}
+
+func crawlOptionsFromRequest(r *http.Request) model.CrawlOptions {
+	return model.CrawlOptions{
+		Start:     strings.TrimSpace(r.URL.Query().Get("start")),
+		End:       strings.TrimSpace(r.URL.Query().Get("end")),
+		TimeField: strings.TrimSpace(r.URL.Query().Get("time_field")),
+	}
 }
 
 func (s *Service) handleRuns(w http.ResponseWriter, r *http.Request) {

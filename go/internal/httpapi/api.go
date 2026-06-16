@@ -113,7 +113,11 @@ func (s *Server) handleRunCrawl(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, "ok", summaries)
 		return
 	}
-	summary, err := s.crawler.Run(r.Context(), sourceType)
+	summary, err := s.crawler.RunWithOptions(r.Context(), sourceType, model.CrawlOptions{
+		Start:     strings.TrimSpace(r.URL.Query().Get("start")),
+		End:       strings.TrimSpace(r.URL.Query().Get("end")),
+		TimeField: strings.TrimSpace(r.URL.Query().Get("time_field")),
+	})
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, err.Error(), summary)
 		return

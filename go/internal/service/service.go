@@ -63,6 +63,10 @@ func cleanText(text string) string {
 }
 
 func (c *Crawler) Run(ctx context.Context, sourceType string) (model.CrawlSummary, error) {
+	return c.RunWithOptions(ctx, sourceType, model.CrawlOptions{})
+}
+
+func (c *Crawler) RunWithOptions(ctx context.Context, sourceType string, options model.CrawlOptions) (model.CrawlSummary, error) {
 	prov := c.providers.Resolve(sourceType)
 	if prov == nil {
 		return model.CrawlSummary{}, errors.New("unsupported source_type")
@@ -88,6 +92,7 @@ func (c *Crawler) Run(ctx context.Context, sourceType string) (model.CrawlSummar
 		_ = c.store.RecordTaskRun(ctx, "crawl:"+sourceType, "failed", fetchErr.Error(), startedAt, &finishedAt)
 		return summary, fetchErr
 	}
+	items = filterCrawlItemsByOptions(items, options)
 
 	now := time.Now().UTC()
 	sourceKeys := make([]string, 0, len(items))
@@ -137,6 +142,67 @@ func (c *Crawler) Run(ctx context.Context, sourceType string) (model.CrawlSummar
 	finishedAt := time.Now().UTC()
 	_ = c.store.RecordTaskRun(ctx, "crawl:"+sourceType, "success", "crawl completed", startedAt, &finishedAt)
 	return summary, nil
+}
+
+func filterCrawlItemsByOptions(items []model.Item, options model.CrawlOptions) []model.Item {
+	start, hasStart := parseCrawlOptionTime(options.Start)
+	end, hasEnd := parseCrawlOptionTime(options.End)
+	if !hasStart && !hasEnd {
+		return items
+	}
+	filtered := make([]model.Item, 0, len(items))
+	for _, item := range items {
+		publishedAt, ok := parseCrawlItemPublishTime(item)
+		if !ok {
+			continue
+		}
+		if hasStart && publishedAt.Before(start) {
+			continue
+		}
+		if hasEnd && publishedAt.After(end) {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	return filtered
+}
+
+func parseCrawlOptionTime(raw string) (time.Time, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}, false
+	}
+	location := shanghaiLocation()
+	for _, layout := range []string{time.RFC3339, "2006-01-02 15:04:05", "2006-01-02 15:04", "2006-01-02"} {
+		if parsed, err := time.ParseInLocation(layout, raw, location); err == nil {
+			return parsed, true
+		}
+	}
+	return time.Time{}, false
+}
+
+func parseCrawlItemPublishTime(item model.Item) (time.Time, bool) {
+	location := shanghaiLocation()
+	for _, value := range []string{item.PublishTime, item.PublishTimeText} {
+		value = strings.TrimSpace(value)
+		if value == "" || strings.Contains(value, "前") || strings.Contains(value, "刚刚") {
+			continue
+		}
+		for _, layout := range []string{time.RFC3339, "2006-01-02 15:04:05", "2006-01-02 15:04", "2006-01-02"} {
+			if parsed, err := time.ParseInLocation(layout, value, location); err == nil {
+				return parsed, true
+			}
+		}
+	}
+	return time.Time{}, false
+}
+
+func shanghaiLocation() *time.Location {
+	location, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		return time.FixedZone("UTC+8", 8*60*60)
+	}
+	return location
 }
 
 func (c *Crawler) RunTemplateByID(ctx context.Context, templateID int64, keyword string) (model.CrawlSummary, error) {

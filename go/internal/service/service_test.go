@@ -59,6 +59,50 @@ func TestCrawlerRunsCryptoSocialSourceWithDedup(t *testing.T) {
 	}
 }
 
+func TestCrawlerRunWithOptionsFiltersPublishTimeWindow(t *testing.T) {
+	store, err := sqlitestore.New(filepath.Join(t.TempDir(), "crawler-window.db"))
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	defer store.Close()
+
+	crawler := NewCrawler(store, provider.Registry{
+		Flash: fakeProvider{
+			sourceType: provider.SourceTypeFlash,
+			items: []model.Item{
+				{Title: "上午新闻", PublishTime: "2026-06-16 09:10:00"},
+				{Title: "下午新闻", PublishTime: "2026-06-16 13:10:00"},
+				{Title: "无发布时间新闻"},
+			},
+		},
+	}, nil)
+
+	summary, err := crawler.RunWithOptions(context.Background(), provider.SourceTypeFlash, model.CrawlOptions{
+		Start:     "2026-06-16 09:00:00",
+		End:       "2026-06-16 09:25:59",
+		TimeField: "publish_time",
+	})
+	if err != nil {
+		t.Fatalf("RunWithOptions error: %v", err)
+	}
+	if summary.FetchedCount != 3 || summary.InsertedCount != 1 {
+		t.Fatalf("unexpected summary: %+v", summary)
+	}
+	items, err := store.ListItems(context.Background(), model.ArticleFilter{
+		Page:      1,
+		PageSize:  10,
+		Start:     "2026-06-16 09:00:00",
+		End:       "2026-06-16 09:25:59",
+		TimeField: "publish_time",
+	})
+	if err != nil {
+		t.Fatalf("ListItems error: %v", err)
+	}
+	if len(items.Items) != 1 || items.Items[0].Title != "上午新闻" {
+		t.Fatalf("expected only morning item, got %+v", items.Items)
+	}
+}
+
 func TestCrawlerRunTemplateByID(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`<html><body><article><h1>BTC ETF update</h1><p>Positive template item</p></article></body></html>`))
@@ -96,6 +140,19 @@ func TestCrawlerRunTemplateByID(t *testing.T) {
 	if len(items) != 1 || items[0].Title != "BTC ETF update" {
 		t.Fatalf("unexpected persisted template item: %+v", items)
 	}
+}
+
+type fakeProvider struct {
+	sourceType string
+	items      []model.Item
+}
+
+func (p fakeProvider) SourceType() string {
+	return p.sourceType
+}
+
+func (p fakeProvider) Fetch(context.Context) ([]model.Item, error) {
+	return p.items, nil
 }
 
 func mustTemplateConfigJSON(t *testing.T, baseURL string) string {

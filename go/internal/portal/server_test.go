@@ -467,7 +467,7 @@ func TestAStockPageShowsBackfillCurrentWindowAction(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"补抓当前窗口新闻", `name="action" value="backfill_window_news"`} {
+	for _, want := range []string{"补抓当前窗口新闻", `name="action" value="backfill_window_news"`, "补录上午新闻并生成推荐", `name="action" value="backfill_morning_stock"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected backfill action %q, got %s", want, body)
 		}
@@ -534,6 +534,46 @@ func TestAStockBackfillWindowActionPassesMorningWindow(t *testing.T) {
 	}
 	loc, _ := url.QueryUnescape(rr.Header().Get("Location"))
 	for _, want := range []string{"date=2026-06-16", "period=morning", "已补抓 2026-06-16 上午 09:00-09:25", "当前窗口已有 1 条财经新闻"} {
+		if !strings.Contains(loc, want) {
+			t.Fatalf("expected redirect message %q, got %q", want, loc)
+		}
+	}
+}
+
+func TestAStockBackfillMorningStockActionSelectsMorningWindow(t *testing.T) {
+	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/admin/tasks/crawl" {
+			t.Fatalf("unexpected crawler request: %s %s", r.Method, r.URL.String())
+		}
+		if r.URL.Query().Get("start") != "2026-06-15 09:00:00" || r.URL.Query().Get("end") != "2026-06-15 09:25:59" {
+			t.Fatalf("unexpected morning backfill query: %s", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "message": "ok"})
+	}))
+	defer crawler.Close()
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    200,
+			"message": "ok",
+			"data":    model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0},
+		})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{CrawlerURL: crawler.URL, ContentURL: content.URL})
+	form := url.Values{"date": {"2026-06-15"}, "period": {"afternoon"}, "action": {"backfill_morning_stock"}}
+	req := httptest.NewRequest(http.MethodPost, "/a-stock", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d", rr.Code)
+	}
+	loc, _ := url.QueryUnescape(rr.Header().Get("Location"))
+	for _, want := range []string{"date=2026-06-15", "period=morning", "已补抓 2026-06-15 上午 09:00-09:25", "上午推荐已按补录后的新闻窗口重新计算"} {
 		if !strings.Contains(loc, want) {
 			t.Fatalf("expected redirect message %q, got %q", want, loc)
 		}

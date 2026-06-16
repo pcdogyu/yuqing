@@ -226,6 +226,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 	}{
 		{Name: "crawl", Label: "抓取全部财经信息", Period: ctx.Period},
 		{Name: "backfill_window_news", Label: "补抓当前窗口新闻", Period: ctx.Period},
+		{Name: "backfill_morning_stock", Label: "补录上午新闻并生成推荐", Period: "morning"},
 		{Name: "generate_morning_stock", Label: "重新生成上午推荐", Period: "morning"},
 		{Name: "generate_afternoon_stock", Label: "重新生成下午推荐", Period: "afternoon"},
 		{Name: "generate", Label: "生成今日热点", Period: ctx.Period},
@@ -268,6 +269,11 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request) 
 	case "backfill_window_news":
 		date := normalizeAStockStrategyDate(r.FormValue("date"))
 		query.Set("msg", s.triggerAStockWindowCrawl(date, period.Key))
+	case "backfill_morning_stock":
+		date := normalizeAStockStrategyDate(r.FormValue("date"))
+		period = normalizeAStockPeriod("morning")
+		query.Set("period", period.Key)
+		query.Set("msg", s.triggerAStockWindowCrawl(date, period.Key)+"上午推荐已按补录后的新闻窗口重新计算。")
 	case "generate_morning_stock":
 		period = normalizeAStockPeriod("morning")
 		query.Set("period", period.Key)
