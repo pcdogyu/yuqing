@@ -2238,6 +2238,7 @@ func (s *Service) operationServiceStatuses(ctx context.Context) []model.Operatio
 func (s *Service) externalIntegrationStatuses(ctx context.Context) []model.OperationExternalStatus {
 	result := []model.OperationExternalStatus{
 		{Name: "jin10_full", Status: boolStatus(s.cfg.Jin10FullEnabled), Message: "controlled by YUQING_JIN10_FULL_ENABLED"},
+		{Name: "eastmoney_kuaixun", Status: boolStatus(strings.TrimSpace(s.cfg.EastMoneyKuaixunURL) != ""), Message: s.cfg.EastMoneyKuaixunURL},
 		s.cryptoSocialStatus(ctx, "crypto_x", s.cfg.CryptoXURL),
 		s.cryptoSocialStatus(ctx, "crypto_telegram", s.cfg.CryptoTelegramURL),
 		{Name: "binance", Status: "configured", Message: s.cfg.BinanceBaseURL},

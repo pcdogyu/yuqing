@@ -18,6 +18,7 @@ import (
 	"github.com/pcdogyu/yuqing/go/internal/provider"
 	"github.com/pcdogyu/yuqing/go/internal/provider/cryptonews"
 	"github.com/pcdogyu/yuqing/go/internal/provider/cryptosocial"
+	"github.com/pcdogyu/yuqing/go/internal/provider/eastmoneykuaixun"
 	"github.com/pcdogyu/yuqing/go/internal/provider/jin10flash"
 	"github.com/pcdogyu/yuqing/go/internal/provider/jin10full"
 	"github.com/pcdogyu/yuqing/go/internal/provider/jin10xnews"
@@ -127,6 +128,9 @@ func NewCrawler(cfg config.Config, store *sqlitestore.Store) *service.Crawler {
 	if cfg.PANewsNewsflashURL != "" {
 		registry.PANewsNewsflash = cryptonews.NewPANewsNewsflashProvider(httpClient, cfg.PANewsNewsflashURL)
 	}
+	if cfg.EastMoneyKuaixunURL != "" {
+		registry.EastMoneyKuaixun = eastmoneykuaixun.NewProvider(httpClient, cfg.EastMoneyKuaixunURL)
+	}
 	return service.NewCrawler(store, registry, nil)
 }
 
@@ -189,6 +193,7 @@ func LogStartup(serviceName, listenAddr string, cfg config.Config) {
 		Str("foresight_newsflash_url", cfg.ForesightNewsflashURL).
 		Str("coindesk_zh_latest_url", cfg.CoinDeskZHLatestURL).
 		Str("panews_newsflash_url", cfg.PANewsNewsflashURL).
+		Str("eastmoney_kuaixun_url", cfg.EastMoneyKuaixunURL).
 		Str("gateway_web_url", cfg.GatewayWebURL).
 		Str("auth_url", cfg.AuthURL).
 		Str("wechat_url", cfg.WechatURL).

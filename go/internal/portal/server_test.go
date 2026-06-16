@@ -263,9 +263,11 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		"T+3 收盘价",
 		"T+4 收盘价",
 		"T+5 收盘价",
-		"抓取全部金十信息",
+		"抓取全部财经信息",
 		"金十全站信息",
 		"jin10_full",
+		"东方财富网",
+		"eastmoney_kuaixun",
 		"暂无数据",
 		"仅供策略研究和回测，不构成投资建议",
 	} {
@@ -430,8 +432,8 @@ func TestAStockCrawlActionTriggersAllJin10Sources(t *testing.T) {
 		t.Fatalf("expected redirect, got %d", rr.Code)
 	}
 	sort.Strings(sources)
-	if strings.Join(sources, ",") != "flash,headline,jin10_full" {
-		t.Fatalf("expected flash, headline and jin10_full crawl, got %v", sources)
+	if strings.Join(sources, ",") != "eastmoney_kuaixun,flash,headline,jin10_full" {
+		t.Fatalf("expected flash, headline, jin10_full and eastmoney_kuaixun crawl, got %v", sources)
 	}
 	if loc := rr.Header().Get("Location"); !strings.Contains(loc, "/a-stock?") || !strings.Contains(loc, "date=2026-06-16") {
 		t.Fatalf("unexpected redirect location: %q", loc)

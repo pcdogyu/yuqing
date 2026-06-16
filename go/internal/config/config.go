@@ -41,6 +41,7 @@ type Config struct {
 	ForesightNewsflashURL      string
 	CoinDeskZHLatestURL        string
 	PANewsNewsflashURL         string
+	EastMoneyKuaixunURL        string
 	HTTPTimeout                time.Duration
 	SchedulerCrawlTimeout      time.Duration
 	ExternalRetryCount         int
@@ -132,6 +133,7 @@ func Load() Config {
 		ForesightNewsflashURL:      envOrDefaultAllowEmpty("YUQING_FORESIGHT_NEWSFLASH_URL", "https://foresightnews.pro/news"),
 		CoinDeskZHLatestURL:        envOrDefaultAllowEmpty("YUQING_COINDESK_ZH_LATEST_URL", "https://www.coindesk.com/zh/latest-crypto-news"),
 		PANewsNewsflashURL:         envOrDefaultAllowEmpty("YUQING_PANEWS_NEWSFLASH_URL", "https://www.panewslab.com/rss.xml?lang=zh&type=NEWS"),
+		EastMoneyKuaixunURL:        envOrDefaultAllowEmpty("YUQING_EASTMONEY_KUAIXUN_URL", "https://kuaixun.eastmoney.com/"),
 		HTTPTimeout:                envDurationSeconds(20, "YUQING_HTTP_TIMEOUT_SEC", "JIN10_HTTP_TIMEOUT_SEC"),
 		SchedulerCrawlTimeout:      envDurationSeconds(120, "YUQING_SCHEDULER_CRAWL_TIMEOUT_SEC"),
 		ExternalRetryCount:         envIntAllowZero(2, "YUQING_EXTERNAL_RETRY_COUNT"),

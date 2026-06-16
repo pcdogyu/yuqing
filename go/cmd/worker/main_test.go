@@ -17,5 +17,6 @@ func TestMainWiresWorkerLoops(t *testing.T) {
 		`runLoop(ctx, crawler, provider.SourceTypeForesightNewsflash, cfg.ForesightNewsflashInterval)`,
 		`runLoop(ctx, crawler, provider.SourceTypeCoinDeskZHLatest, cfg.CoinDeskZHLatestInterval)`,
 		`runLoop(ctx, crawler, provider.SourceTypePANewsNewsflash, cfg.PANewsNewsflashInterval)`,
+		`eastmoneykuaixun.NewProvider(httpClient, cfg.EastMoneyKuaixunURL)`,
 	)
 }

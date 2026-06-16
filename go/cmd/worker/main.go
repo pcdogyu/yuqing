@@ -15,6 +15,7 @@ import (
 	"github.com/pcdogyu/yuqing/go/internal/provider"
 	"github.com/pcdogyu/yuqing/go/internal/provider/cryptonews"
 	"github.com/pcdogyu/yuqing/go/internal/provider/cryptosocial"
+	"github.com/pcdogyu/yuqing/go/internal/provider/eastmoneykuaixun"
 	"github.com/pcdogyu/yuqing/go/internal/provider/jin10flash"
 	"github.com/pcdogyu/yuqing/go/internal/provider/jin10full"
 	"github.com/pcdogyu/yuqing/go/internal/provider/jin10xnews"
@@ -63,6 +64,9 @@ func main() {
 	}
 	if cfg.PANewsNewsflashURL != "" {
 		registry.PANewsNewsflash = cryptonews.NewPANewsNewsflashProvider(httpClient, cfg.PANewsNewsflashURL)
+	}
+	if cfg.EastMoneyKuaixunURL != "" {
+		registry.EastMoneyKuaixun = eastmoneykuaixun.NewProvider(httpClient, cfg.EastMoneyKuaixunURL)
 	}
 	crawler := service.NewCrawler(store, registry, nil)
 

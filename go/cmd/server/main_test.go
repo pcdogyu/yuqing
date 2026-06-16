@@ -17,6 +17,7 @@ func TestMainWiresHTTPServer(t *testing.T) {
 		`cryptonews.NewForesightNewsflashProvider(httpClient, cfg.ForesightNewsflashURL)`,
 		`cryptonews.NewCoinDeskZHLatestProvider(httpClient, cfg.CoinDeskZHLatestURL)`,
 		`cryptonews.NewPANewsNewsflashProvider(httpClient, cfg.PANewsNewsflashURL)`,
+		`eastmoneykuaixun.NewProvider(httpClient, cfg.EastMoneyKuaixunURL)`,
 		`httpapi.NewServer(cfg, crawler, store)`,
 	)
 }
