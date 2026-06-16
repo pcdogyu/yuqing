@@ -266,6 +266,9 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}
 	}
+	if strings.Contains(body, `body[data-page='a-stock'] header`) {
+		t.Fatalf("expected A股 page to keep shared header width, got %s", body)
+	}
 }
 
 func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
@@ -1026,6 +1029,20 @@ func TestPortalNavPositionsLogoutTopRight(t *testing.T) {
 	}
 }
 
+func TestArticlesTemplateUsesSharedHeaderNavDirectly(t *testing.T) {
+	for _, unexpected := range []string{
+		`top-menu-card`,
+		`<section class="top-menu-card">`,
+	} {
+		if strings.Contains(articlesTemplate, unexpected) {
+			t.Fatalf("expected articles template to avoid menu card wrapper %q", unexpected)
+		}
+	}
+	if !strings.Contains(articlesTemplate, `<header><div class="page-title"><div><h1>文章中心</h1></div></div>{{template "nav" .}}</header>`) {
+		t.Fatal("expected articles template to render shared nav directly in header")
+	}
+}
+
 func TestDashboardTemplateOmitsServiceStatusTable(t *testing.T) {
 	for _, unexpected := range []string{
 		`<h2>服务状态</h2>`,
@@ -1040,7 +1057,7 @@ func TestDashboardTemplateOmitsServiceStatusTable(t *testing.T) {
 
 func TestSystemTemplateIncludesServiceRestartActions(t *testing.T) {
 	for _, expected := range []string{
-		`body>header,body>main,body>.site-footer{max-width:none;width:100%;box-sizing:border-box}`,
+		`body>main,body>.site-footer{max-width:none;width:100%;box-sizing:border-box}`,
 		`<th>操作</th>`,
 		`class="service-actions"`,
 		`.service-actions .service-button{display:inline-flex;align-items:center;justify-content:center;width:42px;min-width:42px;max-width:42px`,
