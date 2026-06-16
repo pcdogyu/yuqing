@@ -259,16 +259,20 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		"下午推荐",
 		"热点归纳",
 		"推荐股票",
-		"收盘价",
+		"昨日收盘价",
 		"涨跌幅",
 		"30天涨跌幅",
 		"60天涨跌幅",
+		"现价",
+		"今日跌幅",
 		"当日开盘价",
 		"T+1 收盘价",
-		"T+2 收盘价",
-		"T+3 收盘价",
-		"T+4 收盘价",
-		"T+5 收盘价",
+		"T+1 收益",
+		"T+2 收益",
+		"T+3 收益",
+		"T+4 收益",
+		"T+5 收益",
+		`colspan="10"`,
 		"抓取全部财经信息",
 		"上午股票生成",
 		"下午股票生成",
@@ -281,6 +285,11 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
+		}
+	}
+	for _, notWant := range []string{"T+2 收盘价", "T+3 收盘价", "T+4 收盘价", "T+5 收盘价"} {
+		if strings.Contains(body, notWant) {
+			t.Fatalf("expected A股 page not to contain removed backtest column %q, got %s", notWant, body)
 		}
 	}
 	if strings.Contains(body, `body[data-page='a-stock'] header`) {
@@ -564,9 +573,14 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"AI 算力政策加码", "半导体先进封装景气度提升", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "30天涨跌幅", "60天涨跌幅", "推荐历史", "今日 2026-06-16 上午", "今日 2026-06-16 下午", "前1日 2026-06-15 上午", "前1日 2026-06-15 下午", "前5日 2026-06-11 上午", "前5日 2026-06-11 下午", "10.50", "+1.25%", "+5.00%", "-12.50%", "50.20", "-0.60%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
+	for _, want := range []string{"AI 算力政策加码", "半导体先进封装景气度提升", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "昨日收盘价", "30天涨跌幅", "60天涨跌幅", "现价", "今日跌幅", "推荐历史", "今日 2026-06-16 上午", "今日 2026-06-16 下午", "前1日 2026-06-15 上午", "前1日 2026-06-15 下午", "前5日 2026-06-11 上午", "前5日 2026-06-11 下午", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
+		}
+	}
+	for _, notWant := range []string{"T+2 收盘价", "T+3 收盘价", "T+4 收盘价", "T+5 收盘价"} {
+		if strings.Contains(body, notWant) {
+			t.Fatalf("expected A股 page not to contain removed backtest column %q, got %s", notWant, body)
 		}
 	}
 	if strings.Contains(body, "astock-history-card") || strings.Contains(body, "astock-history-stocks") {
@@ -650,8 +664,14 @@ func TestAStockMarketViewFiltersDeepDrawdownsAndPenalizesSector(t *testing.T) {
 	if filtered[0].Code != "000003" || filtered[0].Rank != 1 {
 		t.Fatalf("expected unpenalized sector to rank first, got %+v", filtered)
 	}
+	if filtered[0].CurrentPrice != "100.00" || filtered[0].TodayPct != "+1.00%" || filtered[0].TodayPctClass != "astock-up" {
+		t.Fatalf("expected current day market fields to be filled, got %+v", filtered[0])
+	}
 	if filtered[1].Code != "000002" || filtered[1].MarketScore != 65 || !strings.Contains(filtered[1].Reason, "板块回撤减分 15") {
 		t.Fatalf("expected remaining AI stock to carry sector penalty, got %+v", filtered[1])
+	}
+	if filtered[1].CurrentPrice != "94.00" || filtered[1].TodayPct != "+2.00%" || filtered[1].TodayPctClass != "astock-up" {
+		t.Fatalf("expected penalized current day market fields to be filled, got %+v", filtered[1])
 	}
 	if len(rows) != 2 || strings.Contains(rows[0].Stock+rows[1].Stock, "000001") || strings.Contains(rows[0].Stock+rows[1].Stock, "000004") {
 		t.Fatalf("expected backtest rows to follow filtered recommendations, got %+v", rows)

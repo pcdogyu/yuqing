@@ -58,6 +58,9 @@ type aStockRecommendation struct {
 	Change30Class string
 	Change60      string
 	Change60Class string
+	CurrentPrice  string
+	TodayPct      string
+	TodayPctClass string
 	Reason        string
 }
 
@@ -239,7 +242,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 	}
 	b.WriteString(`</div><p class="astock-muted">已接入已有新闻抓取链路：抓取按钮会触发金十快讯、金十资讯、金十全站信息和东方财富网快讯，页面按策略日期和推荐窗口聚合财经新闻。行情接口读取 `)
 	b.WriteString(aStockMarketConfigHint())
-	b.WriteString(`，用于展示昨日收盘价、昨日涨跌幅和消息回测。</p><div class="astock-source-list"><span class="astock-badge">flash: https://www.jin10.com/</span><span class="astock-badge">headline: https://xnews.jin10.com/</span><span class="astock-badge">jin10_full: 金十全站</span><span class="astock-badge">eastmoney_kuaixun: 东方财富网</span></div></section>`)
+	b.WriteString(`，用于展示昨日收盘价、现价、涨跌幅和消息回测。</p><div class="astock-source-list"><span class="astock-badge">flash: https://www.jin10.com/</span><span class="astock-badge">headline: https://xnews.jin10.com/</span><span class="astock-badge">jin10_full: 金十全站</span><span class="astock-badge">eastmoney_kuaixun: 东方财富网</span></div></section>`)
 
 	renderAStockNewsSection(&b, ctx)
 	renderAStockHotspotSection(&b, ctx.Hotspots)
@@ -271,7 +274,7 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request) 
 	case "generate":
 		query.Set("msg", period.Label+"热点已按当前新闻窗口重新计算。")
 	case "sync_market":
-		query.Set("msg", "行情已按当前策略日期刷新，页面已重新计算收盘价、涨跌幅和回测。")
+		query.Set("msg", "行情已按当前策略日期刷新，页面已重新计算昨日收盘价、现价、涨跌幅和回测。")
 	case "refresh_backtest":
 		query.Set("msg", "消息回测已按当前推荐股票和行情数据刷新。")
 	default:
@@ -383,10 +386,10 @@ func renderAStockHotspotSection(b *strings.Builder, hotspots []aStockHotspot) {
 func renderAStockRecommendationSection(b *strings.Builder, recommendations []aStockRecommendation) {
 	b.WriteString(`<section><h2>推荐股票</h2>`)
 	if len(recommendations) == 0 {
-		b.WriteString(`<div class="astock-empty">暂无数据：当前新闻窗口未生成热点映射股票，或候选股票回撤超过过滤阈值。</div><table><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>收盘价</th><th>涨跌幅</th><th>30天涨跌幅</th><th>60天涨跌幅</th><th>推荐理由</th></tr><tr><td colspan="9">暂无推荐股票</td></tr></table></section>`)
+		b.WriteString(`<div class="astock-empty">暂无数据：当前新闻窗口未生成热点映射股票，或候选股票回撤超过过滤阈值。</div><table><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>昨日收盘价</th><th>涨跌幅</th><th>30天涨跌幅</th><th>60天涨跌幅</th><th>现价</th><th>今日跌幅</th><th>推荐理由</th></tr><tr><td colspan="11">暂无推荐股票</td></tr></table></section>`)
 		return
 	}
-	b.WriteString(`<table><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>收盘价</th><th>涨跌幅</th><th>30天涨跌幅</th><th>60天涨跌幅</th><th>推荐理由</th></tr>`)
+	b.WriteString(`<table><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>昨日收盘价</th><th>涨跌幅</th><th>30天涨跌幅</th><th>60天涨跌幅</th><th>现价</th><th>今日跌幅</th><th>推荐理由</th></tr>`)
 	for _, rec := range recommendations {
 		b.WriteString(`<tr><td>`)
 		b.WriteString(fmt.Sprintf("%d", rec.Rank))
@@ -414,6 +417,13 @@ func renderAStockRecommendationSection(b *strings.Builder, recommendations []aSt
 		b.WriteString(html.EscapeString(rec.Change60))
 		b.WriteString(`</span>`)
 		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(rec.CurrentPrice))
+		b.WriteString(`</td><td><span class="`)
+		b.WriteString(html.EscapeString(rec.TodayPctClass))
+		b.WriteString(`">`)
+		b.WriteString(html.EscapeString(rec.TodayPct))
+		b.WriteString(`</span>`)
+		b.WriteString(`</td><td>`)
 		b.WriteString(html.EscapeString(rec.Reason))
 		b.WriteString(`</td></tr>`)
 	}
@@ -423,9 +433,9 @@ func renderAStockRecommendationSection(b *strings.Builder, recommendations []aSt
 func renderAStockBacktestSection(b *strings.Builder, strategyDate string, period string, recommendations []aStockRecommendation, rows []aStockBacktestRow) {
 	b.WriteString(`<section><h2>消息回测</h2><p class="astock-muted">买入价采用当日开盘价；T+1 到 T+5 按后续交易日收盘价计算收益，并展示五日内最高收益。</p>`)
 	renderAStockRecommendationHistoryTabs(b, strategyDate, period)
-	b.WriteString(`<div class="astock-scroll"><table class="astock-table"><tr><th>股票</th><th>当日开盘价</th><th>T+1 收盘价</th><th>T+1 收益</th><th>T+2 收盘价</th><th>T+2 收益</th><th>T+3 收盘价</th><th>T+3 收益</th><th>T+4 收盘价</th><th>T+4 收益</th><th>T+5 收盘价</th><th>T+5 收益</th><th>五日内最高收益</th><th>命中状态</th></tr>`)
+	b.WriteString(`<div class="astock-scroll"><table class="astock-table"><tr><th>股票</th><th>当日开盘价</th><th>T+1 收盘价</th><th>T+1 收益</th><th>T+2 收益</th><th>T+3 收益</th><th>T+4 收益</th><th>T+5 收益</th><th>五日内最高收益</th><th>命中状态</th></tr>`)
 	if len(rows) == 0 {
-		b.WriteString(`<tr><td colspan="14">暂无回测结果，等待行情同步。</td></tr>`)
+		b.WriteString(`<tr><td colspan="10">暂无回测结果，等待行情同步。</td></tr>`)
 		b.WriteString(`</table></div></section>`)
 		return
 	}
@@ -440,9 +450,12 @@ func renderAStockBacktestSection(b *strings.Builder, strategyDate string, period
 			if i < len(row.Days) {
 				cell = row.Days[i]
 			}
-			b.WriteString(`<td>`)
-			b.WriteString(html.EscapeString(cell.Close))
-			b.WriteString(`</td><td><span class="`)
+			if i == 0 {
+				b.WriteString(`<td>`)
+				b.WriteString(html.EscapeString(cell.Close))
+				b.WriteString(`</td>`)
+			}
+			b.WriteString(`<td><span class="`)
 			b.WriteString(html.EscapeString(cell.ReturnClass))
 			b.WriteString(`">`)
 			b.WriteString(html.EscapeString(cell.Return))
@@ -710,6 +723,9 @@ func initializeAStockRecommendationMarket(recommendations []aStockRecommendation
 		recommendations[i].Change30Class = "astock-flat"
 		recommendations[i].Change60 = "--"
 		recommendations[i].Change60Class = "astock-flat"
+		recommendations[i].CurrentPrice = "--"
+		recommendations[i].TodayPct = "--"
+		recommendations[i].TodayPctClass = "astock-flat"
 	}
 	return recommendations
 }
@@ -723,9 +739,15 @@ func applyAStockMarketBars(strategyDate string, recommendations []aStockRecommen
 	filtered := make([]aStockRecommendation, 0, len(recommendations))
 	for i := range recommendations {
 		blockedByDrawdown := false
-		if _, ok := aStockEntryBar(byCode[recommendations[i].Code], strategyDate); !ok {
+		entry, ok := aStockEntryBar(byCode[recommendations[i].Code], strategyDate)
+		if !ok {
 			noEntryPriceCount++
 			continue
+		}
+		if entry.Close > 0 {
+			recommendations[i].CurrentPrice = formatAStockPrice(entry.Close)
+			recommendations[i].TodayPct = formatAStockPct(entry.Pct)
+			recommendations[i].TodayPctClass = aStockPctClass(entry.Pct)
 		}
 		if prev, ok := previousAStockBar(byCode[recommendations[i].Code], strategyDate); ok {
 			recommendations[i].PrevClose = formatAStockPrice(prev.Close)
