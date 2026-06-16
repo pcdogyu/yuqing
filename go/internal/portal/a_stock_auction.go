@@ -12,6 +12,10 @@ import (
 )
 
 func (s *Server) handleAStockAuctionPage(w http.ResponseWriter, r *http.Request, user any) {
+	if r.Method == http.MethodPost {
+		s.handleAStockAuctionAction(w, r)
+		return
+	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -34,9 +38,18 @@ func (s *Server) handleAStockAuctionPage(w http.ResponseWriter, r *http.Request,
 		.auction-scroll{overflow:auto}
 		.auction-table{min-width:980px}
 		.auction-empty{padding:18px;border:1px dashed #d0c8b8;border-radius:12px;background:#fff;color:#6a6257}
+		.auction-message{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}
+		.auction-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+		.auction-actions form{margin:0}
+		.auction-actions button{margin:0}
 		@media (max-width:760px){.auction-toolbar{grid-template-columns:1fr}}
 	</style>`)
 	b.WriteString(`<section><h2>集合竞价</h2><p class="auction-muted">每日 09:30 抓取全市场 A 股 09:25 开盘集合竞价成交金额，历史数据来自 PostgreSQL 配置下的业务库。</p></section>`)
+	if message := strings.TrimSpace(r.URL.Query().Get("msg")); message != "" {
+		b.WriteString(`<div class="auction-message">`)
+		b.WriteString(html.EscapeString(message))
+		b.WriteString(`</div>`)
+	}
 	if err != nil {
 		b.WriteString(`<section><div class="auction-empty">集合竞价数据读取失败：`)
 		b.WriteString(html.EscapeString(err.Error()))
@@ -44,10 +57,24 @@ func (s *Server) handleAStockAuctionPage(w http.ResponseWriter, r *http.Request,
 		_ = s.writeSimplePage(w, "a-stock-auction", "A股集合竞价", b.String())
 		return
 	}
+	renderAStockAuctionActions(&b)
 	renderAStockAuctionSummary(&b, ctx)
 	renderAStockAuctionFilters(&b, ctx)
 	renderAStockAuctionTable(&b, ctx)
 	_ = s.writeSimplePage(w, "a-stock-auction", "A股集合竞价", b.String())
+}
+
+func (s *Server) handleAStockAuctionAction(w http.ResponseWriter, r *http.Request) {
+	_ = r.ParseForm()
+	today := aStockNow().In(aStockLocation()).Format("2006-01-02")
+	message := "未知操作"
+	if strings.TrimSpace(r.FormValue("action")) == "fetch_today_auction" {
+		message = s.triggerAStockAuctionCrawl()
+	}
+	query := url.Values{}
+	query.Set("date", today)
+	query.Set("msg", message)
+	http.Redirect(w, r, "/a-stock/auction?"+query.Encode(), http.StatusSeeOther)
 }
 
 func (s *Server) loadAStockAuctionContext(date string, keyword string, page int) (model.AStockAuctionListResult, error) {
@@ -84,6 +111,10 @@ func renderAStockAuctionSummary(b *strings.Builder, ctx model.AStockAuctionListR
 	writeAStockAuctionMetric(b, "最大金额股票", maxStock)
 	writeAStockAuctionMetric(b, "最近抓取时间", fetchedAt)
 	b.WriteString(`</div></section>`)
+}
+
+func renderAStockAuctionActions(b *strings.Builder) {
+	b.WriteString(`<section><h2>操作区</h2><div class="auction-actions"><form method="post"><input type="hidden" name="action" value="fetch_today_auction"><button type="submit">获取今日集合竞价金额</button></form></div><p class="auction-muted">立即触发 scheduler 的 A股集合竞价抓取任务，按服务器 Asia/Shanghai 今日日期从 AKShare 业务服务读取并写入当前业务库。</p></section>`)
 }
 
 func renderAStockAuctionFilters(b *strings.Builder, ctx model.AStockAuctionListResult) {
@@ -217,4 +248,21 @@ func nonEmptyText(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func (s *Server) triggerAStockAuctionCrawl() string {
+	resp, err := s.client.R().
+		SetHeader("X-Service-Token", s.cfg.ServiceToken).
+		Post(s.cfg.SchedulerURL + "/api/v1/scheduler/jobs/a-stock-auction-crawl/run")
+	if err != nil {
+		return "今日集合竞价获取失败：" + err.Error()
+	}
+	if !resp.IsSuccess() {
+		detail := strings.TrimSpace(resp.String())
+		if detail == "" {
+			detail = resp.Status()
+		}
+		return "今日集合竞价获取失败：" + detail
+	}
+	return "今日集合竞价获取任务已触发，请稍后刷新查看当日汇总和明细。"
 }
