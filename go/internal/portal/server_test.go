@@ -1040,6 +1040,7 @@ func TestDashboardTemplateOmitsServiceStatusTable(t *testing.T) {
 
 func TestSystemTemplateIncludesServiceRestartActions(t *testing.T) {
 	for _, expected := range []string{
+		`body>header,body>main,body>.site-footer{max-width:none;width:100%;box-sizing:border-box}`,
 		`<th>操作</th>`,
 		`class="service-actions"`,
 		`.service-actions .service-button{display:inline-flex;align-items:center;justify-content:center;width:42px;min-width:42px;max-width:42px`,

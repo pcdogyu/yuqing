@@ -4555,8 +4555,10 @@ const systemTemplateRaw = `
 
 var systemTemplate = buildSystemTemplate()
 
+const systemFullWidthStyles = `body>header,body>main,body>.site-footer{max-width:none;width:100%;box-sizing:border-box}`
+
 func buildSystemTemplate() string {
-	return strings.NewReplacer(
+	template := strings.NewReplacer(
 		`<div class="tabs"><a class="{{if eq .SectionKey "account"}}active{{end}}" href="/system?section=account">账号安全</a><a class="{{if eq .SectionKey "preferences"}}active{{end}}" href="/system?section=preferences">偏好设置</a><a class="{{if eq .SectionKey "database"}}active{{end}}" href="/system?section=database">数据库配置</a><a class="{{if eq .SectionKey "favorites"}}active{{end}}" href="/system?section=favorites{{if .FavoriteProjectID}}&project_id={{.FavoriteProjectID}}{{end}}">收藏夹</a><a class="{{if eq .SectionKey "warningmsg"}}active{{end}}" href="/system?section=warningmsg{{if .WarningArticleProjectID}}&project_id={{.WarningArticleProjectID}}{{end}}{{if .WarningArticleKeyword}}&keyword={{.WarningArticleKeyword}}{{end}}">预警消息</a><a class="{{if eq .SectionKey "warning"}}active{{end}}" href="/system?section=warning{{if .WarningSetting.ProjectID}}&project_id={{.WarningSetting.ProjectID}}{{end}}">预警设置</a><a class="{{if eq .SectionKey "feedback"}}active{{end}}" href="/system?section=feedback">反馈建议</a><a class="{{if eq .SectionKey "operations"}}active{{end}}" href="/system?section=operations">生产运行</a></div>`,
 		`<div class="tabs"><a class="{{if eq .SectionKey "services"}}active{{end}}" href="/system?section=services">服务状态</a><a class="{{if eq .SectionKey "legacy"}}active{{end}}" href="/system?section=legacy">Legacy注册表</a><a class="{{if eq .SectionKey "account"}}active{{end}}" href="/system?section=account">账号安全</a><a class="{{if eq .SectionKey "preferences"}}active{{end}}" href="/system?section=preferences">偏好设置</a><a class="{{if eq .SectionKey "database"}}active{{end}}" href="/system?section=database">数据库配置</a><a class="{{if eq .SectionKey "favorites"}}active{{end}}" href="/system?section=favorites{{if .FavoriteProjectID}}&project_id={{.FavoriteProjectID}}{{end}}">收藏夹</a><a class="{{if eq .SectionKey "warningmsg"}}active{{end}}" href="/system?section=warningmsg{{if .WarningArticleProjectID}}&project_id={{.WarningArticleProjectID}}{{end}}{{if .WarningArticleKeyword}}&keyword={{.WarningArticleKeyword}}{{end}}">预警消息</a><a class="{{if eq .SectionKey "warning"}}active{{end}}" href="/system?section=warning{{if .WarningSetting.ProjectID}}&project_id={{.WarningSetting.ProjectID}}{{end}}">预警设置</a><a class="{{if eq .SectionKey "feedback"}}active{{end}}" href="/system?section=feedback">反馈建议</a><a class="{{if eq .SectionKey "operations"}}active{{end}}" href="/system?section=operations">生产运行</a><a class="{{if eq .SectionKey "opactions"}}active{{end}}" href="/system?section=opactions">运营操作</a><a class="{{if eq .SectionKey "contracts"}}active{{end}}" href="/system?section=contracts">外部契约与审计</a><a class="{{if eq .SectionKey "announcements"}}active{{end}}" href="/system?section=announcements">公告与任务</a></div>`,
 		`</section><section><h2>服务状态</h2>`,
@@ -4578,6 +4580,7 @@ func buildSystemTemplate() string {
 		`</div></section></main>{{template "footer" .}}</body></html>{{end}}`,
 		`</div></section>{{end}}</main>{{template "footer" .}}</body></html>{{end}}`,
 	).Replace(systemTemplateRaw)
+	return strings.Replace(template, "<style>"+baseStyles, "<style>"+baseStyles+systemFullWidthStyles, 1)
 }
 
 const platformBindingsWorkbenchTemplate = `
