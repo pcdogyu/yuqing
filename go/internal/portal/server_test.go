@@ -255,6 +255,8 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		"推荐股票",
 		"收盘价",
 		"涨跌幅",
+		"30天涨跌幅",
+		"60天涨跌幅",
 		"当日开盘价",
 		"T+1 收盘价",
 		"T+2 收盘价",
@@ -287,6 +289,8 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 			"message": "ok",
 			"data": map[string]any{
 				"items": []map[string]any{
+					{"code": "002230", "date": "2026-04-17", "open": 12.10, "close": 12.00, "pct": -0.40},
+					{"code": "002230", "date": "2026-05-16", "open": 9.90, "close": 10.00, "pct": 0.20},
 					{"code": "002230", "date": "2026-06-15", "open": 10.10, "close": 10.50, "pct": 1.25},
 					{"code": "002230", "date": "2026-06-16", "open": 10.60, "close": 10.90, "pct": 3.81},
 					{"code": "002230", "date": "2026-06-17", "open": 10.95, "close": 11.00, "pct": 0.92},
@@ -337,7 +341,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"AI 算力政策加码", "半导体先进封装景气度提升", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "10.50", "+1.25%", "50.20", "-0.60%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
+	for _, want := range []string{"AI 算力政策加码", "半导体先进封装景气度提升", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "30天涨跌幅", "60天涨跌幅", "10.50", "+1.25%", "+5.00%", "-12.50%", "50.20", "-0.60%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}

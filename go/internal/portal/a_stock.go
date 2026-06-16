@@ -37,14 +37,18 @@ type aStockHotspot struct {
 }
 
 type aStockRecommendation struct {
-	Rank         int
-	Hotspot      string
-	Code         string
-	Name         string
-	PrevClose    string
-	PrevPct      string
-	PrevPctClass string
-	Reason       string
+	Rank          int
+	Hotspot       string
+	Code          string
+	Name          string
+	PrevClose     string
+	PrevPct       string
+	PrevPctClass  string
+	Change30      string
+	Change30Class string
+	Change60      string
+	Change60Class string
+	Reason        string
 }
 
 type aStockMarketBar struct {
@@ -252,10 +256,10 @@ func renderAStockHotspotSection(b *strings.Builder, hotspots []aStockHotspot) {
 func renderAStockRecommendationSection(b *strings.Builder, recommendations []aStockRecommendation) {
 	b.WriteString(`<section><h2>推荐股票</h2>`)
 	if len(recommendations) == 0 {
-		b.WriteString(`<div class="astock-empty">暂无数据：当前新闻窗口未生成热点映射股票。</div><table><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>收盘价</th><th>涨跌幅</th><th>推荐理由</th></tr><tr><td colspan="7">暂无推荐股票</td></tr></table></section>`)
+		b.WriteString(`<div class="astock-empty">暂无数据：当前新闻窗口未生成热点映射股票。</div><table><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>收盘价</th><th>涨跌幅</th><th>30天涨跌幅</th><th>60天涨跌幅</th><th>推荐理由</th></tr><tr><td colspan="9">暂无推荐股票</td></tr></table></section>`)
 		return
 	}
-	b.WriteString(`<table><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>收盘价</th><th>涨跌幅</th><th>推荐理由</th></tr>`)
+	b.WriteString(`<table><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>收盘价</th><th>涨跌幅</th><th>30天涨跌幅</th><th>60天涨跌幅</th><th>推荐理由</th></tr>`)
 	for _, rec := range recommendations {
 		b.WriteString(`<tr><td>`)
 		b.WriteString(fmt.Sprintf("%d", rec.Rank))
@@ -271,6 +275,16 @@ func renderAStockRecommendationSection(b *strings.Builder, recommendations []aSt
 		b.WriteString(html.EscapeString(rec.PrevPctClass))
 		b.WriteString(`">`)
 		b.WriteString(html.EscapeString(rec.PrevPct))
+		b.WriteString(`</span>`)
+		b.WriteString(`</td><td><span class="`)
+		b.WriteString(html.EscapeString(rec.Change30Class))
+		b.WriteString(`">`)
+		b.WriteString(html.EscapeString(rec.Change30))
+		b.WriteString(`</span>`)
+		b.WriteString(`</td><td><span class="`)
+		b.WriteString(html.EscapeString(rec.Change60Class))
+		b.WriteString(`">`)
+		b.WriteString(html.EscapeString(rec.Change60))
 		b.WriteString(`</span>`)
 		b.WriteString(`</td><td>`)
 		b.WriteString(html.EscapeString(rec.Reason))
@@ -388,7 +402,7 @@ func (s *Server) loadEastmoneyAStockBars(strategyDate string, codes []string) ([
 				SetQueryParam("klt", "101").
 				SetQueryParam("fqt", "1").
 				SetQueryParam("end", endDate).
-				SetQueryParam("lmt", "16").
+				SetQueryParam("lmt", "100").
 				SetQueryParam("fields1", "f1,f2,f3,f4,f5,f6").
 				SetQueryParam("fields2", "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61").
 				Get("https://push2his.eastmoney.com/api/qt/stock/kline/get")
@@ -424,6 +438,10 @@ func initializeAStockRecommendationMarket(recommendations []aStockRecommendation
 		recommendations[i].PrevClose = "--"
 		recommendations[i].PrevPct = "--"
 		recommendations[i].PrevPctClass = "astock-flat"
+		recommendations[i].Change30 = "--"
+		recommendations[i].Change30Class = "astock-flat"
+		recommendations[i].Change60 = "--"
+		recommendations[i].Change60Class = "astock-flat"
 	}
 	return recommendations
 }
@@ -436,6 +454,14 @@ func applyAStockMarketBars(strategyDate string, recommendations []aStockRecommen
 			recommendations[i].PrevClose = formatAStockPrice(prev.Close)
 			recommendations[i].PrevPct = formatAStockPct(prev.Pct)
 			recommendations[i].PrevPctClass = aStockPctClass(prev.Pct)
+			if change, ok := aStockLookbackChange(byCode[recommendations[i].Code], strategyDate, 30, prev.Close); ok {
+				recommendations[i].Change30 = formatAStockPct(change)
+				recommendations[i].Change30Class = aStockPctClass(change)
+			}
+			if change, ok := aStockLookbackChange(byCode[recommendations[i].Code], strategyDate, 60, prev.Close); ok {
+				recommendations[i].Change60 = formatAStockPct(change)
+				recommendations[i].Change60Class = aStockPctClass(change)
+			}
 			withPrev++
 		}
 	}
@@ -476,6 +502,34 @@ func previousAStockBar(bars []aStockMarketBar, strategyDate string) (aStockMarke
 	ok := false
 	for _, bar := range bars {
 		if bar.Date >= strategyDate {
+			break
+		}
+		found = bar
+		ok = true
+	}
+	return found, ok
+}
+
+func aStockLookbackChange(bars []aStockMarketBar, strategyDate string, days int, prevClose float64) (float64, bool) {
+	if prevClose <= 0 {
+		return 0, false
+	}
+	targetDate, err := aStockDateOffset(strategyDate, -days)
+	if err != nil {
+		return 0, false
+	}
+	bar, ok := latestAStockBarOnOrBefore(bars, targetDate)
+	if !ok || bar.Close <= 0 {
+		return 0, false
+	}
+	return (prevClose/bar.Close - 1) * 100, true
+}
+
+func latestAStockBarOnOrBefore(bars []aStockMarketBar, targetDate string) (aStockMarketBar, bool) {
+	var found aStockMarketBar
+	ok := false
+	for _, bar := range bars {
+		if bar.Date > targetDate {
 			break
 		}
 		found = bar
@@ -780,6 +834,14 @@ func aStockMarketEndDate(strategyDate string) string {
 		return time.Now().Format("20060102")
 	}
 	return day.AddDate(0, 0, 14).Format("20060102")
+}
+
+func aStockDateOffset(strategyDate string, days int) (string, error) {
+	day, err := time.Parse("2006-01-02", strategyDate)
+	if err != nil {
+		return "", err
+	}
+	return day.AddDate(0, 0, days).Format("2006-01-02"), nil
 }
 
 func eastmoneyAStockSecID(code string) string {
