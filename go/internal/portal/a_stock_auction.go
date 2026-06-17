@@ -1,6 +1,7 @@
 package portal
 
 import (
+	"encoding/json"
 	"fmt"
 	"html"
 	"math"
@@ -258,11 +259,25 @@ func (s *Server) triggerAStockAuctionCrawl() string {
 		return "今日集合竞价获取失败：" + err.Error()
 	}
 	if !resp.IsSuccess() {
-		detail := strings.TrimSpace(resp.String())
+		detail := schedulerAuctionErrorMessage(resp.Body(), resp.String())
 		if detail == "" {
 			detail = resp.Status()
 		}
 		return "今日集合竞价获取失败：" + detail
 	}
 	return "今日集合竞价获取任务已触发，请稍后刷新查看当日汇总和明细。"
+}
+
+func schedulerAuctionErrorMessage(body []byte, fallback string) string {
+	var envelope struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(body, &envelope); err == nil && strings.TrimSpace(envelope.Message) != "" {
+		message := strings.TrimSpace(envelope.Message)
+		if strings.Contains(message, "a-stock-auction-crawl") && strings.Contains(message, "disabled") {
+			return "集合竞价抓取任务未启用：请配置 YUQING_ASTOCK_AUCTION_URL 为 AKShare HTTP 服务地址，并重启 scheduler-service 后再点击获取。"
+		}
+		return message
+	}
+	return strings.TrimSpace(fallback)
 }

@@ -394,6 +394,31 @@ func TestAStockAuctionPagePostTriggersSchedulerJob(t *testing.T) {
 	}
 }
 
+func TestAStockAuctionPageExplainsDisabledSchedulerJob(t *testing.T) {
+	scheduler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"code":500,"data":null,"message":"scheduler job a-stock-auction-crawl is disabled"}`))
+	}))
+	defer scheduler.Close()
+
+	srv := NewServer(config.Config{SchedulerURL: scheduler.URL})
+	req := httptest.NewRequest(http.MethodPost, "/a-stock/auction", strings.NewReader("action=fetch_today_auction"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	srv.handleAStockAuctionPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect after auction trigger, got %d", rr.Code)
+	}
+	loc, _ := url.QueryUnescape(rr.Header().Get("Location"))
+	for _, want := range []string{"集合竞价抓取任务未启用", "YUQING_ASTOCK_AUCTION_URL", "scheduler-service"} {
+		if !strings.Contains(loc, want) {
+			t.Fatalf("expected disabled scheduler explanation %q, got %q", want, loc)
+		}
+	}
+}
+
 func TestAStockStockGenerateActionsSelectPeriod(t *testing.T) {
 	srv := NewServer(config.Config{})
 	tests := []struct {
@@ -845,6 +870,8 @@ func TestAStockNewsSectionPaginatesTenItems(t *testing.T) {
 }
 
 func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
+	setAStockNowForTest(t, time.Date(2026, 6, 16, 9, 30, 0, 0, time.FixedZone("CST", 8*3600)))
+
 	market := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Query().Get("date") != "2026-06-16" {
