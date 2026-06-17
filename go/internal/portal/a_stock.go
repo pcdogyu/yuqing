@@ -145,15 +145,11 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 	var b strings.Builder
 	b.WriteString(`<style>
 		body[data-page='a-stock'] main,body[data-page='a-stock'] .site-footer{max-width:1534px}
-		.astock-hero{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(280px,.7fr);gap:16px;align-items:stretch}
 		.astock-card{padding:18px;border:1px solid #ece7dc;border-radius:14px;background:#fff}
-		.astock-soft{background:#faf8f2}
 		.astock-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}
 		.astock-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
 		.astock-actions form{margin:0}
 		.astock-actions button{margin:0}
-		.astock-form-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
-		.astock-button-link{display:inline-flex;align-items:center;justify-content:center;min-height:42px;border-radius:8px;background:#214e34;color:#fff;text-decoration:none;font-weight:700}
 		.astock-muted{color:#6a6257}
 		.astock-empty{padding:18px;border:1px dashed #d0c8b8;border-radius:12px;background:#fff;color:#6a6257}
 		.astock-badge{display:inline-flex;align-items:center;padding:5px 9px;border-radius:999px;background:#eef4ec;color:#214e34;font-size:13px;margin-right:6px}
@@ -175,7 +171,6 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-up{color:#b3261e;font-weight:700}
 		.astock-down{color:#1b7f3a;font-weight:700}
 		.astock-flat{color:#6a6257}
-		@media (max-width: 760px){.astock-hero{grid-template-columns:1fr}}
 	</style>`)
 	b.WriteString(`<script>
 	(function(){
@@ -194,34 +189,6 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		b.WriteString(html.EscapeString(message))
 		b.WriteString(`</p></section>`)
 	}
-
-	b.WriteString(`<section class="astock-hero"><div class="astock-card astock-soft"><h2>A股策略工作台</h2><p>`)
-	b.WriteString(fmt.Sprintf(`欢迎，用户 %d。`, userIDFromMap(user)))
-	b.WriteString(`本页用于承载上午、下午财经新闻热点归纳、推荐股票和消息回测结果。</p><p class="astock-muted">每日 09:30 自动抓取 08:00-09:30 新闻生成上午推荐；12:50 自动抓取 09:26-12:50 新闻生成下午推荐。仅供策略研究和回测，不构成投资建议。</p>`)
-	renderAStockPeriodTabs(&b, ctx.Date, ctx.Period, ctx.IgnoreRecent)
-	b.WriteString(`</div><div class="astock-card"><form method="get"><label>策略日期</label><input type="date" name="date" value="`)
-	b.WriteString(html.EscapeString(strategyDate))
-	b.WriteString(`"><label>推荐窗口</label><select name="period">`)
-	for _, option := range aStockPeriods() {
-		b.WriteString(`<option value="`)
-		b.WriteString(html.EscapeString(option.Key))
-		b.WriteString(`"`)
-		if option.Key == ctx.Period {
-			b.WriteString(` selected`)
-		}
-		b.WriteString(`>`)
-		b.WriteString(html.EscapeString(option.Label))
-		b.WriteString(`</option>`)
-	}
-	today := aStockTodayDate()
-	b.WriteString(`</select><div class="astock-form-actions"><button type="submit">查看日期</button><a class="astock-button-link" href="/a-stock?date=`)
-	b.WriteString(url.QueryEscape(today))
-	b.WriteString(`&period=`)
-	b.WriteString(url.QueryEscape(ctx.Period))
-	if ctx.IgnoreRecent {
-		b.WriteString(`&ignore_recent=1`)
-	}
-	b.WriteString(`">回到今天</a></div></form></div></section>`)
 
 	b.WriteString(`<section><h2>顶部概览</h2><div class="astock-grid">`)
 	writeAStockMetric(&b, "策略日期", ctx.Date)
@@ -272,7 +239,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 	renderAStockRecommendationSection(&b, ctx)
 	renderAStockBacktestSection(&b, ctx.Date, ctx.Period, ctx.IgnoreRecent, ctx.Recommendations, ctx.Backtests)
 
-	_ = s.writeSimplePage(w, "a-stock", "A股策略工作台", b.String())
+	_ = s.writeSimplePage(w, "a-stock", "A股", b.String())
 }
 
 func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request) {
@@ -1786,25 +1753,4 @@ func normalizeAStockPeriod(raw string) aStockPeriod {
 		}
 	}
 	return aStockPeriods()[0]
-}
-
-func renderAStockPeriodTabs(b *strings.Builder, strategyDate string, selected string, ignoreRecent bool) {
-	b.WriteString(`<div class="astock-tabs">`)
-	for _, period := range aStockPeriods() {
-		b.WriteString(`<a class="astock-tab`)
-		if period.Key == selected {
-			b.WriteString(` active`)
-		}
-		b.WriteString(`" href="/a-stock?date=`)
-		b.WriteString(url.QueryEscape(strategyDate))
-		b.WriteString(`&period=`)
-		b.WriteString(url.QueryEscape(period.Key))
-		if ignoreRecent {
-			b.WriteString(`&ignore_recent=1`)
-		}
-		b.WriteString(`">`)
-		b.WriteString(html.EscapeString(period.Label))
-		b.WriteString(`</a>`)
-	}
-	b.WriteString(`</div>`)
 }

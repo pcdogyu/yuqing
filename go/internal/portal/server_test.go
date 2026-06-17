@@ -253,11 +253,7 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		t.Fatalf("expected A股, 研报调研, 集合竞价 nav links before Crypto, got %s", body)
 	}
 	for _, want := range []string{
-		"A股策略工作台",
 		"08:00-09:30",
-		"09:26-12:50",
-		"每日 09:30",
-		"12:50 自动抓取",
 		"上午推荐",
 		"下午推荐",
 		"热点归纳",
@@ -286,7 +282,6 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		"东方财富网",
 		"eastmoney_kuaixun",
 		"暂无数据",
-		"仅供策略研究和回测，不构成投资建议",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
@@ -295,6 +290,11 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 	for _, notWant := range []string{"T+2 收盘价", "T+3 收盘价", "T+4 收盘价", "T+5 收盘价"} {
 		if strings.Contains(body, notWant) {
 			t.Fatalf("expected A股 page not to contain removed backtest column %q, got %s", notWant, body)
+		}
+	}
+	for _, notWant := range []string{"A股策略工作台", "回到今天", "每日 09:30", "12:50 自动抓取"} {
+		if strings.Contains(body, notWant) {
+			t.Fatalf("expected removed A股 hero content %q to be absent, got %s", notWant, body)
 		}
 	}
 	if strings.Contains(body, `body[data-page='a-stock'] header`) {
@@ -1016,7 +1016,6 @@ func TestAStockPageOffersTodayNavigationAndAfterAlias(t *testing.T) {
 	body := rr.Body.String()
 	for _, want := range []string{
 		"下午推荐",
-		"回到今天",
 		"今日 2026-06-16 上午",
 		"今日 2026-06-16 下午",
 		`href="/a-stock?date=2026-06-16&period=afternoon"`,
