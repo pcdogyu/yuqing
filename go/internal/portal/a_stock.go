@@ -109,6 +109,7 @@ type aStockMarketCandidate struct {
 	MatchedScore  int
 	Evidence      int
 	Keywords      []string
+	Fallback      bool
 }
 
 type aStockPeriod struct {
@@ -1748,7 +1749,10 @@ func buildAStockHotspots(items []model.Item) []aStockHotspot {
 
 func buildAStockRecommendations(hotspots []aStockHotspot, candidates []aStockMarketCandidate) []aStockRecommendation {
 	if len(candidates) == 0 {
-		return nil
+		candidates = fallbackAStockMarketCandidates(hotspots)
+		if len(candidates) == 0 {
+			return nil
+		}
 	}
 	if len(hotspots) > 3 {
 		hotspots = hotspots[:3]
@@ -1764,18 +1768,31 @@ func buildAStockRecommendations(hotspots []aStockHotspot, candidates []aStockMar
 			}
 			seen[stock.Code] = struct{}{}
 			marketScore := hotspot.Score + stock.MatchedScore
-			reason := fmt.Sprintf(
-				"命中 %s，证据新闻 %d 条，热度分 %d；行情排名 %d，成交额 %s，个股证据 %d 条，行情分 %d，综合分 %d",
-				strings.Join(hotspot.Keywords, "、"),
-				hotspot.Evidence,
-				hotspot.Score,
-				stock.Rank,
-				formatAStockAuctionMoney(stock.AuctionAmount),
-				stock.Evidence,
-				stock.MatchedScore,
-				marketScore,
-			)
-			if len(stock.Keywords) > 0 {
+			reason := ""
+			if stock.Fallback {
+				reason = fmt.Sprintf(
+					"命中 %s，证据新闻 %d 条，热度分 %d；集合竞价候选为空，使用内置热点股票池，个股证据 %d 条，匹配分 %d，综合分 %d",
+					strings.Join(hotspot.Keywords, "、"),
+					hotspot.Evidence,
+					hotspot.Score,
+					stock.Evidence,
+					stock.MatchedScore,
+					marketScore,
+				)
+			} else {
+				reason = fmt.Sprintf(
+					"命中 %s，证据新闻 %d 条，热度分 %d；行情排名 %d，成交额 %s，个股证据 %d 条，行情分 %d，综合分 %d",
+					strings.Join(hotspot.Keywords, "、"),
+					hotspot.Evidence,
+					hotspot.Score,
+					stock.Rank,
+					formatAStockAuctionMoney(stock.AuctionAmount),
+					stock.Evidence,
+					stock.MatchedScore,
+					marketScore,
+				)
+			}
+			if len(stock.Keywords) > 0 && !stock.Fallback {
 				reason = fmt.Sprintf("%s，股票名命中 %s", reason, strings.Join(stock.Keywords, "、"))
 			}
 			recommendations = append(recommendations, aStockRecommendation{
@@ -1799,6 +1816,82 @@ func buildAStockRecommendations(hotspots []aStockHotspot, candidates []aStockMar
 	return recommendations
 }
 
+func fallbackAStockMarketCandidates(hotspots []aStockHotspot) []aStockMarketCandidate {
+	type stock struct {
+		Code string
+		Name string
+	}
+	pool := map[string][]stock{
+		"人工智能": {
+			{Code: "002230", Name: "科大讯飞"},
+			{Code: "603019", Name: "中科曙光"},
+			{Code: "601138", Name: "工业富联"},
+		},
+		"半导体": {
+			{Code: "688981", Name: "中芯国际"},
+			{Code: "002371", Name: "北方华创"},
+			{Code: "603986", Name: "兆易创新"},
+		},
+		"新能源": {
+			{Code: "300750", Name: "宁德时代"},
+			{Code: "601012", Name: "隆基绿能"},
+			{Code: "300274", Name: "阳光电源"},
+		},
+		"低空经济": {
+			{Code: "002085", Name: "万丰奥威"},
+			{Code: "600118", Name: "中国卫星"},
+			{Code: "002230", Name: "科大讯飞"},
+		},
+		"金融券商": {
+			{Code: "300059", Name: "东方财富"},
+			{Code: "600030", Name: "中信证券"},
+			{Code: "600036", Name: "招商银行"},
+		},
+		"黄金有色": {
+			{Code: "600547", Name: "山东黄金"},
+			{Code: "601899", Name: "紫金矿业"},
+			{Code: "600111", Name: "北方稀土"},
+		},
+		"医药生物": {
+			{Code: "600276", Name: "恒瑞医药"},
+			{Code: "300760", Name: "迈瑞医疗"},
+			{Code: "603259", Name: "药明康德"},
+		},
+		"消费电子": {
+			{Code: "002241", Name: "歌尔股份"},
+			{Code: "002475", Name: "立讯精密"},
+			{Code: "000725", Name: "京东方A"},
+		},
+		"房地产": {
+			{Code: "000002", Name: "万科A"},
+			{Code: "600048", Name: "保利发展"},
+			{Code: "001979", Name: "招商蛇口"},
+		},
+		"军工航天": {
+			{Code: "600760", Name: "中航沈飞"},
+			{Code: "600118", Name: "中国卫星"},
+			{Code: "000768", Name: "中航西飞"},
+		},
+	}
+
+	candidates := make([]aStockMarketCandidate, 0)
+	rank := 1
+	for _, hotspot := range hotspots {
+		stocks := pool[hotspot.Name]
+		for _, item := range stocks {
+			candidates = append(candidates, aStockMarketCandidate{
+				Code:     item.Code,
+				Name:     item.Name,
+				Rank:     rank,
+				Keywords: append([]string(nil), hotspot.Keywords...),
+				Fallback: true,
+			})
+			rank++
+		}
+	}
+	return candidates
+}
+
 func scoreAStockMarketCandidates(hotspot aStockHotspot, candidates []aStockMarketCandidate) []aStockMarketCandidate {
 	scored := make([]aStockMarketCandidate, 0, len(candidates))
 	for _, candidate := range candidates {
@@ -1809,6 +1902,9 @@ func scoreAStockMarketCandidates(hotspot aStockHotspot, candidates []aStockMarke
 		}
 		evidence := aStockStockEvidenceCount(hotspot.MatchedItems, candidate)
 		keywords := aStockCandidateKeywordMatches(candidate.Name, hotspot.Keywords)
+		if candidate.Fallback && len(keywords) == 0 {
+			keywords = intersectAStockKeywords(candidate.Keywords, hotspot.Keywords)
+		}
 		if evidence == 0 && len(keywords) == 0 {
 			continue
 		}
@@ -1833,6 +1929,35 @@ func scoreAStockMarketCandidates(hotspot aStockHotspot, candidates []aStockMarke
 		return scored[i].MatchedScore > scored[j].MatchedScore
 	})
 	return scored
+}
+
+func intersectAStockKeywords(left []string, right []string) []string {
+	if len(left) == 0 || len(right) == 0 {
+		return nil
+	}
+	rightSet := make(map[string]string, len(right))
+	for _, keyword := range right {
+		normalized := strings.ToLower(strings.TrimSpace(keyword))
+		if normalized != "" {
+			rightSet[normalized] = keyword
+		}
+	}
+	matches := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, keyword := range left {
+		normalized := strings.ToLower(strings.TrimSpace(keyword))
+		if normalized == "" {
+			continue
+		}
+		if value, ok := rightSet[normalized]; ok {
+			if _, exists := seen[value]; !exists {
+				seen[value] = struct{}{}
+				matches = append(matches, value)
+			}
+		}
+	}
+	sort.Strings(matches)
+	return matches
 }
 
 func aStockMarketRankScore(rank int) int {

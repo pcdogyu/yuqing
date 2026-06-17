@@ -1706,6 +1706,28 @@ func TestAStockRecommendationsUseTopThreeHotspotIndustries(t *testing.T) {
 	}
 }
 
+func TestAStockRecommendationsFallbackWhenAuctionCandidatesEmpty(t *testing.T) {
+	recommendations := buildAStockRecommendations([]aStockHotspot{
+		{Name: "人工智能", Keywords: []string{"AI", "人工智能"}, Score: 105, Evidence: 9},
+		{Name: "金融券商", Keywords: []string{"券商", "银行"}, Score: 82, Evidence: 7},
+	}, nil)
+
+	if len(recommendations) == 0 {
+		t.Fatal("expected fallback recommendations when auction candidates are empty")
+	}
+	if recommendations[0].Code != "002230" || recommendations[0].Name != "科大讯飞" {
+		t.Fatalf("expected first fallback recommendation from AI pool, got %+v", recommendations[0])
+	}
+	if !strings.Contains(recommendations[0].Reason, "集合竞价候选为空") || !strings.Contains(recommendations[0].Reason, "内置热点股票池") {
+		t.Fatalf("expected fallback reason to explain auction candidate fallback, got %q", recommendations[0].Reason)
+	}
+	for _, rec := range recommendations {
+		if rec.Hotspot == "人工智能" && rec.Code == "300059" {
+			t.Fatalf("expected finance fallback stock not to be scored under AI hotspot, got %+v", recommendations)
+		}
+	}
+}
+
 func TestAStockRecommendationsApplyHoldingSummaryBonus(t *testing.T) {
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/a-stock/holdings/summary" || r.URL.Query().Get("code") != "002230" {
