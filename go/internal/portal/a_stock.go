@@ -152,7 +152,10 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 
 	var b strings.Builder
 	b.WriteString(`<style>
-		body[data-page='a-stock'] main,body[data-page='a-stock'] .site-footer{max-width:1534px}
+		body[data-page='a-stock'] main{max-width:none;width:100%;box-sizing:border-box}
+		body[data-page='a-stock'] .site-footer{max-width:none;width:100%;box-sizing:border-box}
+		body[data-page='a-stock'] section{width:100%;box-sizing:border-box}
+		body[data-page='a-stock'] table{width:100%;min-width:100%}
 		.astock-card{padding:18px;border:1px solid #ece7dc;border-radius:14px;background:#fff}
 		.astock-overview-table{width:100%;min-width:100%;table-layout:fixed}
 		.astock-overview-table th,.astock-overview-table td{vertical-align:top}
@@ -169,7 +172,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-source-list{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 		.astock-table{min-width:960px}
 		.astock-table th{white-space:nowrap}
-		.astock-scroll{overflow:auto}
+		.astock-scroll{width:100%;overflow:auto}
 		.astock-recommendation-table{width:100%;min-width:1280px}
 		.astock-recommendation-table th,.astock-recommendation-table td{vertical-align:top}
 		.astock-recommendation-table th:last-child,.astock-recommendation-table td:last-child{width:45%}

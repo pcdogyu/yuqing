@@ -254,6 +254,9 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 	}
 	for _, want := range []string{
 		`class="astock-overview-table"`,
+		`body[data-page='a-stock'] main{max-width:none;width:100%;box-sizing:border-box}`,
+		`body[data-page='a-stock'] table{width:100%;min-width:100%}`,
+		`.astock-scroll{width:100%;overflow:auto}`,
 		`rowspan="2"`,
 		"08:00-09:30",
 		"09:30-13:00",
