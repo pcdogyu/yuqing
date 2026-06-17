@@ -248,8 +248,8 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 	auctionIndex := strings.Index(body, `href="/a-stock/auction"`)
 	researchIndex := strings.Index(body, `href="/stock-research"`)
 	cryptoIndex := strings.Index(body, `href="/crypto"`)
-	if aStockIndex < 0 || auctionIndex < 0 || researchIndex < 0 || cryptoIndex < 0 || aStockIndex > auctionIndex || auctionIndex > researchIndex || researchIndex > cryptoIndex {
-		t.Fatalf("expected A股 nav link before Crypto, got %s", body)
+	if aStockIndex < 0 || auctionIndex < 0 || researchIndex < 0 || cryptoIndex < 0 || aStockIndex > researchIndex || researchIndex > auctionIndex || auctionIndex > cryptoIndex {
+		t.Fatalf("expected A股, 研报调研, 集合竞价 nav links before Crypto, got %s", body)
 	}
 	for _, want := range []string{
 		"A股策略工作台",
