@@ -179,6 +179,66 @@ func TestStockResearchAPIUpsertsAndLists(t *testing.T) {
 	}
 }
 
+func TestStockResearchPDFAPIUpdatesDownloadsAndReadsText(t *testing.T) {
+	store := newContentSearchTestStore(t)
+	pdfRoot := t.TempDir()
+	svc := NewService(config.Config{StockResearchPDFDir: pdfRoot}, store)
+	router := svc.Router()
+
+	payload := `{"items":[{"code":"002230","name":"科大讯飞","kind":"report","title":"科大讯飞深度研究","institution":"中金公司","research_date":"2026-06-16","source_type":"sina_finance_report","source_key":"sina-pdf-1","source_url":"https://sina.example.com/1"}]}`
+	postReq := httptest.NewRequest(http.MethodPost, "/api/v1/internal/stock-research/batch", strings.NewReader(payload))
+	postRR := httptest.NewRecorder()
+	router.ServeHTTP(postRR, postReq)
+	if postRR.Code != http.StatusOK {
+		t.Fatalf("expected stock research upsert 200, got %d body=%s", postRR.Code, postRR.Body.String())
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/stock-research?source=sina_finance_report&page=1&page_size=10", nil)
+	listRR := httptest.NewRecorder()
+	router.ServeHTTP(listRR, listReq)
+	if listRR.Code != http.StatusOK {
+		t.Fatalf("expected stock research list 200, got %d body=%s", listRR.Code, listRR.Body.String())
+	}
+	var listEnvelope struct {
+		Data model.StockResearchListResult `json:"data"`
+	}
+	if err := json.Unmarshal(listRR.Body.Bytes(), &listEnvelope); err != nil {
+		t.Fatalf("unmarshal stock research list: %v", err)
+	}
+	if len(listEnvelope.Data.Items) != 1 {
+		t.Fatalf("expected one stock research item, got %+v", listEnvelope.Data)
+	}
+	itemID := listEnvelope.Data.Items[0].ID
+	pdfPath := filepath.Join(pdfRoot, "sina_finance_report", "sina-pdf-1.pdf")
+	if err := os.MkdirAll(filepath.Dir(pdfPath), 0o755); err != nil {
+		t.Fatalf("mkdir pdf dir: %v", err)
+	}
+	if err := os.WriteFile(pdfPath, []byte("%PDF-1.4\nfake\n"), 0o644); err != nil {
+		t.Fatalf("write pdf file: %v", err)
+	}
+
+	updateReq := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/internal/stock-research/%d/pdf", itemID), strings.NewReader(fmt.Sprintf(`{"pdf_url":"https://sina.example.com/1.pdf","pdf_file_path":%q,"pdf_status":"parsed","pdf_text":"科大讯飞研报正文","pdf_fetched_at":"2026-06-16T01:00:00Z","pdf_parsed_at":"2026-06-16T01:01:00Z"}`, pdfPath)))
+	updateRR := httptest.NewRecorder()
+	router.ServeHTTP(updateRR, updateReq)
+	if updateRR.Code != http.StatusOK {
+		t.Fatalf("expected pdf update 200, got %d body=%s", updateRR.Code, updateRR.Body.String())
+	}
+
+	textReq := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/stock-research/%d/pdf/text", itemID), nil)
+	textRR := httptest.NewRecorder()
+	router.ServeHTTP(textRR, textReq)
+	if textRR.Code != http.StatusOK || !strings.Contains(textRR.Body.String(), "科大讯飞研报正文") {
+		t.Fatalf("expected parsed pdf text, got status=%d body=%s", textRR.Code, textRR.Body.String())
+	}
+
+	pdfReq := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/stock-research/%d/pdf", itemID), nil)
+	pdfRR := httptest.NewRecorder()
+	router.ServeHTTP(pdfRR, pdfReq)
+	if pdfRR.Code != http.StatusOK || !strings.Contains(pdfRR.Body.String(), "%PDF-1.4") {
+		t.Fatalf("expected pdf file response, got status=%d body=%s", pdfRR.Code, pdfRR.Body.String())
+	}
+}
+
 func TestStockInstitutionHoldingAPIUpsertsListsAndSummarizes(t *testing.T) {
 	store := newContentSearchTestStore(t)
 	svc := NewService(config.Config{}, store)

@@ -22,8 +22,8 @@ func (s *Store) UpsertStockResearchSurveys(ctx context.Context, items []model.St
 	}()
 
 	stmt, err := tx.PrepareContext(ctx, `
-INSERT INTO stock_research_surveys (code, name, kind, title, institution, analyst, rating, target_price, research_date, publish_time, source_url, source_type, source_key, summary, raw_payload, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO stock_research_surveys (code, name, kind, title, institution, analyst, rating, target_price, research_date, publish_time, source_url, source_type, source_key, summary, raw_payload, pdf_url, pdf_file_path, pdf_status, pdf_text, pdf_error, pdf_fetched_at, pdf_parsed_at, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(source_type, source_key) DO UPDATE SET
 	code = excluded.code,
 	name = excluded.name,
@@ -38,6 +38,13 @@ ON CONFLICT(source_type, source_key) DO UPDATE SET
 	source_url = excluded.source_url,
 	summary = excluded.summary,
 	raw_payload = excluded.raw_payload,
+	pdf_url = CASE WHEN excluded.pdf_url <> '' THEN excluded.pdf_url ELSE stock_research_surveys.pdf_url END,
+	pdf_file_path = CASE WHEN excluded.pdf_file_path <> '' THEN excluded.pdf_file_path ELSE stock_research_surveys.pdf_file_path END,
+	pdf_status = CASE WHEN excluded.pdf_status <> '' THEN excluded.pdf_status ELSE stock_research_surveys.pdf_status END,
+	pdf_text = CASE WHEN excluded.pdf_text <> '' THEN excluded.pdf_text ELSE stock_research_surveys.pdf_text END,
+	pdf_error = CASE WHEN excluded.pdf_error <> '' THEN excluded.pdf_error ELSE stock_research_surveys.pdf_error END,
+	pdf_fetched_at = CASE WHEN excluded.pdf_fetched_at <> '' THEN excluded.pdf_fetched_at ELSE stock_research_surveys.pdf_fetched_at END,
+	pdf_parsed_at = CASE WHEN excluded.pdf_parsed_at <> '' THEN excluded.pdf_parsed_at ELSE stock_research_surveys.pdf_parsed_at END,
 	updated_at = excluded.updated_at`)
 	if err != nil {
 		return result, err
@@ -82,6 +89,13 @@ ON CONFLICT(source_type, source_key) DO UPDATE SET
 			sourceKey,
 			strings.TrimSpace(item.Summary),
 			nonEmpty(strings.TrimSpace(item.RawPayload), "{}"),
+			strings.TrimSpace(item.PDFURL),
+			strings.TrimSpace(item.PDFFilePath),
+			stockResearchPDFStatus(item.PDFStatus),
+			strings.TrimSpace(item.PDFText),
+			strings.TrimSpace(item.PDFError),
+			strings.TrimSpace(item.PDFFetchedAt),
+			strings.TrimSpace(item.PDFParsedAt),
 			createdAt.UTC().Format(time.RFC3339),
 			updatedAt.UTC().Format(time.RFC3339),
 		); err != nil {
@@ -126,7 +140,7 @@ func (s *Store) ListStockResearchSurveys(ctx context.Context, filter model.Stock
 	offset := (filter.Page - 1) * filter.PageSize
 	queryArgs := append(args, filter.PageSize, offset)
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, code, name, kind, title, institution, analyst, rating, target_price, research_date, publish_time, source_url, source_type, source_key, summary, raw_payload, created_at, updated_at
+SELECT id, code, name, kind, title, institution, analyst, rating, target_price, research_date, publish_time, source_url, source_type, source_key, summary, raw_payload, pdf_url, pdf_file_path, pdf_status, pdf_text, pdf_error, pdf_fetched_at, pdf_parsed_at, created_at, updated_at
 FROM stock_research_surveys `+where+`
 ORDER BY COALESCE(NULLIF(research_date, ''), publish_time) DESC, id DESC
 LIMIT ? OFFSET ?`, queryArgs...)
@@ -147,6 +161,38 @@ LIMIT ? OFFSET ?`, queryArgs...)
 	}
 	result.Items = items
 	return result, nil
+}
+
+func (s *Store) GetStockResearchSurvey(ctx context.Context, id int64) (model.StockResearchSurvey, error) {
+	row := s.db.QueryRowContext(ctx, `
+SELECT id, code, name, kind, title, institution, analyst, rating, target_price, research_date, publish_time, source_url, source_type, source_key, summary, raw_payload, pdf_url, pdf_file_path, pdf_status, pdf_text, pdf_error, pdf_fetched_at, pdf_parsed_at, created_at, updated_at
+FROM stock_research_surveys
+WHERE id = ?`, id)
+	return scanStockResearchSurvey(row)
+}
+
+func (s *Store) UpdateStockResearchPDF(ctx context.Context, id int64, update model.StockResearchPDFUpdate) (model.StockResearchSurvey, error) {
+	res, err := s.db.ExecContext(ctx, `
+UPDATE stock_research_surveys
+SET pdf_url = ?, pdf_file_path = ?, pdf_status = ?, pdf_text = ?, pdf_error = ?, pdf_fetched_at = ?, pdf_parsed_at = ?, updated_at = ?
+WHERE id = ?`,
+		strings.TrimSpace(update.PDFURL),
+		strings.TrimSpace(update.PDFFilePath),
+		stockResearchPDFStatus(update.PDFStatus),
+		strings.TrimSpace(update.PDFText),
+		strings.TrimSpace(update.PDFError),
+		strings.TrimSpace(update.PDFFetchedAt),
+		strings.TrimSpace(update.PDFParsedAt),
+		time.Now().UTC().Format(time.RFC3339),
+		id,
+	)
+	if err != nil {
+		return model.StockResearchSurvey{}, err
+	}
+	if rows, rowErr := res.RowsAffected(); rowErr == nil && rows == 0 {
+		return model.StockResearchSurvey{}, sql.ErrNoRows
+	}
+	return s.GetStockResearchSurvey(ctx, id)
 }
 
 func (s *Store) listStockResearchSources(ctx context.Context) ([]string, error) {
@@ -222,6 +268,13 @@ func scanStockResearchSurvey(scanner scanner) (model.StockResearchSurvey, error)
 		&item.SourceKey,
 		&item.Summary,
 		&item.RawPayload,
+		&item.PDFURL,
+		&item.PDFFilePath,
+		&item.PDFStatus,
+		&item.PDFText,
+		&item.PDFError,
+		&item.PDFFetchedAt,
+		&item.PDFParsedAt,
 		&createdAt,
 		&updatedAt,
 	); err != nil {
@@ -238,5 +291,14 @@ func stockResearchKind(value string) string {
 		return "survey"
 	default:
 		return "report"
+	}
+}
+
+func stockResearchPDFStatus(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "pending", "downloaded", "parsed", "no_pdf", "no_text", "failed":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return strings.TrimSpace(value)
 	}
 }

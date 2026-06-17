@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -180,6 +181,32 @@ func TestStockResearchSurveysUpsertAndFilter(t *testing.T) {
 	}
 	if len(list.Sources) != 2 {
 		t.Fatalf("expected source options, got %+v", list.Sources)
+	}
+	pdfUpdated, err := store.UpdateStockResearchPDF(ctx, list.Items[0].ID, model.StockResearchPDFUpdate{
+		PDFURL:       "https://sina.example.com/1.pdf",
+		PDFFilePath:  filepath.Join("data", "stock-research-pdfs", "sina_finance_report", "sina-1.pdf"),
+		PDFStatus:    "parsed",
+		PDFText:      "科大讯飞研报正文",
+		PDFFetchedAt: "2026-06-16T01:00:00Z",
+		PDFParsedAt:  "2026-06-16T01:01:00Z",
+	})
+	if err != nil {
+		t.Fatalf("UpdateStockResearchPDF error: %v", err)
+	}
+	if pdfUpdated.PDFStatus != "parsed" || !strings.Contains(pdfUpdated.PDFText, "研报正文") {
+		t.Fatalf("unexpected pdf update result: %+v", pdfUpdated)
+	}
+	if _, err := store.UpsertStockResearchSurveys(ctx, []model.StockResearchSurvey{
+		{Code: "002230", Name: "科大讯飞", Kind: "report", Title: "科大讯飞深度研究再次更新", Institution: "中金公司", ResearchDate: "2026-06-16", SourceType: "sina_finance_report", SourceKey: "sina-1", RawPayload: "{}"},
+	}); err != nil {
+		t.Fatalf("UpsertStockResearchSurveys preserve pdf error: %v", err)
+	}
+	loaded, err := store.GetStockResearchSurvey(ctx, list.Items[0].ID)
+	if err != nil {
+		t.Fatalf("GetStockResearchSurvey error: %v", err)
+	}
+	if loaded.Title != "科大讯飞深度研究再次更新" || loaded.PDFStatus != "parsed" || loaded.PDFText != "科大讯飞研报正文" {
+		t.Fatalf("expected normal upsert to preserve parsed PDF fields, got %+v", loaded)
 	}
 }
 

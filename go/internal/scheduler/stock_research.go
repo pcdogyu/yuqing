@@ -91,6 +91,16 @@ func (w *Worker) runStockResearchCrawlForRange(ctx context.Context, opts stockRe
 		Str("company", opts.Company).
 		Int("items", len(items)).
 		Msg("stock research crawl completed")
+	if len(items) > 0 {
+		if result, pdfErr := w.runStockResearchPDFParse(ctx, stockResearchPDFParseOptions{
+			Code:    opts.Code,
+			Company: opts.Company,
+			Start:   opts.Start,
+			End:     opts.End,
+		}); pdfErr != nil {
+			log.Warn().Err(pdfErr).Interface("result", result).Msg("stock research pdf parse finished with errors")
+		}
+	}
 	return nil
 }
 
@@ -243,6 +253,12 @@ func normalizeStockResearchSourceItems(items []model.StockResearchSurvey, fallba
 		items[i].PublishTime = cleanStockResearchText(items[i].PublishTime)
 		items[i].SourceURL = strings.TrimSpace(items[i].SourceURL)
 		items[i].SourceType = strings.TrimSpace(items[i].SourceType)
+		items[i].PDFURL = strings.TrimSpace(items[i].PDFURL)
+		items[i].PDFFilePath = strings.TrimSpace(items[i].PDFFilePath)
+		items[i].PDFStatus = strings.TrimSpace(items[i].PDFStatus)
+		items[i].PDFError = cleanStockResearchText(items[i].PDFError)
+		items[i].PDFFetchedAt = cleanStockResearchText(items[i].PDFFetchedAt)
+		items[i].PDFParsedAt = cleanStockResearchText(items[i].PDFParsedAt)
 		if items[i].SourceType == "" {
 			items[i].SourceType = fallbackSource
 		}

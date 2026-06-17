@@ -144,6 +144,13 @@ CREATE TABLE IF NOT EXISTS stock_research_surveys (
 	source_key TEXT NOT NULL DEFAULT '',
 	summary TEXT NOT NULL DEFAULT '',
 	raw_payload TEXT NOT NULL DEFAULT '{}',
+	pdf_url TEXT NOT NULL DEFAULT '',
+	pdf_file_path TEXT NOT NULL DEFAULT '',
+	pdf_status TEXT NOT NULL DEFAULT '',
+	pdf_text TEXT NOT NULL DEFAULT '',
+	pdf_error TEXT NOT NULL DEFAULT '',
+	pdf_fetched_at TEXT NOT NULL DEFAULT '',
+	pdf_parsed_at TEXT NOT NULL DEFAULT '',
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL,
 	UNIQUE (source_type, source_key)
@@ -639,6 +646,13 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_action_created_at ON audit_logs(action
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE crawl_runs ADD COLUMN template_name TEXT NOT NULL DEFAULT ''`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE crawl_runs ADD COLUMN template_snapshot TEXT NOT NULL DEFAULT ''`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE crawl_templates ADD COLUMN website TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE stock_research_surveys ADD COLUMN pdf_url TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE stock_research_surveys ADD COLUMN pdf_file_path TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE stock_research_surveys ADD COLUMN pdf_status TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE stock_research_surveys ADD COLUMN pdf_text TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE stock_research_surveys ADD COLUMN pdf_error TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE stock_research_surveys ADD COLUMN pdf_fetched_at TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE stock_research_surveys ADD COLUMN pdf_parsed_at TEXT NOT NULL DEFAULT ''`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE platform_bindings ADD COLUMN bound INTEGER NOT NULL DEFAULT 0`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE public_options ADD COLUMN detail_status INTEGER NOT NULL DEFAULT 3`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE warning_settings ADD COLUMN warning_setting_id INTEGER NOT NULL DEFAULT 0`)

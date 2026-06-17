@@ -46,6 +46,7 @@ type Config struct {
 	AStockAuctionURL           string
 	AStockHoldingURL           string
 	StockResearchURL           string
+	StockResearchPDFDir        string
 	TuShareToken               string
 	StockResearchPublicEnabled bool
 	SinaFinanceReportURL       string
@@ -147,6 +148,7 @@ func Load() Config {
 		AStockAuctionURL:           envOrDefault("YUQING_ASTOCK_AUCTION_URL", ""),
 		AStockHoldingURL:           envOrDefault("YUQING_ASTOCK_HOLDING_URL", ""),
 		StockResearchURL:           envOrDefault("YUQING_STOCK_RESEARCH_URL", ""),
+		StockResearchPDFDir:        envOrDefault("YUQING_STOCK_RESEARCH_PDF_DIR", filepath.Join("data", "stock-research-pdfs")),
 		TuShareToken:               envOrDefault("YUQING_TUSHARE_TOKEN", ""),
 		StockResearchPublicEnabled: envBool(true, "YUQING_STOCK_RESEARCH_PUBLIC_ENABLED"),
 		SinaFinanceReportURL:       envOrDefaultAllowEmpty("YUQING_SINA_FINANCE_REPORT_URL", "https://stock.finance.sina.com.cn/stock/go.php/vReport_List/kind/lastest/index.phtml"),

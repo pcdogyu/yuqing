@@ -19,6 +19,13 @@ type StockResearchSurvey struct {
 	SourceKey    string    `json:"source_key"`
 	Summary      string    `json:"summary"`
 	RawPayload   string    `json:"raw_payload"`
+	PDFURL       string    `json:"pdf_url"`
+	PDFFilePath  string    `json:"pdf_file_path"`
+	PDFStatus    string    `json:"pdf_status"`
+	PDFText      string    `json:"pdf_text"`
+	PDFError     string    `json:"pdf_error"`
+	PDFFetchedAt string    `json:"pdf_fetched_at"`
+	PDFParsedAt  string    `json:"pdf_parsed_at"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
@@ -54,4 +61,14 @@ type StockResearchUpsertResult struct {
 	Inserted int `json:"inserted"`
 	Updated  int `json:"updated"`
 	Total    int `json:"total"`
+}
+
+type StockResearchPDFUpdate struct {
+	PDFURL       string `json:"pdf_url"`
+	PDFFilePath  string `json:"pdf_file_path"`
+	PDFStatus    string `json:"pdf_status"`
+	PDFText      string `json:"pdf_text"`
+	PDFError     string `json:"pdf_error"`
+	PDFFetchedAt string `json:"pdf_fetched_at"`
+	PDFParsedAt  string `json:"pdf_parsed_at"`
 }

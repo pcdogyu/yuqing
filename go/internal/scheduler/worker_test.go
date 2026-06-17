@@ -443,6 +443,11 @@ func TestParseFinanceReportDocumentExtractsRows(t *testing.T) {
 func TestRunStockResearchBackfillFetchesExternalAndWritesContent(t *testing.T) {
 	var captured []model.StockResearchSurvey
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/stock-research" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockResearchListResult{Page: 1, PageSize: 200, Total: 0}})
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/internal/stock-research/batch" {
 			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
 		}

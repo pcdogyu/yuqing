@@ -65,10 +65,24 @@ CREATE TABLE IF NOT EXISTS stock_research_surveys (
 	source_key TEXT NOT NULL DEFAULT '',
 	summary TEXT NOT NULL DEFAULT '',
 	raw_payload TEXT NOT NULL DEFAULT '{}',
+	pdf_url TEXT NOT NULL DEFAULT '',
+	pdf_file_path TEXT NOT NULL DEFAULT '',
+	pdf_status TEXT NOT NULL DEFAULT '',
+	pdf_text TEXT NOT NULL DEFAULT '',
+	pdf_error TEXT NOT NULL DEFAULT '',
+	pdf_fetched_at TEXT NOT NULL DEFAULT '',
+	pdf_parsed_at TEXT NOT NULL DEFAULT '',
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL,
 	UNIQUE (source_type, source_key)
 );
+ALTER TABLE stock_research_surveys ADD COLUMN IF NOT EXISTS pdf_url TEXT NOT NULL DEFAULT '';
+ALTER TABLE stock_research_surveys ADD COLUMN IF NOT EXISTS pdf_file_path TEXT NOT NULL DEFAULT '';
+ALTER TABLE stock_research_surveys ADD COLUMN IF NOT EXISTS pdf_status TEXT NOT NULL DEFAULT '';
+ALTER TABLE stock_research_surveys ADD COLUMN IF NOT EXISTS pdf_text TEXT NOT NULL DEFAULT '';
+ALTER TABLE stock_research_surveys ADD COLUMN IF NOT EXISTS pdf_error TEXT NOT NULL DEFAULT '';
+ALTER TABLE stock_research_surveys ADD COLUMN IF NOT EXISTS pdf_fetched_at TEXT NOT NULL DEFAULT '';
+ALTER TABLE stock_research_surveys ADD COLUMN IF NOT EXISTS pdf_parsed_at TEXT NOT NULL DEFAULT '';
 
 CREATE TABLE IF NOT EXISTS stock_institution_holdings (
 	id BIGSERIAL PRIMARY KEY,

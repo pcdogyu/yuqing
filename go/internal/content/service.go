@@ -94,6 +94,8 @@ type Store interface {
 	ListAStockAuctionAmounts(rctx context.Context, filter model.AStockAuctionFilter) (model.AStockAuctionListResult, error)
 	UpsertStockResearchSurveys(rctx context.Context, items []model.StockResearchSurvey) (model.StockResearchUpsertResult, error)
 	ListStockResearchSurveys(rctx context.Context, filter model.StockResearchFilter) (model.StockResearchListResult, error)
+	GetStockResearchSurvey(rctx context.Context, id int64) (model.StockResearchSurvey, error)
+	UpdateStockResearchPDF(rctx context.Context, id int64, update model.StockResearchPDFUpdate) (model.StockResearchSurvey, error)
 	UpsertStockInstitutionHoldings(rctx context.Context, items []model.StockInstitutionHolding) (model.StockInstitutionHoldingUpsertResult, error)
 	ListStockInstitutionHoldings(rctx context.Context, filter model.StockInstitutionHoldingFilter) (model.StockInstitutionHoldingListResult, error)
 	GetStockInstitutionHoldingSummary(rctx context.Context, code string, period string) (model.StockInstitutionHoldingSummary, error)
@@ -162,7 +164,11 @@ func (s *Service) Routes(r chi.Router) {
 	r.Get("/api/v1/a-stock/auction", s.handleListAStockAuctionAmounts)
 	r.Post("/api/v1/admin/a-stock/auction", s.handleUpsertAStockAuctionAmounts)
 	r.Get("/api/v1/stock-research", s.handleListStockResearchSurveys)
+	r.Get("/api/v1/stock-research/{id}", s.handleGetStockResearchSurvey)
+	r.Get("/api/v1/stock-research/{id}/pdf", s.handleGetStockResearchPDF)
+	r.Get("/api/v1/stock-research/{id}/pdf/text", s.handleGetStockResearchPDFText)
 	r.Post("/api/v1/internal/stock-research/batch", s.handleUpsertStockResearchSurveys)
+	r.Post("/api/v1/internal/stock-research/{id}/pdf", s.handleUpdateStockResearchPDF)
 	r.Get("/api/v1/a-stock/holdings", s.handleListStockInstitutionHoldings)
 	r.Get("/api/v1/a-stock/holdings/summary", s.handleGetStockInstitutionHoldingSummary)
 	r.Post("/api/v1/internal/a-stock/holdings/batch", s.handleUpsertStockInstitutionHoldings)
@@ -632,6 +638,90 @@ func (s *Service) handleUpsertStockResearchSurveys(w http.ResponseWriter, r *htt
 	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
 }
 
+func (s *Service) handleGetStockResearchSurvey(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	item, err := s.store.GetStockResearchSurvey(r.Context(), int64(id))
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusNotFound, "stock research not found", nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", item)
+}
+
+func (s *Service) handleGetStockResearchPDF(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	item, err := s.store.GetStockResearchSurvey(r.Context(), int64(id))
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusNotFound, "stock research not found", nil)
+		return
+	}
+	path := strings.TrimSpace(item.PDFFilePath)
+	if path == "" {
+		apiutil.WriteJSON(w, http.StatusNotFound, "pdf not downloaded", nil)
+		return
+	}
+	cleanPath, err := s.safeStockResearchPDFPath(path)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+	if _, err := os.Stat(cleanPath); err != nil {
+		apiutil.WriteJSON(w, http.StatusNotFound, "pdf file not found", nil)
+		return
+	}
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", `inline; filename="stock-research.pdf"`)
+	http.ServeFile(w, r, cleanPath)
+}
+
+func (s *Service) handleGetStockResearchPDFText(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	item, err := s.store.GetStockResearchSurvey(r.Context(), int64(id))
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusNotFound, "stock research not found", nil)
+		return
+	}
+	if strings.TrimSpace(item.PDFText) == "" {
+		apiutil.WriteJSON(w, http.StatusNotFound, "pdf text not parsed", nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]any{
+		"id":            item.ID,
+		"title":         item.Title,
+		"pdf_url":       item.PDFURL,
+		"pdf_status":    item.PDFStatus,
+		"pdf_text":      item.PDFText,
+		"pdf_parsed_at": item.PDFParsedAt,
+	})
+}
+
+func (s *Service) handleUpdateStockResearchPDF(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	var payload model.StockResearchPDFUpdate
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid json", nil)
+		return
+	}
+	item, err := s.store.UpdateStockResearchPDF(r.Context(), int64(id), normalizeStockResearchPDFUpdate(payload))
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusNotFound, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", item)
+}
+
 func normalizeStockResearchSurvey(item model.StockResearchSurvey, now time.Time) model.StockResearchSurvey {
 	item.Code = strings.TrimSpace(item.Code)
 	item.Name = strings.TrimSpace(item.Name)
@@ -648,6 +738,13 @@ func normalizeStockResearchSurvey(item model.StockResearchSurvey, now time.Time)
 	item.SourceKey = strings.TrimSpace(item.SourceKey)
 	item.Summary = strings.TrimSpace(item.Summary)
 	item.RawPayload = strings.TrimSpace(item.RawPayload)
+	item.PDFURL = strings.TrimSpace(item.PDFURL)
+	item.PDFFilePath = strings.TrimSpace(item.PDFFilePath)
+	item.PDFStatus = normalizeStockResearchPDFStatus(item.PDFStatus)
+	item.PDFText = strings.TrimSpace(item.PDFText)
+	item.PDFError = strings.TrimSpace(item.PDFError)
+	item.PDFFetchedAt = strings.TrimSpace(item.PDFFetchedAt)
+	item.PDFParsedAt = strings.TrimSpace(item.PDFParsedAt)
 	if item.SourceType == "" {
 		item.SourceType = "stock_research"
 	}
@@ -664,6 +761,49 @@ func normalizeStockResearchSurvey(item model.StockResearchSurvey, now time.Time)
 		item.UpdatedAt = now
 	}
 	return item
+}
+
+func normalizeStockResearchPDFUpdate(update model.StockResearchPDFUpdate) model.StockResearchPDFUpdate {
+	update.PDFURL = strings.TrimSpace(update.PDFURL)
+	update.PDFFilePath = strings.TrimSpace(update.PDFFilePath)
+	update.PDFStatus = normalizeStockResearchPDFStatus(update.PDFStatus)
+	update.PDFText = strings.TrimSpace(update.PDFText)
+	update.PDFError = strings.TrimSpace(update.PDFError)
+	update.PDFFetchedAt = strings.TrimSpace(update.PDFFetchedAt)
+	update.PDFParsedAt = strings.TrimSpace(update.PDFParsedAt)
+	return update
+}
+
+func normalizeStockResearchPDFStatus(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "pending", "downloaded", "parsed", "no_pdf", "no_text", "failed":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return strings.TrimSpace(value)
+	}
+}
+
+func (s *Service) safeStockResearchPDFPath(path string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", errors.New("pdf file path required")
+	}
+	clean := filepath.Clean(path)
+	if filepath.IsAbs(clean) {
+		root := filepath.Clean(strings.TrimSpace(s.cfg.StockResearchPDFDir))
+		if root == "" || !filepath.IsAbs(root) {
+			return "", errors.New("absolute pdf file path is not allowed")
+		}
+		rel, err := filepath.Rel(root, clean)
+		if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
+			return "", errors.New("pdf file path is outside configured directory")
+		}
+		return clean, nil
+	}
+	if strings.HasPrefix(clean, ".."+string(filepath.Separator)) || clean == ".." {
+		return "", errors.New("invalid pdf file path")
+	}
+	return clean, nil
 }
 
 func normalizeStockResearchKind(value string) string {

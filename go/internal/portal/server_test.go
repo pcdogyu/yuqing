@@ -441,6 +441,7 @@ func TestStockResearchPageLoadsFiltersAndRows(t *testing.T) {
 				Source:      "sina_finance_report",
 				Sources:     []string{"sina_finance_report", "sohu_finance_report"},
 				Items: []model.StockResearchSurvey{{
+					ID:           7,
 					Code:         "002230",
 					Name:         "科大讯飞",
 					Kind:         "report",
@@ -452,6 +453,9 @@ func TestStockResearchPageLoadsFiltersAndRows(t *testing.T) {
 					ResearchDate: "2026-06-16",
 					SourceType:   "sina_finance_report",
 					SourceURL:    "https://sina.example.com/1",
+					PDFFilePath:  "data/stock-research-pdfs/sina/sina-1.pdf",
+					PDFStatus:    "parsed",
+					PDFText:      "科大讯飞研报正文",
 				}},
 			},
 		})
@@ -466,7 +470,7 @@ func TestStockResearchPageLoadsFiltersAndRows(t *testing.T) {
 		t.Fatalf("expected stock research page 200, got %d body=%s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"研报调研", "科大讯飞深度研究", "中金公司", "张三", "买入", "50.00", "新浪财经", "搜狐财经", "回补近一年", `value="科大"`} {
+	for _, want := range []string{"研报调研", "科大讯飞深度研究", "中金公司", "张三", "买入", "50.00", "新浪财经", "搜狐财经", "回补近一年", "解析当前筛选研报PDF", "下载PDF", "查看文本", "已解析", "重新解析", `value="科大"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected stock research page to contain %q, got %s", want, body)
 		}
@@ -503,6 +507,42 @@ func TestStockResearchPagePostTriggersBackfill(t *testing.T) {
 	}
 	loc, _ := url.QueryUnescape(rr.Header().Get("Location"))
 	for _, want := range []string{"/stock-research?", "code=002230", "company=科大讯飞", "回补任务已触发"} {
+		if !strings.Contains(loc, want) {
+			t.Fatalf("expected redirect to keep filters and message %q, got %q", want, loc)
+		}
+	}
+}
+
+func TestStockResearchPagePostTriggersPDFParse(t *testing.T) {
+	var schedulerCalled bool
+	scheduler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		schedulerCalled = true
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/scheduler/stock-research/pdf/parse" {
+			t.Fatalf("unexpected scheduler request: %s %s", r.Method, r.URL.String())
+		}
+		if r.Header.Get("X-Service-Token") != "secret-token" {
+			t.Fatalf("expected service token header, got %q", r.Header.Get("X-Service-Token"))
+		}
+		if r.URL.Query().Get("id") != "7" {
+			t.Fatalf("expected single item parse id, got query: %s", r.URL.RawQuery)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"status": "triggered", "result": map[string]int{"total": 1, "parsed": 1}}})
+	}))
+	defer scheduler.Close()
+
+	srv := NewServer(config.Config{SchedulerURL: scheduler.URL, ServiceToken: "secret-token"})
+	req := httptest.NewRequest(http.MethodPost, "/stock-research", strings.NewReader("action=parse_pdf_one&id=7&code=002230&company=%E7%A7%91%E5%A4%A7%E8%AE%AF%E9%A3%9E"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	srv.handleStockResearchPage(rr, req, map[string]any{"id": 1})
+	if !schedulerCalled {
+		t.Fatal("expected scheduler pdf parse to be called")
+	}
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect after stock research pdf parse, got %d", rr.Code)
+	}
+	loc, _ := url.QueryUnescape(rr.Header().Get("Location"))
+	for _, want := range []string{"/stock-research?", "code=002230", "company=科大讯飞", "PDF 解析任务已触发"} {
 		if !strings.Contains(loc, want) {
 			t.Fatalf("expected redirect to keep filters and message %q, got %q", want, loc)
 		}
@@ -935,7 +975,7 @@ func TestAStockPageLoadsAfternoonWindow(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"下午推荐", "09:26-12:50 财经新闻", "午间低空经济订单增加", "万丰奥威"} {
+	for _, want := range []string{"下午推荐", "09:26-12:50 财经新闻", "午间低空经济订单增加", "汇川技术"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 afternoon page to contain %q, got %s", want, body)
 		}
