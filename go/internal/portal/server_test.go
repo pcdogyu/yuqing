@@ -253,7 +253,10 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		t.Fatalf("expected A股, 研报调研, 集合竞价 nav links before Crypto, got %s", body)
 	}
 	for _, want := range []string{
+		`class="astock-overview-table"`,
+		`rowspan="2"`,
 		"08:00-09:30",
+		"09:26-12:50",
 		"上午推荐",
 		"下午推荐",
 		"热点归纳",
@@ -851,7 +854,25 @@ func TestAStockPageExplainsMorningNoNews(t *testing.T) {
 		if r.URL.Path != "/api/v1/articles" {
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
-		if r.URL.Query().Get("time_field") != "publish_time" || r.URL.Query().Get("start") != "2026-06-16 08:00:00" || r.URL.Query().Get("end") != "2026-06-16 09:30:59" {
+		start := r.URL.Query().Get("start")
+		end := r.URL.Query().Get("end")
+		if r.URL.Query().Get("time_field") != "publish_time" {
+			t.Fatalf("unexpected A股 morning window query: %s", r.URL.RawQuery)
+		}
+		if start == "2026-06-16 09:26:00" && end == "2026-06-16 12:50:59" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    200,
+				"message": "ok",
+				"data": model.ItemListResult{
+					Items:    []model.Item{},
+					Page:     1,
+					PageSize: 200,
+					Total:    0,
+				},
+			})
+			return
+		}
+		if start != "2026-06-16 08:00:00" || end != "2026-06-16 09:30:59" {
 			t.Fatalf("unexpected A股 morning window query: %s", r.URL.RawQuery)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -989,7 +1010,25 @@ func TestAStockPageOffersTodayNavigationAndAfterAlias(t *testing.T) {
 		if r.URL.Path != "/api/v1/articles" {
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
-		if r.URL.Query().Get("time_field") != "publish_time" || r.URL.Query().Get("start") != "2026-06-11 09:26:00" || r.URL.Query().Get("end") != "2026-06-11 12:50:59" {
+		start := r.URL.Query().Get("start")
+		end := r.URL.Query().Get("end")
+		if r.URL.Query().Get("time_field") != "publish_time" {
+			t.Fatalf("expected after alias to use afternoon window, got query: %s", r.URL.RawQuery)
+		}
+		if start == "2026-06-11 08:00:00" && end == "2026-06-11 09:30:59" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    200,
+				"message": "ok",
+				"data": model.ItemListResult{
+					Items:    []model.Item{},
+					Page:     1,
+					PageSize: 200,
+					Total:    0,
+				},
+			})
+			return
+		}
+		if start != "2026-06-11 09:26:00" || end != "2026-06-11 12:50:59" {
 			t.Fatalf("expected after alias to use afternoon window, got query: %s", r.URL.RawQuery)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -1072,7 +1111,25 @@ func TestAStockNewsSectionPaginatesTenItems(t *testing.T) {
 		if r.URL.Path != "/api/v1/articles" {
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
-		if r.URL.Query().Get("time_field") != "publish_time" || r.URL.Query().Get("start") != "2026-06-11 09:26:00" || r.URL.Query().Get("end") != "2026-06-11 12:50:59" {
+		start := r.URL.Query().Get("start")
+		end := r.URL.Query().Get("end")
+		if r.URL.Query().Get("time_field") != "publish_time" {
+			t.Fatalf("unexpected A股 afternoon window query: %s", r.URL.RawQuery)
+		}
+		if start == "2026-06-11 08:00:00" && end == "2026-06-11 09:30:59" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    200,
+				"message": "ok",
+				"data": model.ItemListResult{
+					Items:    []model.Item{},
+					Page:     1,
+					PageSize: 200,
+					Total:    0,
+				},
+			})
+			return
+		}
+		if start != "2026-06-11 09:26:00" || end != "2026-06-11 12:50:59" {
 			t.Fatalf("unexpected A股 afternoon window query: %s", r.URL.RawQuery)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -1096,7 +1153,7 @@ func TestAStockNewsSectionPaginatesTenItems(t *testing.T) {
 		t.Fatalf("expected first page 200, got %d", firstRR.Code)
 	}
 	firstBody := firstRR.Body.String()
-	for _, want := range []string{"分页新闻01", "分页新闻10", "新闻分页：1/2，共12条", `/a-stock?date=2026-06-11&period=afternoon&news_page=2`, `<strong style="display:block;margin-top:8px;font-size:24px">12</strong>`} {
+	for _, want := range []string{"分页新闻01", "分页新闻10", "新闻分页：1/2，共12条", `/a-stock?date=2026-06-11&period=afternoon&news_page=2`, `财经新闻数</span><strong>12</strong>`} {
 		if !strings.Contains(firstBody, want) {
 			t.Fatalf("expected first news page to contain %q, got %s", want, firstBody)
 		}

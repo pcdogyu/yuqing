@@ -137,6 +137,14 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 	newsPage := normalizeAStockNewsPage(r.URL.Query().Get("news_page"))
 	ignoreRecent := normalizeAStockBool(r.URL.Query().Get("ignore_recent"))
 	ctx := s.loadAStockContext(strategyDate, period.Key, newsPage, ignoreRecent)
+	morningCtx := ctx
+	if ctx.Period != "morning" {
+		morningCtx = s.loadAStockContext(strategyDate, "morning", 1, ignoreRecent)
+	}
+	afternoonCtx := ctx
+	if ctx.Period != "afternoon" {
+		afternoonCtx = s.loadAStockContext(strategyDate, "afternoon", 1, ignoreRecent)
+	}
 	message := strings.TrimSpace(r.URL.Query().Get("msg"))
 	if message == "" {
 		message = ctx.LoadMessage
@@ -146,7 +154,10 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 	b.WriteString(`<style>
 		body[data-page='a-stock'] main,body[data-page='a-stock'] .site-footer{max-width:1534px}
 		.astock-card{padding:18px;border:1px solid #ece7dc;border-radius:14px;background:#fff}
-		.astock-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}
+		.astock-overview-table{width:100%;min-width:100%;table-layout:fixed}
+		.astock-overview-table th,.astock-overview-table td{vertical-align:top}
+		.astock-overview-table .astock-muted{display:block;margin-bottom:8px}
+		.astock-overview-table strong{display:block;font-size:24px;line-height:1.25}
 		.astock-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
 		.astock-actions form{margin:0}
 		.astock-actions button{margin:0}
@@ -190,20 +201,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		b.WriteString(`</p></section>`)
 	}
 
-	b.WriteString(`<section><h2>顶部概览</h2><div class="astock-grid">`)
-	writeAStockMetric(&b, "策略日期", ctx.Date)
-	writeAStockMetric(&b, "推荐窗口", ctx.PeriodLabel)
-	writeAStockMetric(&b, "新闻窗口", ctx.WindowLabel)
-	writeAStockMetric(&b, "财经新闻数", fmt.Sprintf("%d", len(ctx.Articles)))
-	writeAStockMetric(&b, "候选热点数", fmt.Sprintf("%d", len(ctx.Hotspots)))
-	writeAStockMetric(&b, "推荐股票数", fmt.Sprintf("%d", len(ctx.Recommendations)))
-	if ctx.IgnoreRecent {
-		writeAStockMetric(&b, "15日过滤", "已忽略")
-	} else {
-		writeAStockMetric(&b, "15日过滤", "已启用")
-	}
-	writeAStockMetric(&b, "回测状态", ctx.BacktestStatus)
-	b.WriteString(`</div></section>`)
+	renderAStockOverviewSection(&b, morningCtx, afternoonCtx)
 
 	b.WriteString(`<section><h2>操作区</h2><div class="astock-actions">`)
 	for _, action := range []struct {
@@ -287,12 +285,37 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request) 
 	http.Redirect(w, r, "/a-stock?"+query.Encode(), http.StatusSeeOther)
 }
 
-func writeAStockMetric(b *strings.Builder, label string, value string) {
-	b.WriteString(`<div class="astock-card"><span class="astock-muted">`)
+func renderAStockOverviewSection(b *strings.Builder, morningCtx aStockContext, afternoonCtx aStockContext) {
+	b.WriteString(`<section><h2>顶部概览</h2><div class="astock-scroll"><table class="astock-overview-table"><tr>`)
+	writeAStockOverviewCell(b, "策略日期", morningCtx.Date, ` rowspan="2"`)
+	writeAStockOverviewPeriodCells(b, morningCtx)
+	b.WriteString(`</tr><tr>`)
+	writeAStockOverviewPeriodCells(b, afternoonCtx)
+	b.WriteString(`</tr></table></div></section>`)
+}
+
+func writeAStockOverviewPeriodCells(b *strings.Builder, ctx aStockContext) {
+	writeAStockOverviewCell(b, "推荐窗口", ctx.PeriodLabel, "")
+	writeAStockOverviewCell(b, "新闻窗口", ctx.WindowLabel, "")
+	writeAStockOverviewCell(b, "财经新闻数", fmt.Sprintf("%d", len(ctx.Articles)), "")
+	writeAStockOverviewCell(b, "候选热点数", fmt.Sprintf("%d", len(ctx.Hotspots)), "")
+	writeAStockOverviewCell(b, "推荐股票数", fmt.Sprintf("%d", len(ctx.Recommendations)), "")
+	filterStatus := "已启用"
+	if ctx.IgnoreRecent {
+		filterStatus = "已忽略"
+	}
+	writeAStockOverviewCell(b, "15日过滤", filterStatus, "")
+	writeAStockOverviewCell(b, "回测状态", ctx.BacktestStatus, "")
+}
+
+func writeAStockOverviewCell(b *strings.Builder, label string, value string, attrs string) {
+	b.WriteString(`<td`)
+	b.WriteString(attrs)
+	b.WriteString(`><span class="astock-muted">`)
 	b.WriteString(html.EscapeString(label))
-	b.WriteString(`</span><strong style="display:block;margin-top:8px;font-size:24px">`)
+	b.WriteString(`</span><strong>`)
 	b.WriteString(html.EscapeString(value))
-	b.WriteString(`</strong></div>`)
+	b.WriteString(`</strong></td>`)
 }
 
 func renderAStockNewsSection(b *strings.Builder, ctx aStockContext) {
