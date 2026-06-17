@@ -173,9 +173,10 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-table{min-width:960px}
 		.astock-table th{white-space:nowrap}
 		.astock-scroll{width:100%;overflow:auto}
-		.astock-recommendation-table{width:100%;min-width:1280px}
+		.astock-recommendation-table{width:100%;min-width:1280px;table-layout:fixed}
 		.astock-recommendation-table th,.astock-recommendation-table td{vertical-align:top}
-		.astock-recommendation-table th:last-child,.astock-recommendation-table td:last-child{width:45%}
+		.astock-recommendation-table th:nth-child(2),.astock-recommendation-table td:nth-child(2){width:7.5%;white-space:nowrap}
+		.astock-recommendation-table th:last-child,.astock-recommendation-table td:last-child{width:36%}
 		.astock-date-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0 18px}
 		.astock-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 		.astock-tab{display:inline-flex;align-items:center;padding:8px 12px;border:1px solid #d6ccbb;border-radius:8px;color:#214e34;text-decoration:none;background:#fff}

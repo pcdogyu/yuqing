@@ -273,6 +273,8 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		"现价",
 		"今日跌幅",
 		".astock-table th{white-space:nowrap}",
+		".astock-recommendation-table th:nth-child(2),.astock-recommendation-table td:nth-child(2){width:7.5%;white-space:nowrap}",
+		".astock-recommendation-table th:last-child,.astock-recommendation-table td:last-child{width:36%}",
 		"当日开盘价",
 		"T+1 收盘价",
 		"T+1 收益",
