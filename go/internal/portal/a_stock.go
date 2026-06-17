@@ -36,6 +36,7 @@ type aStockContext struct {
 	BacktestStatus  string
 	EmptyReason     string
 	RecentFiltered  int
+	IgnoreRecent    bool
 }
 
 type aStockHotspot struct {
@@ -134,7 +135,8 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 	strategyDate := normalizeAStockStrategyDate(r.URL.Query().Get("date"))
 	period := normalizeAStockPeriod(r.URL.Query().Get("period"))
 	newsPage := normalizeAStockNewsPage(r.URL.Query().Get("news_page"))
-	ctx := s.loadAStockContext(strategyDate, period.Key, newsPage)
+	ignoreRecent := normalizeAStockBool(r.URL.Query().Get("ignore_recent"))
+	ctx := s.loadAStockContext(strategyDate, period.Key, newsPage, ignoreRecent)
 	message := strings.TrimSpace(r.URL.Query().Get("msg"))
 	if message == "" {
 		message = ctx.LoadMessage
@@ -292,6 +294,9 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request) 
 		period = normalizeAStockPeriod("afternoon")
 		query.Set("period", period.Key)
 		query.Set("msg", "已切换到下午窗口，按 09:26-12:50 历史新闻重新计算推荐。")
+	case "generate_ignore_recent_stock":
+		query.Set("ignore_recent", "1")
+		query.Set("msg", period.Label+"已忽略近15日重复推荐过滤，按当前新闻窗口重新计算推荐。")
 	case "generate":
 		query.Set("msg", period.Label+"热点已按当前新闻窗口重新计算。")
 	case "sync_market":
@@ -542,6 +547,7 @@ func renderAStockRecommendationHistoryActions(b *strings.Builder, strategyDate s
 	}{
 		{Name: "backfill_window_news", Label: "补抓并重新生成当前窗口"},
 		{Name: recomputeAction, Label: "重新生成当前推荐"},
+		{Name: "generate_ignore_recent_stock", Label: "忽略15日重复过滤重新生成"},
 		{Name: "refresh_backtest", Label: "刷新当前回测"},
 	} {
 		b.WriteString(`<form method="post"><input type="hidden" name="date" value="`)
@@ -571,7 +577,7 @@ func writeAStockDateTab(b *strings.Builder, label string, date string, period st
 	b.WriteString(`</a>`)
 }
 
-func (s *Server) loadAStockContext(strategyDate string, periodKey string, newsPage int) aStockContext {
+func (s *Server) loadAStockContext(strategyDate string, periodKey string, newsPage int, ignoreRecent bool) aStockContext {
 	period := normalizeAStockPeriod(periodKey)
 	start, end := aStockWindow(strategyDate, period.Key)
 	ctx := aStockContext{
@@ -584,6 +590,7 @@ func (s *Server) loadAStockContext(strategyDate string, periodKey string, newsPa
 		WindowStart:    start,
 		WindowEnd:      end,
 		BacktestStatus: "等待行情接口",
+		IgnoreRecent:   ignoreRecent,
 	}
 	articles, err := s.loadAStockWindowArticles(start, end)
 	if err != nil {
@@ -595,7 +602,7 @@ func (s *Server) loadAStockContext(strategyDate string, periodKey string, newsPa
 	ctx.PagedArticles, ctx.NewsPage, ctx.NewsTotalPages = paginateAStockNews(ctx.Articles, newsPage, aStockNewsPageSize)
 	ctx.Hotspots = buildAStockHotspots(ctx.Articles)
 	ctx.Recommendations = buildAStockRecommendations(ctx.Hotspots)
-	if len(ctx.Recommendations) > 0 {
+	if len(ctx.Recommendations) > 0 && !ctx.IgnoreRecent {
 		recentCodes := s.loadRecentAStockRecommendationCodes(strategyDate, aStockRecentLookbackDays)
 		ctx.Recommendations, ctx.RecentFiltered = filterRecentAStockRecommendations(ctx.Recommendations, recentCodes)
 	}
@@ -619,11 +626,24 @@ func aStockRecommendationEmptyReason(ctx aStockContext) string {
 	if len(ctx.Hotspots) == 0 {
 		return fmt.Sprintf("暂无推荐股票：%s %s 有 %d 条新闻，但未命中 A股热点关键词。", ctx.PeriodLabel, ctx.WindowLabel, ctx.NewsTotal)
 	}
-	reason := fmt.Sprintf("暂无推荐股票：%s %s 已命中 %d 个热点，但候选股票可能被行情、当日开盘价、30/60天跌幅或近15日重复推荐过滤。", ctx.PeriodLabel, ctx.WindowLabel, len(ctx.Hotspots))
+	recentClause := "或近15日重复推荐"
+	if ctx.IgnoreRecent {
+		recentClause = ""
+	}
+	reason := fmt.Sprintf("暂无推荐股票：%s %s 已命中 %d 个热点，但候选股票可能被行情、当日开盘价、30/60天跌幅%s过滤。", ctx.PeriodLabel, ctx.WindowLabel, len(ctx.Hotspots), recentClause)
 	if ctx.RecentFiltered > 0 {
 		reason = fmt.Sprintf("%s 其中近15日已推荐股票过滤 %d 只。", reason, ctx.RecentFiltered)
 	}
 	return reason
+}
+
+func normalizeAStockBool(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func paginateAStockNews(items []model.Item, page int, pageSize int) ([]model.Item, int, int) {

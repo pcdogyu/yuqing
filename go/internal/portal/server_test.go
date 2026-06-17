@@ -611,6 +611,7 @@ func TestAStockStockGenerateActionsSelectPeriod(t *testing.T) {
 		action     string
 		wantPeriod string
 		wantMsg    string
+		wantIgnore bool
 	}{
 		{
 			name:       "switch to afternoon",
@@ -625,6 +626,14 @@ func TestAStockStockGenerateActionsSelectPeriod(t *testing.T) {
 			action:     "generate_morning_stock",
 			wantPeriod: "morning",
 			wantMsg:    "已切换到上午窗口，按 08:00-09:30 历史新闻重新计算推荐。",
+		},
+		{
+			name:       "ignore recent filter",
+			fromPeriod: "morning",
+			action:     "generate_ignore_recent_stock",
+			wantPeriod: "morning",
+			wantMsg:    "上午推荐已忽略近15日重复推荐过滤，按当前新闻窗口重新计算推荐。",
+			wantIgnore: true,
 		},
 	}
 
@@ -642,6 +651,9 @@ func TestAStockStockGenerateActionsSelectPeriod(t *testing.T) {
 			loc := rr.Header().Get("Location")
 			if !strings.Contains(loc, "date=2026-06-16") || !strings.Contains(loc, "period="+tc.wantPeriod) {
 				t.Fatalf("expected %s redirect, got %q", tc.wantPeriod, loc)
+			}
+			if tc.wantIgnore && !strings.Contains(loc, "ignore_recent=1") {
+				t.Fatalf("expected ignore_recent redirect, got %q", loc)
 			}
 			decoded, _ := url.QueryUnescape(loc)
 			if !strings.Contains(decoded, tc.wantMsg) {
@@ -1153,7 +1165,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"AI 算力政策加码", "半导体先进封装景气度提升", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日跌幅", "推荐历史", "补抓并重新生成当前窗口", "重新生成当前推荐", "刷新当前回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="refresh_backtest"`, "今日 2026-06-16 上午", "今日 2026-06-16 下午", "前1日 2026-06-15 上午", "前1日 2026-06-15 下午", "前5日 2026-06-11 上午", "前5日 2026-06-11 下午", "astock-recommendation-table", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
+	for _, want := range []string{"AI 算力政策加码", "半导体先进封装景气度提升", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日跌幅", "推荐历史", "补抓并重新生成当前窗口", "重新生成当前推荐", "忽略15日重复过滤重新生成", "刷新当前回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_ignore_recent_stock"`, `name="action" value="refresh_backtest"`, "今日 2026-06-16 上午", "今日 2026-06-16 下午", "前1日 2026-06-15 上午", "前1日 2026-06-15 下午", "前5日 2026-06-11 上午", "前5日 2026-06-11 下午", "astock-recommendation-table", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}
@@ -1212,10 +1224,12 @@ func TestAStockRecommendationHistoryActionsUseSelectedPeriod(t *testing.T) {
 		`name="period" value="afternoon"`,
 		`name="action" value="backfill_window_news"`,
 		`name="action" value="generate_afternoon_stock"`,
+		`name="action" value="generate_ignore_recent_stock"`,
 		`name="action" value="refresh_backtest"`,
 		`data-preserve-scroll="1"`,
 		"补抓并重新生成当前窗口",
 		"重新生成当前推荐",
+		"忽略15日重复过滤重新生成",
 		"刷新当前回测",
 	} {
 		if !strings.Contains(body, want) {
@@ -1239,6 +1253,48 @@ func TestFilterRecentAStockRecommendationsDropsPast15DayCodes(t *testing.T) {
 	}
 	if filtered[0].Rank != 1 || filtered[0].Code != "000099" {
 		t.Fatalf("expected remaining recommendation to be reranked, got %+v", filtered)
+	}
+}
+
+func TestAStockContextCanIgnoreRecentRecommendationFilter(t *testing.T) {
+	market := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{"items": []map[string]any{
+				{"code": "002230", "date": "2026-06-15", "open": 10.10, "close": 10.50, "pct": 1.25},
+				{"code": "002230", "date": "2026-06-16", "open": 10.60, "close": 10.90, "pct": 3.81},
+			}},
+		})
+	}))
+	defer market.Close()
+	t.Setenv("YUQING_ASTOCK_MARKET_URL", market.URL)
+
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/v1/a-stock/holdings/summary" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockInstitutionHoldingSummary{}})
+			return
+		}
+		if r.URL.Path != "/api/v1/articles" {
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": model.ItemListResult{
+				Items: []model.Item{{ID: 900, SourceType: "flash", Title: "AI 算力政策加码", Summary: "人工智能产业链活跃", CapturedAt: time.Date(2026, 6, 16, 1, 5, 0, 0, time.UTC)}},
+				Page:  1, PageSize: 200, Total: 1,
+			},
+		})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	filtered := srv.loadAStockContext("2026-06-16", "morning", 1, false)
+	if filtered.RecentFiltered == 0 || len(filtered.Recommendations) != 0 {
+		t.Fatalf("expected recent filter to remove recommendations, got filtered=%d recommendations=%+v", filtered.RecentFiltered, filtered.Recommendations)
+	}
+	ignored := srv.loadAStockContext("2026-06-16", "morning", 1, true)
+	if ignored.RecentFiltered != 0 || len(ignored.Recommendations) == 0 {
+		t.Fatalf("expected ignoreRecent to keep recommendations, got filtered=%d recommendations=%+v", ignored.RecentFiltered, ignored.Recommendations)
 	}
 }
 
