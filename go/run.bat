@@ -80,7 +80,7 @@ pushd "%REPO_ROOT%" >nul
 for /f %%I in ('git rev-parse --short HEAD') do set "YUQING_GIT_COMMIT=%%I"
 for /f %%I in ('git rev-parse --abbrev-ref HEAD') do set "YUQING_GIT_BRANCH=%%I"
 popd >nul
-for /f "usebackq delims=" %%I in (`powershell -NoProfile -Command "(Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')"`) do set "YUQING_BUILD_TIME=%%I"
+for /f "usebackq delims=" %%I in (`powershell -NoProfile -Command "([TimeZoneInfo]::ConvertTimeBySystemTimeZoneId((Get-Date), 'China Standard Time')).ToString('yyyy-MM-ddTHH:mm:ss') + '+08:00'"`) do set "YUQING_BUILD_TIME=%%I"
 if not defined YUQING_GIT_COMMIT set "YUQING_GIT_COMMIT=unknown"
 if not defined YUQING_GIT_BRANCH set "YUQING_GIT_BRANCH=unknown"
 if not defined YUQING_BUILD_TIME set "YUQING_BUILD_TIME=unknown"
