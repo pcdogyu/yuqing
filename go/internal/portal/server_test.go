@@ -781,8 +781,16 @@ func TestAStockPageLoadsAfternoonWindow(t *testing.T) {
 		if r.URL.Path != "/api/v1/articles" {
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
-		if r.URL.Query().Get("time_field") != "publish_time" || r.URL.Query().Get("start") != "2026-06-16 09:26:00" || r.URL.Query().Get("end") != "2026-06-16 12:50:59" {
+		if r.URL.Query().Get("time_field") != "publish_time" {
 			t.Fatalf("unexpected A股 afternoon window query: %s", r.URL.RawQuery)
+		}
+		if r.URL.Query().Get("start") != "2026-06-16 09:26:00" || r.URL.Query().Get("end") != "2026-06-16 12:50:59" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    200,
+				"message": "ok",
+				"data":    model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0},
+			})
+			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"code":    200,
@@ -998,8 +1006,16 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		if r.URL.Path != "/api/v1/articles" {
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
-		if r.URL.Query().Get("time_field") != "publish_time" || r.URL.Query().Get("start") != "2026-06-16 08:00:00" || r.URL.Query().Get("end") != "2026-06-16 09:30:59" {
+		if r.URL.Query().Get("time_field") != "publish_time" {
 			t.Fatalf("unexpected A股 window query: %s", r.URL.RawQuery)
+		}
+		if r.URL.Query().Get("start") != "2026-06-16 08:00:00" || r.URL.Query().Get("end") != "2026-06-16 09:30:59" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    200,
+				"message": "ok",
+				"data":    model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0},
+			})
+			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"code":    200,
@@ -1026,7 +1042,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"AI 算力政策加码", "半导体先进封装景气度提升", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日跌幅", "推荐历史", "今日 2026-06-16 上午", "今日 2026-06-16 下午", "前1日 2026-06-15 上午", "前1日 2026-06-15 下午", "前5日 2026-06-11 上午", "前5日 2026-06-11 下午", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
+	for _, want := range []string{"AI 算力政策加码", "半导体先进封装景气度提升", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日跌幅", "推荐历史", "今日 2026-06-16 上午", "今日 2026-06-16 下午", "前1日 2026-06-15 上午", "前1日 2026-06-15 下午", "前5日 2026-06-11 上午", "前5日 2026-06-11 下午", "astock-recommendation-table", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}
@@ -1073,6 +1089,24 @@ func TestAStockRecommendationHistoryRendersDateTabs(t *testing.T) {
 	}
 	if strings.Contains(body, "astock-history-card") || strings.Contains(body, "山东黄金") {
 		t.Fatalf("expected history stock table/card to be removed, got %s", body)
+	}
+}
+
+func TestFilterRecentAStockRecommendationsDropsPast15DayCodes(t *testing.T) {
+	recommendations := []aStockRecommendation{
+		{Rank: 1, Hotspot: "人工智能", Code: "002230", Name: "科大讯飞"},
+		{Rank: 2, Hotspot: "半导体", Code: "688981", Name: "中芯国际"},
+		{Rank: 3, Hotspot: "低空经济", Code: "000099", Name: "保留股票"},
+	}
+	filtered, skipped := filterRecentAStockRecommendations(recommendations, map[string]struct{}{
+		"002230": {},
+		"688981": {},
+	})
+	if skipped != 2 || len(filtered) != 1 {
+		t.Fatalf("expected two recent recommendations to be filtered, got skipped=%d filtered=%+v", skipped, filtered)
+	}
+	if filtered[0].Rank != 1 || filtered[0].Code != "000099" {
+		t.Fatalf("expected remaining recommendation to be reranked, got %+v", filtered)
 	}
 }
 

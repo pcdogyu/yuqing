@@ -35,6 +35,7 @@ type aStockContext struct {
 	LoadMessage     string
 	BacktestStatus  string
 	EmptyReason     string
+	RecentFiltered  int
 }
 
 type aStockHotspot struct {
@@ -109,6 +110,7 @@ const (
 	aStockDrawdownFilterThreshold = -15.0
 	aStockSectorDrawdownPenalty   = 15
 	aStockNewsPageSize            = 10
+	aStockRecentLookbackDays      = 15
 )
 
 var (
@@ -154,6 +156,9 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-source-list{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 		.astock-table{min-width:960px}
 		.astock-scroll{overflow:auto}
+		.astock-recommendation-table{width:100%;min-width:1280px}
+		.astock-recommendation-table th,.astock-recommendation-table td{vertical-align:top}
+		.astock-recommendation-table th:last-child,.astock-recommendation-table td:last-child{width:45%}
 		.astock-date-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0 18px}
 		.astock-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 		.astock-tab{display:inline-flex;align-items:center;padding:8px 12px;border:1px solid #d6ccbb;border-radius:8px;color:#214e34;text-decoration:none;background:#fff}
@@ -404,10 +409,10 @@ func renderAStockRecommendationSection(b *strings.Builder, ctx aStockContext) {
 		}
 		b.WriteString(`<div class="astock-empty">`)
 		b.WriteString(html.EscapeString(reason))
-		b.WriteString(`</div><table><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>昨日收盘价</th><th>昨日涨跌幅</th><th>30天涨跌幅</th><th>60天涨跌幅</th><th>现价</th><th>今日跌幅</th><th>推荐理由</th></tr><tr><td colspan="11">暂无推荐股票</td></tr></table></section>`)
+		b.WriteString(`</div><div class="astock-scroll"><table class="astock-table astock-recommendation-table"><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>昨日收盘价</th><th>昨日涨跌幅</th><th>30天涨跌幅</th><th>60天涨跌幅</th><th>现价</th><th>今日跌幅</th><th>推荐理由</th></tr><tr><td colspan="11">暂无推荐股票</td></tr></table></div></section>`)
 		return
 	}
-	b.WriteString(`<table><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>昨日收盘价</th><th>昨日涨跌幅</th><th>30天涨跌幅</th><th>60天涨跌幅</th><th>现价</th><th>今日跌幅</th><th>推荐理由</th></tr>`)
+	b.WriteString(`<div class="astock-scroll"><table class="astock-table astock-recommendation-table"><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>昨日收盘价</th><th>昨日涨跌幅</th><th>30天涨跌幅</th><th>60天涨跌幅</th><th>现价</th><th>今日跌幅</th><th>推荐理由</th></tr>`)
 	for _, rec := range recommendations {
 		b.WriteString(`<tr><td>`)
 		b.WriteString(fmt.Sprintf("%d", rec.Rank))
@@ -445,7 +450,7 @@ func renderAStockRecommendationSection(b *strings.Builder, ctx aStockContext) {
 		b.WriteString(html.EscapeString(rec.Reason))
 		b.WriteString(`</td></tr>`)
 	}
-	b.WriteString(`</table></section>`)
+	b.WriteString(`</table></div></section>`)
 }
 
 func renderAStockBacktestSection(b *strings.Builder, strategyDate string, period string, recommendations []aStockRecommendation, rows []aStockBacktestRow) {
@@ -542,17 +547,20 @@ func (s *Server) loadAStockContext(strategyDate string, periodKey string, newsPa
 		WindowEnd:      end,
 		BacktestStatus: "等待行情接口",
 	}
-	result := model.ItemListResult{}
-	query := "/api/v1/articles?page=1&page_size=200&time_field=publish_time&start=" + url.QueryEscape(formatAStockPublishTime(start)) + "&end=" + url.QueryEscape(formatAStockPublishTime(end))
-	if err := s.getJSON(s.cfg.ContentURL+query, &result); err != nil {
+	articles, err := s.loadAStockWindowArticles(start, end)
+	if err != nil {
 		ctx.LoadMessage = "A股新闻读取失败：" + err.Error()
 		return ctx
 	}
-	ctx.Articles = filterAStockNews(result.Items)
+	ctx.Articles = articles
 	ctx.NewsTotal = len(ctx.Articles)
 	ctx.PagedArticles, ctx.NewsPage, ctx.NewsTotalPages = paginateAStockNews(ctx.Articles, newsPage, aStockNewsPageSize)
 	ctx.Hotspots = buildAStockHotspots(ctx.Articles)
 	ctx.Recommendations = buildAStockRecommendations(ctx.Hotspots)
+	if len(ctx.Recommendations) > 0 {
+		recentCodes := s.loadRecentAStockRecommendationCodes(strategyDate, aStockRecentLookbackDays)
+		ctx.Recommendations, ctx.RecentFiltered = filterRecentAStockRecommendations(ctx.Recommendations, recentCodes)
+	}
 	ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus = s.loadAStockMarketView(strategyDate, ctx.Recommendations)
 	ctx.EmptyReason = aStockRecommendationEmptyReason(ctx)
 	return ctx
@@ -572,7 +580,11 @@ func aStockRecommendationEmptyReason(ctx aStockContext) string {
 	if len(ctx.Hotspots) == 0 {
 		return fmt.Sprintf("暂无推荐股票：%s %s 有 %d 条新闻，但未命中 A股热点关键词。", ctx.PeriodLabel, ctx.WindowLabel, ctx.NewsTotal)
 	}
-	return fmt.Sprintf("暂无推荐股票：%s %s 已命中 %d 个热点，但候选股票可能被行情、当日开盘价、30/60天跌幅过滤。", ctx.PeriodLabel, ctx.WindowLabel, len(ctx.Hotspots))
+	reason := fmt.Sprintf("暂无推荐股票：%s %s 已命中 %d 个热点，但候选股票可能被行情、当日开盘价、30/60天跌幅或近15日重复推荐过滤。", ctx.PeriodLabel, ctx.WindowLabel, len(ctx.Hotspots))
+	if ctx.RecentFiltered > 0 {
+		reason = fmt.Sprintf("%s 其中近15日已推荐股票过滤 %d 只。", reason, ctx.RecentFiltered)
+	}
+	return reason
 }
 
 func paginateAStockNews(items []model.Item, page int, pageSize int) ([]model.Item, int, int) {
@@ -596,6 +608,66 @@ func paginateAStockNews(items []model.Item, page int, pageSize int) ([]model.Ite
 		end = total
 	}
 	return items[start:end], page, totalPages
+}
+
+func (s *Server) loadRecentAStockRecommendationCodes(strategyDate string, lookbackDays int) map[string]struct{} {
+	if lookbackDays <= 0 {
+		return nil
+	}
+	day, err := time.ParseInLocation("2006-01-02", strategyDate, aStockLocation())
+	if err != nil {
+		return nil
+	}
+	result := make(map[string]struct{})
+	for offset := 1; offset <= lookbackDays; offset++ {
+		date := day.AddDate(0, 0, -offset).Format("2006-01-02")
+		for _, period := range aStockPeriods() {
+			start, end := aStockWindow(date, period.Key)
+			items, err := s.loadAStockWindowArticles(start, end)
+			if err != nil || len(items) == 0 {
+				continue
+			}
+			for _, rec := range buildAStockRecommendations(buildAStockHotspots(items)) {
+				code := normalizeAStockCode(rec.Code)
+				if code != "" {
+					result[code] = struct{}{}
+				}
+			}
+		}
+	}
+	return result
+}
+
+func (s *Server) loadAStockWindowArticles(start time.Time, end time.Time) ([]model.Item, error) {
+	result := model.ItemListResult{}
+	query := "/api/v1/articles?page=1&page_size=200&time_field=publish_time&start=" + url.QueryEscape(formatAStockPublishTime(start)) + "&end=" + url.QueryEscape(formatAStockPublishTime(end))
+	if err := s.getJSON(s.cfg.ContentURL+query, &result); err != nil {
+		return nil, err
+	}
+	return filterAStockNews(result.Items), nil
+}
+
+func filterRecentAStockRecommendations(recommendations []aStockRecommendation, recentCodes map[string]struct{}) ([]aStockRecommendation, int) {
+	if len(recommendations) == 0 || len(recentCodes) == 0 {
+		return rerankAStockRecommendations(recommendations), 0
+	}
+	filtered := make([]aStockRecommendation, 0, len(recommendations))
+	skipped := 0
+	for _, rec := range recommendations {
+		if _, ok := recentCodes[normalizeAStockCode(rec.Code)]; ok {
+			skipped++
+			continue
+		}
+		filtered = append(filtered, rec)
+	}
+	return rerankAStockRecommendations(filtered), skipped
+}
+
+func rerankAStockRecommendations(recommendations []aStockRecommendation) []aStockRecommendation {
+	for i := range recommendations {
+		recommendations[i].Rank = i + 1
+	}
+	return recommendations
 }
 
 func (s *Server) loadAStockMarketView(strategyDate string, recommendations []aStockRecommendation) ([]aStockRecommendation, []aStockBacktestRow, string) {
