@@ -298,13 +298,13 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 		withJobMeta(jobDefinition{
 			Name:        "a-stock-afternoon-recommendation",
 			Group:       "a-stock",
-			Description: "A股下午推荐：12:50 抓取 09:26-12:50 财经新闻并生成相关股票推荐",
+			Description: "A股下午推荐：13:00 抓取 09:30-13:00 财经新闻并生成相关股票推荐",
 			Interval:    24 * time.Hour,
 			Enabled:     true,
 			Run: func(ctx context.Context) error {
 				return w.runAStockRecommendation(ctx, "afternoon")
 			},
-		}, "AStockAfternoonRecommendation", "0 50 12 * * ?"),
+		}, "AStockAfternoonRecommendation", "0 0 13 * * ?"),
 		withJobMeta(jobDefinition{
 			Name:        "a-stock-auction-crawl",
 			Group:       "a-stock",

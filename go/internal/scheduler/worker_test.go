@@ -239,7 +239,7 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	if aStockMorningJob.Cron != "0 30 9 * * ?" || aStockMorningJob.NextRunAt == nil {
 		t.Fatalf("expected A股 morning recommendation cron metadata, got %+v", aStockMorningJob)
 	}
-	if aStockAfternoonJob.Cron != "0 50 12 * * ?" || aStockAfternoonJob.NextRunAt == nil {
+	if aStockAfternoonJob.Cron != "0 0 13 * * ?" || aStockAfternoonJob.NextRunAt == nil {
 		t.Fatalf("expected A股 afternoon recommendation cron metadata, got %+v", aStockAfternoonJob)
 	}
 	if aStockAuctionJob.Cron != "0 30 9 * * ?" || aStockAuctionJob.Enabled {
@@ -305,7 +305,7 @@ func TestRunAStockRecommendationCrawlsSourcesAndQueriesWindow(t *testing.T) {
 		if r.URL.Path != "/api/v1/articles" {
 			t.Fatalf("unexpected content request: %s", r.URL.String())
 		}
-		if r.URL.Query().Get("start") != "2026-06-16T01:26:00Z" || r.URL.Query().Get("end") != "2026-06-16T04:50:59Z" {
+		if r.URL.Query().Get("start") != "2026-06-16T01:30:00Z" || r.URL.Query().Get("end") != "2026-06-16T05:00:59Z" {
 			t.Fatalf("unexpected A股 afternoon window query: %s", r.URL.RawQuery)
 		}
 		w.WriteHeader(http.StatusOK)

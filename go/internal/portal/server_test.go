@@ -256,7 +256,7 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		`class="astock-overview-table"`,
 		`rowspan="2"`,
 		"08:00-09:30",
-		"09:26-12:50",
+		"09:30-13:00",
 		"上午推荐",
 		"下午推荐",
 		"热点归纳",
@@ -701,7 +701,7 @@ func TestAStockStockGenerateActionsSelectPeriod(t *testing.T) {
 			fromPeriod: "morning",
 			action:     "generate_afternoon_stock",
 			wantPeriod: "afternoon",
-			wantMsg:    "已切换到下午窗口，按 09:26-12:50 历史新闻重新计算推荐。",
+			wantMsg:    "已切换到下午窗口，按 09:30-13:00 历史新闻重新计算推荐。",
 		},
 		{
 			name:       "regenerate morning from afternoon",
@@ -973,6 +973,18 @@ func TestNormalizeAStockPeriodAcceptsAfterAlias(t *testing.T) {
 	}
 }
 
+func TestAStockRecentFilterDefaultsOff(t *testing.T) {
+	if !normalizeAStockIgnoreRecent(url.Values{}) {
+		t.Fatal("expected recent recommendation filter to be ignored by default")
+	}
+	if normalizeAStockIgnoreRecent(url.Values{"filter_recent": {"1"}}) {
+		t.Fatal("expected filter_recent=1 to enable the recent recommendation filter")
+	}
+	if !normalizeAStockIgnoreRecent(url.Values{"ignore_recent": {"1"}}) {
+		t.Fatal("expected ignore_recent=1 to keep ignoring the recent recommendation filter")
+	}
+}
+
 func TestAStockPageLoadsAfternoonWindow(t *testing.T) {
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -986,7 +998,7 @@ func TestAStockPageLoadsAfternoonWindow(t *testing.T) {
 		if r.URL.Query().Get("time_field") != "publish_time" {
 			t.Fatalf("unexpected A股 afternoon window query: %s", r.URL.RawQuery)
 		}
-		if r.URL.Query().Get("start") != "2026-06-16 09:26:00" || r.URL.Query().Get("end") != "2026-06-16 12:50:59" {
+		if r.URL.Query().Get("start") != "2026-06-16 09:30:00" || r.URL.Query().Get("end") != "2026-06-16 13:00:59" {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"code":    200,
 				"message": "ok",
@@ -1018,7 +1030,7 @@ func TestAStockPageLoadsAfternoonWindow(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"下午推荐", "09:26-12:50 财经新闻", "午间低空经济订单增加", "汇川技术"} {
+	for _, want := range []string{"下午推荐", "09:30-13:00 财经新闻", "午间低空经济订单增加", "汇川技术"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 afternoon page to contain %q, got %s", want, body)
 		}
@@ -1035,7 +1047,7 @@ func TestAStockPageOffersTodayNavigationAndAfterAlias(t *testing.T) {
 		if r.URL.Query().Get("time_field") != "publish_time" {
 			t.Fatalf("expected after alias to use afternoon window, got query: %s", r.URL.RawQuery)
 		}
-		if !strings.Contains(r.URL.Query().Get("start"), "09:26") {
+		if !strings.Contains(r.URL.Query().Get("start"), "09:30") {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"code":    200,
 				"message": "ok",
@@ -1074,7 +1086,7 @@ func TestAStockPageOffersTodayNavigationAndAfterAlias(t *testing.T) {
 		"下午推荐",
 		"今日 2026-06-16 上午",
 		"今日 2026-06-16 下午",
-		`href="/a-stock?date=2026-06-16&period=afternoon"`,
+		`href="/a-stock?date=2026-06-16&period=afternoon&ignore_recent=1"`,
 		"前5日 2026-06-11 下午",
 	} {
 		if !strings.Contains(body, want) {
@@ -1131,7 +1143,7 @@ func TestAStockNewsSectionPaginatesTenItems(t *testing.T) {
 		if r.URL.Query().Get("time_field") != "publish_time" {
 			t.Fatalf("unexpected A股 afternoon window query: %s", r.URL.RawQuery)
 		}
-		if !strings.Contains(r.URL.Query().Get("start"), "09:26") {
+		if !strings.Contains(r.URL.Query().Get("start"), "09:30") {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"code":    200,
 				"message": "ok",

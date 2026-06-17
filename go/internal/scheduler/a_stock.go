@@ -407,9 +407,9 @@ func aStockRecommendationWindow(strategyDate string, period string) (time.Time, 
 	}
 	switch period {
 	case "afternoon":
-		return time.Date(day.Year(), day.Month(), day.Day(), 9, 26, 0, 0, location),
-			time.Date(day.Year(), day.Month(), day.Day(), 12, 50, 59, 0, location),
-			"09:26-12:50", nil
+		return time.Date(day.Year(), day.Month(), day.Day(), 9, 30, 0, 0, location),
+			time.Date(day.Year(), day.Month(), day.Day(), 13, 0, 59, 0, location),
+			"09:30-13:00", nil
 	default:
 		return time.Date(day.Year(), day.Month(), day.Day(), 8, 0, 0, 0, location),
 			time.Date(day.Year(), day.Month(), day.Day(), 9, 30, 59, 0, location),

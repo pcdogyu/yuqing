@@ -135,7 +135,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 	strategyDate := normalizeAStockStrategyDate(r.URL.Query().Get("date"))
 	period := normalizeAStockPeriod(r.URL.Query().Get("period"))
 	newsPage := normalizeAStockNewsPage(r.URL.Query().Get("news_page"))
-	ignoreRecent := normalizeAStockBool(r.URL.Query().Get("ignore_recent"))
+	ignoreRecent := normalizeAStockIgnoreRecent(r.URL.Query())
 	ctx := s.loadAStockContext(strategyDate, period.Key, newsPage, ignoreRecent)
 	morningCtx := ctx
 	if ctx.Period != "morning" {
@@ -269,7 +269,7 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request) 
 	case "generate_afternoon_stock":
 		period = normalizeAStockPeriod("afternoon")
 		query.Set("period", period.Key)
-		query.Set("msg", "已切换到下午窗口，按 09:26-12:50 历史新闻重新计算推荐。")
+		query.Set("msg", "已切换到下午窗口，按 09:30-13:00 历史新闻重新计算推荐。")
 	case "generate_ignore_recent_stock":
 		query.Set("ignore_recent", "1")
 		query.Set("msg", period.Label+"已忽略近15日重复推荐过滤，按当前新闻窗口重新计算推荐。")
@@ -302,7 +302,7 @@ func writeAStockOverviewPeriodCells(b *strings.Builder, ctx aStockContext) {
 	writeAStockOverviewCell(b, "推荐股票数", fmt.Sprintf("%d", len(ctx.Recommendations)), "")
 	filterStatus := "已启用"
 	if ctx.IgnoreRecent {
-		filterStatus = "已忽略"
+		filterStatus = "已关闭"
 	}
 	writeAStockOverviewCell(b, "15日过滤", filterStatus, "")
 	writeAStockOverviewCell(b, "回测状态", ctx.BacktestStatus, "")
@@ -652,6 +652,16 @@ func normalizeAStockBool(raw string) bool {
 	default:
 		return false
 	}
+}
+
+func normalizeAStockIgnoreRecent(query url.Values) bool {
+	if normalizeAStockBool(query.Get("filter_recent")) {
+		return false
+	}
+	if _, ok := query["ignore_recent"]; ok {
+		return normalizeAStockBool(query.Get("ignore_recent"))
+	}
+	return true
 }
 
 func paginateAStockNews(items []model.Item, page int, pageSize int) ([]model.Item, int, int) {
@@ -1581,7 +1591,7 @@ func aStockWindow(strategyDate string, periodKey string) (time.Time, time.Time) 
 	period := normalizeAStockPeriod(periodKey)
 	startHour, startMinute, endHour, endMinute := 8, 0, 9, 30
 	if period.Key == "afternoon" {
-		startHour, startMinute, endHour, endMinute = 9, 26, 12, 50
+		startHour, startMinute, endHour, endMinute = 9, 30, 13, 0
 	}
 	start := time.Date(day.Year(), day.Month(), day.Day(), startHour, startMinute, 0, 0, location)
 	end := time.Date(day.Year(), day.Month(), day.Day(), endHour, endMinute, 59, 0, location)
@@ -1761,7 +1771,7 @@ func aStockPageHref(strategyDate string, period string, newsPage int, ignoreRece
 func aStockPeriods() []aStockPeriod {
 	return []aStockPeriod{
 		{Key: "morning", Label: "上午推荐", WindowLabel: "08:00-09:30"},
-		{Key: "afternoon", Label: "下午推荐", WindowLabel: "09:26-12:50"},
+		{Key: "afternoon", Label: "下午推荐", WindowLabel: "09:30-13:00"},
 	}
 }
 
