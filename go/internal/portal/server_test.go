@@ -1042,7 +1042,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"AI 算力政策加码", "半导体先进封装景气度提升", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日跌幅", "推荐历史", "今日 2026-06-16 上午", "今日 2026-06-16 下午", "前1日 2026-06-15 上午", "前1日 2026-06-15 下午", "前5日 2026-06-11 上午", "前5日 2026-06-11 下午", "astock-recommendation-table", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
+	for _, want := range []string{"AI 算力政策加码", "半导体先进封装景气度提升", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日跌幅", "推荐历史", "补抓并重新生成当前窗口", "重新生成当前推荐", "刷新当前回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="refresh_backtest"`, "今日 2026-06-16 上午", "今日 2026-06-16 下午", "前1日 2026-06-15 上午", "前1日 2026-06-15 下午", "前5日 2026-06-11 上午", "前5日 2026-06-11 下午", "astock-recommendation-table", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}
@@ -1089,6 +1089,27 @@ func TestAStockRecommendationHistoryRendersDateTabs(t *testing.T) {
 	}
 	if strings.Contains(body, "astock-history-card") || strings.Contains(body, "山东黄金") {
 		t.Fatalf("expected history stock table/card to be removed, got %s", body)
+	}
+}
+
+func TestAStockRecommendationHistoryActionsUseSelectedPeriod(t *testing.T) {
+	var b strings.Builder
+	renderAStockRecommendationHistoryActions(&b, "2026-06-16", "afternoon")
+	body := b.String()
+	for _, want := range []string{
+		`name="date" value="2026-06-16"`,
+		`name="period" value="afternoon"`,
+		`name="action" value="backfill_window_news"`,
+		`name="action" value="generate_afternoon_stock"`,
+		`name="action" value="refresh_backtest"`,
+		`data-preserve-scroll="1"`,
+		"补抓并重新生成当前窗口",
+		"重新生成当前推荐",
+		"刷新当前回测",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected history actions to contain %q, got %s", want, body)
+		}
 	}
 }
 

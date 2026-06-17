@@ -164,6 +164,9 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-tab{display:inline-flex;align-items:center;padding:8px 12px;border:1px solid #d6ccbb;border-radius:8px;color:#214e34;text-decoration:none;background:#fff}
 		.astock-tab.active{background:#214e34;color:#fff;border-color:#214e34}
 		.astock-tab.disabled{color:#9a9388;border-color:#ece7dc;background:#faf8f2;pointer-events:none}
+		.astock-history-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:0 0 18px}
+		.astock-history-actions form{margin:0}
+		.astock-history-actions button{margin:0;min-height:38px;padding:8px 12px}
 		.astock-pagination{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:14px}
 		.astock-up{color:#b3261e;font-weight:700}
 		.astock-down{color:#1b7f3a;font-weight:700}
@@ -456,6 +459,7 @@ func renderAStockRecommendationSection(b *strings.Builder, ctx aStockContext) {
 func renderAStockBacktestSection(b *strings.Builder, strategyDate string, period string, recommendations []aStockRecommendation, rows []aStockBacktestRow) {
 	b.WriteString(`<section><h2>消息回测</h2><p class="astock-muted">买入价采用当日开盘价；T+1 到 T+5 按后续交易日收盘价计算收益，并展示五日内最高收益。</p>`)
 	renderAStockRecommendationHistoryTabs(b, strategyDate, period)
+	renderAStockRecommendationHistoryActions(b, strategyDate, period)
 	b.WriteString(`<div class="astock-scroll"><table class="astock-table"><tr><th>股票</th><th>当日开盘价</th><th>T+1 收盘价</th><th>T+1 收益</th><th>T+2 收益</th><th>T+3 收益</th><th>T+4 收益</th><th>T+5 收益</th><th>五日内最高收益</th><th>命中状态</th></tr>`)
 	if len(rows) == 0 {
 		b.WriteString(`<tr><td colspan="10">暂无回测结果，等待行情同步。</td></tr>`)
@@ -515,6 +519,34 @@ func renderAStockRecommendationHistoryTabs(b *strings.Builder, strategyDate stri
 			active := strategyDate == date && normalizedPeriod == option.Key
 			writeAStockDateTab(b, label+" "+date+" "+periodLabel, date, option.Key, active)
 		}
+	}
+	b.WriteString(`</div>`)
+}
+
+func renderAStockRecommendationHistoryActions(b *strings.Builder, strategyDate string, period string) {
+	normalizedPeriod := normalizeAStockPeriod(period).Key
+	recomputeAction := "generate_afternoon_stock"
+	if normalizedPeriod == "morning" {
+		recomputeAction = "generate_morning_stock"
+	}
+	b.WriteString(`<div class="astock-history-actions">`)
+	for _, action := range []struct {
+		Name  string
+		Label string
+	}{
+		{Name: "backfill_window_news", Label: "补抓并重新生成当前窗口"},
+		{Name: recomputeAction, Label: "重新生成当前推荐"},
+		{Name: "refresh_backtest", Label: "刷新当前回测"},
+	} {
+		b.WriteString(`<form method="post"><input type="hidden" name="date" value="`)
+		b.WriteString(html.EscapeString(strategyDate))
+		b.WriteString(`"><input type="hidden" name="period" value="`)
+		b.WriteString(html.EscapeString(normalizedPeriod))
+		b.WriteString(`"><input type="hidden" name="action" value="`)
+		b.WriteString(html.EscapeString(action.Name))
+		b.WriteString(`"><button type="submit" data-preserve-scroll="1">`)
+		b.WriteString(html.EscapeString(action.Label))
+		b.WriteString(`</button></form>`)
 	}
 	b.WriteString(`</div>`)
 }
