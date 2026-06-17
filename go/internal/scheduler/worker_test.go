@@ -801,7 +801,7 @@ func TestSchedulerCryptoJobsEnabledWhenEndpointsConfigured(t *testing.T) {
 func TestSchedulerAStockAuctionJobEnabledWhenEndpointConfigured(t *testing.T) {
 	worker := NewWorker(config.Config{
 		HTTPTimeout:           time.Second,
-		AStockAuctionURL:      "http://127.0.0.1:19091",
+		AStockAuctionURL:      "http://127.0.0.1:8087",
 		FlashInterval:         time.Hour,
 		HeadlineInterval:      time.Hour,
 		AnalysisInterval:      time.Hour,

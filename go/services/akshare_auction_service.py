@@ -28,7 +28,7 @@ from typing import Any
 
 
 DEFAULT_HOST = "127.0.0.1"
-DEFAULT_PORT = 19091
+DEFAULT_PORT = 8087
 DEFAULT_WORKERS = 12
 DEFAULT_CACHE_DIR = Path("data") / "akshare-cache" / "a-stock-auction"
 

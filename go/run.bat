@@ -20,7 +20,7 @@ if not defined YUQING_GO_TEST_FLAGS (
     set "GO_TEST_FLAGS=%YUQING_GO_TEST_FLAGS%"
 )
 set "GO_TEST_LOG=%LOG_DIR%\go-test.log"
-set "AKSHARE_AUCTION_PORT=19091"
+set "AKSHARE_AUCTION_PORT=8087"
 set "AKSHARE_AUCTION_HOST=127.0.0.1"
 set "YUQING_ASTOCK_AUCTION_URL_DEFAULTED=0"
 set "YUQING_AKSHARE_AUCTION_STARTED=0"
@@ -29,7 +29,7 @@ if not defined YUQING_ASTOCK_AUCTION_URL (
     set "YUQING_ASTOCK_AUCTION_URL_DEFAULTED=1"
 )
 set "SERVICE_PORTS=80 8081 8082 8083 8084 8085 %AKSHARE_AUCTION_PORT%"
-set "SERVICE_NAMES=auth-service content-service crawler-service analysis-service nlp-service gateway-web scheduler-service"
+set "SERVICE_NAMES=auth-service content-service crawler-service analysis-service nlp-service gateway-web scheduler-service akshare-service"
 set "PORT_CHECKS=auth-service=8081 content-service=8082 crawler-service=8083 analysis-service=8084 nlp-service=8085 gateway-web=80"
 set "YUQING_LOG_LEVEL=debug"
 set "YUQING_RUN_VERSION=local"
@@ -124,6 +124,7 @@ for %%S in (
     analysis-service
     nlp-service
     gateway-web
+    akshare-service
     scheduler-service
 ) do (
     echo Building %%S...
@@ -163,9 +164,9 @@ call :print_port_status crawler-service 8083
 call :print_port_status analysis-service 8084
 call :print_port_status nlp-service 8085
 if "%YUQING_AKSHARE_AUCTION_STARTED%"=="1" (
-    call :print_port_status akshare-auction-service %AKSHARE_AUCTION_PORT%
+    call :print_port_status akshare-service %AKSHARE_AUCTION_PORT%
 ) else (
-    echo PORT %AKSHARE_AUCTION_PORT% akshare-auction-service is skipped.
+    echo PORT %AKSHARE_AUCTION_PORT% akshare-service is skipped.
 )
 call :print_port_status scheduler-service %YUQING_SCHEDULER_PORT%
 
@@ -233,13 +234,13 @@ if errorlevel 1 (
     if "%YUQING_ASTOCK_AUCTION_URL_DEFAULTED%"=="1" set "YUQING_ASTOCK_AUCTION_URL="
     exit /b 0
 )
-set "TARGET_SERVICE=akshare-auction-service"
+set "TARGET_SERVICE=akshare-service"
 set "OUT_LOG=%LOG_DIR%\%TARGET_SERVICE%.out.log"
 set "ERR_LOG=%LOG_DIR%\%TARGET_SERVICE%.err.log"
 if exist "%OUT_LOG%" del /Q "%OUT_LOG%" >nul 2>nul
 if exist "%ERR_LOG%" del /Q "%ERR_LOG%" >nul 2>nul
 echo Starting %TARGET_SERVICE%...
-powershell -NoProfile -Command "$argsList = @(); if ('%PYTHON_LAUNCH_ARGS%' -ne '') { $argsList += '%PYTHON_LAUNCH_ARGS%' }; $argsList += @('%GO_DIR%\services\akshare_auction_service.py','--host','%AKSHARE_AUCTION_HOST%','--port','%AKSHARE_AUCTION_PORT%'); $p = Start-Process -FilePath '%PYTHON_EXE%' -ArgumentList $argsList -WorkingDirectory '%GO_DIR%' -RedirectStandardOutput '%OUT_LOG%' -RedirectStandardError '%ERR_LOG%' -PassThru -WindowStyle Hidden; if ($null -eq $p) { exit 1 }"
+powershell -NoProfile -Command "$argsList = @('--host','%AKSHARE_AUCTION_HOST%','--port','%AKSHARE_AUCTION_PORT%','--python','%PYTHON_EXE%'); if ('%PYTHON_LAUNCH_ARGS%' -ne '') { $argsList += @('--python-arg','%PYTHON_LAUNCH_ARGS%') }; $p = Start-Process -FilePath '%BIN_DIR%\%TARGET_SERVICE%.exe' -ArgumentList $argsList -WorkingDirectory '%GO_DIR%' -RedirectStandardOutput '%OUT_LOG%' -RedirectStandardError '%ERR_LOG%' -PassThru -WindowStyle Hidden; if ($null -eq $p) { exit 1 }"
 if errorlevel 1 (
     echo WARNING: Failed to start %TARGET_SERVICE%.
     if "%YUQING_ASTOCK_AUCTION_URL_DEFAULTED%"=="1" set "YUQING_ASTOCK_AUCTION_URL="

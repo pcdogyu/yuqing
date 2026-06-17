@@ -1,8 +1,8 @@
 @echo off
 setlocal EnableExtensions
 
-set "SERVICE_PORTS=80 8081 8082 8083 8084 8085"
-set "SERVICE_NAMES=auth-service content-service crawler-service analysis-service nlp-service gateway-web scheduler-service"
+set "SERVICE_PORTS=80 8081 8082 8083 8084 8085 8087"
+set "SERVICE_NAMES=auth-service content-service crawler-service analysis-service nlp-service gateway-web scheduler-service akshare-service"
 set "HAS_REMAINING_PORTS=0"
 
 echo [1/3] Stop service processes...
