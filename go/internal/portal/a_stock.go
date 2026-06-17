@@ -161,6 +161,8 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
 		.astock-actions form{margin:0}
 		.astock-actions button{margin:0}
+		.astock-actions button.astock-action-running{background:#8f6a20;cursor:progress}
+		.astock-actions button:disabled{opacity:.78;cursor:wait}
 		.astock-muted{color:#6a6257}
 		.astock-empty{padding:18px;border:1px dashed #d0c8b8;border-radius:12px;background:#fff;color:#6a6257}
 		.astock-badge{display:inline-flex;align-items:center;padding:5px 9px;border-radius:999px;background:#eef4ec;color:#214e34;font-size:13px;margin-right:6px}
@@ -193,6 +195,30 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 			document.querySelectorAll("[data-preserve-scroll='1']").forEach(function(el){
 				el.addEventListener("click",function(){sessionStorage.setItem(key,String(window.scrollY||0));});
 			});
+			document.querySelectorAll(".astock-action-form").forEach(function(form){
+				form.addEventListener("submit",function(event){
+					if(form.dataset.submitting==="1"){event.preventDefault();return;}
+					form.dataset.submitting="1";
+					var current=form.querySelector("button[type='submit']");
+					document.querySelectorAll(".astock-action-form button[type='submit']").forEach(function(button){
+						button.disabled=true;
+						button.setAttribute("aria-disabled","true");
+					});
+					if(current){
+						current.classList.add("astock-action-running");
+						current.setAttribute("aria-busy","true");
+					}
+				});
+			});
+		});
+		window.addEventListener("pageshow",function(){
+			document.querySelectorAll(".astock-action-form").forEach(function(form){form.dataset.submitting="";});
+			document.querySelectorAll(".astock-action-form button[type='submit']").forEach(function(button){
+				button.disabled=false;
+				button.removeAttribute("aria-disabled");
+				button.removeAttribute("aria-busy");
+				button.classList.remove("astock-action-running");
+			});
 		});
 	})();
 	</script>`)
@@ -219,7 +245,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		{Name: "sync_market", Label: "同步行情", Period: ctx.Period},
 		{Name: "refresh_backtest", Label: "刷新回测结果", Period: ctx.Period},
 	} {
-		b.WriteString(`<form method="post"><input type="hidden" name="date" value="`)
+		b.WriteString(`<form class="astock-action-form" method="post"><input type="hidden" name="date" value="`)
 		b.WriteString(html.EscapeString(ctx.Date))
 		b.WriteString(`"><input type="hidden" name="period" value="`)
 		b.WriteString(html.EscapeString(action.Period))
