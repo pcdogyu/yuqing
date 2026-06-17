@@ -95,12 +95,18 @@ type aStockBacktestRow struct {
 type aStockTopicRule struct {
 	Name     string
 	Keywords []string
-	Stocks   []aStockStockPick
 }
 
-type aStockStockPick struct {
-	Code string
-	Name string
+type aStockMarketCandidate struct {
+	Code          string
+	Name          string
+	TradeDate     string
+	Rank          int
+	AuctionAmount float64
+	AuctionVolume float64
+	MatchedScore  int
+	Evidence      int
+	Keywords      []string
 }
 
 type aStockPeriod struct {
@@ -114,6 +120,8 @@ const (
 	aStockSectorDrawdownPenalty   = 15
 	aStockNewsPageSize            = 10
 	aStockRecentLookbackDays      = 15
+	aStockMarketCandidateLimit    = 200
+	aStockStocksPerHotspot        = 3
 )
 
 var (
@@ -640,7 +648,10 @@ func (s *Server) loadAStockContext(strategyDate string, periodKey string, newsPa
 	ctx.NewsTotal = len(ctx.Articles)
 	ctx.PagedArticles, ctx.NewsPage, ctx.NewsTotalPages = paginateAStockNews(ctx.Articles, newsPage, aStockNewsPageSize)
 	ctx.Hotspots = buildAStockHotspots(ctx.Articles)
-	ctx.Recommendations = buildAStockRecommendations(ctx.Hotspots)
+	if len(ctx.Hotspots) > 0 {
+		candidates := s.loadAStockMarketCandidates(strategyDate)
+		ctx.Recommendations = buildAStockRecommendations(ctx.Hotspots, candidates)
+	}
 	if len(ctx.Recommendations) > 0 && !ctx.IgnoreRecent {
 		recentCodes := s.loadRecentAStockRecommendationCodes(strategyDate, aStockRecentLookbackDays)
 		ctx.Recommendations, ctx.RecentFiltered = filterRecentAStockRecommendations(ctx.Recommendations, recentCodes)
@@ -669,7 +680,7 @@ func aStockRecommendationEmptyReason(ctx aStockContext) string {
 	if ctx.IgnoreRecent {
 		recentClause = ""
 	}
-	reason := fmt.Sprintf("暂无推荐股票：%s %s 已命中 %d 个热点，但候选股票可能被行情、当日开盘价、30/60天跌幅%s过滤。", ctx.PeriodLabel, ctx.WindowLabel, len(ctx.Hotspots), recentClause)
+	reason := fmt.Sprintf("暂无推荐股票：%s %s 已命中 %d 个热点，但全市场行情候选未命中个股，或被当日开盘价、30/60天跌幅%s过滤。", ctx.PeriodLabel, ctx.WindowLabel, len(ctx.Hotspots), recentClause)
 	if ctx.RecentFiltered > 0 {
 		reason = fmt.Sprintf("%s 其中近15日已推荐股票过滤 %d 只。", reason, ctx.RecentFiltered)
 	}
@@ -735,7 +746,8 @@ func (s *Server) loadRecentAStockRecommendationCodes(strategyDate string, lookba
 			if err != nil || len(items) == 0 {
 				continue
 			}
-			for _, rec := range buildAStockRecommendations(buildAStockHotspots(items)) {
+			candidates := s.loadAStockMarketCandidates(date)
+			for _, rec := range buildAStockRecommendations(buildAStockHotspots(items), candidates) {
 				code := normalizeAStockCode(rec.Code)
 				if code != "" {
 					result[code] = struct{}{}
@@ -799,6 +811,38 @@ func (s *Server) loadAStockWindowArticles(start time.Time, end time.Time) ([]mod
 		return nil, err
 	}
 	return filterAStockNews(result.Items), nil
+}
+
+func (s *Server) loadAStockMarketCandidates(strategyDate string) []aStockMarketCandidate {
+	if strings.TrimSpace(s.cfg.ContentURL) == "" {
+		return nil
+	}
+	var result model.AStockAuctionListResult
+	query := "/api/v1/a-stock/auction?date=" + url.QueryEscape(normalizeAStockStrategyDate(strategyDate)) +
+		"&page=1&page_size=" + fmt.Sprint(aStockMarketCandidateLimit)
+	if err := s.getJSON(s.cfg.ContentURL+query, &result); err != nil || len(result.Items) == 0 {
+		return nil
+	}
+	candidates := make([]aStockMarketCandidate, 0, len(result.Items))
+	for i, item := range result.Items {
+		code := normalizeAStockCode(item.Code)
+		name := strings.TrimSpace(item.Name)
+		if code == "" || name == "" {
+			continue
+		}
+		if item.AuctionAmount <= 0 && item.AuctionVolume <= 0 {
+			continue
+		}
+		candidates = append(candidates, aStockMarketCandidate{
+			Code:          code,
+			Name:          name,
+			TradeDate:     nonEmpty(item.TradeDate, result.Date),
+			Rank:          i + 1,
+			AuctionAmount: item.AuctionAmount,
+			AuctionVolume: item.AuctionVolume,
+		})
+	}
+	return candidates
 }
 
 func filterRecentAStockRecommendations(recommendations []aStockRecommendation, recentCodes map[string]struct{}) ([]aStockRecommendation, int) {
@@ -1695,10 +1739,9 @@ func buildAStockHotspots(items []model.Item) []aStockHotspot {
 	return hotspots
 }
 
-func buildAStockRecommendations(hotspots []aStockHotspot) []aStockRecommendation {
-	ruleByName := make(map[string]aStockTopicRule)
-	for _, rule := range aStockTopicRules() {
-		ruleByName[rule.Name] = rule
+func buildAStockRecommendations(hotspots []aStockHotspot, candidates []aStockMarketCandidate) []aStockRecommendation {
+	if len(candidates) == 0 {
+		return nil
 	}
 	if len(hotspots) > 3 {
 		hotspots = hotspots[:3]
@@ -1706,30 +1749,158 @@ func buildAStockRecommendations(hotspots []aStockHotspot) []aStockRecommendation
 	recommendations := make([]aStockRecommendation, 0)
 	seen := make(map[string]struct{})
 	for _, hotspot := range hotspots {
-		rule, ok := ruleByName[hotspot.Name]
-		if !ok {
-			continue
-		}
-		for _, stock := range rule.Stocks {
+		stocks := scoreAStockMarketCandidates(hotspot, candidates)
+		picked := 0
+		for _, stock := range stocks {
 			if _, exists := seen[stock.Code]; exists {
 				continue
 			}
 			seen[stock.Code] = struct{}{}
+			marketScore := hotspot.Score + stock.MatchedScore
+			reason := fmt.Sprintf(
+				"命中 %s，证据新闻 %d 条，热度分 %d；行情排名 %d，成交额 %s，个股证据 %d 条，行情分 %d，综合分 %d",
+				strings.Join(hotspot.Keywords, "、"),
+				hotspot.Evidence,
+				hotspot.Score,
+				stock.Rank,
+				formatAStockAuctionMoney(stock.AuctionAmount),
+				stock.Evidence,
+				stock.MatchedScore,
+				marketScore,
+			)
+			if len(stock.Keywords) > 0 {
+				reason = fmt.Sprintf("%s，股票名命中 %s", reason, strings.Join(stock.Keywords, "、"))
+			}
 			recommendations = append(recommendations, aStockRecommendation{
 				Rank:         len(recommendations) + 1,
 				Hotspot:      hotspot.Name,
 				Code:         stock.Code,
 				Name:         stock.Name,
 				HotspotScore: hotspot.Score,
-				MarketScore:  hotspot.Score,
-				Reason:       fmt.Sprintf("命中 %s，证据新闻 %d 条，热度分 %d", strings.Join(hotspot.Keywords, "、"), hotspot.Evidence, hotspot.Score),
+				MarketScore:  marketScore,
+				Reason:       reason,
 			})
-			if len(recommendations) >= 12 {
-				return recommendations
+			picked++
+			if picked >= aStockStocksPerHotspot || len(recommendations) >= 12 {
+				break
 			}
+		}
+		if len(recommendations) >= 12 {
+			return recommendations
 		}
 	}
 	return recommendations
+}
+
+func scoreAStockMarketCandidates(hotspot aStockHotspot, candidates []aStockMarketCandidate) []aStockMarketCandidate {
+	scored := make([]aStockMarketCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		candidate.Code = normalizeAStockCode(candidate.Code)
+		candidate.Name = strings.TrimSpace(candidate.Name)
+		if candidate.Code == "" || candidate.Name == "" {
+			continue
+		}
+		evidence := aStockStockEvidenceCount(hotspot.MatchedItems, candidate)
+		keywords := aStockCandidateKeywordMatches(candidate.Name, hotspot.Keywords)
+		if evidence == 0 && len(keywords) == 0 {
+			continue
+		}
+		candidate.Evidence = evidence
+		candidate.Keywords = keywords
+		candidate.MatchedScore = aStockMarketRankScore(candidate.Rank) + evidence*25 + len(keywords)*12
+		scored = append(scored, candidate)
+	}
+	sort.SliceStable(scored, func(i, j int) bool {
+		if scored[i].MatchedScore == scored[j].MatchedScore {
+			if scored[i].Evidence == scored[j].Evidence {
+				if scored[i].AuctionAmount == scored[j].AuctionAmount {
+					if scored[i].AuctionVolume == scored[j].AuctionVolume {
+						return scored[i].Code < scored[j].Code
+					}
+					return scored[i].AuctionVolume > scored[j].AuctionVolume
+				}
+				return scored[i].AuctionAmount > scored[j].AuctionAmount
+			}
+			return scored[i].Evidence > scored[j].Evidence
+		}
+		return scored[i].MatchedScore > scored[j].MatchedScore
+	})
+	return scored
+}
+
+func aStockMarketRankScore(rank int) int {
+	if rank <= 0 {
+		return 0
+	}
+	score := (aStockMarketCandidateLimit - rank + 1) / 5
+	if score < 1 {
+		return 1
+	}
+	return score
+}
+
+func aStockStockEvidenceCount(items []model.Item, candidate aStockMarketCandidate) int {
+	count := 0
+	for _, item := range items {
+		if aStockItemMentionsStock(item, candidate) {
+			count++
+		}
+	}
+	return count
+}
+
+func aStockItemMentionsStock(item model.Item, candidate aStockMarketCandidate) bool {
+	code := normalizeAStockCode(candidate.Code)
+	name := strings.TrimSpace(candidate.Name)
+	if code != "" && aStockStockListContainsCode(item.TagFlags, code) {
+		return true
+	}
+	if code != "" && strings.Contains(item.RawPayload, "stockList") && aStockStockListContainsCode(item.RawPayload, code) {
+		return true
+	}
+	text := strings.ToLower(item.Title + " " + item.Summary + " " + item.Content + " " + item.RawPayload)
+	if name != "" && strings.Contains(text, strings.ToLower(name)) {
+		return true
+	}
+	return false
+}
+
+func aStockStockListContainsCode(raw string, code string) bool {
+	code = normalizeAStockCode(code)
+	if code == "" || strings.TrimSpace(raw) == "" {
+		return false
+	}
+	for _, token := range strings.FieldsFunc(raw, func(r rune) bool {
+		return r < '0' || r > '9'
+	}) {
+		if len(token) >= 6 && token[len(token)-6:] == code {
+			return true
+		}
+	}
+	return false
+}
+
+func aStockCandidateKeywordMatches(name string, keywords []string) []string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" {
+		return nil
+	}
+	matches := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, keyword := range keywords {
+		normalized := strings.ToLower(strings.TrimSpace(keyword))
+		if normalized == "" {
+			continue
+		}
+		if strings.Contains(name, normalized) {
+			if _, ok := seen[keyword]; !ok {
+				seen[keyword] = struct{}{}
+				matches = append(matches, keyword)
+			}
+		}
+	}
+	sort.Strings(matches)
+	return matches
 }
 
 func aStockMatchedKeywords(item model.Item) []string {
@@ -1752,16 +1923,16 @@ func aStockMatchedKeywords(item model.Item) []string {
 
 func aStockTopicRules() []aStockTopicRule {
 	return []aStockTopicRule{
-		{Name: "人工智能", Keywords: []string{"AI", "人工智能", "大模型", "算力", "AIGC", "机器人"}, Stocks: []aStockStockPick{{Code: "002230", Name: "科大讯飞"}, {Code: "603019", Name: "中科曙光"}, {Code: "601138", Name: "工业富联"}}},
-		{Name: "半导体", Keywords: []string{"半导体", "芯片", "光刻", "晶圆", "存储", "先进封装"}, Stocks: []aStockStockPick{{Code: "688981", Name: "中芯国际"}, {Code: "002371", Name: "北方华创"}, {Code: "603986", Name: "兆易创新"}}},
-		{Name: "新能源", Keywords: []string{"新能源", "锂电", "储能", "光伏", "风电", "充电桩"}, Stocks: []aStockStockPick{{Code: "300750", Name: "宁德时代"}, {Code: "300274", Name: "阳光电源"}, {Code: "601012", Name: "隆基绿能"}}},
-		{Name: "低空经济", Keywords: []string{"低空经济", "eVTOL", "无人机", "通航", "飞行汽车"}, Stocks: []aStockStockPick{{Code: "000099", Name: "中信海直"}, {Code: "002085", Name: "万丰奥威"}, {Code: "300124", Name: "汇川技术"}}},
-		{Name: "金融券商", Keywords: []string{"券商", "证券", "银行", "保险", "降准", "降息", "资本市场"}, Stocks: []aStockStockPick{{Code: "300059", Name: "东方财富"}, {Code: "600030", Name: "中信证券"}, {Code: "600036", Name: "招商银行"}}},
-		{Name: "黄金有色", Keywords: []string{"黄金", "有色", "铜", "铝", "稀土", "贵金属"}, Stocks: []aStockStockPick{{Code: "600547", Name: "山东黄金"}, {Code: "601899", Name: "紫金矿业"}, {Code: "600111", Name: "北方稀土"}}},
-		{Name: "医药生物", Keywords: []string{"医药", "创新药", "疫苗", "医疗器械", "CXO"}, Stocks: []aStockStockPick{{Code: "600276", Name: "恒瑞医药"}, {Code: "300760", Name: "迈瑞医疗"}, {Code: "603259", Name: "药明康德"}}},
-		{Name: "消费电子", Keywords: []string{"消费电子", "苹果", "华为", "手机", "MR", "AR", "VR"}, Stocks: []aStockStockPick{{Code: "002475", Name: "立讯精密"}, {Code: "000725", Name: "京东方A"}, {Code: "300433", Name: "蓝思科技"}}},
-		{Name: "房地产", Keywords: []string{"房地产", "地产", "房贷", "楼市", "保障房"}, Stocks: []aStockStockPick{{Code: "000002", Name: "万科A"}, {Code: "001979", Name: "招商蛇口"}, {Code: "600048", Name: "保利发展"}}},
-		{Name: "军工航天", Keywords: []string{"军工", "航天", "卫星", "商业航天", "航空发动机"}, Stocks: []aStockStockPick{{Code: "600760", Name: "中航沈飞"}, {Code: "600893", Name: "航发动力"}, {Code: "002179", Name: "中航光电"}}},
+		{Name: "人工智能", Keywords: []string{"AI", "人工智能", "大模型", "算力", "AIGC", "机器人"}},
+		{Name: "半导体", Keywords: []string{"半导体", "芯片", "光刻", "晶圆", "存储", "先进封装"}},
+		{Name: "新能源", Keywords: []string{"新能源", "锂电", "储能", "光伏", "风电", "充电桩"}},
+		{Name: "低空经济", Keywords: []string{"低空经济", "eVTOL", "无人机", "通航", "飞行汽车"}},
+		{Name: "金融券商", Keywords: []string{"券商", "证券", "银行", "保险", "降准", "降息", "资本市场"}},
+		{Name: "黄金有色", Keywords: []string{"黄金", "有色", "铜", "铝", "稀土", "贵金属"}},
+		{Name: "医药生物", Keywords: []string{"医药", "创新药", "疫苗", "医疗器械", "CXO"}},
+		{Name: "消费电子", Keywords: []string{"消费电子", "苹果", "华为", "手机", "MR", "AR", "VR"}},
+		{Name: "房地产", Keywords: []string{"房地产", "地产", "房贷", "楼市", "保障房"}},
+		{Name: "军工航天", Keywords: []string{"军工", "航天", "卫星", "商业航天", "航空发动机"}},
 	}
 }
 

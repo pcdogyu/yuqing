@@ -1008,6 +1008,25 @@ func TestAStockPageLoadsAfternoonWindow(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "message": "ok", "data": model.StockInstitutionHoldingSummary{}})
 			return
 		}
+		if r.URL.Path == "/api/v1/a-stock/auction" {
+			if r.URL.Query().Get("date") != "2026-06-16" {
+				t.Fatalf("unexpected auction date: %s", r.URL.RawQuery)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    200,
+				"message": "ok",
+				"data": model.AStockAuctionListResult{
+					Date:     "2026-06-16",
+					Page:     1,
+					PageSize: 200,
+					Total:    1,
+					Items: []model.AStockAuctionAmount{
+						{TradeDate: "2026-06-16", Code: "300777", Name: "无人机龙头", AuctionPrice: 21.60, AuctionVolume: 1800000, AuctionAmount: 38880000, Status: "ok"},
+					},
+				},
+			})
+			return
+		}
 		if r.URL.Path != "/api/v1/articles" {
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
@@ -1027,7 +1046,7 @@ func TestAStockPageLoadsAfternoonWindow(t *testing.T) {
 			"message": "ok",
 			"data": model.ItemListResult{
 				Items: []model.Item{
-					{ID: 601, SourceType: "eastmoney_kuaixun", Title: "午间低空经济订单增加", Summary: "无人机产业链升温", CapturedAt: time.Date(2026, 6, 16, 4, 42, 0, 0, time.UTC)},
+					{ID: 601, SourceType: "eastmoney_kuaixun", Title: "午间低空经济订单增加", Summary: "无人机产业链升温", TagFlags: "0.300777", CapturedAt: time.Date(2026, 6, 16, 4, 42, 0, 0, time.UTC)},
 				},
 				Page:     1,
 				PageSize: 200,
@@ -1046,10 +1065,13 @@ func TestAStockPageLoadsAfternoonWindow(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"下午推荐", "09:30-13:00 财经新闻", "午间低空经济订单增加", "汇川技术"} {
+	for _, want := range []string{"下午推荐", "09:30-13:00 财经新闻", "午间低空经济订单增加", "无人机龙头"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 afternoon page to contain %q, got %s", want, body)
 		}
+	}
+	if strings.Contains(body, "汇川技术") {
+		t.Fatalf("expected fixed-pool stock to be absent, got %s", body)
 	}
 }
 
@@ -1262,6 +1284,26 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "message": "ok", "data": model.StockInstitutionHoldingSummary{}})
 			return
 		}
+		if r.URL.Path == "/api/v1/a-stock/auction" {
+			if r.URL.Query().Get("date") != "2026-06-16" {
+				t.Fatalf("unexpected auction date: %s", r.URL.RawQuery)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    200,
+				"message": "ok",
+				"data": model.AStockAuctionListResult{
+					Date:     "2026-06-16",
+					Page:     1,
+					PageSize: 200,
+					Total:    2,
+					Items: []model.AStockAuctionAmount{
+						{TradeDate: "2026-06-16", Code: "002230", Name: "科大讯飞", AuctionPrice: 10.60, AuctionVolume: 1800000, AuctionAmount: 19080000, Status: "ok"},
+						{TradeDate: "2026-06-16", Code: "688981", Name: "中芯国际", AuctionPrice: 50.10, AuctionVolume: 900000, AuctionAmount: 45090000, Status: "ok"},
+					},
+				},
+			})
+			return
+		}
 		if r.URL.Path != "/api/v1/articles" {
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
@@ -1281,8 +1323,8 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 			"message": "ok",
 			"data": model.ItemListResult{
 				Items: []model.Item{
-					{ID: 501, SourceType: "flash", Title: "AI 算力政策加码", Summary: "人工智能产业链活跃", CapturedAt: time.Date(2026, 6, 16, 1, 5, 0, 0, time.UTC)},
-					{ID: 502, SourceType: "headline", Title: "半导体先进封装景气度提升", Summary: "芯片设备需求回暖", CapturedAt: time.Date(2026, 6, 16, 1, 12, 0, 0, time.UTC)},
+					{ID: 501, SourceType: "flash", Title: "AI 算力政策加码，科大讯飞盘中活跃", Summary: "人工智能产业链活跃", TagFlags: "0.002230", CapturedAt: time.Date(2026, 6, 16, 1, 5, 0, 0, time.UTC)},
+					{ID: 502, SourceType: "headline", Title: "半导体先进封装景气度提升，中芯国际成交放量", Summary: "芯片设备需求回暖", TagFlags: "1.688981", CapturedAt: time.Date(2026, 6, 16, 1, 12, 0, 0, time.UTC)},
 				},
 				Page:     1,
 				PageSize: 200,
@@ -1432,12 +1474,21 @@ func TestAStockContextCanIgnoreRecentRecommendationFilter(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockInstitutionHoldingSummary{}})
 			return
 		}
+		if r.URL.Path == "/api/v1/a-stock/auction" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": model.AStockAuctionListResult{
+					Date:  r.URL.Query().Get("date"),
+					Items: []model.AStockAuctionAmount{{TradeDate: r.URL.Query().Get("date"), Code: "002230", Name: "科大讯飞", AuctionVolume: 1000000, AuctionAmount: 10000000, Status: "ok"}},
+				},
+			})
+			return
+		}
 		if r.URL.Path != "/api/v1/articles" {
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"data": model.ItemListResult{
-				Items: []model.Item{{ID: 900, SourceType: "flash", Title: "AI 算力政策加码", Summary: "人工智能产业链活跃", CapturedAt: time.Date(2026, 6, 16, 1, 5, 0, 0, time.UTC)}},
+				Items: []model.Item{{ID: 900, SourceType: "flash", Title: "AI 算力政策加码，科大讯飞活跃", Summary: "人工智能产业链活跃", TagFlags: "0.002230", CapturedAt: time.Date(2026, 6, 16, 1, 5, 0, 0, time.UTC)}},
 				Page:  1, PageSize: 200, Total: 1,
 			},
 		})
@@ -1611,6 +1662,17 @@ func TestAStockRecommendationsUseTopThreeHotspotIndustries(t *testing.T) {
 		{Name: "消费电子", Keywords: []string{"华为"}, Score: 26, Evidence: 2},
 		{Name: "新能源", Keywords: []string{"储能"}, Score: 25, Evidence: 1},
 		{Name: "医药生物", Keywords: []string{"医药"}, Score: 19, Evidence: 1},
+	}, []aStockMarketCandidate{
+		{Code: "100001", Name: "黄金一号", Rank: 1, AuctionAmount: 9000000},
+		{Code: "100002", Name: "黄金二号", Rank: 2, AuctionAmount: 8000000},
+		{Code: "100003", Name: "黄金三号", Rank: 3, AuctionAmount: 7000000},
+		{Code: "100004", Name: "华为手机一号", Rank: 4, AuctionAmount: 6000000},
+		{Code: "100005", Name: "华为手机二号", Rank: 5, AuctionAmount: 5000000},
+		{Code: "100006", Name: "华为手机三号", Rank: 6, AuctionAmount: 4000000},
+		{Code: "100007", Name: "储能一号", Rank: 7, AuctionAmount: 3000000},
+		{Code: "100008", Name: "储能二号", Rank: 8, AuctionAmount: 2000000},
+		{Code: "100009", Name: "储能三号", Rank: 9, AuctionAmount: 1000000},
+		{Code: "100010", Name: "医药一号", Rank: 10, AuctionAmount: 900000},
 	})
 
 	if len(recommendations) != 9 {
@@ -1631,6 +1693,11 @@ func TestAStockRecommendationsUseTopThreeHotspotIndustries(t *testing.T) {
 		}
 		if !found {
 			t.Fatalf("expected recommendations to include hotspot %q, got %+v", want, recommendations)
+		}
+	}
+	for _, rec := range recommendations {
+		if rec.Code == "002230" || rec.Code == "688981" {
+			t.Fatalf("expected recommendations to use market candidates instead of fixed pools, got %+v", recommendations)
 		}
 	}
 }
