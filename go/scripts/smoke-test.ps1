@@ -1,7 +1,7 @@
 param(
     [string]$SchedulerUrl = "http://127.0.0.1:8086",
     [string]$AuthUrl = "http://127.0.0.1:8081",
-    [string]$WechatUrl = "http://127.0.0.1:8087",
+    [string]$WechatUrl = "http://127.0.0.1:8088",
     [string]$ContentUrl = "http://127.0.0.1:8082",
     [string]$CrawlerUrl = "http://127.0.0.1:8083",
     [string]$AnalysisUrl = "http://127.0.0.1:8084",

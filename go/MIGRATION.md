@@ -2,7 +2,8 @@
 
 ## 结论
 
-- 二期/三期 Java -> Go 主链路迁移截至 2026-06-12 已完成到“可运行 + 兼容收口”状态；四期核心生产化能力已开始落地，覆盖 scheduler 任务注册表、AOP 审计、健康检查和 Windows 运维脚本。
+- 二期/三期 Java -> Go 主链路迁移截至 2026-06-12 已完成到“可运行 + 兼容收口”状态；四期核心生产化能力已落地，覆盖 scheduler 任务注册表、AOP 审计、健康检查和 Windows 运维脚本。
+- 2026-06-17 已完成 Java 活跃工程退场：`src/main/java`、根 `pom.xml`、`mvnw`、`mvnw.cmd` 和 `.mvn` 从活跃源码树移除。启动、部署、调度、门户和 API 验收均以 Go 服务为准。
 - 当前更准确的判断标准不是“是否已经有 Go 代码”，而是“是否已经脱离 legacy 兼容层，并能由 Go 正式接口稳定承接”。
 - `DatafavoriteContoller` 已完成 Go 主链路收口。
 - `PublicOptionContoller` 已完成 Go 工作台承接，旧详情页、分析页和 `loadInformation` 已推进为 `410 Gone` 下线。
@@ -10,14 +11,15 @@
 - Java 全量高级全文检索剩余能力已补齐正式 Go API 承接面，旧 `fullsearch` 与 `timelysearch` 兼容入口均已推进为 `410 Gone`。
 - 复杂传播 / 情感 / 专题分析已补齐正式聚合查询契约，并由 `PublicOption` 工作台优先消费；旧兼容页面入口已下线。
 - OCR 与外部平台集成已补齐正式报告预览接口、能力清单和文档，正式接入统一使用 `nlp-service /api/v1/nlp/*`。
-- 四期收尾已把 legacy 注册表收敛到 `proxy=0`、`preserve=0`、`gone=76`、`delete=40`：不再保留存活旧入口。
+- 四期收尾已把 legacy 注册表收敛到 `proxy=0`、`preserve=0`、`redirect=0`、`gone=76`、`delete=40`：不再保留存活旧入口。
+- Java-Go 全量对账报告见 [docs/java-go-cutover-report.md](docs/java-go-cutover-report.md)。
 
 ## 状态定义
 
 | 状态 | 定义 |
 | --- | --- |
 | `完成` | 已由 Go 正式接口承接，主链路不再依赖旧 Java 兼容入口。 |
-| `兼容完成` | Go 已可承接主要功能，但仍保留 legacy 路由、旧页面或旧返回格式兼容层。 |
+| `兼容完成` | 历史状态，表示 Go 已可承接主要功能但当时仍保留 legacy 路由、旧页面或旧返回格式兼容层；当前活跃入口不再使用该状态。 |
 | `部分完成` | 只有部分子能力迁移到 Go，仍有明显缺口或兼容返回未收口。 |
 | `未完成` | 尚未形成可替代旧 Java 的 Go 实现，或只完成了很小一部分。 |
 
@@ -34,20 +36,20 @@
 | `SearchController` | `完成` | `gateway-web /search` + `gateway-web /articles?mode=search` | 主搜索入口已切到 Go。 |
 | `SystemController` 公告/反馈/任务记录/偏好/预警子集 | `完成` | `content-service / system-*` + `gateway-web /system` | 核心系统页能力已在 Go 主链路。 |
 | `DatafavoriteContoller` | `完成` | `portal-web /articles` + `content-service /articles` | 已读、收藏、分享、情感标记、删除均已走正式 Go 动作；旧 `datamonitor/*` 特殊兼容返回不再作为主链路。 |
-| `WechatController` | `兼容完成` | `portal-web /wechat/*` + `wechat-service /api/v1/wechat/*` | Go 已实现登录、绑定、token 等能力，但仍保留兼容入口。 |
-| `MailController` | `兼容完成` | `gateway-web /mail/*` + `content-service /system/mail-config` | 邮件配置已落到 Go，但旧接口格式仍在兼容。 |
-| `PopUpController` | `兼容完成` | `gateway-web /popUp/*` + `content-service /system/popup` | 弹窗状态由 Go 存取，但旧入口仍保留。 |
+| `WechatController` | `完成` | `portal-web /wechat/*` + `wechat-service /api/v1/wechat/*` | 登录、绑定、token 等能力已由 Go 正式链路承接。 |
+| `MailController` | `完成` | `content-service /system/mail-config` + `gateway-web /system` | 邮件配置已由 Go 系统配置能力承接。 |
+| `PopUpController` | `完成` | `content-service /system/popup` + `gateway-web /system` | 弹窗状态已由 Go 系统能力承接。 |
 | `ImageController` | `完成` | `/login` | 旧 `/img/code` 验证码兼容入口已下线为 `410 Gone`。 |
 | `MobileController` | `完成` | `portal-web /articles` + 主门户页面 | 旧 `/mobile/*` 移动端兼容入口已下线为 `410 Gone`。 |
 | `DisplayBoardController` | `完成` | `portal-web /` + `/system?section=operations` | 旧 `/displayboard*` 大屏兼容入口已下线为 `410 Gone`。 |
 | `VolumeController` | `完成` | `analysis-service /api/v1/analysis/*` + `/system?section=operations` | 旧 `/volume*` 声量兼容入口已下线为 `410 Gone`。 |
 | `HotNewsController` | `完成` | `content-service /api/v1/search/hot-keywords` | 旧 `/hot/*` 热点兼容入口已下线为 `410 Gone`。 |
 | `UserAuthController` | `完成` | `/login` + 正式账号流程 | 旧 `/dist/*` 试用申请兼容入口已下线为 `410 Gone`。 |
-| `UserController` | `兼容完成` | `content-service /system/preferences` + `gateway-web /system` | 用户资料、偏好已迁移，但仍通过部分兼容入口暴露。 |
-| `FullSearchController` | `兼容完成` | `gateway-web /fullsearch` + `content-service /api/v1/search/full` + `portal-web` | 全文搜索主能力已在 Go；旧结果页、特殊详情页、历史词、列表、元数据、特殊类型 JSON 入口均已下线为 `410 Gone`。 |
+| `UserController` | `完成` | `content-service /system/preferences` + `gateway-web /system` | 用户资料、偏好已迁移到 Go 系统能力。 |
+| `FullSearchController` | `完成` | `content-service /api/v1/search/full` + `portal-web /articles` | 全文搜索主能力已在 Go；旧结果页、特殊详情页、历史词、列表、元数据、特殊类型 JSON 入口均已下线为 `410 Gone`。 |
 | `TimelySearchController` | `完成` | `portal-web /articles?mode=timely` + `content-service /api/v1/search/timely` | 即时搜索正式入口可用，旧 `/timelysearch/*` 兼容路由已下线为 `410 Gone`。 |
-| `LSearchController` | `兼容完成` | `content-service /api/v1/search/metadata/*` + `/api/v1/search/full/facets` | `/industry` `/getevent` `/getProvinceList` `/getArticleCityList` 已下线为 `410 Gone`，调用方应使用正式搜索元数据和 facets 接口。 |
-| `PublicOptionContoller` | `兼容完成` | `portal-web /publicoption/*` + `content-service /api/v1/public-options` | `/publicoption` 已切到统一“事件分析工作台”；列表、详情、创建、更新、删除、分析视图均由 Go 页面承接；旧 `reportdetail/*`、`*analysis*` 和 `loadInformation` 已返回 `410 Gone`；增改删旧 JSON 兼容接口仍保留。 |
+| `LSearchController` | `完成` | `content-service /api/v1/search/metadata/*` + `/api/v1/search/full/facets` | `/industry` `/getevent` `/getProvinceList` `/getArticleCityList` 已下线为 `410 Gone`，调用方应使用正式搜索元数据和 facets 接口。 |
+| `PublicOptionContoller` | `完成` | `portal-web /publicoption/*` + `content-service /api/v1/public-options` | `/publicoption` 已切到统一“事件分析工作台”；列表、详情、创建、更新、删除、分析视图均由 Go 页面/API 承接；旧 `reportdetail/*`、`*analysis*` 和 `loadInformation` 已返回 `410 Gone`。 |
 | `PlatformController` | `完成` | `portal-web /platform/bindings` + `content-service /platform/bindings/*` + `nlp-service /api/v1/nlp/*` | 平台工作台、绑定、公告、审计、OCR、图像识别、写作标题生成、写作报告预览均由正式 Go 页面/API 承接；旧 `/platform/nlp/*`、`/platform/xie/*` 已下线为 `410 Gone`。 |
 | OCR 与外部平台集成 | `完成` | `nlp-service /api/v1/nlp/*` + `portal-web /platform/bindings` | OCR、图像识别、标题生成、报告预览、能力清单均已有正式 Go API；旧 Platform/NLP 兼容入口已下线。 |
 | Java 全量高级全文检索剩余能力 | `完成` | `content-service /api/v1/search/metadata/*` + `content-service /api/v1/search/special/*` + `portal-web` | 高级筛选、聚合面包屑、特殊类型列表/选项/详情已补到正式 Go API；旧 `fullsearch` 与 `timelysearch` 兼容入口均已下线。 |
@@ -95,8 +97,8 @@
 
 | 状态 | 项数 | 范围 |
 | --- | --- | --- |
-| `完成` | 19 | 登录、项目、监测、报告、基础分析、基础文章查询、主搜索入口、系统页核心能力、Datafavorite 主链路、验证码旧入口下线、移动端旧入口下线、大屏旧入口下线、声量旧入口下线、热点旧入口下线、试用申请旧入口下线、即时搜索正式入口、Platform、OCR/外部平台、legacy 收口 |
-| `兼容完成` | 9 | 微信、邮件、弹窗、用户资料、全文搜索、LSearch、PublicOption、高级分析相关工作台、复杂分析历史数据契约 |
+| `完成` | 28 | 登录、项目、监测、报告、基础分析、基础文章查询、主搜索入口、系统页核心能力、Datafavorite 主链路、微信、邮件、弹窗、用户资料、验证码旧入口下线、移动端旧入口下线、大屏旧入口下线、声量旧入口下线、热点旧入口下线、试用申请旧入口下线、全文搜索、即时搜索、LSearch、PublicOption、Platform、OCR/外部平台、高级分析相关工作台、复杂分析历史数据契约、legacy 收口 |
+| `兼容完成` | 0 | - |
 | `部分完成` | 0 | - |
 | `未完成` | 0 | - |
 
@@ -257,6 +259,10 @@
 - 2026-06-16：数据库切换闭环：
   - `app.NewStore` 已按 `YUQING_DB_DRIVER` 接入 SQLite / PostgreSQL Store，PostgreSQL 启动时会应用 `db/postgres_schema.sql`。
   - `/system?section=database` 的切换按钮保存运行配置后会提交全服务自动重启，重启后左侧“运行 Store”反映实际业务 Store。
+- 2026-06-17：Java 活跃工程退场：
+  - 已完成 Java-Go 全量对账报告：[docs/java-go-cutover-report.md](docs/java-go-cutover-report.md)。
+  - `Wechat`、`Mail`、`PopUp`、`User`、`FullSearch`、`LSearch`、`PublicOption` 等历史“兼容完成”项最终判定为 Go 正式承接或旧入口 `410 Gone`。
+  - `src/main/java`、根 `pom.xml`、`mvnw`、`mvnw.cmd` 和 `.mvn` 已从活跃源码树移除；运行入口只保留 Go 服务。
 
 ## 下一步
 

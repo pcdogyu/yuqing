@@ -73,7 +73,7 @@ func TestLoadUsesDefaults(t *testing.T) {
 	if cfg.GatewayWebAddr != ":80" {
 		t.Fatalf("expected default gateway addr, got %q", cfg.GatewayWebAddr)
 	}
-	if cfg.WechatAddr != ":8087" {
+	if cfg.WechatAddr != ":8088" {
 		t.Fatalf("expected default wechat addr, got %q", cfg.WechatAddr)
 	}
 	if cfg.FlashURL != "https://www.jin10.com/" {
@@ -145,7 +145,7 @@ func TestLoadUsesDefaults(t *testing.T) {
 	if cfg.GatewayWebURL != "http://127.0.0.1" {
 		t.Fatalf("expected default gateway url, got %q", cfg.GatewayWebURL)
 	}
-	if cfg.WechatURL != "http://127.0.0.1:8087" {
+	if cfg.WechatURL != "http://127.0.0.1:8088" {
 		t.Fatalf("expected default wechat url, got %q", cfg.WechatURL)
 	}
 }

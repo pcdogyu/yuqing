@@ -4,7 +4,7 @@ param(
     [string]$OutputPath = "",
     [string]$GatewayUrl = "http://127.0.0.1",
     [string]$AuthUrl = "http://127.0.0.1:8081",
-    [string]$WechatUrl = "http://127.0.0.1:8087",
+    [string]$WechatUrl = "http://127.0.0.1:8088",
     [string]$ContentUrl = "http://127.0.0.1:8082",
     [string]$CrawlerUrl = "http://127.0.0.1:8083",
     [string]$AnalysisUrl = "http://127.0.0.1:8084",
@@ -98,8 +98,8 @@ if ($GatewayUrl -eq "http://127.0.0.1" -and (Test-PortInUse $gatewayPort)) {
 $env:YUQING_GATEWAY_ADDR = ":$gatewayPort"
 
 $wechatPort = Get-UrlPort $WechatUrl
-if ($WechatUrl -eq "http://127.0.0.1:8087" -and (Test-PortInUse $wechatPort)) {
-    $wechatPort = Find-FreePort 18087
+if ($WechatUrl -eq "http://127.0.0.1:8088" -and (Test-PortInUse $wechatPort)) {
+    $wechatPort = Find-FreePort 18088
     $WechatUrl = "http://127.0.0.1:$wechatPort"
 }
 $env:YUQING_WECHAT_ADDR = ":$wechatPort"
@@ -154,7 +154,7 @@ try {
     } | Out-Null
 
     Invoke-ReleaseStep "smoke_test" {
-        Invoke-ChildPowerShell (Join-Path $PSScriptRoot "smoke-test.ps1") @(
+        $smokeArgs = @(
             "-GatewayUrl", $GatewayUrl,
             "-AuthUrl", $AuthUrl,
             "-WechatUrl", $WechatUrl,
@@ -164,9 +164,12 @@ try {
             "-NlpUrl", $NlpUrl,
             "-SchedulerUrl", $SchedulerUrl,
             "-ServiceToken", $ServiceToken,
-            "-DatabasePath", $DatabasePath,
-            "-CryptoMockUrl", $CryptoMockUrl
+            "-DatabasePath", $DatabasePath
         )
+        if ($CryptoMockUrl) {
+            $smokeArgs += @("-CryptoMockUrl", $CryptoMockUrl)
+        }
+        Invoke-ChildPowerShell (Join-Path $PSScriptRoot "smoke-test.ps1") $smokeArgs
     } | Out-Null
 
     $reconcileOutput = Invoke-ReleaseStep "reconcile" {

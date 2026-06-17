@@ -1,5 +1,7 @@
 # 思通舆情安装配置手册
 
+> 当前分支已经完成 Java 到 Go 的运行链路收口，根 Maven 工程与 `src/main/java` 已退场。本文下面的 Java/JDK/MySQL/Tomcat 安装说明仅作为历史版本资料保留；当前部署、启动和验收请使用 [go/README.md](go/README.md)、`go/run.bat`、`go/scripts/start-all.ps1` 和 `go/scripts/release-check.ps1`。
+
 ## 操作系统选择
 我们推荐您使用 Linux Ubuntu 16 或 Ubuntu 18的版本。
 

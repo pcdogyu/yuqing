@@ -14,6 +14,8 @@ Go 版已经从早期 `jin10` 采集骨架收敛为一套可运行的一期多�
 
 二期/三期已经把 Go 主链路和 legacy 收口推进到可运行状态；四期收尾已将剩余 legacy `proxy` / `preserve` 入口统一下线为 `410 Gone`，当前注册表为 `proxy=0`、`preserve=0`、`gone=76`、`delete=40`。
 
+2026-06-17 起，仓库活跃运行链路已完成 Java 工程退场：根 `pom.xml`、`mvnw`、`mvnw.cmd`、`.mvn` 和 `src/main/java` 不再保留。部署、启动和验收均以 `go/` 下的 Go 服务、脚本和文档为准；Java-Go 对账记录见 [docs/java-go-cutover-report.md](docs/java-go-cutover-report.md)。
+
 当前二期已经补出的正式接口基线：
 
 - 搜索增强：`/api/v1/search/full`、`/api/v1/search/timely`、`/api/v1/search/full/facets`、`/api/v1/search/history`、`/api/v1/search/suggestions`、`/api/v1/search/hot-keywords`、`/api/v1/search/metadata/types`、`/api/v1/search/metadata/polymerizations`、`/api/v1/search/metadata/breadcrumbs`
@@ -26,7 +28,7 @@ Go 版已经从早期 `jin10` 采集骨架收敛为一套可运行的一期多�
 状态定义：
 
 - `完成`：已由 Go 正式接口承接，主链路不再依赖旧 Java 兼容入口。
-- `兼容完成`：Go 已可承接功能，但仍保留 legacy 路由、旧页面或旧返回格式兼容层。
+- `兼容完成`：历史状态，表示 Go 已可承接功能但当时仍保留 legacy 路由、旧页面或旧返回格式兼容层；当前活跃入口不再使用该状态。
 - `部分完成`：只有部分子能力迁移到 Go，仍有明显缺口或兼容返回未收口。
 - `未完成`：仍未形成可替代旧 Java 的 Go 实现，或只完成了很小一部分。
 
@@ -36,13 +38,13 @@ Go 版已经从早期 `jin10` 采集骨架收敛为一套可运行的一期多�
 | 项目、项目组、监测规则、文章、报告 | `完成` | 基础业务 CRUD 和查询主链路已在 Go。 |
 | 总览、趋势、来源分布、关键词热点 | `完成` | 基础分析接口已由 `analysis-service` 承接。 |
 | 系统公告、反馈、任务记录、偏好、预警子集 | `完成` | 核心系统页能力已在 Go 主链路。 |
-| 微信登录/绑定 | `兼容完成` | Go 已实现，但仍保留兼容入口。 |
-| 邮件配置、弹窗状态 | `兼容完成` | Go 已实现，旧接口格式仍在兼容。 |
+| 微信登录/绑定 | `完成` | 已由 `wechat-service` 和 Go 门户绑定链路承接。 |
+| 邮件配置、弹窗状态 | `完成` | 已由 `content-service` 系统配置能力承接。 |
 | 移动端、大屏、热点、声量、申请试用 | `完成` | 旧 `/mobile/*`、`/displayboard*`、`/volume*`、`/hot/*`、`/dist/*`、`/img/code` 已统一下线为 `410 Gone`，正式能力走 Go 门户与正式 API。 |
 | 全文搜索、即时搜索、LSearch 历史筛选接口 | `完成` | 旧 `fullsearch` JSON、LSearch 顶层聚合和 `timelysearch` 入口均已下线为 `410 Gone`，正式链路走 `/articles` 与 `/api/v1/search/*`。 |
 | 平台设置、公共选项、收藏/已读等操作 | `完成` | Go 已承接主闭环；`publicoption/loadInformation`、`/platform/nlp/*`、`/platform/xie/*` 等旧入口已下线为 `410 Gone`。 |
 | OCR 与外部平台集成 | `完成` | OCR、图像识别、标题生成、报告预览、能力清单均由正式 Go API 承接，旧兼容平台入口已下线。 |
-| Java 全量高级全文检索剩余能力 | `兼容完成` | 高级筛选、聚合面包屑、特殊类型列表/选项/详情已补到正式 Go API，旧 `fullsearch` JSON 已下线。 |
+| Java 全量高级全文检索剩余能力 | `完成` | 高级筛选、聚合面包屑、特殊类型列表/选项/详情已补到正式 Go API，旧 `fullsearch` JSON 已下线。 |
 | 复杂传播/情感/专题分析 | `完成` | 已有统一聚合查询契约，`PublicOption` 页面优先消费正式分析接口，旧分析兼容入口已下线。 |
 | legacy 路由清理与兼容层收口 | `完成` | 注册表已收敛为 `proxy=0`、`preserve=0`、`gone=76`、`delete=40`；不再保留存活 legacy 业务入口。 |
 
@@ -98,7 +100,7 @@ $env:YUQING_AKSHARE_PYTHON = "C:\Users\Administrator\AppData\Local\Programs\Pyth
 
 未安装 Python 或 AKShare 依赖安装失败时，`run.bat` 会跳过本地 AKShare 适配服务并继续启动 Go 主系统；默认集合竞价任务会保持未配置状态，安装 Python 后重新运行即可启用。
 
-`akshare-service` 使用 Python/AKShare 作为底层数据源。若需要生成独立 exe，可执行 `go build -o .\bin\akshare-service.exe .\cmd\akshare-service`，再运行 `.\bin\akshare-service.exe --host 127.0.0.1 --port 8087`。8087 也是 standalone `wechat-service` 的历史默认端口；如两者需要同时运行，请为微信服务覆盖 `YUQING_WECHAT_ADDR` 和 `YUQING_WECHAT_URL`。
+`akshare-service` 使用 Python/AKShare 作为底层数据源。若需要生成独立 exe，可执行 `go build -o .\bin\akshare-service.exe .\cmd\akshare-service`，再运行 `.\bin\akshare-service.exe --host 127.0.0.1 --port 8087`。`wechat-service` 默认使用 `8088`，`run.bat` 会同时构建并启动 `bin\wechat-service.exe`。
 
 适配服务全市场抓取时使用 AKShare `stock_zh_a_spot_em` 一次性读取东财沪深京 A 股行情，适合 scheduler 在 09:30 触发后入库；传入 `code=` 单股排查时使用 `stock_zh_a_hist_pre_min_em` 读取盘前分钟数据，并把 09:25 附近的成交价、成交量、成交额转换为系统的 `date/items` 契约。AKShare 盘前分钟接口只返回最近交易日数据，服务会缓存成功抓到的日期；历史日期如果本地无可用缓存，将返回 422 并给出无法实时回抓的说明。
 
@@ -140,8 +142,8 @@ http://127.0.0.1/crypto?pair=eth
 
 - `gateway-web`: `80`
 - `auth-service`: `8081`
-- `wechat-service`: `8087`
-- `akshare-service`: `8087`（`run.bat` 默认用于集合竞价；如同时启动 `wechat-service`，需改微信端口）
+- `wechat-service`: `8088`
+- `akshare-service`: `8087`（`run.bat` 默认用于集合竞价）
 - `content-service`: `8082`
 - `crawler-service`: `8083`
 - `analysis-service`: `8084`
