@@ -31,26 +31,50 @@ func (w *Worker) runAStockAuctionCrawl(ctx context.Context) error {
 }
 
 func (w *Worker) runAStockAuctionCrawlForDate(ctx context.Context, tradeDate string) error {
+	result, err := w.runAStockAuctionCrawlForDateResult(ctx, tradeDate)
+	if err != nil {
+		return err
+	}
+	log.Info().
+		Str("trade_date", result.Date).
+		Int("total", result.Total).
+		Int("ok", result.OK).
+		Msg("a-stock auction amounts crawled")
+	return nil
+}
+
+type aStockAuctionCrawlResult struct {
+	Date  string `json:"date"`
+	Total int    `json:"total"`
+	OK    int    `json:"ok"`
+}
+
+type aStockAuctionBackfillResult struct {
+	Days      int                        `json:"days"`
+	Succeeded int                        `json:"succeeded"`
+	Failed    int                        `json:"failed"`
+	Results   []aStockAuctionCrawlResult `json:"results"`
+	Errors    []string                   `json:"errors"`
+}
+
+func (w *Worker) runAStockAuctionCrawlForDateResult(ctx context.Context, tradeDate string) (aStockAuctionCrawlResult, error) {
 	baseURL := strings.TrimRight(strings.TrimSpace(w.cfg.AStockAuctionURL), "/")
 	if baseURL == "" {
-		return fmt.Errorf("YUQING_ASTOCK_AUCTION_URL not configured")
-	}
-	var payload struct {
-		Date  string                      `json:"date"`
-		Items []model.AStockAuctionAmount `json:"items"`
+		return aStockAuctionCrawlResult{}, fmt.Errorf("YUQING_ASTOCK_AUCTION_URL not configured")
 	}
 	resp, err := w.client.R().
 		SetContext(ctx).
 		SetQueryParam("date", tradeDate).
 		Get(baseURL + "/api/a-stock/auction")
 	if err != nil {
-		return err
+		return aStockAuctionCrawlResult{}, err
 	}
 	if !resp.IsSuccess() {
-		return fmt.Errorf("akshare auction endpoint failed: %s", resp.Status())
+		return aStockAuctionCrawlResult{}, fmt.Errorf("akshare auction endpoint failed: %s", resp.Status())
 	}
-	if err := json.Unmarshal(resp.Body(), &payload); err != nil {
-		return err
+	payload, err := decodeAStockAuctionPayload(resp.Body())
+	if err != nil {
+		return aStockAuctionCrawlResult{}, err
 	}
 	if payload.Date == "" {
 		payload.Date = tradeDate
@@ -68,10 +92,10 @@ func (w *Worker) runAStockAuctionCrawlForDate(ctx context.Context, tradeDate str
 		SetBody(payload).
 		Post(w.cfg.ContentURL + "/api/v1/admin/a-stock/auction")
 	if err != nil {
-		return err
+		return aStockAuctionCrawlResult{}, err
 	}
 	if !writeResp.IsSuccess() {
-		return fmt.Errorf("content auction upsert failed: %s", writeResp.Status())
+		return aStockAuctionCrawlResult{}, fmt.Errorf("content auction upsert failed: %s", writeResp.Status())
 	}
 	okCount := 0
 	for _, item := range payload.Items {
@@ -79,12 +103,85 @@ func (w *Worker) runAStockAuctionCrawlForDate(ctx context.Context, tradeDate str
 			okCount++
 		}
 	}
-	log.Info().
-		Str("trade_date", payload.Date).
-		Int("total", len(payload.Items)).
-		Int("ok", okCount).
-		Msg("a-stock auction amounts crawled")
-	return nil
+	return aStockAuctionCrawlResult{Date: payload.Date, Total: len(payload.Items), OK: okCount}, nil
+}
+
+func (w *Worker) runAStockAuctionBackfill(ctx context.Context, days int, start string, end string) (aStockAuctionBackfillResult, error) {
+	dates := aStockAuctionBackfillDates(days, start, end, time.Now().In(aStockLocation()))
+	result := aStockAuctionBackfillResult{Days: len(dates), Results: make([]aStockAuctionCrawlResult, 0, len(dates))}
+	for _, date := range dates {
+		item, err := w.runAStockAuctionCrawlForDateResult(ctx, date)
+		if err != nil {
+			result.Failed++
+			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", date, err))
+			continue
+		}
+		result.Succeeded++
+		result.Results = append(result.Results, item)
+	}
+	if result.Succeeded == 0 && result.Failed > 0 {
+		return result, fmt.Errorf("a-stock auction backfill failed: %s", strings.Join(result.Errors, "; "))
+	}
+	return result, nil
+}
+
+type aStockAuctionPayload struct {
+	Date  string                      `json:"date"`
+	Items []model.AStockAuctionAmount `json:"items"`
+}
+
+func decodeAStockAuctionPayload(body []byte) (aStockAuctionPayload, error) {
+	var payload aStockAuctionPayload
+	if err := json.Unmarshal(body, &payload); err != nil {
+		var items []model.AStockAuctionAmount
+		if arrayErr := json.Unmarshal(body, &items); arrayErr == nil {
+			payload.Items = items
+			return payload, nil
+		}
+		return payload, err
+	}
+	if len(payload.Items) > 0 || payload.Date != "" {
+		return payload, nil
+	}
+	var envelope struct {
+		Data struct {
+			Date  string                      `json:"date"`
+			Items []model.AStockAuctionAmount `json:"items"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &envelope); err == nil && (envelope.Data.Date != "" || len(envelope.Data.Items) > 0) {
+		payload.Date = envelope.Data.Date
+		payload.Items = envelope.Data.Items
+	}
+	return payload, nil
+}
+
+func aStockAuctionBackfillDates(days int, start string, end string, now time.Time) []string {
+	start = strings.TrimSpace(start)
+	end = strings.TrimSpace(end)
+	location := now.Location()
+	if days <= 0 {
+		days = 30
+	}
+	if days > 120 {
+		days = 120
+	}
+	endDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, location)
+	if parsed, err := time.ParseInLocation("2006-01-02", end, location); err == nil {
+		endDate = parsed
+	}
+	startDate := endDate.AddDate(0, 0, -days+1)
+	if parsed, err := time.ParseInLocation("2006-01-02", start, location); err == nil {
+		startDate = parsed
+	}
+	if startDate.After(endDate) {
+		startDate, endDate = endDate, startDate
+	}
+	out := make([]string, 0)
+	for cursor := startDate; !cursor.After(endDate); cursor = cursor.AddDate(0, 0, 1) {
+		out = append(out, cursor.Format("2006-01-02"))
+	}
+	return out
 }
 
 type aStockHoldingCrawlOptions struct {

@@ -347,6 +347,10 @@ func TestAStockAuctionPageLoadsSummaryAndRows(t *testing.T) {
 					Status:        "ok",
 					FetchedAt:     fetchedAt,
 				}},
+				Trend: []model.AStockAuctionTrend{
+					{Date: "2026-06-15", StockCount: 2, TotalVolume: 180000, TotalAmount: 4500000, MaxStockCode: "600000", MaxStockName: "浦发银行"},
+					{Date: "2026-06-16", StockCount: 2, TotalVolume: 213400, TotalAmount: 5876080, MaxStockCode: "002230", MaxStockName: "科大讯飞"},
+				},
 			},
 		})
 	}))
@@ -360,7 +364,7 @@ func TestAStockAuctionPageLoadsSummaryAndRows(t *testing.T) {
 		t.Fatalf("expected auction page 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"集合竞价", "操作区", "获取今日集合竞价金额", "当日汇总", "2026-06-16", "科大讯飞", "股票数", "2", "1.51亿", "508.41万", "12.34万", "akshare_pre_min", `value="科"`} {
+	for _, want := range []string{"集合竞价", "操作区", "获取今日集合竞价金额", "回溯近30天集合竞价", "当日汇总", "近30日资金趋势", "2026-06-16", "科大讯飞", "股票数", "2", "1.51亿", "508.41万", "12.34万", "akshare_pre_min", `value="科"`, `<svg class="auction-chart"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected auction page to contain %q, got %s", want, body)
 		}
@@ -371,8 +375,11 @@ func TestAStockAuctionPagePostTriggersSchedulerJob(t *testing.T) {
 	var schedulerCalled bool
 	scheduler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		schedulerCalled = true
-		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/scheduler/jobs/a-stock-auction-crawl/run" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/scheduler/a-stock/auction/backfill" {
 			t.Fatalf("unexpected scheduler request: %s %s", r.Method, r.URL.String())
+		}
+		if r.URL.Query().Get("days") != "1" {
+			t.Fatalf("expected today fetch to use days=1, got %s", r.URL.RawQuery)
 		}
 		if r.Header.Get("X-Service-Token") != "secret-token" {
 			t.Fatalf("expected service token header, got %q", r.Header.Get("X-Service-Token"))
@@ -397,6 +404,39 @@ func TestAStockAuctionPagePostTriggersSchedulerJob(t *testing.T) {
 	loc := rr.Header().Get("Location")
 	if !strings.Contains(loc, "/a-stock/auction?") || !strings.Contains(loc, "date=") || !strings.Contains(loc, "msg=") {
 		t.Fatalf("expected redirect to auction page with date and msg, got %q", loc)
+	}
+}
+
+func TestAStockAuctionPagePostTriggersBackfill30Days(t *testing.T) {
+	var schedulerCalled bool
+	scheduler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		schedulerCalled = true
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/scheduler/a-stock/auction/backfill" || r.URL.Query().Get("days") != "30" {
+			t.Fatalf("unexpected scheduler request: %s %s", r.Method, r.URL.String())
+		}
+		if r.Header.Get("X-Service-Token") != "secret-token" {
+			t.Fatalf("expected service token header, got %q", r.Header.Get("X-Service-Token"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"status":"triggered"}}`))
+	}))
+	defer scheduler.Close()
+
+	srv := NewServer(config.Config{SchedulerURL: scheduler.URL, ServiceToken: "secret-token"})
+	req := httptest.NewRequest(http.MethodPost, "/a-stock/auction", strings.NewReader("action=backfill_30d_auction"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	srv.handleAStockAuctionPage(rr, req, map[string]any{"id": 1})
+
+	if !schedulerCalled {
+		t.Fatal("expected scheduler backfill to be called")
+	}
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect after auction backfill, got %d", rr.Code)
+	}
+	loc, _ := url.QueryUnescape(rr.Header().Get("Location"))
+	if !strings.Contains(loc, "近30天集合竞价回溯任务已触发") {
+		t.Fatalf("expected backfill success message, got %q", loc)
 	}
 }
 
@@ -854,25 +894,7 @@ func TestAStockPageExplainsMorningNoNews(t *testing.T) {
 		if r.URL.Path != "/api/v1/articles" {
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
-		start := r.URL.Query().Get("start")
-		end := r.URL.Query().Get("end")
 		if r.URL.Query().Get("time_field") != "publish_time" {
-			t.Fatalf("unexpected A股 morning window query: %s", r.URL.RawQuery)
-		}
-		if start == "2026-06-16 09:26:00" && end == "2026-06-16 12:50:59" {
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"code":    200,
-				"message": "ok",
-				"data": model.ItemListResult{
-					Items:    []model.Item{},
-					Page:     1,
-					PageSize: 200,
-					Total:    0,
-				},
-			})
-			return
-		}
-		if start != "2026-06-16 08:00:00" || end != "2026-06-16 09:30:59" {
 			t.Fatalf("unexpected A股 morning window query: %s", r.URL.RawQuery)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -1010,12 +1032,10 @@ func TestAStockPageOffersTodayNavigationAndAfterAlias(t *testing.T) {
 		if r.URL.Path != "/api/v1/articles" {
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
-		start := r.URL.Query().Get("start")
-		end := r.URL.Query().Get("end")
 		if r.URL.Query().Get("time_field") != "publish_time" {
 			t.Fatalf("expected after alias to use afternoon window, got query: %s", r.URL.RawQuery)
 		}
-		if start == "2026-06-11 08:00:00" && end == "2026-06-11 09:30:59" {
+		if !strings.Contains(r.URL.Query().Get("start"), "09:26") {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"code":    200,
 				"message": "ok",
@@ -1027,9 +1047,6 @@ func TestAStockPageOffersTodayNavigationAndAfterAlias(t *testing.T) {
 				},
 			})
 			return
-		}
-		if start != "2026-06-11 09:26:00" || end != "2026-06-11 12:50:59" {
-			t.Fatalf("expected after alias to use afternoon window, got query: %s", r.URL.RawQuery)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"code":    200,
@@ -1111,12 +1128,10 @@ func TestAStockNewsSectionPaginatesTenItems(t *testing.T) {
 		if r.URL.Path != "/api/v1/articles" {
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
-		start := r.URL.Query().Get("start")
-		end := r.URL.Query().Get("end")
 		if r.URL.Query().Get("time_field") != "publish_time" {
 			t.Fatalf("unexpected A股 afternoon window query: %s", r.URL.RawQuery)
 		}
-		if start == "2026-06-11 08:00:00" && end == "2026-06-11 09:30:59" {
+		if !strings.Contains(r.URL.Query().Get("start"), "09:26") {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"code":    200,
 				"message": "ok",
@@ -1128,9 +1143,6 @@ func TestAStockNewsSectionPaginatesTenItems(t *testing.T) {
 				},
 			})
 			return
-		}
-		if start != "2026-06-11 09:26:00" || end != "2026-06-11 12:50:59" {
-			t.Fatalf("unexpected A股 afternoon window query: %s", r.URL.RawQuery)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"code":    200,

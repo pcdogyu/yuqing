@@ -36,6 +36,7 @@ type AStockAuctionListResult struct {
 	TotalAmount  float64               `json:"total_amount"`
 	MaxItem      *AStockAuctionAmount  `json:"max_item,omitempty"`
 	FetchedAt    *time.Time            `json:"fetched_at,omitempty"`
+	Trend        []AStockAuctionTrend  `json:"trend"`
 }
 
 type AStockAuctionUpsertResult struct {
@@ -43,4 +44,13 @@ type AStockAuctionUpsertResult struct {
 	Inserted int    `json:"inserted"`
 	Updated  int    `json:"updated"`
 	Total    int    `json:"total"`
+}
+
+type AStockAuctionTrend struct {
+	Date         string  `json:"date"`
+	StockCount   int     `json:"stock_count"`
+	TotalVolume  float64 `json:"total_volume"`
+	TotalAmount  float64 `json:"total_amount"`
+	MaxStockCode string  `json:"max_stock_code"`
+	MaxStockName string  `json:"max_stock_name"`
 }

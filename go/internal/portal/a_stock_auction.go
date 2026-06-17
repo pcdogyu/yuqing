@@ -43,6 +43,13 @@ func (s *Server) handleAStockAuctionPage(w http.ResponseWriter, r *http.Request,
 		.auction-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
 		.auction-actions form{margin:0}
 		.auction-actions button{margin:0}
+		.auction-chart{width:100%;height:auto;min-height:260px}
+		.auction-chart-line{fill:none;stroke:#214e34;stroke-width:3}
+		.auction-chart-area{fill:rgba(33,78,52,.08)}
+		.auction-chart-axis{stroke:#d6ccbb;stroke-width:1}
+		.auction-chart-label{font-size:12px;fill:#6a6257}
+		.auction-chart-dot{fill:#214e34}
+		.auction-trend-table{margin-top:12px}
 		@media (max-width:760px){.auction-toolbar{grid-template-columns:1fr}}
 	</style>`)
 	b.WriteString(`<section><h2>集合竞价</h2><p class="auction-muted">每日 09:30 抓取全市场 A 股 09:25 开盘集合竞价成交金额，历史数据来自 PostgreSQL 配置下的业务库。</p></section>`)
@@ -60,6 +67,7 @@ func (s *Server) handleAStockAuctionPage(w http.ResponseWriter, r *http.Request,
 	}
 	renderAStockAuctionActions(&b)
 	renderAStockAuctionSummary(&b, ctx)
+	renderAStockAuctionTrend(&b, ctx)
 	renderAStockAuctionFilters(&b, ctx)
 	renderAStockAuctionTable(&b, ctx)
 	_ = s.writeSimplePage(w, "a-stock-auction", "A股集合竞价", b.String())
@@ -69,8 +77,11 @@ func (s *Server) handleAStockAuctionAction(w http.ResponseWriter, r *http.Reques
 	_ = r.ParseForm()
 	today := aStockNow().In(aStockLocation()).Format("2006-01-02")
 	message := "未知操作"
-	if strings.TrimSpace(r.FormValue("action")) == "fetch_today_auction" {
+	switch strings.TrimSpace(r.FormValue("action")) {
+	case "fetch_today_auction":
 		message = s.triggerAStockAuctionCrawl()
+	case "backfill_30d_auction":
+		message = s.triggerAStockAuctionBackfill(30)
 	}
 	query := url.Values{}
 	query.Set("date", today)
@@ -115,7 +126,33 @@ func renderAStockAuctionSummary(b *strings.Builder, ctx model.AStockAuctionListR
 }
 
 func renderAStockAuctionActions(b *strings.Builder) {
-	b.WriteString(`<section><h2>操作区</h2><div class="auction-actions"><form method="post"><input type="hidden" name="action" value="fetch_today_auction"><button type="submit">获取今日集合竞价金额</button></form></div><p class="auction-muted">立即触发 scheduler 的 A股集合竞价抓取任务，按服务器 Asia/Shanghai 今日日期从 AKShare 业务服务读取并写入当前业务库。</p></section>`)
+	b.WriteString(`<section><h2>操作区</h2><div class="auction-actions"><form method="post"><input type="hidden" name="action" value="fetch_today_auction"><button type="submit">获取今日集合竞价金额</button></form><form method="post"><input type="hidden" name="action" value="backfill_30d_auction"><button type="submit">回溯近30天集合竞价</button></form></div><p class="auction-muted">立即触发 scheduler 的 A股集合竞价抓取任务，按服务器 Asia/Shanghai 日期从 AKShare 业务服务读取并写入当前业务库。若页面为空，优先点击回溯近30天补齐历史交易日。</p></section>`)
+}
+
+func renderAStockAuctionTrend(b *strings.Builder, ctx model.AStockAuctionListResult) {
+	b.WriteString(`<section><h2>近30日资金趋势</h2>`)
+	if len(ctx.Trend) == 0 {
+		b.WriteString(`<div class="auction-empty">暂无趋势数据。请先点击“回溯近30天集合竞价”，或检查 YUQING_ASTOCK_AUCTION_URL 指向的 AKShare 业务服务。</div></section>`)
+		return
+	}
+	b.WriteString(`<p class="auction-muted">折线按每日集合竞价总成交额绘制，明细表同步展示总成交量。</p>`)
+	b.WriteString(aStockAuctionTrendSVG(ctx.Trend))
+	b.WriteString(`<div class="auction-scroll"><table class="auction-table auction-trend-table"><tr><th>日期</th><th>股票数</th><th>集合竞价总金额</th><th>成交量</th><th>最大金额股票</th></tr>`)
+	start := max(len(ctx.Trend)-8, 0)
+	for _, point := range ctx.Trend[start:] {
+		b.WriteString(`<tr><td>`)
+		b.WriteString(html.EscapeString(point.Date))
+		b.WriteString(`</td><td>`)
+		b.WriteString(fmt.Sprintf("%d", point.StockCount))
+		b.WriteString(`</td><td>`)
+		b.WriteString(formatAStockAuctionMoney(point.TotalAmount))
+		b.WriteString(`</td><td>`)
+		b.WriteString(formatAStockAuctionVolume(point.TotalVolume))
+		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(nonEmptyText(strings.TrimSpace(point.MaxStockCode+" "+point.MaxStockName), "--")))
+		b.WriteString(`</td></tr>`)
+	}
+	b.WriteString(`</table></div></section>`)
 }
 
 func renderAStockAuctionFilters(b *strings.Builder, ctx model.AStockAuctionListResult) {
@@ -241,6 +278,98 @@ func formatAStockAuctionMoney(value float64) string {
 	return fmt.Sprintf("%.2f万", value/10000)
 }
 
+func aStockAuctionTrendSVG(points []model.AStockAuctionTrend) string {
+	const (
+		width  = 1120.0
+		height = 280.0
+		left   = 56.0
+		right  = 24.0
+		top    = 24.0
+		bottom = 44.0
+	)
+	maxAmount := 0.0
+	for _, point := range points {
+		if point.TotalAmount > maxAmount {
+			maxAmount = point.TotalAmount
+		}
+	}
+	if maxAmount <= 0 {
+		return `<div class="auction-empty">近30日趋势金额均为空，请确认 AKShare 返回了成交额字段。</div>`
+	}
+	plotWidth := width - left - right
+	plotHeight := height - top - bottom
+	coords := make([]string, 0, len(points))
+	area := make([]string, 0, len(points)+2)
+	for i, point := range points {
+		x := left
+		if len(points) > 1 {
+			x += float64(i) * plotWidth / float64(len(points)-1)
+		}
+		y := top + (1-point.TotalAmount/maxAmount)*plotHeight
+		coords = append(coords, fmt.Sprintf("%.1f,%.1f", x, y))
+		area = append(area, fmt.Sprintf("%.1f,%.1f", x, y))
+	}
+	area = append([]string{fmt.Sprintf("%.1f,%.1f", left, top+plotHeight)}, area...)
+	lastX := left
+	if len(points) > 1 {
+		lastX += plotWidth
+	}
+	area = append(area, fmt.Sprintf("%.1f,%.1f", lastX, top+plotHeight))
+	var b strings.Builder
+	b.WriteString(`<svg class="auction-chart" viewBox="0 0 1120 280" role="img" aria-label="近30日集合竞价资金趋势">`)
+	for i := 0; i <= 4; i++ {
+		y := top + float64(i)*plotHeight/4
+		b.WriteString(`<line class="auction-chart-axis" x1="`)
+		b.WriteString(fmt.Sprintf("%.1f", left))
+		b.WriteString(`" y1="`)
+		b.WriteString(fmt.Sprintf("%.1f", y))
+		b.WriteString(`" x2="`)
+		b.WriteString(fmt.Sprintf("%.1f", left+plotWidth))
+		b.WriteString(`" y2="`)
+		b.WriteString(fmt.Sprintf("%.1f", y))
+		b.WriteString(`"></line>`)
+	}
+	b.WriteString(`<polygon class="auction-chart-area" points="`)
+	b.WriteString(strings.Join(area, " "))
+	b.WriteString(`"></polygon><polyline class="auction-chart-line" points="`)
+	b.WriteString(strings.Join(coords, " "))
+	b.WriteString(`"></polyline>`)
+	for i, point := range points {
+		if i != 0 && i != len(points)-1 && i%5 != 0 {
+			continue
+		}
+		x := left
+		if len(points) > 1 {
+			x += float64(i) * plotWidth / float64(len(points)-1)
+		}
+		y := top + (1-point.TotalAmount/maxAmount)*plotHeight
+		b.WriteString(`<circle class="auction-chart-dot" cx="`)
+		b.WriteString(fmt.Sprintf("%.1f", x))
+		b.WriteString(`" cy="`)
+		b.WriteString(fmt.Sprintf("%.1f", y))
+		b.WriteString(`" r="4"><title>`)
+		b.WriteString(html.EscapeString(point.Date + " " + formatAStockAuctionMoney(point.TotalAmount)))
+		b.WriteString(`</title></circle>`)
+	}
+	if len(points) > 0 {
+		b.WriteString(`<text class="auction-chart-label" x="`)
+		b.WriteString(fmt.Sprintf("%.1f", left))
+		b.WriteString(`" y="268">`)
+		b.WriteString(html.EscapeString(points[0].Date))
+		b.WriteString(`</text><text class="auction-chart-label" text-anchor="end" x="`)
+		b.WriteString(fmt.Sprintf("%.1f", left+plotWidth))
+		b.WriteString(`" y="268">`)
+		b.WriteString(html.EscapeString(points[len(points)-1].Date))
+		b.WriteString(`</text><text class="auction-chart-label" x="`)
+		b.WriteString(fmt.Sprintf("%.1f", left))
+		b.WriteString(`" y="18">最高 `)
+		b.WriteString(html.EscapeString(formatAStockAuctionMoney(maxAmount)))
+		b.WriteString(`</text>`)
+	}
+	b.WriteString(`</svg>`)
+	return b.String()
+}
+
 func nonEmptyText(values ...string) string {
 	for _, value := range values {
 		value = strings.TrimSpace(value)
@@ -254,7 +383,7 @@ func nonEmptyText(values ...string) string {
 func (s *Server) triggerAStockAuctionCrawl() string {
 	resp, err := s.client.R().
 		SetHeader("X-Service-Token", s.cfg.ServiceToken).
-		Post(s.cfg.SchedulerURL + "/api/v1/scheduler/jobs/a-stock-auction-crawl/run")
+		Post(s.cfg.SchedulerURL + "/api/v1/scheduler/a-stock/auction/backfill?days=1")
 	if err != nil {
 		return "今日集合竞价获取失败：" + err.Error()
 	}
@@ -268,6 +397,26 @@ func (s *Server) triggerAStockAuctionCrawl() string {
 	return "今日集合竞价获取任务已触发，请稍后刷新查看当日汇总和明细。"
 }
 
+func (s *Server) triggerAStockAuctionBackfill(days int) string {
+	if days <= 0 {
+		days = 30
+	}
+	resp, err := s.client.R().
+		SetHeader("X-Service-Token", s.cfg.ServiceToken).
+		Post(s.cfg.SchedulerURL + "/api/v1/scheduler/a-stock/auction/backfill?days=" + fmt.Sprintf("%d", days))
+	if err != nil {
+		return "集合竞价回溯失败：" + err.Error()
+	}
+	if !resp.IsSuccess() {
+		detail := schedulerAuctionErrorMessage(resp.Body(), resp.String())
+		if detail == "" {
+			detail = resp.Status()
+		}
+		return "集合竞价回溯失败：" + detail
+	}
+	return fmt.Sprintf("近%d天集合竞价回溯任务已触发，请稍后刷新查看资金趋势。", days)
+}
+
 func schedulerAuctionErrorMessage(body []byte, fallback string) string {
 	var envelope struct {
 		Message string `json:"message"`
@@ -276,6 +425,9 @@ func schedulerAuctionErrorMessage(body []byte, fallback string) string {
 		message := strings.TrimSpace(envelope.Message)
 		if strings.Contains(message, "a-stock-auction-crawl") && strings.Contains(message, "disabled") {
 			return "集合竞价抓取任务未启用：请配置 YUQING_ASTOCK_AUCTION_URL 为 AKShare HTTP 服务地址，并重启 scheduler-service 后再点击获取。"
+		}
+		if strings.Contains(message, "YUQING_ASTOCK_AUCTION_URL not configured") {
+			return "集合竞价抓取服务未配置：请配置 YUQING_ASTOCK_AUCTION_URL 为 AKShare HTTP 服务地址，并重启 scheduler-service 后再点击获取。"
 		}
 		return message
 	}

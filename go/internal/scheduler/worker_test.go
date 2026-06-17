@@ -339,7 +339,7 @@ func TestRunAStockAuctionCrawlFetchesAkshareAndWritesContent(t *testing.T) {
 			t.Fatalf("unexpected akshare request: %s", r.URL.String())
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"date":"2026-06-16","items":[{"code":"002230","name":"科大讯飞","auction_price":41.2,"auction_volume":123400,"auction_amount":5084080,"source":"akshare_pre_min","status":"ok"},{"code":"000001","name":"平安银行","auction_price":12,"auction_volume":0,"auction_amount":0,"source":"akshare_pre_min","status":"no_auction_data"}]}`))
+		_, _ = w.Write([]byte(`{"data":{"date":"2026-06-16","items":[{"code":"002230","name":"科大讯飞","auction_price":41.2,"auction_volume":123400,"auction_amount":5084080,"source":"akshare_pre_min","status":"ok"},{"code":"000001","name":"平安银行","auction_price":12,"auction_volume":0,"auction_amount":0,"source":"akshare_pre_min","status":"no_auction_data"}]}}`))
 	}))
 	defer akshare.Close()
 
@@ -368,6 +368,50 @@ func TestRunAStockAuctionCrawlFetchesAkshareAndWritesContent(t *testing.T) {
 	}
 	if contentPayload.Date != "2026-06-16" || len(contentPayload.Items) != 2 || contentPayload.Items[0].Code != "002230" || contentPayload.Items[1].Status != "no_auction_data" {
 		t.Fatalf("unexpected content payload: %+v", contentPayload)
+	}
+}
+
+func TestRunAStockAuctionBackfillFetchesDateRange(t *testing.T) {
+	var requested []string
+	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		date := r.URL.Query().Get("date")
+		requested = append(requested, date)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]model.AStockAuctionAmount{{
+			TradeDate:     date,
+			Code:          "002230",
+			Name:          "科大讯飞",
+			AuctionPrice:  41.2,
+			AuctionVolume: 123400,
+			AuctionAmount: 5084080,
+			Source:        "akshare_pre_min",
+			Status:        "ok",
+		}})
+	}))
+	defer akshare.Close()
+
+	var writeCount int
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/admin/a-stock/auction" {
+			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
+		}
+		writeCount++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer content.Close()
+
+	worker := NewWorker(config.Config{
+		AStockAuctionURL: akshare.URL,
+		ContentURL:       content.URL,
+		HTTPTimeout:      time.Second,
+		ServiceToken:     "secret-token",
+	})
+	result, err := worker.runAStockAuctionBackfill(context.Background(), 0, "2026-06-14", "2026-06-16")
+	if err != nil {
+		t.Fatalf("runAStockAuctionBackfill error: %v", err)
+	}
+	if strings.Join(requested, ",") != "2026-06-14,2026-06-15,2026-06-16" || writeCount != 3 || result.Succeeded != 3 {
+		t.Fatalf("unexpected backfill result requested=%v writes=%d result=%+v", requested, writeCount, result)
 	}
 }
 

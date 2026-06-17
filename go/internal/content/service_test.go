@@ -144,6 +144,9 @@ func TestAStockAuctionAmountAPIUpsertsAndLists(t *testing.T) {
 	if envelope.Data.TotalAmount != 5876080 || envelope.Data.MaxItem == nil || envelope.Data.MaxItem.Code != "002230" {
 		t.Fatalf("expected date summary independent of keyword filter, got %+v", envelope.Data)
 	}
+	if len(envelope.Data.Trend) != 1 || envelope.Data.Trend[0].TotalAmount != 5876080 || envelope.Data.Trend[0].TotalVolume != 213400 {
+		t.Fatalf("expected auction trend totals, got %+v", envelope.Data.Trend)
+	}
 }
 
 func TestStockResearchAPIUpsertsAndLists(t *testing.T) {

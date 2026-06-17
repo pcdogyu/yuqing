@@ -21,6 +21,7 @@ func (w *Worker) Router() http.Handler {
 	r.Post("/api/v1/scheduler/jobs/{name}/run", w.handleRunJob)
 	r.Post("/api/v1/scheduler/stock-research/backfill", w.handleRunStockResearchBackfill)
 	r.Post("/api/v1/scheduler/stock-research/pdf/parse", w.handleRunStockResearchPDFParse)
+	r.Post("/api/v1/scheduler/a-stock/auction/backfill", w.handleRunAStockAuctionBackfill)
 	r.Post("/api/v1/scheduler/a-stock/holdings/backfill", w.handleRunAStockHoldingsBackfill)
 	return r
 }
@@ -105,6 +106,31 @@ func (w *Worker) handleRunStockResearchPDFParse(wr http.ResponseWriter, r *http.
 		message = err.Error()
 	}
 	_ = w.recordTaskRun(r.Context(), "stock-research-pdf-parse", status, message, startedAt, &finishedAt)
+	if err != nil {
+		apiutil.WriteJSON(wr, http.StatusInternalServerError, err.Error(), result)
+		return
+	}
+	apiutil.WriteJSON(wr, http.StatusOK, "ok", map[string]any{"status": "triggered", "result": result})
+}
+
+func (w *Worker) handleRunAStockAuctionBackfill(wr http.ResponseWriter, r *http.Request) {
+	if strings.TrimSpace(r.Header.Get("X-Service-Token")) != strings.TrimSpace(w.cfg.ServiceToken) {
+		apiutil.WriteJSON(wr, http.StatusUnauthorized, "unauthorized", nil)
+		return
+	}
+	days := apiutil.IntQuery(r, "days", 30)
+	start := strings.TrimSpace(r.URL.Query().Get("start"))
+	end := strings.TrimSpace(r.URL.Query().Get("end"))
+	startedAt := time.Now().UTC()
+	result, err := w.runAStockAuctionBackfill(r.Context(), days, start, end)
+	finishedAt := time.Now().UTC()
+	status := "success"
+	message := fmt.Sprintf("a-stock auction backfill completed: days=%d succeeded=%d failed=%d", result.Days, result.Succeeded, result.Failed)
+	if err != nil {
+		status = "failed"
+		message = err.Error()
+	}
+	_ = w.recordTaskRun(r.Context(), "a-stock-auction-backfill", status, message, startedAt, &finishedAt)
 	if err != nil {
 		apiutil.WriteJSON(wr, http.StatusInternalServerError, err.Error(), result)
 		return

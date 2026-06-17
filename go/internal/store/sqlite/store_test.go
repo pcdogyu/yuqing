@@ -138,6 +138,9 @@ func TestAStockAuctionAmountsUpsertAndList(t *testing.T) {
 	if latest.MaxItem == nil || latest.MaxItem.Code != "002230" {
 		t.Fatalf("expected max item, got %+v", latest.MaxItem)
 	}
+	if len(latest.Trend) != 2 || latest.Trend[0].Date != "2026-06-15" || latest.Trend[1].Date != "2026-06-16" || latest.Trend[1].TotalVolume != 190000 {
+		t.Fatalf("expected two-day auction trend, got %+v", latest.Trend)
+	}
 
 	filtered, err := store.ListAStockAuctionAmounts(ctx, model.AStockAuctionFilter{Date: "2026-06-16", Keyword: "浦发", Page: 1, PageSize: 10})
 	if err != nil {
