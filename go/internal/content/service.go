@@ -92,6 +92,8 @@ type Store interface {
 	DeletePublicOption(rctx context.Context, id int64) error
 	UpsertAStockAuctionAmounts(rctx context.Context, tradeDate string, items []model.AStockAuctionAmount) (model.AStockAuctionUpsertResult, error)
 	ListAStockAuctionAmounts(rctx context.Context, filter model.AStockAuctionFilter) (model.AStockAuctionListResult, error)
+	UpsertStockResearchSurveys(rctx context.Context, items []model.StockResearchSurvey) (model.StockResearchUpsertResult, error)
+	ListStockResearchSurveys(rctx context.Context, filter model.StockResearchFilter) (model.StockResearchListResult, error)
 }
 
 type Service struct {
@@ -156,6 +158,8 @@ func (s *Service) Routes(r chi.Router) {
 	r.Post("/api/v1/articles/{id}/share", s.handleShareArticle)
 	r.Get("/api/v1/a-stock/auction", s.handleListAStockAuctionAmounts)
 	r.Post("/api/v1/admin/a-stock/auction", s.handleUpsertAStockAuctionAmounts)
+	r.Get("/api/v1/stock-research", s.handleListStockResearchSurveys)
+	r.Post("/api/v1/internal/stock-research/batch", s.handleUpsertStockResearchSurveys)
 	r.Get("/api/v1/search/articles", s.handleSearchArticles)
 	r.Get("/api/v1/search/full", s.handleSearchFull)
 	r.Get("/api/v1/search/timely", s.handleSearchTimely)
@@ -580,6 +584,89 @@ func (s *Service) handleUpsertAStockAuctionAmounts(w http.ResponseWriter, r *htt
 		return
 	}
 	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleListStockResearchSurveys(w http.ResponseWriter, r *http.Request) {
+	filter := model.StockResearchFilter{
+		Code:        strings.TrimSpace(r.URL.Query().Get("code")),
+		Company:     strings.TrimSpace(nonEmpty(r.URL.Query().Get("company"), r.URL.Query().Get("q"))),
+		Institution: strings.TrimSpace(r.URL.Query().Get("institution")),
+		Kind:        strings.TrimSpace(r.URL.Query().Get("kind")),
+		Source:      strings.TrimSpace(r.URL.Query().Get("source")),
+		Start:       strings.TrimSpace(r.URL.Query().Get("start")),
+		End:         strings.TrimSpace(r.URL.Query().Get("end")),
+		Page:        apiutil.IntQuery(r, "page", 1),
+		PageSize:    apiutil.IntQuery(r, "page_size", 50),
+	}
+	result, err := s.store.ListStockResearchSurveys(r.Context(), filter)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleUpsertStockResearchSurveys(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		Items []model.StockResearchSurvey `json:"items"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid json", nil)
+		return
+	}
+	now := time.Now().UTC()
+	for i := range payload.Items {
+		payload.Items[i] = normalizeStockResearchSurvey(payload.Items[i], now)
+	}
+	result, err := s.store.UpsertStockResearchSurveys(r.Context(), payload.Items)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func normalizeStockResearchSurvey(item model.StockResearchSurvey, now time.Time) model.StockResearchSurvey {
+	item.Code = strings.TrimSpace(item.Code)
+	item.Name = strings.TrimSpace(item.Name)
+	item.Kind = normalizeStockResearchKind(item.Kind)
+	item.Title = strings.TrimSpace(item.Title)
+	item.Institution = strings.TrimSpace(item.Institution)
+	item.Analyst = strings.TrimSpace(item.Analyst)
+	item.Rating = strings.TrimSpace(item.Rating)
+	item.TargetPrice = strings.TrimSpace(item.TargetPrice)
+	item.ResearchDate = strings.TrimSpace(item.ResearchDate)
+	item.PublishTime = strings.TrimSpace(item.PublishTime)
+	item.SourceURL = strings.TrimSpace(item.SourceURL)
+	item.SourceType = strings.TrimSpace(item.SourceType)
+	item.SourceKey = strings.TrimSpace(item.SourceKey)
+	item.Summary = strings.TrimSpace(item.Summary)
+	item.RawPayload = strings.TrimSpace(item.RawPayload)
+	if item.SourceType == "" {
+		item.SourceType = "stock_research"
+	}
+	if item.SourceKey == "" {
+		item.SourceKey = strings.Join([]string{item.SourceType, item.Code, item.Title, item.ResearchDate, item.SourceURL}, "|")
+	}
+	if item.RawPayload == "" {
+		item.RawPayload = "{}"
+	}
+	if item.CreatedAt.IsZero() {
+		item.CreatedAt = now
+	}
+	if item.UpdatedAt.IsZero() {
+		item.UpdatedAt = now
+	}
+	return item
+}
+
+func normalizeStockResearchKind(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "survey", "调研":
+		return "survey"
+	default:
+		return "report"
+	}
 }
 
 func (s *Service) handleGetArticle(w http.ResponseWriter, r *http.Request) {

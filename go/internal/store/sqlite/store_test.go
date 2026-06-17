@@ -147,6 +147,42 @@ func TestAStockAuctionAmountsUpsertAndList(t *testing.T) {
 	}
 }
 
+func TestStockResearchSurveysUpsertAndFilter(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	first, err := store.UpsertStockResearchSurveys(ctx, []model.StockResearchSurvey{
+		{Code: "002230", Name: "科大讯飞", Kind: "report", Title: "科大讯飞深度研究", Institution: "中金公司", Analyst: "张三", Rating: "买入", TargetPrice: "50.00", ResearchDate: "2026-06-16", SourceType: "sina_finance_report", SourceKey: "sina-1", SourceURL: "https://sina.example.com/1", RawPayload: "{}"},
+		{Code: "300059", Name: "东方财富", Kind: "survey", Title: "东方财富机构调研", Institution: "华泰证券", ResearchDate: "2026-06-15", SourceType: "sohu_finance_report", SourceKey: "sohu-1", RawPayload: "{}"},
+	})
+	if err != nil {
+		t.Fatalf("UpsertStockResearchSurveys insert error: %v", err)
+	}
+	if first.Inserted != 2 || first.Updated != 0 {
+		t.Fatalf("unexpected insert result: %+v", first)
+	}
+	second, err := store.UpsertStockResearchSurveys(ctx, []model.StockResearchSurvey{
+		{Code: "002230", Name: "科大讯飞", Kind: "report", Title: "科大讯飞深度研究更新", Institution: "中金公司", ResearchDate: "2026-06-16", SourceType: "sina_finance_report", SourceKey: "sina-1", RawPayload: "{}"},
+	})
+	if err != nil {
+		t.Fatalf("UpsertStockResearchSurveys update error: %v", err)
+	}
+	if second.Inserted != 0 || second.Updated != 1 {
+		t.Fatalf("unexpected update result: %+v", second)
+	}
+
+	list, err := store.ListStockResearchSurveys(ctx, model.StockResearchFilter{Code: "002230", Institution: "中金", Source: "sina_finance_report", Start: "2026-06-01", End: "2026-06-30", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListStockResearchSurveys error: %v", err)
+	}
+	if list.Total != 1 || len(list.Items) != 1 || list.Items[0].Title != "科大讯飞深度研究更新" {
+		t.Fatalf("unexpected stock research list: %+v", list)
+	}
+	if len(list.Sources) != 2 {
+		t.Fatalf("expected source options, got %+v", list.Sources)
+	}
+}
+
 func TestNewStoreSetsBusyTimeout(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()

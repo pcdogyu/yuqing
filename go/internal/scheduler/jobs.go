@@ -316,6 +316,16 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 			},
 		}, "AStockAuctionCrawl", "0 30 9 * * ?"),
 		withJobMeta(jobDefinition{
+			Name:        "stock-research-crawl",
+			Group:       "a-stock",
+			Description: "上市公司研报调研：抓取 AKShare/TuShare、东方财富、新浪财经、搜狐财经研报调研数据",
+			Interval:    24 * time.Hour,
+			Enabled:     strings.TrimSpace(w.cfg.StockResearchURL) != "" || w.cfg.StockResearchPublicEnabled,
+			Run: func(ctx context.Context) error {
+				return w.runStockResearchCrawl(ctx)
+			},
+		}, "StockResearchCrawl", "0 30 16 * * ?"),
+		withJobMeta(jobDefinition{
 			Name:        "analysis-refresh",
 			Group:       "analysis",
 			Description: "AnalysisQuartz 等价的系统分析快照刷新",

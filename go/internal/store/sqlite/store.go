@@ -127,6 +127,28 @@ CREATE TABLE IF NOT EXISTS crawl_states (
 	PRIMARY KEY (source_type, cursor_key)
 );
 
+CREATE TABLE IF NOT EXISTS stock_research_surveys (
+	id INTEGER PRIMARY KEY,
+	code TEXT NOT NULL DEFAULT '',
+	name TEXT NOT NULL DEFAULT '',
+	kind TEXT NOT NULL DEFAULT 'report',
+	title TEXT NOT NULL DEFAULT '',
+	institution TEXT NOT NULL DEFAULT '',
+	analyst TEXT NOT NULL DEFAULT '',
+	rating TEXT NOT NULL DEFAULT '',
+	target_price TEXT NOT NULL DEFAULT '',
+	research_date TEXT NOT NULL DEFAULT '',
+	publish_time TEXT NOT NULL DEFAULT '',
+	source_url TEXT NOT NULL DEFAULT '',
+	source_type TEXT NOT NULL DEFAULT '',
+	source_key TEXT NOT NULL DEFAULT '',
+	summary TEXT NOT NULL DEFAULT '',
+	raw_payload TEXT NOT NULL DEFAULT '{}',
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	UNIQUE (source_type, source_key)
+);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
 	title,
 	content,
@@ -551,6 +573,9 @@ CREATE INDEX IF NOT EXISTS idx_items_source_type_captured_at ON items(source_typ
 CREATE INDEX IF NOT EXISTS idx_items_title ON items(title);
 CREATE INDEX IF NOT EXISTS idx_crawl_runs_source_type_started_at ON crawl_runs(source_type, started_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_crawl_states_updated ON crawl_states(source_type, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_stock_research_code_date ON stock_research_surveys(code, research_date DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_stock_research_institution_date ON stock_research_surveys(institution, research_date DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_stock_research_source_date ON stock_research_surveys(source_type, research_date DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_crawl_templates_enabled_updated ON crawl_templates(enabled, updated_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_a_stock_auction_date_amount ON a_stock_auction_amounts(trade_date DESC, auction_amount DESC);
 CREATE INDEX IF NOT EXISTS idx_a_stock_auction_code ON a_stock_auction_amounts(code);

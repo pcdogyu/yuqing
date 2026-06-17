@@ -44,6 +44,11 @@ type Config struct {
 	TheBlockLatestURL          string
 	EastMoneyKuaixunURL        string
 	AStockAuctionURL           string
+	StockResearchURL           string
+	TuShareToken               string
+	StockResearchPublicEnabled bool
+	SinaFinanceReportURL       string
+	SohuFinanceReportURL       string
 	HTTPTimeout                time.Duration
 	SchedulerCrawlTimeout      time.Duration
 	ExternalRetryCount         int
@@ -139,6 +144,11 @@ func Load() Config {
 		TheBlockLatestURL:          envOrDefaultAllowEmpty("YUQING_THEBLOCK_LATEST_URL", "https://www.theblock.co/latest-crypto-news"),
 		EastMoneyKuaixunURL:        envOrDefaultAllowEmpty("YUQING_EASTMONEY_KUAIXUN_URL", "https://kuaixun.eastmoney.com/"),
 		AStockAuctionURL:           envOrDefault("YUQING_ASTOCK_AUCTION_URL", ""),
+		StockResearchURL:           envOrDefault("YUQING_STOCK_RESEARCH_URL", ""),
+		TuShareToken:               envOrDefault("YUQING_TUSHARE_TOKEN", ""),
+		StockResearchPublicEnabled: envBool(true, "YUQING_STOCK_RESEARCH_PUBLIC_ENABLED"),
+		SinaFinanceReportURL:       envOrDefaultAllowEmpty("YUQING_SINA_FINANCE_REPORT_URL", "https://stock.finance.sina.com.cn/stock/go.php/vReport_List/kind/lastest/index.phtml"),
+		SohuFinanceReportURL:       envOrDefaultAllowEmpty("YUQING_SOHU_FINANCE_REPORT_URL", "https://q.stock.sohu.com/jlp/"),
 		HTTPTimeout:                envDurationSeconds(20, "YUQING_HTTP_TIMEOUT_SEC", "JIN10_HTTP_TIMEOUT_SEC"),
 		SchedulerCrawlTimeout:      envDurationSeconds(120, "YUQING_SCHEDULER_CRAWL_TIMEOUT_SEC"),
 		ExternalRetryCount:         envIntAllowZero(2, "YUQING_EXTERNAL_RETRY_COUNT"),

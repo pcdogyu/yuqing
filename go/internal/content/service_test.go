@@ -146,6 +146,39 @@ func TestAStockAuctionAmountAPIUpsertsAndLists(t *testing.T) {
 	}
 }
 
+func TestStockResearchAPIUpsertsAndLists(t *testing.T) {
+	store := newContentSearchTestStore(t)
+	svc := NewService(config.Config{}, store)
+	router := svc.Router()
+
+	payload := `{"items":[{"code":"002230","name":"科大讯飞","kind":"report","title":"科大讯飞深度研究","institution":"中金公司","analyst":"张三","rating":"买入","target_price":"50.00","research_date":"2026-06-16","source_type":"sina_finance_report","source_key":"sina-1","source_url":"https://sina.example.com/1"},{"code":"300059","name":"东方财富","kind":"survey","title":"东方财富机构调研","institution":"华泰证券","research_date":"2026-06-15","source_type":"sohu_finance_report","source_key":"sohu-1"}]}`
+	postReq := httptest.NewRequest(http.MethodPost, "/api/v1/internal/stock-research/batch", strings.NewReader(payload))
+	postRR := httptest.NewRecorder()
+	router.ServeHTTP(postRR, postReq)
+	if postRR.Code != http.StatusOK {
+		t.Fatalf("expected stock research upsert 200, got %d body=%s", postRR.Code, postRR.Body.String())
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/stock-research?company=科大&institution=中金&source=sina_finance_report&page=1&page_size=10", nil)
+	listRR := httptest.NewRecorder()
+	router.ServeHTTP(listRR, listReq)
+	if listRR.Code != http.StatusOK {
+		t.Fatalf("expected stock research list 200, got %d body=%s", listRR.Code, listRR.Body.String())
+	}
+	var envelope struct {
+		Data model.StockResearchListResult `json:"data"`
+	}
+	if err := json.Unmarshal(listRR.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal stock research list: %v", err)
+	}
+	if envelope.Data.Total != 1 || len(envelope.Data.Items) != 1 || envelope.Data.Items[0].Code != "002230" {
+		t.Fatalf("unexpected stock research list payload: %+v", envelope.Data)
+	}
+	if envelope.Data.Items[0].Rating != "买入" || envelope.Data.Items[0].TargetPrice != "50.00" {
+		t.Fatalf("expected rating and target price, got %+v", envelope.Data.Items[0])
+	}
+}
+
 func TestAuditMiddlewareWritesSanitizedAccessLog(t *testing.T) {
 	store := newContentSearchTestStore(t)
 	svc := NewService(config.Config{}, store)

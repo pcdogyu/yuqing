@@ -246,8 +246,9 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 	body := rr.Body.String()
 	aStockIndex := strings.Index(body, `href="/a-stock"`)
 	auctionIndex := strings.Index(body, `href="/a-stock/auction"`)
+	researchIndex := strings.Index(body, `href="/stock-research"`)
 	cryptoIndex := strings.Index(body, `href="/crypto"`)
-	if aStockIndex < 0 || auctionIndex < 0 || cryptoIndex < 0 || aStockIndex > auctionIndex || auctionIndex > cryptoIndex {
+	if aStockIndex < 0 || auctionIndex < 0 || researchIndex < 0 || cryptoIndex < 0 || aStockIndex > auctionIndex || auctionIndex > researchIndex || researchIndex > cryptoIndex {
 		t.Fatalf("expected A股 nav link before Crypto, got %s", body)
 	}
 	for _, want := range []string{
@@ -261,6 +262,7 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		"热点归纳",
 		"推荐股票",
 		"集合竞价",
+		"研报调研",
 		"昨日收盘价",
 		"昨日涨跌幅",
 		"30天涨跌幅",
@@ -415,6 +417,93 @@ func TestAStockAuctionPageExplainsDisabledSchedulerJob(t *testing.T) {
 	for _, want := range []string{"集合竞价抓取任务未启用", "YUQING_ASTOCK_AUCTION_URL", "scheduler-service"} {
 		if !strings.Contains(loc, want) {
 			t.Fatalf("expected disabled scheduler explanation %q, got %q", want, loc)
+		}
+	}
+}
+
+func TestStockResearchPageLoadsFiltersAndRows(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/stock-research" {
+			t.Fatalf("unexpected stock research content path: %s", r.URL.String())
+		}
+		if r.URL.Query().Get("company") != "科大" || r.URL.Query().Get("institution") != "中金" || r.URL.Query().Get("source") != "sina_finance_report" {
+			t.Fatalf("unexpected stock research query: %s", r.URL.RawQuery)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": model.StockResearchListResult{
+				Page:        1,
+				PageSize:    50,
+				Total:       1,
+				Company:     "科大",
+				Institution: "中金",
+				Source:      "sina_finance_report",
+				Sources:     []string{"sina_finance_report", "sohu_finance_report"},
+				Items: []model.StockResearchSurvey{{
+					Code:         "002230",
+					Name:         "科大讯飞",
+					Kind:         "report",
+					Title:        "科大讯飞深度研究",
+					Institution:  "中金公司",
+					Analyst:      "张三",
+					Rating:       "买入",
+					TargetPrice:  "50.00",
+					ResearchDate: "2026-06-16",
+					SourceType:   "sina_finance_report",
+					SourceURL:    "https://sina.example.com/1",
+				}},
+			},
+		})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	req := httptest.NewRequest(http.MethodGet, "/stock-research?company=科大&institution=中金&source=sina_finance_report", nil)
+	rr := httptest.NewRecorder()
+	srv.handleStockResearchPage(rr, req, map[string]any{"id": 1})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected stock research page 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"研报调研", "科大讯飞深度研究", "中金公司", "张三", "买入", "50.00", "新浪财经", "搜狐财经", "回补近一年", `value="科大"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected stock research page to contain %q, got %s", want, body)
+		}
+	}
+}
+
+func TestStockResearchPagePostTriggersBackfill(t *testing.T) {
+	var schedulerCalled bool
+	scheduler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		schedulerCalled = true
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/scheduler/stock-research/backfill" {
+			t.Fatalf("unexpected scheduler request: %s %s", r.Method, r.URL.String())
+		}
+		if r.Header.Get("X-Service-Token") != "secret-token" {
+			t.Fatalf("expected service token header, got %q", r.Header.Get("X-Service-Token"))
+		}
+		if r.URL.Query().Get("code") != "002230" || r.URL.Query().Get("company") != "科大讯飞" || r.URL.Query().Get("start") == "" || r.URL.Query().Get("end") == "" {
+			t.Fatalf("unexpected scheduler query: %s", r.URL.RawQuery)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{"status": "triggered"}})
+	}))
+	defer scheduler.Close()
+
+	srv := NewServer(config.Config{SchedulerURL: scheduler.URL, ServiceToken: "secret-token"})
+	req := httptest.NewRequest(http.MethodPost, "/stock-research", strings.NewReader("action=backfill_year&code=002230&company=%E7%A7%91%E5%A4%A7%E8%AE%AF%E9%A3%9E"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	srv.handleStockResearchPage(rr, req, map[string]any{"id": 1})
+	if !schedulerCalled {
+		t.Fatal("expected scheduler backfill to be called")
+	}
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect after stock research backfill, got %d", rr.Code)
+	}
+	loc, _ := url.QueryUnescape(rr.Header().Get("Location"))
+	for _, want := range []string{"/stock-research?", "code=002230", "company=科大讯飞", "回补任务已触发"} {
+		if !strings.Contains(loc, want) {
+			t.Fatalf("expected redirect to keep filters and message %q, got %q", want, loc)
 		}
 	}
 }

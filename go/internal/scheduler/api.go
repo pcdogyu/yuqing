@@ -3,6 +3,7 @@ package scheduler
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -16,6 +17,7 @@ func (w *Worker) Router() http.Handler {
 	})
 	r.Get("/api/v1/scheduler/jobs", w.handleListJobs)
 	r.Post("/api/v1/scheduler/jobs/{name}/run", w.handleRunJob)
+	r.Post("/api/v1/scheduler/stock-research/backfill", w.handleRunStockResearchBackfill)
 	return r
 }
 
@@ -38,4 +40,32 @@ func (w *Worker) handleRunJob(wr http.ResponseWriter, r *http.Request) {
 		return
 	}
 	apiutil.WriteJSON(wr, http.StatusOK, "ok", map[string]string{"name": name, "status": "triggered"})
+}
+
+func (w *Worker) handleRunStockResearchBackfill(wr http.ResponseWriter, r *http.Request) {
+	if strings.TrimSpace(r.Header.Get("X-Service-Token")) != strings.TrimSpace(w.cfg.ServiceToken) {
+		apiutil.WriteJSON(wr, http.StatusUnauthorized, "unauthorized", nil)
+		return
+	}
+	opts := stockResearchCrawlOptions{
+		Code:    strings.TrimSpace(r.URL.Query().Get("code")),
+		Company: strings.TrimSpace(r.URL.Query().Get("company")),
+		Start:   strings.TrimSpace(r.URL.Query().Get("start")),
+		End:     strings.TrimSpace(r.URL.Query().Get("end")),
+	}
+	startedAt := time.Now().UTC()
+	err := w.runStockResearchBackfill(r.Context(), opts)
+	finishedAt := time.Now().UTC()
+	status := "success"
+	message := "stock research backfill completed"
+	if err != nil {
+		status = "failed"
+		message = err.Error()
+	}
+	_ = w.recordTaskRun(r.Context(), "stock-research-backfill", status, message, startedAt, &finishedAt)
+	if err != nil {
+		apiutil.WriteJSON(wr, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(wr, http.StatusOK, "ok", map[string]string{"status": "triggered"})
 }

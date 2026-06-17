@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PuerkitoBio/goquery"
+
 	"github.com/pcdogyu/yuqing/go/internal/config"
 	"github.com/pcdogyu/yuqing/go/internal/model"
 	sqlitestore "github.com/pcdogyu/yuqing/go/internal/store/sqlite"
@@ -182,10 +184,10 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	if err := json.Unmarshal(listRR.Body.Bytes(), &listEnvelope); err != nil {
 		t.Fatalf("unmarshal jobs list: %v", err)
 	}
-	if len(listEnvelope.Data) != 26 {
-		t.Fatalf("expected 26 scheduler jobs, got %d", len(listEnvelope.Data))
+	if len(listEnvelope.Data) != 27 {
+		t.Fatalf("expected 27 scheduler jobs, got %d", len(listEnvelope.Data))
 	}
-	var heartbeatJob, hotJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningJob, aStockAfternoonJob, aStockAuctionJob Job
+	var heartbeatJob, hotJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningJob, aStockAfternoonJob, aStockAuctionJob, stockResearchJob Job
 	for _, job := range listEnvelope.Data {
 		switch job.Name {
 		case "crawl-link-heartbeat":
@@ -210,6 +212,8 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 			aStockAfternoonJob = job
 		case "a-stock-auction-crawl":
 			aStockAuctionJob = job
+		case "stock-research-crawl":
+			stockResearchJob = job
 		}
 	}
 	if hotJob.JavaQuartzName != "HotDataSchedule" || hotJob.Cron == "" || hotJob.NextRunAt == nil {
@@ -238,6 +242,9 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	}
 	if aStockAuctionJob.Cron != "0 30 9 * * ?" || aStockAuctionJob.Enabled {
 		t.Fatalf("expected A股 auction crawl disabled by default with 09:30 cron, got %+v", aStockAuctionJob)
+	}
+	if stockResearchJob.Cron != "0 30 16 * * ?" || stockResearchJob.Enabled {
+		t.Fatalf("expected stock research crawl disabled by default in test config, got %+v", stockResearchJob)
 	}
 	if cryptoXJob.Enabled || cryptoTelegramJob.Enabled || foresightJob.Enabled || coindeskJob.Enabled || panewsJob.Enabled || theBlockJob.Enabled {
 		t.Fatalf("expected crypto jobs disabled without endpoint urls, got x=%+v telegram=%+v foresight=%+v coindesk=%+v panews=%+v theblock=%+v", cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob)
@@ -356,6 +363,78 @@ func TestRunAStockAuctionCrawlFetchesAkshareAndWritesContent(t *testing.T) {
 	}
 	if contentPayload.Date != "2026-06-16" || len(contentPayload.Items) != 2 || contentPayload.Items[0].Code != "002230" || contentPayload.Items[1].Status != "no_auction_data" {
 		t.Fatalf("unexpected content payload: %+v", contentPayload)
+	}
+}
+
+func TestParseFinanceReportDocumentExtractsRows(t *testing.T) {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(`<html><body><table><tr><td>1</td><td><a href="/report/1.html">科大讯飞深度研究：AI 应用点评</a></td><td>公司研究</td><td>2026-06-16</td><td>中金公司</td><td>张三</td></tr></table></body></html>`))
+	if err != nil {
+		t.Fatalf("new document: %v", err)
+	}
+	items := parseFinanceReportDocument(doc, "https://stock.finance.sina.com.cn/list.html", "sina_finance_report", time.Date(2026, 6, 16, 1, 0, 0, 0, time.UTC))
+	if len(items) != 1 {
+		t.Fatalf("expected one parsed report, got %+v", items)
+	}
+	if items[0].Title != "科大讯飞深度研究：AI 应用点评" || items[0].ResearchDate != "2026-06-16" || items[0].Institution != "中金公司" || items[0].Analyst != "张三" {
+		t.Fatalf("unexpected parsed item: %+v", items[0])
+	}
+	if items[0].SourceURL != "https://stock.finance.sina.com.cn/report/1.html" || items[0].SourceKey == "" {
+		t.Fatalf("expected resolved source url and key, got %+v", items[0])
+	}
+}
+
+func TestRunStockResearchBackfillFetchesExternalAndWritesContent(t *testing.T) {
+	var captured []model.StockResearchSurvey
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/internal/stock-research/batch" {
+			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
+		}
+		var payload struct {
+			Items []model.StockResearchSurvey `json:"items"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode content payload: %v", err)
+		}
+		captured = payload.Items
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockResearchUpsertResult{Inserted: len(payload.Items), Total: len(payload.Items)}})
+	}))
+	defer content.Close()
+
+	external := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/stock-research" || r.URL.Query().Get("code") != "002230" || r.URL.Query().Get("tushare_token") != "token" {
+			t.Fatalf("unexpected external request: %s", r.URL.String())
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"items": []model.StockResearchSurvey{{
+			Code:         "002230",
+			Name:         "科大讯飞",
+			Kind:         "report",
+			Title:        "科大讯飞深度研究",
+			Institution:  "中金公司",
+			ResearchDate: "2026-06-16",
+			SourceType:   "akshare_stock_research",
+			SourceKey:    "ak-1",
+		}}})
+	}))
+	defer external.Close()
+
+	worker := NewWorker(config.Config{
+		ContentURL:                 content.URL,
+		StockResearchURL:           external.URL,
+		TuShareToken:               "token",
+		StockResearchPublicEnabled: false,
+		HTTPTimeout:                time.Second,
+		ServiceToken:               "secret-token",
+		ExternalRetryCount:         0,
+		ExternalRetryWait:          time.Millisecond,
+		SchedulerCrawlTimeout:      time.Second,
+		SinaFinanceReportURL:       "",
+		SohuFinanceReportURL:       "",
+	})
+	if err := worker.runStockResearchBackfill(context.Background(), stockResearchCrawlOptions{Code: "002230", Start: "2026-06-01", End: "2026-06-17"}); err != nil {
+		t.Fatalf("runStockResearchBackfill error: %v", err)
+	}
+	if len(captured) != 1 || captured[0].Code != "002230" || captured[0].SourceType != "akshare_stock_research" {
+		t.Fatalf("unexpected captured stock research payload: %+v", captured)
 	}
 }
 
