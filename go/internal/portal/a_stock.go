@@ -86,6 +86,8 @@ type aStockBacktestCell struct {
 type aStockBacktestRow struct {
 	Stock           string
 	EntryOpen       string
+	T0Return        string
+	T0ReturnClass   string
 	Days            []aStockBacktestCell
 	BestReturn      string
 	BestReturnClass string
@@ -508,10 +510,10 @@ func renderAStockRecommendationSection(b *strings.Builder, ctx aStockContext) {
 }
 
 func renderAStockBacktestSection(b *strings.Builder, strategyDate string, period string, ignoreRecent bool, recommendations []aStockRecommendation, rows []aStockBacktestRow) {
-	b.WriteString(`<section><h2>消息回测</h2><p class="astock-muted">买入价采用当日开盘价；T+1 到 T+5 按后续交易日收盘价计算收益，并展示五日内最高收益。</p>`)
+	b.WriteString(`<section><h2>消息回测</h2><p class="astock-muted">买入价采用当日开盘价；T+0 到 T+5 按交易日收盘价计算收益，并展示五日内最高收益。</p>`)
 	renderAStockRecommendationHistoryTabs(b, strategyDate, period, ignoreRecent)
 	renderAStockRecommendationHistoryActions(b, strategyDate, period, ignoreRecent)
-	b.WriteString(`<div class="astock-scroll"><table class="astock-table"><tr><th>股票</th><th>当日开盘价</th><th>T+1 收盘价</th><th>T+1 收益</th><th>T+2 收益</th><th>T+3 收益</th><th>T+4 收益</th><th>T+5 收益</th><th>五日内最高收益</th><th>命中状态</th></tr>`)
+	b.WriteString(`<div class="astock-scroll"><table class="astock-table"><tr><th>股票</th><th>当日开盘价</th><th>T+0 收益</th><th>T+1 收益</th><th>T+2 收益</th><th>T+3 收益</th><th>T+4 收益</th><th>T+5 收益</th><th>五日内最高收益</th><th>命中状态</th></tr>`)
 	if len(rows) == 0 {
 		b.WriteString(`<tr><td colspan="10">暂无回测结果，等待行情同步。</td></tr>`)
 		b.WriteString(`</table></div></section>`)
@@ -522,16 +524,15 @@ func renderAStockBacktestSection(b *strings.Builder, strategyDate string, period
 		b.WriteString(html.EscapeString(row.Stock))
 		b.WriteString(`</td><td>`)
 		b.WriteString(html.EscapeString(row.EntryOpen))
-		b.WriteString(`</td>`)
+		b.WriteString(`</td><td><span class="`)
+		b.WriteString(html.EscapeString(row.T0ReturnClass))
+		b.WriteString(`">`)
+		b.WriteString(html.EscapeString(row.T0Return))
+		b.WriteString(`</span></td>`)
 		for i := 0; i < 5; i++ {
 			cell := aStockBacktestCell{Close: "--", Return: "--", ReturnClass: "astock-flat"}
 			if i < len(row.Days) {
 				cell = row.Days[i]
-			}
-			if i == 0 {
-				b.WriteString(`<td>`)
-				b.WriteString(html.EscapeString(cell.Close))
-				b.WriteString(`</td>`)
 			}
 			b.WriteString(`<td><span class="`)
 			b.WriteString(html.EscapeString(cell.ReturnClass))
@@ -559,16 +560,15 @@ func renderAStockRecommendationHistoryTabs(b *strings.Builder, strategyDate stri
 		b.WriteString(`<span class="astock-muted">暂无推荐历史日期</span></div>`)
 		return
 	}
-	for offset := 0; offset <= 5; offset++ {
+	for offset := 5; offset >= 0; offset-- {
 		date := day.AddDate(0, 0, -offset).Format("2006-01-02")
-		label := "今日"
-		if offset > 0 {
-			label = fmt.Sprintf("前%d日", offset)
-		}
 		for _, option := range aStockPeriods() {
-			periodLabel := strings.TrimSuffix(option.Label, "推荐")
+			periodLabel := "PM"
+			if option.Key == "morning" {
+				periodLabel = "AM"
+			}
 			active := strategyDate == date && normalizedPeriod == option.Key
-			writeAStockDateTab(b, label+" "+date+" "+periodLabel, date, option.Key, active, ignoreRecent)
+			writeAStockDateTab(b, date+" "+periodLabel, date, option.Key, active, ignoreRecent)
 		}
 	}
 	b.WriteString(`</div>`)
@@ -1216,6 +1216,8 @@ func buildAStockBacktestRows(strategyDate string, recommendations []aStockRecomm
 		row := aStockBacktestRow{
 			Stock:           rec.Code + " " + rec.Name,
 			EntryOpen:       "--",
+			T0Return:        "--",
+			T0ReturnClass:   "astock-flat",
 			Days:            make([]aStockBacktestCell, 5),
 			BestReturn:      "--",
 			BestReturnClass: "astock-flat",
@@ -1240,6 +1242,11 @@ func buildAStockBacktestRows(strategyDate string, recommendations []aStockRecomm
 		}
 		entry := bars[entryIdx]
 		row.EntryOpen = formatAStockPrice(entry.Open)
+		if entry.Close > 0 {
+			t0Ret := (entry.Close/entry.Open - 1) * 100
+			row.T0Return = formatAStockPct(t0Ret)
+			row.T0ReturnClass = aStockPctClass(t0Ret)
+		}
 		bestSet := false
 		bestReturn := 0.0
 		filled := 0

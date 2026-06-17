@@ -276,7 +276,7 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		".astock-recommendation-table th:nth-child(2),.astock-recommendation-table td:nth-child(2){width:7.5%;white-space:nowrap}",
 		".astock-recommendation-table th:last-child,.astock-recommendation-table td:last-child{width:36%}",
 		"当日开盘价",
-		"T+1 收盘价",
+		"T+0 收益",
 		"T+1 收益",
 		"T+2 收益",
 		"T+3 收益",
@@ -1122,10 +1122,10 @@ func TestAStockPageOffersTodayNavigationAndAfterAlias(t *testing.T) {
 	body := rr.Body.String()
 	for _, want := range []string{
 		"下午推荐",
-		"今日 2026-06-16 上午",
-		"今日 2026-06-16 下午",
+		"2026-06-16 AM",
+		"2026-06-16 PM",
 		`href="/a-stock?date=2026-06-16&period=afternoon&ignore_recent=1"`,
-		"前5日 2026-06-11 下午",
+		"2026-06-11 PM",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
@@ -1343,12 +1343,12 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"AI 算力政策加码", "半导体先进封装景气度提升", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日跌幅", "推荐历史", "补抓并重新生成当前窗口", "重新生成当前推荐", "忽略15日重复过滤重新生成", "刷新当前回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_ignore_recent_stock"`, `name="action" value="refresh_backtest"`, "今日 2026-06-16 上午", "今日 2026-06-16 下午", "前1日 2026-06-15 上午", "前1日 2026-06-15 下午", "前5日 2026-06-11 上午", "前5日 2026-06-11 下午", "astock-recommendation-table", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
+	for _, want := range []string{"AI 算力政策加码", "半导体先进封装景气度提升", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日跌幅", "推荐历史", "补抓并重新生成当前窗口", "重新生成当前推荐", "忽略15日重复过滤重新生成", "刷新当前回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_ignore_recent_stock"`, `name="action" value="refresh_backtest"`, "2026-06-16 AM", "2026-06-16 PM", "2026-06-15 AM", "2026-06-15 PM", "2026-06-11 AM", "2026-06-11 PM", "T+0 收益", "astock-recommendation-table", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}
 	}
-	for _, notWant := range []string{"T+2 收盘价", "T+3 收盘价", "T+4 收盘价", "T+5 收盘价"} {
+	for _, notWant := range []string{"T+1 收盘价", "T+2 收盘价", "T+3 收盘价", "T+4 收盘价", "T+5 收盘价"} {
 		if strings.Contains(body, notWant) {
 			t.Fatalf("expected A股 page not to contain removed backtest column %q, got %s", notWant, body)
 		}
@@ -1372,12 +1372,12 @@ func TestAStockRecommendationHistoryRendersDateTabs(t *testing.T) {
 	body := b.String()
 	for _, want := range []string{
 		"推荐历史",
-		"今日 2026-06-16 上午",
-		"今日 2026-06-16 下午",
-		"前1日 2026-06-15 上午",
-		"前1日 2026-06-15 下午",
-		"前5日 2026-06-11 上午",
-		"前5日 2026-06-11 下午",
+		"2026-06-11 AM",
+		"2026-06-11 PM",
+		"2026-06-15 AM",
+		"2026-06-15 PM",
+		"2026-06-16 AM",
+		"2026-06-16 PM",
 		`/a-stock?date=2026-06-16&period=morning`,
 		`/a-stock?date=2026-06-16&period=afternoon`,
 		`/a-stock?date=2026-06-15&period=morning`,
@@ -1390,6 +1390,9 @@ func TestAStockRecommendationHistoryRendersDateTabs(t *testing.T) {
 	}
 	if strings.Contains(body, "astock-history-card") || strings.Contains(body, "山东黄金") {
 		t.Fatalf("expected history stock table/card to be removed, got %s", body)
+	}
+	if strings.Index(body, "2026-06-11 AM") > strings.Index(body, "2026-06-16 PM") {
+		t.Fatalf("expected history tabs to render oldest date first, got %s", body)
 	}
 }
 
@@ -1558,6 +1561,9 @@ func TestAStockMarketViewFiltersDeepDrawdownsAndPenalizesSector(t *testing.T) {
 	}
 	if len(rows) != 4 {
 		t.Fatalf("expected backtest rows to keep generated candidates before market filtering, got %+v", rows)
+	}
+	if rows[2].T0Return != "+1.01%" || rows[2].T0ReturnClass != "astock-up" {
+		t.Fatalf("expected T+0 return to use strategy-day close/open, got %+v", rows[2])
 	}
 	rowStocks := strings.Join([]string{rows[0].Stock, rows[1].Stock, rows[2].Stock, rows[3].Stock}, " ")
 	if !strings.Contains(rowStocks, "000001") || !strings.Contains(rowStocks, "000004") {
