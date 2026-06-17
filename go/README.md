@@ -89,6 +89,15 @@ Invoke-RestMethod "http://127.0.0.1:19091/healthz"
 Invoke-RestMethod "http://127.0.0.1:19091/api/a-stock/auction?date=2026-06-17&code=002230"
 ```
 
+如果服务器未把 Python 加入 `PATH`，可以在启动前指定解释器路径：
+
+```powershell
+$env:YUQING_AKSHARE_PYTHON = "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\python.exe"
+.\run.bat
+```
+
+未安装 Python 或 AKShare 依赖安装失败时，`run.bat` 会跳过本地 AKShare 适配服务并继续启动 Go 主系统；默认集合竞价任务会保持未配置状态，安装 Python 后重新运行即可启用。
+
 适配服务全市场抓取时使用 AKShare `stock_zh_a_spot_em` 一次性读取东财沪深京 A 股行情，适合 scheduler 在 09:30 触发后入库；传入 `code=` 单股排查时使用 `stock_zh_a_hist_pre_min_em` 读取盘前分钟数据，并把 09:25 附近的成交价、成交量、成交额转换为系统的 `date/items` 契约。AKShare 盘前分钟接口只返回最近交易日数据，服务会缓存成功抓到的日期；历史日期如果本地无缓存，将返回空列表。
 
 快速联调：

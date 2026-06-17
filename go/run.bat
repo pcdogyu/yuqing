@@ -22,7 +22,12 @@ if not defined YUQING_GO_TEST_FLAGS (
 set "GO_TEST_LOG=%LOG_DIR%\go-test.log"
 set "AKSHARE_AUCTION_PORT=19091"
 set "AKSHARE_AUCTION_HOST=127.0.0.1"
-if not defined YUQING_ASTOCK_AUCTION_URL set "YUQING_ASTOCK_AUCTION_URL=http://127.0.0.1:%AKSHARE_AUCTION_PORT%"
+set "YUQING_ASTOCK_AUCTION_URL_DEFAULTED=0"
+set "YUQING_AKSHARE_AUCTION_STARTED=0"
+if not defined YUQING_ASTOCK_AUCTION_URL (
+    set "YUQING_ASTOCK_AUCTION_URL=http://127.0.0.1:%AKSHARE_AUCTION_PORT%"
+    set "YUQING_ASTOCK_AUCTION_URL_DEFAULTED=1"
+)
 set "SERVICE_PORTS=80 8081 8082 8083 8084 8085 %AKSHARE_AUCTION_PORT%"
 set "SERVICE_NAMES=auth-service content-service crawler-service analysis-service nlp-service gateway-web scheduler-service"
 set "PORT_CHECKS=auth-service=8081 content-service=8082 crawler-service=8083 analysis-service=8084 nlp-service=8085 gateway-web=80"
@@ -140,7 +145,6 @@ if errorlevel 1 goto :fail
 call :start_process_core gateway-web
 if errorlevel 1 goto :fail
 call :start_akshare_auction_service
-if errorlevel 1 goto :fail
 powershell -NoProfile -Command "$checks = @(@{Name='auth-service';Port=8081}, @{Name='content-service';Port=8082}, @{Name='crawler-service';Port=8083}, @{Name='analysis-service';Port=8084}, @{Name='nlp-service';Port=8085}, @{Name='gateway-web';Port=80}); $counts = @{}; foreach ($check in $checks) { $counts[$check.Name] = 0 }; while ($true) { Start-Sleep -Seconds 3; $allDone = $true; foreach ($check in $checks) { if ($counts[$check.Name] -ge 3) { Write-Host ('[{0}] check {1}/3: port {2} is listening.' -f $check.Name, $counts[$check.Name], $check.Port); continue }; $listening = Get-NetTCPConnection -LocalPort $check.Port -State Listen -ErrorAction SilentlyContinue; if ($listening) { $counts[$check.Name]++; Write-Host ('[{0}] check {1}/3: port {2} is listening.' -f $check.Name, $counts[$check.Name], $check.Port) } else { Write-Host ('[{0}] check {1}/3: port {2} is not listening.' -f $check.Name, $counts[$check.Name], $check.Port); exit 1 }; if ($counts[$check.Name] -lt 3) { $allDone = $false } }; if ($allDone) { break } }"
 if errorlevel 1 goto :fail
 for %%C in (%PORT_CHECKS%) do (
@@ -158,14 +162,22 @@ call :print_port_status content-service 8082
 call :print_port_status crawler-service 8083
 call :print_port_status analysis-service 8084
 call :print_port_status nlp-service 8085
-call :print_port_status akshare-auction-service %AKSHARE_AUCTION_PORT%
+if "%YUQING_AKSHARE_AUCTION_STARTED%"=="1" (
+    call :print_port_status akshare-auction-service %AKSHARE_AUCTION_PORT%
+) else (
+    echo PORT %AKSHARE_AUCTION_PORT% akshare-auction-service is skipped.
+)
 call :print_port_status scheduler-service %YUQING_SCHEDULER_PORT%
 
 echo.
 echo Services started.
 echo Gateway: http://127.0.0.1
 echo Scheduler: %YUQING_SCHEDULER_URL%
-echo AKShareAuction: %YUQING_ASTOCK_AUCTION_URL%
+if defined YUQING_ASTOCK_AUCTION_URL (
+    echo AKShareAuction: %YUQING_ASTOCK_AUCTION_URL%
+) else (
+    echo AKShareAuction: disabled ^(Python/AKShare service not available^)
+)
 echo LogLevel: %YUQING_LOG_LEVEL%
 echo Version: %YUQING_RUN_VERSION%
 echo Commit: %YUQING_GIT_COMMIT%
@@ -187,25 +199,40 @@ if defined PYTHON_EXE (
     set "PYTHON_LAUNCH_ARGS=-3"
     exit /b 0
 )
-echo Python was not found. Install Python 3, then rerun run.bat.
+echo WARNING: Python was not found. AKShare auction service will be skipped.
+echo Install Python 3 and rerun run.bat, or set YUQING_AKSHARE_PYTHON to python.exe.
 exit /b 1
 
 :ensure_akshare_deps
-call :find_python
-if errorlevel 1 exit /b 1
+if defined YUQING_AKSHARE_PYTHON (
+    if not exist "%YUQING_AKSHARE_PYTHON%" (
+        echo WARNING: YUQING_AKSHARE_PYTHON does not exist: %YUQING_AKSHARE_PYTHON%
+        echo AKShare auction service will be skipped.
+        exit /b 1
+    )
+    set "PYTHON_EXE=%YUQING_AKSHARE_PYTHON%"
+    set "PYTHON_LAUNCH_ARGS="
+) else (
+    call :find_python
+    if errorlevel 1 exit /b 1
+)
 "%PYTHON_EXE%" %PYTHON_LAUNCH_ARGS% -c "import akshare" >nul 2>nul
 if not errorlevel 1 exit /b 0
 echo Installing AKShare Python dependencies...
 "%PYTHON_EXE%" %PYTHON_LAUNCH_ARGS% -m pip install -r "%GO_DIR%\requirements-akshare.txt"
 if errorlevel 1 (
-    echo Failed to install AKShare dependencies. Run: python -m pip install -r "%GO_DIR%\requirements-akshare.txt"
+    echo WARNING: Failed to install AKShare dependencies. AKShare auction service will be skipped.
+    echo Run manually: python -m pip install -r "%GO_DIR%\requirements-akshare.txt"
     exit /b 1
 )
 exit /b 0
 
 :start_akshare_auction_service
 call :ensure_akshare_deps
-if errorlevel 1 exit /b 1
+if errorlevel 1 (
+    if "%YUQING_ASTOCK_AUCTION_URL_DEFAULTED%"=="1" set "YUQING_ASTOCK_AUCTION_URL="
+    exit /b 0
+)
 set "TARGET_SERVICE=akshare-auction-service"
 set "OUT_LOG=%LOG_DIR%\%TARGET_SERVICE%.out.log"
 set "ERR_LOG=%LOG_DIR%\%TARGET_SERVICE%.err.log"
@@ -214,11 +241,17 @@ if exist "%ERR_LOG%" del /Q "%ERR_LOG%" >nul 2>nul
 echo Starting %TARGET_SERVICE%...
 powershell -NoProfile -Command "$argsList = @(); if ('%PYTHON_LAUNCH_ARGS%' -ne '') { $argsList += '%PYTHON_LAUNCH_ARGS%' }; $argsList += @('%GO_DIR%\services\akshare_auction_service.py','--host','%AKSHARE_AUCTION_HOST%','--port','%AKSHARE_AUCTION_PORT%'); $p = Start-Process -FilePath '%PYTHON_EXE%' -ArgumentList $argsList -WorkingDirectory '%GO_DIR%' -RedirectStandardOutput '%OUT_LOG%' -RedirectStandardError '%ERR_LOG%' -PassThru -WindowStyle Hidden; if ($null -eq $p) { exit 1 }"
 if errorlevel 1 (
-    echo Failed to start %TARGET_SERVICE%.
-    exit /b 1
+    echo WARNING: Failed to start %TARGET_SERVICE%.
+    if "%YUQING_ASTOCK_AUCTION_URL_DEFAULTED%"=="1" set "YUQING_ASTOCK_AUCTION_URL="
+    exit /b 0
 )
 call :wait_for_port %TARGET_SERVICE% %AKSHARE_AUCTION_PORT%
-if errorlevel 1 exit /b 1
+if errorlevel 1 (
+    echo WARNING: %TARGET_SERVICE% did not open port %AKSHARE_AUCTION_PORT%.
+    if "%YUQING_ASTOCK_AUCTION_URL_DEFAULTED%"=="1" set "YUQING_ASTOCK_AUCTION_URL="
+    exit /b 0
+)
+set "YUQING_AKSHARE_AUCTION_STARTED=1"
 exit /b 0
 
 :wait_for_port
