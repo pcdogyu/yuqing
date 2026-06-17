@@ -78,8 +78,8 @@ func TestCrawlerRunWithOptionsFiltersPublishTimeWindow(t *testing.T) {
 	}, nil)
 
 	summary, err := crawler.RunWithOptions(context.Background(), provider.SourceTypeFlash, model.CrawlOptions{
-		Start:     "2026-06-16 09:00:00",
-		End:       "2026-06-16 09:25:59",
+		Start:     "2026-06-16 08:00:00",
+		End:       "2026-06-16 09:30:59",
 		TimeField: "publish_time",
 	})
 	if err != nil {
@@ -91,8 +91,8 @@ func TestCrawlerRunWithOptionsFiltersPublishTimeWindow(t *testing.T) {
 	items, err := store.ListItems(context.Background(), model.ArticleFilter{
 		Page:      1,
 		PageSize:  10,
-		Start:     "2026-06-16 09:00:00",
-		End:       "2026-06-16 09:25:59",
+		Start:     "2026-06-16 08:00:00",
+		End:       "2026-06-16 09:30:59",
 		TimeField: "publish_time",
 	})
 	if err != nil {

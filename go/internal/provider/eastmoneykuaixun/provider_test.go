@@ -53,20 +53,52 @@ func TestParseResponseJSONP(t *testing.T) {
 	}
 }
 
+func TestParseSearchResponse(t *testing.T) {
+	body := []byte(`yuqing({"result":{"cmsArticleWebOld":[{"date":"2026-06-17 09:05:00","code":"20260617001","title":"<em>AI</em>算力订单增加","content":"人工智能产业链活跃","mediaName":"证券时报","url":"http://finance.eastmoney.com/a/20260617001.html"}]}})`)
+
+	items, err := ParseSearchResponse(body, "https://kuaixun.eastmoney.com/", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("ParseSearchResponse error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected one search item, got %+v", items)
+	}
+	item := items[0]
+	if item.SourceType != provider.SourceTypeEastMoneyKuaixun || item.Title != "AI算力订单增加" || item.Summary != "人工智能产业链活跃" {
+		t.Fatalf("unexpected search item: %+v", item)
+	}
+	if item.PublishTime != "2026-06-17 09:05:00" || item.FromText != "证券时报" || item.DetailURL != "http://finance.eastmoney.com/a/20260617001.html" {
+		t.Fatalf("unexpected search metadata: %+v", item)
+	}
+}
+
 func TestProviderFetchUsesEastMoneyListAPI(t *testing.T) {
 	var gotPageSize, gotClient, gotBiz string
+	searchCalls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Referer") == "" || !strings.Contains(r.Header.Get("Accept-Language"), "zh-CN") {
-			t.Fatalf("expected browser-like headers, got %+v", r.Header)
+		switch r.URL.Path {
+		case "/comm/web/getFastNewsList":
+			if r.Header.Get("Referer") == "" || !strings.Contains(r.Header.Get("Accept-Language"), "zh-CN") {
+				t.Fatalf("expected browser-like headers, got %+v", r.Header)
+			}
+			gotPageSize = r.URL.Query().Get("pageSize")
+			gotClient = r.URL.Query().Get("client")
+			gotBiz = r.URL.Query().Get("biz")
+			_, _ = w.Write([]byte(`{"code":"1","data":{"fastNewsList":[{"summary":"财经快讯正文","code":"20260616001","showTime":"2026-06-16 09:05:00","title":"东方财富快讯","stockList":[],"image":[]}]}}`))
+		case "/search/jsonp":
+			searchCalls++
+			if r.URL.Query().Get("param") == "" || r.URL.Query().Get("cb") == "" {
+				t.Fatalf("expected search params, got %s", r.URL.RawQuery)
+			}
+			_, _ = w.Write([]byte(`yuqing({"result":{"cmsArticleWebOld":[{"date":"2026-06-16 09:08:00","title":"东方财富搜索新闻","content":"A股新闻搜索补充","mediaName":"东方财富网","url":"http://finance.eastmoney.com/a/20260616002.html"}]}})`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.String())
 		}
-		gotPageSize = r.URL.Query().Get("pageSize")
-		gotClient = r.URL.Query().Get("client")
-		gotBiz = r.URL.Query().Get("biz")
-		_, _ = w.Write([]byte(`{"code":"1","data":{"fastNewsList":[{"summary":"财经快讯正文","code":"20260616001","showTime":"2026-06-16 09:05:00","title":"东方财富快讯","stockList":[],"image":[]}]}}`))
 	}))
 	defer server.Close()
 
 	prov := NewProvider(resty.New().SetRetryCount(0), server.URL+"/comm/web/getFastNewsList")
+	prov.searchAPIURL = server.URL + "/search/jsonp"
 	items, err := prov.Fetch(context.Background())
 	if err != nil {
 		t.Fatalf("Fetch error: %v", err)
@@ -74,7 +106,10 @@ func TestProviderFetchUsesEastMoneyListAPI(t *testing.T) {
 	if gotClient != "web" || gotBiz != "web_724" || gotPageSize != "50" {
 		t.Fatalf("unexpected query params: client=%q biz=%q pageSize=%q", gotClient, gotBiz, gotPageSize)
 	}
-	if len(items) != 1 || items[0].Title != "东方财富快讯" {
+	if searchCalls == 0 {
+		t.Fatal("expected search endpoint to be called")
+	}
+	if len(items) < 2 || items[0].Title != "东方财富快讯" {
 		t.Fatalf("unexpected items: %+v", items)
 	}
 }

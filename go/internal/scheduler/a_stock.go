@@ -133,8 +133,8 @@ func aStockRecommendationWindow(strategyDate string, period string) (time.Time, 
 			time.Date(day.Year(), day.Month(), day.Day(), 12, 50, 59, 0, location),
 			"09:26-12:50", nil
 	default:
-		return time.Date(day.Year(), day.Month(), day.Day(), 9, 0, 0, 0, location),
-			time.Date(day.Year(), day.Month(), day.Day(), 9, 25, 59, 0, location),
-			"09:00-09:25", nil
+		return time.Date(day.Year(), day.Month(), day.Day(), 8, 0, 0, 0, location),
+			time.Date(day.Year(), day.Month(), day.Day(), 9, 30, 59, 0, location),
+			"08:00-09:30", nil
 	}
 }

@@ -185,7 +185,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 
 	b.WriteString(`<section class="astock-hero"><div class="astock-card astock-soft"><h2>A股策略工作台</h2><p>`)
 	b.WriteString(fmt.Sprintf(`欢迎，用户 %d。`, userIDFromMap(user)))
-	b.WriteString(`本页用于承载上午、下午财经新闻热点归纳、推荐股票和消息回测结果。</p><p class="astock-muted">每日 09:25 自动抓取 09:00-09:25 新闻生成上午推荐；12:50 自动抓取 09:26-12:50 新闻生成下午推荐。仅供策略研究和回测，不构成投资建议。</p>`)
+	b.WriteString(`本页用于承载上午、下午财经新闻热点归纳、推荐股票和消息回测结果。</p><p class="astock-muted">每日 09:30 自动抓取 08:00-09:30 新闻生成上午推荐；12:50 自动抓取 09:26-12:50 新闻生成下午推荐。仅供策略研究和回测，不构成投资建议。</p>`)
 	renderAStockPeriodTabs(&b, ctx.Date, ctx.Period)
 	b.WriteString(`</div><div class="astock-card"><form method="get"><label>策略日期</label><input type="date" name="date" value="`)
 	b.WriteString(html.EscapeString(strategyDate))
@@ -277,7 +277,7 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request) 
 	case "generate_morning_stock":
 		period = normalizeAStockPeriod("morning")
 		query.Set("period", period.Key)
-		query.Set("msg", "已切换到上午窗口，按 09:00-09:25 历史新闻重新计算推荐。")
+		query.Set("msg", "已切换到上午窗口，按 08:00-09:30 历史新闻重新计算推荐。")
 	case "generate_afternoon_stock":
 		period = normalizeAStockPeriod("afternoon")
 		query.Set("period", period.Key)
@@ -1387,7 +1387,7 @@ func aStockWindow(strategyDate string, periodKey string) (time.Time, time.Time) 
 		day = time.Now().In(location)
 	}
 	period := normalizeAStockPeriod(periodKey)
-	startHour, startMinute, endHour, endMinute := 9, 0, 9, 25
+	startHour, startMinute, endHour, endMinute := 8, 0, 9, 30
 	if period.Key == "afternoon" {
 		startHour, startMinute, endHour, endMinute = 9, 26, 12, 50
 	}
@@ -1565,7 +1565,7 @@ func aStockPageHref(strategyDate string, period string, newsPage int) string {
 
 func aStockPeriods() []aStockPeriod {
 	return []aStockPeriod{
-		{Key: "morning", Label: "上午推荐", WindowLabel: "09:00-09:25"},
+		{Key: "morning", Label: "上午推荐", WindowLabel: "08:00-09:30"},
 		{Key: "afternoon", Label: "下午推荐", WindowLabel: "09:26-12:50"},
 	}
 }

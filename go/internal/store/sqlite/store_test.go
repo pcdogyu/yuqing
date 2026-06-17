@@ -68,8 +68,8 @@ func TestListItemsCanFilterByPublishTime(t *testing.T) {
 		Page:      1,
 		PageSize:  10,
 		TimeField: "publish_time",
-		Start:     "2026-06-16 09:00:00",
-		End:       "2026-06-16 09:25:59",
+		Start:     "2026-06-16 08:00:00",
+		End:       "2026-06-16 09:30:59",
 	})
 	if err != nil {
 		t.Fatalf("ListItems by publish_time error: %v", err)
@@ -81,8 +81,8 @@ func TestListItemsCanFilterByPublishTime(t *testing.T) {
 	defaultList, err := store.ListItems(ctx, model.ArticleFilter{
 		Page:     1,
 		PageSize: 10,
-		Start:    "2026-06-16 09:00:00",
-		End:      "2026-06-16 09:25:59",
+		Start:    "2026-06-16 08:00:00",
+		End:      "2026-06-16 09:30:59",
 	})
 	if err != nil {
 		t.Fatalf("ListItems by default captured_at error: %v", err)

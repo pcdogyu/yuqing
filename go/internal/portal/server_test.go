@@ -252,9 +252,9 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 	}
 	for _, want := range []string{
 		"A股策略工作台",
-		"09:00-09:25",
+		"08:00-09:30",
 		"09:26-12:50",
-		"每日 09:25",
+		"每日 09:30",
 		"12:50 自动抓取",
 		"上午推荐",
 		"下午推荐",
@@ -440,7 +440,7 @@ func TestAStockStockGenerateActionsSelectPeriod(t *testing.T) {
 			fromPeriod: "afternoon",
 			action:     "generate_morning_stock",
 			wantPeriod: "morning",
-			wantMsg:    "已切换到上午窗口，按 09:00-09:25 历史新闻重新计算推荐。",
+			wantMsg:    "已切换到上午窗口，按 08:00-09:30 历史新闻重新计算推荐。",
 		},
 	}
 
@@ -506,7 +506,7 @@ func TestAStockBackfillWindowActionPassesMorningWindow(t *testing.T) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/admin/tasks/crawl" {
 			t.Fatalf("unexpected crawler request: %s %s", r.Method, r.URL.String())
 		}
-		if r.URL.Query().Get("start") != "2026-06-16 09:00:00" || r.URL.Query().Get("end") != "2026-06-16 09:25:59" || r.URL.Query().Get("time_field") != "publish_time" {
+		if r.URL.Query().Get("start") != "2026-06-16 08:00:00" || r.URL.Query().Get("end") != "2026-06-16 09:30:59" || r.URL.Query().Get("time_field") != "publish_time" {
 			t.Fatalf("unexpected backfill window query: %s", r.URL.RawQuery)
 		}
 		mu.Lock()
@@ -520,7 +520,7 @@ func TestAStockBackfillWindowActionPassesMorningWindow(t *testing.T) {
 		if r.URL.Path != "/api/v1/articles" {
 			t.Fatalf("unexpected content request: %s", r.URL.String())
 		}
-		if r.URL.Query().Get("start") != "2026-06-16 09:00:00" || r.URL.Query().Get("end") != "2026-06-16 09:25:59" {
+		if r.URL.Query().Get("start") != "2026-06-16 08:00:00" || r.URL.Query().Get("end") != "2026-06-16 09:30:59" {
 			t.Fatalf("unexpected content window query: %s", r.URL.RawQuery)
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -558,7 +558,7 @@ func TestAStockBackfillWindowActionPassesMorningWindow(t *testing.T) {
 		}
 	}
 	loc, _ := url.QueryUnescape(rr.Header().Get("Location"))
-	for _, want := range []string{"date=2026-06-16", "period=morning", "已补抓 2026-06-16 上午 09:00-09:25", "当前窗口已有 1 条财经新闻"} {
+	for _, want := range []string{"date=2026-06-16", "period=morning", "已补抓 2026-06-16 上午 08:00-09:30", "当前窗口已有 1 条财经新闻"} {
 		if !strings.Contains(loc, want) {
 			t.Fatalf("expected redirect message %q, got %q", want, loc)
 		}
@@ -570,7 +570,7 @@ func TestAStockBackfillMorningStockActionSelectsMorningWindow(t *testing.T) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/admin/tasks/crawl" {
 			t.Fatalf("unexpected crawler request: %s %s", r.Method, r.URL.String())
 		}
-		if r.URL.Query().Get("start") != "2026-06-15 09:00:00" || r.URL.Query().Get("end") != "2026-06-15 09:25:59" {
+		if r.URL.Query().Get("start") != "2026-06-15 08:00:00" || r.URL.Query().Get("end") != "2026-06-15 09:30:59" {
 			t.Fatalf("unexpected morning backfill query: %s", r.URL.RawQuery)
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -598,7 +598,7 @@ func TestAStockBackfillMorningStockActionSelectsMorningWindow(t *testing.T) {
 		t.Fatalf("expected redirect, got %d", rr.Code)
 	}
 	loc, _ := url.QueryUnescape(rr.Header().Get("Location"))
-	for _, want := range []string{"date=2026-06-15", "period=morning", "已补抓 2026-06-15 上午 09:00-09:25", "上午推荐已按补录后的新闻窗口重新计算"} {
+	for _, want := range []string{"date=2026-06-15", "period=morning", "已补抓 2026-06-15 上午 08:00-09:30", "上午推荐已按补录后的新闻窗口重新计算"} {
 		if !strings.Contains(loc, want) {
 			t.Fatalf("expected redirect message %q, got %q", want, loc)
 		}
@@ -611,7 +611,7 @@ func TestAStockPageExplainsMorningNoNews(t *testing.T) {
 		if r.URL.Path != "/api/v1/articles" {
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
-		if r.URL.Query().Get("time_field") != "publish_time" || r.URL.Query().Get("start") != "2026-06-16 09:00:00" || r.URL.Query().Get("end") != "2026-06-16 09:25:59" {
+		if r.URL.Query().Get("time_field") != "publish_time" || r.URL.Query().Get("start") != "2026-06-16 08:00:00" || r.URL.Query().Get("end") != "2026-06-16 09:30:59" {
 			t.Fatalf("unexpected A股 morning window query: %s", r.URL.RawQuery)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -636,7 +636,7 @@ func TestAStockPageExplainsMorningNoNews(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"上午推荐", "09:00-09:25", "没有历史新闻", "请先抓取或补抓财经信息"} {
+	for _, want := range []string{"上午推荐", "08:00-09:30", "没有历史新闻", "请先抓取或补抓财经信息"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected no-news explanation %q, got %s", want, body)
 		}
@@ -909,7 +909,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		if r.URL.Path != "/api/v1/articles" {
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
-		if r.URL.Query().Get("time_field") != "publish_time" || r.URL.Query().Get("start") != "2026-06-16 09:00:00" || r.URL.Query().Get("end") != "2026-06-16 09:25:59" {
+		if r.URL.Query().Get("time_field") != "publish_time" || r.URL.Query().Get("start") != "2026-06-16 08:00:00" || r.URL.Query().Get("end") != "2026-06-16 09:30:59" {
 			t.Fatalf("unexpected A股 window query: %s", r.URL.RawQuery)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{

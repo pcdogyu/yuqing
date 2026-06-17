@@ -225,7 +225,7 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	if panewsJob.Name == "" {
 		t.Fatalf("expected panews scheduler job, got %+v", listEnvelope.Data)
 	}
-	if aStockMorningJob.Cron != "0 25 9 * * ?" || aStockMorningJob.NextRunAt == nil {
+	if aStockMorningJob.Cron != "0 30 9 * * ?" || aStockMorningJob.NextRunAt == nil {
 		t.Fatalf("expected A股 morning recommendation cron metadata, got %+v", aStockMorningJob)
 	}
 	if aStockAfternoonJob.Cron != "0 50 12 * * ?" || aStockAfternoonJob.NextRunAt == nil {
