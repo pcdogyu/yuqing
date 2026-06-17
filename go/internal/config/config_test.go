@@ -35,6 +35,9 @@ func TestLoadUsesDefaults(t *testing.T) {
 	unsetEnv(t, "YUQING_COINDESK_ZH_LATEST_URL")
 	unsetEnv(t, "YUQING_PANEWS_NEWSFLASH_URL")
 	unsetEnv(t, "YUQING_EASTMONEY_KUAIXUN_URL")
+	unsetEnv(t, "YUQING_WALLSTREETCN_A_STOCK_URL")
+	unsetEnv(t, "YUQING_CLS_TELEGRAPH_URL")
+	unsetEnv(t, "YUQING_SINA_FINANCE_7X24_URL")
 	t.Setenv("YUQING_ASTOCK_AUCTION_URL", "")
 	t.Setenv("YUQING_JIN10_FULL_BACKFILL_DAYS", "")
 	t.Setenv("YUQING_JIN10_FULL_MAX_PAGES_PER_RUN", "")
@@ -96,6 +99,9 @@ func TestLoadUsesDefaults(t *testing.T) {
 	}
 	if cfg.EastMoneyKuaixunURL != "https://kuaixun.eastmoney.com/" {
 		t.Fatalf("expected default eastmoney kuaixun url, got %q", cfg.EastMoneyKuaixunURL)
+	}
+	if cfg.WallStreetCNAStockURL != "https://wallstreetcn.com/live/a-stock" || cfg.CLSTelegraphURL != "https://www.cls.cn/telegraph" || cfg.SinaFinance7x24URL != "https://finance.sina.com.cn/7x24/?tag=10" {
+		t.Fatalf("expected default A股 public news urls, got wallstreet=%q cls=%q sina=%q", cfg.WallStreetCNAStockURL, cfg.CLSTelegraphURL, cfg.SinaFinance7x24URL)
 	}
 	if cfg.AStockAuctionURL != "" {
 		t.Fatalf("expected empty A股 auction url by default, got %q", cfg.AStockAuctionURL)
@@ -171,6 +177,9 @@ func TestLoadPrefersPrimaryAndAliasEnv(t *testing.T) {
 	t.Setenv("YUQING_PANEWS_NEWSFLASH_URL", "https://panews.example.com/rss.xml")
 	t.Setenv("YUQING_THEBLOCK_LATEST_URL", "https://theblock.example.com/latest")
 	t.Setenv("YUQING_EASTMONEY_KUAIXUN_URL", "https://eastmoney.example.com/kuaixun")
+	t.Setenv("YUQING_WALLSTREETCN_A_STOCK_URL", "https://wallstreet.example.com/a-stock")
+	t.Setenv("YUQING_CLS_TELEGRAPH_URL", "https://cls.example.com/telegraph")
+	t.Setenv("YUQING_SINA_FINANCE_7X24_URL", "https://sina.example.com/7x24")
 	t.Setenv("YUQING_ASTOCK_AUCTION_URL", "http://akshare.example.com")
 	t.Setenv("YUQING_ASTOCK_HOLDING_URL", "http://holding.example.com")
 	t.Setenv("YUQING_STOCK_RESEARCH_PDF_DIR", "D:\\research-pdfs")
@@ -262,6 +271,9 @@ func TestLoadPrefersPrimaryAndAliasEnv(t *testing.T) {
 	if cfg.EastMoneyKuaixunURL != "https://eastmoney.example.com/kuaixun" {
 		t.Fatalf("expected eastmoney kuaixun url loaded, got %q", cfg.EastMoneyKuaixunURL)
 	}
+	if cfg.WallStreetCNAStockURL != "https://wallstreet.example.com/a-stock" || cfg.CLSTelegraphURL != "https://cls.example.com/telegraph" || cfg.SinaFinance7x24URL != "https://sina.example.com/7x24" {
+		t.Fatalf("expected A股 public news urls loaded, got wallstreet=%q cls=%q sina=%q", cfg.WallStreetCNAStockURL, cfg.CLSTelegraphURL, cfg.SinaFinance7x24URL)
+	}
 	if cfg.CryptoXInterval != 77*time.Second || cfg.CryptoTelegramInterval != 88*time.Second {
 		t.Fatalf("expected social intervals loaded, got x=%s tg=%s", cfg.CryptoXInterval, cfg.CryptoTelegramInterval)
 	}
@@ -286,11 +298,14 @@ func TestCryptoNewsURLsCanBeDisabledWithExplicitEmptyEnv(t *testing.T) {
 	t.Setenv("YUQING_PANEWS_NEWSFLASH_URL", "")
 	t.Setenv("YUQING_THEBLOCK_LATEST_URL", "")
 	t.Setenv("YUQING_EASTMONEY_KUAIXUN_URL", "")
+	t.Setenv("YUQING_WALLSTREETCN_A_STOCK_URL", "")
+	t.Setenv("YUQING_CLS_TELEGRAPH_URL", "")
+	t.Setenv("YUQING_SINA_FINANCE_7X24_URL", "")
 
 	cfg := Load()
 
-	if cfg.ForesightNewsflashURL != "" || cfg.CoinDeskZHLatestURL != "" || cfg.PANewsNewsflashURL != "" || cfg.TheBlockLatestURL != "" || cfg.EastMoneyKuaixunURL != "" {
-		t.Fatalf("expected explicit empty news URLs to disable providers, got foresight=%q coindesk=%q panews=%q theblock=%q eastmoney=%q", cfg.ForesightNewsflashURL, cfg.CoinDeskZHLatestURL, cfg.PANewsNewsflashURL, cfg.TheBlockLatestURL, cfg.EastMoneyKuaixunURL)
+	if cfg.ForesightNewsflashURL != "" || cfg.CoinDeskZHLatestURL != "" || cfg.PANewsNewsflashURL != "" || cfg.TheBlockLatestURL != "" || cfg.EastMoneyKuaixunURL != "" || cfg.WallStreetCNAStockURL != "" || cfg.CLSTelegraphURL != "" || cfg.SinaFinance7x24URL != "" {
+		t.Fatalf("expected explicit empty news URLs to disable providers, got foresight=%q coindesk=%q panews=%q theblock=%q eastmoney=%q wallstreet=%q cls=%q sina=%q", cfg.ForesightNewsflashURL, cfg.CoinDeskZHLatestURL, cfg.PANewsNewsflashURL, cfg.TheBlockLatestURL, cfg.EastMoneyKuaixunURL, cfg.WallStreetCNAStockURL, cfg.CLSTelegraphURL, cfg.SinaFinance7x24URL)
 	}
 }
 

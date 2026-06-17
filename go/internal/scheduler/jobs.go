@@ -551,6 +551,9 @@ func (w *Worker) crawlLinkHeartbeatSites() []crawlLinkHeartbeatSite {
 	}
 	sites = append(sites,
 		crawlLinkHeartbeatSite{SourceType: "eastmoney_kuaixun", Name: "东方财富快讯", URL: w.cfg.EastMoneyKuaixunURL},
+		crawlLinkHeartbeatSite{SourceType: "wallstreetcn_a_stock", Name: "华尔街见闻 A股快讯", URL: w.cfg.WallStreetCNAStockURL},
+		crawlLinkHeartbeatSite{SourceType: "cls_telegraph", Name: "财联社电报", URL: w.cfg.CLSTelegraphURL},
+		crawlLinkHeartbeatSite{SourceType: "sina_finance_7x24", Name: "新浪财经 7x24", URL: w.cfg.SinaFinance7x24URL},
 		crawlLinkHeartbeatSite{SourceType: "foresight_newsflash", Name: "Foresight News 快讯", URL: w.cfg.ForesightNewsflashURL},
 		crawlLinkHeartbeatSite{SourceType: "coindesk_zh_latest", Name: "CoinDesk 中文最新", URL: w.cfg.CoinDeskZHLatestURL},
 		crawlLinkHeartbeatSite{SourceType: "panews_newsflash", Name: "PANews 快讯", URL: w.cfg.PANewsNewsflashURL},

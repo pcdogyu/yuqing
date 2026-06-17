@@ -324,7 +324,7 @@ func TestRunAStockRecommendationCrawlsSourcesAndQueriesWindow(t *testing.T) {
 		t.Fatalf("runAStockRecommendationForDate error: %v", err)
 	}
 	sort.Strings(sources)
-	if strings.Join(sources, ",") != "eastmoney_kuaixun,flash,headline,jin10_full" {
+	if strings.Join(sources, ",") != "cls_telegraph,eastmoney_kuaixun,flash,headline,jin10_full,sina_finance_7x24,wallstreetcn_a_stock" {
 		t.Fatalf("expected all A股 sources to be crawled, got %v", sources)
 	}
 }

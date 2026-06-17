@@ -229,9 +229,9 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		b.WriteString(html.EscapeString(action.Label))
 		b.WriteString(`</button></form>`)
 	}
-	b.WriteString(`</div><p class="astock-muted">已接入已有新闻抓取链路：抓取按钮会触发金十快讯、金十资讯、金十全站信息和东方财富网快讯，页面按策略日期和推荐窗口聚合财经新闻。行情接口读取 `)
+	b.WriteString(`</div><p class="astock-muted">已接入已有新闻抓取链路：抓取按钮会触发金十快讯、金十资讯、金十全站信息、东方财富网快讯、华尔街见闻、财联社和新浪财经，页面按策略日期和推荐窗口聚合财经新闻。行情接口读取 `)
 	b.WriteString(aStockMarketConfigHint())
-	b.WriteString(`，用于展示昨日收盘价、现价、涨跌幅和消息回测。</p><div class="astock-source-list"><span class="astock-badge">flash: https://www.jin10.com/</span><span class="astock-badge">headline: https://xnews.jin10.com/</span><span class="astock-badge">jin10_full: 金十全站</span><span class="astock-badge">eastmoney_kuaixun: 东方财富网</span></div></section>`)
+	b.WriteString(`，用于展示昨日收盘价、现价、涨跌幅和消息回测。</p><div class="astock-source-list"><span class="astock-badge">flash: https://www.jin10.com/</span><span class="astock-badge">headline: https://xnews.jin10.com/</span><span class="astock-badge">jin10_full: 金十全站</span><span class="astock-badge">eastmoney_kuaixun: 东方财富网</span><span class="astock-badge">wallstreetcn_a_stock: 华尔街见闻</span><span class="astock-badge">cls_telegraph: 财联社</span><span class="astock-badge">sina_finance_7x24: 新浪财经</span></div></section>`)
 
 	renderAStockNewsSection(&b, ctx)
 	renderAStockHotspotSection(&b, ctx.Hotspots)
@@ -1524,7 +1524,7 @@ func aStockLocation() *time.Location {
 }
 
 func (s *Server) triggerAStockCrawl() string {
-	sources := []string{"flash", "headline", "jin10_full", "eastmoney_kuaixun"}
+	sources := aStockCrawlSources()
 	ok := 0
 	failures := make([]string, 0)
 	for _, sourceType := range sources {
@@ -1540,13 +1540,13 @@ func (s *Server) triggerAStockCrawl() string {
 	if len(failures) > 0 {
 		return fmt.Sprintf("A股新闻抓取部分触发：成功 %d 个，失败 %s", ok, strings.Join(failures, "、"))
 	}
-	return "A股新闻抓取已触发：金十快讯、金十资讯、金十全站信息、东方财富网"
+	return "A股新闻抓取已触发：金十快讯、金十资讯、金十全站信息、东方财富网、华尔街见闻、财联社、新浪财经"
 }
 
 func (s *Server) triggerAStockWindowCrawl(strategyDate string, periodKey string) string {
 	period := normalizeAStockPeriod(periodKey)
 	start, end := aStockWindow(strategyDate, period.Key)
-	sources := []string{"flash", "headline", "jin10_full", "eastmoney_kuaixun"}
+	sources := aStockCrawlSources()
 	ok := 0
 	failures := make([]string, 0)
 	for _, sourceType := range sources {
@@ -1571,7 +1571,11 @@ func (s *Server) triggerAStockWindowCrawl(strategyDate string, periodKey string)
 	if len(failures) > 0 {
 		return fmt.Sprintf("已补抓 %s：成功 %d 个来源，失败 %s。%s", windowText, ok, strings.Join(failures, "、"), countText)
 	}
-	return fmt.Sprintf("已补抓 %s：金十快讯、金十资讯、金十全站信息、东方财富网。%s", windowText, countText)
+	return fmt.Sprintf("已补抓 %s：金十快讯、金十资讯、金十全站信息、东方财富网、华尔街见闻、财联社、新浪财经。%s", windowText, countText)
+}
+
+func aStockCrawlSources() []string {
+	return []string{"flash", "headline", "jin10_full", "eastmoney_kuaixun", "wallstreetcn_a_stock", "cls_telegraph", "sina_finance_7x24"}
 }
 
 func (s *Server) countAStockWindowNews(start time.Time, end time.Time) (int, error) {
@@ -1603,7 +1607,7 @@ func filterAStockNews(items []model.Item) []model.Item {
 	filtered := make([]model.Item, 0, len(items))
 	for _, item := range items {
 		sourceType := strings.TrimSpace(item.SourceType)
-		if sourceType != "flash" && sourceType != "headline" && sourceType != "jin10_full" && sourceType != "eastmoney_kuaixun" {
+		if sourceType != "flash" && sourceType != "headline" && sourceType != "jin10_full" && sourceType != "eastmoney_kuaixun" && sourceType != "wallstreetcn_a_stock" && sourceType != "cls_telegraph" && sourceType != "sina_finance_7x24" {
 			continue
 		}
 		filtered = append(filtered, item)

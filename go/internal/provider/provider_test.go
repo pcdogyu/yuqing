@@ -30,7 +30,10 @@ func TestRegistryResolve(t *testing.T) {
 	panews := stubProvider{sourceType: SourceTypePANewsNewsflash}
 	theBlock := stubProvider{sourceType: SourceTypeTheBlockLatest}
 	eastmoney := stubProvider{sourceType: SourceTypeEastMoneyKuaixun}
-	registry := Registry{Flash: flash, Headline: headline, Jin10Full: jin10Full, CryptoX: cryptoX, CryptoTelegram: telegram, ForesightNewsflash: foresight, CoinDeskZHLatest: coindesk, PANewsNewsflash: panews, TheBlockLatest: theBlock, EastMoneyKuaixun: eastmoney}
+	wallstreetcn := stubProvider{sourceType: SourceTypeWallStreetCNAStock}
+	cls := stubProvider{sourceType: SourceTypeCLSTelegraph}
+	sina := stubProvider{sourceType: SourceTypeSinaFinance7x24}
+	registry := Registry{Flash: flash, Headline: headline, Jin10Full: jin10Full, CryptoX: cryptoX, CryptoTelegram: telegram, ForesightNewsflash: foresight, CoinDeskZHLatest: coindesk, PANewsNewsflash: panews, TheBlockLatest: theBlock, EastMoneyKuaixun: eastmoney, WallStreetCNAStock: wallstreetcn, CLSTelegraph: cls, SinaFinance7x24: sina}
 
 	if got := registry.Resolve(SourceTypeFlash); got != flash {
 		t.Fatalf("expected flash provider, got %#v", got)
@@ -62,6 +65,15 @@ func TestRegistryResolve(t *testing.T) {
 	if got := registry.Resolve(SourceTypeEastMoneyKuaixun); got != eastmoney {
 		t.Fatalf("expected eastmoney kuaixun provider, got %#v", got)
 	}
+	if got := registry.Resolve(SourceTypeWallStreetCNAStock); got != wallstreetcn {
+		t.Fatalf("expected wallstreetcn a-stock provider, got %#v", got)
+	}
+	if got := registry.Resolve(SourceTypeCLSTelegraph); got != cls {
+		t.Fatalf("expected cls telegraph provider, got %#v", got)
+	}
+	if got := registry.Resolve(SourceTypeSinaFinance7x24); got != sina {
+		t.Fatalf("expected sina finance 7x24 provider, got %#v", got)
+	}
 	if got := registry.Resolve("unknown"); got != nil {
 		t.Fatalf("expected nil for unknown source type, got %#v", got)
 	}
@@ -72,8 +84,8 @@ func TestRegistryAllPreservesSlots(t *testing.T) {
 	registry := Registry{Flash: flash}
 
 	all := registry.All()
-	if len(all) != 10 {
-		t.Fatalf("expected 10 providers, got %d", len(all))
+	if len(all) != 13 {
+		t.Fatalf("expected 13 providers, got %d", len(all))
 	}
 	if all[0] != flash {
 		t.Fatalf("expected flash provider in first slot, got %#v", all[0])
@@ -81,7 +93,9 @@ func TestRegistryAllPreservesSlots(t *testing.T) {
 	if all[1] != nil {
 		t.Fatalf("expected nil second slot when headline provider missing, got %#v", all[1])
 	}
-	if all[2] != nil || all[3] != nil || all[4] != nil || all[5] != nil || all[6] != nil || all[7] != nil || all[8] != nil || all[9] != nil {
-		t.Fatalf("expected nil full/social/news slots when providers missing, got %#v %#v %#v %#v %#v %#v %#v %#v", all[2], all[3], all[4], all[5], all[6], all[7], all[8], all[9])
+	for i := 2; i < len(all); i++ {
+		if all[i] != nil {
+			t.Fatalf("expected nil provider slot %d when provider missing, got %#v", i, all[i])
+		}
 	}
 }

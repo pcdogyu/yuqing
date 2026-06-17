@@ -22,6 +22,7 @@ import (
 	"github.com/pcdogyu/yuqing/go/internal/provider/jin10flash"
 	"github.com/pcdogyu/yuqing/go/internal/provider/jin10full"
 	"github.com/pcdogyu/yuqing/go/internal/provider/jin10xnews"
+	"github.com/pcdogyu/yuqing/go/internal/provider/publicfinance"
 	"github.com/pcdogyu/yuqing/go/internal/service"
 	sqlitestore "github.com/pcdogyu/yuqing/go/internal/store/sqlite"
 )
@@ -134,6 +135,15 @@ func NewCrawler(cfg config.Config, store *sqlitestore.Store) *service.Crawler {
 	if cfg.EastMoneyKuaixunURL != "" {
 		registry.EastMoneyKuaixun = eastmoneykuaixun.NewProvider(httpClient, cfg.EastMoneyKuaixunURL)
 	}
+	if cfg.WallStreetCNAStockURL != "" {
+		registry.WallStreetCNAStock = publicfinance.NewWallStreetCNAStockProvider(httpClient, cfg.WallStreetCNAStockURL)
+	}
+	if cfg.CLSTelegraphURL != "" {
+		registry.CLSTelegraph = publicfinance.NewCLSTelegraphProvider(httpClient, cfg.CLSTelegraphURL)
+	}
+	if cfg.SinaFinance7x24URL != "" {
+		registry.SinaFinance7x24 = publicfinance.NewSinaFinance7x24Provider(httpClient, cfg.SinaFinance7x24URL)
+	}
 	return service.NewCrawler(store, registry, nil)
 }
 
@@ -199,6 +209,9 @@ func LogStartup(serviceName, listenAddr string, cfg config.Config) {
 		Str("panews_newsflash_url", cfg.PANewsNewsflashURL).
 		Str("theblock_latest_url", cfg.TheBlockLatestURL).
 		Str("eastmoney_kuaixun_url", cfg.EastMoneyKuaixunURL).
+		Str("wallstreetcn_a_stock_url", cfg.WallStreetCNAStockURL).
+		Str("cls_telegraph_url", cfg.CLSTelegraphURL).
+		Str("sina_finance_7x24_url", cfg.SinaFinance7x24URL).
 		Str("gateway_web_url", cfg.GatewayWebURL).
 		Str("auth_url", cfg.AuthURL).
 		Str("wechat_url", cfg.WechatURL).

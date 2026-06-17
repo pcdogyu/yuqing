@@ -43,6 +43,9 @@ type Config struct {
 	PANewsNewsflashURL         string
 	TheBlockLatestURL          string
 	EastMoneyKuaixunURL        string
+	WallStreetCNAStockURL      string
+	CLSTelegraphURL            string
+	SinaFinance7x24URL         string
 	AStockAuctionURL           string
 	AStockHoldingURL           string
 	StockResearchURL           string
@@ -145,6 +148,9 @@ func Load() Config {
 		PANewsNewsflashURL:         envOrDefaultAllowEmpty("YUQING_PANEWS_NEWSFLASH_URL", "https://www.panewslab.com/rss.xml?lang=zh&type=NEWS"),
 		TheBlockLatestURL:          envOrDefaultAllowEmpty("YUQING_THEBLOCK_LATEST_URL", "https://www.theblock.co/latest-crypto-news"),
 		EastMoneyKuaixunURL:        envOrDefaultAllowEmpty("YUQING_EASTMONEY_KUAIXUN_URL", "https://kuaixun.eastmoney.com/"),
+		WallStreetCNAStockURL:      envOrDefaultAllowEmpty("YUQING_WALLSTREETCN_A_STOCK_URL", "https://wallstreetcn.com/live/a-stock"),
+		CLSTelegraphURL:            envOrDefaultAllowEmpty("YUQING_CLS_TELEGRAPH_URL", "https://www.cls.cn/telegraph"),
+		SinaFinance7x24URL:         envOrDefaultAllowEmpty("YUQING_SINA_FINANCE_7X24_URL", "https://finance.sina.com.cn/7x24/?tag=10"),
 		AStockAuctionURL:           envOrDefault("YUQING_ASTOCK_AUCTION_URL", ""),
 		AStockHoldingURL:           envOrDefault("YUQING_ASTOCK_HOLDING_URL", ""),
 		StockResearchURL:           envOrDefault("YUQING_STOCK_RESEARCH_URL", ""),
