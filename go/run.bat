@@ -141,7 +141,6 @@ if errorlevel 1 goto :fail
 for %%C in (%PORT_CHECKS%) do (
     for /f "tokens=1,2 delims==" %%A in ("%%C") do (
         echo PORT %%B %%A is up.
-        call :print_service_logs %%A
     )
 )
 call :start_process_service scheduler-service
@@ -173,7 +172,6 @@ call :start_process_core %TARGET_SERVICE%
 if errorlevel 1 exit /b 1
 call :wait_for_process %TARGET_SERVICE%
 if errorlevel 1 exit /b 1
-call :print_service_logs %TARGET_SERVICE%
 exit /b 0
 
 :start_process_core
@@ -249,20 +247,6 @@ if not errorlevel 1 (
 )
 echo PORT %STATUS_PORT% %STATUS_SERVICE% is down.
 exit /b 1
-
-:print_service_logs
-set "LOG_SERVICE=%~1"
-set "OUT_LOG=%LOG_DIR%\%LOG_SERVICE%.out.log"
-set "ERR_LOG=%LOG_DIR%\%LOG_SERVICE%.err.log"
-echo ---- %LOG_SERVICE% startup log ----
-if exist "%OUT_LOG%" (
-    type "%OUT_LOG%"
-)
-if exist "%ERR_LOG%" (
-    for %%I in ("%ERR_LOG%") do if %%~zI GTR 0 type "%ERR_LOG%"
-)
-echo ---- end %LOG_SERVICE% log ----
-exit /b 0
 
 :print_go_test_failures
 if exist "%GO_TEST_LOG%" (
