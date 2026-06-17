@@ -166,6 +166,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-badge{display:inline-flex;align-items:center;padding:5px 9px;border-radius:999px;background:#eef4ec;color:#214e34;font-size:13px;margin-right:6px}
 		.astock-source-list{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 		.astock-table{min-width:960px}
+		.astock-table th{white-space:nowrap}
 		.astock-scroll{overflow:auto}
 		.astock-recommendation-table{width:100%;min-width:1280px}
 		.astock-recommendation-table th,.astock-recommendation-table td{vertical-align:top}

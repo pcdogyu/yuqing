@@ -269,6 +269,7 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		"60天涨跌幅",
 		"现价",
 		"今日跌幅",
+		".astock-table th{white-space:nowrap}",
 		"当日开盘价",
 		"T+1 收盘价",
 		"T+1 收益",
