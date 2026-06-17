@@ -1,6 +1,7 @@
 package apiutil
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -63,12 +64,12 @@ func TestBearerToken(t *testing.T) {
 }
 
 func TestWithUserAndUserIDFromContext(t *testing.T) {
-	ctx := WithUser(t.Context(), 42)
+	ctx := WithUser(context.Background(), 42)
 
 	if got := UserIDFromContext(ctx); got != 42 {
 		t.Fatalf("expected user id 42, got %d", got)
 	}
-	if got := UserIDFromContext(t.Context()); got != 0 {
+	if got := UserIDFromContext(context.Background()); got != 0 {
 		t.Fatalf("expected zero user id for missing context value, got %d", got)
 	}
 }

@@ -1,44 +1,27 @@
-HELP.md
-target/
-!.mvn/wrapper/maven-wrapper.jar
-!**/src/main/**
-!**/src/test/**
-
-### STS ###
-.apt_generated
-.classpath
-.factorypath
-.project
-.settings
-.springBeans
-.sts4-cache
-
-### IntelliJ IDEA ###
-.idea
-*.iws
+# Editors
+.idea/
+.vscode/
 *.iml
 *.ipr
+*.iws
 
-### NetBeans ###
-/nbproject/private/
-/nbbuild/
-/dist/
-/nbdist/
-/.nb-gradle/
-build/
-
-### VS Code ###
-.vscode/
-
-### Go crawler ###
+# Go build and runtime output
+go/bin/
 go/data/
 go/data/*.db
 go/data/*.db-shm
 go/data/*.db-wal
-go/bin/
 go/runtime-logs/
-go/go/
 go/tmp/
+go/go/
+go/**/*.test
+go/coverage.out
+
+# Python helper cache for adapter services
+go/.venv/
+go/services/__pycache__/
+go/services/**/*.pyc
+
 # Local Git pack/index artifacts are handled by the run script; keep them out of the tree if they surface during maintenance.
 .git/objects/pack/*.idx
 .git/objects/pack/*.pack

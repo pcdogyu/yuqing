@@ -138,13 +138,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\release-check.ps1
 
 | 路径 | 说明 |
 | --- | --- |
+| `go/assets` | Go 门户运行时资源 |
 | `go/cmd` | 各服务入口 |
 | `go/internal` | 核心业务实现 |
 | `go/scripts` | 启动、健康检查、发布验收和备份恢复脚本 |
 | `go/docs` | 迁移、接口和运行文档 |
 | `go/db` | 数据库 schema |
 | `go/services` | 外部数据适配服务 |
-| `src/main/resources` | 历史资源归档，非 Java 运行入口 |
 
 ## Java 退场说明
 

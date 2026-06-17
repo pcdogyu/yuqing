@@ -16,22 +16,28 @@ import (
 )
 
 func (s *Store) EnsureDefaultAdmin(ctx context.Context, username, password string) error {
-	var count int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM users WHERE username = ?`, username).Scan(&count); err != nil {
-		return err
-	}
-	if count > 0 {
-		return nil
-	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return err
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err = s.db.ExecContext(ctx, `INSERT INTO users (username, display_name, email, role, status, term_of_validity, password_hash, created_at, updated_at) VALUES (?, ?, '', 'admin', 1, ?, ?, ?, ?)`,
+	query := `INSERT OR IGNORE INTO users (username, display_name, email, role, status, term_of_validity, password_hash, created_at, updated_at) VALUES (?, ?, '', 'admin', 1, ?, ?, ?, ?)`
+	if s.Driver() == "postgres" {
+		query = `INSERT INTO users (username, display_name, email, role, status, term_of_validity, password_hash, created_at, updated_at) VALUES (?, ?, '', 'admin', 1, ?, ?, ?, ?) ON CONFLICT(username) DO NOTHING`
+	}
+	if _, err = s.db.ExecContext(ctx, query,
 		username, "管理员", "2099-01-19T00:00:00Z", string(hash), now, now,
-	)
-	return err
+	); err != nil {
+		return err
+	}
+	var count int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM users WHERE username = ?`, username).Scan(&count); err != nil {
+		return err
+	}
+	if count == 0 {
+		return errors.New("default admin was not created")
+	}
+	return nil
 }
 
 func (s *Store) AuthenticateUser(ctx context.Context, username, password string) (model.User, error) {

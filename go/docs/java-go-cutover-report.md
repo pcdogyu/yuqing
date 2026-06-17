@@ -47,7 +47,7 @@ Go 侧 legacy 注册表保持收口基线：
 
 ## 保留项说明
 
-- `src/main/resources` 暂不随本次删除。该目录包含历史 MyBatis XML、Flyway SQL 和旧静态资源，已经不再是 Java/Maven 启动入口；后续可作为单独的资源归档任务清理。
+- `src/main/resources` 已随根目录 Go 版清理移除；历史 MyBatis XML、Flyway SQL 和旧静态资源不再保留在活跃源码树中。
 - `docs/legacy-route-inventory.md` 继续作为旧入口 `410/404` 基线。
 - Go 发布验收入口仍是 `go/scripts/release-check.ps1` 或等价健康检查。
 

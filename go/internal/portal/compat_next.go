@@ -543,12 +543,10 @@ func (s *Server) handleSystemUploadProductManual(w http.ResponseWriter, r *http.
 
 func locateProductManualPath() (string, error) {
 	candidates := []string{
-		filepath.Clean(filepath.Join("..", "..", "..", "src", "main", "resources", "static", "assets", "images", "新版本舆情产品手册V1.0.pdf")),
-		filepath.Clean(filepath.Join("..", "..", "..", "产品手册V1.0.pdf")),
-		filepath.Clean(filepath.Join("..", "..", "src", "main", "resources", "static", "assets", "images", "新版本舆情产品手册V1.0.pdf")),
-		filepath.Clean(filepath.Join("..", "..", "产品手册V1.0.pdf")),
-		filepath.Clean(filepath.Join("..", "src", "main", "resources", "static", "assets", "images", "新版本舆情产品手册V1.0.pdf")),
-		filepath.Clean(filepath.Join("..", "产品手册V1.0.pdf")),
+		filepath.Clean(filepath.Join("assets", "product-manual.pdf")),
+		filepath.Clean(filepath.Join("go", "assets", "product-manual.pdf")),
+		filepath.Clean(filepath.Join("..", "assets", "product-manual.pdf")),
+		filepath.Clean(filepath.Join("..", "..", "assets", "product-manual.pdf")),
 	}
 	for _, candidate := range candidates {
 		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {

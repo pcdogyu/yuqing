@@ -104,8 +104,13 @@ set "LDFLAGS=-X github.com/pcdogyu/yuqing/go/internal/app.Version=%YUQING_RUN_VE
 if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
 
 echo [3/6] Run go test ./...
-powershell -NoProfile -NonInteractive -InputFormat None -Command "& { Set-Location -LiteralPath '%GO_DIR%'; if (Test-Path -LiteralPath '%GO_TEST_LOG%') { Remove-Item -LiteralPath '%GO_TEST_LOG%' -Force -ErrorAction SilentlyContinue }; Write-Host ('Go test flags: %GO_TEST_FLAGS%'); Write-Host ('Go test log: %GO_TEST_LOG%'); & go test ./... %GO_TEST_FLAGS% 2>&1 | Tee-Object -FilePath '%GO_TEST_LOG%'; exit $LASTEXITCODE }"
-if errorlevel 1 (
+if exist "%GO_TEST_LOG%" del /Q "%GO_TEST_LOG%" >nul 2>nul
+echo Go test flags: %GO_TEST_FLAGS%
+echo Go test log: %GO_TEST_LOG%
+go test ./... %GO_TEST_FLAGS% > "%GO_TEST_LOG%" 2>&1
+set "GO_TEST_EXIT=%ERRORLEVEL%"
+type "%GO_TEST_LOG%"
+if not "%GO_TEST_EXIT%"=="0" (
     call :print_go_test_failures
     goto :fail
 )

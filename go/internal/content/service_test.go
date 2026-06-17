@@ -550,7 +550,18 @@ func TestRestartServiceAPIRequiresTokenAndSubmitsKnownService(t *testing.T) {
 func TestServiceLogsAPIRequiresTokenAndReadsTail(t *testing.T) {
 	store := newContentSearchTestStore(t)
 	root := t.TempDir()
-	t.Chdir(root)
+	previousDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd error: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("Chdir error: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(previousDir); err != nil {
+			t.Fatalf("restore working directory: %v", err)
+		}
+	})
 	if err := os.MkdirAll(filepath.Join(root, "runtime-logs"), 0o755); err != nil {
 		t.Fatalf("MkdirAll error: %v", err)
 	}
