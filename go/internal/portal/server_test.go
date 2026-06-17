@@ -1409,8 +1409,15 @@ func TestAStockMarketViewFiltersDeepDrawdownsAndPenalizesSector(t *testing.T) {
 	if filtered[1].CurrentPrice != "94.00" || filtered[1].TodayPct != "+2.00%" || filtered[1].TodayPctClass != "astock-up" {
 		t.Fatalf("expected penalized current day market fields to be filled, got %+v", filtered[1])
 	}
-	if len(rows) != 2 || strings.Contains(rows[0].Stock+rows[1].Stock, "000001") || strings.Contains(rows[0].Stock+rows[1].Stock, "000004") {
-		t.Fatalf("expected backtest rows to follow filtered recommendations, got %+v", rows)
+	if len(rows) != 4 {
+		t.Fatalf("expected backtest rows to keep generated candidates before market filtering, got %+v", rows)
+	}
+	rowStocks := strings.Join([]string{rows[0].Stock, rows[1].Stock, rows[2].Stock, rows[3].Stock}, " ")
+	if !strings.Contains(rowStocks, "000001") || !strings.Contains(rowStocks, "000004") {
+		t.Fatalf("expected backtest rows to include market-filtered candidates, got %+v", rows)
+	}
+	if rows[3].Status != "等待当日开盘价" {
+		t.Fatalf("expected missing entry candidate to show waiting status, got %+v", rows[3])
 	}
 	if !strings.Contains(status, "过滤回撤股票 1") || !strings.Contains(status, "过滤无当日行情股票 1") {
 		t.Fatalf("expected status to mention drawdown and missing price filtering, got %q", status)

@@ -969,6 +969,7 @@ func initializeAStockRecommendationMarket(recommendations []aStockRecommendation
 
 func applyAStockMarketBars(strategyDate string, recommendations []aStockRecommendation, bars []aStockMarketBar) ([]aStockRecommendation, []aStockBacktestRow, string) {
 	byCode := groupAStockMarketBars(bars)
+	backtestRecommendations := append([]aStockRecommendation(nil), recommendations...)
 	withPrev := 0
 	sectorPenalties := make(map[string]int)
 	filteredCount := 0
@@ -1037,14 +1038,14 @@ func applyAStockMarketBars(strategyDate string, recommendations []aStockRecommen
 	for i := range recommendations {
 		recommendations[i].Rank = i + 1
 	}
-	rows := buildAStockBacktestRows(strategyDate, recommendations, byCode)
+	rows := buildAStockBacktestRows(strategyDate, backtestRecommendations, byCode)
 	completed := 0
 	for _, row := range rows {
 		if row.Status == "已回测" || strings.HasPrefix(row.Status, "已回测") {
 			completed++
 		}
 	}
-	status := fmt.Sprintf("已回测 %d/%d", completed, len(recommendations))
+	status := fmt.Sprintf("已回测 %d/%d", completed, len(rows))
 	if filteredCount > 0 {
 		status = fmt.Sprintf("%s，过滤回撤股票 %d", status, filteredCount)
 	}
