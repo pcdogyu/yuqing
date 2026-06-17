@@ -59,12 +59,12 @@ func (w *Worker) runStockResearchCrawlForRange(ctx context.Context, opts stockRe
 	}
 	if w.cfg.StockResearchPublicEnabled {
 		if sinaItems, err := w.fetchSinaFinanceReports(ctx); err != nil {
-			errs = append(errs, "sina: "+err.Error())
+			log.Warn().Err(err).Str("source", "sina_finance_report").Msg("stock research public source skipped")
 		} else {
 			items = append(items, filterStockResearchItems(sinaItems, opts)...)
 		}
 		if sohuItems, err := w.fetchSohuFinanceReports(ctx); err != nil {
-			errs = append(errs, "sohu: "+err.Error())
+			log.Warn().Err(err).Str("source", "sohu_finance_report").Msg("stock research public source skipped")
 		} else {
 			items = append(items, filterStockResearchItems(sohuItems, opts)...)
 		}

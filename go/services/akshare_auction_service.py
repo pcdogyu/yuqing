@@ -261,6 +261,20 @@ def write_cache(cache_dir: Path, trade_date: str, payload: dict[str, Any]) -> No
     )
 
 
+def item_has_usable_amount(item: dict[str, Any]) -> bool:
+    status = text_value(item.get("status")).lower()
+    if status and status != "ok":
+        return False
+    return finite_float(item.get("auction_amount")) > 0 or finite_float(item.get("auction_volume")) > 0
+
+
+def payload_has_usable_items(payload: dict[str, Any]) -> bool:
+    items = payload.get("items")
+    if not isinstance(items, list):
+        return False
+    return any(isinstance(item, dict) and item_has_usable_amount(item) for item in items)
+
+
 class AuctionService:
     def __init__(self, cache_dir: Path, workers: int, default_limit: int):
         self.cache_dir = cache_dir
@@ -283,14 +297,15 @@ class AuctionService:
 
         if not force:
             cached = read_cache(self.cache_dir, trade_date)
-            if cached is not None:
+            if cached is not None and payload_has_usable_items(cached):
                 return cached
 
-        if trade_date != local_today() and not explicit_codes:
+        if trade_date != local_today():
             return {
+                "_http_status": 422,
                 "date": trade_date,
                 "items": [],
-                "message": "AKShare stock_zh_a_hist_pre_min_em only returns the latest trading day's pre-market minute data; no local cache for requested date.",
+                "message": "AKShare auction adapter only serves the current trading day without a usable local cache for the requested date.",
                 "fetched_at": utc_now_iso(),
             }
 
@@ -328,8 +343,12 @@ class AuctionService:
         }
         if warning:
             payload["warning"] = warning
-        if items:
+        if payload_has_usable_items(payload):
             write_cache(self.cache_dir, trade_date, payload)
+        elif items:
+            payload["warning"] = (
+                (warning + "; ") if warning else ""
+            ) + "AKShare returned rows but no usable auction amounts; cache was not updated."
         return payload
 
 
@@ -364,7 +383,12 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self.write_json(200, self.service.health())
                 return
             if parsed.path == "/api/a-stock/auction":
-                self.write_json(200, self.service.fetch(query))
+                payload = self.service.fetch(query)
+                status = int(payload.get("_http_status", 200))
+                if "_http_status" in payload:
+                    payload = dict(payload)
+                    payload.pop("_http_status", None)
+                self.write_json(status, payload)
                 return
             self.write_json(404, {"error": "not found"})
         except Exception as exc:
@@ -412,6 +436,8 @@ def run_self_test() -> None:
     assert normalize_date("20260617") == "2026-06-17"
     assert finite_float("12.3") == 12.3
     assert finite_float("nan") == 0.0
+    assert payload_has_usable_items({"items": [{"status": "ok", "auction_amount": 1}]})
+    assert not payload_has_usable_items({"items": [{"status": "no_auction_amount", "auction_amount": 0}]})
     print("akshare auction service self-test passed")
 
 

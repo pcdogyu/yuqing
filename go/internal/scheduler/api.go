@@ -125,7 +125,7 @@ func (w *Worker) handleRunAStockAuctionBackfill(wr http.ResponseWriter, r *http.
 	result, err := w.runAStockAuctionBackfill(r.Context(), days, start, end)
 	finishedAt := time.Now().UTC()
 	status := "success"
-	message := fmt.Sprintf("a-stock auction backfill completed: days=%d succeeded=%d failed=%d", result.Days, result.Succeeded, result.Failed)
+	message := fmt.Sprintf("a-stock auction backfill completed: days=%d succeeded=%d skipped=%d failed=%d", result.Days, result.Succeeded, result.Skipped, result.Failed)
 	if err != nil {
 		status = "failed"
 		message = err.Error()

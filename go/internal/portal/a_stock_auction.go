@@ -429,6 +429,15 @@ func schedulerAuctionErrorMessage(body []byte, fallback string) string {
 		if strings.Contains(message, "YUQING_ASTOCK_AUCTION_URL not configured") {
 			return "集合竞价抓取服务未配置：请配置 YUQING_ASTOCK_AUCTION_URL 为 AKShare HTTP 服务地址，并重启 scheduler-service 后再点击获取。"
 		}
+		if strings.Contains(message, "skipped all dates without usable data") {
+			return "集合竞价回溯未写入数据：AKShare 当前接口只能实时抓取最新交易日；历史日期需要依赖过去每日抓取形成的缓存/业务库记录。请先确认 AKShare 适配服务已启动，并在交易日 09:30 后执行今日抓取。"
+		}
+		if strings.Contains(message, "only serves the current trading day") {
+			return "集合竞价历史日期无法实时回抓：当前 AKShare 接口只支持最新交易日，旧交易日只能读取已有缓存。"
+		}
+		if strings.Contains(message, "no usable auction amounts") || strings.Contains(message, "有效成交额/成交量为 0") {
+			return "集合竞价抓取未写入：AKShare 返回了明细但成交额/成交量均为 0，请稍后重试或检查 AKShare 数据源。"
+		}
 		return message
 	}
 	return strings.TrimSpace(fallback)

@@ -415,6 +415,91 @@ func TestRunAStockAuctionBackfillFetchesDateRange(t *testing.T) {
 	}
 }
 
+func TestRunAStockAuctionBackfillSkipsUnsupportedAndZeroAmountDates(t *testing.T) {
+	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		date := r.URL.Query().Get("date")
+		w.Header().Set("Content-Type", "application/json")
+		if date == "2026-06-14" {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"date":    date,
+				"message": "AKShare auction adapter only serves the current trading day without a usable local cache for the requested date.",
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"date": date,
+			"items": []model.AStockAuctionAmount{{
+				TradeDate: date,
+				Code:      "002230",
+				Name:      "科大讯飞",
+				Source:    "akshare_pre_min",
+				Status:    "no_auction_amount",
+			}},
+		})
+	}))
+	defer akshare.Close()
+
+	var writeCount int
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeCount++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer content.Close()
+
+	worker := NewWorker(config.Config{
+		AStockAuctionURL: akshare.URL,
+		ContentURL:       content.URL,
+		HTTPTimeout:      time.Second,
+		ServiceToken:     "secret-token",
+	})
+	result, err := worker.runAStockAuctionBackfill(context.Background(), 0, "2026-06-14", "2026-06-15")
+	if err == nil || !strings.Contains(err.Error(), "skipped all dates without usable data") {
+		t.Fatalf("expected all-skipped backfill error, got err=%v result=%+v", err, result)
+	}
+	if result.Succeeded != 0 || result.Skipped != 2 || result.Failed != 0 || writeCount != 0 {
+		t.Fatalf("expected skipped without writes, got writes=%d result=%+v", writeCount, result)
+	}
+}
+
+func TestRunAStockAuctionCrawlRejectsZeroAmountPayload(t *testing.T) {
+	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"date": "2026-06-16",
+			"items": []model.AStockAuctionAmount{{
+				TradeDate: "2026-06-16",
+				Code:      "002230",
+				Name:      "科大讯飞",
+				Source:    "akshare_pre_min",
+				Status:    "no_auction_amount",
+			}},
+		})
+	}))
+	defer akshare.Close()
+
+	var writeCount int
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeCount++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer content.Close()
+
+	worker := NewWorker(config.Config{
+		AStockAuctionURL: akshare.URL,
+		ContentURL:       content.URL,
+		HTTPTimeout:      time.Second,
+		ServiceToken:     "secret-token",
+	})
+	err := worker.runAStockAuctionCrawlForDate(context.Background(), "2026-06-16")
+	if err == nil || !strings.Contains(err.Error(), "有效成交额/成交量为 0") {
+		t.Fatalf("expected zero amount crawl error, got %v", err)
+	}
+	if writeCount != 0 {
+		t.Fatalf("expected zero amount payload not to be written, got writes=%d", writeCount)
+	}
+}
+
 func TestRunAStockHoldingsBackfillFetchesExternalAndWritesContent(t *testing.T) {
 	var contentPayload struct {
 		Items []model.StockInstitutionHolding `json:"items"`
@@ -541,6 +626,52 @@ func TestRunStockResearchBackfillFetchesExternalAndWritesContent(t *testing.T) {
 	}
 	if len(captured) != 1 || captured[0].Code != "002230" || captured[0].SourceType != "akshare_stock_research" {
 		t.Fatalf("unexpected captured stock research payload: %+v", captured)
+	}
+}
+
+func TestRunStockResearchBackfillSkipsUnavailablePublicSources(t *testing.T) {
+	var captured []model.StockResearchSurvey
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/internal/stock-research/batch" {
+			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
+		}
+		var payload struct {
+			Items []model.StockResearchSurvey `json:"items"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode content payload: %v", err)
+		}
+		captured = payload.Items
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockResearchUpsertResult{Total: len(payload.Items)}})
+	}))
+	defer content.Close()
+
+	sina := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<html><body><table></table></body></html>`))
+	}))
+	defer sina.Close()
+
+	sohu := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer sohu.Close()
+
+	worker := NewWorker(config.Config{
+		ContentURL:                 content.URL,
+		StockResearchPublicEnabled: true,
+		SinaFinanceReportURL:       sina.URL,
+		SohuFinanceReportURL:       sohu.URL,
+		HTTPTimeout:                time.Second,
+		ServiceToken:               "secret-token",
+		ExternalRetryCount:         0,
+		ExternalRetryWait:          time.Millisecond,
+		SchedulerCrawlTimeout:      time.Second,
+	})
+	if err := worker.runStockResearchBackfill(context.Background(), stockResearchCrawlOptions{Start: "2026-06-01", End: "2026-06-17"}); err != nil {
+		t.Fatalf("expected unavailable public sources to be skipped, got %v", err)
+	}
+	if len(captured) != 0 {
+		t.Fatalf("expected empty stock research payload, got %+v", captured)
 	}
 }
 

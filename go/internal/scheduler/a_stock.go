@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -35,6 +36,9 @@ func (w *Worker) runAStockAuctionCrawlForDate(ctx context.Context, tradeDate str
 	if err != nil {
 		return err
 	}
+	if result.Skipped {
+		return fmt.Errorf("a-stock auction crawl skipped for %s: %s", result.Date, result.Message)
+	}
 	log.Info().
 		Str("trade_date", result.Date).
 		Int("total", result.Total).
@@ -44,14 +48,17 @@ func (w *Worker) runAStockAuctionCrawlForDate(ctx context.Context, tradeDate str
 }
 
 type aStockAuctionCrawlResult struct {
-	Date  string `json:"date"`
-	Total int    `json:"total"`
-	OK    int    `json:"ok"`
+	Date    string `json:"date"`
+	Total   int    `json:"total"`
+	OK      int    `json:"ok"`
+	Skipped bool   `json:"skipped,omitempty"`
+	Message string `json:"message,omitempty"`
 }
 
 type aStockAuctionBackfillResult struct {
 	Days      int                        `json:"days"`
 	Succeeded int                        `json:"succeeded"`
+	Skipped   int                        `json:"skipped"`
 	Failed    int                        `json:"failed"`
 	Results   []aStockAuctionCrawlResult `json:"results"`
 	Errors    []string                   `json:"errors"`
@@ -70,7 +77,14 @@ func (w *Worker) runAStockAuctionCrawlForDateResult(ctx context.Context, tradeDa
 		return aStockAuctionCrawlResult{}, err
 	}
 	if !resp.IsSuccess() {
-		return aStockAuctionCrawlResult{}, fmt.Errorf("akshare auction endpoint failed: %s", resp.Status())
+		message := decodeAStockAuctionEndpointMessage(resp.Body(), resp.String())
+		if message == "" {
+			message = resp.Status()
+		}
+		if resp.StatusCode() == http.StatusUnprocessableEntity {
+			return aStockAuctionCrawlResult{Date: tradeDate, Skipped: true, Message: message}, nil
+		}
+		return aStockAuctionCrawlResult{}, fmt.Errorf("akshare auction endpoint failed: %s", message)
 	}
 	payload, err := decodeAStockAuctionPayload(resp.Body())
 	if err != nil {
@@ -87,6 +101,23 @@ func (w *Worker) runAStockAuctionCrawlForDateResult(ctx context.Context, tradeDa
 			payload.Items[i].FetchedAt = time.Now().UTC()
 		}
 	}
+	okCount := 0
+	for _, item := range payload.Items {
+		if isUsableAStockAuctionItem(item) {
+			okCount++
+		}
+	}
+	if len(payload.Items) == 0 || okCount == 0 {
+		message := nonEmpty(strings.TrimSpace(payload.Message), strings.TrimSpace(payload.Warning))
+		if message == "" {
+			if len(payload.Items) == 0 {
+				message = "AKShare 集合竞价接口未返回明细，未写入业务库"
+			} else {
+				message = fmt.Sprintf("AKShare 集合竞价接口返回 %d 条明细，但有效成交额/成交量为 0，未写入业务库", len(payload.Items))
+			}
+		}
+		return aStockAuctionCrawlResult{Date: payload.Date, Total: len(payload.Items), OK: okCount, Skipped: true, Message: message}, nil
+	}
 	writeResp, err := w.client.R().
 		SetContext(ctx).
 		SetBody(payload).
@@ -96,12 +127,6 @@ func (w *Worker) runAStockAuctionCrawlForDateResult(ctx context.Context, tradeDa
 	}
 	if !writeResp.IsSuccess() {
 		return aStockAuctionCrawlResult{}, fmt.Errorf("content auction upsert failed: %s", writeResp.Status())
-	}
-	okCount := 0
-	for _, item := range payload.Items {
-		if strings.TrimSpace(item.Status) == "" || strings.EqualFold(item.Status, "ok") {
-			okCount++
-		}
 	}
 	return aStockAuctionCrawlResult{Date: payload.Date, Total: len(payload.Items), OK: okCount}, nil
 }
@@ -116,18 +141,31 @@ func (w *Worker) runAStockAuctionBackfill(ctx context.Context, days int, start s
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", date, err))
 			continue
 		}
+		if item.Skipped {
+			result.Skipped++
+			result.Results = append(result.Results, item)
+			if strings.TrimSpace(item.Message) != "" {
+				result.Errors = append(result.Errors, fmt.Sprintf("%s: %s", date, item.Message))
+			}
+			continue
+		}
 		result.Succeeded++
 		result.Results = append(result.Results, item)
 	}
 	if result.Succeeded == 0 && result.Failed > 0 {
 		return result, fmt.Errorf("a-stock auction backfill failed: %s", strings.Join(result.Errors, "; "))
 	}
+	if result.Succeeded == 0 && result.Skipped > 0 {
+		return result, fmt.Errorf("a-stock auction backfill skipped all dates without usable data: %s", strings.Join(result.Errors, "; "))
+	}
 	return result, nil
 }
 
 type aStockAuctionPayload struct {
-	Date  string                      `json:"date"`
-	Items []model.AStockAuctionAmount `json:"items"`
+	Date    string                      `json:"date"`
+	Items   []model.AStockAuctionAmount `json:"items"`
+	Message string                      `json:"message"`
+	Warning string                      `json:"warning"`
 }
 
 func decodeAStockAuctionPayload(body []byte) (aStockAuctionPayload, error) {
@@ -154,6 +192,44 @@ func decodeAStockAuctionPayload(body []byte) (aStockAuctionPayload, error) {
 		payload.Items = envelope.Data.Items
 	}
 	return payload, nil
+}
+
+func decodeAStockAuctionEndpointMessage(body []byte, fallback string) string {
+	var envelope struct {
+		Message string `json:"message"`
+		Error   string `json:"error"`
+		Data    struct {
+			Message string `json:"message"`
+			Error   string `json:"error"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &envelope); err == nil {
+		return nonEmpty(
+			strings.TrimSpace(envelope.Message),
+			strings.TrimSpace(envelope.Error),
+			strings.TrimSpace(envelope.Data.Message),
+			strings.TrimSpace(envelope.Data.Error),
+		)
+	}
+	return strings.TrimSpace(fallback)
+}
+
+func isUsableAStockAuctionItem(item model.AStockAuctionAmount) bool {
+	status := strings.TrimSpace(item.Status)
+	if status != "" && !strings.EqualFold(status, "ok") {
+		return false
+	}
+	return item.AuctionAmount > 0 || item.AuctionVolume > 0
+}
+
+func nonEmpty(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func aStockAuctionBackfillDates(days int, start string, end string, now time.Time) []string {
