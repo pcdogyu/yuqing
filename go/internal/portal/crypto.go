@@ -28,6 +28,7 @@ type cryptoDiagnostics struct {
 	ForesightConfigured bool
 	CoinDeskConfigured  bool
 	PANewsConfigured    bool
+	TheBlockConfigured  bool
 }
 
 func (s *Server) handleCryptoPage(w http.ResponseWriter, r *http.Request, user any) {
@@ -232,6 +233,8 @@ func (s *Server) handleCryptoPageAction(w http.ResponseWriter, r *http.Request) 
 		message = s.triggerCryptoCrawl("coindesk_zh_latest", "CoinDesk 中文抓取已触发", "CoinDesk 中文抓取触发失败")
 	case "crawl_panews_newsflash":
 		message = s.triggerCryptoCrawl("panews_newsflash", "PANews 抓取已触发", "PANews 抓取触发失败")
+	case "crawl_theblock_latest":
+		message = s.triggerCryptoCrawl("theblock_latest", "The Block 抓取已触发", "The Block 抓取触发失败")
 	case "analysis":
 		resp, err := s.client.R().Post(s.cfg.AnalysisURL + "/api/v1/admin/tasks/analysis/refresh")
 		if err != nil || !resp.IsSuccess() {
@@ -269,6 +272,7 @@ func renderCryptoActions(b *strings.Builder, pair string) {
 	writeCryptoActionForm(b, pair, "crawl_foresight_newsflash", "抓取 Foresight")
 	writeCryptoActionForm(b, pair, "crawl_coindesk_zh_latest", "抓取 CoinDesk 中文")
 	writeCryptoActionForm(b, pair, "crawl_panews_newsflash", "抓取 PANews")
+	writeCryptoActionForm(b, pair, "crawl_theblock_latest", "抓取 The Block")
 	writeCryptoActionForm(b, pair, "analysis", "刷新分析")
 	b.WriteString(`</div></section>`)
 }
@@ -294,9 +298,10 @@ func (s *Server) loadCryptoDiagnostics() cryptoDiagnostics {
 		ForesightConfigured: strings.TrimSpace(s.cfg.ForesightNewsflashURL) != "",
 		CoinDeskConfigured:  strings.TrimSpace(s.cfg.CoinDeskZHLatestURL) != "",
 		PANewsConfigured:    strings.TrimSpace(s.cfg.PANewsNewsflashURL) != "",
+		TheBlockConfigured:  strings.TrimSpace(s.cfg.TheBlockLatestURL) != "",
 	}
 	if strings.TrimSpace(s.cfg.CrawlerURL) != "" {
-		for _, sourceType := range []string{"crypto_x", "crypto_telegram", "foresight_newsflash", "coindesk_zh_latest", "panews_newsflash"} {
+		for _, sourceType := range []string{"crypto_x", "crypto_telegram", "foresight_newsflash", "coindesk_zh_latest", "panews_newsflash", "theblock_latest"} {
 			runs := []model.CrawlRun{}
 			if err := s.getJSON(s.cfg.CrawlerURL+"/api/v1/admin/tasks/crawl/runs?limit=5&source_type="+url.QueryEscape(sourceType), &runs); err == nil {
 				diag.CrawlRuns = append(diag.CrawlRuns, runs...)
@@ -307,7 +312,7 @@ func (s *Server) loadCryptoDiagnostics() cryptoDiagnostics {
 		jobs := []model.OperationSchedulerJob{}
 		if err := s.getJSON(s.cfg.SchedulerURL+"/api/v1/scheduler/jobs", &jobs); err == nil {
 			for _, job := range jobs {
-				if job.Name == "crypto-x-crawl" || job.Name == "crypto-telegram-crawl" || job.Name == "foresight-newsflash-crawl" || job.Name == "coindesk-zh-latest-crawl" || job.Name == "panews-newsflash-crawl" {
+				if job.Name == "crypto-x-crawl" || job.Name == "crypto-telegram-crawl" || job.Name == "foresight-newsflash-crawl" || job.Name == "coindesk-zh-latest-crawl" || job.Name == "panews-newsflash-crawl" || job.Name == "theblock-latest-crawl" {
 					diag.SchedulerJobs = append(diag.SchedulerJobs, job)
 				}
 			}
@@ -328,6 +333,8 @@ func renderCryptoDiagnostics(b *strings.Builder, diag cryptoDiagnostics) {
 	b.WriteString(configStatusText(diag.CoinDeskConfigured))
 	b.WriteString(` / PANews `)
 	b.WriteString(configStatusText(diag.PANewsConfigured))
+	b.WriteString(` / The Block `)
+	b.WriteString(configStatusText(diag.TheBlockConfigured))
 	b.WriteString(`。</p>`)
 	b.WriteString(`<p class="crypto-muted">若当前币对无新闻或社媒证据，通常是未配置源、未抓取、抓取失败，或最近抓取内容未命中该币对。</p></div>`)
 	b.WriteString(`<h3>Crypto Scheduler</h3><table><tr><th>任务</th><th>启用</th><th>最近状态</th><th>下次执行</th><th>说明</th></tr>`)

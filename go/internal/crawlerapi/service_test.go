@@ -42,6 +42,9 @@ func TestValidSourceType(t *testing.T) {
 	if got := validSourceType("panews_newsflash"); got != "panews_newsflash" {
 		t.Fatalf("expected panews_newsflash, got %q", got)
 	}
+	if got := validSourceType("theblock_latest"); got != "theblock_latest" {
+		t.Fatalf("expected theblock_latest, got %q", got)
+	}
 	if got := validSourceType("eastmoney_kuaixun"); got != "eastmoney_kuaixun" {
 		t.Fatalf("expected eastmoney_kuaixun, got %q", got)
 	}

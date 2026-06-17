@@ -41,6 +41,7 @@ type Config struct {
 	ForesightNewsflashURL      string
 	CoinDeskZHLatestURL        string
 	PANewsNewsflashURL         string
+	TheBlockLatestURL          string
 	EastMoneyKuaixunURL        string
 	AStockAuctionURL           string
 	HTTPTimeout                time.Duration
@@ -55,6 +56,7 @@ type Config struct {
 	ForesightNewsflashInterval time.Duration
 	CoinDeskZHLatestInterval   time.Duration
 	PANewsNewsflashInterval    time.Duration
+	TheBlockLatestInterval     time.Duration
 	AnalysisInterval           time.Duration
 	WechatCleanupInterval      time.Duration
 	WechatPushInterval         time.Duration
@@ -134,6 +136,7 @@ func Load() Config {
 		ForesightNewsflashURL:      envOrDefaultAllowEmpty("YUQING_FORESIGHT_NEWSFLASH_URL", "https://foresightnews.pro/news"),
 		CoinDeskZHLatestURL:        envOrDefaultAllowEmpty("YUQING_COINDESK_ZH_LATEST_URL", "https://www.coindesk.com/zh/latest-crypto-news"),
 		PANewsNewsflashURL:         envOrDefaultAllowEmpty("YUQING_PANEWS_NEWSFLASH_URL", "https://www.panewslab.com/rss.xml?lang=zh&type=NEWS"),
+		TheBlockLatestURL:          envOrDefaultAllowEmpty("YUQING_THEBLOCK_LATEST_URL", "https://www.theblock.co/latest-crypto-news"),
 		EastMoneyKuaixunURL:        envOrDefaultAllowEmpty("YUQING_EASTMONEY_KUAIXUN_URL", "https://kuaixun.eastmoney.com/"),
 		AStockAuctionURL:           envOrDefault("YUQING_ASTOCK_AUCTION_URL", ""),
 		HTTPTimeout:                envDurationSeconds(20, "YUQING_HTTP_TIMEOUT_SEC", "JIN10_HTTP_TIMEOUT_SEC"),
@@ -148,6 +151,7 @@ func Load() Config {
 		ForesightNewsflashInterval: envDurationSeconds(120, "YUQING_FORESIGHT_NEWSFLASH_INTERVAL_SEC"),
 		CoinDeskZHLatestInterval:   envDurationSeconds(300, "YUQING_COINDESK_ZH_LATEST_INTERVAL_SEC"),
 		PANewsNewsflashInterval:    envDurationSeconds(120, "YUQING_PANEWS_NEWSFLASH_INTERVAL_SEC"),
+		TheBlockLatestInterval:     envDurationSeconds(300, "YUQING_THEBLOCK_LATEST_INTERVAL_SEC"),
 		AnalysisInterval:           envDurationSeconds(120, "YUQING_ANALYSIS_INTERVAL_SEC"),
 		WechatCleanupInterval:      envDurationSeconds(3600, "YUQING_WECHAT_CLEANUP_INTERVAL_SEC"),
 		WechatPushInterval:         envDurationSeconds(86400, "YUQING_WECHAT_PUSH_INTERVAL_SEC"),

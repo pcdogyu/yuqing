@@ -68,6 +68,9 @@ func main() {
 	if cfg.PANewsNewsflashURL != "" {
 		registry.PANewsNewsflash = cryptonews.NewPANewsNewsflashProvider(httpClient, cfg.PANewsNewsflashURL)
 	}
+	if cfg.TheBlockLatestURL != "" {
+		registry.TheBlockLatest = cryptonews.NewTheBlockLatestProvider(httpClient, cfg.TheBlockLatestURL)
+	}
 	if cfg.EastMoneyKuaixunURL != "" {
 		registry.EastMoneyKuaixun = eastmoneykuaixun.NewProvider(httpClient, cfg.EastMoneyKuaixunURL)
 	}

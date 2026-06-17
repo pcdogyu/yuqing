@@ -199,3 +199,33 @@ func TestParsePANewsRSS(t *testing.T) {
 		t.Fatalf("expected panews timing/url metadata, got %+v", item)
 	}
 }
+
+func TestParseTheBlockRSS(t *testing.T) {
+	rss := []byte(`<?xml version="1.0" encoding="UTF-8"?><rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/"><channel><item>
+<title><![CDATA[Bitcoin ETF issuers see renewed inflows]]></title>
+<description><![CDATA[Spot bitcoin ETFs recorded renewed demand.]]></description>
+<link>https://www.theblock.co/post/123456/bitcoin-etf-inflows</link>
+<guid isPermaLink="false">theblock-123456</guid>
+<pubDate>Tue, 16 Jun 2026 10:30:00 GMT</pubDate>
+<category>Markets</category>
+<content:encoded><![CDATA[<p>Bitcoin ETF demand improved as BTC liquidity recovered.</p><img src="https://www.theblock.co/image.jpg">]]></content:encoded>
+</item></channel></rss>`)
+
+	items, err := ParseTheBlockRSS(rss, "https://www.theblock.co/latest-crypto-news", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("ParseTheBlockRSS error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected one item, got %+v", items)
+	}
+	item := items[0]
+	if item.SourceType != provider.SourceTypeTheBlockLatest || item.Title != "Bitcoin ETF issuers see renewed inflows" {
+		t.Fatalf("unexpected theblock item: %+v", item)
+	}
+	if !strings.Contains(item.Content, "BTC liquidity") || item.FromText != "The Block" || !item.HasImage {
+		t.Fatalf("expected theblock content metadata, got %+v", item)
+	}
+	if item.PublishTime == "" || item.DetailURL != "https://www.theblock.co/post/123456/bitcoin-etf-inflows" || item.TagFlags != "Markets" {
+		t.Fatalf("expected theblock timing/url/tag metadata, got %+v", item)
+	}
+}

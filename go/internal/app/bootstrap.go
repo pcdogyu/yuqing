@@ -128,6 +128,9 @@ func NewCrawler(cfg config.Config, store *sqlitestore.Store) *service.Crawler {
 	if cfg.PANewsNewsflashURL != "" {
 		registry.PANewsNewsflash = cryptonews.NewPANewsNewsflashProvider(httpClient, cfg.PANewsNewsflashURL)
 	}
+	if cfg.TheBlockLatestURL != "" {
+		registry.TheBlockLatest = cryptonews.NewTheBlockLatestProvider(httpClient, cfg.TheBlockLatestURL)
+	}
 	if cfg.EastMoneyKuaixunURL != "" {
 		registry.EastMoneyKuaixun = eastmoneykuaixun.NewProvider(httpClient, cfg.EastMoneyKuaixunURL)
 	}
@@ -170,6 +173,7 @@ func LogStartup(serviceName, listenAddr string, cfg config.Config) {
 		Dur("foresight_newsflash_interval", cfg.ForesightNewsflashInterval).
 		Dur("coindesk_zh_latest_interval", cfg.CoinDeskZHLatestInterval).
 		Dur("panews_newsflash_interval", cfg.PANewsNewsflashInterval).
+		Dur("theblock_latest_interval", cfg.TheBlockLatestInterval).
 		Dur("analysis_interval", cfg.AnalysisInterval).
 		Dur("session_ttl", cfg.SessionTTL).
 		Str("database_driver", cfg.DatabaseDriver).
@@ -193,6 +197,7 @@ func LogStartup(serviceName, listenAddr string, cfg config.Config) {
 		Str("foresight_newsflash_url", cfg.ForesightNewsflashURL).
 		Str("coindesk_zh_latest_url", cfg.CoinDeskZHLatestURL).
 		Str("panews_newsflash_url", cfg.PANewsNewsflashURL).
+		Str("theblock_latest_url", cfg.TheBlockLatestURL).
 		Str("eastmoney_kuaixun_url", cfg.EastMoneyKuaixunURL).
 		Str("gateway_web_url", cfg.GatewayWebURL).
 		Str("auth_url", cfg.AuthURL).

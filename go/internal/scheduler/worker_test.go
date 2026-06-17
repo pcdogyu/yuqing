@@ -182,10 +182,10 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	if err := json.Unmarshal(listRR.Body.Bytes(), &listEnvelope); err != nil {
 		t.Fatalf("unmarshal jobs list: %v", err)
 	}
-	if len(listEnvelope.Data) != 25 {
-		t.Fatalf("expected 25 scheduler jobs, got %d", len(listEnvelope.Data))
+	if len(listEnvelope.Data) != 26 {
+		t.Fatalf("expected 26 scheduler jobs, got %d", len(listEnvelope.Data))
 	}
-	var heartbeatJob, hotJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, aStockMorningJob, aStockAfternoonJob, aStockAuctionJob Job
+	var heartbeatJob, hotJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningJob, aStockAfternoonJob, aStockAuctionJob Job
 	for _, job := range listEnvelope.Data {
 		switch job.Name {
 		case "crawl-link-heartbeat":
@@ -202,6 +202,8 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 			coindeskJob = job
 		case "panews-newsflash-crawl":
 			panewsJob = job
+		case "theblock-latest-crawl":
+			theBlockJob = job
 		case "a-stock-morning-recommendation":
 			aStockMorningJob = job
 		case "a-stock-afternoon-recommendation":
@@ -225,6 +227,9 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	if panewsJob.Name == "" {
 		t.Fatalf("expected panews scheduler job, got %+v", listEnvelope.Data)
 	}
+	if theBlockJob.Name == "" {
+		t.Fatalf("expected theblock scheduler job, got %+v", listEnvelope.Data)
+	}
 	if aStockMorningJob.Cron != "0 30 9 * * ?" || aStockMorningJob.NextRunAt == nil {
 		t.Fatalf("expected A股 morning recommendation cron metadata, got %+v", aStockMorningJob)
 	}
@@ -234,8 +239,8 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	if aStockAuctionJob.Cron != "0 30 9 * * ?" || aStockAuctionJob.Enabled {
 		t.Fatalf("expected A股 auction crawl disabled by default with 09:30 cron, got %+v", aStockAuctionJob)
 	}
-	if cryptoXJob.Enabled || cryptoTelegramJob.Enabled || foresightJob.Enabled || coindeskJob.Enabled || panewsJob.Enabled {
-		t.Fatalf("expected crypto jobs disabled without endpoint urls, got x=%+v telegram=%+v foresight=%+v coindesk=%+v panews=%+v", cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob)
+	if cryptoXJob.Enabled || cryptoTelegramJob.Enabled || foresightJob.Enabled || coindeskJob.Enabled || panewsJob.Enabled || theBlockJob.Enabled {
+		t.Fatalf("expected crypto jobs disabled without endpoint urls, got x=%+v telegram=%+v foresight=%+v coindesk=%+v panews=%+v theblock=%+v", cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob)
 	}
 
 	runReq := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/jobs/hot-data-refresh/run", nil)
@@ -408,6 +413,15 @@ func TestRunCrawlLinkHeartbeatRecordsFailures(t *testing.T) {
 	}
 }
 
+func TestTheBlockHeartbeatUsesRSSForLatestPage(t *testing.T) {
+	if got := theBlockHeartbeatURL("https://www.theblock.co/latest-crypto-news"); got != "https://www.theblock.co/rss.xml" {
+		t.Fatalf("expected The Block latest page heartbeat to use RSS, got %q", got)
+	}
+	if got := theBlockHeartbeatURL("https://example.com/custom.xml"); got != "https://example.com/custom.xml" {
+		t.Fatalf("expected custom The Block heartbeat URL to pass through, got %q", got)
+	}
+}
+
 func TestSchedulerCryptoJobsEnabledWhenEndpointsConfigured(t *testing.T) {
 	worker := NewWorker(config.Config{
 		HTTPTimeout:                time.Second,
@@ -416,11 +430,13 @@ func TestSchedulerCryptoJobsEnabledWhenEndpointsConfigured(t *testing.T) {
 		ForesightNewsflashURL:      "https://foresight.example.com/news",
 		CoinDeskZHLatestURL:        "https://coindesk.example.com/zh/latest",
 		PANewsNewsflashURL:         "https://panews.example.com/rss.xml",
+		TheBlockLatestURL:          "https://www.theblock.co/latest-crypto-news",
 		CryptoXInterval:            2 * time.Minute,
 		CryptoTelegramInterval:     3 * time.Minute,
 		ForesightNewsflashInterval: 4 * time.Minute,
 		CoinDeskZHLatestInterval:   5 * time.Minute,
 		PANewsNewsflashInterval:    6 * time.Minute,
+		TheBlockLatestInterval:     7 * time.Minute,
 		WechatCleanupInterval:      time.Hour,
 		WechatPushInterval:         time.Hour,
 		FlashInterval:              time.Hour,
@@ -428,7 +444,7 @@ func TestSchedulerCryptoJobsEnabledWhenEndpointsConfigured(t *testing.T) {
 		AnalysisInterval:           time.Hour,
 	})
 
-	var cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob Job
+	var cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob Job
 	for _, job := range worker.Jobs() {
 		switch job.Name {
 		case "crypto-x-crawl":
@@ -441,6 +457,8 @@ func TestSchedulerCryptoJobsEnabledWhenEndpointsConfigured(t *testing.T) {
 			coindeskJob = job
 		case "panews-newsflash-crawl":
 			panewsJob = job
+		case "theblock-latest-crawl":
+			theBlockJob = job
 		}
 	}
 
@@ -458,6 +476,9 @@ func TestSchedulerCryptoJobsEnabledWhenEndpointsConfigured(t *testing.T) {
 	}
 	if !panewsJob.Enabled || panewsJob.IntervalSec != 360 || panewsJob.NextRunAt == nil {
 		t.Fatalf("expected enabled panews job with runtime metadata, got %+v", panewsJob)
+	}
+	if !theBlockJob.Enabled || theBlockJob.IntervalSec != 420 || theBlockJob.NextRunAt == nil {
+		t.Fatalf("expected enabled theblock job with runtime metadata, got %+v", theBlockJob)
 	}
 }
 

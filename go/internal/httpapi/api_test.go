@@ -73,6 +73,9 @@ func TestValidSourceType(t *testing.T) {
 	if got := validSourceType(provider.SourceTypePANewsNewsflash); got != provider.SourceTypePANewsNewsflash {
 		t.Fatalf("expected panews source type, got %q", got)
 	}
+	if got := validSourceType(provider.SourceTypeTheBlockLatest); got != provider.SourceTypeTheBlockLatest {
+		t.Fatalf("expected theblock source type, got %q", got)
+	}
 	if got := validSourceType(provider.SourceTypeEastMoneyKuaixun); got != provider.SourceTypeEastMoneyKuaixun {
 		t.Fatalf("expected eastmoney kuaixun source type, got %q", got)
 	}

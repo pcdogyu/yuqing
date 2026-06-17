@@ -346,7 +346,7 @@ func cryptoArticleScore(item model.Item, term string, resolution model.CryptoPai
 		sourceScore = 1.5
 	case "flash":
 		sourceScore = 1.2
-	case "foresight_newsflash", "coindesk_zh_latest", "panews_newsflash":
+	case "foresight_newsflash", "coindesk_zh_latest", "panews_newsflash", "theblock_latest":
 		sourceScore = 1.4
 	}
 	return termScore + recencyScore + sourceScore

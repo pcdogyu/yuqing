@@ -65,6 +65,9 @@ func main() {
 	if cfg.PANewsNewsflashURL != "" {
 		registry.PANewsNewsflash = cryptonews.NewPANewsNewsflashProvider(httpClient, cfg.PANewsNewsflashURL)
 	}
+	if cfg.TheBlockLatestURL != "" {
+		registry.TheBlockLatest = cryptonews.NewTheBlockLatestProvider(httpClient, cfg.TheBlockLatestURL)
+	}
 	if cfg.EastMoneyKuaixunURL != "" {
 		registry.EastMoneyKuaixun = eastmoneykuaixun.NewProvider(httpClient, cfg.EastMoneyKuaixunURL)
 	}
@@ -92,6 +95,9 @@ func main() {
 	}
 	if cfg.PANewsNewsflashURL != "" {
 		go runLoop(ctx, crawler, provider.SourceTypePANewsNewsflash, cfg.PANewsNewsflashInterval)
+	}
+	if cfg.TheBlockLatestURL != "" {
+		go runLoop(ctx, crawler, provider.SourceTypeTheBlockLatest, cfg.TheBlockLatestInterval)
 	}
 
 	app.LogServiceReady("worker", "")

@@ -276,6 +276,16 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 			},
 		}, "PANewsNewsflashCrawler", "0 1/2 * * * ?"),
 		withJobMeta(jobDefinition{
+			Name:        "theblock-latest-crawl",
+			Group:       "crawl",
+			Description: "The Block 最新加密新闻抓取，补充币对新闻证据",
+			Interval:    w.cfg.TheBlockLatestInterval,
+			Enabled:     strings.TrimSpace(w.cfg.TheBlockLatestURL) != "",
+			Run: func(ctx context.Context) error {
+				return w.runCrawl(ctx, "theblock_latest")
+			},
+		}, "TheBlockLatestCrawler", "0 2/5 * * * ?"),
+		withJobMeta(jobDefinition{
 			Name:        "a-stock-morning-recommendation",
 			Group:       "a-stock",
 			Description: "A股上午推荐：09:30 抓取 08:00-09:30 财经新闻并生成相关股票推荐",
@@ -524,6 +534,7 @@ func (w *Worker) crawlLinkHeartbeatSites() []crawlLinkHeartbeatSite {
 		crawlLinkHeartbeatSite{SourceType: "foresight_newsflash", Name: "Foresight News 快讯", URL: w.cfg.ForesightNewsflashURL},
 		crawlLinkHeartbeatSite{SourceType: "coindesk_zh_latest", Name: "CoinDesk 中文最新", URL: w.cfg.CoinDeskZHLatestURL},
 		crawlLinkHeartbeatSite{SourceType: "panews_newsflash", Name: "PANews 快讯", URL: w.cfg.PANewsNewsflashURL},
+		crawlLinkHeartbeatSite{SourceType: "theblock_latest", Name: "The Block 最新新闻", URL: theBlockHeartbeatURL(w.cfg.TheBlockLatestURL)},
 		crawlLinkHeartbeatSite{SourceType: "crypto_x", Name: "Crypto X", URL: w.cfg.CryptoXURL},
 		crawlLinkHeartbeatSite{SourceType: "crypto_telegram", Name: "Crypto Telegram", URL: w.cfg.CryptoTelegramURL},
 		crawlLinkHeartbeatSite{SourceType: "a_stock_auction", Name: "A股集合竞价行情", URL: w.cfg.AStockAuctionURL},
@@ -531,6 +542,14 @@ func (w *Worker) crawlLinkHeartbeatSites() []crawlLinkHeartbeatSite {
 	return slices.DeleteFunc(sites, func(site crawlLinkHeartbeatSite) bool {
 		return strings.TrimSpace(site.URL) == ""
 	})
+}
+
+func theBlockHeartbeatURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if strings.Contains(raw, "theblock.co/latest-crypto-news") {
+		return "https://www.theblock.co/rss.xml"
+	}
+	return raw
 }
 
 func (w *Worker) runCrawlLinkHeartbeatForSites(ctx context.Context, sites []crawlLinkHeartbeatSite) error {

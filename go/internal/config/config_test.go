@@ -91,6 +91,9 @@ func TestLoadUsesDefaults(t *testing.T) {
 	if cfg.PANewsNewsflashURL != "https://www.panewslab.com/rss.xml?lang=zh&type=NEWS" {
 		t.Fatalf("expected default panews url, got %q", cfg.PANewsNewsflashURL)
 	}
+	if cfg.TheBlockLatestURL != "https://www.theblock.co/latest-crypto-news" {
+		t.Fatalf("expected default theblock url, got %q", cfg.TheBlockLatestURL)
+	}
 	if cfg.EastMoneyKuaixunURL != "https://kuaixun.eastmoney.com/" {
 		t.Fatalf("expected default eastmoney kuaixun url, got %q", cfg.EastMoneyKuaixunURL)
 	}
@@ -120,6 +123,9 @@ func TestLoadUsesDefaults(t *testing.T) {
 	}
 	if cfg.PANewsNewsflashInterval != 120*time.Second {
 		t.Fatalf("expected default panews interval, got %s", cfg.PANewsNewsflashInterval)
+	}
+	if cfg.TheBlockLatestInterval != 300*time.Second {
+		t.Fatalf("expected default theblock interval, got %s", cfg.TheBlockLatestInterval)
 	}
 	if cfg.LogLevel != "info" {
 		t.Fatalf("expected default log level, got %q", cfg.LogLevel)
@@ -157,6 +163,7 @@ func TestLoadPrefersPrimaryAndAliasEnv(t *testing.T) {
 	t.Setenv("YUQING_FORESIGHT_NEWSFLASH_URL", "https://foresight.example.com/news")
 	t.Setenv("YUQING_COINDESK_ZH_LATEST_URL", "https://coindesk.example.com/zh/latest")
 	t.Setenv("YUQING_PANEWS_NEWSFLASH_URL", "https://panews.example.com/rss.xml")
+	t.Setenv("YUQING_THEBLOCK_LATEST_URL", "https://theblock.example.com/latest")
 	t.Setenv("YUQING_EASTMONEY_KUAIXUN_URL", "https://eastmoney.example.com/kuaixun")
 	t.Setenv("YUQING_ASTOCK_AUCTION_URL", "http://akshare.example.com")
 	t.Setenv("YUQING_HTTP_TIMEOUT_SEC", "45")
@@ -178,6 +185,7 @@ func TestLoadPrefersPrimaryAndAliasEnv(t *testing.T) {
 	t.Setenv("YUQING_FORESIGHT_NEWSFLASH_INTERVAL_SEC", "121")
 	t.Setenv("YUQING_COINDESK_ZH_LATEST_INTERVAL_SEC", "301")
 	t.Setenv("YUQING_PANEWS_NEWSFLASH_INTERVAL_SEC", "122")
+	t.Setenv("YUQING_THEBLOCK_LATEST_INTERVAL_SEC", "303")
 	t.Setenv("YUQING_WECHAT_ADDR", ":18087")
 	t.Setenv("YUQING_WECHAT_URL", "http://127.0.0.1:18087")
 
@@ -234,6 +242,9 @@ func TestLoadPrefersPrimaryAndAliasEnv(t *testing.T) {
 	if cfg.PANewsNewsflashURL != "https://panews.example.com/rss.xml" {
 		t.Fatalf("expected panews url loaded, got %q", cfg.PANewsNewsflashURL)
 	}
+	if cfg.TheBlockLatestURL != "https://theblock.example.com/latest" {
+		t.Fatalf("expected theblock url loaded, got %q", cfg.TheBlockLatestURL)
+	}
 	if cfg.EastMoneyKuaixunURL != "https://eastmoney.example.com/kuaixun" {
 		t.Fatalf("expected eastmoney kuaixun url loaded, got %q", cfg.EastMoneyKuaixunURL)
 	}
@@ -246,6 +257,9 @@ func TestLoadPrefersPrimaryAndAliasEnv(t *testing.T) {
 	if cfg.PANewsNewsflashInterval != 122*time.Second {
 		t.Fatalf("expected panews interval loaded, got %s", cfg.PANewsNewsflashInterval)
 	}
+	if cfg.TheBlockLatestInterval != 303*time.Second {
+		t.Fatalf("expected theblock interval loaded, got %s", cfg.TheBlockLatestInterval)
+	}
 	if cfg.WechatAddr != ":18087" || cfg.WechatURL != "http://127.0.0.1:18087" {
 		t.Fatalf("expected wechat service config loaded, got addr=%q url=%q", cfg.WechatAddr, cfg.WechatURL)
 	}
@@ -256,12 +270,13 @@ func TestCryptoNewsURLsCanBeDisabledWithExplicitEmptyEnv(t *testing.T) {
 	t.Setenv("YUQING_FORESIGHT_NEWSFLASH_URL", "")
 	t.Setenv("YUQING_COINDESK_ZH_LATEST_URL", "")
 	t.Setenv("YUQING_PANEWS_NEWSFLASH_URL", "")
+	t.Setenv("YUQING_THEBLOCK_LATEST_URL", "")
 	t.Setenv("YUQING_EASTMONEY_KUAIXUN_URL", "")
 
 	cfg := Load()
 
-	if cfg.ForesightNewsflashURL != "" || cfg.CoinDeskZHLatestURL != "" || cfg.PANewsNewsflashURL != "" || cfg.EastMoneyKuaixunURL != "" {
-		t.Fatalf("expected explicit empty news URLs to disable providers, got foresight=%q coindesk=%q panews=%q eastmoney=%q", cfg.ForesightNewsflashURL, cfg.CoinDeskZHLatestURL, cfg.PANewsNewsflashURL, cfg.EastMoneyKuaixunURL)
+	if cfg.ForesightNewsflashURL != "" || cfg.CoinDeskZHLatestURL != "" || cfg.PANewsNewsflashURL != "" || cfg.TheBlockLatestURL != "" || cfg.EastMoneyKuaixunURL != "" {
+		t.Fatalf("expected explicit empty news URLs to disable providers, got foresight=%q coindesk=%q panews=%q theblock=%q eastmoney=%q", cfg.ForesightNewsflashURL, cfg.CoinDeskZHLatestURL, cfg.PANewsNewsflashURL, cfg.TheBlockLatestURL, cfg.EastMoneyKuaixunURL)
 	}
 }
 

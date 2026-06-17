@@ -16,6 +16,7 @@ const (
 	SourceTypeForesightNewsflash = "foresight_newsflash"
 	SourceTypeCoinDeskZHLatest   = "coindesk_zh_latest"
 	SourceTypePANewsNewsflash    = "panews_newsflash"
+	SourceTypeTheBlockLatest     = "theblock_latest"
 	SourceTypeEastMoneyKuaixun   = "eastmoney_kuaixun"
 )
 
@@ -37,6 +38,8 @@ func ValidSourceType(value string) string {
 		return SourceTypeCoinDeskZHLatest
 	case SourceTypePANewsNewsflash:
 		return SourceTypePANewsNewsflash
+	case SourceTypeTheBlockLatest:
+		return SourceTypeTheBlockLatest
 	case SourceTypeEastMoneyKuaixun:
 		return SourceTypeEastMoneyKuaixun
 	default:
@@ -58,6 +61,7 @@ type Registry struct {
 	ForesightNewsflash Provider
 	CoinDeskZHLatest   Provider
 	PANewsNewsflash    Provider
+	TheBlockLatest     Provider
 	EastMoneyKuaixun   Provider
 }
 
@@ -79,6 +83,8 @@ func (r Registry) Resolve(sourceType string) Provider {
 		return r.CoinDeskZHLatest
 	case SourceTypePANewsNewsflash:
 		return r.PANewsNewsflash
+	case SourceTypeTheBlockLatest:
+		return r.TheBlockLatest
 	case SourceTypeEastMoneyKuaixun:
 		return r.EastMoneyKuaixun
 	default:
@@ -87,5 +93,5 @@ func (r Registry) Resolve(sourceType string) Provider {
 }
 
 func (r Registry) All() []Provider {
-	return []Provider{r.Flash, r.Headline, r.Jin10Full, r.CryptoX, r.CryptoTelegram, r.ForesightNewsflash, r.CoinDeskZHLatest, r.PANewsNewsflash, r.EastMoneyKuaixun}
+	return []Provider{r.Flash, r.Headline, r.Jin10Full, r.CryptoX, r.CryptoTelegram, r.ForesightNewsflash, r.CoinDeskZHLatest, r.PANewsNewsflash, r.TheBlockLatest, r.EastMoneyKuaixun}
 }

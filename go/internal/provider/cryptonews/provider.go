@@ -19,7 +19,10 @@ import (
 	"github.com/pcdogyu/yuqing/go/internal/provider"
 )
 
-const coindeskRSSURL = "https://www.coindesk.com/arc/outboundfeeds/rss/?outputType=xml"
+const (
+	coindeskRSSURL = "https://www.coindesk.com/arc/outboundfeeds/rss/?outputType=xml"
+	theBlockRSSURL = "https://www.theblock.co/rss.xml"
+)
 
 var browserHeaders = map[string]string{
 	"Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
@@ -62,6 +65,15 @@ func NewPANewsNewsflashProvider(client *resty.Client, feedURL string) *Provider 
 	}
 }
 
+func NewTheBlockLatestProvider(client *resty.Client, pageURL string) *Provider {
+	return &Provider{
+		client:     client,
+		sourceType: provider.SourceTypeTheBlockLatest,
+		pageURL:    strings.TrimSpace(pageURL),
+		fromText:   "The Block",
+	}
+}
+
 func (p *Provider) SourceType() string {
 	return p.sourceType
 }
@@ -69,6 +81,9 @@ func (p *Provider) SourceType() string {
 func (p *Provider) Fetch(ctx context.Context) ([]model.Item, error) {
 	if strings.TrimSpace(p.pageURL) == "" {
 		return nil, fmt.Errorf("%s endpoint is empty", p.sourceType)
+	}
+	if p.sourceType == provider.SourceTypeTheBlockLatest {
+		return p.fetchTheBlockRSS(ctx, time.Now().UTC())
 	}
 	resp, err := p.fetchPage(ctx, p.pageURL)
 	if p.sourceType == provider.SourceTypeForesightNewsflash && shouldTryForesightFallback(resp, err) {
@@ -100,6 +115,8 @@ func (p *Provider) Fetch(ctx context.Context) ([]model.Item, error) {
 		return p.fetchCoinDeskRSSFallback(ctx, capturedAt)
 	case provider.SourceTypePANewsNewsflash:
 		return ParsePANewsRSS(resp.Body(), p.pageURL, capturedAt)
+	case provider.SourceTypeTheBlockLatest:
+		return ParseTheBlockRSS(resp.Body(), p.pageURL, capturedAt)
 	default:
 		return nil, fmt.Errorf("unsupported crypto news source_type %s", p.sourceType)
 	}
@@ -146,6 +163,17 @@ func (p *Provider) fetchCoinDeskRSSFallback(ctx context.Context, capturedAt time
 		return nil, fmt.Errorf("coindesk rss fetch failed: %s", resp.Status())
 	}
 	return ParseCoinDeskRSS(resp.Body(), coindeskRSSURL, capturedAt)
+}
+
+func (p *Provider) fetchTheBlockRSS(ctx context.Context, capturedAt time.Time) ([]model.Item, error) {
+	resp, err := p.client.R().SetContext(ctx).Get(theBlockRSSURL)
+	if err != nil {
+		return nil, err
+	}
+	if resp.IsError() {
+		return nil, fmt.Errorf("theblock rss fetch failed: %s", resp.Status())
+	}
+	return ParseTheBlockRSS(resp.Body(), p.pageURL, capturedAt)
 }
 
 func ParseForesightHTML(rawHTML, pageURL string, capturedAt time.Time) ([]model.Item, error) {
@@ -355,6 +383,41 @@ func ParsePANewsRSS(body []byte, feedURL string, capturedAt time.Time) ([]model.
 			TagFlags:           strings.Join(row.Categories, "/"),
 			FromText:           "PANews",
 			ExternalSourceHost: hostOf(feedURL),
+			HasImage:           strings.Contains(row.Content, "<img") || strings.Contains(row.Description, "<img"),
+			RawPayload:         marshalRaw(row),
+			CapturedAt:         capturedAt,
+		})
+	}
+	return dedupe(items), nil
+}
+
+func ParseTheBlockRSS(body []byte, pageURL string, capturedAt time.Time) ([]model.Item, error) {
+	var feed rssFeed
+	if err := xml.Unmarshal(body, &feed); err != nil {
+		return nil, err
+	}
+	items := make([]model.Item, 0, len(feed.Channel.Items))
+	for _, row := range feed.Channel.Items {
+		title := cleanText(row.Title)
+		link := normalizeURL(row.Link)
+		if title == "" || link == "" {
+			continue
+		}
+		published, publishText := parseRSSDate(row.PubDate)
+		content := cleanHTML(nonEmpty(row.Content, row.Description))
+		summary := cleanHTML(row.Description)
+		items = append(items, model.Item{
+			SourceType:         provider.SourceTypeTheBlockLatest,
+			Title:              title,
+			Summary:            summary,
+			Content:            content,
+			PublishTime:        formatTime(published),
+			PublishTimeText:    nonEmpty(publishText, row.PubDate),
+			DetailURL:          link,
+			SourceURL:          link,
+			TagFlags:           strings.Join(row.Categories, "/"),
+			FromText:           "The Block",
+			ExternalSourceHost: hostOf(nonEmpty(pageURL, theBlockRSSURL)),
 			HasImage:           strings.Contains(row.Content, "<img") || strings.Contains(row.Description, "<img"),
 			RawPayload:         marshalRaw(row),
 			CapturedAt:         capturedAt,
