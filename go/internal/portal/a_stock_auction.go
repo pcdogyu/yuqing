@@ -77,14 +77,17 @@ func (s *Server) handleAStockAuctionAction(w http.ResponseWriter, r *http.Reques
 	_ = r.ParseForm()
 	today := aStockNow().In(aStockLocation()).Format("2006-01-02")
 	message := "未知操作"
-	switch strings.TrimSpace(r.FormValue("action")) {
+	action := strings.TrimSpace(r.FormValue("action"))
+	switch action {
 	case "fetch_today_auction":
 		message = s.triggerAStockAuctionCrawl()
 	case "backfill_30d_auction":
 		message = s.triggerAStockAuctionBackfill(30)
 	}
 	query := url.Values{}
-	query.Set("date", today)
+	if action != "fetch_today_auction" {
+		query.Set("date", today)
+	}
 	query.Set("msg", message)
 	http.Redirect(w, r, "/a-stock/auction?"+query.Encode(), http.StatusSeeOther)
 }
@@ -126,7 +129,7 @@ func renderAStockAuctionSummary(b *strings.Builder, ctx model.AStockAuctionListR
 }
 
 func renderAStockAuctionActions(b *strings.Builder) {
-	b.WriteString(`<section><h2>操作区</h2><div class="auction-actions"><form method="post"><input type="hidden" name="action" value="fetch_today_auction"><button type="submit">获取今日集合竞价金额</button></form><form method="post"><input type="hidden" name="action" value="backfill_30d_auction"><button type="submit">回溯近30天集合竞价</button></form></div><p class="auction-muted">立即触发 scheduler 的 A股集合竞价抓取任务，按服务器 Asia/Shanghai 日期从 AKShare 业务服务读取并写入当前业务库。若页面为空，优先点击回溯近30天补齐历史交易日。</p></section>`)
+	b.WriteString(`<section><h2>操作区</h2><div class="auction-actions"><form method="post"><input type="hidden" name="action" value="fetch_today_auction"><button type="submit">获取最新交易日集合竞价金额</button></form><form method="post"><input type="hidden" name="action" value="backfill_30d_auction"><button type="submit">回溯近30天集合竞价</button></form></div><p class="auction-muted">立即触发 scheduler 的 A股集合竞价抓取任务，从 AKShare 业务服务读取最新交易日并写入当前业务库。若 09:30 定时任务漏抓，仍可点击“获取最新交易日集合竞价金额”补抓；更早历史交易日只能读取已有缓存或业务库记录。</p></section>`)
 }
 
 func renderAStockAuctionTrend(b *strings.Builder, ctx model.AStockAuctionListResult) {
@@ -383,18 +386,22 @@ func nonEmptyText(values ...string) string {
 func (s *Server) triggerAStockAuctionCrawl() string {
 	resp, err := s.client.R().
 		SetHeader("X-Service-Token", s.cfg.ServiceToken).
-		Post(s.cfg.SchedulerURL + "/api/v1/scheduler/a-stock/auction/backfill?days=1")
+		Post(s.cfg.SchedulerURL + "/api/v1/scheduler/a-stock/auction/latest")
 	if err != nil {
-		return "今日集合竞价获取失败：" + err.Error()
+		return "最新交易日集合竞价获取失败：" + err.Error()
 	}
 	if !resp.IsSuccess() {
 		detail := schedulerAuctionErrorMessage(resp.Body(), resp.String())
 		if detail == "" {
 			detail = resp.Status()
 		}
-		return "今日集合竞价获取失败：" + detail
+		return "最新交易日集合竞价获取失败：" + detail
 	}
-	return "今日集合竞价获取任务已触发，请稍后刷新查看当日汇总和明细。"
+	result := decodeSchedulerAuctionLatestResult(resp.Body())
+	if result.Date != "" {
+		return fmt.Sprintf("最新交易日集合竞价已写入：%s，明细 %d 条，有效 %d 条。", result.Date, result.Total, result.OK)
+	}
+	return "最新交易日集合竞价获取任务已触发，请稍后刷新查看当日汇总和明细。"
 }
 
 func (s *Server) triggerAStockAuctionBackfill(days int) string {
@@ -430,10 +437,10 @@ func schedulerAuctionErrorMessage(body []byte, fallback string) string {
 			return "集合竞价抓取服务未配置：请配置 YUQING_ASTOCK_AUCTION_URL 为 AKShare HTTP 服务地址，并重启 scheduler-service 后再点击获取。"
 		}
 		if strings.Contains(message, "skipped all dates without usable data") {
-			return "集合竞价回溯未写入数据：AKShare 当前接口只能实时抓取最新交易日；历史日期需要依赖过去每日抓取形成的缓存/业务库记录。请先确认 AKShare 适配服务已启动，并在交易日 09:30 后执行今日抓取。"
+			return "集合竞价回溯未写入数据：最新交易日可点击“获取最新交易日集合竞价金额”补抓；更早历史交易日需要依赖过去每日抓取形成的缓存/业务库记录。原始信息：" + message
 		}
 		if strings.Contains(message, "only serves the current trading day") {
-			return "集合竞价历史日期无法实时回抓：当前 AKShare 接口只支持最新交易日，旧交易日只能读取已有缓存。"
+			return "集合竞价历史日期无法实时回抓：当前 AKShare 接口只支持最新交易日，旧交易日只能读取已有缓存；如是 09:30 漏抓，请点击“获取最新交易日集合竞价金额”。"
 		}
 		if strings.Contains(message, "no usable auction amounts") || strings.Contains(message, "有效成交额/成交量为 0") {
 			return "集合竞价抓取未写入：AKShare 返回了明细但成交额/成交量均为 0，请稍后重试或检查 AKShare 数据源。"
@@ -441,4 +448,22 @@ func schedulerAuctionErrorMessage(body []byte, fallback string) string {
 		return message
 	}
 	return strings.TrimSpace(fallback)
+}
+
+type schedulerAuctionLatestResult struct {
+	Date  string `json:"date"`
+	Total int    `json:"total"`
+	OK    int    `json:"ok"`
+}
+
+func decodeSchedulerAuctionLatestResult(body []byte) schedulerAuctionLatestResult {
+	var envelope struct {
+		Data struct {
+			Result schedulerAuctionLatestResult `json:"result"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return schedulerAuctionLatestResult{}
+	}
+	return envelope.Data.Result
 }

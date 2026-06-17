@@ -371,6 +371,57 @@ func TestRunAStockAuctionCrawlFetchesAkshareAndWritesContent(t *testing.T) {
 	}
 }
 
+func TestRunAStockAuctionLatestUsesAdapterDate(t *testing.T) {
+	var contentPayload struct {
+		Date  string                      `json:"date"`
+		Items []model.AStockAuctionAmount `json:"items"`
+	}
+	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/a-stock/auction" || r.URL.Query().Get("date") != "" {
+			t.Fatalf("unexpected akshare latest request: %s", r.URL.String())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"date": "2026-06-15",
+			"items": []model.AStockAuctionAmount{{
+				TradeDate:     "2026-06-15",
+				Code:          "002230",
+				Name:          "科大讯飞",
+				AuctionVolume: 123400,
+				AuctionAmount: 5084080,
+				Source:        "akshare_spot_em",
+				Status:        "ok",
+			}},
+		})
+	}))
+	defer akshare.Close()
+
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/admin/a-stock/auction" {
+			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
+		}
+		if err := json.NewDecoder(r.Body).Decode(&contentPayload); err != nil {
+			t.Fatalf("decode content payload: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer content.Close()
+
+	worker := NewWorker(config.Config{
+		AStockAuctionURL: akshare.URL,
+		ContentURL:       content.URL,
+		HTTPTimeout:      time.Second,
+		ServiceToken:     "secret-token",
+	})
+	result, err := worker.runAStockAuctionLatest(context.Background())
+	if err != nil {
+		t.Fatalf("runAStockAuctionLatest error: %v", err)
+	}
+	if result.Date != "2026-06-15" || contentPayload.Date != "2026-06-15" || len(contentPayload.Items) != 1 {
+		t.Fatalf("expected latest adapter date to be written, result=%+v payload=%+v", result, contentPayload)
+	}
+}
+
 func TestRunAStockAuctionBackfillFetchesDateRange(t *testing.T) {
 	var requested []string
 	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

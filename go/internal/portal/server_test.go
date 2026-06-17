@@ -380,7 +380,7 @@ func TestAStockAuctionPageLoadsSummaryAndRows(t *testing.T) {
 		t.Fatalf("expected auction page 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"集合竞价", "操作区", "获取今日集合竞价金额", "回溯近30天集合竞价", "当日汇总", "近30日资金趋势", "2026-06-16", "科大讯飞", "股票数", "2", "1.51亿", "508.41万", "12.34万", "akshare_pre_min", `value="科"`, `<svg class="auction-chart"`} {
+	for _, want := range []string{"集合竞价", "操作区", "获取最新交易日集合竞价金额", "回溯近30天集合竞价", "当日汇总", "近30日资金趋势", "2026-06-16", "科大讯飞", "股票数", "2", "1.51亿", "508.41万", "12.34万", "akshare_pre_min", `value="科"`, `<svg class="auction-chart"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected auction page to contain %q, got %s", want, body)
 		}
@@ -391,17 +391,14 @@ func TestAStockAuctionPagePostTriggersSchedulerJob(t *testing.T) {
 	var schedulerCalled bool
 	scheduler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		schedulerCalled = true
-		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/scheduler/a-stock/auction/backfill" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/scheduler/a-stock/auction/latest" {
 			t.Fatalf("unexpected scheduler request: %s %s", r.Method, r.URL.String())
-		}
-		if r.URL.Query().Get("days") != "1" {
-			t.Fatalf("expected today fetch to use days=1, got %s", r.URL.RawQuery)
 		}
 		if r.Header.Get("X-Service-Token") != "secret-token" {
 			t.Fatalf("expected service token header, got %q", r.Header.Get("X-Service-Token"))
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"status":"triggered"}}`))
+		_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"status":"triggered","result":{"date":"2026-06-16","total":2,"ok":1}}}`))
 	}))
 	defer scheduler.Close()
 
@@ -418,8 +415,9 @@ func TestAStockAuctionPagePostTriggersSchedulerJob(t *testing.T) {
 		t.Fatalf("expected redirect after auction trigger, got %d", rr.Code)
 	}
 	loc := rr.Header().Get("Location")
-	if !strings.Contains(loc, "/a-stock/auction?") || !strings.Contains(loc, "date=") || !strings.Contains(loc, "msg=") {
-		t.Fatalf("expected redirect to auction page with date and msg, got %q", loc)
+	decoded, _ := url.QueryUnescape(loc)
+	if !strings.Contains(decoded, "/a-stock/auction?") || strings.Contains(decoded, "date=") || !strings.Contains(decoded, "最新交易日集合竞价已写入：2026-06-16") {
+		t.Fatalf("expected redirect to auction page with latest message and no forced date, got %q", decoded)
 	}
 }
 

@@ -31,6 +31,10 @@ func (w *Worker) runAStockAuctionCrawl(ctx context.Context) error {
 	return w.runAStockAuctionCrawlForDate(ctx, time.Now().In(location).Format("2006-01-02"))
 }
 
+func (w *Worker) runAStockAuctionLatest(ctx context.Context) (aStockAuctionCrawlResult, error) {
+	return w.runAStockAuctionCrawlForDateResult(ctx, "")
+}
+
 func (w *Worker) runAStockAuctionCrawlForDate(ctx context.Context, tradeDate string) error {
 	result, err := w.runAStockAuctionCrawlForDateResult(ctx, tradeDate)
 	if err != nil {
@@ -69,24 +73,26 @@ func (w *Worker) runAStockAuctionCrawlForDateResult(ctx context.Context, tradeDa
 	if baseURL == "" {
 		return aStockAuctionCrawlResult{}, fmt.Errorf("YUQING_ASTOCK_AUCTION_URL not configured")
 	}
-	resp, err := w.client.R().
-		SetContext(ctx).
-		SetQueryParam("date", tradeDate).
-		Get(baseURL + "/api/a-stock/auction")
+	req := w.client.R().
+		SetContext(ctx)
+	if strings.TrimSpace(tradeDate) != "" {
+		req.SetQueryParam("date", tradeDate)
+	}
+	httpResp, err := req.Get(baseURL + "/api/a-stock/auction")
 	if err != nil {
 		return aStockAuctionCrawlResult{}, err
 	}
-	if !resp.IsSuccess() {
-		message := decodeAStockAuctionEndpointMessage(resp.Body(), resp.String())
+	if !httpResp.IsSuccess() {
+		message := decodeAStockAuctionEndpointMessage(httpResp.Body(), httpResp.String())
 		if message == "" {
-			message = resp.Status()
+			message = httpResp.Status()
 		}
-		if resp.StatusCode() == http.StatusUnprocessableEntity {
+		if httpResp.StatusCode() == http.StatusUnprocessableEntity {
 			return aStockAuctionCrawlResult{Date: tradeDate, Skipped: true, Message: message}, nil
 		}
 		return aStockAuctionCrawlResult{}, fmt.Errorf("akshare auction endpoint failed: %s", message)
 	}
-	payload, err := decodeAStockAuctionPayload(resp.Body())
+	payload, err := decodeAStockAuctionPayload(httpResp.Body())
 	if err != nil {
 		return aStockAuctionCrawlResult{}, err
 	}

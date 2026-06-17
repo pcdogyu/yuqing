@@ -76,6 +76,38 @@ def normalize_date(value: str | None) -> str:
     return local_today()
 
 
+def parse_trade_date(value: Any) -> str:
+    text = text_value(value)
+    if not text:
+        return ""
+    if " " in text:
+        text = text.split(" ", 1)[0]
+    for fmt in ("%Y-%m-%d", "%Y%m%d"):
+        try:
+            return dt.datetime.strptime(text, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+    return ""
+
+
+def latest_trading_day(ak: Any, today: str) -> str:
+    try:
+        frame = ak.tool_trade_date_hist_sina()
+    except Exception:
+        return today
+    latest = ""
+    try:
+        iterator = frame.iterrows()
+    except Exception:
+        return today
+    for _, row in iterator:
+        value = first_existing(row, ["trade_date", "交易日", "date", "日期"])
+        parsed = parse_trade_date(value)
+        if parsed and parsed <= today and parsed > latest:
+            latest = parsed
+    return latest or today
+
+
 def finite_float(value: Any) -> float:
     try:
         number = float(value)
@@ -289,7 +321,8 @@ class AuctionService:
             return {"status": "degraded", "akshare": "missing", "error": str(exc)}
 
     def fetch(self, query: dict[str, list[str]]) -> dict[str, Any]:
-        trade_date = normalize_date(first_query_value(query, "date"))
+        requested_date = first_query_value(query, "date")
+        trade_date = normalize_date(requested_date)
         code_value = first_query_value(query, "code") or ""
         explicit_codes = [item.strip().zfill(6) for item in code_value.split(",") if item.strip()]
         limit = int_value(first_query_value(query, "limit"), self.default_limit)
@@ -300,17 +333,27 @@ class AuctionService:
             if cached is not None and payload_has_usable_items(cached):
                 return cached
 
-        if trade_date != local_today():
+        ak = load_akshare()
+        latest_date = latest_trading_day(ak, local_today())
+        if not requested_date:
+            trade_date = latest_date
+            if not force:
+                cached = read_cache(self.cache_dir, trade_date)
+                if cached is not None and payload_has_usable_items(cached):
+                    return cached
+        if trade_date != latest_date:
             return {
                 "_http_status": 422,
                 "date": trade_date,
                 "items": [],
-                "message": "AKShare auction adapter only serves the current trading day without a usable local cache for the requested date.",
+                "message": (
+                    "AKShare auction adapter only serves the latest trading day "
+                    f"({latest_date}) without a usable local cache for the requested date."
+                ),
                 "fetched_at": utc_now_iso(),
             }
 
         started = time.time()
-        ak = load_akshare()
         warning = ""
         if explicit_codes:
             symbols = load_symbols(ak, explicit_codes, limit)
@@ -438,6 +481,21 @@ def run_self_test() -> None:
     assert finite_float("nan") == 0.0
     assert payload_has_usable_items({"items": [{"status": "ok", "auction_amount": 1}]})
     assert not payload_has_usable_items({"items": [{"status": "no_auction_amount", "auction_amount": 0}]})
+    class FakeFrame:
+        def iterrows(self) -> Any:
+            return iter(
+                [
+                    (0, {"trade_date": "2026-06-12"}),
+                    (1, {"trade_date": "2026-06-15"}),
+                    (2, {"trade_date": "2026-06-18"}),
+                ]
+            )
+
+    class FakeAK:
+        def tool_trade_date_hist_sina(self) -> Any:
+            return FakeFrame()
+
+    assert latest_trading_day(FakeAK(), "2026-06-17") == "2026-06-15"
     print("akshare auction service self-test passed")
 
 

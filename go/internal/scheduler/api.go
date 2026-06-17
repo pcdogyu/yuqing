@@ -21,6 +21,7 @@ func (w *Worker) Router() http.Handler {
 	r.Post("/api/v1/scheduler/jobs/{name}/run", w.handleRunJob)
 	r.Post("/api/v1/scheduler/stock-research/backfill", w.handleRunStockResearchBackfill)
 	r.Post("/api/v1/scheduler/stock-research/pdf/parse", w.handleRunStockResearchPDFParse)
+	r.Post("/api/v1/scheduler/a-stock/auction/latest", w.handleRunAStockAuctionLatest)
 	r.Post("/api/v1/scheduler/a-stock/auction/backfill", w.handleRunAStockAuctionBackfill)
 	r.Post("/api/v1/scheduler/a-stock/holdings/backfill", w.handleRunAStockHoldingsBackfill)
 	return r
@@ -131,6 +132,32 @@ func (w *Worker) handleRunAStockAuctionBackfill(wr http.ResponseWriter, r *http.
 		message = err.Error()
 	}
 	_ = w.recordTaskRun(r.Context(), "a-stock-auction-backfill", status, message, startedAt, &finishedAt)
+	if err != nil {
+		apiutil.WriteJSON(wr, http.StatusInternalServerError, err.Error(), result)
+		return
+	}
+	apiutil.WriteJSON(wr, http.StatusOK, "ok", map[string]any{"status": "triggered", "result": result})
+}
+
+func (w *Worker) handleRunAStockAuctionLatest(wr http.ResponseWriter, r *http.Request) {
+	if strings.TrimSpace(r.Header.Get("X-Service-Token")) != strings.TrimSpace(w.cfg.ServiceToken) {
+		apiutil.WriteJSON(wr, http.StatusUnauthorized, "unauthorized", nil)
+		return
+	}
+	startedAt := time.Now().UTC()
+	result, err := w.runAStockAuctionLatest(r.Context())
+	finishedAt := time.Now().UTC()
+	status := "success"
+	message := fmt.Sprintf("a-stock auction latest completed: date=%s total=%d ok=%d", result.Date, result.Total, result.OK)
+	if err != nil {
+		status = "failed"
+		message = err.Error()
+	} else if result.Skipped {
+		status = "failed"
+		message = fmt.Sprintf("a-stock auction latest skipped for %s: %s", result.Date, result.Message)
+		err = fmt.Errorf("%s", message)
+	}
+	_ = w.recordTaskRun(r.Context(), "a-stock-auction-latest", status, message, startedAt, &finishedAt)
 	if err != nil {
 		apiutil.WriteJSON(wr, http.StatusInternalServerError, err.Error(), result)
 		return
