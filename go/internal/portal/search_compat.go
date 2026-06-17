@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"net/http"
@@ -1474,7 +1475,7 @@ func (s *Server) recordLegacySearchWord(r *http.Request, userID int64) error {
 		return err
 	}
 	if !resp.IsSuccess() {
-		return fmt.Errorf(resp.Status())
+		return errors.New(resp.Status())
 	}
 	return nil
 }

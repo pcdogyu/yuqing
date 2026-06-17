@@ -198,7 +198,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 	b.WriteString(`<section class="astock-hero"><div class="astock-card astock-soft"><h2>A股策略工作台</h2><p>`)
 	b.WriteString(fmt.Sprintf(`欢迎，用户 %d。`, userIDFromMap(user)))
 	b.WriteString(`本页用于承载上午、下午财经新闻热点归纳、推荐股票和消息回测结果。</p><p class="astock-muted">每日 09:30 自动抓取 08:00-09:30 新闻生成上午推荐；12:50 自动抓取 09:26-12:50 新闻生成下午推荐。仅供策略研究和回测，不构成投资建议。</p>`)
-	renderAStockPeriodTabs(&b, ctx.Date, ctx.Period)
+	renderAStockPeriodTabs(&b, ctx.Date, ctx.Period, ctx.IgnoreRecent)
 	b.WriteString(`</div><div class="astock-card"><form method="get"><label>策略日期</label><input type="date" name="date" value="`)
 	b.WriteString(html.EscapeString(strategyDate))
 	b.WriteString(`"><label>推荐窗口</label><select name="period">`)
@@ -218,6 +218,9 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 	b.WriteString(url.QueryEscape(today))
 	b.WriteString(`&period=`)
 	b.WriteString(url.QueryEscape(ctx.Period))
+	if ctx.IgnoreRecent {
+		b.WriteString(`&ignore_recent=1`)
+	}
 	b.WriteString(`">回到今天</a></div></form></div></section>`)
 
 	b.WriteString(`<section><h2>顶部概览</h2><div class="astock-grid">`)
@@ -227,6 +230,11 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 	writeAStockMetric(&b, "财经新闻数", fmt.Sprintf("%d", len(ctx.Articles)))
 	writeAStockMetric(&b, "候选热点数", fmt.Sprintf("%d", len(ctx.Hotspots)))
 	writeAStockMetric(&b, "推荐股票数", fmt.Sprintf("%d", len(ctx.Recommendations)))
+	if ctx.IgnoreRecent {
+		writeAStockMetric(&b, "15日过滤", "已忽略")
+	} else {
+		writeAStockMetric(&b, "15日过滤", "已启用")
+	}
 	writeAStockMetric(&b, "回测状态", ctx.BacktestStatus)
 	b.WriteString(`</div></section>`)
 
@@ -262,7 +270,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 	renderAStockNewsSection(&b, ctx)
 	renderAStockHotspotSection(&b, ctx.Hotspots)
 	renderAStockRecommendationSection(&b, ctx)
-	renderAStockBacktestSection(&b, ctx.Date, ctx.Period, ctx.Recommendations, ctx.Backtests)
+	renderAStockBacktestSection(&b, ctx.Date, ctx.Period, ctx.IgnoreRecent, ctx.Recommendations, ctx.Backtests)
 
 	_ = s.writeSimplePage(w, "a-stock", "A股策略工作台", b.String())
 }
@@ -275,6 +283,9 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request) 
 	}
 	period := normalizeAStockPeriod(r.FormValue("period"))
 	query.Set("period", period.Key)
+	if normalizeAStockBool(r.FormValue("ignore_recent")) {
+		query.Set("ignore_recent", "1")
+	}
 	switch strings.TrimSpace(r.FormValue("action")) {
 	case "crawl":
 		query.Set("msg", s.triggerAStockCrawl())
@@ -336,7 +347,7 @@ func renderAStockNewsSection(b *strings.Builder, ctx aStockContext) {
 		b.WriteString(`<tr><td><a class="inline" href="/articles/`)
 		b.WriteString(fmt.Sprintf("%d", item.ID))
 		b.WriteString(`?return_to=`)
-		b.WriteString(url.QueryEscape(aStockPageHref(ctx.Date, ctx.Period, ctx.NewsPage)))
+		b.WriteString(url.QueryEscape(aStockPageHref(ctx.Date, ctx.Period, ctx.NewsPage, ctx.IgnoreRecent)))
 		b.WriteString(`">`)
 		b.WriteString(html.EscapeString(item.Title))
 		b.WriteString(`</a></td><td>`)
@@ -381,7 +392,7 @@ func renderAStockNewsPageLink(b *strings.Builder, ctx aStockContext, page int, l
 	if disabled {
 		b.WriteString(`#`)
 	} else {
-		b.WriteString(aStockPageHref(ctx.Date, ctx.Period, page))
+		b.WriteString(aStockPageHref(ctx.Date, ctx.Period, page, ctx.IgnoreRecent))
 	}
 	b.WriteString(`">`)
 	b.WriteString(html.EscapeString(label))
@@ -467,10 +478,10 @@ func renderAStockRecommendationSection(b *strings.Builder, ctx aStockContext) {
 	b.WriteString(`</table></div></section>`)
 }
 
-func renderAStockBacktestSection(b *strings.Builder, strategyDate string, period string, recommendations []aStockRecommendation, rows []aStockBacktestRow) {
+func renderAStockBacktestSection(b *strings.Builder, strategyDate string, period string, ignoreRecent bool, recommendations []aStockRecommendation, rows []aStockBacktestRow) {
 	b.WriteString(`<section><h2>消息回测</h2><p class="astock-muted">买入价采用当日开盘价；T+1 到 T+5 按后续交易日收盘价计算收益，并展示五日内最高收益。</p>`)
-	renderAStockRecommendationHistoryTabs(b, strategyDate, period)
-	renderAStockRecommendationHistoryActions(b, strategyDate, period)
+	renderAStockRecommendationHistoryTabs(b, strategyDate, period, ignoreRecent)
+	renderAStockRecommendationHistoryActions(b, strategyDate, period, ignoreRecent)
 	b.WriteString(`<div class="astock-scroll"><table class="astock-table"><tr><th>股票</th><th>当日开盘价</th><th>T+1 收盘价</th><th>T+1 收益</th><th>T+2 收益</th><th>T+3 收益</th><th>T+4 收益</th><th>T+5 收益</th><th>五日内最高收益</th><th>命中状态</th></tr>`)
 	if len(rows) == 0 {
 		b.WriteString(`<tr><td colspan="10">暂无回测结果，等待行情同步。</td></tr>`)
@@ -510,7 +521,7 @@ func renderAStockBacktestSection(b *strings.Builder, strategyDate string, period
 	b.WriteString(`</table></div></section>`)
 }
 
-func renderAStockRecommendationHistoryTabs(b *strings.Builder, strategyDate string, period string) {
+func renderAStockRecommendationHistoryTabs(b *strings.Builder, strategyDate string, period string, ignoreRecent bool) {
 	b.WriteString(`<h3>推荐历史</h3><div class="astock-date-tabs">`)
 	normalizedPeriod := normalizeAStockPeriod(period).Key
 	today := aStockTodayDate()
@@ -528,13 +539,13 @@ func renderAStockRecommendationHistoryTabs(b *strings.Builder, strategyDate stri
 		for _, option := range aStockPeriods() {
 			periodLabel := strings.TrimSuffix(option.Label, "推荐")
 			active := strategyDate == date && normalizedPeriod == option.Key
-			writeAStockDateTab(b, label+" "+date+" "+periodLabel, date, option.Key, active)
+			writeAStockDateTab(b, label+" "+date+" "+periodLabel, date, option.Key, active, ignoreRecent)
 		}
 	}
 	b.WriteString(`</div>`)
 }
 
-func renderAStockRecommendationHistoryActions(b *strings.Builder, strategyDate string, period string) {
+func renderAStockRecommendationHistoryActions(b *strings.Builder, strategyDate string, period string, ignoreRecent bool) {
 	normalizedPeriod := normalizeAStockPeriod(period).Key
 	recomputeAction := "generate_afternoon_stock"
 	if normalizedPeriod == "morning" {
@@ -554,7 +565,11 @@ func renderAStockRecommendationHistoryActions(b *strings.Builder, strategyDate s
 		b.WriteString(html.EscapeString(strategyDate))
 		b.WriteString(`"><input type="hidden" name="period" value="`)
 		b.WriteString(html.EscapeString(normalizedPeriod))
-		b.WriteString(`"><input type="hidden" name="action" value="`)
+		b.WriteString(`">`)
+		if ignoreRecent {
+			b.WriteString(`<input type="hidden" name="ignore_recent" value="1">`)
+		}
+		b.WriteString(`<input type="hidden" name="action" value="`)
 		b.WriteString(html.EscapeString(action.Name))
 		b.WriteString(`"><button type="submit" data-preserve-scroll="1">`)
 		b.WriteString(html.EscapeString(action.Label))
@@ -563,7 +578,7 @@ func renderAStockRecommendationHistoryActions(b *strings.Builder, strategyDate s
 	b.WriteString(`</div>`)
 }
 
-func writeAStockDateTab(b *strings.Builder, label string, date string, period string, active bool) {
+func writeAStockDateTab(b *strings.Builder, label string, date string, period string, active bool, ignoreRecent bool) {
 	b.WriteString(`<a class="astock-tab`)
 	if active {
 		b.WriteString(` active`)
@@ -572,6 +587,9 @@ func writeAStockDateTab(b *strings.Builder, label string, date string, period st
 	b.WriteString(url.QueryEscape(date))
 	b.WriteString(`&period=`)
 	b.WriteString(url.QueryEscape(period))
+	if ignoreRecent {
+		b.WriteString(`&ignore_recent=1`)
+	}
 	b.WriteString(`">`)
 	b.WriteString(html.EscapeString(label))
 	b.WriteString(`</a>`)
@@ -1738,10 +1756,13 @@ func normalizeAStockNewsPage(raw string) int {
 	return page
 }
 
-func aStockPageHref(strategyDate string, period string, newsPage int) string {
+func aStockPageHref(strategyDate string, period string, newsPage int, ignoreRecent bool) string {
 	href := "/a-stock?date=" + url.QueryEscape(normalizeAStockStrategyDate(strategyDate)) + "&period=" + url.QueryEscape(normalizeAStockPeriod(period).Key)
 	if newsPage > 1 {
 		href += "&news_page=" + url.QueryEscape(fmt.Sprintf("%d", newsPage))
+	}
+	if ignoreRecent {
+		href += "&ignore_recent=1"
 	}
 	return href
 }
@@ -1766,7 +1787,7 @@ func normalizeAStockPeriod(raw string) aStockPeriod {
 	return aStockPeriods()[0]
 }
 
-func renderAStockPeriodTabs(b *strings.Builder, strategyDate string, selected string) {
+func renderAStockPeriodTabs(b *strings.Builder, strategyDate string, selected string, ignoreRecent bool) {
 	b.WriteString(`<div class="astock-tabs">`)
 	for _, period := range aStockPeriods() {
 		b.WriteString(`<a class="astock-tab`)
@@ -1777,6 +1798,9 @@ func renderAStockPeriodTabs(b *strings.Builder, strategyDate string, selected st
 		b.WriteString(url.QueryEscape(strategyDate))
 		b.WriteString(`&period=`)
 		b.WriteString(url.QueryEscape(period.Key))
+		if ignoreRecent {
+			b.WriteString(`&ignore_recent=1`)
+		}
 		b.WriteString(`">`)
 		b.WriteString(html.EscapeString(period.Label))
 		b.WriteString(`</a>`)

@@ -3,6 +3,7 @@ package analysis
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -399,7 +400,7 @@ func (s *Service) fetchPublicOpinionArticles(ctx context.Context, criteria model
 		return nil, err
 	}
 	if !resp.IsSuccess() {
-		return nil, fmt.Errorf(resp.Status())
+		return nil, errors.New(resp.Status())
 	}
 	if err := json.Unmarshal(resp.Body(), &envelope); err != nil {
 		return nil, err

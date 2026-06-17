@@ -3,6 +3,7 @@ package portal
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -280,7 +281,7 @@ func (s *Server) runPlatformOCRWorkbench(r *http.Request, userID int64) (string,
 		return "", err
 	}
 	if code != http.StatusOK {
-		return "", fmt.Errorf(nonEmpty(msg, "OCR 识别失败"))
+		return "", errors.New(nonEmpty(msg, "OCR 识别失败"))
 	}
 	return summarizePlatformOCRResults(results), nil
 }
@@ -302,7 +303,7 @@ func (s *Server) runPlatformImageWorkbench(r *http.Request, userID int64) (strin
 		return "", err
 	}
 	if code != http.StatusOK {
-		return "", fmt.Errorf(nonEmpty(msg, "图像识别失败"))
+		return "", errors.New(nonEmpty(msg, "图像识别失败"))
 	}
 	return summarizePlatformImageResults(results), nil
 }
@@ -1205,7 +1206,7 @@ func (s *Server) putPlatformBinding(binding model.PlatformBinding) (model.Platfo
 		return model.PlatformBinding{}, err
 	}
 	if !resp.IsSuccess() {
-		return model.PlatformBinding{}, fmt.Errorf(resp.Status())
+		return model.PlatformBinding{}, errors.New(resp.Status())
 	}
 	var envelope struct {
 		Code    int                   `json:"code"`
@@ -1256,7 +1257,7 @@ func (s *Server) putPublicOptionCreate(option model.PublicOption) (model.PublicO
 		return model.PublicOption{}, err
 	}
 	if !resp.IsSuccess() {
-		return model.PublicOption{}, fmt.Errorf(resp.Status())
+		return model.PublicOption{}, errors.New(resp.Status())
 	}
 	var envelope struct {
 		Code    int                `json:"code"`
@@ -1284,7 +1285,7 @@ func (s *Server) putPublicOptionUpdate(option model.PublicOption) (model.PublicO
 		return model.PublicOption{}, err
 	}
 	if !resp.IsSuccess() {
-		return model.PublicOption{}, fmt.Errorf(resp.Status())
+		return model.PublicOption{}, errors.New(resp.Status())
 	}
 	var envelope struct {
 		Code    int                `json:"code"`
@@ -1304,7 +1305,7 @@ func (s *Server) deletePublicOption(id int64) error {
 		return err
 	}
 	if !resp.IsSuccess() {
-		return fmt.Errorf(resp.Status())
+		return errors.New(resp.Status())
 	}
 	return nil
 }
@@ -1357,7 +1358,7 @@ func (s *Server) getPublicOpinionAnalysisBundle(option model.PublicOption) (mode
 	var view model.PublicOpinionAnalysisView
 	if err := s.getJSON(s.cfg.AnalysisURL+"/api/v1/public-opinion/analysis?"+query.Encode(), &view); err == nil {
 		if strings.EqualFold(strings.TrimSpace(view.Status), "failed") {
-			return model.PublicOpinionAnalysisBundle{}, fmt.Errorf(strings.TrimSpace(view.Message))
+			return model.PublicOpinionAnalysisBundle{}, errors.New(strings.TrimSpace(view.Message))
 		}
 		if view.Bundle.EventName != "" || view.Bundle.ArticleCount > 0 || strings.EqualFold(strings.TrimSpace(view.Status), "empty") {
 			return view.Bundle, nil
@@ -1591,7 +1592,7 @@ func (s *Server) getJSONWithResult(url string, body any, result any) error {
 		return err
 	}
 	if !resp.IsSuccess() {
-		return fmt.Errorf(resp.Status())
+		return errors.New(resp.Status())
 	}
 	return nil
 }
@@ -1670,7 +1671,7 @@ func (s *Server) getJSONWithForm(url string, form url.Values, result any) error 
 		return err
 	}
 	if !resp.IsSuccess() {
-		return fmt.Errorf(resp.Status())
+		return errors.New(resp.Status())
 	}
 	return nil
 }

@@ -1189,7 +1189,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 func TestAStockRecommendationHistoryRendersDateTabs(t *testing.T) {
 	setAStockNowForTest(t, time.Date(2026, 6, 16, 9, 30, 0, 0, time.FixedZone("CST", 8*3600)))
 	var b strings.Builder
-	renderAStockRecommendationHistoryTabs(&b, "2026-06-18", "afternoon")
+	renderAStockRecommendationHistoryTabs(&b, "2026-06-18", "afternoon", false)
 
 	body := b.String()
 	for _, want := range []string{
@@ -1217,7 +1217,7 @@ func TestAStockRecommendationHistoryRendersDateTabs(t *testing.T) {
 
 func TestAStockRecommendationHistoryActionsUseSelectedPeriod(t *testing.T) {
 	var b strings.Builder
-	renderAStockRecommendationHistoryActions(&b, "2026-06-16", "afternoon")
+	renderAStockRecommendationHistoryActions(&b, "2026-06-16", "afternoon", false)
 	body := b.String()
 	for _, want := range []string{
 		`name="date" value="2026-06-16"`,
@@ -1235,6 +1235,27 @@ func TestAStockRecommendationHistoryActionsUseSelectedPeriod(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected history actions to contain %q, got %s", want, body)
 		}
+	}
+}
+
+func TestAStockIgnoreRecentStatePersistsInHistoryNavigation(t *testing.T) {
+	var tabs strings.Builder
+	renderAStockRecommendationHistoryTabs(&tabs, "2026-06-16", "morning", true)
+	tabsBody := tabs.String()
+	for _, want := range []string{
+		`/a-stock?date=2026-06-16&period=morning&ignore_recent=1`,
+		`/a-stock?date=2026-06-16&period=afternoon&ignore_recent=1`,
+	} {
+		if !strings.Contains(tabsBody, want) {
+			t.Fatalf("expected history tab to preserve ignore_recent %q, got %s", want, tabsBody)
+		}
+	}
+
+	var actions strings.Builder
+	renderAStockRecommendationHistoryActions(&actions, "2026-06-16", "morning", true)
+	actionsBody := actions.String()
+	if !strings.Contains(actionsBody, `name="ignore_recent" value="1"`) {
+		t.Fatalf("expected history actions to preserve ignore_recent, got %s", actionsBody)
 	}
 }
 
