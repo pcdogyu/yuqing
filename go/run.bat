@@ -37,7 +37,7 @@ if not defined YUQING_ASTOCK_AUCTION_URL (
 )
 set "SERVICE_PORTS=80 8081 8082 8083 8084 8085 %AKSHARE_AUCTION_PORT% %WECHAT_SERVICE_PORT%"
 set "SERVICE_NAMES=auth-service wechat-service content-service crawler-service analysis-service nlp-service gateway-web scheduler-service akshare-service"
-set "PORT_CHECKS=auth-service=8081 wechat-service=%WECHAT_SERVICE_PORT% content-service=8082 crawler-service=8083 analysis-service=8084 nlp-service=8085 gateway-web=80"
+set "PORT_CHECKS=auth-service:8081 wechat-service:%WECHAT_SERVICE_PORT% content-service:8082 crawler-service:8083 analysis-service:8084 nlp-service:8085 gateway-web:80"
 set "YUQING_LOG_LEVEL=debug"
 set "YUQING_RUN_VERSION=local"
 set "TEMP_BOOTSTRAP=%TEMP%\yuqing-run-bootstrap-%RANDOM%-%RANDOM%.cmd"
@@ -159,7 +159,7 @@ call :start_akshare_auction_service
 powershell -NoProfile -Command "$checks = @(@{Name='auth-service';Port=8081}, @{Name='wechat-service';Port=%WECHAT_SERVICE_PORT%}, @{Name='content-service';Port=8082}, @{Name='crawler-service';Port=8083}, @{Name='analysis-service';Port=8084}, @{Name='nlp-service';Port=8085}, @{Name='gateway-web';Port=80}); $counts = @{}; foreach ($check in $checks) { $counts[$check.Name] = 0 }; while ($true) { Start-Sleep -Seconds 3; $allDone = $true; foreach ($check in $checks) { if ($counts[$check.Name] -ge 3) { Write-Host ('[{0}] check {1}/3: port {2} is listening.' -f $check.Name, $counts[$check.Name], $check.Port); continue }; $listening = Get-NetTCPConnection -LocalPort $check.Port -State Listen -ErrorAction SilentlyContinue; if ($listening) { $counts[$check.Name]++; Write-Host ('[{0}] check {1}/3: port {2} is listening.' -f $check.Name, $counts[$check.Name], $check.Port) } else { Write-Host ('[{0}] check {1}/3: port {2} is not listening.' -f $check.Name, $counts[$check.Name], $check.Port); exit 1 }; if ($counts[$check.Name] -lt 3) { $allDone = $false } }; if ($allDone) { break } }"
 if errorlevel 1 goto :fail
 for %%C in (%PORT_CHECKS%) do (
-    for /f "tokens=1,2 delims==" %%A in ("%%C") do (
+    for /f "tokens=1,2 delims=:" %%A in ("%%C") do (
         echo PORT %%B %%A is up.
     )
 )
