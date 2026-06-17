@@ -94,6 +94,9 @@ type Store interface {
 	ListAStockAuctionAmounts(rctx context.Context, filter model.AStockAuctionFilter) (model.AStockAuctionListResult, error)
 	UpsertStockResearchSurveys(rctx context.Context, items []model.StockResearchSurvey) (model.StockResearchUpsertResult, error)
 	ListStockResearchSurveys(rctx context.Context, filter model.StockResearchFilter) (model.StockResearchListResult, error)
+	UpsertStockInstitutionHoldings(rctx context.Context, items []model.StockInstitutionHolding) (model.StockInstitutionHoldingUpsertResult, error)
+	ListStockInstitutionHoldings(rctx context.Context, filter model.StockInstitutionHoldingFilter) (model.StockInstitutionHoldingListResult, error)
+	GetStockInstitutionHoldingSummary(rctx context.Context, code string, period string) (model.StockInstitutionHoldingSummary, error)
 }
 
 type Service struct {
@@ -160,6 +163,9 @@ func (s *Service) Routes(r chi.Router) {
 	r.Post("/api/v1/admin/a-stock/auction", s.handleUpsertAStockAuctionAmounts)
 	r.Get("/api/v1/stock-research", s.handleListStockResearchSurveys)
 	r.Post("/api/v1/internal/stock-research/batch", s.handleUpsertStockResearchSurveys)
+	r.Get("/api/v1/a-stock/holdings", s.handleListStockInstitutionHoldings)
+	r.Get("/api/v1/a-stock/holdings/summary", s.handleGetStockInstitutionHoldingSummary)
+	r.Post("/api/v1/internal/a-stock/holdings/batch", s.handleUpsertStockInstitutionHoldings)
 	r.Get("/api/v1/search/articles", s.handleSearchArticles)
 	r.Get("/api/v1/search/full", s.handleSearchFull)
 	r.Get("/api/v1/search/timely", s.handleSearchTimely)
@@ -666,6 +672,156 @@ func normalizeStockResearchKind(value string) string {
 		return "survey"
 	default:
 		return "report"
+	}
+}
+
+func (s *Service) handleListStockInstitutionHoldings(w http.ResponseWriter, r *http.Request) {
+	filter := model.StockInstitutionHoldingFilter{
+		Code:       normalizeAStockContentCode(r.URL.Query().Get("code")),
+		Company:    strings.TrimSpace(nonEmpty(r.URL.Query().Get("company"), r.URL.Query().Get("q"))),
+		Period:     normalizeStockHoldingPeriod(r.URL.Query().Get("period")),
+		Holder:     strings.TrimSpace(r.URL.Query().Get("holder")),
+		HolderType: strings.TrimSpace(r.URL.Query().Get("holder_type")),
+		Source:     strings.TrimSpace(r.URL.Query().Get("source")),
+		Page:       apiutil.IntQuery(r, "page", 1),
+		PageSize:   apiutil.IntQuery(r, "page_size", 50),
+	}
+	result, err := s.store.ListStockInstitutionHoldings(r.Context(), filter)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleGetStockInstitutionHoldingSummary(w http.ResponseWriter, r *http.Request) {
+	code := normalizeAStockContentCode(r.URL.Query().Get("code"))
+	period := normalizeStockHoldingPeriod(r.URL.Query().Get("period"))
+	result, err := s.store.GetStockInstitutionHoldingSummary(r.Context(), code, period)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleUpsertStockInstitutionHoldings(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		Items []model.StockInstitutionHolding `json:"items"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid json", nil)
+		return
+	}
+	now := time.Now().UTC()
+	for i := range payload.Items {
+		payload.Items[i] = normalizeStockInstitutionHolding(payload.Items[i], now)
+	}
+	result, err := s.store.UpsertStockInstitutionHoldings(r.Context(), payload.Items)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func normalizeStockInstitutionHolding(item model.StockInstitutionHolding, now time.Time) model.StockInstitutionHolding {
+	item.StockCode = normalizeAStockContentCode(item.StockCode)
+	item.StockName = strings.TrimSpace(item.StockName)
+	item.ReportPeriod = normalizeStockHoldingPeriod(item.ReportPeriod)
+	item.AnnounceDate = strings.TrimSpace(item.AnnounceDate)
+	item.HolderName = strings.TrimSpace(item.HolderName)
+	item.HolderType = normalizeStockInstitutionHolderType(item.HolderType, item.HolderName)
+	item.HolderCode = strings.TrimSpace(item.HolderCode)
+	item.HolderRank = strings.TrimSpace(item.HolderRank)
+	item.SourceType = strings.TrimSpace(item.SourceType)
+	item.SourceURL = strings.TrimSpace(item.SourceURL)
+	item.RawPayload = strings.TrimSpace(item.RawPayload)
+	if item.SourceType == "" {
+		item.SourceType = "akshare_stock_holding"
+	}
+	if item.RawPayload == "" {
+		item.RawPayload = "{}"
+	}
+	if item.FetchedAt.IsZero() {
+		item.FetchedAt = now
+	}
+	if item.CreatedAt.IsZero() {
+		item.CreatedAt = now
+	}
+	if item.UpdatedAt.IsZero() {
+		item.UpdatedAt = now
+	}
+	return item
+}
+
+func normalizeStockHoldingPeriod(value string) string {
+	value = strings.TrimSpace(value)
+	upper := strings.ToUpper(value)
+	upper = strings.ReplaceAll(upper, "-", "")
+	upper = strings.ReplaceAll(upper, "/", "")
+	upper = strings.ReplaceAll(upper, ".", "")
+	if len(upper) == 6 && upper[4] == 'Q' {
+		switch upper[5:] {
+		case "1":
+			return upper[:4] + "0331"
+		case "2":
+			return upper[:4] + "0630"
+		case "3":
+			return upper[:4] + "0930"
+		case "4":
+			return upper[:4] + "1231"
+		}
+	}
+	if len(upper) == 8 {
+		return upper
+	}
+	return strings.TrimSpace(value)
+}
+
+func normalizeAStockContentCode(value string) string {
+	value = strings.TrimSpace(value)
+	upper := strings.ToUpper(value)
+	for _, suffix := range []string{".SH", ".SZ", ".BJ", ".OF"} {
+		if strings.HasSuffix(upper, suffix) {
+			return strings.TrimSpace(value[:len(value)-len(suffix)])
+		}
+	}
+	for _, prefix := range []string{"SH.", "SZ.", "BJ.", "OF."} {
+		if strings.HasPrefix(upper, prefix) {
+			return strings.TrimSpace(value[len(prefix):])
+		}
+	}
+	parts := strings.Split(value, ".")
+	if len(parts) > 1 {
+		value = parts[0]
+	}
+	return value
+}
+
+func normalizeStockInstitutionHolderType(value string, holderName string) string {
+	text := strings.ToLower(strings.TrimSpace(value + " " + holderName))
+	switch {
+	case strings.Contains(text, "社保"):
+		return "social_security"
+	case strings.Contains(text, "qfii") || strings.Contains(text, "rqfii") || strings.Contains(text, "境外"):
+		return "qfii"
+	case strings.Contains(text, "fund") || strings.Contains(text, "基金"):
+		return "fund"
+	case strings.Contains(text, "证券") || strings.Contains(text, "券商"):
+		return "broker"
+	case strings.Contains(text, "保险"):
+		return "insurance"
+	case strings.Contains(text, "信托"):
+		return "trust"
+	case strings.Contains(text, "银行") || strings.Contains(text, "理财"):
+		return "bank_wealth"
+	case strings.Contains(text, "自然人") || strings.Contains(text, "个人"):
+		return "natural_person"
+	case strings.Contains(text, "机构") || strings.Contains(text, "公司") || strings.Contains(text, "资产") || strings.Contains(text, "资管"):
+		return "institution"
+	default:
+		return "other"
 	}
 }
 

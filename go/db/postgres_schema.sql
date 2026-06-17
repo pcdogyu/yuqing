@@ -70,6 +70,30 @@ CREATE TABLE IF NOT EXISTS stock_research_surveys (
 	UNIQUE (source_type, source_key)
 );
 
+CREATE TABLE IF NOT EXISTS stock_institution_holdings (
+	id BIGSERIAL PRIMARY KEY,
+	stock_code TEXT NOT NULL DEFAULT '',
+	stock_name TEXT NOT NULL DEFAULT '',
+	report_period TEXT NOT NULL DEFAULT '',
+	announce_date TEXT NOT NULL DEFAULT '',
+	holder_name TEXT NOT NULL DEFAULT '',
+	holder_type TEXT NOT NULL DEFAULT '',
+	holder_code TEXT NOT NULL DEFAULT '',
+	holder_rank TEXT NOT NULL DEFAULT '',
+	shares DOUBLE PRECISION NOT NULL DEFAULT 0,
+	shares_change DOUBLE PRECISION NOT NULL DEFAULT 0,
+	change_ratio DOUBLE PRECISION NOT NULL DEFAULT 0,
+	float_ratio DOUBLE PRECISION NOT NULL DEFAULT 0,
+	market_value DOUBLE PRECISION NOT NULL DEFAULT 0,
+	source_type TEXT NOT NULL DEFAULT '',
+	source_url TEXT NOT NULL DEFAULT '',
+	raw_payload TEXT NOT NULL DEFAULT '{}',
+	fetched_at TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	UNIQUE (source_type, report_period, stock_code, holder_name, holder_type, holder_code)
+);
+
 CREATE TABLE IF NOT EXISTS users (
 	id BIGSERIAL PRIMARY KEY,
 	username TEXT NOT NULL UNIQUE,
@@ -475,6 +499,9 @@ CREATE INDEX IF NOT EXISTS idx_crawl_states_updated ON crawl_states(source_type,
 CREATE INDEX IF NOT EXISTS idx_stock_research_code_date ON stock_research_surveys(code, research_date DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_stock_research_institution_date ON stock_research_surveys(institution, research_date DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_stock_research_source_date ON stock_research_surveys(source_type, research_date DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_stock_holdings_code_period ON stock_institution_holdings(stock_code, report_period DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_stock_holdings_holder_period ON stock_institution_holdings(holder_name, report_period DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_stock_holdings_type_period ON stock_institution_holdings(holder_type, report_period DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_crawl_templates_enabled_updated ON crawl_templates(enabled, updated_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_projects_group_id ON projects(group_id);
 CREATE INDEX IF NOT EXISTS idx_monitor_rules_project_id ON monitor_rules(project_id);

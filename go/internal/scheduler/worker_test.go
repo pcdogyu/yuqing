@@ -184,10 +184,10 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	if err := json.Unmarshal(listRR.Body.Bytes(), &listEnvelope); err != nil {
 		t.Fatalf("unmarshal jobs list: %v", err)
 	}
-	if len(listEnvelope.Data) != 27 {
-		t.Fatalf("expected 27 scheduler jobs, got %d", len(listEnvelope.Data))
+	if len(listEnvelope.Data) != 28 {
+		t.Fatalf("expected 28 scheduler jobs, got %d", len(listEnvelope.Data))
 	}
-	var heartbeatJob, hotJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningJob, aStockAfternoonJob, aStockAuctionJob, stockResearchJob Job
+	var heartbeatJob, hotJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningJob, aStockAfternoonJob, aStockAuctionJob, aStockHoldingsJob, stockResearchJob Job
 	for _, job := range listEnvelope.Data {
 		switch job.Name {
 		case "crawl-link-heartbeat":
@@ -212,6 +212,8 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 			aStockAfternoonJob = job
 		case "a-stock-auction-crawl":
 			aStockAuctionJob = job
+		case "a-stock-holdings-crawl":
+			aStockHoldingsJob = job
 		case "stock-research-crawl":
 			stockResearchJob = job
 		}
@@ -242,6 +244,9 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	}
 	if aStockAuctionJob.Cron != "0 30 9 * * ?" || aStockAuctionJob.Enabled {
 		t.Fatalf("expected A股 auction crawl disabled by default with 09:30 cron, got %+v", aStockAuctionJob)
+	}
+	if aStockHoldingsJob.Cron != "0 35 2 * * ?" || aStockHoldingsJob.Enabled {
+		t.Fatalf("expected A股 holdings crawl disabled by default with 02:35 cron, got %+v", aStockHoldingsJob)
 	}
 	if stockResearchJob.Cron != "0 30 16 * * ?" || stockResearchJob.Enabled {
 		t.Fatalf("expected stock research crawl disabled by default in test config, got %+v", stockResearchJob)
@@ -363,6 +368,58 @@ func TestRunAStockAuctionCrawlFetchesAkshareAndWritesContent(t *testing.T) {
 	}
 	if contentPayload.Date != "2026-06-16" || len(contentPayload.Items) != 2 || contentPayload.Items[0].Code != "002230" || contentPayload.Items[1].Status != "no_auction_data" {
 		t.Fatalf("unexpected content payload: %+v", contentPayload)
+	}
+}
+
+func TestRunAStockHoldingsBackfillFetchesExternalAndWritesContent(t *testing.T) {
+	var contentPayload struct {
+		Items []model.StockInstitutionHolding `json:"items"`
+	}
+	external := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/a-stock/holdings" || r.URL.Query().Get("period") != "20260331" || r.URL.Query().Get("code") != "002230" || r.URL.Query().Get("tushare_token") != "token" {
+			t.Fatalf("unexpected external holdings request: %s", r.URL.String())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"items": []model.StockInstitutionHolding{{
+			StockCode:    "002230",
+			StockName:    "科大讯飞",
+			ReportPeriod: "20260331",
+			HolderName:   "易方达基金",
+			HolderType:   "fund",
+			SourceType:   "stock_institute_hold_detail",
+		}}})
+	}))
+	defer external.Close()
+
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/internal/a-stock/holdings/batch" {
+			t.Fatalf("unexpected content holdings request: %s %s", r.Method, r.URL.String())
+		}
+		if r.Header.Get("X-Service-Token") != "secret-token" {
+			t.Fatalf("expected service token header, got %q", r.Header.Get("X-Service-Token"))
+		}
+		if err := json.NewDecoder(r.Body).Decode(&contentPayload); err != nil {
+			t.Fatalf("decode holdings content payload: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockInstitutionHoldingUpsertResult{Inserted: len(contentPayload.Items), Total: len(contentPayload.Items)}})
+	}))
+	defer content.Close()
+
+	worker := NewWorker(config.Config{
+		AStockHoldingURL:      external.URL,
+		ContentURL:            content.URL,
+		TuShareToken:          "token",
+		HTTPTimeout:           time.Second,
+		ServiceToken:          "secret-token",
+		ExternalRetryCount:    0,
+		ExternalRetryWait:     time.Millisecond,
+		SchedulerCrawlTimeout: time.Second,
+	})
+	if err := worker.runAStockHoldingsBackfill(context.Background(), aStockHoldingCrawlOptions{Code: "002230", Period: "20260331"}); err != nil {
+		t.Fatalf("runAStockHoldingsBackfill error: %v", err)
+	}
+	if len(contentPayload.Items) != 1 || contentPayload.Items[0].StockCode != "002230" || contentPayload.Items[0].ReportPeriod != "20260331" {
+		t.Fatalf("unexpected holdings content payload: %+v", contentPayload)
 	}
 }
 
@@ -580,6 +637,28 @@ func TestSchedulerAStockAuctionJobEnabledWhenEndpointConfigured(t *testing.T) {
 	}
 	if !auctionJob.Enabled || auctionJob.Cron != "0 30 9 * * ?" || auctionJob.NextRunAt == nil {
 		t.Fatalf("expected enabled A股 auction crawl with 09:30 cron, got %+v", auctionJob)
+	}
+}
+
+func TestSchedulerAStockHoldingsJobEnabledWhenEndpointConfigured(t *testing.T) {
+	worker := NewWorker(config.Config{
+		HTTPTimeout:           time.Second,
+		AStockHoldingURL:      "http://127.0.0.1:19092",
+		FlashInterval:         time.Hour,
+		HeadlineInterval:      time.Hour,
+		AnalysisInterval:      time.Hour,
+		WechatCleanupInterval: time.Hour,
+		WechatPushInterval:    time.Hour,
+	})
+	var holdingsJob Job
+	for _, job := range worker.Jobs() {
+		if job.Name == "a-stock-holdings-crawl" {
+			holdingsJob = job
+			break
+		}
+	}
+	if !holdingsJob.Enabled || holdingsJob.Cron != "0 35 2 * * ?" || holdingsJob.NextRunAt == nil {
+		t.Fatalf("expected enabled A股 holdings crawl with 02:35 cron, got %+v", holdingsJob)
 	}
 }
 

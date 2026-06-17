@@ -44,6 +44,7 @@ type Config struct {
 	TheBlockLatestURL          string
 	EastMoneyKuaixunURL        string
 	AStockAuctionURL           string
+	AStockHoldingURL           string
 	StockResearchURL           string
 	TuShareToken               string
 	StockResearchPublicEnabled bool
@@ -144,6 +145,7 @@ func Load() Config {
 		TheBlockLatestURL:          envOrDefaultAllowEmpty("YUQING_THEBLOCK_LATEST_URL", "https://www.theblock.co/latest-crypto-news"),
 		EastMoneyKuaixunURL:        envOrDefaultAllowEmpty("YUQING_EASTMONEY_KUAIXUN_URL", "https://kuaixun.eastmoney.com/"),
 		AStockAuctionURL:           envOrDefault("YUQING_ASTOCK_AUCTION_URL", ""),
+		AStockHoldingURL:           envOrDefault("YUQING_ASTOCK_HOLDING_URL", ""),
 		StockResearchURL:           envOrDefault("YUQING_STOCK_RESEARCH_URL", ""),
 		TuShareToken:               envOrDefault("YUQING_TUSHARE_TOKEN", ""),
 		StockResearchPublicEnabled: envBool(true, "YUQING_STOCK_RESEARCH_PUBLIC_ENABLED"),

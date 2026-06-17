@@ -183,6 +183,56 @@ func TestStockResearchSurveysUpsertAndFilter(t *testing.T) {
 	}
 }
 
+func TestStockInstitutionHoldingsUpsertListAndSummary(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	fetchedAt := time.Date(2026, 6, 17, 2, 35, 0, 0, time.UTC)
+
+	first, err := store.UpsertStockInstitutionHoldings(ctx, []model.StockInstitutionHolding{
+		{StockCode: "002230", StockName: "科大讯飞", ReportPeriod: "20260331", AnnounceDate: "2026-04-30", HolderName: "易方达基金", HolderType: "fund", HolderCode: "110001", HolderRank: "1", Shares: 1000, SharesChange: 100, ChangeRatio: 10, FloatRatio: 1.5, MarketValue: 50000, SourceType: "stock_institute_hold_detail", SourceURL: "https://example.com/1", RawPayload: `{"id":1}`, FetchedAt: fetchedAt},
+		{StockCode: "002230", StockName: "科大讯飞", ReportPeriod: "20260331", HolderName: "社保基金一一八组合", HolderType: "social_security", Shares: 2000, FloatRatio: 2.5, MarketValue: 100000, SourceType: "stock_gdfx_free_holding_detail_em", RawPayload: `{}`, FetchedAt: fetchedAt},
+		{StockCode: "300059", StockName: "东方财富", ReportPeriod: "20260331", HolderName: "香港中央结算有限公司", HolderType: "institution", Shares: 3000, FloatRatio: 3, SourceType: "stock_gdfx_holding_detail_em", RawPayload: `{}`, FetchedAt: fetchedAt},
+	})
+	if err != nil {
+		t.Fatalf("UpsertStockInstitutionHoldings insert error: %v", err)
+	}
+	if first.Inserted != 3 || first.Updated != 0 || first.Total != 3 {
+		t.Fatalf("unexpected first upsert result: %+v", first)
+	}
+
+	second, err := store.UpsertStockInstitutionHoldings(ctx, []model.StockInstitutionHolding{
+		{StockCode: "002230", StockName: "科大讯飞", ReportPeriod: "20260331", HolderName: "易方达基金", HolderType: "fund", HolderCode: "110001", Shares: 1500, FloatRatio: 1.8, MarketValue: 80000, SourceType: "stock_institute_hold_detail", RawPayload: `{"id":2}`, FetchedAt: fetchedAt},
+	})
+	if err != nil {
+		t.Fatalf("UpsertStockInstitutionHoldings update error: %v", err)
+	}
+	if second.Inserted != 0 || second.Updated != 1 || second.Total != 1 {
+		t.Fatalf("unexpected second upsert result: %+v", second)
+	}
+
+	list, err := store.ListStockInstitutionHoldings(ctx, model.StockInstitutionHoldingFilter{Code: "002230", Period: "20260331", HolderType: "fund", Holder: "易方达", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListStockInstitutionHoldings error: %v", err)
+	}
+	if list.Total != 1 || len(list.Items) != 1 || list.Items[0].Shares != 1500 || list.Items[0].HolderType != "fund" {
+		t.Fatalf("unexpected holdings list: %+v", list)
+	}
+	if len(list.Periods) != 1 || len(list.HolderTypes) != 3 || len(list.Sources) != 3 {
+		t.Fatalf("expected distinct filters, got periods=%v types=%v sources=%v", list.Periods, list.HolderTypes, list.Sources)
+	}
+
+	summary, err := store.GetStockInstitutionHoldingSummary(ctx, "002230", "20260331")
+	if err != nil {
+		t.Fatalf("GetStockInstitutionHoldingSummary error: %v", err)
+	}
+	if summary.HolderCount != 2 || summary.FundCount != 1 || summary.HolderTypeCount != 2 {
+		t.Fatalf("unexpected holder counts: %+v", summary)
+	}
+	if summary.TotalShares != 3500 || summary.TotalFloatRatio != 4.3 || summary.MaxHolderName != "社保基金一一八组合" {
+		t.Fatalf("unexpected summary totals: %+v", summary)
+	}
+}
+
 func TestNewStoreSetsBusyTimeout(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()

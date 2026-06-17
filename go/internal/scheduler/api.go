@@ -18,6 +18,7 @@ func (w *Worker) Router() http.Handler {
 	r.Get("/api/v1/scheduler/jobs", w.handleListJobs)
 	r.Post("/api/v1/scheduler/jobs/{name}/run", w.handleRunJob)
 	r.Post("/api/v1/scheduler/stock-research/backfill", w.handleRunStockResearchBackfill)
+	r.Post("/api/v1/scheduler/a-stock/holdings/backfill", w.handleRunAStockHoldingsBackfill)
 	return r
 }
 
@@ -63,6 +64,34 @@ func (w *Worker) handleRunStockResearchBackfill(wr http.ResponseWriter, r *http.
 		message = err.Error()
 	}
 	_ = w.recordTaskRun(r.Context(), "stock-research-backfill", status, message, startedAt, &finishedAt)
+	if err != nil {
+		apiutil.WriteJSON(wr, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(wr, http.StatusOK, "ok", map[string]string{"status": "triggered"})
+}
+
+func (w *Worker) handleRunAStockHoldingsBackfill(wr http.ResponseWriter, r *http.Request) {
+	if strings.TrimSpace(r.Header.Get("X-Service-Token")) != strings.TrimSpace(w.cfg.ServiceToken) {
+		apiutil.WriteJSON(wr, http.StatusUnauthorized, "unauthorized", nil)
+		return
+	}
+	opts := aStockHoldingCrawlOptions{
+		Code:        strings.TrimSpace(r.URL.Query().Get("code")),
+		Period:      strings.TrimSpace(r.URL.Query().Get("period")),
+		StartPeriod: strings.TrimSpace(r.URL.Query().Get("start_period")),
+		EndPeriod:   strings.TrimSpace(r.URL.Query().Get("end_period")),
+	}
+	startedAt := time.Now().UTC()
+	err := w.runAStockHoldingsBackfill(r.Context(), opts)
+	finishedAt := time.Now().UTC()
+	status := "success"
+	message := "a-stock holdings backfill completed"
+	if err != nil {
+		status = "failed"
+		message = err.Error()
+	}
+	_ = w.recordTaskRun(r.Context(), "a-stock-holdings-backfill", status, message, startedAt, &finishedAt)
 	if err != nil {
 		apiutil.WriteJSON(wr, http.StatusInternalServerError, err.Error(), nil)
 		return

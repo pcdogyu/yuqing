@@ -326,6 +326,16 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 			},
 		}, "StockResearchCrawl", "0 30 16 * * ?"),
 		withJobMeta(jobDefinition{
+			Name:        "a-stock-holdings-crawl",
+			Group:       "a-stock",
+			Description: "A股机构持仓：按最近 4 个报告期抓取基金、机构、社保、QFII 等季度持仓",
+			Interval:    24 * time.Hour,
+			Enabled:     strings.TrimSpace(w.cfg.AStockHoldingURL) != "",
+			Run: func(ctx context.Context) error {
+				return w.runAStockHoldingsCrawl(ctx)
+			},
+		}, "AStockHoldingsCrawl", "0 35 2 * * ?"),
+		withJobMeta(jobDefinition{
 			Name:        "analysis-refresh",
 			Group:       "analysis",
 			Description: "AnalysisQuartz 等价的系统分析快照刷新",
@@ -548,6 +558,7 @@ func (w *Worker) crawlLinkHeartbeatSites() []crawlLinkHeartbeatSite {
 		crawlLinkHeartbeatSite{SourceType: "crypto_x", Name: "Crypto X", URL: w.cfg.CryptoXURL},
 		crawlLinkHeartbeatSite{SourceType: "crypto_telegram", Name: "Crypto Telegram", URL: w.cfg.CryptoTelegramURL},
 		crawlLinkHeartbeatSite{SourceType: "a_stock_auction", Name: "A股集合竞价行情", URL: w.cfg.AStockAuctionURL},
+		crawlLinkHeartbeatSite{SourceType: "a_stock_holdings", Name: "A股机构持仓", URL: w.cfg.AStockHoldingURL},
 	)
 	return slices.DeleteFunc(sites, func(site crawlLinkHeartbeatSite) bool {
 		return strings.TrimSpace(site.URL) == ""

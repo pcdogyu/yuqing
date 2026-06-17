@@ -84,6 +84,7 @@ func TestArticleBodyTextSkipsTitleOnlyContent(t *testing.T) {
 
 func TestMonitorCompatGetArticle(t *testing.T) {
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/v1/search/full":
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -508,6 +509,100 @@ func TestStockResearchPagePostTriggersBackfill(t *testing.T) {
 	}
 }
 
+func TestAStockHoldingsPageLoadsSummaryRowsAndFilters(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/a-stock/holdings":
+			if r.URL.Query().Get("code") != "002230" || r.URL.Query().Get("period") != "20260331" || r.URL.Query().Get("holder_type") != "fund" {
+				t.Fatalf("unexpected holdings list query: %s", r.URL.RawQuery)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockInstitutionHoldingListResult{
+				Total:       1,
+				Page:        1,
+				PageSize:    50,
+				Periods:     []string{"20260331"},
+				HolderTypes: []string{"fund"},
+				Sources:     []string{"stock_institute_hold_detail"},
+				Items: []model.StockInstitutionHolding{{
+					StockCode:    "002230",
+					StockName:    "科大讯飞",
+					ReportPeriod: "20260331",
+					HolderName:   "易方达基金",
+					HolderType:   "fund",
+					Shares:       1000,
+					FloatRatio:   1.5,
+					SourceType:   "stock_institute_hold_detail",
+				}},
+			}})
+		case "/api/v1/a-stock/holdings/summary":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockInstitutionHoldingSummary{
+				StockCode:       "002230",
+				ReportPeriod:    "20260331",
+				HolderCount:     2,
+				FundCount:       1,
+				HolderTypeCount: 2,
+				TotalShares:     3000,
+				TotalFloatRatio: 3.5,
+				MaxHolderName:   "易方达基金",
+				MaxHolderType:   "fund",
+				MaxHolderShares: 1000,
+			}})
+		default:
+			t.Fatalf("unexpected holdings content path: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	req := httptest.NewRequest(http.MethodGet, "/a-stock/holdings?code=002230&period=20260331&holder_type=fund", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAStockHoldingsPage(rr, req, map[string]any{"id": 1})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected holdings page 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"机构持仓", "共持摘要", "2026-Q1", "易方达基金", "基金", "3.50%"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected holdings page to contain %q, got %s", want, body)
+		}
+	}
+}
+
+func TestAStockHoldingsPagePostTriggersBackfill(t *testing.T) {
+	var called bool
+	scheduler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/scheduler/a-stock/holdings/backfill" {
+			t.Fatalf("unexpected scheduler holdings request: %s %s", r.Method, r.URL.String())
+		}
+		if r.URL.Query().Get("code") != "002230" || r.URL.Query().Get("period") != "20260331" {
+			t.Fatalf("unexpected scheduler holdings query: %s", r.URL.RawQuery)
+		}
+		if r.Header.Get("X-Service-Token") != "secret-token" {
+			t.Fatalf("expected service token header, got %q", r.Header.Get("X-Service-Token"))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"status": "triggered"}})
+	}))
+	defer scheduler.Close()
+
+	srv := NewServer(config.Config{SchedulerURL: scheduler.URL, ServiceToken: "secret-token"})
+	form := url.Values{"action": {"backfill"}, "code": {"002230"}, "period": {"20260331"}, "holder_type": {"fund"}}
+	req := httptest.NewRequest(http.MethodPost, "/a-stock/holdings", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	srv.handleAStockHoldingsPage(rr, req, map[string]any{"id": 1})
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !called {
+		t.Fatal("expected scheduler holdings backfill call")
+	}
+	if location := rr.Header().Get("Location"); !strings.Contains(location, "/a-stock/holdings?") || !strings.Contains(location, "msg=") {
+		t.Fatalf("expected redirect back to holdings with msg, got %s", location)
+	}
+}
+
 func TestAStockStockGenerateActionsSelectPeriod(t *testing.T) {
 	srv := NewServer(config.Config{})
 	tests := []struct {
@@ -697,6 +792,10 @@ func TestAStockBackfillMorningStockActionSelectsMorningWindow(t *testing.T) {
 func TestAStockPageExplainsMorningNoNews(t *testing.T) {
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/v1/a-stock/holdings/summary" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "message": "ok", "data": model.StockInstitutionHoldingSummary{}})
+			return
+		}
 		if r.URL.Path != "/api/v1/articles" {
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
@@ -735,6 +834,10 @@ func TestAStockPageExplainsMorningNoNews(t *testing.T) {
 func TestAStockPageExplainsNewsWithoutHotspots(t *testing.T) {
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/v1/a-stock/holdings/summary" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "message": "ok", "data": model.StockInstitutionHoldingSummary{}})
+			return
+		}
 		if r.URL.Path != "/api/v1/articles" {
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
@@ -778,6 +881,10 @@ func TestNormalizeAStockPeriodAcceptsAfterAlias(t *testing.T) {
 func TestAStockPageLoadsAfternoonWindow(t *testing.T) {
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/v1/a-stock/holdings/summary" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "message": "ok", "data": model.StockInstitutionHoldingSummary{}})
+			return
+		}
 		if r.URL.Path != "/api/v1/articles" {
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
@@ -1003,6 +1110,10 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/v1/a-stock/holdings/summary" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "message": "ok", "data": model.StockInstitutionHoldingSummary{}})
+			return
+		}
 		if r.URL.Path != "/api/v1/articles" {
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
@@ -1301,6 +1412,43 @@ func TestAStockRecommendationsUseTopThreeHotspotIndustries(t *testing.T) {
 		if !found {
 			t.Fatalf("expected recommendations to include hotspot %q, got %+v", want, recommendations)
 		}
+	}
+}
+
+func TestAStockRecommendationsApplyHoldingSummaryBonus(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/a-stock/holdings/summary" || r.URL.Query().Get("code") != "002230" {
+			t.Fatalf("unexpected holdings summary request: %s", r.URL.String())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockInstitutionHoldingSummary{
+			StockCode:       "002230",
+			HolderCount:     6,
+			HolderTypeCount: 3,
+			TotalFloatRatio: 8.4,
+		}})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	recommendations := srv.applyAStockHoldingSummaries([]aStockRecommendation{{
+		Rank:         1,
+		Hotspot:      "人工智能",
+		Code:         "002230",
+		Name:         "科大讯飞",
+		HotspotScore: 40,
+		MarketScore:  40,
+		Reason:       "命中 AI，热度分 40",
+	}})
+	if len(recommendations) != 1 {
+		t.Fatalf("expected one recommendation, got %+v", recommendations)
+	}
+	got := recommendations[0]
+	if got.MarketScore != 60 || got.HoldingSummary != "6家/3类" || got.HoldingRatio != "8.40%" {
+		t.Fatalf("expected holdings bonus and display fields, got %+v", got)
+	}
+	if !strings.Contains(got.Reason, "机构共持 6 家") || !strings.Contains(got.Reason, "持仓加分 20") {
+		t.Fatalf("expected holdings reason, got %s", got.Reason)
 	}
 }
 

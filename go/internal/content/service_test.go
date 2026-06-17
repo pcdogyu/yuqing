@@ -179,6 +179,56 @@ func TestStockResearchAPIUpsertsAndLists(t *testing.T) {
 	}
 }
 
+func TestStockInstitutionHoldingAPIUpsertsListsAndSummarizes(t *testing.T) {
+	store := newContentSearchTestStore(t)
+	svc := NewService(config.Config{}, store)
+	router := svc.Router()
+
+	payload := `{"items":[{"stock_code":"SH.002230","stock_name":"科大讯飞","report_period":"2026-Q1","announce_date":"2026-04-30","holder_name":"易方达基金","holder_type":"基金","holder_code":"110001","holder_rank":"1","shares":1000,"float_ratio":1.5,"market_value":50000,"source_type":"stock_institute_hold_detail","raw_payload":"{\"id\":1}"},{"stock_code":"002230","stock_name":"科大讯飞","report_period":"20260331","holder_name":"社保基金一一八组合","holder_type":"社保基金","shares":2000,"float_ratio":2.5,"market_value":100000,"source_type":"stock_gdfx_free_holding_detail_em"}]}`
+	postReq := httptest.NewRequest(http.MethodPost, "/api/v1/internal/a-stock/holdings/batch", strings.NewReader(payload))
+	postRR := httptest.NewRecorder()
+	router.ServeHTTP(postRR, postReq)
+	if postRR.Code != http.StatusOK {
+		t.Fatalf("expected holdings upsert 200, got %d body=%s", postRR.Code, postRR.Body.String())
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/holdings?code=002230&period=2026Q1&holder_type=fund&page=1&page_size=10", nil)
+	listRR := httptest.NewRecorder()
+	router.ServeHTTP(listRR, listReq)
+	if listRR.Code != http.StatusOK {
+		t.Fatalf("expected holdings list 200, got %d body=%s", listRR.Code, listRR.Body.String())
+	}
+	var listEnvelope struct {
+		Data model.StockInstitutionHoldingListResult `json:"data"`
+	}
+	if err := json.Unmarshal(listRR.Body.Bytes(), &listEnvelope); err != nil {
+		t.Fatalf("unmarshal holdings list: %v", err)
+	}
+	if listEnvelope.Data.Total != 1 || len(listEnvelope.Data.Items) != 1 {
+		t.Fatalf("unexpected holdings list payload: %+v", listEnvelope.Data)
+	}
+	item := listEnvelope.Data.Items[0]
+	if item.StockCode != "002230" || item.ReportPeriod != "20260331" || item.HolderType != "fund" || !strings.Contains(item.RawPayload, `"id":1`) {
+		t.Fatalf("expected normalized holding row, got %+v", item)
+	}
+
+	summaryReq := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/holdings/summary?code=002230&period=20260331", nil)
+	summaryRR := httptest.NewRecorder()
+	router.ServeHTTP(summaryRR, summaryReq)
+	if summaryRR.Code != http.StatusOK {
+		t.Fatalf("expected holdings summary 200, got %d body=%s", summaryRR.Code, summaryRR.Body.String())
+	}
+	var summaryEnvelope struct {
+		Data model.StockInstitutionHoldingSummary `json:"data"`
+	}
+	if err := json.Unmarshal(summaryRR.Body.Bytes(), &summaryEnvelope); err != nil {
+		t.Fatalf("unmarshal holdings summary: %v", err)
+	}
+	if summaryEnvelope.Data.HolderCount != 2 || summaryEnvelope.Data.FundCount != 1 || summaryEnvelope.Data.HolderTypeCount != 2 || summaryEnvelope.Data.TotalFloatRatio != 4 {
+		t.Fatalf("unexpected holdings summary: %+v", summaryEnvelope.Data)
+	}
+}
+
 func TestAuditMiddlewareWritesSanitizedAccessLog(t *testing.T) {
 	store := newContentSearchTestStore(t)
 	svc := NewService(config.Config{}, store)

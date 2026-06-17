@@ -47,23 +47,25 @@ type aStockHotspot struct {
 }
 
 type aStockRecommendation struct {
-	Rank          int
-	Hotspot       string
-	Code          string
-	Name          string
-	HotspotScore  int
-	MarketScore   int
-	PrevClose     string
-	PrevPct       string
-	PrevPctClass  string
-	Change30      string
-	Change30Class string
-	Change60      string
-	Change60Class string
-	CurrentPrice  string
-	TodayPct      string
-	TodayPctClass string
-	Reason        string
+	Rank           int
+	Hotspot        string
+	Code           string
+	Name           string
+	HotspotScore   int
+	MarketScore    int
+	PrevClose      string
+	PrevPct        string
+	PrevPctClass   string
+	Change30       string
+	Change30Class  string
+	Change60       string
+	Change60Class  string
+	CurrentPrice   string
+	TodayPct       string
+	TodayPctClass  string
+	HoldingSummary string
+	HoldingRatio   string
+	Reason         string
 }
 
 type aStockMarketBar struct {
@@ -412,10 +414,10 @@ func renderAStockRecommendationSection(b *strings.Builder, ctx aStockContext) {
 		}
 		b.WriteString(`<div class="astock-empty">`)
 		b.WriteString(html.EscapeString(reason))
-		b.WriteString(`</div><div class="astock-scroll"><table class="astock-table astock-recommendation-table"><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>昨日收盘价</th><th>昨日涨跌幅</th><th>30天涨跌幅</th><th>60天涨跌幅</th><th>现价</th><th>今日跌幅</th><th>推荐理由</th></tr><tr><td colspan="11">暂无推荐股票</td></tr></table></div></section>`)
+		b.WriteString(`</div><div class="astock-scroll"><table class="astock-table astock-recommendation-table"><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>昨日收盘价</th><th>昨日涨跌幅</th><th>30天涨跌幅</th><th>60天涨跌幅</th><th>现价</th><th>今日跌幅</th><th>机构共持</th><th>持仓占比</th><th>推荐理由</th></tr><tr><td colspan="13">暂无推荐股票</td></tr></table></div></section>`)
 		return
 	}
-	b.WriteString(`<div class="astock-scroll"><table class="astock-table astock-recommendation-table"><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>昨日收盘价</th><th>昨日涨跌幅</th><th>30天涨跌幅</th><th>60天涨跌幅</th><th>现价</th><th>今日跌幅</th><th>推荐理由</th></tr>`)
+	b.WriteString(`<div class="astock-scroll"><table class="astock-table astock-recommendation-table"><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>昨日收盘价</th><th>昨日涨跌幅</th><th>30天涨跌幅</th><th>60天涨跌幅</th><th>现价</th><th>今日跌幅</th><th>机构共持</th><th>持仓占比</th><th>推荐理由</th></tr>`)
 	for _, rec := range recommendations {
 		b.WriteString(`<tr><td>`)
 		b.WriteString(fmt.Sprintf("%d", rec.Rank))
@@ -449,6 +451,10 @@ func renderAStockRecommendationSection(b *strings.Builder, ctx aStockContext) {
 		b.WriteString(`">`)
 		b.WriteString(html.EscapeString(rec.TodayPct))
 		b.WriteString(`</span>`)
+		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(rec.HoldingSummary))
+		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(rec.HoldingRatio))
 		b.WriteString(`</td><td>`)
 		b.WriteString(html.EscapeString(rec.Reason))
 		b.WriteString(`</td></tr>`)
@@ -593,6 +599,7 @@ func (s *Server) loadAStockContext(strategyDate string, periodKey string, newsPa
 		recentCodes := s.loadRecentAStockRecommendationCodes(strategyDate, aStockRecentLookbackDays)
 		ctx.Recommendations, ctx.RecentFiltered = filterRecentAStockRecommendations(ctx.Recommendations, recentCodes)
 	}
+	ctx.Recommendations = s.applyAStockHoldingSummaries(ctx.Recommendations)
 	ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus = s.loadAStockMarketView(strategyDate, ctx.Recommendations)
 	ctx.EmptyReason = aStockRecommendationEmptyReason(ctx)
 	return ctx
@@ -668,6 +675,52 @@ func (s *Server) loadRecentAStockRecommendationCodes(strategyDate string, lookba
 		}
 	}
 	return result
+}
+
+func (s *Server) applyAStockHoldingSummaries(recommendations []aStockRecommendation) []aStockRecommendation {
+	if len(recommendations) == 0 {
+		return recommendations
+	}
+	for i := range recommendations {
+		recommendations[i].HoldingSummary = "--"
+		recommendations[i].HoldingRatio = "--"
+		code := normalizeAStockCode(recommendations[i].Code)
+		if code == "" {
+			continue
+		}
+		summary := model.StockInstitutionHoldingSummary{}
+		query := "/api/v1/a-stock/holdings/summary?code=" + url.QueryEscape(code)
+		if err := s.getJSON(s.cfg.ContentURL+query, &summary); err != nil {
+			continue
+		}
+		if summary.HolderCount <= 0 {
+			continue
+		}
+		bonus := aStockHoldingScore(summary)
+		recommendations[i].MarketScore += bonus
+		recommendations[i].HoldingSummary = fmt.Sprintf("%d家/%d类", summary.HolderCount, summary.HolderTypeCount)
+		recommendations[i].HoldingRatio = formatAStockHoldingPct(summary.TotalFloatRatio)
+		recommendations[i].Reason = fmt.Sprintf(
+			"%s，机构共持 %d 家，类型 %d 类，合计流通占比 %.2f%%，持仓加分 %d",
+			recommendations[i].Reason,
+			summary.HolderCount,
+			summary.HolderTypeCount,
+			summary.TotalFloatRatio,
+			bonus,
+		)
+	}
+	return recommendations
+}
+
+func aStockHoldingScore(summary model.StockInstitutionHoldingSummary) int {
+	score := summary.HolderCount*2 + summary.HolderTypeCount*3 + int(summary.TotalFloatRatio)
+	if score < 0 {
+		return 0
+	}
+	if score > 20 {
+		return 20
+	}
+	return score
 }
 
 func (s *Server) loadAStockWindowArticles(start time.Time, end time.Time) ([]model.Item, error) {
@@ -866,6 +919,12 @@ func initializeAStockRecommendationMarket(recommendations []aStockRecommendation
 		recommendations[i].CurrentPrice = "--"
 		recommendations[i].TodayPct = "--"
 		recommendations[i].TodayPctClass = "astock-flat"
+		if strings.TrimSpace(recommendations[i].HoldingSummary) == "" {
+			recommendations[i].HoldingSummary = "--"
+		}
+		if strings.TrimSpace(recommendations[i].HoldingRatio) == "" {
+			recommendations[i].HoldingRatio = "--"
+		}
 	}
 	return recommendations
 }
@@ -919,9 +978,9 @@ func applyAStockMarketBars(strategyDate string, recommendations []aStockRecommen
 	recommendations = filtered
 	for i := range recommendations {
 		penalty := sectorPenalties[recommendations[i].Hotspot]
-		baseScore := recommendations[i].HotspotScore
+		baseScore := recommendations[i].MarketScore
 		if baseScore == 0 {
-			baseScore = recommendations[i].MarketScore
+			baseScore = recommendations[i].HotspotScore
 		}
 		recommendations[i].MarketScore = baseScore - penalty
 		if penalty > 0 {

@@ -100,6 +100,9 @@ func TestLoadUsesDefaults(t *testing.T) {
 	if cfg.AStockAuctionURL != "" {
 		t.Fatalf("expected empty A股 auction url by default, got %q", cfg.AStockAuctionURL)
 	}
+	if cfg.AStockHoldingURL != "" {
+		t.Fatalf("expected empty A股 holding url by default, got %q", cfg.AStockHoldingURL)
+	}
 	if cfg.Jin10FullBackfillDays != 30 || cfg.Jin10FullMaxPages != 20 {
 		t.Fatalf("expected default jin10 full backfill/pages, got days=%d pages=%d", cfg.Jin10FullBackfillDays, cfg.Jin10FullMaxPages)
 	}
@@ -166,6 +169,7 @@ func TestLoadPrefersPrimaryAndAliasEnv(t *testing.T) {
 	t.Setenv("YUQING_THEBLOCK_LATEST_URL", "https://theblock.example.com/latest")
 	t.Setenv("YUQING_EASTMONEY_KUAIXUN_URL", "https://eastmoney.example.com/kuaixun")
 	t.Setenv("YUQING_ASTOCK_AUCTION_URL", "http://akshare.example.com")
+	t.Setenv("YUQING_ASTOCK_HOLDING_URL", "http://holding.example.com")
 	t.Setenv("YUQING_HTTP_TIMEOUT_SEC", "45")
 	t.Setenv("YUQING_SCHEDULER_CRAWL_TIMEOUT_SEC", "180")
 	t.Setenv("YUQING_EXTERNAL_RETRY_COUNT", "3")
@@ -211,6 +215,9 @@ func TestLoadPrefersPrimaryAndAliasEnv(t *testing.T) {
 	}
 	if cfg.AStockAuctionURL != "http://akshare.example.com" {
 		t.Fatalf("expected A股 auction url loaded, got %q", cfg.AStockAuctionURL)
+	}
+	if cfg.AStockHoldingURL != "http://holding.example.com" {
+		t.Fatalf("expected A股 holding url loaded, got %q", cfg.AStockHoldingURL)
 	}
 	if cfg.HTTPTimeout != 45*time.Second {
 		t.Fatalf("expected primary http timeout, got %s", cfg.HTTPTimeout)
