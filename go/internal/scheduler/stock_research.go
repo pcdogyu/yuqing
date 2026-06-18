@@ -27,6 +27,8 @@ var (
 	stockResearchCodePattern = regexp.MustCompile(`([^\s（(：:，,、]+)[（(](\d{6})[）)]`)
 )
 
+const eastMoneyReportAPIURL = "https://reportapi.eastmoney.com/report/list"
+
 func (w *Worker) runStockResearchCrawl(ctx context.Context) error {
 	end := stockResearchToday()
 	start := end.AddDate(0, 0, -7)
@@ -164,11 +166,15 @@ func (w *Worker) fetchSinaFinanceReports(ctx context.Context, opts stockResearch
 	if strings.TrimSpace(w.cfg.SinaFinanceReportURL) == "" {
 		return nil, nil
 	}
-	doc, _, err := w.fetchStockResearchDocument(ctx, w.cfg.SinaFinanceReportURL, "sina_finance_report")
+	listURL := w.cfg.SinaFinanceReportURL
+	if code := strings.TrimSpace(opts.Code); code != "" {
+		listURL = sinaFinanceSearchURL(listURL, code)
+	}
+	doc, _, err := w.fetchStockResearchDocument(ctx, listURL, "sina_finance_report")
 	if err != nil {
 		return nil, err
 	}
-	items := parseSinaFinanceReportDocument(doc, w.cfg.SinaFinanceReportURL, time.Now().UTC())
+	items := parseSinaFinanceReportDocument(doc, listURL, time.Now().UTC())
 	items = filterStockResearchItems(items, opts)
 	items = w.enrichSinaFinanceReportDetails(ctx, items)
 	return normalizeStockResearchSourceItems(items, "sina_finance_report"), nil
@@ -177,6 +183,14 @@ func (w *Worker) fetchSinaFinanceReports(ctx context.Context, opts stockResearch
 func (w *Worker) fetchEastMoneyReports(ctx context.Context, opts stockResearchCrawlOptions) ([]model.StockResearchSurvey, error) {
 	if strings.TrimSpace(w.cfg.EastMoneyReportURL) == "" {
 		return nil, nil
+	}
+	if strings.TrimSpace(opts.Code) != "" {
+		items, err := w.fetchEastMoneyReportsByAPI(ctx, opts)
+		if err != nil {
+			return nil, err
+		}
+		items = w.enrichEastMoneyReportDetails(ctx, items)
+		return normalizeStockResearchSourceItems(items, "eastmoney_report"), nil
 	}
 	_, body, err := w.fetchStockResearchDocument(ctx, w.cfg.EastMoneyReportURL, "eastmoney_report")
 	if err != nil {
@@ -189,6 +203,41 @@ func (w *Worker) fetchEastMoneyReports(ctx context.Context, opts stockResearchCr
 	items = filterStockResearchItems(items, opts)
 	items = w.enrichEastMoneyReportDetails(ctx, items)
 	return normalizeStockResearchSourceItems(items, "eastmoney_report"), nil
+}
+
+func (w *Worker) fetchEastMoneyReportsByAPI(ctx context.Context, opts stockResearchCrawlOptions) ([]model.StockResearchSurvey, error) {
+	items := make([]model.StockResearchSurvey, 0)
+	pageSize := 50
+	for page := 1; ; page++ {
+		query := url.Values{}
+		query.Set("industryCode", "*")
+		query.Set("pageSize", fmt.Sprintf("%d", pageSize))
+		query.Set("industry", "*")
+		query.Set("rating", "*")
+		query.Set("ratingChange", "*")
+		query.Set("beginTime", normalizeStockResearchDate(opts.Start))
+		query.Set("endTime", normalizeStockResearchDate(opts.End))
+		query.Set("pageNo", fmt.Sprintf("%d", page))
+		query.Set("fields", "")
+		query.Set("qType", "0")
+		query.Set("orgCode", "")
+		query.Set("code", strings.TrimSpace(opts.Code))
+		query.Set("rcode", "")
+		body, err := w.fetchStockResearchText(ctx, eastMoneyReportAPIURL+"?"+query.Encode(), "eastmoney_report_api")
+		if err != nil {
+			return nil, err
+		}
+		pageItems, total, err := parseEastMoneyReportAPI(body, w.cfg.EastMoneyReportURL, time.Now().UTC())
+		if err != nil {
+			return nil, err
+		}
+		pageItems = filterStockResearchItems(pageItems, opts)
+		items = append(items, pageItems...)
+		if total <= page*pageSize || len(pageItems) == 0 {
+			break
+		}
+	}
+	return items, nil
 }
 
 func (w *Worker) fetchSohuFinanceReports(ctx context.Context) ([]model.StockResearchSurvey, error) {
@@ -209,19 +258,32 @@ func (w *Worker) fetchFinanceReportHTML(ctx context.Context, rawURL string, sour
 }
 
 func (w *Worker) fetchStockResearchDocument(ctx context.Context, rawURL string, sourceType string) (*goquery.Document, string, error) {
+	body, err := w.fetchStockResearchText(ctx, rawURL, sourceType)
+	if err != nil {
+		return nil, "", err
+	}
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(body))
+	if err != nil {
+		return nil, "", err
+	}
+	return doc, body, nil
+}
+
+func (w *Worker) fetchStockResearchText(ctx context.Context, rawURL string, sourceType string) (string, error) {
 	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
-		return nil, "", nil
+		return "", nil
 	}
 	resp, err := w.client.R().
 		SetContext(ctx).
 		SetHeader("User-Agent", w.cfg.UserAgent).
+		SetHeader("Referer", "https://data.eastmoney.com/report/stock.jshtml").
 		Get(rawURL)
 	if err != nil {
-		return nil, "", err
+		return "", err
 	}
 	if !resp.IsSuccess() {
-		return nil, "", fmt.Errorf("%s failed: %s", sourceType, resp.Status())
+		return "", fmt.Errorf("%s failed: %s", sourceType, resp.Status())
 	}
 	reader, err := charset.NewReader(bytes.NewReader(resp.Body()), resp.Header().Get("Content-Type"))
 	if err != nil {
@@ -229,13 +291,22 @@ func (w *Worker) fetchStockResearchDocument(ctx context.Context, rawURL string, 
 	}
 	data, err := io.ReadAll(reader)
 	if err != nil {
-		return nil, "", err
+		return "", err
 	}
-	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(data))
+	return string(data), nil
+}
+
+func sinaFinanceSearchURL(rawURL string, code string) string {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil {
-		return nil, "", err
+		return rawURL
 	}
-	return doc, string(data), nil
+	parsed.Path = "/stock/go.php/vReport_List/kind/search/index.phtml"
+	query := parsed.Query()
+	query.Set("t1", "2")
+	query.Set("symbol", strings.TrimSpace(code))
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
 }
 
 func parseSinaFinanceReportDocument(doc *goquery.Document, pageURL string, now time.Time) []model.StockResearchSurvey {
@@ -340,6 +411,8 @@ func enrichSinaFinanceReportDetail(doc *goquery.Document, item *model.StockResea
 }
 
 type eastMoneyInitData struct {
+	Hits int                  `json:"hits"`
+	Size int                  `json:"size"`
 	Data []eastMoneyReportRow `json:"data"`
 }
 
@@ -388,8 +461,20 @@ func parseEastMoneyReportDocument(body string, pageURL string, now time.Time) ([
 	if err := json.Unmarshal([]byte(match[1]), &initData); err != nil {
 		return nil, err
 	}
-	items := make([]model.StockResearchSurvey, 0, len(initData.Data))
-	for _, row := range initData.Data {
+	return buildEastMoneyReportItems(initData.Data, pageURL, now), nil
+}
+
+func parseEastMoneyReportAPI(body string, pageURL string, now time.Time) ([]model.StockResearchSurvey, int, error) {
+	var data eastMoneyInitData
+	if err := json.Unmarshal([]byte(body), &data); err != nil {
+		return nil, 0, err
+	}
+	return buildEastMoneyReportItems(data.Data, pageURL, now), data.Hits, nil
+}
+
+func buildEastMoneyReportItems(rows []eastMoneyReportRow, pageURL string, now time.Time) []model.StockResearchSurvey {
+	items := make([]model.StockResearchSurvey, 0, len(rows))
+	for _, row := range rows {
 		title := cleanStockResearchText(row.Title)
 		infoCode := strings.TrimSpace(row.InfoCode)
 		if title == "" || infoCode == "" {
@@ -418,7 +503,7 @@ func parseEastMoneyReportDocument(body string, pageURL string, now time.Time) ([
 		}
 		items = append(items, item)
 	}
-	return items, nil
+	return items
 }
 
 func (w *Worker) enrichEastMoneyReportDetails(ctx context.Context, items []model.StockResearchSurvey) []model.StockResearchSurvey {
