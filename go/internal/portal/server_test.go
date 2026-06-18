@@ -785,9 +785,46 @@ func TestAStockPageShowsBackfillCurrentWindowAction(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"补抓当前窗口新闻", `name="action" value="backfill_window_news"`, "补录上午新闻并生成推荐", `name="action" value="backfill_morning_stock"`} {
+	for _, want := range []string{"补抓当前窗口新闻", `name="action" value="backfill_window_news"`, "补录上午新闻并生成推荐", `name="action" value="backfill_morning_stock"`, "补录集合竞价", `name="action" value="backfill_auction"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected backfill action %q, got %s", want, body)
+		}
+	}
+}
+
+func TestAStockBackfillAuctionActionUsesSelectedDate(t *testing.T) {
+	scheduler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/scheduler/a-stock/auction/backfill" {
+			t.Fatalf("unexpected scheduler request: %s %s", r.Method, r.URL.String())
+		}
+		if r.URL.Query().Get("days") != "1" || r.URL.Query().Get("start") != "2026-06-17" || r.URL.Query().Get("end") != "2026-06-17" {
+			t.Fatalf("unexpected auction backfill query: %s", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{"result": map[string]any{
+				"succeeded": 1,
+				"skipped":   0,
+				"failed":    0,
+			}},
+		})
+	}))
+	defer scheduler.Close()
+
+	srv := NewServer(config.Config{SchedulerURL: scheduler.URL, ServiceToken: "secret-token"})
+	form := url.Values{"date": {"2026-06-17"}, "period": {"afternoon"}, "action": {"backfill_auction"}}
+	req := httptest.NewRequest(http.MethodPost, "/a-stock", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d", rr.Code)
+	}
+	loc, _ := url.QueryUnescape(rr.Header().Get("Location"))
+	for _, want := range []string{"date=2026-06-17", "period=afternoon", "已补录 2026-06-17 集合竞价", "请重新生成推荐"} {
+		if !strings.Contains(loc, want) {
+			t.Fatalf("expected auction backfill redirect message %q, got %q", want, loc)
 		}
 	}
 }
@@ -933,9 +970,47 @@ func TestAStockPageExplainsMorningNoNews(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"上午推荐", "08:00-09:30", "没有历史新闻", "请先抓取或补抓财经信息"} {
+	for _, want := range []string{"上午推荐", "08:00-09:30", "没有新闻", "请先抓取或补抓财经信息"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected no-news explanation %q, got %s", want, body)
+		}
+	}
+}
+
+func TestAStockPageExplainsNewsAndHotspotsWithoutAuction(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/a-stock/holdings/summary":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockInstitutionHoldingSummary{}})
+		case "/api/v1/a-stock/auction":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.AStockAuctionListResult{
+				Date:  r.URL.Query().Get("date"),
+				Items: []model.AStockAuctionAmount{},
+			}})
+		case "/api/v1/articles":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.ItemListResult{
+				Items: []model.Item{{ID: 1, SourceType: "flash", Title: "人工智能产业链活跃", Summary: "AI 算力需求增长", PublishTime: "2026-06-16 09:05:00"}},
+				Page:  1, PageSize: 200, Total: 1,
+			}})
+		default:
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-16&period=morning", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"有新闻和热点", "没有集合竞价候选数据", "补录集合竞价"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected no-auction explanation %q, got %s", want, body)
 		}
 	}
 }
@@ -1433,11 +1508,13 @@ func TestAStockRecommendationHistoryActionsUseSelectedPeriod(t *testing.T) {
 		`name="action" value="backfill_window_news"`,
 		`name="action" value="generate_afternoon_stock"`,
 		`name="action" value="generate_ignore_recent_stock"`,
+		`name="action" value="backfill_auction"`,
 		`name="action" value="refresh_backtest"`,
 		`data-preserve-scroll="1"`,
 		"补抓并重新生成当前窗口",
 		"重新生成当前推荐",
 		"忽略15日重复过滤重新生成",
+		"补录集合竞价",
 		"刷新当前回测",
 	} {
 		if !strings.Contains(body, want) {

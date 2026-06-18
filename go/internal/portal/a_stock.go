@@ -17,26 +17,29 @@ import (
 )
 
 type aStockContext struct {
-	Date            string
-	Period          string
-	PeriodLabel     string
-	WindowLabel     string
-	NewsPage        int
-	NewsPageSize    int
-	NewsTotal       int
-	NewsTotalPages  int
-	WindowStart     time.Time
-	WindowEnd       time.Time
-	Articles        []model.Item
-	PagedArticles   []model.Item
-	Hotspots        []aStockHotspot
-	Recommendations []aStockRecommendation
-	Backtests       []aStockBacktestRow
-	LoadMessage     string
-	BacktestStatus  string
-	EmptyReason     string
-	RecentFiltered  int
-	IgnoreRecent    bool
+	Date                         string
+	Period                       string
+	PeriodLabel                  string
+	WindowLabel                  string
+	NewsPage                     int
+	NewsPageSize                 int
+	NewsTotal                    int
+	NewsTotalPages               int
+	WindowStart                  time.Time
+	WindowEnd                    time.Time
+	Articles                     []model.Item
+	PagedArticles                []model.Item
+	Hotspots                     []aStockHotspot
+	Recommendations              []aStockRecommendation
+	Backtests                    []aStockBacktestRow
+	LoadMessage                  string
+	BacktestStatus               string
+	EmptyReason                  string
+	RecentFiltered               int
+	IgnoreRecent                 bool
+	MarketCandidateStatus        string
+	MarketCandidateCount         int
+	GeneratedRecommendationCount int
 }
 
 type aStockHotspot struct {
@@ -260,6 +263,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		{Name: "generate_afternoon_stock", Label: "重新生成下午推荐", Period: "afternoon"},
 		{Name: "generate", Label: "生成今日热点", Period: ctx.Period},
 		{Name: "sync_market", Label: "同步行情", Period: ctx.Period},
+		{Name: "backfill_auction", Label: "补录集合竞价", Period: ctx.Period},
 		{Name: "refresh_backtest", Label: "刷新回测结果", Period: ctx.Period},
 	} {
 		b.WriteString(`<form class="astock-action-form" method="post"><input type="hidden" name="date" value="`)
@@ -321,6 +325,9 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request) 
 		query.Set("msg", period.Label+"热点已按当前新闻窗口重新计算。")
 	case "sync_market":
 		query.Set("msg", "行情已按当前策略日期刷新，页面已重新计算昨日收盘价、现价、涨跌幅和回测。")
+	case "backfill_auction":
+		date := normalizeAStockStrategyDate(r.FormValue("date"))
+		query.Set("msg", s.triggerAStockAuctionBackfillDate(date))
 	case "refresh_backtest":
 		query.Set("msg", "消息回测已按当前推荐股票和行情数据刷新。")
 	default:
@@ -598,6 +605,7 @@ func renderAStockRecommendationHistoryActions(b *strings.Builder, strategyDate s
 		{Name: "backfill_window_news", Label: "补抓并重新生成当前窗口"},
 		{Name: recomputeAction, Label: "重新生成当前推荐"},
 		{Name: "generate_ignore_recent_stock", Label: "忽略15日重复过滤重新生成"},
+		{Name: "backfill_auction", Label: "补录集合竞价"},
 		{Name: "refresh_backtest", Label: "刷新当前回测"},
 	} {
 		b.WriteString(`<form method="post"><input type="hidden" name="date" value="`)
@@ -659,8 +667,11 @@ func (s *Server) loadAStockContext(strategyDate string, periodKey string, newsPa
 	ctx.PagedArticles, ctx.NewsPage, ctx.NewsTotalPages = paginateAStockNews(ctx.Articles, newsPage, aStockNewsPageSize)
 	ctx.Hotspots = buildAStockHotspots(ctx.Articles)
 	if len(ctx.Hotspots) > 0 {
-		candidates := s.loadAStockMarketCandidates(strategyDate)
+		candidates, candidateStatus := s.loadAStockMarketCandidatesWithStatus(strategyDate)
+		ctx.MarketCandidateStatus = candidateStatus
+		ctx.MarketCandidateCount = len(candidates)
 		ctx.Recommendations = buildAStockRecommendations(ctx.Hotspots, candidates)
+		ctx.GeneratedRecommendationCount = len(ctx.Recommendations)
 	}
 	if len(ctx.Recommendations) > 0 && !ctx.IgnoreRecent {
 		recentCodes := s.loadRecentAStockRecommendationCodes(strategyDate, aStockRecentLookbackDays)
@@ -681,20 +692,30 @@ func aStockRecommendationEmptyReason(ctx aStockContext) string {
 		return ""
 	}
 	if ctx.NewsTotal == 0 {
-		return fmt.Sprintf("暂无推荐股票：%s %s 没有历史新闻，请先抓取或补抓财经信息。", ctx.PeriodLabel, ctx.WindowLabel)
+		return fmt.Sprintf("暂无推荐股票：%s %s 没有新闻，请先抓取或补抓财经信息。", ctx.PeriodLabel, ctx.WindowLabel)
 	}
 	if len(ctx.Hotspots) == 0 {
 		return fmt.Sprintf("暂无推荐股票：%s %s 有 %d 条新闻，但未命中 A股热点关键词。", ctx.PeriodLabel, ctx.WindowLabel, ctx.NewsTotal)
 	}
-	recentClause := "或近15日重复推荐"
-	if ctx.IgnoreRecent {
-		recentClause = ""
+	if ctx.MarketCandidateStatus == "no_auction_candidates" || ctx.MarketCandidateStatus == "content_unconfigured" {
+		return fmt.Sprintf("暂无推荐股票：%s %s 有新闻和热点，但没有集合竞价候选数据。请点击“补录集合竞价”后重新生成推荐。", ctx.PeriodLabel, ctx.WindowLabel)
 	}
-	reason := fmt.Sprintf("暂无推荐股票：%s %s 已命中 %d 个热点，但全市场行情候选未命中个股，或被当日开盘价、30/60天跌幅%s过滤。", ctx.PeriodLabel, ctx.WindowLabel, len(ctx.Hotspots), recentClause)
+	if ctx.GeneratedRecommendationCount == 0 {
+		if ctx.MarketCandidateStatus == "latest_auction_fallback" {
+			return fmt.Sprintf("暂无推荐股票：%s %s 有新闻和热点；策略日没有集合竞价，已使用最新集合竞价字典，但新闻没有明确匹配到股票名称或代码。", ctx.PeriodLabel, ctx.WindowLabel)
+		}
+		return fmt.Sprintf("暂无推荐股票：%s %s 有新闻和热点，也有 %d 条集合竞价候选，但新闻没有明确匹配到股票名称或代码。", ctx.PeriodLabel, ctx.WindowLabel, ctx.MarketCandidateCount)
+	}
 	if ctx.RecentFiltered > 0 {
-		reason = fmt.Sprintf("%s 其中近15日已推荐股票过滤 %d 只。", reason, ctx.RecentFiltered)
+		return fmt.Sprintf("暂无推荐股票：%s %s 已生成候选，但近15日重复推荐过滤 %d 只。可点击“忽略15日重复过滤重新生成”。", ctx.PeriodLabel, ctx.WindowLabel, ctx.RecentFiltered)
 	}
-	return reason
+	if strings.Contains(ctx.BacktestStatus, "无当日行情") || strings.Contains(ctx.BacktestStatus, "过滤无当日行情") {
+		return fmt.Sprintf("暂无推荐股票：%s %s 已生成 %d 只候选，但没有当日行情或开盘价。请点击“同步行情”后重试。", ctx.PeriodLabel, ctx.WindowLabel, ctx.GeneratedRecommendationCount)
+	}
+	if strings.Contains(ctx.BacktestStatus, "回撤过滤") || strings.Contains(ctx.BacktestStatus, "过滤回撤") {
+		return fmt.Sprintf("暂无推荐股票：%s %s 已生成 %d 只候选，但被30/60天回撤过滤。", ctx.PeriodLabel, ctx.WindowLabel, ctx.GeneratedRecommendationCount)
+	}
+	return fmt.Sprintf("暂无推荐股票：%s %s 已生成 %d 只候选，但未通过行情、回撤或回测过滤。状态：%s", ctx.PeriodLabel, ctx.WindowLabel, ctx.GeneratedRecommendationCount, ctx.BacktestStatus)
 }
 
 func normalizeAStockBool(raw string) bool {
@@ -824,18 +845,26 @@ func (s *Server) loadAStockWindowArticles(start time.Time, end time.Time) ([]mod
 }
 
 func (s *Server) loadAStockMarketCandidates(strategyDate string) []aStockMarketCandidate {
+	candidates, _ := s.loadAStockMarketCandidatesWithStatus(strategyDate)
+	return candidates
+}
+
+func (s *Server) loadAStockMarketCandidatesWithStatus(strategyDate string) ([]aStockMarketCandidate, string) {
 	if strings.TrimSpace(s.cfg.ContentURL) == "" {
-		return nil
+		return nil, "content_unconfigured"
 	}
 	date := normalizeAStockStrategyDate(strategyDate)
 	result, ok := s.loadAStockMarketCandidateResult(date)
 	if !ok && date != "" {
 		result, ok = s.loadAStockMarketCandidateResult("")
+		if ok {
+			return aStockMarketCandidatesFromAuctionResult(result), "latest_auction_fallback"
+		}
 	}
 	if !ok {
-		return nil
+		return nil, "no_auction_candidates"
 	}
-	return aStockMarketCandidatesFromAuctionResult(result)
+	return aStockMarketCandidatesFromAuctionResult(result), "date_auction"
 }
 
 func (s *Server) loadAStockMarketCandidateResult(strategyDate string) (model.AStockAuctionListResult, bool) {

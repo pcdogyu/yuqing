@@ -424,6 +424,69 @@ func (s *Server) triggerAStockAuctionBackfill(days int) string {
 	return fmt.Sprintf("近%d天集合竞价回溯任务已触发，请稍后刷新查看资金趋势。", days)
 }
 
+func (s *Server) triggerAStockAuctionBackfillDate(date string) string {
+	date = normalizeAStockStrategyDate(date)
+	if date == "" {
+		return "集合竞价补录失败：策略日期无效。"
+	}
+	query := url.Values{}
+	query.Set("days", "1")
+	query.Set("start", date)
+	query.Set("end", date)
+	resp, err := s.client.R().
+		SetHeader("X-Service-Token", s.cfg.ServiceToken).
+		Post(s.cfg.SchedulerURL + "/api/v1/scheduler/a-stock/auction/backfill?" + query.Encode())
+	if err != nil {
+		return "集合竞价补录失败：" + err.Error()
+	}
+	if !resp.IsSuccess() {
+		detail := schedulerAuctionErrorMessage(resp.Body(), resp.String())
+		if detail == "" {
+			detail = resp.Status()
+		}
+		return "集合竞价补录失败：" + detail
+	}
+	result := decodeSchedulerAuctionBackfillResult(resp.Body())
+	if result.Succeeded > 0 {
+		return fmt.Sprintf("已补录 %s 集合竞价：成功 %d 天，跳过 %d 天，失败 %d 天。请重新生成推荐。", date, result.Succeeded, result.Skipped, result.Failed)
+	}
+	if result.Skipped > 0 || result.Failed > 0 {
+		return fmt.Sprintf("%s 集合竞价未写入：跳过 %d 天，失败 %d 天。%s", date, result.Skipped, result.Failed, strings.Join(result.Errors, "；"))
+	}
+	return fmt.Sprintf("%s 集合竞价补录任务已触发，请稍后刷新后重新生成推荐。", date)
+}
+
+func decodeSchedulerAuctionBackfillResult(body []byte) struct {
+	Succeeded int
+	Skipped   int
+	Failed    int
+	Errors    []string
+} {
+	var envelope struct {
+		Data struct {
+			Result struct {
+				Succeeded int      `json:"succeeded"`
+				Skipped   int      `json:"skipped"`
+				Failed    int      `json:"failed"`
+				Errors    []string `json:"errors"`
+			} `json:"result"`
+		} `json:"data"`
+	}
+	var result struct {
+		Succeeded int
+		Skipped   int
+		Failed    int
+		Errors    []string
+	}
+	if err := json.Unmarshal(body, &envelope); err == nil {
+		result.Succeeded = envelope.Data.Result.Succeeded
+		result.Skipped = envelope.Data.Result.Skipped
+		result.Failed = envelope.Data.Result.Failed
+		result.Errors = envelope.Data.Result.Errors
+	}
+	return result
+}
+
 func schedulerAuctionErrorMessage(body []byte, fallback string) string {
 	var envelope struct {
 		Message string `json:"message"`
