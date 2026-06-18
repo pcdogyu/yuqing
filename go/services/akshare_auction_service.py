@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Small AKShare HTTP adapter for A-share opening auction amounts.
+"""Small AKShare HTTP adapter for A-share opening auction amounts and research reports.
 
 The Go scheduler calls:
   GET /api/a-stock/auction?date=YYYY-MM-DD
+  GET /api/stock-research?code=002230&start=YYYY-MM-DD&end=YYYY-MM-DD
 
 This service uses AKShare's Eastmoney pre-market minute API and returns the
 JSON contract consumed by scheduler-service. It intentionally stays on the
@@ -14,6 +15,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import datetime as dt
+import hashlib
 import json
 import math
 import os
@@ -32,6 +34,7 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8087
 DEFAULT_WORKERS = 12
 DEFAULT_CACHE_DIR = Path("data") / "akshare-cache" / "a-stock-auction"
+DEFAULT_RESEARCH_SYMBOLS = ["002230", "300059", "000001", "600519", "300750", "000858", "601318"]
 EASTMONEY_CLIST_URLS = [
     "https://push2delay.eastmoney.com/api/qt/clist/get",
     "http://push2delay.eastmoney.com/api/qt/clist/get",
@@ -97,6 +100,22 @@ def normalize_date(value: str | None) -> str:
     return local_today()
 
 
+def normalize_optional_date(value: str | None) -> str:
+    if not value:
+        return ""
+    value = value.strip()
+    for fmt in ("%Y-%m-%d", "%Y%m%d", "%Y/%m/%d", "%Y.%m.%d"):
+        try:
+            return dt.datetime.strptime(value, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+    if "T" in value:
+        return normalize_optional_date(value.split("T", 1)[0])
+    if " " in value:
+        return normalize_optional_date(value.split(" ", 1)[0])
+    return value
+
+
 def parse_trade_date(value: Any) -> str:
     text = text_value(value)
     if not text:
@@ -142,7 +161,15 @@ def finite_float(value: Any) -> float:
 def text_value(value: Any) -> str:
     if value is None:
         return ""
-    return str(value).strip()
+    try:
+        if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+            return ""
+    except Exception:
+        pass
+    text = str(value).strip()
+    if text.lower() in {"nan", "nat", "none"}:
+        return ""
+    return text
 
 
 def first_existing(row: Any, names: list[str]) -> Any:
@@ -154,6 +181,47 @@ def first_existing(row: Any, names: list[str]) -> Any:
         if text_value(value) != "":
             return value
     return None
+
+
+def row_to_dict(row: Any) -> dict[str, Any]:
+    if isinstance(row, dict):
+        return row
+    try:
+        return row.to_dict()
+    except Exception:
+        return {}
+
+
+def json_safe_value(value: Any) -> Any:
+    if value is None:
+        return None
+    try:
+        if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+            return None
+    except Exception:
+        pass
+    try:
+        is_na = bool(value != value)
+        if is_na:
+            return None
+    except Exception:
+        pass
+    if isinstance(value, (str, int, bool)):
+        return value
+    if isinstance(value, float):
+        return value
+    if isinstance(value, (dt.datetime, dt.date)):
+        return value.isoformat()
+    if hasattr(value, "isoformat"):
+        try:
+            return value.isoformat()
+        except Exception:
+            pass
+    return str(value)
+
+
+def json_safe_row(row: Any) -> dict[str, Any]:
+    return {str(key): json_safe_value(value) for key, value in row_to_dict(row).items()}
 
 
 def row_time_text(row: Any) -> str:
@@ -391,6 +459,129 @@ def payload_has_usable_items(payload: dict[str, Any]) -> bool:
     return any(isinstance(item, dict) and item_has_usable_amount(item) for item in items)
 
 
+def source_key(parts: list[str]) -> str:
+    return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()
+
+
+def report_date_text(row: Any) -> str:
+    value = first_existing(row, ["日期", "date", "报告日期", "publish_date", "research_date"])
+    return normalize_optional_date(text_value(json_safe_value(value)))
+
+
+def report_summary(row: Any) -> str:
+    parts: list[str] = []
+    industry = text_value(first_existing(row, ["行业", "industry"]))
+    if industry:
+        parts.append(f"行业：{industry}")
+    month_count = text_value(first_existing(row, ["近一月个股研报数"]))
+    if month_count:
+        parts.append(f"近一月研报数：{month_count}")
+    for year in ("2026", "2027", "2028"):
+        eps = text_value(first_existing(row, [f"{year}-盈利预测-收益"]))
+        pe = text_value(first_existing(row, [f"{year}-盈利预测-市盈率"]))
+        if eps or pe:
+            parts.append(f"{year} EPS {eps or '--'} / PE {pe or '--'}")
+    return "；".join(parts)
+
+
+def research_symbols_from_env() -> list[str]:
+    raw = os.getenv("AKSHARE_RESEARCH_DEFAULT_SYMBOLS", "")
+    values = [item.strip().zfill(6) for item in raw.split(",") if item.strip()]
+    return values or DEFAULT_RESEARCH_SYMBOLS
+
+
+def resolve_research_symbols(ak: Any, query: dict[str, list[str]]) -> tuple[list[str], str]:
+    code_value = first_query_value(query, "code") or first_query_value(query, "symbol") or ""
+    explicit_codes = [item.strip().zfill(6) for item in code_value.split(",") if item.strip()]
+    if explicit_codes:
+        return explicit_codes, ""
+
+    company = first_query_value(query, "company") or first_query_value(query, "name") or ""
+    company = company.strip()
+    if not company:
+        return research_symbols_from_env(), "no code/company supplied; used default research symbols"
+
+    frames = []
+    for loader in (getattr(ak, "stock_info_a_code_name", None), getattr(ak, "stock_zh_a_spot_em", None)):
+        if loader is None:
+            continue
+        try:
+            frames.append(loader())
+        except Exception:
+            continue
+    for frame in frames:
+        try:
+            iterator = frame.iterrows()
+        except Exception:
+            continue
+        for _, row in iterator:
+            code = text_value(first_existing(row, ["代码", "code", "股票代码"]))
+            name = text_value(first_existing(row, ["名称", "name", "股票名称"]))
+            if code and (company in name or name in company):
+                return [code.zfill(6)], ""
+    return [], f"company not found in A-share symbol list: {company}"
+
+
+def research_report_item(row: Any, fallback_code: str) -> dict[str, Any] | None:
+    code = text_value(first_existing(row, ["股票代码", "code", "股票代码"])) or fallback_code
+    code = code.zfill(6) if code else ""
+    name = text_value(first_existing(row, ["股票简称", "名称", "name", "股票名称"]))
+    title = text_value(first_existing(row, ["报告名称", "title", "标题"]))
+    institution = text_value(first_existing(row, ["机构", "institution"]))
+    rating = text_value(first_existing(row, ["东财评级", "评级", "rating"]))
+    research_date = report_date_text(row)
+    pdf_url = text_value(first_existing(row, ["报告PDF链接", "pdf_url", "PDF链接"]))
+    if not title:
+        return None
+    raw_payload = json.dumps(json_safe_row(row), ensure_ascii=False, separators=(",", ":"))
+    key = source_key(["akshare_stock_research", code, title, institution, research_date, pdf_url])
+    return {
+        "code": code,
+        "name": name,
+        "kind": "report",
+        "title": title,
+        "institution": institution,
+        "analyst": "",
+        "rating": rating,
+        "target_price": "",
+        "research_date": research_date,
+        "publish_time": research_date,
+        "source_url": pdf_url,
+        "source_type": "akshare_stock_research",
+        "source_key": key,
+        "summary": report_summary(row),
+        "raw_payload": raw_payload,
+        "pdf_url": pdf_url,
+        "pdf_status": "pending" if pdf_url else "no_pdf",
+    }
+
+
+def date_in_range(value: str, start: str, end: str) -> bool:
+    if value:
+        if start and value < start:
+            return False
+        if end and value > end:
+            return False
+    return True
+
+
+def fetch_research_reports_for_symbol(ak: Any, symbol: str, start: str, end: str) -> list[dict[str, Any]]:
+    frame = ak.stock_research_report_em(symbol=symbol)
+    items: list[dict[str, Any]] = []
+    try:
+        iterator = frame.iterrows()
+    except Exception:
+        return items
+    for _, row in iterator:
+        item = research_report_item(row, symbol)
+        if item is None:
+            continue
+        if not date_in_range(text_value(item.get("research_date")), start, end):
+            continue
+        items.append(item)
+    return items
+
+
 class AuctionService:
     def __init__(self, cache_dir: Path, workers: int, default_limit: int):
         self.cache_dir = cache_dir
@@ -497,6 +688,43 @@ class AuctionService:
             ) + "AKShare returned rows but no usable auction amounts; cache was not updated."
         return payload
 
+    def fetch_stock_research(self, query: dict[str, list[str]]) -> dict[str, Any]:
+        ak = load_akshare()
+        start = normalize_optional_date(first_query_value(query, "start"))
+        end = normalize_optional_date(first_query_value(query, "end"))
+        limit = int_value(first_query_value(query, "limit"), 0)
+        symbols, warning = resolve_research_symbols(ak, query)
+        if limit <= 0 and not (first_query_value(query, "code") or first_query_value(query, "company")):
+            limit = 50
+        started = time.time()
+        items: list[dict[str, Any]] = []
+        errors: list[str] = []
+        for symbol in symbols:
+            try:
+                items.extend(fetch_research_reports_for_symbol(ak, symbol, start, end))
+            except Exception as exc:  # pragma: no cover - external service variability
+                errors.append(f"{symbol}: {exc}")
+        items.sort(key=lambda item: (text_value(item.get("research_date")), text_value(item.get("source_key"))), reverse=True)
+        if limit > 0:
+            items = items[:limit]
+        payload: dict[str, Any] = {
+            "items": items,
+            "count": len(items),
+            "symbols": symbols,
+            "start": start,
+            "end": end,
+            "elapsed_sec": round(time.time() - started, 3),
+            "fetched_at": utc_now_iso(),
+        }
+        warnings = [item for item in [warning] if item]
+        if errors:
+            warnings.append("; ".join(errors))
+        if warnings:
+            payload["warning"] = "; ".join(warnings)
+        if symbols and not items and errors:
+            payload["_http_status"] = 502
+        return payload
+
 
 def first_query_value(query: dict[str, list[str]], key: str) -> str | None:
     values = query.get(key)
@@ -530,6 +758,14 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/a-stock/auction":
                 payload = self.service.fetch(query)
+                status = int(payload.get("_http_status", 200))
+                if "_http_status" in payload:
+                    payload = dict(payload)
+                    payload.pop("_http_status", None)
+                self.write_json(status, payload)
+                return
+            if parsed.path == "/api/stock-research":
+                payload = self.service.fetch_stock_research(query)
                 status = int(payload.get("_http_status", 200))
                 if "_http_status" in payload:
                     payload = dict(payload)
@@ -609,6 +845,24 @@ def run_self_test() -> None:
             return FakeFrame()
 
     assert latest_trading_day(FakeAK(), "2026-06-17") == "2026-06-15"
+    report = research_report_item(
+        {
+            "股票代码": "2230",
+            "股票简称": "科大讯飞",
+            "报告名称": "科大讯飞深度研究",
+            "东财评级": "买入",
+            "机构": "中金公司",
+            "日期": "2026-06-16",
+            "报告PDF链接": "https://example.com/report.pdf",
+            "行业": "软件开发",
+        },
+        "002230",
+    )
+    assert report is not None
+    assert report["code"] == "002230"
+    assert report["source_type"] == "akshare_stock_research"
+    assert report["pdf_status"] == "pending"
+    assert date_in_range("2026-06-16", "2026-06-01", "2026-06-30")
     print("akshare auction service self-test passed")
 
 

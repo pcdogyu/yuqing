@@ -196,6 +196,11 @@ if defined YUQING_ASTOCK_AUCTION_URL (
 ) else (
     echo AKShareAuction: disabled ^(Python/AKShare service not available^)
 )
+if defined YUQING_STOCK_RESEARCH_URL (
+    echo StockResearch: %YUQING_STOCK_RESEARCH_URL%
+) else (
+    echo StockResearch: public sources only ^(AKShare service not available^)
+)
 echo LogLevel: %YUQING_LOG_LEVEL%
 echo Version: %YUQING_RUN_VERSION%
 echo Commit: %YUQING_GIT_COMMIT%
@@ -270,6 +275,9 @@ if errorlevel 1 (
     exit /b 0
 )
 set "YUQING_AKSHARE_AUCTION_STARTED=1"
+if not defined YUQING_STOCK_RESEARCH_URL (
+    set "YUQING_STOCK_RESEARCH_URL=http://127.0.0.1:%AKSHARE_AUCTION_PORT%"
+)
 exit /b 0
 
 :wait_for_port
