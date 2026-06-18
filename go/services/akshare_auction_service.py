@@ -22,6 +22,7 @@ import threading
 import time
 import traceback
 import urllib.parse
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,26 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8087
 DEFAULT_WORKERS = 12
 DEFAULT_CACHE_DIR = Path("data") / "akshare-cache" / "a-stock-auction"
+EASTMONEY_CLIST_URLS = [
+    "https://push2delay.eastmoney.com/api/qt/clist/get",
+    "http://push2delay.eastmoney.com/api/qt/clist/get",
+    "https://push2.eastmoney.com/api/qt/clist/get",
+    "http://push2.eastmoney.com/api/qt/clist/get",
+    "https://82.push2.eastmoney.com/api/qt/clist/get",
+    "http://82.push2.eastmoney.com/api/qt/clist/get",
+]
+EASTMONEY_A_STOCK_FS = "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23"
+EASTMONEY_FIELDS = "f12,f14,f2,f5,f6"
+EASTMONEY_HEADERS = {
+    "Accept": "application/json,text/plain,*/*",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    "Connection": "close",
+    "Referer": "https://quote.eastmoney.com/center/gridlist.html",
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
+    ),
+}
 
 _akshare_module: Any | None = None
 _akshare_error: str | None = None
@@ -223,6 +244,69 @@ def fetch_market_snapshot(ak: Any, trade_date: str, limit: int) -> list[dict[str
     return items
 
 
+def eastmoney_rows_to_items(rows: list[dict[str, Any]], trade_date: str, limit: int) -> list[dict[str, Any]]:
+    fetched_at = utc_now_iso()
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        code = text_value(row.get("f12"))
+        name = text_value(row.get("f14"))
+        if not code:
+            continue
+        price = finite_float(row.get("f2"))
+        volume = finite_float(row.get("f5"))
+        amount = finite_float(row.get("f6"))
+        items.append(
+            {
+                "trade_date": trade_date,
+                "code": code.zfill(6),
+                "name": name,
+                "auction_price": price,
+                "auction_volume": volume,
+                "auction_amount": amount,
+                "source": "eastmoney_clist",
+                "status": "ok" if amount > 0 or volume > 0 else "no_auction_amount",
+                "fetched_at": fetched_at,
+            }
+        )
+        if limit > 0 and len(items) >= limit:
+            break
+    return items
+
+
+def fetch_eastmoney_snapshot(trade_date: str, limit: int) -> list[dict[str, Any]]:
+    params = {
+        "pn": "1",
+        "pz": str(limit if limit > 0 else 6000),
+        "po": "1",
+        "np": "1",
+        "fltt": "2",
+        "invt": "2",
+        "fid": "f3",
+        "fs": EASTMONEY_A_STOCK_FS,
+        "fields": EASTMONEY_FIELDS,
+        "_": str(int(time.time() * 1000)),
+    }
+    query = urllib.parse.urlencode(params)
+    errors: list[str] = []
+    for base_url in EASTMONEY_CLIST_URLS:
+        url = base_url + "?" + query
+        for attempt in range(3):
+            try:
+                request = urllib.request.Request(url, headers=EASTMONEY_HEADERS)
+                with urllib.request.urlopen(request, timeout=20) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+                data = payload.get("data") if isinstance(payload, dict) else None
+                rows = data.get("diff") if isinstance(data, dict) else None
+                if isinstance(rows, list) and rows:
+                    return eastmoney_rows_to_items(rows, trade_date, limit)
+                errors.append(f"{base_url}: empty diff")
+                break
+            except Exception as exc:  # pragma: no cover - external service variability
+                errors.append(f"{base_url} attempt {attempt + 1}: {exc}")
+                time.sleep(0.3 * (attempt + 1))
+    raise RuntimeError("; ".join(errors) or "Eastmoney clist returned no data")
+
+
 def fetch_one_auction(ak: Any, symbol: dict[str, str], trade_date: str) -> dict[str, Any]:
     code = symbol["code"]
     name = symbol.get("name", "")
@@ -363,19 +447,38 @@ class AuctionService:
             try:
                 items = fetch_market_snapshot(ak, trade_date, limit)
             except Exception as exc:
-                fallback_limit = int(os.getenv("AKSHARE_AUCTION_FALLBACK_LIMIT", "300"))
-                effective_limit = limit if limit > 0 else max(0, fallback_limit)
                 try:
-                    symbols = load_symbols(ak, [], effective_limit)
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=self.workers) as pool:
-                        items = list(pool.map(lambda symbol: fetch_one_auction(ak, symbol, trade_date), symbols))
-                    warning = f"stock_zh_a_spot_em failed, used pre-market fallback: {exc}"
-                except Exception as fallback_exc:
-                    items = []
-                    warning = (
-                        "AKShare market snapshot and fallback symbol list both failed: "
-                        f"snapshot={exc}; fallback={fallback_exc}"
-                    )
+                    items = fetch_eastmoney_snapshot(trade_date, limit)
+                    warning = f"stock_zh_a_spot_em failed, used direct Eastmoney snapshot: {exc}"
+                except Exception as eastmoney_exc:
+                    fallback_limit = int(os.getenv("AKSHARE_AUCTION_FALLBACK_LIMIT", "300"))
+                    effective_limit = limit if limit > 0 else max(0, fallback_limit)
+                    try:
+                        symbols = load_symbols(ak, [], effective_limit)
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=self.workers) as pool:
+                            items = list(pool.map(lambda symbol: fetch_one_auction(ak, symbol, trade_date), symbols))
+                        warning = (
+                            "stock_zh_a_spot_em and direct Eastmoney snapshot failed, "
+                            f"used pre-market fallback: snapshot={exc}; eastmoney={eastmoney_exc}"
+                        )
+                    except Exception as fallback_exc:
+                        items = []
+                        warning = (
+                            "AKShare market snapshot, direct Eastmoney snapshot, and fallback symbol list all failed: "
+                            f"snapshot={exc}; eastmoney={eastmoney_exc}; fallback={fallback_exc}"
+                        )
+            if items and not any(item_has_usable_amount(item) for item in items):
+                try:
+                    eastmoney_items = fetch_eastmoney_snapshot(trade_date, limit)
+                    if any(item_has_usable_amount(item) for item in eastmoney_items):
+                        previous_warning = (warning + "; ") if warning else ""
+                        items = eastmoney_items
+                        warning = previous_warning + "AKShare snapshot returned no usable amounts, used direct Eastmoney snapshot."
+                except Exception as eastmoney_exc:
+                    if warning:
+                        warning += f"; direct Eastmoney snapshot also failed: {eastmoney_exc}"
+                    else:
+                        warning = f"AKShare snapshot returned no usable amounts and direct Eastmoney snapshot failed: {eastmoney_exc}"
         payload = {
             "date": trade_date,
             "items": items,
@@ -422,7 +525,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         query = urllib.parse.parse_qs(parsed.query)
         try:
-            if parsed.path == "/healthz":
+            if parsed.path in {"/", "/healthz"}:
                 self.write_json(200, self.service.health())
                 return
             if parsed.path == "/api/a-stock/auction":
@@ -481,6 +584,16 @@ def run_self_test() -> None:
     assert finite_float("nan") == 0.0
     assert payload_has_usable_items({"items": [{"status": "ok", "auction_amount": 1}]})
     assert not payload_has_usable_items({"items": [{"status": "no_auction_amount", "auction_amount": 0}]})
+    eastmoney_items = eastmoney_rows_to_items(
+        [{"f12": "1", "f14": "平安银行", "f2": "12.3", "f5": "1000", "f6": "12300"}],
+        "2026-06-18",
+        0,
+    )
+    assert eastmoney_items[0]["code"] == "000001"
+    assert eastmoney_items[0]["name"] == "平安银行"
+    assert eastmoney_items[0]["source"] == "eastmoney_clist"
+    assert eastmoney_items[0]["status"] == "ok"
+
     class FakeFrame:
         def iterrows(self) -> Any:
             return iter(
