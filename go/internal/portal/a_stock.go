@@ -517,10 +517,10 @@ func renderAStockRecommendationSection(b *strings.Builder, ctx aStockContext) {
 		}
 		b.WriteString(`<div class="astock-empty">`)
 		b.WriteString(html.EscapeString(reason))
-		b.WriteString(`</div><div class="astock-scroll"><table class="astock-table astock-recommendation-table"><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>昨日收盘价</th><th>昨日涨跌幅</th><th>30天涨跌幅</th><th>60天涨跌幅</th><th>现价</th><th>今日跌幅</th><th>机构共持</th><th>持仓占比</th><th>推荐理由</th></tr><tr><td colspan="13">暂无推荐股票</td></tr></table></div></section>`)
+		b.WriteString(`</div><div class="astock-scroll"><table class="astock-table astock-recommendation-table"><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>昨日收盘价</th><th>昨日涨跌幅</th><th>30天涨跌幅</th><th>60天涨跌幅</th><th>现价</th><th>今日涨跌幅</th><th>机构共持</th><th>持仓占比</th><th>推荐理由</th></tr><tr><td colspan="13">暂无推荐股票</td></tr></table></div></section>`)
 		return
 	}
-	b.WriteString(`<div class="astock-scroll"><table class="astock-table astock-recommendation-table"><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>昨日收盘价</th><th>昨日涨跌幅</th><th>30天涨跌幅</th><th>60天涨跌幅</th><th>现价</th><th>今日跌幅</th><th>机构共持</th><th>持仓占比</th><th>推荐理由</th></tr>`)
+	b.WriteString(`<div class="astock-scroll"><table class="astock-table astock-recommendation-table"><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>昨日收盘价</th><th>昨日涨跌幅</th><th>30天涨跌幅</th><th>60天涨跌幅</th><th>现价</th><th>今日涨跌幅</th><th>机构共持</th><th>持仓占比</th><th>推荐理由</th></tr>`)
 	for _, rec := range recommendations {
 		b.WriteString(`<tr><td>`)
 		b.WriteString(fmt.Sprintf("%d", rec.Rank))
