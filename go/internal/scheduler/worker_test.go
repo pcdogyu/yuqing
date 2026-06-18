@@ -184,10 +184,10 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	if err := json.Unmarshal(listRR.Body.Bytes(), &listEnvelope); err != nil {
 		t.Fatalf("unmarshal jobs list: %v", err)
 	}
-	if len(listEnvelope.Data) != 28 {
-		t.Fatalf("expected 28 scheduler jobs, got %d", len(listEnvelope.Data))
+	if len(listEnvelope.Data) != 30 {
+		t.Fatalf("expected 30 scheduler jobs, got %d", len(listEnvelope.Data))
 	}
-	var heartbeatJob, hotJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningJob, aStockAfternoonJob, aStockAuctionJob, aStockHoldingsJob, stockResearchJob Job
+	var heartbeatJob, hotJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningPreviewJob, aStockMorningJob, aStockAfternoonPreviewJob, aStockAfternoonJob, aStockAuctionJob, aStockHoldingsJob, stockResearchJob Job
 	for _, job := range listEnvelope.Data {
 		switch job.Name {
 		case "crawl-link-heartbeat":
@@ -208,8 +208,12 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 			theBlockJob = job
 		case "a-stock-morning-recommendation":
 			aStockMorningJob = job
+		case "a-stock-morning-recommendation-preview":
+			aStockMorningPreviewJob = job
 		case "a-stock-afternoon-recommendation":
 			aStockAfternoonJob = job
+		case "a-stock-afternoon-recommendation-preview":
+			aStockAfternoonPreviewJob = job
 		case "a-stock-auction-crawl":
 			aStockAuctionJob = job
 		case "a-stock-holdings-crawl":
@@ -239,8 +243,14 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	if aStockMorningJob.Cron != "0 30 9 * * ?" || aStockMorningJob.NextRunAt == nil {
 		t.Fatalf("expected A股 morning recommendation cron metadata, got %+v", aStockMorningJob)
 	}
+	if aStockMorningPreviewJob.Cron != "0 25 9 * * ?" || aStockMorningPreviewJob.NextRunAt == nil {
+		t.Fatalf("expected A股 morning recommendation preview cron metadata, got %+v", aStockMorningPreviewJob)
+	}
 	if aStockAfternoonJob.Cron != "0 0 13 * * ?" || aStockAfternoonJob.NextRunAt == nil {
 		t.Fatalf("expected A股 afternoon recommendation cron metadata, got %+v", aStockAfternoonJob)
+	}
+	if aStockAfternoonPreviewJob.Cron != "0 55 12 * * ?" || aStockAfternoonPreviewJob.NextRunAt == nil {
+		t.Fatalf("expected A股 afternoon recommendation preview cron metadata, got %+v", aStockAfternoonPreviewJob)
 	}
 	if aStockAuctionJob.Cron != "0 30 9 * * ?" || aStockAuctionJob.Enabled {
 		t.Fatalf("expected A股 auction crawl disabled by default with 09:30 cron, got %+v", aStockAuctionJob)

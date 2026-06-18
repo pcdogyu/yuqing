@@ -286,6 +286,16 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 			},
 		}, "TheBlockLatestCrawler", "0 2/5 * * * ?"),
 		withJobMeta(jobDefinition{
+			Name:        "a-stock-morning-recommendation-preview",
+			Group:       "a-stock",
+			Description: "A股上午推荐预生成：09:25 抓取 08:00-09:30 财经新闻并生成上午推荐快照",
+			Interval:    24 * time.Hour,
+			Enabled:     true,
+			Run: func(ctx context.Context) error {
+				return w.runAStockRecommendation(ctx, "morning")
+			},
+		}, "AStockMorningRecommendationPreview", "0 25 9 * * ?"),
+		withJobMeta(jobDefinition{
 			Name:        "a-stock-morning-recommendation",
 			Group:       "a-stock",
 			Description: "A股上午推荐：09:30 抓取 08:00-09:30 财经新闻并生成相关股票推荐",
@@ -295,6 +305,16 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 				return w.runAStockRecommendation(ctx, "morning")
 			},
 		}, "AStockMorningRecommendation", "0 30 9 * * ?"),
+		withJobMeta(jobDefinition{
+			Name:        "a-stock-afternoon-recommendation-preview",
+			Group:       "a-stock",
+			Description: "A股下午推荐预生成：12:55 抓取 09:30-13:00 财经新闻并生成下午推荐快照",
+			Interval:    24 * time.Hour,
+			Enabled:     true,
+			Run: func(ctx context.Context) error {
+				return w.runAStockRecommendation(ctx, "afternoon")
+			},
+		}, "AStockAfternoonRecommendationPreview", "0 55 12 * * ?"),
 		withJobMeta(jobDefinition{
 			Name:        "a-stock-afternoon-recommendation",
 			Group:       "a-stock",

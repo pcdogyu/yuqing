@@ -41,6 +41,7 @@ type aStockContext struct {
 	MarketCandidateCount         int
 	GeneratedRecommendationCount int
 	AuctionAmountLabel           string
+	SameDayMorningFiltered       int
 }
 
 type aStockHotspot struct {
@@ -686,8 +687,12 @@ func (s *Server) loadAStockContext(strategyDate string, periodKey string, newsPa
 		ctx.MarketCandidateStatus = candidateStatus
 		ctx.MarketCandidateCount = len(candidates)
 		ctx.AuctionAmountLabel = formatAStockAuctionSummaryAmount(auctionResult)
-		ctx.Recommendations = buildAStockRecommendations(ctx.Hotspots, candidates)
+		ctx.Recommendations = buildAStockSnapshotRecommendations(strategyDate, period.Key, ctx.Articles, candidates)
 		ctx.GeneratedRecommendationCount = len(ctx.Recommendations)
+		if period.Key == "afternoon" && len(ctx.Recommendations) > 0 {
+			morningCodes := s.loadSameDayMorningAStockRecommendationCodes(strategyDate, candidates)
+			ctx.Recommendations, ctx.SameDayMorningFiltered = filterAStockRecommendationsByCodes(ctx.Recommendations, morningCodes)
+		}
 	}
 	if len(ctx.Recommendations) > 0 && !ctx.IgnoreRecent {
 		recentCodes := s.loadRecentAStockRecommendationCodes(strategyDate, aStockRecentLookbackDays)
@@ -724,6 +729,9 @@ func aStockRecommendationEmptyReason(ctx aStockContext) string {
 	}
 	if ctx.RecentFiltered > 0 {
 		return fmt.Sprintf("暂无推荐股票：%s %s 已生成候选，但近15日重复推荐过滤 %d 只。可点击“忽略15日重复过滤重新生成”。", ctx.PeriodLabel, ctx.WindowLabel, ctx.RecentFiltered)
+	}
+	if ctx.SameDayMorningFiltered > 0 {
+		return fmt.Sprintf("暂无推荐股票：%s %s 已生成候选，但过滤上午已推荐股票 %d 只。", ctx.PeriodLabel, ctx.WindowLabel, ctx.SameDayMorningFiltered)
 	}
 	if strings.Contains(ctx.BacktestStatus, "无当日行情") || strings.Contains(ctx.BacktestStatus, "过滤无当日行情") {
 		return fmt.Sprintf("暂无推荐股票：%s %s 已生成 %d 只候选，但没有当日行情或开盘价。请点击“同步行情”后重试。", ctx.PeriodLabel, ctx.WindowLabel, ctx.GeneratedRecommendationCount)
@@ -794,7 +802,7 @@ func (s *Server) loadRecentAStockRecommendationCodes(strategyDate string, lookba
 				continue
 			}
 			candidates := s.loadAStockMarketCandidates(date)
-			for _, rec := range buildAStockRecommendations(buildAStockHotspots(items), candidates) {
+			for _, rec := range buildAStockSnapshotRecommendations(date, period.Key, items, candidates) {
 				code := normalizeAStockCode(rec.Code)
 				if code != "" {
 					result[code] = struct{}{}
@@ -803,6 +811,15 @@ func (s *Server) loadRecentAStockRecommendationCodes(strategyDate string, lookba
 		}
 	}
 	return result
+}
+
+func (s *Server) loadSameDayMorningAStockRecommendationCodes(strategyDate string, candidates []aStockMarketCandidate) map[string]struct{} {
+	start, end := aStockWindow(strategyDate, "morning")
+	items, err := s.loadAStockWindowArticles(start, end)
+	if err != nil || len(items) == 0 {
+		return nil
+	}
+	return aStockRecommendationCodeSet(buildAStockSnapshotRecommendations(strategyDate, "morning", items, candidates))
 }
 
 func (s *Server) applyAStockHoldingSummaries(recommendations []aStockRecommendation) []aStockRecommendation {
@@ -1898,6 +1915,131 @@ func buildAStockRecommendations(hotspots []aStockHotspot, candidates []aStockMar
 		}
 	}
 	return recommendations
+}
+
+type aStockRecommendationSnapshot struct {
+	Label string
+	Start time.Time
+	End   time.Time
+}
+
+func buildAStockSnapshotRecommendations(strategyDate string, periodKey string, articles []model.Item, candidates []aStockMarketCandidate) []aStockRecommendation {
+	snapshots := aStockRecommendationSnapshots(strategyDate, periodKey)
+	if len(snapshots) == 0 {
+		return buildAStockRecommendations(buildAStockHotspots(articles), candidates)
+	}
+	combined := make([]aStockRecommendation, 0)
+	seen := make(map[string]struct{})
+	for _, snapshot := range snapshots {
+		snapshotArticles := filterAStockArticlesByPublishWindow(articles, snapshot.Start, snapshot.End)
+		if len(snapshotArticles) == 0 {
+			continue
+		}
+		for _, rec := range buildAStockRecommendations(buildAStockHotspots(snapshotArticles), candidates) {
+			code := normalizeAStockCode(rec.Code)
+			if code == "" {
+				continue
+			}
+			if _, exists := seen[code]; exists {
+				continue
+			}
+			seen[code] = struct{}{}
+			rec.Code = code
+			rec.Rank = len(combined) + 1
+			if snapshot.Label != "" {
+				rec.Reason = rec.Reason + "，生成点 " + snapshot.Label
+			}
+			combined = append(combined, rec)
+		}
+	}
+	if len(combined) == 0 && len(articles) > 0 {
+		return buildAStockRecommendations(buildAStockHotspots(articles), candidates)
+	}
+	return combined
+}
+
+func aStockRecommendationSnapshots(strategyDate string, periodKey string) []aStockRecommendationSnapshot {
+	location := aStockLocation()
+	day, err := time.ParseInLocation("2006-01-02", normalizeAStockStrategyDate(strategyDate), location)
+	if err != nil {
+		return nil
+	}
+	period := normalizeAStockPeriod(periodKey)
+	if period.Key == "afternoon" {
+		start := time.Date(day.Year(), day.Month(), day.Day(), 9, 30, 0, 0, location)
+		return []aStockRecommendationSnapshot{
+			{Label: "12:55", Start: start, End: time.Date(day.Year(), day.Month(), day.Day(), 12, 55, 59, 0, location)},
+			{Label: "13:00", Start: start, End: time.Date(day.Year(), day.Month(), day.Day(), 13, 0, 59, 0, location)},
+		}
+	}
+	start := time.Date(day.Year(), day.Month(), day.Day(), 8, 0, 0, 0, location)
+	return []aStockRecommendationSnapshot{
+		{Label: "09:25", Start: start, End: time.Date(day.Year(), day.Month(), day.Day(), 9, 25, 59, 0, location)},
+		{Label: "09:30", Start: start, End: time.Date(day.Year(), day.Month(), day.Day(), 9, 30, 59, 0, location)},
+	}
+}
+
+func filterAStockArticlesByPublishWindow(items []model.Item, start time.Time, end time.Time) []model.Item {
+	filtered := make([]model.Item, 0, len(items))
+	for _, item := range items {
+		publishedAt, ok := aStockItemPublishTime(item)
+		if !ok {
+			continue
+		}
+		if publishedAt.Before(start) || publishedAt.After(end) {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	return filtered
+}
+
+func aStockItemPublishTime(item model.Item) (time.Time, bool) {
+	location := aStockLocation()
+	for _, value := range []string{item.PublishTime, item.PublishTimeText} {
+		value = strings.TrimSpace(value)
+		if value == "" || strings.Contains(value, "前") || strings.Contains(value, "刚刚") {
+			continue
+		}
+		for _, layout := range []string{time.RFC3339, "2006-01-02 15:04:05", "2006-01-02 15:04", "2006-01-02"} {
+			if parsed, err := time.ParseInLocation(layout, value, location); err == nil {
+				return parsed.In(location), true
+			}
+		}
+	}
+	if !item.CapturedAt.IsZero() {
+		return item.CapturedAt.In(location), true
+	}
+	return time.Time{}, false
+}
+
+func aStockRecommendationCodeSet(recommendations []aStockRecommendation) map[string]struct{} {
+	if len(recommendations) == 0 {
+		return nil
+	}
+	codes := make(map[string]struct{}, len(recommendations))
+	for _, rec := range recommendations {
+		if code := normalizeAStockCode(rec.Code); code != "" {
+			codes[code] = struct{}{}
+		}
+	}
+	return codes
+}
+
+func filterAStockRecommendationsByCodes(recommendations []aStockRecommendation, blockedCodes map[string]struct{}) ([]aStockRecommendation, int) {
+	if len(recommendations) == 0 || len(blockedCodes) == 0 {
+		return rerankAStockRecommendations(recommendations), 0
+	}
+	filtered := make([]aStockRecommendation, 0, len(recommendations))
+	skipped := 0
+	for _, rec := range recommendations {
+		if _, blocked := blockedCodes[normalizeAStockCode(rec.Code)]; blocked {
+			skipped++
+			continue
+		}
+		filtered = append(filtered, rec)
+	}
+	return rerankAStockRecommendations(filtered), skipped
 }
 
 func newsDerivedAStockMarketCandidates(hotspots []aStockHotspot) []aStockMarketCandidate {

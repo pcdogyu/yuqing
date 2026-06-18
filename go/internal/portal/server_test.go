@@ -1857,6 +1857,47 @@ func TestAStockRecommendationsFallbackWhenAuctionCandidatesEmpty(t *testing.T) {
 	}
 }
 
+func TestAStockSnapshotRecommendationsMergeAndDeduplicate(t *testing.T) {
+	items := []model.Item{
+		{ID: 1, SourceType: "flash", Title: "科大讯飞盘中活跃", Summary: "AI 人工智能算力需求增长", PublishTime: "2026-06-18 09:20:00", TagFlags: "0.002230"},
+		{ID: 2, SourceType: "flash", Title: "科大讯飞继续活跃", Summary: "AI 人工智能应用落地", PublishTime: "2026-06-18 09:28:00", TagFlags: "0.002230"},
+		{ID: 3, SourceType: "flash", Title: "中芯国际成交放量", Summary: "半导体芯片国产替代升温", PublishTime: "2026-06-18 09:28:00", TagFlags: "1.688981"},
+	}
+	candidates := []aStockMarketCandidate{
+		{Code: "002230", Name: "科大讯飞", Rank: 1, AuctionAmount: 20000000, AuctionVolume: 1000000},
+		{Code: "688981", Name: "中芯国际", Rank: 2, AuctionAmount: 18000000, AuctionVolume: 900000},
+	}
+
+	recommendations := buildAStockSnapshotRecommendations("2026-06-18", "morning", items, candidates)
+
+	if len(recommendations) != 2 {
+		t.Fatalf("expected 09:25 and 09:30 snapshots to merge into two unique stocks, got %+v", recommendations)
+	}
+	if recommendations[0].Code != "002230" || recommendations[1].Code != "688981" {
+		t.Fatalf("expected duplicate 科大讯飞 to be deduplicated before later 中芯国际, got %+v", recommendations)
+	}
+	if !strings.Contains(recommendations[0].Reason, "生成点 09:25") || !strings.Contains(recommendations[1].Reason, "生成点 09:30") {
+		t.Fatalf("expected recommendations to retain snapshot generation labels, got %+v", recommendations)
+	}
+}
+
+func TestAStockAfternoonRecommendationsFilterMorningCodes(t *testing.T) {
+	morning := []aStockRecommendation{{Code: "002230", Name: "科大讯飞"}}
+	afternoon := []aStockRecommendation{
+		{Rank: 1, Code: "002230", Name: "科大讯飞"},
+		{Rank: 2, Code: "688981", Name: "中芯国际"},
+	}
+
+	filtered, skipped := filterAStockRecommendationsByCodes(afternoon, aStockRecommendationCodeSet(morning))
+
+	if skipped != 1 || len(filtered) != 1 {
+		t.Fatalf("expected one afternoon duplicate to be filtered, got skipped=%d filtered=%+v", skipped, filtered)
+	}
+	if filtered[0].Rank != 1 || filtered[0].Code != "688981" {
+		t.Fatalf("expected remaining afternoon stock to be reranked, got %+v", filtered)
+	}
+}
+
 func TestAStockRecommendationsCanUseFullMarketCandidateNameMatch(t *testing.T) {
 	recommendations := buildAStockRecommendations([]aStockHotspot{
 		{
