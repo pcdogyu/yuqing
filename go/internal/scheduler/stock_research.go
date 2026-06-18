@@ -176,7 +176,6 @@ func (w *Worker) fetchSinaFinanceReports(ctx context.Context, opts stockResearch
 	}
 	items := parseSinaFinanceReportDocument(doc, listURL, time.Now().UTC())
 	items = filterStockResearchItems(items, opts)
-	items = w.enrichSinaFinanceReportDetails(ctx, items)
 	return normalizeStockResearchSourceItems(items, "sina_finance_report"), nil
 }
 
@@ -321,6 +320,9 @@ func parseSinaFinanceReportDocument(doc *goquery.Document, pageURL string, now t
 		}
 		link := row.Find("a").First()
 		title := cleanStockResearchText(link.Text())
+		if attrTitle, ok := link.Attr("title"); ok {
+			title = nonEmptyText(cleanStockResearchText(attrTitle), title)
+		}
 		if title == "" || !looksLikeResearchTitle(title) {
 			return
 		}
@@ -904,6 +906,9 @@ func looksLikeResearchTitle(title string) bool {
 	title = strings.TrimSpace(title)
 	if title == "" {
 		return false
+	}
+	if stockResearchCodePattern.MatchString(title) {
+		return true
 	}
 	for _, keyword := range []string{"研报", "研究", "评级", "调研", "点评", "深度", "策略"} {
 		if strings.Contains(title, keyword) {
