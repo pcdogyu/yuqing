@@ -3022,6 +3022,25 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) 
 			} else {
 				message = "数据库连接检测失败：" + responseErrorMessage(resp, nil)
 			}
+		case "database_save_config":
+			resp, err := s.client.R().SetBody(map[string]any{
+				"driver":            r.FormValue("driver"),
+				"sqlite_path":       r.FormValue("sqlite_path"),
+				"postgres_dsn":      r.FormValue("postgres_dsn"),
+				"postgres_host":     r.FormValue("postgres_host"),
+				"postgres_port":     r.FormValue("postgres_port"),
+				"postgres_database": r.FormValue("postgres_database"),
+				"postgres_user":     r.FormValue("postgres_user"),
+				"postgres_password": r.FormValue("postgres_password"),
+				"postgres_sslmode":  r.FormValue("postgres_sslmode"),
+			}).Post(s.cfg.ContentURL + "/api/v1/system/database-config/save")
+			if err != nil {
+				message = "数据库连接参数保存失败"
+			} else if resp.IsSuccess() {
+				message = "数据库连接参数配置已保存"
+			} else {
+				message = "数据库连接参数保存失败：" + responseErrorMessage(resp, nil)
+			}
 		case "database_switch", "database_switch_postgres", "database_switch_sqlite":
 			driver := r.FormValue("driver")
 			switch strings.TrimSpace(r.FormValue("form_type")) {
@@ -4656,6 +4675,8 @@ func buildSystemTemplate() string {
 		`name="section" value="opactions"`,
 		`</div></section><section class="section-block"><h2>公告与任务</h2>`,
 		`</div></section>{{end}}{{if eq .SectionKey "announcements"}}<section class="section-block"><h2>公告与任务</h2>`,
+		`<div><h3>PowerShell 閰嶇疆</h3>`,
+		`<div><h3>数据库连接参数保存配置</h3><form method="post"><input type="hidden" name="section" value="database"><input type="hidden" name="form_type" value="database_save_config"><select name="driver"><option value="sqlite" {{if eq .DatabaseConfig.ConfiguredDriver "sqlite"}}selected{{end}}>本地 SQLite</option><option value="postgres" {{if eq .DatabaseConfig.ConfiguredDriver "postgres"}}selected{{end}}>PostgreSQL</option></select><input name="sqlite_path" placeholder="SQLite 路径" value="{{.DatabaseConfig.SQLitePath}}"><input name="postgres_dsn" placeholder="postgres://user:password@127.0.0.1:5432/yuqing?sslmode=disable"><input name="postgres_host" placeholder="Host" value="{{.DatabaseConfig.PostgresHost}}"><input name="postgres_port" placeholder="Port" value="{{if .DatabaseConfig.PostgresPort}}{{.DatabaseConfig.PostgresPort}}{{else}}5432{{end}}"><input name="postgres_database" placeholder="Database" value="{{.DatabaseConfig.PostgresDatabase}}"><input name="postgres_user" placeholder="User" value="{{.DatabaseConfig.PostgresUser}}"><input type="password" name="postgres_password" placeholder="Password"><select name="postgres_sslmode"><option value="disable" {{if eq .DatabaseConfig.PostgresSSLMode "disable"}}selected{{end}}>disable</option><option value="require" {{if eq .DatabaseConfig.PostgresSSLMode "require"}}selected{{end}}>require</option><option value="verify-ca" {{if eq .DatabaseConfig.PostgresSSLMode "verify-ca"}}selected{{end}}>verify-ca</option><option value="verify-full" {{if eq .DatabaseConfig.PostgresSSLMode "verify-full"}}selected{{end}}>verify-full</option></select><button type="submit">保存连接参数配置</button></form><p class="muted">仅保存连接参数到本地配置文件，不执行连接检测，不自动重启服务。</p><h3>PowerShell 配置</h3>`,
 		`</div></section></main>{{template "footer" .}}</body></html>{{end}}`,
 		`</div></section>{{end}}</main>{{template "footer" .}}</body></html>{{end}}`,
 	).Replace(systemTemplateRaw)

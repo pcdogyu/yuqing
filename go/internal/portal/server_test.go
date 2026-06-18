@@ -4634,6 +4634,35 @@ func TestSystemDatabaseSectionRendersPostgresConfig(t *testing.T) {
 	}
 }
 
+func TestSystemDatabaseSaveConfigRedirectsWithSuccess(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+
+	form := url.Values{}
+	form.Set("section", "database")
+	form.Set("form_type", "database_save_config")
+	form.Set("driver", "postgres")
+	form.Set("sqlite_path", "data/yuqing.db")
+	form.Set("postgres_host", "127.0.0.1")
+	form.Set("postgres_port", "5432")
+	form.Set("postgres_database", "yuqing")
+	form.Set("postgres_user", "postgres")
+	form.Set("postgres_sslmode", "disable")
+	req := httptest.NewRequest(http.MethodPost, "/system?section=database", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+
+	srv.handleSystem(rr, req, map[string]any{"id": int64(1), "username": "admin"})
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect after database config save, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	location := rr.Header().Get("Location")
+	if !strings.Contains(location, "section=database") || !strings.Contains(location, url.QueryEscape("数据库连接参数配置已保存")) {
+		t.Fatalf("expected database save success redirect, got %q", location)
+	}
+}
+
 func TestSystemDatabaseSwitchRedirectsWithSuccess(t *testing.T) {
 	srv, cleanup := newPortalCompatServer(t)
 	defer cleanup()
@@ -5506,6 +5535,16 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/system/database-config/check":
 			writeEnvelope(http.StatusOK, "postgresql connection ok", model.DatabaseConfigStatus{Driver: "postgres", Status: "ok", Message: "postgresql connection ok"})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/system/database-config/save":
+			writeEnvelope(http.StatusOK, "database connection config saved", model.DatabaseConfigStatus{
+				Driver:           "postgres",
+				ConfiguredDriver: "postgres",
+				RuntimeDriver:    "sqlite",
+				Status:           "ok",
+				Message:          "database connection config saved",
+				ConfigPath:       "data/database-config.json",
+				RestartRequired:  true,
+			})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/system/database-config/switch":
 			writeEnvelope(http.StatusOK, "database switch saved; restarting all services to apply", model.DatabaseConfigStatus{
 				Driver:           "sqlite",

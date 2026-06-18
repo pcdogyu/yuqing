@@ -519,6 +519,44 @@ func TestDatabaseSwitchAPISavesRuntimeConfig(t *testing.T) {
 	}
 }
 
+func TestDatabaseSaveAPISavesRuntimeConfigWithoutRestart(t *testing.T) {
+	store := newContentSearchTestStore(t)
+	restartSubmitted := false
+	previousRestartAll := startAllServicesRestart
+	startAllServicesRestart = func() error {
+		restartSubmitted = true
+		return nil
+	}
+	t.Cleanup(func() { startAllServicesRestart = previousRestartAll })
+	configPath := filepath.Join(t.TempDir(), "database-config.json")
+	svc := NewService(config.Config{
+		DatabaseDriver:     "sqlite",
+		DatabasePath:       filepath.Join(t.TempDir(), "local.db"),
+		DatabaseConfigPath: configPath,
+		HTTPTimeout:        time.Second,
+	}, store)
+	router := svc.Router()
+
+	saveReq := httptest.NewRequest(http.MethodPost, "/api/v1/system/database-config/save", strings.NewReader(`{"driver":"postgres","postgres_host":"127.0.0.1","postgres_port":"5432","postgres_database":"yuqing","postgres_user":"postgres","postgres_password":"secret","postgres_sslmode":"disable","sqlite_path":"data/yuqing.db"}`))
+	saveReq.Header.Set("Content-Type", "application/json")
+	saveRR := httptest.NewRecorder()
+	router.ServeHTTP(saveRR, saveReq)
+	if saveRR.Code != http.StatusOK {
+		t.Fatalf("expected database save 200, got status=%d body=%s", saveRR.Code, saveRR.Body.String())
+	}
+	if restartSubmitted {
+		t.Fatal("expected database save not to restart services")
+	}
+	payload, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("expected runtime database config file: %v", err)
+	}
+	body := string(payload)
+	if !strings.Contains(body, `"driver": "postgres"`) || !strings.Contains(body, `"postgres_password": "secret"`) {
+		t.Fatalf("unexpected saved database config payload: %s", body)
+	}
+}
+
 func TestRestartServiceAPIRequiresTokenAndSubmitsKnownService(t *testing.T) {
 	store := newContentSearchTestStore(t)
 	var restarted serviceRestartSpec

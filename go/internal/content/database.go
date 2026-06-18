@@ -63,6 +63,38 @@ func (s *Service) handleDatabaseCheck(w http.ResponseWriter, r *http.Request) {
 	apiutil.WriteJSON(w, code, status.Message, status)
 }
 
+func (s *Service) handleDatabaseSave(w http.ResponseWriter, r *http.Request) {
+	var req databaseConfigRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+	cfg := s.databaseConfigFromRequest(req)
+	driver := normalizeDatabaseDriver(cfg.Driver)
+	if driver == "" {
+		driver = "sqlite"
+	}
+	if driver != "sqlite" && driver != "postgres" {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "unsupported database driver: "+driver, nil)
+		return
+	}
+	cfg.Driver = driver
+	if strings.TrimSpace(cfg.SQLitePath) == "" {
+		cfg.SQLitePath = filepath.Join("data", "yuqing.db")
+	}
+	configPath := runtimeDatabaseConfigPath(s.cfg.DatabaseConfigPath)
+	if err := writeRuntimeDatabaseConfig(configPath, cfg); err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	status := s.databaseConfigStatus(r.Context(), cfg)
+	status.ConfiguredDriver = driver
+	status.ConfigPath = configPath
+	status.RestartRequired = normalizeDatabaseDriver(s.cfg.DatabaseDriver) != driver
+	status.Message = "database connection config saved"
+	apiutil.WriteJSON(w, http.StatusOK, status.Message, status)
+}
+
 func (s *Service) handleDatabaseSwitch(w http.ResponseWriter, r *http.Request) {
 	var req databaseConfigRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
