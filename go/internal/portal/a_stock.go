@@ -75,11 +75,12 @@ type aStockRecommendation struct {
 }
 
 type aStockMarketBar struct {
-	Code  string
-	Date  string
-	Open  float64
-	Close float64
-	Pct   float64
+	Code       string
+	Date       string
+	Open       float64
+	Close      float64
+	Pct        float64
+	EntryPrice float64
 }
 
 type aStockBacktestCell struct {
@@ -1105,7 +1106,65 @@ func (s *Server) loadEastmoneyAStockBars(strategyDate string, codes []string) ([
 	if len(bars) == 0 {
 		return nil, fmt.Errorf("no eastmoney market bars")
 	}
+	if entryPrices := s.loadEastmoneyAStock0930Prices(strategyDate, codes); len(entryPrices) > 0 {
+		for i := range bars {
+			if bars[i].Date != strategyDate {
+				continue
+			}
+			if price := entryPrices[normalizeAStockCode(bars[i].Code)]; price > 0 {
+				bars[i].EntryPrice = price
+			}
+		}
+	}
 	return bars, nil
+}
+
+func (s *Server) loadEastmoneyAStock0930Prices(strategyDate string, codes []string) map[string]float64 {
+	endDate := strings.ReplaceAll(strategyDate, "-", "")
+	var wg sync.WaitGroup
+	type result struct {
+		code  string
+		price float64
+	}
+	priceCh := make(chan result, len(codes))
+	for _, code := range codes {
+		code := normalizeAStockCode(code)
+		if code == "" {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
+			defer cancel()
+			resp, err := s.client.R().
+				SetContext(ctx).
+				SetQueryParam("secid", eastmoneyAStockSecID(code)).
+				SetQueryParam("klt", "1").
+				SetQueryParam("fqt", "1").
+				SetQueryParam("end", endDate).
+				SetQueryParam("lmt", "300").
+				SetQueryParam("fields1", "f1,f2,f3,f4,f5,f6").
+				SetQueryParam("fields2", "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61").
+				Get(aStockEastmoneyKlineURL)
+			if err != nil || !resp.IsSuccess() {
+				return
+			}
+			price, ok := decodeEastmoneyAStock0930Price(resp.Body(), strategyDate)
+			if ok {
+				priceCh <- result{code: code, price: price}
+			}
+		}()
+	}
+	wg.Wait()
+	close(priceCh)
+	prices := make(map[string]float64)
+	for item := range priceCh {
+		if item.code != "" && item.price > 0 {
+			prices[item.code] = item.price
+		}
+	}
+	return prices
 }
 
 func (s *Server) loadYahooAStockBars(strategyDate string, codes []string) ([]aStockMarketBar, error) {
@@ -1342,11 +1401,18 @@ func latestAStockBarOnOrBefore(bars []aStockMarketBar, targetDate string) (aStoc
 
 func aStockEntryBar(bars []aStockMarketBar, strategyDate string) (aStockMarketBar, bool) {
 	for _, bar := range bars {
-		if bar.Date == strategyDate && bar.Open > 0 {
+		if bar.Date == strategyDate && aStockEntryPrice(bar) > 0 {
 			return bar, true
 		}
 	}
 	return aStockMarketBar{}, false
+}
+
+func aStockEntryPrice(bar aStockMarketBar) float64 {
+	if bar.EntryPrice > 0 {
+		return bar.EntryPrice
+	}
+	return bar.Open
 }
 
 func buildAStockBacktestRows(strategyDate string, recommendations []aStockRecommendation, byCode map[string][]aStockMarketBar) []aStockBacktestRow {
@@ -1380,7 +1446,8 @@ func buildAStockBacktestRows(strategyDate string, recommendations []aStockRecomm
 			continue
 		}
 		entry := bars[entryIdx]
-		row.EntryOpen = formatAStockPrice(entry.Open)
+		entryPrice := aStockEntryPrice(entry)
+		row.EntryOpen = formatAStockPrice(entryPrice)
 		row.T0Return = formatAStockPct(entry.Pct)
 		row.T0ReturnClass = aStockPctClass(entry.Pct)
 		bestSet := false
@@ -1392,7 +1459,7 @@ func buildAStockBacktestRows(strategyDate string, recommendations []aStockRecomm
 				break
 			}
 			bar := bars[barIdx]
-			ret := (bar.Close/entry.Open - 1) * 100
+			ret := (bar.Close/entryPrice - 1) * 100
 			row.Days[day-1] = aStockBacktestCell{
 				Close:       formatAStockPrice(bar.Close),
 				Return:      formatAStockPct(ret),
@@ -1423,7 +1490,7 @@ func buildAStockBacktestRows(strategyDate string, recommendations []aStockRecomm
 
 func aStockEntryBarIndex(bars []aStockMarketBar, strategyDate string) int {
 	for i, bar := range bars {
-		if bar.Date == strategyDate && bar.Open > 0 {
+		if bar.Date == strategyDate && aStockEntryPrice(bar) > 0 {
 			return i
 		}
 	}
@@ -1556,10 +1623,11 @@ func mapToAStockMarketBar(row map[string]any) (aStockMarketBar, bool) {
 	open, _ := firstFloat(row, "open", "open_price")
 	closeValue, ok := firstFloat(row, "close", "close_price", "pre_close")
 	pct, _ := firstFloat(row, "pct", "pct_chg", "change_pct")
+	entryPrice, _ := firstFloat(row, "entry_price", "entry", "open0930", "open_0930", "price0930", "price_0930", "minute0930", "minute_0930")
 	if code == "" || date == "" || !ok {
 		return aStockMarketBar{}, false
 	}
-	return aStockMarketBar{Code: code, Date: date, Open: open, Close: closeValue, Pct: pct}, true
+	return aStockMarketBar{Code: code, Date: date, Open: open, Close: closeValue, Pct: pct, EntryPrice: entryPrice}, true
 }
 
 func arrayToAStockMarketBar(row []any, fields []string) (aStockMarketBar, bool) {
@@ -1584,6 +1652,77 @@ func eastmoneyKlineToAStockMarketBar(raw string) (aStockMarketBar, bool) {
 	closeValue := parseAStockFloat(parts[2])
 	pct := parseAStockFloat(parts[8])
 	return aStockMarketBar{Date: normalizeAStockMarketDate(parts[0]), Open: open, Close: closeValue, Pct: pct}, true
+}
+
+func decodeEastmoneyAStock0930Price(body []byte, strategyDate string) (float64, bool) {
+	klines := collectAStockKlineStringsFromJSON(body)
+	for _, raw := range klines {
+		price, ok := eastmoney0930KlinePrice(raw, strategyDate)
+		if ok {
+			return price, true
+		}
+	}
+	return 0, false
+}
+
+func collectAStockKlineStringsFromJSON(body []byte) []string {
+	var payload any
+	decoder := json.NewDecoder(strings.NewReader(string(body)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&payload); err != nil {
+		return nil
+	}
+	return collectAStockKlineStrings(payload)
+}
+
+func collectAStockKlineStrings(value any) []string {
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make([]string, 0)
+		if klines, ok := typed["klines"]; ok {
+			out = append(out, collectAStockKlineStrings(klines)...)
+		}
+		if data, ok := typed["data"]; ok {
+			out = append(out, collectAStockKlineStrings(data)...)
+		}
+		if items, ok := typed["items"]; ok {
+			out = append(out, collectAStockKlineStrings(items)...)
+		}
+		return out
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			switch row := item.(type) {
+			case string:
+				out = append(out, row)
+			case map[string]any, []any:
+				out = append(out, collectAStockKlineStrings(row)...)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func eastmoney0930KlinePrice(raw string, strategyDate string) (float64, bool) {
+	parts := strings.Split(raw, ",")
+	if len(parts) < 3 {
+		return 0, false
+	}
+	timestamp := strings.TrimSpace(parts[0])
+	if !strings.HasPrefix(timestamp, strategyDate+" ") || !strings.Contains(timestamp, "09:30") {
+		return 0, false
+	}
+	closeValue := parseAStockFloat(parts[2])
+	if closeValue > 0 {
+		return closeValue, true
+	}
+	open := parseAStockFloat(parts[1])
+	if open > 0 {
+		return open, true
+	}
+	return 0, false
 }
 
 func firstString(row map[string]any, keys ...string) string {

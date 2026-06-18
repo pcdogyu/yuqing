@@ -1786,6 +1786,36 @@ func TestAStockMarketViewFiltersDeepDrawdownsAndPenalizesSector(t *testing.T) {
 	}
 }
 
+func TestAStockBacktestUses0930EntryPrice(t *testing.T) {
+	recommendations := []aStockRecommendation{{Code: "300285", Name: "国瓷材料"}}
+	byCode := groupAStockMarketBars([]aStockMarketBar{
+		{Code: "300285", Date: "2026-06-18", Open: 65, EntryPrice: 66, Close: 67, Pct: 3.08},
+		{Code: "300285", Date: "2026-06-19", Open: 67.5, Close: 69.3, Pct: 3.43},
+	})
+
+	rows := buildAStockBacktestRows("2026-06-18", recommendations, byCode)
+
+	if len(rows) != 1 {
+		t.Fatalf("expected one backtest row, got %+v", rows)
+	}
+	if rows[0].EntryOpen != "66.00" {
+		t.Fatalf("expected entry price to use 09:30 price, got %+v", rows[0])
+	}
+	if rows[0].Days[0].Return != "+5.00%" {
+		t.Fatalf("expected T+1 return to use 09:30 entry price, got %+v", rows[0])
+	}
+}
+
+func TestDecodeEastmoneyAStock0930Price(t *testing.T) {
+	body := []byte(`{"data":{"klines":["2026-06-18 09:29,64.00,64.50,0,0,0,0,0,0","2026-06-18 09:30,65.00,66.00,0,0,0,0,0,0","2026-06-18 09:31,66.00,66.50,0,0,0,0,0,0"]}}`)
+
+	price, ok := decodeEastmoneyAStock0930Price(body, "2026-06-18")
+
+	if !ok || price != 66 {
+		t.Fatalf("expected 09:30 close price 66, got price=%v ok=%v", price, ok)
+	}
+}
+
 func TestAStockMarketBarsFallbackToEastmoneyWhenCustomEndpointEmpty(t *testing.T) {
 	custom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
