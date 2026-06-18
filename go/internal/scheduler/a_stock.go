@@ -73,7 +73,7 @@ func (w *Worker) runAStockAuctionCrawlForDateResult(ctx context.Context, tradeDa
 	if baseURL == "" {
 		return aStockAuctionCrawlResult{}, fmt.Errorf("YUQING_ASTOCK_AUCTION_URL not configured")
 	}
-	req := w.client.R().
+	req := w.crawlClient.R().
 		SetContext(ctx)
 	if strings.TrimSpace(tradeDate) != "" {
 		req.SetQueryParam("date", tradeDate)

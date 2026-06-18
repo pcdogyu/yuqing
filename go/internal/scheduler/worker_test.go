@@ -422,6 +422,86 @@ func TestRunAStockAuctionLatestUsesAdapterDate(t *testing.T) {
 	}
 }
 
+func TestHandleRunAStockAuctionLatestTriggersAsync(t *testing.T) {
+	releaseAdapter := make(chan struct{})
+	contentWritten := make(chan struct{}, 1)
+	adapterReleased := false
+	defer func() {
+		if !adapterReleased {
+			close(releaseAdapter)
+		}
+	}()
+
+	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/a-stock/auction" || r.URL.Query().Get("date") != "" {
+			t.Fatalf("unexpected akshare latest request: %s", r.URL.String())
+		}
+		<-releaseAdapter
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"date": "2026-06-15",
+			"items": []model.AStockAuctionAmount{{
+				TradeDate:     "2026-06-15",
+				Code:          "002230",
+				Name:          "科大讯飞",
+				AuctionVolume: 123400,
+				AuctionAmount: 5084080,
+				Source:        "akshare_spot_em",
+				Status:        "ok",
+			}},
+		})
+	}))
+	defer akshare.Close()
+
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/admin/a-stock/auction" {
+			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
+		}
+		select {
+		case contentWritten <- struct{}{}:
+		default:
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer content.Close()
+
+	worker := NewWorker(config.Config{
+		AStockAuctionURL:      akshare.URL,
+		ContentURL:            content.URL,
+		HTTPTimeout:           500 * time.Millisecond,
+		SchedulerCrawlTimeout: time.Second,
+		ServiceToken:          "secret-token",
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/a-stock/auction/latest", nil)
+	req.Header.Set("X-Service-Token", "secret-token")
+	rr := httptest.NewRecorder()
+	started := time.Now()
+	worker.Router().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected async latest trigger 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if elapsed := time.Since(started); elapsed > 200*time.Millisecond {
+		t.Fatalf("expected latest trigger to return before crawl finishes, took %s", elapsed)
+	}
+	if !strings.Contains(rr.Body.String(), `"status":"triggered"`) {
+		t.Fatalf("expected triggered response, got %s", rr.Body.String())
+	}
+	select {
+	case <-contentWritten:
+		t.Fatal("expected content write to wait for background crawl")
+	default:
+	}
+
+	close(releaseAdapter)
+	adapterReleased = true
+	select {
+	case <-contentWritten:
+	case <-time.After(time.Second):
+		t.Fatal("expected background latest crawl to write content")
+	}
+}
+
 func TestRunAStockAuctionBackfillFetchesDateRange(t *testing.T) {
 	var requested []string
 	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

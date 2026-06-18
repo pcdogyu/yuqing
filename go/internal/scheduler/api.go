@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/rs/zerolog/log"
 
 	"github.com/pcdogyu/yuqing/go/internal/apiutil"
 )
@@ -145,7 +147,12 @@ func (w *Worker) handleRunAStockAuctionLatest(wr http.ResponseWriter, r *http.Re
 		return
 	}
 	startedAt := time.Now().UTC()
-	result, err := w.runAStockAuctionLatest(r.Context())
+	go w.runAStockAuctionLatestTask(context.Background(), startedAt)
+	apiutil.WriteJSON(wr, http.StatusOK, "ok", map[string]any{"status": "triggered"})
+}
+
+func (w *Worker) runAStockAuctionLatestTask(ctx context.Context, startedAt time.Time) {
+	result, err := w.runAStockAuctionLatest(ctx)
 	finishedAt := time.Now().UTC()
 	status := "success"
 	message := fmt.Sprintf("a-stock auction latest completed: date=%s total=%d ok=%d", result.Date, result.Total, result.OK)
@@ -157,12 +164,14 @@ func (w *Worker) handleRunAStockAuctionLatest(wr http.ResponseWriter, r *http.Re
 		message = fmt.Sprintf("a-stock auction latest skipped for %s: %s", result.Date, result.Message)
 		err = fmt.Errorf("%s", message)
 	}
-	_ = w.recordTaskRun(r.Context(), "a-stock-auction-latest", status, message, startedAt, &finishedAt)
+	if recordErr := w.recordTaskRun(ctx, "a-stock-auction-latest", status, message, startedAt, &finishedAt); recordErr != nil {
+		log.Warn().Err(recordErr).Str("task", "a-stock-auction-latest").Msg("record scheduler task run failed")
+	}
 	if err != nil {
-		apiutil.WriteJSON(wr, http.StatusInternalServerError, err.Error(), result)
+		log.Error().Err(err).Str("task", "a-stock-auction-latest").Msg("scheduler task failed")
 		return
 	}
-	apiutil.WriteJSON(wr, http.StatusOK, "ok", map[string]any{"status": "triggered", "result": result})
+	log.Info().Str("task", "a-stock-auction-latest").Str("trade_date", result.Date).Int("total", result.Total).Int("ok", result.OK).Msg("scheduler task completed")
 }
 
 func (w *Worker) handleRunAStockHoldingsBackfill(wr http.ResponseWriter, r *http.Request) {
