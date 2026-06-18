@@ -40,6 +40,7 @@ type aStockContext struct {
 	MarketCandidateStatus        string
 	MarketCandidateCount         int
 	GeneratedRecommendationCount int
+	AuctionAmountLabel           string
 }
 
 type aStockHotspot struct {
@@ -175,6 +176,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-overview-table{width:100%;min-width:100%;table-layout:fixed}
 		.astock-overview-table th,.astock-overview-table td{vertical-align:top}
 		.astock-overview-table .astock-muted{display:block;margin-bottom:8px}
+		.astock-overview-table .astock-overview-sub-label{margin-top:16px}
 		.astock-overview-table strong{display:block;font-size:24px;line-height:1.25}
 		.astock-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
 		.astock-actions form{margin:0}
@@ -338,11 +340,24 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request) 
 
 func renderAStockOverviewSection(b *strings.Builder, morningCtx aStockContext, afternoonCtx aStockContext) {
 	b.WriteString(`<section><h2>顶部概览</h2><div class="astock-scroll"><table class="astock-overview-table"><tr>`)
-	writeAStockOverviewCell(b, "策略日期", morningCtx.Date, ` rowspan="2"`)
+	writeAStockOverviewStrategyCell(b, morningCtx.Date, firstNonEmpty(morningCtx.AuctionAmountLabel, afternoonCtx.AuctionAmountLabel), ` rowspan="2"`)
 	writeAStockOverviewPeriodCells(b, morningCtx)
 	b.WriteString(`</tr><tr>`)
 	writeAStockOverviewPeriodCells(b, afternoonCtx)
 	b.WriteString(`</tr></table></div></section>`)
+}
+
+func writeAStockOverviewStrategyCell(b *strings.Builder, date string, auctionAmount string, attrs string) {
+	if strings.TrimSpace(auctionAmount) == "" {
+		auctionAmount = "--"
+	}
+	b.WriteString(`<td`)
+	b.WriteString(attrs)
+	b.WriteString(`><span class="astock-muted">策略日期</span><strong>`)
+	b.WriteString(html.EscapeString(date))
+	b.WriteString(`</strong><span class="astock-muted astock-overview-sub-label">集合竞价金额</span><strong>`)
+	b.WriteString(html.EscapeString(auctionAmount))
+	b.WriteString(`</strong></td>`)
 }
 
 func writeAStockOverviewPeriodCells(b *strings.Builder, ctx aStockContext) {
@@ -667,9 +682,10 @@ func (s *Server) loadAStockContext(strategyDate string, periodKey string, newsPa
 	ctx.PagedArticles, ctx.NewsPage, ctx.NewsTotalPages = paginateAStockNews(ctx.Articles, newsPage, aStockNewsPageSize)
 	ctx.Hotspots = buildAStockHotspots(ctx.Articles)
 	if len(ctx.Hotspots) > 0 {
-		candidates, candidateStatus := s.loadAStockMarketCandidatesWithStatus(strategyDate)
+		candidates, candidateStatus, auctionResult := s.loadAStockMarketCandidatesWithStatus(strategyDate)
 		ctx.MarketCandidateStatus = candidateStatus
 		ctx.MarketCandidateCount = len(candidates)
+		ctx.AuctionAmountLabel = formatAStockAuctionSummaryAmount(auctionResult)
 		ctx.Recommendations = buildAStockRecommendations(ctx.Hotspots, candidates)
 		ctx.GeneratedRecommendationCount = len(ctx.Recommendations)
 	}
@@ -845,26 +861,38 @@ func (s *Server) loadAStockWindowArticles(start time.Time, end time.Time) ([]mod
 }
 
 func (s *Server) loadAStockMarketCandidates(strategyDate string) []aStockMarketCandidate {
-	candidates, _ := s.loadAStockMarketCandidatesWithStatus(strategyDate)
+	candidates, _, _ := s.loadAStockMarketCandidatesWithStatus(strategyDate)
 	return candidates
 }
 
-func (s *Server) loadAStockMarketCandidatesWithStatus(strategyDate string) ([]aStockMarketCandidate, string) {
+func (s *Server) loadAStockMarketCandidatesWithStatus(strategyDate string) ([]aStockMarketCandidate, string, model.AStockAuctionListResult) {
 	if strings.TrimSpace(s.cfg.ContentURL) == "" {
-		return nil, "content_unconfigured"
+		return nil, "content_unconfigured", model.AStockAuctionListResult{}
 	}
 	date := normalizeAStockStrategyDate(strategyDate)
 	result, ok := s.loadAStockMarketCandidateResult(date)
+	dateResult := result
 	if !ok && date != "" {
 		result, ok = s.loadAStockMarketCandidateResult("")
 		if ok {
-			return aStockMarketCandidatesFromAuctionResult(result), "latest_auction_fallback"
+			return aStockMarketCandidatesFromAuctionResult(result), "latest_auction_fallback", dateResult
 		}
 	}
 	if !ok {
-		return nil, "no_auction_candidates"
+		return nil, "no_auction_candidates", dateResult
 	}
-	return aStockMarketCandidatesFromAuctionResult(result), "date_auction"
+	return aStockMarketCandidatesFromAuctionResult(result), "date_auction", result
+}
+
+func formatAStockAuctionSummaryAmount(result model.AStockAuctionListResult) string {
+	if result.TotalAmount > 0 {
+		return formatAStockAuctionMoney(result.TotalAmount)
+	}
+	total := 0.0
+	for _, item := range result.Items {
+		total += item.AuctionAmount
+	}
+	return formatAStockAuctionMoney(total)
 }
 
 func (s *Server) loadAStockMarketCandidateResult(strategyDate string) (model.AStockAuctionListResult, bool) {
@@ -873,8 +901,11 @@ func (s *Server) loadAStockMarketCandidateResult(strategyDate string) (model.ASt
 	if strings.TrimSpace(strategyDate) != "" {
 		query += "&date=" + url.QueryEscape(normalizeAStockStrategyDate(strategyDate))
 	}
-	if err := s.getJSON(s.cfg.ContentURL+query, &result); err != nil || len(result.Items) == 0 {
+	if err := s.getJSON(s.cfg.ContentURL+query, &result); err != nil {
 		return model.AStockAuctionListResult{}, false
+	}
+	if len(result.Items) == 0 {
+		return result, false
 	}
 	return result, true
 }

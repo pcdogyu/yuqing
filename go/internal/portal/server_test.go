@@ -1368,10 +1368,11 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 				"code":    200,
 				"message": "ok",
 				"data": model.AStockAuctionListResult{
-					Date:     "2026-06-16",
-					Page:     1,
-					PageSize: 200,
-					Total:    2,
+					Date:        "2026-06-16",
+					Page:        1,
+					PageSize:    200,
+					Total:       2,
+					TotalAmount: 64170000,
 					Items: []model.AStockAuctionAmount{
 						{TradeDate: "2026-06-16", Code: "002230", Name: "科大讯飞", AuctionPrice: 10.60, AuctionVolume: 1800000, AuctionAmount: 19080000, Status: "ok"},
 						{TradeDate: "2026-06-16", Code: "688981", Name: "中芯国际", AuctionPrice: 50.10, AuctionVolume: 900000, AuctionAmount: 45090000, Status: "ok"},
@@ -1419,7 +1420,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"AI 算力政策加码", "半导体先进封装景气度提升", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日跌幅", "推荐历史", "补抓并重新生成当前窗口", "重新生成当前推荐", "忽略15日重复过滤重新生成", "刷新当前回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_ignore_recent_stock"`, `name="action" value="refresh_backtest"`, "2026-06-16 AM", "2026-06-16 PM", "2026-06-15 AM", "2026-06-15 PM", "2026-06-11 AM", "2026-06-11 PM", "T+0 收益", "astock-recommendation-table", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
+	for _, want := range []string{"AI 算力政策加码", "半导体先进封装景气度提升", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日跌幅", "推荐历史", "补抓并重新生成当前窗口", "重新生成当前推荐", "忽略15日重复过滤重新生成", "刷新当前回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_ignore_recent_stock"`, `name="action" value="refresh_backtest"`, "2026-06-16 AM", "2026-06-16 PM", "2026-06-15 AM", "2026-06-15 PM", "2026-06-11 AM", "2026-06-11 PM", "T+0 收益", "astock-recommendation-table", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}
