@@ -22,6 +22,8 @@ import (
 	sqlitestore "github.com/pcdogyu/yuqing/go/internal/store/sqlite"
 )
 
+const stockResearchDefaultPageSize = 20
+
 type Store interface {
 	ListProjectGroups(rctx context.Context) ([]model.ProjectGroup, error)
 	GetProjectGroup(rctx context.Context, id int64) (model.ProjectGroup, error)
@@ -608,7 +610,7 @@ func (s *Service) handleListStockResearchSurveys(w http.ResponseWriter, r *http.
 		Start:       strings.TrimSpace(r.URL.Query().Get("start")),
 		End:         strings.TrimSpace(r.URL.Query().Get("end")),
 		Page:        apiutil.IntQuery(r, "page", 1),
-		PageSize:    apiutil.IntQuery(r, "page_size", 50),
+		PageSize:    apiutil.IntQuery(r, "page_size", stockResearchDefaultPageSize),
 	}
 	result, err := s.store.ListStockResearchSurveys(r.Context(), filter)
 	if err != nil {

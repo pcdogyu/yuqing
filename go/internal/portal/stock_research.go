@@ -13,6 +13,8 @@ import (
 	"github.com/pcdogyu/yuqing/go/internal/model"
 )
 
+const stockResearchPageSize = 20
+
 func (s *Server) handleStockResearchPage(w http.ResponseWriter, r *http.Request, user any) {
 	if r.Method == http.MethodPost {
 		s.handleStockResearchAction(w, r)
@@ -193,7 +195,7 @@ func stockResearchFilterFromRequest(r *http.Request) model.StockResearchFilter {
 		Start:       strings.TrimSpace(r.URL.Query().Get("start")),
 		End:         strings.TrimSpace(r.URL.Query().Get("end")),
 		Page:        normalizeAStockNewsPage(r.URL.Query().Get("page")),
-		PageSize:    50,
+		PageSize:    stockResearchPageSize,
 	}
 }
 
@@ -207,7 +209,11 @@ func (s *Server) loadStockResearchContext(filter model.StockResearchFilter) (mod
 func stockResearchQuery(filter model.StockResearchFilter) url.Values {
 	query := url.Values{}
 	query.Set("page", fmt.Sprintf("%d", max(filter.Page, 1)))
-	query.Set("page_size", fmt.Sprintf("%d", max(filter.PageSize, 50)))
+	pageSize := filter.PageSize
+	if pageSize <= 0 || pageSize > stockResearchPageSize {
+		pageSize = stockResearchPageSize
+	}
+	query.Set("page_size", fmt.Sprintf("%d", pageSize))
 	if filter.Code != "" {
 		query.Set("code", filter.Code)
 	}
@@ -354,7 +360,7 @@ func renderStockResearchPagination(b *strings.Builder, ctx model.StockResearchLi
 		if link.Page < 1 || link.Page > totalPages {
 			continue
 		}
-		filter := model.StockResearchFilter{Code: ctx.Code, Company: ctx.Company, Institution: ctx.Institution, Kind: ctx.Kind, Source: ctx.Source, Start: ctx.Start, End: ctx.End, Page: link.Page, PageSize: ctx.PageSize}
+		filter := model.StockResearchFilter{Code: ctx.Code, Company: ctx.Company, Institution: ctx.Institution, Kind: ctx.Kind, Source: ctx.Source, Start: ctx.Start, End: ctx.End, Page: link.Page, PageSize: stockResearchPageSize}
 		b.WriteString(`<a class="research-tab" href="/stock-research?`)
 		b.WriteString(html.EscapeString(stockResearchQuery(filter).Encode()))
 		b.WriteString(`">`)
@@ -390,7 +396,7 @@ func (s *Server) handleStockResearchAction(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	filter.Page = 1
-	filter.PageSize = 50
+	filter.PageSize = stockResearchPageSize
 	query := stockResearchQuery(filter)
 	query.Set("msg", message)
 	http.Redirect(w, r, "/stock-research?"+query.Encode(), http.StatusSeeOther)

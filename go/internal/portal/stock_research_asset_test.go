@@ -33,6 +33,43 @@ func TestFormatStockResearchTargetPrice(t *testing.T) {
 	}
 }
 
+func TestStockResearchPageRequestsTwentyItemsPerPage(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/stock-research" {
+			t.Fatalf("unexpected stock research content path: %s", r.URL.String())
+		}
+		if r.URL.Query().Get("page") != "3" || r.URL.Query().Get("page_size") != "20" {
+			t.Fatalf("expected portal to request page 3 with page_size=20, got %s", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": model.StockResearchListResult{
+				Page:     3,
+				PageSize: stockResearchPageSize,
+				Total:    45,
+			},
+		})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	req := httptest.NewRequest(http.MethodGet, "/stock-research?page=3&page_size=50", nil)
+	rr := httptest.NewRecorder()
+	srv.handleStockResearchPage(rr, req, map[string]any{"id": 1})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected stock research page 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"第 3/3 页，共 45 条", "page_size=20"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected stock research page to contain %q, got %s", want, body)
+		}
+	}
+	if strings.Contains(body, "page_size=50") {
+		t.Fatalf("expected pagination links to keep page_size=20, got %s", body)
+	}
+}
+
 func TestStockResearchPageUsesPortalPDFLinks(t *testing.T) {
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/stock-research" {

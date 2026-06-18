@@ -180,6 +180,22 @@ func TestStockResearchAPIUpsertsAndLists(t *testing.T) {
 	if envelope.Data.Items[0].Rating != "买入" || envelope.Data.Items[0].TargetPrice != "50.00" {
 		t.Fatalf("expected rating and target price, got %+v", envelope.Data.Items[0])
 	}
+
+	defaultPageReq := httptest.NewRequest(http.MethodGet, "/api/v1/stock-research?company=科大&page=1", nil)
+	defaultPageRR := httptest.NewRecorder()
+	router.ServeHTTP(defaultPageRR, defaultPageReq)
+	if defaultPageRR.Code != http.StatusOK {
+		t.Fatalf("expected stock research default page list 200, got %d body=%s", defaultPageRR.Code, defaultPageRR.Body.String())
+	}
+	envelope = struct {
+		Data model.StockResearchListResult `json:"data"`
+	}{}
+	if err := json.Unmarshal(defaultPageRR.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal stock research default page list: %v", err)
+	}
+	if envelope.Data.PageSize != 20 {
+		t.Fatalf("expected stock research default page size 20, got %+v", envelope.Data)
+	}
 }
 
 func TestStockResearchPDFAPIUpdatesDownloadsAndReadsText(t *testing.T) {
