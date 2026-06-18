@@ -2,6 +2,9 @@ package app
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"fmt"
 	"net"
 	"net/url"
 	"os"
@@ -11,6 +14,7 @@ import (
 	"time"
 
 	"github.com/go-resty/resty/v2"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/rs/zerolog/log"
 
 	"github.com/pcdogyu/yuqing/go/internal/config"
@@ -37,6 +41,12 @@ var (
 func NewStore(cfg config.Config) (*sqlitestore.Store, error) {
 	if cfg.DatabaseDriver == "postgres" {
 		store, err := sqlitestore.NewPostgres(postgresDSN(cfg))
+		if err != nil && isPostgresDatabaseMissing(err) {
+			if createErr := ensureConfiguredPostgresDatabase(context.Background(), cfg); createErr != nil {
+				return nil, fmt.Errorf("open postgres store: %w; create database: %v", err, createErr)
+			}
+			store, err = sqlitestore.NewPostgres(postgresDSN(cfg))
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -63,6 +73,82 @@ func NewStore(cfg config.Config) (*sqlitestore.Store, error) {
 		return nil, err
 	}
 	return store, nil
+}
+
+func ensureConfiguredPostgresDatabase(ctx context.Context, cfg config.Config) error {
+	adminDSN, database, err := postgresAdminDSN(cfg)
+	if err != nil {
+		return err
+	}
+	if !validPostgresDatabaseName(database) {
+		return fmt.Errorf("database name %q must contain only letters, digits, and underscore", database)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	db, err := sql.Open("pgx", adminDSN)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if err := db.PingContext(ctx); err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, `CREATE DATABASE `+quotePostgresIdent(database)); err != nil && !isPostgresDuplicateDatabase(err) {
+		return err
+	}
+	return nil
+}
+
+func postgresAdminDSN(cfg config.Config) (string, string, error) {
+	if strings.TrimSpace(cfg.DatabaseURL) != "" {
+		u, err := url.Parse(strings.TrimSpace(cfg.DatabaseURL))
+		if err != nil {
+			return "", "", err
+		}
+		database := strings.Trim(strings.TrimSpace(u.Path), "/")
+		if database == "" {
+			database = "yuqing"
+		}
+		u.Path = "/postgres"
+		return u.String(), database, nil
+	}
+	database := strings.TrimSpace(cfg.PostgresDatabase)
+	if database == "" {
+		database = "yuqing"
+	}
+	admin := cfg
+	admin.PostgresDatabase = "postgres"
+	return postgresDSN(admin), database, nil
+}
+
+func validPostgresDatabaseName(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func quotePostgresIdent(value string) string {
+	return `"` + strings.ReplaceAll(value, `"`, `""`) + `"`
+}
+
+func isPostgresDatabaseMissing(err error) bool {
+	return postgresErrorCode(err, "3D000") || strings.Contains(err.Error(), "SQLSTATE 3D000")
+}
+
+func isPostgresDuplicateDatabase(err error) bool {
+	return postgresErrorCode(err, "42P04") || strings.Contains(err.Error(), "SQLSTATE 42P04")
+}
+
+func postgresErrorCode(err error, code string) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == code
 }
 
 func postgresDSN(cfg config.Config) string {

@@ -928,12 +928,18 @@ func TestRunStockResearchBackfillSkipsUnavailablePublicSources(t *testing.T) {
 func TestFetchCNInfoInvestorRelationsPaginatesAndBuildsPDFItems(t *testing.T) {
 	var pages []string
 	cninfo := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("searchTypes") != "4" || r.URL.Query().Get("stockCode") != "300250" {
-			t.Fatalf("unexpected cninfo query: %s", r.URL.RawQuery)
+		if r.Method != http.MethodPost {
+			t.Fatalf("expected cninfo POST, got %s", r.Method)
 		}
-		pages = append(pages, r.URL.Query().Get("pageNo"))
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse cninfo form: %v", err)
+		}
+		if r.Form.Get("searchTypes") != "4" || r.Form.Get("stockCode") != "300250" || r.Form.Get("beginDate") != "2026-06-17 00:00:00" || r.Form.Get("endDate") != "2026-06-18 23:59:59" {
+			t.Fatalf("unexpected cninfo form: %s", r.Form.Encode())
+		}
+		pages = append(pages, r.Form.Get("pageNo"))
 		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Query().Get("pageNo") {
+		switch r.Form.Get("pageNo") {
 		case "1":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"pageNo": 1, "pageSize": 1, "totalRecord": 2, "totalPage": 2,
@@ -949,7 +955,7 @@ func TestFetchCNInfoInvestorRelationsPaginatesAndBuildsPDFItems(t *testing.T) {
 				}},
 			})
 		default:
-			t.Fatalf("unexpected page: %s", r.URL.Query().Get("pageNo"))
+			t.Fatalf("unexpected page: %s", r.Form.Get("pageNo"))
 		}
 	}))
 	defer cninfo.Close()

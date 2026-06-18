@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -85,10 +84,7 @@ func (w *Worker) fetchCNInfoInvestorRelations(ctx context.Context, opts stockRes
 	pageSize := 50
 	now := time.Now().UTC()
 	for page := 1; page <= 200; page++ {
-		queryURL, err := cninfoInvestorRelationsURL(endpoint, opts, page, pageSize)
-		if err != nil {
-			return nil, err
-		}
+		form := cninfoInvestorRelationsForm(opts, page, pageSize)
 		var envelope cninfoInvestorRelationsResponse
 		resp, err := w.client.R().
 			SetContext(ctx).
@@ -96,8 +92,9 @@ func (w *Worker) fetchCNInfoInvestorRelations(ctx context.Context, opts stockRes
 			SetHeader("Origin", "https://irm.cninfo.com.cn").
 			SetHeader("Referer", cninfoSurveyPageURL).
 			SetHeader("User-Agent", nonEmptyText(w.cfg.UserAgent, "Mozilla/5.0")).
+			SetFormData(form).
 			SetResult(&envelope).
-			Get(queryURL)
+			Post(endpoint)
 		if err != nil {
 			return nil, err
 		}
@@ -123,25 +120,22 @@ func (w *Worker) fetchCNInfoInvestorRelations(ctx context.Context, opts stockRes
 	return dedupeStockResearch(normalizeStockResearchSourceItems(items, investorRelationsSourceType)), nil
 }
 
-func cninfoInvestorRelationsURL(endpoint string, opts stockResearchCrawlOptions, page, pageSize int) (string, error) {
-	parsed, err := url.Parse(strings.TrimSpace(endpoint))
-	if err != nil {
-		return "", err
+func cninfoInvestorRelationsForm(opts stockResearchCrawlOptions, page, pageSize int) map[string]string {
+	form := map[string]string{
+		"pageNo":      strconv.Itoa(page),
+		"pageSize":    strconv.Itoa(pageSize),
+		"searchTypes": "4",
+		"keyWord":     strings.TrimSpace(opts.Company),
+		"stockCode":   strings.TrimSpace(opts.Code),
+		"highLight":   "true",
 	}
-	query := parsed.Query()
-	query.Set("pageNo", strconv.Itoa(page))
-	query.Set("pageSize", strconv.Itoa(pageSize))
-	query.Set("searchTypes", "4")
-	query.Set("keyWord", strings.TrimSpace(opts.Company))
-	query.Set("stockCode", strings.TrimSpace(opts.Code))
 	if start := normalizeStockResearchDate(opts.Start); start != "" {
-		query.Set("beginDate", start+" 00:00:00")
+		form["beginDate"] = start + " 00:00:00"
 	}
 	if end := normalizeStockResearchDate(opts.End); end != "" {
-		query.Set("endDate", end+" 23:59:59")
+		form["endDate"] = end + " 23:59:59"
 	}
-	parsed.RawQuery = query.Encode()
-	return parsed.String(), nil
+	return form
 }
 
 type cninfoInvestorRelationsResponse struct {
