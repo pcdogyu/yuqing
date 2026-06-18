@@ -929,6 +929,55 @@ func TestAStockBackfillWindowActionPassesMorningWindow(t *testing.T) {
 	}
 }
 
+func TestAStockBackfillWindowActionExplainsZeroWindowNews(t *testing.T) {
+	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/admin/tasks/crawl" {
+			t.Fatalf("unexpected crawler request: %s %s", r.Method, r.URL.String())
+		}
+		if r.URL.Query().Get("start") != "2026-06-16 08:00:00" || r.URL.Query().Get("end") != "2026-06-16 09:30:59" || r.URL.Query().Get("time_field") != "publish_time" {
+			t.Fatalf("unexpected backfill window query: %s", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    200,
+			"message": "ok",
+			"data": model.CrawlSummary{
+				SourceType: r.URL.Query().Get("source_type"),
+			},
+		})
+	}))
+	defer crawler.Close()
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/articles" {
+			t.Fatalf("unexpected content request: %s", r.URL.String())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    200,
+			"message": "ok",
+			"data":    model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0},
+		})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{CrawlerURL: crawler.URL, ContentURL: content.URL})
+	form := url.Values{"date": {"2026-06-16"}, "period": {"morning"}, "action": {"backfill_window_news"}}
+	req := httptest.NewRequest(http.MethodPost, "/a-stock", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d", rr.Code)
+	}
+	loc, _ := url.QueryUnescape(rr.Header().Get("Location"))
+	for _, want := range []string{"date=2026-06-16", "period=morning", "源站返回 0 条，窗口内入库 0 条、更新 0 条", "当前窗口已有 0 条财经新闻", "没有新闻：本次补抓没有写入 08:00-09:30 窗口内带 publish_time 的可用新闻"} {
+		if !strings.Contains(loc, want) {
+			t.Fatalf("expected redirect message %q, got %q", want, loc)
+		}
+	}
+}
+
 func TestAStockBackfillMorningStockActionSelectsMorningWindow(t *testing.T) {
 	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/admin/tasks/crawl" {

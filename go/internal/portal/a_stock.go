@@ -1766,6 +1766,7 @@ func (s *Server) triggerAStockWindowCrawl(strategyDate string, periodKey string)
 	sources := aStockCrawlSources()
 	ok := 0
 	failures := make([]string, 0)
+	results := make([]aStockWindowCrawlResult, 0, len(sources))
 	for _, sourceType := range sources {
 		resp, err := s.client.R().
 			SetQueryParam("source_type", sourceType).
@@ -1773,26 +1774,111 @@ func (s *Server) triggerAStockWindowCrawl(strategyDate string, periodKey string)
 			SetQueryParam("end", formatAStockPublishTime(end)).
 			SetQueryParam("time_field", "publish_time").
 			Post(s.cfg.CrawlerURL + "/api/v1/admin/tasks/crawl")
+		result := aStockWindowCrawlResult{SourceType: sourceType}
 		if err != nil || !resp.IsSuccess() {
 			failures = append(failures, sourceType)
+			if err != nil {
+				result.ErrorText = err.Error()
+			} else if resp != nil {
+				result.ErrorText = strings.TrimSpace(resp.String())
+				if result.ErrorText == "" {
+					result.ErrorText = resp.Status()
+				}
+			}
+			results = append(results, result)
 			continue
 		}
+		if summary, decoded := decodeAStockCrawlSummary(resp.Body()); decoded {
+			result.Decoded = true
+			result.Fetched = summary.FetchedCount
+			result.Inserted = summary.InsertedCount
+			result.Updated = summary.UpdatedCount
+			result.ErrorText = summary.ErrorText
+		}
+		results = append(results, result)
 		ok++
 	}
 
 	countText := ""
+	windowCount := -1
 	if count, err := s.countAStockWindowNews(start, end); err == nil {
+		windowCount = count
 		countText = fmt.Sprintf("当前窗口已有 %d 条财经新闻。", count)
 	}
 	windowText := fmt.Sprintf("%s %s %s", normalizeAStockStrategyDate(strategyDate), strings.TrimSuffix(period.Label, "推荐"), period.WindowLabel)
-	if len(failures) > 0 {
-		return fmt.Sprintf("已补抓 %s：成功 %d 个来源，失败 %s。%s", windowText, ok, strings.Join(failures, "、"), countText)
+	statsText := formatAStockWindowCrawlStats(results)
+	emptyExplain := ""
+	if windowCount == 0 {
+		emptyExplain = fmt.Sprintf("没有新闻：本次补抓没有写入 %s 窗口内带 publish_time 的可用新闻；历史补录依赖源站支持该日期窗口，或需要源数据提供准确发布时间。", period.WindowLabel)
 	}
-	return fmt.Sprintf("已补抓 %s：金十快讯、金十资讯、金十全站信息、东方财富网、华尔街见闻、财联社、新浪财经。%s", windowText, countText)
+	parts := make([]string, 0, 4)
+	if len(failures) > 0 {
+		parts = append(parts, fmt.Sprintf("已补抓 %s：成功 %d 个来源，失败 %s。", windowText, ok, strings.Join(failures, "、")))
+	} else {
+		parts = append(parts, fmt.Sprintf("已补抓 %s：金十快讯、金十资讯、金十全站信息、东方财富网、华尔街见闻、财联社、新浪财经。", windowText))
+	}
+	if statsText != "" {
+		parts = append(parts, statsText)
+	}
+	if countText != "" {
+		parts = append(parts, countText)
+	}
+	if emptyExplain != "" {
+		parts = append(parts, emptyExplain)
+	}
+	return strings.Join(parts, "")
 }
 
 func aStockCrawlSources() []string {
 	return []string{"flash", "headline", "jin10_full", "eastmoney_kuaixun", "wallstreetcn_a_stock", "cls_telegraph", "sina_finance_7x24"}
+}
+
+type aStockWindowCrawlResult struct {
+	SourceType string
+	Fetched    int
+	Inserted   int
+	Updated    int
+	ErrorText  string
+	Decoded    bool
+}
+
+func decodeAStockCrawlSummary(body []byte) (model.CrawlSummary, bool) {
+	if len(body) == 0 {
+		return model.CrawlSummary{}, false
+	}
+	var envelope struct {
+		Data model.CrawlSummary `json:"data"`
+	}
+	if err := json.Unmarshal(body, &envelope); err == nil && (envelope.Data.SourceType != "" || envelope.Data.FetchedCount > 0 || envelope.Data.InsertedCount > 0 || envelope.Data.UpdatedCount > 0 || envelope.Data.RunID > 0 || envelope.Data.ErrorText != "") {
+		return envelope.Data, true
+	}
+	var summary model.CrawlSummary
+	if err := json.Unmarshal(body, &summary); err == nil && (summary.SourceType != "" || summary.FetchedCount > 0 || summary.InsertedCount > 0 || summary.UpdatedCount > 0 || summary.RunID > 0 || summary.ErrorText != "") {
+		return summary, true
+	}
+	return model.CrawlSummary{}, false
+}
+
+func formatAStockWindowCrawlStats(results []aStockWindowCrawlResult) string {
+	if len(results) == 0 {
+		return ""
+	}
+	fetched := 0
+	inserted := 0
+	updated := 0
+	hasDecoded := false
+	for _, result := range results {
+		fetched += result.Fetched
+		inserted += result.Inserted
+		updated += result.Updated
+		if result.Decoded || result.Fetched > 0 || result.Inserted > 0 || result.Updated > 0 || result.ErrorText != "" {
+			hasDecoded = true
+		}
+	}
+	if !hasDecoded {
+		return ""
+	}
+	return fmt.Sprintf("源站返回 %d 条，窗口内入库 %d 条、更新 %d 条。", fetched, inserted, updated)
 }
 
 func (s *Server) countAStockWindowNews(start time.Time, end time.Time) (int, error) {
