@@ -112,6 +112,9 @@ func TestLoadUsesDefaults(t *testing.T) {
 	if cfg.StockResearchPDFDir != filepath.Join("data", "stock-research-pdfs") {
 		t.Fatalf("expected default stock research PDF dir, got %q", cfg.StockResearchPDFDir)
 	}
+	if cfg.SinaFinanceReportURL != "https://stock.finance.sina.com.cn/stock/go.php/vReport_List/kind/company/index.phtml" || cfg.EastMoneyReportURL != "https://data.eastmoney.com/report/stock.jshtml" {
+		t.Fatalf("expected default stock research report urls, got sina=%q eastmoney=%q", cfg.SinaFinanceReportURL, cfg.EastMoneyReportURL)
+	}
 	if cfg.Jin10FullBackfillDays != 30 || cfg.Jin10FullMaxPages != 20 {
 		t.Fatalf("expected default jin10 full backfill/pages, got days=%d pages=%d", cfg.Jin10FullBackfillDays, cfg.Jin10FullMaxPages)
 	}
@@ -183,6 +186,8 @@ func TestLoadPrefersPrimaryAndAliasEnv(t *testing.T) {
 	t.Setenv("YUQING_ASTOCK_AUCTION_URL", "http://akshare.example.com")
 	t.Setenv("YUQING_ASTOCK_HOLDING_URL", "http://holding.example.com")
 	t.Setenv("YUQING_STOCK_RESEARCH_PDF_DIR", "D:\\research-pdfs")
+	t.Setenv("YUQING_SINA_FINANCE_REPORT_URL", "https://sina.example.com/reports")
+	t.Setenv("YUQING_EASTMONEY_REPORT_URL", "https://eastmoney.example.com/reports")
 	t.Setenv("YUQING_HTTP_TIMEOUT_SEC", "45")
 	t.Setenv("YUQING_SCHEDULER_CRAWL_TIMEOUT_SEC", "180")
 	t.Setenv("YUQING_EXTERNAL_RETRY_COUNT", "3")
@@ -234,6 +239,9 @@ func TestLoadPrefersPrimaryAndAliasEnv(t *testing.T) {
 	}
 	if cfg.StockResearchPDFDir != "D:\\research-pdfs" {
 		t.Fatalf("expected stock research PDF dir loaded, got %q", cfg.StockResearchPDFDir)
+	}
+	if cfg.SinaFinanceReportURL != "https://sina.example.com/reports" || cfg.EastMoneyReportURL != "https://eastmoney.example.com/reports" {
+		t.Fatalf("expected stock research report urls loaded, got sina=%q eastmoney=%q", cfg.SinaFinanceReportURL, cfg.EastMoneyReportURL)
 	}
 	if cfg.HTTPTimeout != 45*time.Second {
 		t.Fatalf("expected primary http timeout, got %s", cfg.HTTPTimeout)

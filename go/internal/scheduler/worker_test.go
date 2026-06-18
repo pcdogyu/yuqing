@@ -754,6 +754,56 @@ func TestParseFinanceReportDocumentExtractsRows(t *testing.T) {
 	}
 }
 
+func TestParseSinaFinanceReportDocumentAndDetail(t *testing.T) {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(`<html><body><table>
+<tr><th>序号</th><th>标题</th><th>报告类型</th><th>发布日期</th><th>机构</th><th>研究员</th></tr>
+<tr><td>1</td><td><a href="//stock.finance.sina.com.cn/stock/go.php/vReport_Show/kind/company/rptid/835086605455/index.phtml">深度*公司*瑞联新材(688550)：显示材料持续发力</a></td><td>公司</td><td>2026-06-18</td><td>中银国际证券股份有限公司</td><td>余嫄嫄/范琦岩</td></tr>
+</table></body></html>`))
+	if err != nil {
+		t.Fatalf("new sina list document: %v", err)
+	}
+	items := parseSinaFinanceReportDocument(doc, "https://stock.finance.sina.com.cn/stock/go.php/vReport_List/kind/company/index.phtml", time.Date(2026, 6, 18, 1, 0, 0, 0, time.UTC))
+	if len(items) != 1 {
+		t.Fatalf("expected one sina item, got %+v", items)
+	}
+	if items[0].Code != "688550" || items[0].Name != "瑞联新材" || items[0].Institution != "中银国际证券股份有限公司" || items[0].Analyst != "余嫄嫄/范琦岩" {
+		t.Fatalf("unexpected sina list item: %+v", items[0])
+	}
+	detail, err := goquery.NewDocumentFromReader(strings.NewReader(`<html><body><div class="content">
+<h1>深度*公司*瑞联新材(688550)：显示材料持续发力 医药CDMO开拓新增量</h1>
+<div class="creab"><span>类别：公司</span><span>机构：<a>中银国际证券股份有限公司</a></span><span>研究员：<a>余嫄嫄/范琦岩</a></span><span>日期：2026-06-18</span></div>
+<div class="blk_container"><p>公司在显示材料、医药板块以及电子材料多点布局，给予买入评级。</p></div>
+</div></body></html>`))
+	if err != nil {
+		t.Fatalf("new sina detail document: %v", err)
+	}
+	enrichSinaFinanceReportDetail(detail, &items[0])
+	if !strings.Contains(items[0].Summary, "显示材料") || items[0].ResearchDate != "2026-06-18" || !strings.Contains(items[0].RawPayload, "显示材料") {
+		t.Fatalf("unexpected sina detail item: %+v", items[0])
+	}
+}
+
+func TestParseEastMoneyReportDocumentAndDetail(t *testing.T) {
+	body := `<script>var initdata = {"hits":1,"size":50,"data":[{"title":"CMD放量业绩高速增长，稳定分红回报股东","stockName":"泛亚微透","stockCode":"688386","orgName":"山西证券股份有限公司","orgSName":"山西证券","publishDate":"2026-06-18 00:00:00.000","infoCode":"AP202606181823661327","emRatingName":"买入","researcher":"冀泳洁","predictThisYearEps":"1.79","predictThisYearPe":"53.2","predictNextYearEps":"3.08","predictNextYearPe":"30.9","indvInduName":"塑料","indvAimPriceT":"120","indvAimPriceL":"100","author":["11000390531.冀泳洁"]}]};</script>`
+	items, err := parseEastMoneyReportDocument(body, "https://data.eastmoney.com/report/stock.jshtml", time.Date(2026, 6, 18, 1, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("parse eastmoney report: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected one eastmoney item, got %+v", items)
+	}
+	if items[0].Code != "688386" || items[0].SourceType != "eastmoney_report" || items[0].SourceKey != "AP202606181823661327" || items[0].TargetPrice != "100-120" {
+		t.Fatalf("unexpected eastmoney list item: %+v", items[0])
+	}
+	detail := `<script>var zwinfo= {"attach_url":"https://pdf.dfcfw.com/pdf/H3_AP202606181823661327_1.pdf?1781791903000.pdf","info_code":"AP202606181823661327","notice_content":"　　泛亚微透(688386)\n　　事件描述\n　　营收稳健增长。","notice_date":"2026-06-18 14:11:43","notice_title":"CMD放量业绩高速增长，稳定分红回报股东","rating":"买入","researcher":"冀泳洁","short_name":"泛亚微透","source_sample_name":"东方财富"};</script>`
+	if err := enrichEastMoneyReportDetail(detail, &items[0]); err != nil {
+		t.Fatalf("enrich eastmoney detail: %v", err)
+	}
+	if items[0].PDFURL == "" || !strings.Contains(items[0].Summary, "营收稳健增长") || items[0].ResearchDate != "2026-06-18" {
+		t.Fatalf("unexpected eastmoney detail item: %+v", items[0])
+	}
+}
+
 func TestRunStockResearchBackfillFetchesExternalAndWritesContent(t *testing.T) {
 	var captured []model.StockResearchSurvey
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

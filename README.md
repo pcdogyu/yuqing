@@ -70,6 +70,8 @@ cd D:\yuqing\go
 | `YUQING_ASTOCK_MARKET_URL` | A 股行情数据源覆盖 |
 | `YUQING_ASTOCK_AUCTION_URL` | 集合竞价 AKShare HTTP 服务 |
 | `YUQING_STOCK_RESEARCH_URL` | 研报调研 HTTP 服务；未显式配置且本地 AKShare 适配器启动成功时，`go\run.bat` 会默认指向 `http://127.0.0.1:8087` |
+| `YUQING_SINA_FINANCE_REPORT_URL` | 新浪财经研报列表页，默认公司研究研报 |
+| `YUQING_EASTMONEY_REPORT_URL` | 东方财富个股研报列表页 |
 | `YUQING_TUSHARE_TOKEN` | TuShare 增强数据 Token |
 
 PostgreSQL 生产配置建议：

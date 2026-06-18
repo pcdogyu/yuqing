@@ -1,20 +1,30 @@
 package scheduler
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/rs/zerolog/log"
+	"golang.org/x/net/html/charset"
 
 	"github.com/pcdogyu/yuqing/go/internal/model"
+)
+
+var (
+	eastMoneyInitDataPattern = regexp.MustCompile(`(?s)var\s+initdata\s*=\s*(\{.*?\});`)
+	eastMoneyZWInfoPattern   = regexp.MustCompile(`(?s)var\s+zwinfo\s*=\s*(\{.*?\});`)
+	stockResearchCodePattern = regexp.MustCompile(`([^\s（(：:，,、]+)[（(](\d{6})[）)]`)
 )
 
 func (w *Worker) runStockResearchCrawl(ctx context.Context) error {
@@ -58,10 +68,15 @@ func (w *Worker) runStockResearchCrawlForRange(ctx context.Context, opts stockRe
 		items = append(items, externalItems...)
 	}
 	if w.cfg.StockResearchPublicEnabled {
-		if sinaItems, err := w.fetchSinaFinanceReports(ctx); err != nil {
+		if sinaItems, err := w.fetchSinaFinanceReports(ctx, opts); err != nil {
 			log.Warn().Err(err).Str("source", "sina_finance_report").Msg("stock research public source skipped")
 		} else {
-			items = append(items, filterStockResearchItems(sinaItems, opts)...)
+			items = append(items, sinaItems...)
+		}
+		if eastMoneyItems, err := w.fetchEastMoneyReports(ctx, opts); err != nil {
+			log.Warn().Err(err).Str("source", "eastmoney_report").Msg("stock research public source skipped")
+		} else {
+			items = append(items, eastMoneyItems...)
 		}
 		if sohuItems, err := w.fetchSohuFinanceReports(ctx); err != nil {
 			log.Warn().Err(err).Str("source", "sohu_finance_report").Msg("stock research public source skipped")
@@ -145,8 +160,35 @@ func (w *Worker) fetchExternalStockResearch(ctx context.Context, opts stockResea
 	return normalizeStockResearchSourceItems(envelope.Items, "akshare_stock_research"), nil
 }
 
-func (w *Worker) fetchSinaFinanceReports(ctx context.Context) ([]model.StockResearchSurvey, error) {
-	return w.fetchFinanceReportHTML(ctx, w.cfg.SinaFinanceReportURL, "sina_finance_report")
+func (w *Worker) fetchSinaFinanceReports(ctx context.Context, opts stockResearchCrawlOptions) ([]model.StockResearchSurvey, error) {
+	if strings.TrimSpace(w.cfg.SinaFinanceReportURL) == "" {
+		return nil, nil
+	}
+	doc, _, err := w.fetchStockResearchDocument(ctx, w.cfg.SinaFinanceReportURL, "sina_finance_report")
+	if err != nil {
+		return nil, err
+	}
+	items := parseSinaFinanceReportDocument(doc, w.cfg.SinaFinanceReportURL, time.Now().UTC())
+	items = filterStockResearchItems(items, opts)
+	items = w.enrichSinaFinanceReportDetails(ctx, items)
+	return normalizeStockResearchSourceItems(items, "sina_finance_report"), nil
+}
+
+func (w *Worker) fetchEastMoneyReports(ctx context.Context, opts stockResearchCrawlOptions) ([]model.StockResearchSurvey, error) {
+	if strings.TrimSpace(w.cfg.EastMoneyReportURL) == "" {
+		return nil, nil
+	}
+	_, body, err := w.fetchStockResearchDocument(ctx, w.cfg.EastMoneyReportURL, "eastmoney_report")
+	if err != nil {
+		return nil, err
+	}
+	items, err := parseEastMoneyReportDocument(body, w.cfg.EastMoneyReportURL, time.Now().UTC())
+	if err != nil {
+		return nil, err
+	}
+	items = filterStockResearchItems(items, opts)
+	items = w.enrichEastMoneyReportDetails(ctx, items)
+	return normalizeStockResearchSourceItems(items, "eastmoney_report"), nil
 }
 
 func (w *Worker) fetchSohuFinanceReports(ctx context.Context) ([]model.StockResearchSurvey, error) {
@@ -158,22 +200,297 @@ func (w *Worker) fetchFinanceReportHTML(ctx context.Context, rawURL string, sour
 	if rawURL == "" {
 		return nil, nil
 	}
-	resp, err := w.client.R().
-		SetContext(ctx).
-		SetHeader("User-Agent", w.cfg.UserAgent).
-		Get(rawURL)
-	if err != nil {
-		return nil, err
-	}
-	if !resp.IsSuccess() {
-		return nil, fmt.Errorf("%s failed: %s", sourceType, resp.Status())
-	}
-	doc, err := goquery.NewDocumentFromReader(strings.NewReader(resp.String()))
+	doc, _, err := w.fetchStockResearchDocument(ctx, rawURL, sourceType)
 	if err != nil {
 		return nil, err
 	}
 	items := parseFinanceReportDocument(doc, rawURL, sourceType, time.Now().UTC())
 	return normalizeStockResearchSourceItems(items, sourceType), nil
+}
+
+func (w *Worker) fetchStockResearchDocument(ctx context.Context, rawURL string, sourceType string) (*goquery.Document, string, error) {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return nil, "", nil
+	}
+	resp, err := w.client.R().
+		SetContext(ctx).
+		SetHeader("User-Agent", w.cfg.UserAgent).
+		Get(rawURL)
+	if err != nil {
+		return nil, "", err
+	}
+	if !resp.IsSuccess() {
+		return nil, "", fmt.Errorf("%s failed: %s", sourceType, resp.Status())
+	}
+	reader, err := charset.NewReader(bytes.NewReader(resp.Body()), resp.Header().Get("Content-Type"))
+	if err != nil {
+		reader = bytes.NewReader(resp.Body())
+	}
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, "", err
+	}
+	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(data))
+	if err != nil {
+		return nil, "", err
+	}
+	return doc, string(data), nil
+}
+
+func parseSinaFinanceReportDocument(doc *goquery.Document, pageURL string, now time.Time) []model.StockResearchSurvey {
+	items := make([]model.StockResearchSurvey, 0)
+	doc.Find("tr").Each(func(_ int, row *goquery.Selection) {
+		cells := make([]string, 0)
+		row.Find("td").Each(func(_ int, cell *goquery.Selection) {
+			cells = append(cells, cleanStockResearchText(cell.Text()))
+		})
+		if len(cells) < 6 || strings.EqualFold(cells[0], "序号") {
+			return
+		}
+		link := row.Find("a").First()
+		title := cleanStockResearchText(link.Text())
+		if title == "" || !looksLikeResearchTitle(title) {
+			return
+		}
+		href, _ := link.Attr("href")
+		code, name := stockResearchNameCodeFromTitle(title)
+		item := model.StockResearchSurvey{
+			Code:         code,
+			Name:         name,
+			Kind:         "report",
+			Title:        title,
+			ResearchDate: normalizeStockResearchDate(stockResearchCell(cells, 3)),
+			PublishTime:  normalizeStockResearchDate(stockResearchCell(cells, 3)),
+			Institution:  stockResearchCell(cells, 4),
+			Analyst:      stockResearchCell(cells, 5),
+			SourceURL:    resolveStockResearchURL(pageURL, href),
+			SourceType:   "sina_finance_report",
+			RawPayload:   stockResearchJSONPayload(map[string]any{"cells": cells}),
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		}
+		if item.SourceURL == "" {
+			item.SourceURL = pageURL
+		}
+		item.SourceKey = stockResearchSourceKey(item)
+		items = append(items, item)
+	})
+	return items
+}
+
+func (w *Worker) enrichSinaFinanceReportDetails(ctx context.Context, items []model.StockResearchSurvey) []model.StockResearchSurvey {
+	for i := range items {
+		sourceURL := strings.TrimSpace(items[i].SourceURL)
+		if sourceURL == "" {
+			continue
+		}
+		doc, _, err := w.fetchStockResearchDocument(ctx, sourceURL, "sina_finance_report_detail")
+		if err != nil {
+			log.Warn().Err(err).Str("url", sourceURL).Msg("sina stock research detail skipped")
+			continue
+		}
+		enrichSinaFinanceReportDetail(doc, &items[i])
+	}
+	return items
+}
+
+func enrichSinaFinanceReportDetail(doc *goquery.Document, item *model.StockResearchSurvey) {
+	if title := cleanStockResearchText(doc.Find(".content h1").First().Text()); title != "" {
+		item.Title = title
+		if code, name := stockResearchNameCodeFromTitle(title); code != "" {
+			item.Code = code
+			item.Name = nonEmptyText(item.Name, name)
+		}
+	}
+	doc.Find(".content .creab span").Each(func(_ int, span *goquery.Selection) {
+		text := cleanStockResearchText(span.Text())
+		switch {
+		case strings.HasPrefix(text, "类别："):
+			item.Kind = "report"
+		case strings.HasPrefix(text, "机构："):
+			item.Institution = strings.TrimSpace(strings.TrimPrefix(text, "机构："))
+		case strings.HasPrefix(text, "研究员："):
+			item.Analyst = strings.TrimSpace(strings.TrimPrefix(text, "研究员："))
+		case strings.HasPrefix(text, "日期："):
+			if date := normalizeStockResearchDate(strings.TrimPrefix(text, "日期：")); date != "" {
+				item.ResearchDate = date
+				item.PublishTime = date
+			}
+		}
+	})
+	if body := cleanStockResearchText(doc.Find(".content .blk_container").First().Text()); body != "" {
+		item.Summary = truncateStockResearchText(body, 6000)
+	}
+	code, name := stockResearchNameCodeFromTitle(item.Title)
+	if item.Code == "" {
+		item.Code = code
+	}
+	if item.Name == "" {
+		item.Name = name
+	}
+	item.RawPayload = stockResearchJSONPayload(map[string]any{
+		"title":        item.Title,
+		"institution":  item.Institution,
+		"analyst":      item.Analyst,
+		"researchDate": item.ResearchDate,
+		"summary":      item.Summary,
+	})
+	item.SourceKey = stockResearchSourceKey(*item)
+}
+
+type eastMoneyInitData struct {
+	Data []eastMoneyReportRow `json:"data"`
+}
+
+type eastMoneyReportRow struct {
+	Title                 string   `json:"title"`
+	StockName             string   `json:"stockName"`
+	StockCode             string   `json:"stockCode"`
+	OrgName               string   `json:"orgName"`
+	OrgSName              string   `json:"orgSName"`
+	PublishDate           string   `json:"publishDate"`
+	InfoCode              string   `json:"infoCode"`
+	EmRatingName          string   `json:"emRatingName"`
+	SRatingName           string   `json:"sRatingName"`
+	Researcher            string   `json:"researcher"`
+	IndvAimPriceT         string   `json:"indvAimPriceT"`
+	IndvAimPriceL         string   `json:"indvAimPriceL"`
+	PredictThisYearEPS    string   `json:"predictThisYearEps"`
+	PredictThisYearPE     string   `json:"predictThisYearPe"`
+	PredictNextYearEPS    string   `json:"predictNextYearEps"`
+	PredictNextYearPE     string   `json:"predictNextYearPe"`
+	PredictNextTwoYearEPS string   `json:"predictNextTwoYearEps"`
+	PredictNextTwoYearPE  string   `json:"predictNextTwoYearPe"`
+	IndustryName          string   `json:"industryName"`
+	IndvInduName          string   `json:"indvInduName"`
+	Author                []string `json:"author"`
+}
+
+type eastMoneyReportDetail struct {
+	AttachURL     string `json:"attach_url"`
+	InfoCode      string `json:"info_code"`
+	NoticeTitle   string `json:"notice_title"`
+	NoticeContent string `json:"notice_content"`
+	NoticeDate    string `json:"notice_date"`
+	Rating        string `json:"rating"`
+	Researcher    string `json:"researcher"`
+	ShortName     string `json:"short_name"`
+	SourceName    string `json:"source_sample_name"`
+}
+
+func parseEastMoneyReportDocument(body string, pageURL string, now time.Time) ([]model.StockResearchSurvey, error) {
+	match := eastMoneyInitDataPattern.FindStringSubmatch(body)
+	if len(match) < 2 {
+		return nil, errors.New("eastmoney initdata not found")
+	}
+	var initData eastMoneyInitData
+	if err := json.Unmarshal([]byte(match[1]), &initData); err != nil {
+		return nil, err
+	}
+	items := make([]model.StockResearchSurvey, 0, len(initData.Data))
+	for _, row := range initData.Data {
+		title := cleanStockResearchText(row.Title)
+		infoCode := strings.TrimSpace(row.InfoCode)
+		if title == "" || infoCode == "" {
+			continue
+		}
+		sourceURL := resolveStockResearchURL(pageURL, "/report/info/"+infoCode+".html")
+		rowPayload, _ := json.Marshal(row)
+		item := model.StockResearchSurvey{
+			Code:         strings.TrimSpace(row.StockCode),
+			Name:         cleanStockResearchText(row.StockName),
+			Kind:         "report",
+			Title:        title,
+			Institution:  nonEmptyText(cleanStockResearchText(row.OrgName), cleanStockResearchText(row.OrgSName)),
+			Analyst:      cleanStockResearchText(nonEmptyText(row.Researcher, strings.Join(row.Author, "/"))),
+			Rating:       cleanStockResearchText(nonEmptyText(row.EmRatingName, row.SRatingName)),
+			TargetPrice:  eastMoneyTargetPrice(row),
+			ResearchDate: normalizeStockResearchDate(row.PublishDate),
+			PublishTime:  normalizeStockResearchDate(row.PublishDate),
+			SourceURL:    sourceURL,
+			SourceType:   "eastmoney_report",
+			SourceKey:    infoCode,
+			Summary:      eastMoneyReportSummary(row),
+			RawPayload:   string(rowPayload),
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		}
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+func (w *Worker) enrichEastMoneyReportDetails(ctx context.Context, items []model.StockResearchSurvey) []model.StockResearchSurvey {
+	for i := range items {
+		sourceURL := strings.TrimSpace(items[i].SourceURL)
+		if sourceURL == "" {
+			continue
+		}
+		_, body, err := w.fetchStockResearchDocument(ctx, sourceURL, "eastmoney_report_detail")
+		if err != nil {
+			log.Warn().Err(err).Str("url", sourceURL).Msg("eastmoney stock research detail skipped")
+			continue
+		}
+		if err := enrichEastMoneyReportDetail(body, &items[i]); err != nil {
+			log.Warn().Err(err).Str("url", sourceURL).Msg("eastmoney stock research detail parse skipped")
+		}
+	}
+	return items
+}
+
+func enrichEastMoneyReportDetail(body string, item *model.StockResearchSurvey) error {
+	match := eastMoneyZWInfoPattern.FindStringSubmatch(body)
+	if len(match) < 2 {
+		return errors.New("eastmoney zwinfo not found")
+	}
+	var detail eastMoneyReportDetail
+	if err := json.Unmarshal([]byte(match[1]), &detail); err != nil {
+		return err
+	}
+	if title := cleanStockResearchText(detail.NoticeTitle); title != "" {
+		item.Title = title
+	}
+	if researcher := cleanStockResearchText(detail.Researcher); researcher != "" {
+		item.Analyst = researcher
+	}
+	if rating := cleanStockResearchText(detail.Rating); rating != "" {
+		item.Rating = rating
+	}
+	if shortName := cleanStockResearchText(detail.ShortName); shortName != "" && item.Name == "" {
+		item.Name = shortName
+	}
+	if date := normalizeStockResearchDate(detail.NoticeDate); date != "" {
+		item.ResearchDate = date
+		item.PublishTime = date
+	}
+	if pdfURL := strings.TrimSpace(detail.AttachURL); pdfURL != "" {
+		item.PDFURL = pdfURL
+		item.PDFStatus = "pending"
+	}
+	if content := cleanStockResearchText(detail.NoticeContent); content != "" {
+		item.Summary = truncateStockResearchText(content, 6000)
+		if item.Code == "" || item.Name == "" {
+			code, name := stockResearchNameCodeFromTitle(content)
+			if item.Code == "" {
+				item.Code = code
+			}
+			if item.Name == "" {
+				item.Name = name
+			}
+		}
+	}
+	item.RawPayload = stockResearchJSONPayload(map[string]any{
+		"infoCode":      nonEmptyText(detail.InfoCode, item.SourceKey),
+		"noticeTitle":   detail.NoticeTitle,
+		"noticeDate":    detail.NoticeDate,
+		"researcher":    detail.Researcher,
+		"rating":        detail.Rating,
+		"sourceName":    detail.SourceName,
+		"attachURL":     detail.AttachURL,
+		"noticeContent": item.Summary,
+	})
+	return nil
 }
 
 func parseFinanceReportDocument(doc *goquery.Document, pageURL string, sourceType string, now time.Time) []model.StockResearchSurvey {
@@ -282,12 +599,22 @@ func normalizeStockResearchSourceItems(items []model.StockResearchSurvey, fallba
 func filterStockResearchItems(items []model.StockResearchSurvey, opts stockResearchCrawlOptions) []model.StockResearchSurvey {
 	code := strings.TrimSpace(opts.Code)
 	company := strings.TrimSpace(opts.Company)
-	if code == "" && company == "" {
+	start := normalizeStockResearchDate(opts.Start)
+	end := normalizeStockResearchDate(opts.End)
+	if code == "" && company == "" && start == "" && end == "" {
 		return items
 	}
 	out := make([]model.StockResearchSurvey, 0, len(items))
 	for _, item := range items {
+		itemDate := normalizeStockResearchDate(nonEmptyText(item.ResearchDate, item.PublishTime))
+		if !stockResearchDateInRange(itemDate, start, end) {
+			continue
+		}
 		blob := strings.ToLower(strings.Join([]string{item.Code, item.Name, item.Title, item.Summary, item.RawPayload}, " "))
+		if code == "" && company == "" {
+			out = append(out, item)
+			continue
+		}
 		if code != "" && strings.Contains(blob, strings.ToLower(code)) {
 			out = append(out, item)
 			continue
@@ -297,6 +624,19 @@ func filterStockResearchItems(items []model.StockResearchSurvey, opts stockResea
 		}
 	}
 	return out
+}
+
+func stockResearchDateInRange(value, start, end string) bool {
+	if value == "" {
+		return true
+	}
+	if start != "" && value < start {
+		return false
+	}
+	if end != "" && value > end {
+		return false
+	}
+	return true
 }
 
 func dedupeStockResearch(items []model.StockResearchSurvey) []model.StockResearchSurvey {
@@ -339,6 +679,107 @@ func stockResearchSourceKey(item model.StockResearchSurvey) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func stockResearchJSONPayload(value any) string {
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return "{}"
+	}
+	return string(payload)
+}
+
+func nonEmptyText(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func normalizeStockResearchDate(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if idx := strings.Index(value, "T"); idx > 0 {
+		value = value[:idx]
+	}
+	if idx := strings.Index(value, " "); idx > 0 && strings.Contains(value[:idx], "-") {
+		value = value[:idx]
+	}
+	for _, layout := range []string{"2006-01-02", "2006/01/02", "2006.01.02", "20060102", "2006-01-02 15:04:05", "2006-01-02 15:04:05.000"} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed.Format("2006-01-02")
+		}
+	}
+	return value
+}
+
+func stockResearchNameCodeFromTitle(title string) (string, string) {
+	matches := stockResearchCodePattern.FindAllStringSubmatch(title, -1)
+	if len(matches) == 0 {
+		return "", ""
+	}
+	match := matches[len(matches)-1]
+	name := strings.TrimSpace(match[1])
+	for _, sep := range []string{"*", "：", ":", " ", "　"} {
+		if idx := strings.LastIndex(name, sep); idx >= 0 {
+			name = strings.TrimSpace(name[idx+len(sep):])
+		}
+	}
+	return match[2], strings.Trim(name, " -_")
+}
+
+func eastMoneyTargetPrice(row eastMoneyReportRow) string {
+	high := strings.TrimSpace(row.IndvAimPriceT)
+	low := strings.TrimSpace(row.IndvAimPriceL)
+	switch {
+	case high != "" && low != "" && high != low:
+		return low + "-" + high
+	case high != "":
+		return high
+	case low != "":
+		return low
+	default:
+		return ""
+	}
+}
+
+func eastMoneyReportSummary(row eastMoneyReportRow) string {
+	parts := make([]string, 0)
+	if industry := nonEmptyText(row.IndustryName, row.IndvInduName); industry != "" {
+		parts = append(parts, "行业："+industry)
+	}
+	for _, item := range []struct {
+		Year string
+		EPS  string
+		PE   string
+	}{
+		{"当年", row.PredictThisYearEPS, row.PredictThisYearPE},
+		{"次年", row.PredictNextYearEPS, row.PredictNextYearPE},
+		{"后年", row.PredictNextTwoYearEPS, row.PredictNextTwoYearPE},
+	} {
+		eps := strings.TrimSpace(item.EPS)
+		pe := strings.TrimSpace(item.PE)
+		if eps == "" && pe == "" {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s EPS %s / PE %s", item.Year, nonEmptyText(eps, "--"), nonEmptyText(pe, "--")))
+	}
+	return strings.Join(parts, "；")
+}
+
+func truncateStockResearchText(value string, limit int) string {
+	if limit <= 0 {
+		return value
+	}
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit])
+}
+
 func cleanStockResearchText(raw string) string {
 	return strings.Join(strings.Fields(strings.TrimSpace(raw)), " ")
 }
@@ -355,18 +796,18 @@ func firstMeaningfulStockResearchCell(cells []string) string {
 func firstStockResearchDate(cells []string) string {
 	for _, cell := range cells {
 		if isStockResearchDate(cell) {
-			return cell
+			return normalizeStockResearchDate(cell)
 		}
 	}
 	return ""
 }
 
 func isStockResearchDate(value string) bool {
-	value = strings.TrimSpace(value)
+	value = normalizeStockResearchDate(value)
 	if len(value) < 8 {
 		return false
 	}
-	for _, layout := range []string{"2006-01-02", "2006/01/02", "2006.01.02"} {
+	for _, layout := range []string{"2006-01-02"} {
 		if _, err := time.Parse(layout, value); err == nil {
 			return true
 		}

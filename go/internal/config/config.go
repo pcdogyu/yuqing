@@ -53,6 +53,7 @@ type Config struct {
 	TuShareToken               string
 	StockResearchPublicEnabled bool
 	SinaFinanceReportURL       string
+	EastMoneyReportURL         string
 	SohuFinanceReportURL       string
 	HTTPTimeout                time.Duration
 	SchedulerCrawlTimeout      time.Duration
@@ -157,7 +158,8 @@ func Load() Config {
 		StockResearchPDFDir:        envOrDefault("YUQING_STOCK_RESEARCH_PDF_DIR", filepath.Join("data", "stock-research-pdfs")),
 		TuShareToken:               envOrDefault("YUQING_TUSHARE_TOKEN", ""),
 		StockResearchPublicEnabled: envBool(true, "YUQING_STOCK_RESEARCH_PUBLIC_ENABLED"),
-		SinaFinanceReportURL:       envOrDefaultAllowEmpty("YUQING_SINA_FINANCE_REPORT_URL", "https://stock.finance.sina.com.cn/stock/go.php/vReport_List/kind/lastest/index.phtml"),
+		SinaFinanceReportURL:       envOrDefaultAllowEmpty("YUQING_SINA_FINANCE_REPORT_URL", "https://stock.finance.sina.com.cn/stock/go.php/vReport_List/kind/company/index.phtml"),
+		EastMoneyReportURL:         envOrDefaultAllowEmpty("YUQING_EASTMONEY_REPORT_URL", "https://data.eastmoney.com/report/stock.jshtml"),
 		SohuFinanceReportURL:       envOrDefaultAllowEmpty("YUQING_SOHU_FINANCE_REPORT_URL", "https://q.stock.sohu.com/jlp/"),
 		HTTPTimeout:                envDurationSeconds(20, "YUQING_HTTP_TIMEOUT_SEC", "JIN10_HTTP_TIMEOUT_SEC"),
 		SchedulerCrawlTimeout:      envDurationSeconds(120, "YUQING_SCHEDULER_CRAWL_TIMEOUT_SEC"),
