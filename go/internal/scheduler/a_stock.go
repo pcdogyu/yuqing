@@ -24,11 +24,19 @@ func (w *Worker) runAStockRecommendation(ctx context.Context, period string) err
 }
 
 func (w *Worker) runAStockAuctionCrawl(ctx context.Context) error {
-	location, err := time.LoadLocation("Asia/Shanghai")
+	result, err := w.runAStockAuctionLatest(ctx)
 	if err != nil {
-		location = time.FixedZone("UTC+8", 8*60*60)
+		return err
 	}
-	return w.runAStockAuctionCrawlForDate(ctx, time.Now().In(location).Format("2006-01-02"))
+	if result.Skipped {
+		return fmt.Errorf("a-stock auction crawl skipped for %s: %s", result.Date, result.Message)
+	}
+	log.Info().
+		Str("trade_date", result.Date).
+		Int("total", result.Total).
+		Int("ok", result.OK).
+		Msg("a-stock auction amounts crawled")
+	return nil
 }
 
 func (w *Worker) runAStockAuctionLatest(ctx context.Context) (aStockAuctionCrawlResult, error) {
@@ -76,6 +84,9 @@ func (w *Worker) runAStockAuctionCrawlForDateResult(ctx context.Context, tradeDa
 	req := w.crawlClient.R().
 		SetContext(ctx).
 		SetQueryParam("limit", "0")
+	if strings.TrimSpace(tradeDate) == "" {
+		req.SetQueryParam("force", "1")
+	}
 	if strings.TrimSpace(tradeDate) != "" {
 		req.SetQueryParam("date", tradeDate)
 	}

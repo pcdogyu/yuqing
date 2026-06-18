@@ -377,7 +377,7 @@ func TestRunAStockAuctionLatestUsesAdapterDate(t *testing.T) {
 		Items []model.AStockAuctionAmount `json:"items"`
 	}
 	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/a-stock/auction" || r.URL.Query().Get("date") != "" || r.URL.Query().Get("limit") != "0" {
+		if r.URL.Path != "/api/a-stock/auction" || r.URL.Query().Get("date") != "" || r.URL.Query().Get("limit") != "0" || r.URL.Query().Get("force") != "1" {
 			t.Fatalf("unexpected akshare latest request: %s", r.URL.String())
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -422,6 +422,51 @@ func TestRunAStockAuctionLatestUsesAdapterDate(t *testing.T) {
 	}
 }
 
+func TestRunAStockAuctionCrawlForcesLatestRefresh(t *testing.T) {
+	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/a-stock/auction" || r.URL.Query().Get("date") != "" || r.URL.Query().Get("limit") != "0" || r.URL.Query().Get("force") != "1" {
+			t.Fatalf("unexpected scheduled auction request: %s", r.URL.String())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"date": "2026-06-18",
+			"items": []model.AStockAuctionAmount{{
+				TradeDate:     "2026-06-18",
+				Code:          "002230",
+				Name:          "科大讯飞",
+				AuctionVolume: 123400,
+				AuctionAmount: 5084080,
+				Source:        "eastmoney_clist",
+				Status:        "ok",
+			}},
+		})
+	}))
+	defer akshare.Close()
+
+	var writeCount int
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/admin/a-stock/auction" {
+			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
+		}
+		writeCount++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer content.Close()
+
+	worker := NewWorker(config.Config{
+		AStockAuctionURL: akshare.URL,
+		ContentURL:       content.URL,
+		HTTPTimeout:      time.Second,
+		ServiceToken:     "secret-token",
+	})
+	if err := worker.runAStockAuctionCrawl(context.Background()); err != nil {
+		t.Fatalf("runAStockAuctionCrawl error: %v", err)
+	}
+	if writeCount != 1 {
+		t.Fatalf("expected scheduled latest crawl to write once, got %d", writeCount)
+	}
+}
+
 func TestHandleRunAStockAuctionLatestTriggersAsync(t *testing.T) {
 	releaseAdapter := make(chan struct{})
 	contentWritten := make(chan struct{}, 1)
@@ -433,7 +478,7 @@ func TestHandleRunAStockAuctionLatestTriggersAsync(t *testing.T) {
 	}()
 
 	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/a-stock/auction" || r.URL.Query().Get("date") != "" || r.URL.Query().Get("limit") != "0" {
+		if r.URL.Path != "/api/a-stock/auction" || r.URL.Query().Get("date") != "" || r.URL.Query().Get("limit") != "0" || r.URL.Query().Get("force") != "1" {
 			t.Fatalf("unexpected akshare latest request: %s", r.URL.String())
 		}
 		<-releaseAdapter
