@@ -335,7 +335,7 @@ func TestRunAStockAuctionCrawlFetchesAkshareAndWritesContent(t *testing.T) {
 		Items []model.AStockAuctionAmount `json:"items"`
 	}
 	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/a-stock/auction" || r.URL.Query().Get("date") != "2026-06-16" {
+		if r.URL.Path != "/api/a-stock/auction" || r.URL.Query().Get("date") != "2026-06-16" || r.URL.Query().Get("limit") != "0" {
 			t.Fatalf("unexpected akshare request: %s", r.URL.String())
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -377,7 +377,7 @@ func TestRunAStockAuctionLatestUsesAdapterDate(t *testing.T) {
 		Items []model.AStockAuctionAmount `json:"items"`
 	}
 	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/a-stock/auction" || r.URL.Query().Get("date") != "" {
+		if r.URL.Path != "/api/a-stock/auction" || r.URL.Query().Get("date") != "" || r.URL.Query().Get("limit") != "0" {
 			t.Fatalf("unexpected akshare latest request: %s", r.URL.String())
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -433,7 +433,7 @@ func TestHandleRunAStockAuctionLatestTriggersAsync(t *testing.T) {
 	}()
 
 	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/a-stock/auction" || r.URL.Query().Get("date") != "" {
+		if r.URL.Path != "/api/a-stock/auction" || r.URL.Query().Get("date") != "" || r.URL.Query().Get("limit") != "0" {
 			t.Fatalf("unexpected akshare latest request: %s", r.URL.String())
 		}
 		<-releaseAdapter
@@ -506,6 +506,9 @@ func TestRunAStockAuctionBackfillFetchesDateRange(t *testing.T) {
 	var requested []string
 	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		date := r.URL.Query().Get("date")
+		if r.URL.Query().Get("limit") != "0" {
+			t.Fatalf("expected full-market auction limit override, got %s", r.URL.String())
+		}
 		requested = append(requested, date)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode([]model.AStockAuctionAmount{{
@@ -549,6 +552,9 @@ func TestRunAStockAuctionBackfillFetchesDateRange(t *testing.T) {
 func TestRunAStockAuctionBackfillSkipsUnsupportedAndZeroAmountDates(t *testing.T) {
 	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		date := r.URL.Query().Get("date")
+		if r.URL.Query().Get("limit") != "0" {
+			t.Fatalf("expected full-market auction limit override, got %s", r.URL.String())
+		}
 		w.Header().Set("Content-Type", "application/json")
 		if date == "2026-06-14" {
 			w.WriteHeader(http.StatusUnprocessableEntity)
@@ -595,6 +601,9 @@ func TestRunAStockAuctionBackfillSkipsUnsupportedAndZeroAmountDates(t *testing.T
 
 func TestRunAStockAuctionCrawlRejectsZeroAmountPayload(t *testing.T) {
 	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("limit") != "0" {
+			t.Fatalf("expected full-market auction limit override, got %s", r.URL.String())
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"date": "2026-06-16",
