@@ -1749,7 +1749,7 @@ func buildAStockHotspots(items []model.Item) []aStockHotspot {
 
 func buildAStockRecommendations(hotspots []aStockHotspot, candidates []aStockMarketCandidate) []aStockRecommendation {
 	if len(candidates) == 0 {
-		candidates = fallbackAStockMarketCandidates(hotspots)
+		candidates = newsDerivedAStockMarketCandidates(hotspots)
 		if len(candidates) == 0 {
 			return nil
 		}
@@ -1771,7 +1771,7 @@ func buildAStockRecommendations(hotspots []aStockHotspot, candidates []aStockMar
 			reason := ""
 			if stock.Fallback {
 				reason = fmt.Sprintf(
-					"命中 %s，证据新闻 %d 条，热度分 %d；集合竞价候选为空，使用内置热点股票池，个股证据 %d 条，匹配分 %d，综合分 %d",
+					"命中 %s，证据新闻 %d 条，热度分 %d；集合竞价候选为空，使用实时新闻明确提及股票，个股证据 %d 条，匹配分 %d，综合分 %d",
 					strings.Join(hotspot.Keywords, "、"),
 					hotspot.Evidence,
 					hotspot.Score,
@@ -1816,80 +1816,263 @@ func buildAStockRecommendations(hotspots []aStockHotspot, candidates []aStockMar
 	return recommendations
 }
 
-func fallbackAStockMarketCandidates(hotspots []aStockHotspot) []aStockMarketCandidate {
-	type stock struct {
-		Code string
-		Name string
+func newsDerivedAStockMarketCandidates(hotspots []aStockHotspot) []aStockMarketCandidate {
+	type aggregate struct {
+		Candidate aStockMarketCandidate
+		Keywords  map[string]struct{}
+		Evidence  int
 	}
-	pool := map[string][]stock{
-		"人工智能": {
-			{Code: "002230", Name: "科大讯飞"},
-			{Code: "603019", Name: "中科曙光"},
-			{Code: "601138", Name: "工业富联"},
-		},
-		"半导体": {
-			{Code: "688981", Name: "中芯国际"},
-			{Code: "002371", Name: "北方华创"},
-			{Code: "603986", Name: "兆易创新"},
-		},
-		"新能源": {
-			{Code: "300750", Name: "宁德时代"},
-			{Code: "601012", Name: "隆基绿能"},
-			{Code: "300274", Name: "阳光电源"},
-		},
-		"低空经济": {
-			{Code: "002085", Name: "万丰奥威"},
-			{Code: "600118", Name: "中国卫星"},
-			{Code: "002230", Name: "科大讯飞"},
-		},
-		"金融券商": {
-			{Code: "300059", Name: "东方财富"},
-			{Code: "600030", Name: "中信证券"},
-			{Code: "600036", Name: "招商银行"},
-		},
-		"黄金有色": {
-			{Code: "600547", Name: "山东黄金"},
-			{Code: "601899", Name: "紫金矿业"},
-			{Code: "600111", Name: "北方稀土"},
-		},
-		"医药生物": {
-			{Code: "600276", Name: "恒瑞医药"},
-			{Code: "300760", Name: "迈瑞医疗"},
-			{Code: "603259", Name: "药明康德"},
-		},
-		"消费电子": {
-			{Code: "002241", Name: "歌尔股份"},
-			{Code: "002475", Name: "立讯精密"},
-			{Code: "000725", Name: "京东方A"},
-		},
-		"房地产": {
-			{Code: "000002", Name: "万科A"},
-			{Code: "600048", Name: "保利发展"},
-			{Code: "001979", Name: "招商蛇口"},
-		},
-		"军工航天": {
-			{Code: "600760", Name: "中航沈飞"},
-			{Code: "600118", Name: "中国卫星"},
-			{Code: "000768", Name: "中航西飞"},
-		},
-	}
-
-	candidates := make([]aStockMarketCandidate, 0)
-	rank := 1
+	aggregates := make(map[string]*aggregate)
+	order := make([]string, 0)
 	for _, hotspot := range hotspots {
-		stocks := pool[hotspot.Name]
-		for _, item := range stocks {
-			candidates = append(candidates, aStockMarketCandidate{
-				Code:     item.Code,
-				Name:     item.Name,
-				Rank:     rank,
-				Keywords: append([]string(nil), hotspot.Keywords...),
-				Fallback: true,
-			})
-			rank++
+		for _, item := range hotspot.MatchedItems {
+			for _, mention := range extractAStockMentionsFromItem(item) {
+				code := normalizeAStockCode(mention.Code)
+				if !isAStockCode(code) {
+					continue
+				}
+				name := strings.TrimSpace(mention.Name)
+				if name == "" {
+					name = inferAStockNameFromNews(item)
+				}
+				if name == "" {
+					name = code
+				}
+				entry, ok := aggregates[code]
+				if !ok {
+					entry = &aggregate{
+						Candidate: aStockMarketCandidate{
+							Code:     code,
+							Name:     name,
+							Rank:     len(order) + 1,
+							Fallback: true,
+						},
+						Keywords: make(map[string]struct{}),
+					}
+					aggregates[code] = entry
+					order = append(order, code)
+				}
+				if entry.Candidate.Name == entry.Candidate.Code && name != "" && name != code {
+					entry.Candidate.Name = name
+				}
+				entry.Evidence++
+				for _, keyword := range hotspot.Keywords {
+					keyword = strings.TrimSpace(keyword)
+					if keyword != "" {
+						entry.Keywords[keyword] = struct{}{}
+					}
+				}
+			}
 		}
 	}
+	candidates := make([]aStockMarketCandidate, 0, len(order))
+	for _, code := range order {
+		entry := aggregates[code]
+		keywords := make([]string, 0, len(entry.Keywords))
+		for keyword := range entry.Keywords {
+			keywords = append(keywords, keyword)
+		}
+		sort.Strings(keywords)
+		entry.Candidate.Keywords = keywords
+		entry.Candidate.Evidence = entry.Evidence
+		candidates = append(candidates, entry.Candidate)
+	}
 	return candidates
+}
+
+type aStockMention struct {
+	Code string
+	Name string
+}
+
+func extractAStockMentionsFromItem(item model.Item) []aStockMention {
+	mentions := make([]aStockMention, 0)
+	seen := make(map[string]int)
+	appendMention := func(code string, name string) {
+		code = normalizeAStockCode(code)
+		if !isAStockCode(code) {
+			return
+		}
+		name = cleanAStockMentionName(name)
+		if index, ok := seen[code]; ok {
+			if mentions[index].Name == "" && name != "" {
+				mentions[index].Name = name
+			}
+			return
+		}
+		seen[code] = len(mentions)
+		mentions = append(mentions, aStockMention{Code: code, Name: name})
+	}
+	for _, code := range extractAStockCodes(item.TagFlags) {
+		appendMention(code, "")
+	}
+	parseAStockMentionsFromJSON(item.RawPayload, appendMention)
+	return mentions
+}
+
+func parseAStockMentionsFromJSON(raw string, appendMention func(code string, name string)) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || (!strings.HasPrefix(raw, "{") && !strings.HasPrefix(raw, "[")) {
+		return
+	}
+	var payload any
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return
+	}
+	walkAStockMentionPayload(payload, "", appendMention)
+}
+
+func walkAStockMentionPayload(value any, parentKey string, appendMention func(code string, name string)) {
+	switch typed := value.(type) {
+	case []any:
+		for _, item := range typed {
+			if text, ok := item.(string); ok && isAStockListKey(parentKey) {
+				appendMention(text, "")
+				continue
+			}
+			walkAStockMentionPayload(item, parentKey, appendMention)
+		}
+	case map[string]any:
+		code := firstAStockPayloadString(typed, "StockID", "stock_id", "stockCode", "stock_code", "code", "symbol", "secuCode", "SECURITY_CODE")
+		name := firstAStockPayloadString(typed, "name", "stock_name", "stockName", "SECURITY_NAME_ABBR", "SECURITY_NAME", "股票名称")
+		if code != "" {
+			appendMention(code, name)
+		}
+		for key, child := range typed {
+			walkAStockMentionPayload(child, key, appendMention)
+		}
+	}
+}
+
+func firstAStockPayloadString(payload map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := payload[key]; ok {
+			switch typed := value.(type) {
+			case string:
+				if strings.TrimSpace(typed) != "" {
+					return typed
+				}
+			case float64:
+				if typed > 0 {
+					return fmt.Sprintf("%.0f", typed)
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func isAStockListKey(key string) bool {
+	key = strings.ToLower(strings.TrimSpace(key))
+	return key == "stocklist" || key == "stock_list" || key == "stocks" || key == "stock"
+}
+
+func extractAStockCodes(raw string) []string {
+	codes := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, token := range strings.FieldsFunc(raw, func(r rune) bool {
+		return !(r >= '0' && r <= '9') && !(r >= 'A' && r <= 'Z') && !(r >= 'a' && r <= 'z')
+	}) {
+		code := normalizeAStockCode(token)
+		if !isAStockCode(code) {
+			continue
+		}
+		if _, ok := seen[code]; ok {
+			continue
+		}
+		seen[code] = struct{}{}
+		codes = append(codes, code)
+	}
+	return codes
+}
+
+func isAStockCode(code string) bool {
+	if len(code) != 6 {
+		return false
+	}
+	for _, r := range code {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return strings.HasPrefix(code, "0") || strings.HasPrefix(code, "3") || strings.HasPrefix(code, "6") || strings.HasPrefix(code, "8")
+}
+
+func inferAStockNameFromNews(item model.Item) string {
+	text := cleanAStockMentionName(item.Title)
+	if text == "" {
+		text = cleanAStockMentionName(item.Summary)
+	}
+	if text == "" {
+		text = cleanAStockMentionName(item.Content)
+	}
+	return inferAStockNameFromText(text)
+}
+
+func inferAStockNameFromText(text string) string {
+	text = strings.TrimSpace(strings.Trim(text, "【】[]()（）"))
+	if text == "" {
+		return ""
+	}
+	separators := []string{"：", ":", "丨", "|", " "}
+	for _, sep := range separators {
+		if idx := strings.Index(text, sep); idx > 0 {
+			prefix := cleanAStockMentionName(text[:idx])
+			if validAStockMentionName(prefix) {
+				return prefix
+			}
+			break
+		}
+	}
+	triggers := []string{"快速", "盘中", "异动", "涨停", "跌停", "涨超", "跌超", "大涨", "大跌", "拉升", "回调", "走强", "走弱", "封板", "冲高", "跳水"}
+	best := ""
+	bestIndex := len([]rune(text)) + 1
+	for _, trigger := range triggers {
+		if idx := strings.Index(text, trigger); idx > 0 && idx < bestIndex {
+			best = cleanAStockMentionName(text[:idx])
+			bestIndex = idx
+		}
+	}
+	if idx := regexpAStockNewsDateIndex(text); idx > 0 && idx < bestIndex {
+		best = cleanAStockMentionName(text[:idx])
+	}
+	if validAStockMentionName(best) {
+		return best
+	}
+	return ""
+}
+
+func regexpAStockNewsDateIndex(text string) int {
+	for i := 0; i+1 < len(text); i++ {
+		if text[i] >= '0' && text[i] <= '9' {
+			if idx := strings.Index(text[i:], "月"); idx > 0 {
+				if dayIdx := strings.Index(text[i+idx:], "日"); dayIdx > 0 {
+					return i
+				}
+			}
+		}
+	}
+	return -1
+}
+
+func cleanAStockMentionName(raw string) string {
+	raw = strings.TrimSpace(raw)
+	raw = strings.Trim(raw, "【】[]()（）「」《》")
+	return raw
+}
+
+func validAStockMentionName(name string) bool {
+	runes := []rune(strings.TrimSpace(name))
+	if len(runes) < 2 || len(runes) > 8 {
+		return false
+	}
+	blocked := []string{"A股", "港股", "美股", "股票", "股指", "板块", "概念", "期货", "国债期货", "中证转债指数"}
+	for _, word := range blocked {
+		if name == word || strings.Contains(name, word) {
+			return false
+		}
+	}
+	return true
 }
 
 func scoreAStockMarketCandidates(hotspot aStockHotspot, candidates []aStockMarketCandidate) []aStockMarketCandidate {

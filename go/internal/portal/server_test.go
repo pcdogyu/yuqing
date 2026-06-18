@@ -1708,22 +1708,44 @@ func TestAStockRecommendationsUseTopThreeHotspotIndustries(t *testing.T) {
 
 func TestAStockRecommendationsFallbackWhenAuctionCandidatesEmpty(t *testing.T) {
 	recommendations := buildAStockRecommendations([]aStockHotspot{
-		{Name: "人工智能", Keywords: []string{"AI", "人工智能"}, Score: 105, Evidence: 9},
-		{Name: "金融券商", Keywords: []string{"券商", "银行"}, Score: 82, Evidence: 7},
+		{
+			Name:     "黄金有色",
+			Keywords: []string{"有色", "黄金"},
+			Score:    105,
+			Evidence: 2,
+			MatchedItems: []model.Item{
+				{SourceType: "eastmoney_kuaixun", Title: "中铝国际6月18日快速拉升", Summary: "有色板块活跃", TagFlags: "1.601068"},
+				{SourceType: "cls_telegraph", Title: "钢铁板块异动拉升 抚顺特钢涨停", Summary: "财联社6月18日电，钢铁板块盘中异动拉升。", RawPayload: `{"stock_list":[{"StockID":"sh600399","name":"抚顺特钢"}]}`},
+			},
+		},
+		{
+			Name:         "人工智能",
+			Keywords:     []string{"AI", "人工智能"},
+			Score:        82,
+			Evidence:     1,
+			MatchedItems: []model.Item{{SourceType: "sina_finance_7x24", Title: "人工智能产业链继续活跃"}},
+		},
 	}, nil)
 
-	if len(recommendations) == 0 {
-		t.Fatal("expected fallback recommendations when auction candidates are empty")
+	if len(recommendations) != 2 {
+		t.Fatalf("expected two news-derived recommendations when auction candidates are empty, got %+v", recommendations)
 	}
-	if recommendations[0].Code != "002230" || recommendations[0].Name != "科大讯飞" {
-		t.Fatalf("expected first fallback recommendation from AI pool, got %+v", recommendations[0])
-	}
-	if !strings.Contains(recommendations[0].Reason, "集合竞价候选为空") || !strings.Contains(recommendations[0].Reason, "内置热点股票池") {
-		t.Fatalf("expected fallback reason to explain auction candidate fallback, got %q", recommendations[0].Reason)
-	}
+	got := map[string]string{}
 	for _, rec := range recommendations {
-		if rec.Hotspot == "人工智能" && rec.Code == "300059" {
-			t.Fatalf("expected finance fallback stock not to be scored under AI hotspot, got %+v", recommendations)
+		got[rec.Code] = rec.Name
+	}
+	if got["600399"] != "抚顺特钢" {
+		t.Fatalf("expected recommendation from explicit CLS stock list, got %+v", recommendations)
+	}
+	if got["601068"] != "中铝国际" {
+		t.Fatalf("expected recommendation to infer name from realtime news title, got %+v", recommendations)
+	}
+	if !strings.Contains(recommendations[0].Reason, "集合竞价候选为空") || !strings.Contains(recommendations[0].Reason, "实时新闻明确提及股票") {
+		t.Fatalf("expected fallback reason to explain news-derived fallback, got %q", recommendations[0].Reason)
+	}
+	for _, stalePoolCode := range []string{"002230", "603019", "601138", "300059", "600030", "600036"} {
+		if recommendations[0].Code == stalePoolCode || recommendations[1].Code == stalePoolCode {
+			t.Fatalf("expected no fixed stock-pool recommendations, got %+v", recommendations)
 		}
 	}
 }
