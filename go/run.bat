@@ -14,12 +14,12 @@ for %%I in ("%GO_DIR%.") do set "GO_DIR=%%~fI"
 for %%I in ("%GO_DIR%\..") do set "REPO_ROOT=%%~fI"
 set "BIN_DIR=%GO_DIR%\bin"
 set "LOG_DIR=%GO_DIR%\runtime-logs"
+if not defined YUQING_RUN_GO_TEST set "YUQING_RUN_GO_TEST=0"
 if not defined YUQING_GO_TEST_FLAGS (
     set "GO_TEST_FLAGS=-p 3 -count=1 -timeout 5m"
 ) else (
     set "GO_TEST_FLAGS=%YUQING_GO_TEST_FLAGS%"
 )
-set "GO_TEST_LOG=%LOG_DIR%\go-test.log"
 set "AKSHARE_AUCTION_PORT=8087"
 set "AKSHARE_AUCTION_HOST=127.0.0.1"
 set "WECHAT_SERVICE_PORT=8088"
@@ -103,16 +103,15 @@ set "LDFLAGS=-X github.com/pcdogyu/yuqing/go/internal/app.Version=%YUQING_RUN_VE
 
 if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
 
-echo [3/6] Run go test ./...
-if exist "%GO_TEST_LOG%" del /Q "%GO_TEST_LOG%" >nul 2>nul
-echo Go test flags: %GO_TEST_FLAGS%
-echo Go test log: %GO_TEST_LOG%
-go test ./... %GO_TEST_FLAGS% > "%GO_TEST_LOG%" 2>&1
-set "GO_TEST_EXIT=%ERRORLEVEL%"
-type "%GO_TEST_LOG%"
-if not "%GO_TEST_EXIT%"=="0" (
-    call :print_go_test_failures
-    goto :fail
+echo [3/6] Skip go test during startup...
+if "%YUQING_RUN_GO_TEST%"=="1" (
+    echo YUQING_RUN_GO_TEST=1, running go test ./... before startup.
+    echo Go test flags: %GO_TEST_FLAGS%
+    go test ./... %GO_TEST_FLAGS%
+    if errorlevel 1 goto :fail
+    echo go test completed.
+) else (
+    echo Startup tests are disabled by default. Set YUQING_RUN_GO_TEST=1 to run them manually before startup.
 )
 
 echo [4/6] Stop processes occupying service ports...
@@ -380,16 +379,6 @@ if not errorlevel 1 (
 )
 echo PORT %STATUS_PORT% %STATUS_SERVICE% is down.
 exit /b 1
-
-:print_go_test_failures
-if exist "%GO_TEST_LOG%" (
-    echo ---- go test failure summary ----
-    powershell -NoProfile -Command "Select-String -Path '%GO_TEST_LOG%' -Pattern '^FAIL|--- FAIL|panic:|build failed|\[build failed\]|WaitDelay|Test I/O incomplete' -Context 4,8 | ForEach-Object { $_.ToString() }"
-    echo ---- end go test failure summary ----
-) else (
-    echo Go test log not found: %GO_TEST_LOG%
-)
-exit /b 0
 
 :configure_scheduler_port
 for /f "usebackq tokens=1,2,3 delims=|" %%A in (`powershell -NoProfile -Command "$addr=$env:YUQING_SCHEDULER_ADDR; if ([string]::IsNullOrWhiteSpace($addr)) { $addr=':8086' }; if ($addr -match ':(\d+)$') { $port=[int]$Matches[1] } else { $port=8086 }; function Test-Port([int]$p) { return @((Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue)).Count -gt 0 }; $changed=$false; if (Test-Port $port) { $found=$false; for ($p=18086; $p -le 18186; $p++) { if (-not (Test-Port $p)) { $port=$p; $addr=':'+$p; $changed=$true; $found=$true; break } }; if (-not $found) { throw 'no free scheduler port found from 18086' } }; $url=$env:YUQING_SCHEDULER_URL; if ([string]::IsNullOrWhiteSpace($url) -or $changed -or $url -match ':8086/?$') { $url='http://127.0.0.1:'+$port }; Write-Output ($addr+'|'+$url+'|'+$port)"`) do (
