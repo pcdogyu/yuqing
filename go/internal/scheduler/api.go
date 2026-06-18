@@ -42,7 +42,12 @@ func (w *Worker) handleRunInvestorRelationsBackfill(wr http.ResponseWriter, r *h
 		End:     strings.TrimSpace(r.URL.Query().Get("end")),
 	}
 	startedAt := time.Now().UTC()
-	err := w.runInvestorRelationsBackfill(r.Context(), opts)
+	go w.runInvestorRelationsBackfillTask(context.Background(), opts, startedAt)
+	apiutil.WriteJSON(wr, http.StatusOK, "ok", map[string]string{"status": "triggered"})
+}
+
+func (w *Worker) runInvestorRelationsBackfillTask(ctx context.Context, opts stockResearchCrawlOptions, startedAt time.Time) {
+	err := w.runInvestorRelationsBackfill(ctx, opts)
 	finishedAt := time.Now().UTC()
 	status := "success"
 	message := "investor relations backfill completed"
@@ -50,12 +55,14 @@ func (w *Worker) handleRunInvestorRelationsBackfill(wr http.ResponseWriter, r *h
 		status = "failed"
 		message = err.Error()
 	}
-	_ = w.recordTaskRun(r.Context(), "investor-relations-backfill", status, message, startedAt, &finishedAt)
+	if recordErr := w.recordTaskRun(ctx, "investor-relations-backfill", status, message, startedAt, &finishedAt); recordErr != nil {
+		log.Warn().Err(recordErr).Str("task", "investor-relations-backfill").Msg("record scheduler task run failed")
+	}
 	if err != nil {
-		apiutil.WriteJSON(wr, http.StatusInternalServerError, err.Error(), nil)
+		log.Error().Err(err).Str("task", "investor-relations-backfill").Msg("scheduler task failed")
 		return
 	}
-	apiutil.WriteJSON(wr, http.StatusOK, "ok", map[string]string{"status": "triggered"})
+	log.Info().Str("task", "investor-relations-backfill").Msg("scheduler task completed")
 }
 
 func (w *Worker) handleListJobs(wr http.ResponseWriter, r *http.Request) {

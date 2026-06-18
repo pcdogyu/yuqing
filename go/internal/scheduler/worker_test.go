@@ -978,6 +978,63 @@ func TestFetchCNInfoInvestorRelationsPaginatesAndBuildsPDFItems(t *testing.T) {
 	}
 }
 
+func TestInvestorRelationsBackfillHandlerReturnsBeforeCrawlCompletes(t *testing.T) {
+	cninfoRequested := make(chan struct{}, 1)
+	unblockCNInfo := make(chan struct{})
+	cninfo := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cninfoRequested <- struct{}{}
+		<-unblockCNInfo
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"pageNo": 1, "pageSize": 50, "totalRecord": 0, "totalPage": 0, "results": []map[string]any{},
+		})
+	}))
+	defer cninfo.Close()
+
+	contentCalled := make(chan struct{}, 1)
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		contentCalled <- struct{}{}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{"status": "ok"}})
+	}))
+	defer content.Close()
+
+	worker := NewWorker(config.Config{
+		ContentURL:            content.URL,
+		InvestorRelationsURL:  cninfo.URL + "/newircs/index/search",
+		ServiceToken:          "secret-token",
+		HTTPTimeout:           5 * time.Second,
+		ExternalRetryCount:    0,
+		ExternalRetryWait:     time.Millisecond,
+		SchedulerCrawlTimeout: 5 * time.Second,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/investor-relations/backfill?start=2025-06-18&end=2026-06-18", nil)
+	req.Header.Set("X-Service-Token", "secret-token")
+	rr := httptest.NewRecorder()
+
+	started := time.Now()
+	worker.Router().ServeHTTP(rr, req)
+	elapsed := time.Since(started)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected async backfill trigger 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if elapsed > 200*time.Millisecond {
+		t.Fatalf("expected handler to return before crawl completes, took %s", elapsed)
+	}
+
+	select {
+	case <-cninfoRequested:
+	case <-time.After(time.Second):
+		t.Fatal("expected background investor relations crawl to start")
+	}
+	close(unblockCNInfo)
+	select {
+	case <-contentCalled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected background investor relations crawl to finish")
+	}
+}
+
 func TestRunCrawlLinkHeartbeatRecordsFailures(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "scheduler-heartbeat.db")
