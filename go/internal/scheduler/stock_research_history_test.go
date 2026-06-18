@@ -85,3 +85,63 @@ func TestParseEastMoneyReportAPIForStockHistory(t *testing.T) {
 		t.Fatalf("unexpected eastmoney api items: total=%d items=%+v", total, items)
 	}
 }
+
+func TestFetchEastMoneyReportsPaginatesWithoutStockCode(t *testing.T) {
+	oldAPIURL := eastMoneyReportAPIURL
+	defer func() { eastMoneyReportAPIURL = oldAPIURL }()
+
+	var pages []string
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/report/list" {
+			t.Fatalf("unexpected eastmoney api path: %s", r.URL.String())
+		}
+		pages = append(pages, r.URL.Query().Get("pageNo"))
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Query().Get("pageNo") {
+		case "1":
+			_, _ = w.Write([]byte(`{"hits":51,"size":50,"data":[{"title":"首发覆盖：底部切磨底部本增收，国产替代驱动增长","stockName":"妙可蓝多","stockCode":"600882","orgName":"万联证券","publishDate":"2026-06-03 00:00:00.000","infoCode":"AP202606030001","emRatingName":"增持","researcher":"张三"},{"title":"电科蓝天：星链布局打开成长空间","stockName":"电科蓝天","stockCode":"688818","orgName":"中航证券","publishDate":"2026-06-02 00:00:00.000","infoCode":"AP202606020001","emRatingName":"买入","researcher":"李四"}]}`))
+		case "2":
+			_, _ = w.Write([]byte(`{"hits":51,"size":50,"data":[{"title":"业务协同改善，打开盈利空间","stockName":"悦龙科技","stockCode":"920188","orgName":"开源证券","publishDate":"2026-06-01 00:00:00.000","infoCode":"AP202606010001","emRatingName":"增持","researcher":"王五"}]}`))
+		default:
+			t.Fatalf("unexpected eastmoney pageNo: %s", r.URL.Query().Get("pageNo"))
+		}
+	}))
+	defer api.Close()
+	eastMoneyReportAPIURL = api.URL + "/report/list"
+
+	worker := NewWorker(config.Config{
+		EastMoneyReportURL: "https://data.eastmoney.com/report/stock.jshtml",
+		HTTPTimeout:        time.Second,
+	})
+	items, err := worker.fetchEastMoneyReports(context.Background(), stockResearchCrawlOptions{Start: "2026-06-01", End: "2026-06-18"})
+	if err != nil {
+		t.Fatalf("fetch eastmoney reports: %v", err)
+	}
+	if strings.Join(pages, ",") != "1,2" {
+		t.Fatalf("expected eastmoney pagination pages 1,2, got %v", pages)
+	}
+	if len(items) != 3 {
+		t.Fatalf("expected three eastmoney items, got %+v", items)
+	}
+	if items[0].ResearchDate != "2026-06-03" || items[2].ResearchDate != "2026-06-01" || items[2].SourceKey != "AP202606010001" {
+		t.Fatalf("unexpected eastmoney paginated items: %+v", items)
+	}
+}
+
+func TestEastMoneyDetailKeepsListPublishDate(t *testing.T) {
+	body := `{"hits":1,"size":1,"data":[{"title":"半导体国产替代加速","stockName":"华虹微","stockCode":"688396","orgName":"国信证券","publishDate":"2026-06-03 00:00:00.000","infoCode":"AP202606030099","emRatingName":"增持","researcher":"张三"}]}`
+	items, _, err := parseEastMoneyReportAPI(body, "https://data.eastmoney.com/report/stock.jshtml", time.Date(2026, 6, 18, 1, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("parse eastmoney api: %v", err)
+	}
+	detail := `<script>var zwinfo= {"attach_url":"https://pdf.dfcfw.com/pdf/H3_AP202606030099_1.pdf","info_code":"AP202606030099","notice_content":"正文内容","notice_date":"2026-06-18 14:11:43","notice_title":"半导体国产替代加速","rating":"买入","researcher":"李四","short_name":"华虹微","source_sample_name":"东方财富"};</script>`
+	if err := enrichEastMoneyReportDetail(detail, &items[0]); err != nil {
+		t.Fatalf("enrich eastmoney detail: %v", err)
+	}
+	if items[0].ResearchDate != "2026-06-03" || items[0].PublishTime != "2026-06-03" {
+		t.Fatalf("expected list publish date to be preserved, got research=%q publish=%q", items[0].ResearchDate, items[0].PublishTime)
+	}
+	if items[0].PDFURL == "" || !strings.Contains(items[0].Summary, "正文内容") {
+		t.Fatalf("expected detail enrichment to keep pdf and summary, got %+v", items[0])
+	}
+}
