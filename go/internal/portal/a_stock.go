@@ -827,12 +827,30 @@ func (s *Server) loadAStockMarketCandidates(strategyDate string) []aStockMarketC
 	if strings.TrimSpace(s.cfg.ContentURL) == "" {
 		return nil
 	}
-	var result model.AStockAuctionListResult
-	query := "/api/v1/a-stock/auction?date=" + url.QueryEscape(normalizeAStockStrategyDate(strategyDate)) +
-		"&page=1&page_size=" + fmt.Sprint(aStockMarketCandidateLimit)
-	if err := s.getJSON(s.cfg.ContentURL+query, &result); err != nil || len(result.Items) == 0 {
+	date := normalizeAStockStrategyDate(strategyDate)
+	result, ok := s.loadAStockMarketCandidateResult(date)
+	if !ok && date != "" {
+		result, ok = s.loadAStockMarketCandidateResult("")
+	}
+	if !ok {
 		return nil
 	}
+	return aStockMarketCandidatesFromAuctionResult(result)
+}
+
+func (s *Server) loadAStockMarketCandidateResult(strategyDate string) (model.AStockAuctionListResult, bool) {
+	var result model.AStockAuctionListResult
+	query := "/api/v1/a-stock/auction?page=1&page_size=" + fmt.Sprint(aStockMarketCandidateLimit)
+	if strings.TrimSpace(strategyDate) != "" {
+		query += "&date=" + url.QueryEscape(normalizeAStockStrategyDate(strategyDate))
+	}
+	if err := s.getJSON(s.cfg.ContentURL+query, &result); err != nil || len(result.Items) == 0 {
+		return model.AStockAuctionListResult{}, false
+	}
+	return result, true
+}
+
+func aStockMarketCandidatesFromAuctionResult(result model.AStockAuctionListResult) []aStockMarketCandidate {
 	candidates := make([]aStockMarketCandidate, 0, len(result.Items))
 	for i, item := range result.Items {
 		code := normalizeAStockCode(item.Code)

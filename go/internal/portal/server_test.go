@@ -1805,6 +1805,62 @@ func TestAStockRecommendationsCanUseFullMarketCandidateNameMatch(t *testing.T) {
 	}
 }
 
+func TestAStockContextFallsBackToLatestAuctionDictionary(t *testing.T) {
+	market := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{"items": []map[string]any{
+				{"code": "601688", "date": "2026-06-16", "open": 15.20, "close": 15.80, "pct": 2.60},
+				{"code": "601688", "date": "2026-06-17", "open": 15.90, "close": 16.30, "pct": 3.16},
+			}},
+		})
+	}))
+	defer market.Close()
+	t.Setenv("YUQING_ASTOCK_MARKET_URL", market.URL)
+
+	auctionQueries := make([]string, 0)
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/a-stock/holdings/summary":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockInstitutionHoldingSummary{}})
+		case "/api/v1/a-stock/auction":
+			auctionQueries = append(auctionQueries, r.URL.RawQuery)
+			if r.URL.Query().Get("date") == "2026-06-17" {
+				_ = json.NewEncoder(w).Encode(map[string]any{"data": model.AStockAuctionListResult{
+					Date: "2026-06-17", Page: 1, PageSize: 5000, Total: 0, Items: []model.AStockAuctionAmount{},
+				}})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.AStockAuctionListResult{
+				Date: "2026-06-18", Page: 1, PageSize: 5000, Total: 1,
+				Items: []model.AStockAuctionAmount{{TradeDate: "2026-06-18", Code: "601688", Name: "华泰证券", AuctionVolume: 100000, AuctionAmount: 1500000, Status: "ok"}},
+			}})
+		case "/api/v1/articles":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.ItemListResult{
+				Items: []model.Item{{ID: 110, SourceType: "flash", Title: "华泰证券：资金面仍具活跃基础", Summary: "证券资本市场活跃", PublishTime: "2026-06-17 08:37:00"}},
+				Page:  1, PageSize: 200, Total: 1,
+			}})
+		default:
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	ctx := srv.loadAStockContext("2026-06-17", "morning", 1, true)
+
+	if len(ctx.Recommendations) != 1 {
+		t.Fatalf("expected latest auction dictionary to produce recommendation, got %+v empty=%q", ctx.Recommendations, ctx.EmptyReason)
+	}
+	if ctx.Recommendations[0].Code != "601688" || ctx.Recommendations[0].Name != "华泰证券" {
+		t.Fatalf("unexpected latest dictionary recommendation: %+v", ctx.Recommendations[0])
+	}
+	if len(auctionQueries) < 2 || !strings.Contains(auctionQueries[0], "date=2026-06-17") || strings.Contains(auctionQueries[1], "date=") {
+		t.Fatalf("expected date-specific auction lookup then latest fallback, got %v", auctionQueries)
+	}
+}
+
 func TestAStockRecommendationsApplyHoldingSummaryBonus(t *testing.T) {
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/a-stock/holdings/summary" || r.URL.Query().Get("code") != "002230" {
