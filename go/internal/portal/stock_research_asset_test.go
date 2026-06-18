@@ -11,6 +11,28 @@ import (
 	"github.com/pcdogyu/yuqing/go/internal/model"
 )
 
+func TestFormatStockResearchTargetPrice(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{name: "empty", value: "", want: "--"},
+		{name: "integer", value: "327", want: "327.00"},
+		{name: "long decimal", value: "327.9000000000", want: "327.90"},
+		{name: "comma number", value: "1,234.567", want: "1234.57"},
+		{name: "plain text", value: "上调至合理区间", want: "上调至合理区间"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := formatStockResearchTargetPrice(tc.value); got != tc.want {
+				t.Fatalf("expected %q, got %q", tc.want, got)
+			}
+		})
+	}
+}
+
 func TestStockResearchPageUsesPortalPDFLinks(t *testing.T) {
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/stock-research" {

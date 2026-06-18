@@ -506,7 +506,7 @@ func TestStockResearchPageLoadsFiltersAndRows(t *testing.T) {
 					Institution:  "中金公司",
 					Analyst:      "张三",
 					Rating:       "买入",
-					TargetPrice:  "50.00",
+					TargetPrice:  "50.123456",
 					ResearchDate: "2026-06-16",
 					SourceType:   "sina_finance_report",
 					SourceURL:    "https://sina.example.com/1",
@@ -527,9 +527,14 @@ func TestStockResearchPageLoadsFiltersAndRows(t *testing.T) {
 		t.Fatalf("expected stock research page 200, got %d body=%s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"研报调研", "科大讯飞深度研究", "中金公司", "张三", "买入", "50.00", "新浪财经", "搜狐财经", "回补近一年", "解析当前筛选研报PDF", "下载PDF", "查看文本", "已解析", "重新解析", `value="科大"`, "body[data-page='stock-research'] header,body[data-page='stock-research'] main,body[data-page='stock-research'] .site-footer{max-width:none;width:100%;box-sizing:border-box}", "body[data-page='stock-research'] main{font-size:14px;line-height:1.45}"} {
+	for _, want := range []string{"研报调研", "科大讯飞深度研究", "中金公司", "张三", "买入", "50.12", "新浪财经", "搜狐财经", "回补近一年", "解析当前筛选研报PDF", "下载PDF", "查看文本", "已解析", "重新解析", `value="科大"`, "body[data-page='stock-research'] header,body[data-page='stock-research'] main,body[data-page='stock-research'] .site-footer{max-width:none;width:100%;box-sizing:border-box}", "body[data-page='stock-research'] main{font-size:14px;line-height:1.45}", ".research-col-date{width:7.5%}", ".research-col-stock{width:8.5%}", ".research-col-source{width:6%}", ".research-col-link{width:5%}", "<th>日期</th><th>股票</th><th>标题</th>"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected stock research page to contain %q, got %s", want, body)
+		}
+	}
+	for _, notWant := range []string{"50.123456", "<th>日期</th><th>股票</th><th>类型</th>"} {
+		if strings.Contains(body, notWant) {
+			t.Fatalf("expected stock research page not to contain %q, got %s", notWant, body)
 		}
 	}
 }

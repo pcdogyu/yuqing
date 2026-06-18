@@ -32,7 +32,10 @@ body[data-page='stock-research'] input,body[data-page='stock-research'] select,b
 .research-muted{color:#6a6257}.research-message{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}
 .research-toolbar{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;align-items:end}
 .research-toolbar button{margin:0}.research-actions{display:flex;gap:10px;flex-wrap:wrap}.research-scroll{overflow:auto}
-.research-table{min-width:1180px}.research-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.research-table{min-width:1320px;width:100%;table-layout:fixed}.research-table th,.research-table td{vertical-align:top}
+.research-col-date{width:7.5%}.research-col-stock{width:8.5%}.research-col-title{width:29%}.research-col-institution{width:10%}.research-col-analyst{width:8%}.research-col-rating{width:3.5%}.research-col-target{width:5.5%}.research-col-source{width:6%}.research-col-link{width:5%}.research-col-pdf{width:7%}.research-col-status{width:10%}
+.research-table th:nth-child(1),.research-table td:nth-child(1),.research-table th:nth-child(2),.research-table td:nth-child(2),.research-table th:nth-child(8),.research-table td:nth-child(8),.research-table th:nth-child(9),.research-table td:nth-child(9){white-space:nowrap}
+.research-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 .research-tab{display:inline-flex;align-items:center;padding:8px 12px;border:1px solid #d6ccbb;border-radius:8px;color:#214e34;text-decoration:none;background:#fff}
 .research-source{font-size:12px;padding:3px 8px;border-radius:999px;background:#eff6f0;color:#214e34}
 .research-action-form{display:inline}.research-table form{display:inline}.research-status{font-size:12px;padding:3px 8px;border-radius:999px;background:#f4efe6;color:#5b4a32;white-space:nowrap}
@@ -274,17 +277,15 @@ func renderStockResearchFilters(b *strings.Builder, ctx model.StockResearchListR
 }
 
 func renderStockResearchTable(b *strings.Builder, ctx model.StockResearchListResult) {
-	b.WriteString(`<section><h2>研报调研列表</h2><div class="research-scroll"><table class="research-table"><tr><th>日期</th><th>股票</th><th>类型</th><th>标题</th><th>机构</th><th>分析师</th><th>评级</th><th>目标价</th><th>来源</th><th>链接</th><th>PDF</th><th>解析状态</th></tr>`)
+	b.WriteString(`<section><h2>研报调研列表</h2><div class="research-scroll"><table class="research-table"><colgroup><col class="research-col-date"><col class="research-col-stock"><col class="research-col-title"><col class="research-col-institution"><col class="research-col-analyst"><col class="research-col-rating"><col class="research-col-target"><col class="research-col-source"><col class="research-col-link"><col class="research-col-pdf"><col class="research-col-status"></colgroup><tr><th>日期</th><th>股票</th><th>标题</th><th>机构</th><th>分析师</th><th>评级</th><th>目标价</th><th>来源</th><th>链接</th><th>PDF</th><th>解析状态</th></tr>`)
 	if len(ctx.Items) == 0 {
-		b.WriteString(`<tr><td colspan="12">暂无研报调研数据，请点击“回补近一年”或等待定时抓取任务。</td></tr>`)
+		b.WriteString(`<tr><td colspan="11">暂无研报调研数据，请点击“回补近一年”或等待定时抓取任务。</td></tr>`)
 	} else {
 		for _, item := range ctx.Items {
 			b.WriteString(`<tr><td>`)
 			b.WriteString(html.EscapeString(nonEmptyText(item.ResearchDate, item.PublishTime, "--")))
 			b.WriteString(`</td><td>`)
 			b.WriteString(html.EscapeString(strings.TrimSpace(item.Code + " " + item.Name)))
-			b.WriteString(`</td><td>`)
-			b.WriteString(html.EscapeString(stockResearchKindLabel(item.Kind)))
 			b.WriteString(`</td><td>`)
 			b.WriteString(html.EscapeString(item.Title))
 			b.WriteString(`</td><td>`)
@@ -294,7 +295,7 @@ func renderStockResearchTable(b *strings.Builder, ctx model.StockResearchListRes
 			b.WriteString(`</td><td>`)
 			b.WriteString(html.EscapeString(nonEmptyText(item.Rating, "--")))
 			b.WriteString(`</td><td>`)
-			b.WriteString(html.EscapeString(nonEmptyText(item.TargetPrice, "--")))
+			b.WriteString(html.EscapeString(formatStockResearchTargetPrice(item.TargetPrice)))
 			b.WriteString(`</td><td><span class="research-source">`)
 			b.WriteString(html.EscapeString(stockResearchSourceLabel(item.SourceType)))
 			b.WriteString(`</span></td><td>`)
@@ -485,6 +486,18 @@ func stockResearchKindLabel(kind string) string {
 		return "调研"
 	}
 	return "研报"
+}
+
+func formatStockResearchTargetPrice(value string) string {
+	raw := strings.TrimSpace(value)
+	if raw == "" {
+		return "--"
+	}
+	normalized := strings.ReplaceAll(raw, ",", "")
+	if parsed, err := strconv.ParseFloat(normalized, 64); err == nil {
+		return fmt.Sprintf("%.2f", parsed)
+	}
+	return raw
 }
 
 func stockResearchSourceLabel(source string) string {
