@@ -127,7 +127,7 @@ const (
 	aStockDrawdownFilterThreshold = -15.0
 	aStockSectorDrawdownPenalty   = 15
 	aStockNewsPageSize            = 10
-	aStockRecentLookbackDays      = 15
+	aStockRecentLookbackDays      = 5
 	aStockMarketCandidateLimit    = 5000
 	aStockMarketRankScoreBase     = 200
 	aStockStocksPerHotspot        = 3
@@ -323,7 +323,7 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request) 
 		query.Set("msg", "已切换到下午窗口，按 09:30-13:00 历史新闻重新计算推荐。")
 	case "generate_ignore_recent_stock":
 		query.Set("ignore_recent", "1")
-		query.Set("msg", period.Label+"已忽略近15日重复推荐过滤，按当前新闻窗口重新计算推荐。")
+		query.Set("msg", period.Label+"已忽略5日内重复推荐过滤，按当前新闻窗口重新计算推荐。")
 	case "generate":
 		query.Set("msg", period.Label+"热点已按当前新闻窗口重新计算。")
 	case "sync_market":
@@ -371,7 +371,7 @@ func writeAStockOverviewPeriodCells(b *strings.Builder, ctx aStockContext) {
 	if ctx.IgnoreRecent {
 		filterStatus = "已关闭"
 	}
-	writeAStockOverviewCell(b, "15日过滤", filterStatus, "")
+	writeAStockOverviewCell(b, "5日内过滤", filterStatus, "")
 	writeAStockOverviewCell(b, "回测状态", ctx.BacktestStatus, "")
 }
 
@@ -620,7 +620,7 @@ func renderAStockRecommendationHistoryActions(b *strings.Builder, strategyDate s
 	}{
 		{Name: "backfill_window_news", Label: "补抓并重新生成当前窗口"},
 		{Name: recomputeAction, Label: "重新生成当前推荐"},
-		{Name: "generate_ignore_recent_stock", Label: "忽略15日重复过滤重新生成"},
+		{Name: "generate_ignore_recent_stock", Label: "忽略5日内重复过滤重新生成"},
 		{Name: "backfill_auction", Label: "补录集合竞价"},
 		{Name: "refresh_backtest", Label: "刷新当前回测"},
 	} {
@@ -728,7 +728,7 @@ func aStockRecommendationEmptyReason(ctx aStockContext) string {
 		return fmt.Sprintf("暂无推荐股票：%s %s 有新闻和热点，也有 %d 条集合竞价候选，但新闻没有明确匹配到股票名称或代码。", ctx.PeriodLabel, ctx.WindowLabel, ctx.MarketCandidateCount)
 	}
 	if ctx.RecentFiltered > 0 {
-		return fmt.Sprintf("暂无推荐股票：%s %s 已生成候选，但近15日重复推荐过滤 %d 只。可点击“忽略15日重复过滤重新生成”。", ctx.PeriodLabel, ctx.WindowLabel, ctx.RecentFiltered)
+		return fmt.Sprintf("暂无推荐股票：%s %s 已生成候选，但5日内重复推荐过滤 %d 只。可点击“忽略5日内重复过滤重新生成”。", ctx.PeriodLabel, ctx.WindowLabel, ctx.RecentFiltered)
 	}
 	if ctx.SameDayMorningFiltered > 0 {
 		return fmt.Sprintf("暂无推荐股票：%s %s 已生成候选，但过滤上午已推荐股票 %d 只。", ctx.PeriodLabel, ctx.WindowLabel, ctx.SameDayMorningFiltered)
@@ -758,7 +758,7 @@ func normalizeAStockIgnoreRecent(query url.Values) bool {
 	if _, ok := query["ignore_recent"]; ok {
 		return normalizeAStockBool(query.Get("ignore_recent"))
 	}
-	return true
+	return false
 }
 
 func paginateAStockNews(items []model.Item, page int, pageSize int) ([]model.Item, int, int) {
