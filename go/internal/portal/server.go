@@ -321,6 +321,8 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/a-stock", s.requireSession(s.handleAStockPage))
 	mux.HandleFunc("/a-stock/", s.requireSession(s.handleAStockPage))
 	mux.HandleFunc("/stock-research", s.requireSession(s.handleStockResearchPage))
+	mux.HandleFunc("/stock-research/", s.requireSession(s.handleStockResearchAsset))
+	mux.HandleFunc("/api/v1/stock-research/", s.requireSession(s.handleStockResearchAsset))
 	mux.HandleFunc("/crypto", s.requireSession(s.handleCryptoPage))
 	mux.HandleFunc("/crypto/", s.requireSession(s.handleCryptoPage))
 	mux.HandleFunc("/volume/getproject", s.requireSessionJSONUnlessRemoved(s.handleVolumeGetProject))

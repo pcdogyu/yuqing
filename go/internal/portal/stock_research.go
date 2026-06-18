@@ -55,6 +55,129 @@ body[data-page='stock-research'] main,body[data-page='stock-research'] .site-foo
 	_ = user
 }
 
+func (s *Server) handleStockResearchAsset(w http.ResponseWriter, r *http.Request, user any) {
+	_ = user
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id, action, ok := parseStockResearchAssetPath(r.URL.Path)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	switch action {
+	case "pdf":
+		s.proxyStockResearchPDF(w, r, id)
+	case "text":
+		s.renderStockResearchPDFText(w, r, id)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func parseStockResearchAssetPath(path string) (int64, string, bool) {
+	path = strings.TrimSpace(path)
+	for _, prefix := range []string{"/stock-research/", "/api/v1/stock-research/"} {
+		if !strings.HasPrefix(path, prefix) {
+			continue
+		}
+		parts := strings.Split(strings.Trim(strings.TrimPrefix(path, prefix), "/"), "/")
+		if len(parts) < 2 || len(parts) > 3 || parts[1] != "pdf" {
+			return 0, "", false
+		}
+		id, err := strconv.ParseInt(parts[0], 10, 64)
+		if err != nil || id <= 0 {
+			return 0, "", false
+		}
+		if len(parts) == 2 {
+			return id, "pdf", true
+		}
+		if parts[2] == "text" {
+			return id, "text", true
+		}
+		return 0, "", false
+	}
+	return 0, "", false
+}
+
+func (s *Server) proxyStockResearchPDF(w http.ResponseWriter, r *http.Request, id int64) {
+	contentURL := strings.TrimRight(strings.TrimSpace(s.cfg.ContentURL), "/")
+	if contentURL == "" {
+		http.Error(w, "content service is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	resp, err := s.client.R().
+		SetContext(r.Context()).
+		Get(fmt.Sprintf("%s/api/v1/stock-research/%d/pdf", contentURL, id))
+	if err != nil {
+		http.Error(w, "PDF 下载失败："+err.Error(), http.StatusBadGateway)
+		return
+	}
+	if !resp.IsSuccess() {
+		http.Error(w, "PDF 下载失败："+stockResearchSchedulerError(resp.Body(), resp.String()), resp.StatusCode())
+		return
+	}
+	contentType := strings.TrimSpace(resp.Header().Get("Content-Type"))
+	if contentType == "" {
+		contentType = "application/pdf"
+	}
+	w.Header().Set("Content-Type", contentType)
+	if disposition := strings.TrimSpace(resp.Header().Get("Content-Disposition")); disposition != "" {
+		w.Header().Set("Content-Disposition", disposition)
+	}
+	w.WriteHeader(resp.StatusCode())
+	_, _ = w.Write(resp.Body())
+}
+
+func (s *Server) renderStockResearchPDFText(w http.ResponseWriter, r *http.Request, id int64) {
+	contentURL := strings.TrimRight(strings.TrimSpace(s.cfg.ContentURL), "/")
+	if contentURL == "" {
+		http.Error(w, "content service is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	var item model.StockResearchSurvey
+	err := s.getJSONWithContext(r.Context(), fmt.Sprintf("%s/api/v1/stock-research/%d/pdf/text", contentURL, id), &item)
+	if err != nil {
+		http.Error(w, "PDF 文本读取失败："+err.Error(), http.StatusBadGateway)
+		return
+	}
+	text := strings.TrimSpace(item.PDFText)
+	if text == "" {
+		http.Error(w, "PDF 文本未解析，请返回列表点击重新解析。", http.StatusNotFound)
+		return
+	}
+	var b strings.Builder
+	b.WriteString(`<style>
+body[data-page='stock-research-pdf-text'] main,body[data-page='stock-research-pdf-text'] .site-footer{max-width:1180px}
+.research-text-meta{color:#6a6257;margin:8px 0 14px}
+.research-text-actions{display:flex;gap:12px;flex-wrap:wrap;margin:12px 0}
+.research-pdf-text{white-space:pre-wrap;line-height:1.72;background:#fff;border:1px solid #ece7dc;border-radius:12px;padding:18px;overflow:auto}
+</style>`)
+	b.WriteString(`<section><h2>研报 PDF 文本</h2>`)
+	if strings.TrimSpace(item.Title) != "" {
+		b.WriteString(`<h3>`)
+		b.WriteString(html.EscapeString(item.Title))
+		b.WriteString(`</h3>`)
+	}
+	b.WriteString(`<p class="research-text-meta">`)
+	b.WriteString(html.EscapeString(strings.TrimSpace(item.Code + " " + item.Name)))
+	if strings.TrimSpace(item.PDFParsedAt) != "" {
+		b.WriteString(` ｜ 解析时间：`)
+		b.WriteString(html.EscapeString(item.PDFParsedAt))
+	}
+	b.WriteString(`</p><div class="research-text-actions"><a class="inline" href="/stock-research">返回研报列表</a>`)
+	if strings.TrimSpace(item.PDFURL) != "" {
+		b.WriteString(`<a class="inline" href="`)
+		b.WriteString(html.EscapeString(item.PDFURL))
+		b.WriteString(`" target="_blank" rel="noreferrer">原始 PDF 链接</a>`)
+	}
+	b.WriteString(`</div></section><section><pre class="research-pdf-text">`)
+	b.WriteString(html.EscapeString(text))
+	b.WriteString(`</pre></section>`)
+	_ = s.writeSimplePage(w, "stock-research-pdf-text", "研报 PDF 文本", b.String())
+}
+
 func stockResearchFilterFromRequest(r *http.Request) model.StockResearchFilter {
 	return model.StockResearchFilter{
 		Code:        strings.TrimSpace(r.URL.Query().Get("code")),
@@ -182,7 +305,7 @@ func renderStockResearchTable(b *strings.Builder, ctx model.StockResearchListRes
 			}
 			b.WriteString(`</td><td>`)
 			if strings.TrimSpace(item.PDFFilePath) != "" {
-				b.WriteString(`<a class="inline" href="/api/v1/stock-research/`)
+				b.WriteString(`<a class="inline" href="/stock-research/`)
 				b.WriteString(fmt.Sprintf("%d", item.ID))
 				b.WriteString(`/pdf" target="_blank" rel="noreferrer">下载PDF</a>`)
 			} else if strings.TrimSpace(item.PDFURL) != "" {
@@ -193,7 +316,7 @@ func renderStockResearchTable(b *strings.Builder, ctx model.StockResearchListRes
 				b.WriteString(`--`)
 			}
 			if strings.EqualFold(item.PDFStatus, "parsed") && strings.TrimSpace(item.PDFText) != "" {
-				b.WriteString(` <a class="inline" href="/api/v1/stock-research/`)
+				b.WriteString(` <a class="inline" href="/stock-research/`)
 				b.WriteString(fmt.Sprintf("%d", item.ID))
 				b.WriteString(`/pdf/text" target="_blank" rel="noreferrer">查看文本</a>`)
 			}
