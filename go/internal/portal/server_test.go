@@ -1010,6 +1010,9 @@ func TestAStockPageLoadsAfternoonWindow(t *testing.T) {
 			if r.URL.Query().Get("date") != "2026-06-16" {
 				t.Fatalf("unexpected auction date: %s", r.URL.RawQuery)
 			}
+			if r.URL.Query().Get("page_size") != "5000" {
+				t.Fatalf("expected A股 page to request full-market auction candidates, got %s", r.URL.RawQuery)
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"code":    200,
 				"message": "ok",
@@ -1773,6 +1776,32 @@ func TestAStockRecommendationsFallbackWhenAuctionCandidatesEmpty(t *testing.T) {
 		if recommendations[0].Code == stalePoolCode || recommendations[1].Code == stalePoolCode {
 			t.Fatalf("expected no fixed stock-pool recommendations, got %+v", recommendations)
 		}
+	}
+}
+
+func TestAStockRecommendationsCanUseFullMarketCandidateNameMatch(t *testing.T) {
+	recommendations := buildAStockRecommendations([]aStockHotspot{
+		{
+			Name:     "金融券商",
+			Keywords: []string{"证券", "资本市场"},
+			Score:    245,
+			Evidence: 2,
+			MatchedItems: []model.Item{
+				{SourceType: "flash", Title: "华泰证券：资金面仍具活跃基础", Summary: "资本市场情绪修复"},
+			},
+		},
+	}, []aStockMarketCandidate{
+		{Code: "601688", Name: "华泰证券", Rank: 320, AuctionAmount: 1200000, AuctionVolume: 50000},
+	})
+
+	if len(recommendations) != 1 {
+		t.Fatalf("expected realtime news stock name to match full-market auction candidate, got %+v", recommendations)
+	}
+	if recommendations[0].Code != "601688" || recommendations[0].Name != "华泰证券" {
+		t.Fatalf("unexpected full-market candidate recommendation: %+v", recommendations[0])
+	}
+	if !strings.Contains(recommendations[0].Reason, "个股证据 1 条") {
+		t.Fatalf("expected recommendation reason to include stock evidence, got %q", recommendations[0].Reason)
 	}
 }
 

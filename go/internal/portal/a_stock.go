@@ -123,7 +123,8 @@ const (
 	aStockSectorDrawdownPenalty   = 15
 	aStockNewsPageSize            = 10
 	aStockRecentLookbackDays      = 15
-	aStockMarketCandidateLimit    = 200
+	aStockMarketCandidateLimit    = 5000
+	aStockMarketRankScoreBase     = 200
 	aStockStocksPerHotspot        = 3
 )
 
@@ -2152,7 +2153,7 @@ func aStockMarketRankScore(rank int) int {
 	if rank <= 0 {
 		return 0
 	}
-	score := (aStockMarketCandidateLimit - rank + 1) / 5
+	score := (aStockMarketRankScoreBase - rank + 1) / 5
 	if score < 1 {
 		return 1
 	}
