@@ -1560,8 +1560,8 @@ func TestAStockMarketViewFiltersDeepDrawdownsAndPenalizesSector(t *testing.T) {
 	if len(rows) != 4 {
 		t.Fatalf("expected backtest rows to keep generated candidates before market filtering, got %+v", rows)
 	}
-	if rows[2].T0Return != "+1.01%" || rows[2].T0ReturnClass != "astock-up" {
-		t.Fatalf("expected T+0 return to use strategy-day close/open, got %+v", rows[2])
+	if rows[2].T0Return != "+1.00%" || rows[2].T0ReturnClass != "astock-up" {
+		t.Fatalf("expected T+0 return to use strategy-day realtime/close pct field, got %+v", rows[2])
 	}
 	rowStocks := strings.Join([]string{rows[0].Stock, rows[1].Stock, rows[2].Stock, rows[3].Stock}, " ")
 	if !strings.Contains(rowStocks, "000001") || !strings.Contains(rowStocks, "000004") {
