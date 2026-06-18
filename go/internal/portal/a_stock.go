@@ -243,6 +243,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		b.WriteString(`</p></section>`)
 	}
 
+	renderAStockDatePeriodTabs(&b, ctx.Date, ctx.Period, ctx.IgnoreRecent, false)
 	renderAStockOverviewSection(&b, morningCtx, afternoonCtx)
 
 	b.WriteString(`<section><h2>操作区</h2><div class="astock-actions">`)
@@ -553,7 +554,14 @@ func renderAStockBacktestSection(b *strings.Builder, strategyDate string, period
 }
 
 func renderAStockRecommendationHistoryTabs(b *strings.Builder, strategyDate string, period string, ignoreRecent bool) {
-	b.WriteString(`<h3>推荐历史</h3><div class="astock-date-tabs">`)
+	renderAStockDatePeriodTabs(b, strategyDate, period, ignoreRecent, true)
+}
+
+func renderAStockDatePeriodTabs(b *strings.Builder, strategyDate string, period string, ignoreRecent bool, withHeading bool) {
+	if withHeading {
+		b.WriteString(`<h3>推荐历史</h3>`)
+	}
+	b.WriteString(`<div class="astock-date-tabs">`)
 	normalizedPeriod := normalizeAStockPeriod(period).Key
 	today := aStockTodayDate()
 	day, err := time.Parse("2006-01-02", today)

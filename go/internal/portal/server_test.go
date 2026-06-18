@@ -1346,6 +1346,9 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}
 	}
+	if strings.Index(body, "2026-06-16 AM") < 0 || strings.Index(body, "2026-06-16 AM") > strings.Index(body, "顶部概览") {
+		t.Fatalf("expected date period tabs to render above overview, got %s", body)
+	}
 	for _, notWant := range []string{"T+1 收盘价", "T+2 收盘价", "T+3 收盘价", "T+4 收盘价", "T+5 收盘价"} {
 		if strings.Contains(body, notWant) {
 			t.Fatalf("expected A股 page not to contain removed backtest column %q, got %s", notWant, body)
@@ -1391,6 +1394,29 @@ func TestAStockRecommendationHistoryRendersDateTabs(t *testing.T) {
 	}
 	if strings.Index(body, "2026-06-11 AM") > strings.Index(body, "2026-06-16 PM") {
 		t.Fatalf("expected history tabs to render oldest date first, got %s", body)
+	}
+}
+
+func TestAStockDatePeriodTabsCanRenderWithoutHeading(t *testing.T) {
+	setAStockNowForTest(t, time.Date(2026, 6, 18, 9, 30, 0, 0, time.FixedZone("CST", 8*3600)))
+	var b strings.Builder
+	renderAStockDatePeriodTabs(&b, "2026-06-18", "morning", true, false)
+
+	body := b.String()
+	for _, want := range []string{
+		"2026-06-13 AM",
+		"2026-06-18 AM",
+		"2026-06-18 PM",
+		`/a-stock?date=2026-06-18&period=morning&ignore_recent=1`,
+		`class="astock-tab active"`,
+		`data-preserve-scroll="1"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected top date tabs to contain %q, got %s", want, body)
+		}
+	}
+	if strings.Contains(body, "推荐历史") {
+		t.Fatalf("expected top date tabs to render without history heading, got %s", body)
 	}
 }
 
