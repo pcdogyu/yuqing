@@ -346,6 +346,16 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 			},
 		}, "StockResearchCrawl", "0 30 16 * * ?"),
 		withJobMeta(jobDefinition{
+			Name:        "investor-relations-crawl",
+			Group:       "a-stock",
+			Description: "CNINFO 投资者关系活动记录抓取，下载 PDF 并解析文本评分",
+			Interval:    24 * time.Hour,
+			Enabled:     strings.TrimSpace(w.cfg.InvestorRelationsURL) != "",
+			Run: func(ctx context.Context) error {
+				return w.runInvestorRelationsCrawl(ctx)
+			},
+		}, "InvestorRelationsCrawl", "0 45 16 * * ?"),
+		withJobMeta(jobDefinition{
 			Name:        "a-stock-holdings-crawl",
 			Group:       "a-stock",
 			Description: "A股机构持仓：按最近 4 个报告期抓取基金、机构、社保、QFII 等季度持仓",

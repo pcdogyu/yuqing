@@ -294,6 +294,23 @@ type NLPResponse struct {
 	Keywords []string `json:"keywords,omitempty"`
 }
 
+type NLPStockScoreRequest struct {
+	Code  string `json:"code,omitempty"`
+	Name  string `json:"name,omitempty"`
+	Title string `json:"title,omitempty"`
+	Text  string `json:"text"`
+}
+
+type NLPStockScoreResponse struct {
+	Code     string   `json:"code,omitempty"`
+	Name     string   `json:"name,omitempty"`
+	Score    float64  `json:"score"`
+	Rating   string   `json:"rating"`
+	Reason   string   `json:"reason"`
+	Keywords []string `json:"keywords,omitempty"`
+	Status   string   `json:"status,omitempty"`
+}
+
 type NLPReportPreviewRequest struct {
 	ArticleID   string `json:"article_id,omitempty"`
 	Text        string `json:"text,omitempty"`

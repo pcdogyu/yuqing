@@ -703,6 +703,10 @@ func (s *Service) handleGetStockResearchPDFText(w http.ResponseWriter, r *http.R
 		"pdf_status":    item.PDFStatus,
 		"pdf_text":      item.PDFText,
 		"pdf_parsed_at": item.PDFParsedAt,
+		"nlp_score":     item.NLPScore,
+		"nlp_rating":    item.NLPRating,
+		"nlp_reason":    item.NLPReason,
+		"nlp_scored_at": item.NLPScoredAt,
 	})
 }
 
@@ -747,6 +751,9 @@ func normalizeStockResearchSurvey(item model.StockResearchSurvey, now time.Time)
 	item.PDFError = strings.TrimSpace(item.PDFError)
 	item.PDFFetchedAt = strings.TrimSpace(item.PDFFetchedAt)
 	item.PDFParsedAt = strings.TrimSpace(item.PDFParsedAt)
+	item.NLPRating = strings.TrimSpace(item.NLPRating)
+	item.NLPReason = strings.TrimSpace(item.NLPReason)
+	item.NLPScoredAt = strings.TrimSpace(item.NLPScoredAt)
 	if item.SourceType == "" {
 		item.SourceType = "stock_research"
 	}
@@ -773,6 +780,9 @@ func normalizeStockResearchPDFUpdate(update model.StockResearchPDFUpdate) model.
 	update.PDFError = strings.TrimSpace(update.PDFError)
 	update.PDFFetchedAt = strings.TrimSpace(update.PDFFetchedAt)
 	update.PDFParsedAt = strings.TrimSpace(update.PDFParsedAt)
+	update.NLPRating = strings.TrimSpace(update.NLPRating)
+	update.NLPReason = strings.TrimSpace(update.NLPReason)
+	update.NLPScoredAt = strings.TrimSpace(update.NLPScoredAt)
 	return update
 }
 

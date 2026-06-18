@@ -143,6 +143,79 @@ func TestRunStockResearchPDFParseMarksNoText(t *testing.T) {
 	}
 }
 
+func TestRunStockResearchPDFParseScoresInvestorRelations(t *testing.T) {
+	previousExtractor := stockResearchPDFTextExtractor
+	stockResearchPDFTextExtractor = func(filePath string) (string, error) {
+		if _, err := os.Stat(filePath); err != nil {
+			t.Fatalf("expected downloaded investor relations pdf file: %v", err)
+		}
+		return "公司AI订单增长，客户需求提升，盈利改善。", nil
+	}
+	t.Cleanup(func() { stockResearchPDFTextExtractor = previousExtractor })
+
+	external := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/pdf")
+		_, _ = w.Write([]byte("%PDF-1.4\nfake\n"))
+	}))
+	defer external.Close()
+
+	nlp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/nlp/stock-score" {
+			t.Fatalf("unexpected nlp request: %s %s", r.Method, r.URL.String())
+		}
+		var req model.NLPStockScoreRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode nlp request: %v", err)
+		}
+		if req.Code != "300250" || !strings.HasPrefix(req.Text, "# ") {
+			t.Fatalf("unexpected nlp request payload: %+v", req)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": model.NLPStockScoreResponse{Score: 78.5, Rating: "积极", Reason: "AI订单增长", Status: "ok"}})
+	}))
+	defer nlp.Close()
+
+	var captured model.StockResearchPDFUpdate
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/stock-research":
+			if r.URL.Query().Get("source") != investorRelationsSourceType || r.URL.Query().Get("kind") != "survey" {
+				t.Fatalf("expected investor relation source filter, got %s", r.URL.RawQuery)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockResearchListResult{
+				Page: 1, PageSize: 200, Total: 1,
+				Items: []model.StockResearchSurvey{{
+					ID: 9, Code: "300250", Name: "初灵信息", Kind: "survey", Title: "初灵信息投资者关系活动记录",
+					PDFURL: external.URL + "/ir.pdf", SourceType: investorRelationsSourceType, SourceKey: "ir-1", ResearchDate: "2026-06-18",
+				}},
+			}})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/internal/stock-research/9/pdf":
+			if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+				t.Fatalf("decode captured update: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": captured})
+		default:
+			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	worker := NewWorker(config.Config{
+		ContentURL:          content.URL,
+		NLPURL:              nlp.URL,
+		StockResearchPDFDir: t.TempDir(),
+		HTTPTimeout:         time.Second,
+		ExternalRetryWait:   time.Millisecond,
+	})
+	result, err := worker.runStockResearchPDFParse(context.Background(), stockResearchPDFParseOptions{Source: investorRelationsSourceType, Code: "300250"})
+	if err != nil {
+		t.Fatalf("runStockResearchPDFParse error: %v", err)
+	}
+	if result.Parsed != 1 || captured.NLPScore != 78.5 || captured.NLPRating != "积极" || !strings.HasPrefix(captured.PDFText, "# 初灵信息") {
+		t.Fatalf("unexpected investor relation pdf parse result=%+v update=%+v", result, captured)
+	}
+}
+
 func TestSchedulerStockResearchPDFParseEndpoint(t *testing.T) {
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

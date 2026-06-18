@@ -72,6 +72,10 @@ CREATE TABLE IF NOT EXISTS stock_research_surveys (
 	pdf_error TEXT NOT NULL DEFAULT '',
 	pdf_fetched_at TEXT NOT NULL DEFAULT '',
 	pdf_parsed_at TEXT NOT NULL DEFAULT '',
+	nlp_score DOUBLE PRECISION NOT NULL DEFAULT 0,
+	nlp_rating TEXT NOT NULL DEFAULT '',
+	nlp_reason TEXT NOT NULL DEFAULT '',
+	nlp_scored_at TEXT NOT NULL DEFAULT '',
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL,
 	UNIQUE (source_type, source_key)
@@ -83,6 +87,10 @@ ALTER TABLE stock_research_surveys ADD COLUMN IF NOT EXISTS pdf_text TEXT NOT NU
 ALTER TABLE stock_research_surveys ADD COLUMN IF NOT EXISTS pdf_error TEXT NOT NULL DEFAULT '';
 ALTER TABLE stock_research_surveys ADD COLUMN IF NOT EXISTS pdf_fetched_at TEXT NOT NULL DEFAULT '';
 ALTER TABLE stock_research_surveys ADD COLUMN IF NOT EXISTS pdf_parsed_at TEXT NOT NULL DEFAULT '';
+ALTER TABLE stock_research_surveys ADD COLUMN IF NOT EXISTS nlp_score DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE stock_research_surveys ADD COLUMN IF NOT EXISTS nlp_rating TEXT NOT NULL DEFAULT '';
+ALTER TABLE stock_research_surveys ADD COLUMN IF NOT EXISTS nlp_reason TEXT NOT NULL DEFAULT '';
+ALTER TABLE stock_research_surveys ADD COLUMN IF NOT EXISTS nlp_scored_at TEXT NOT NULL DEFAULT '';
 
 CREATE TABLE IF NOT EXISTS stock_institution_holdings (
 	id BIGSERIAL PRIMARY KEY,

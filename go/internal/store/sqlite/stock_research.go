@@ -22,8 +22,8 @@ func (s *Store) UpsertStockResearchSurveys(ctx context.Context, items []model.St
 	}()
 
 	stmt, err := tx.PrepareContext(ctx, `
-INSERT INTO stock_research_surveys (code, name, kind, title, institution, analyst, rating, target_price, research_date, publish_time, source_url, source_type, source_key, summary, raw_payload, pdf_url, pdf_file_path, pdf_status, pdf_text, pdf_error, pdf_fetched_at, pdf_parsed_at, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO stock_research_surveys (code, name, kind, title, institution, analyst, rating, target_price, research_date, publish_time, source_url, source_type, source_key, summary, raw_payload, pdf_url, pdf_file_path, pdf_status, pdf_text, pdf_error, pdf_fetched_at, pdf_parsed_at, nlp_score, nlp_rating, nlp_reason, nlp_scored_at, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(source_type, source_key) DO UPDATE SET
 	code = excluded.code,
 	name = excluded.name,
@@ -45,6 +45,10 @@ ON CONFLICT(source_type, source_key) DO UPDATE SET
 	pdf_error = CASE WHEN excluded.pdf_error <> '' THEN excluded.pdf_error ELSE stock_research_surveys.pdf_error END,
 	pdf_fetched_at = CASE WHEN excluded.pdf_fetched_at <> '' THEN excluded.pdf_fetched_at ELSE stock_research_surveys.pdf_fetched_at END,
 	pdf_parsed_at = CASE WHEN excluded.pdf_parsed_at <> '' THEN excluded.pdf_parsed_at ELSE stock_research_surveys.pdf_parsed_at END,
+	nlp_score = CASE WHEN excluded.nlp_scored_at <> '' THEN excluded.nlp_score ELSE stock_research_surveys.nlp_score END,
+	nlp_rating = CASE WHEN excluded.nlp_rating <> '' THEN excluded.nlp_rating ELSE stock_research_surveys.nlp_rating END,
+	nlp_reason = CASE WHEN excluded.nlp_reason <> '' THEN excluded.nlp_reason ELSE stock_research_surveys.nlp_reason END,
+	nlp_scored_at = CASE WHEN excluded.nlp_scored_at <> '' THEN excluded.nlp_scored_at ELSE stock_research_surveys.nlp_scored_at END,
 	updated_at = excluded.updated_at`)
 	if err != nil {
 		return result, err
@@ -96,6 +100,10 @@ ON CONFLICT(source_type, source_key) DO UPDATE SET
 			strings.TrimSpace(item.PDFError),
 			strings.TrimSpace(item.PDFFetchedAt),
 			strings.TrimSpace(item.PDFParsedAt),
+			item.NLPScore,
+			strings.TrimSpace(item.NLPRating),
+			strings.TrimSpace(item.NLPReason),
+			strings.TrimSpace(item.NLPScoredAt),
 			createdAt.UTC().Format(time.RFC3339),
 			updatedAt.UTC().Format(time.RFC3339),
 		); err != nil {
@@ -140,7 +148,7 @@ func (s *Store) ListStockResearchSurveys(ctx context.Context, filter model.Stock
 	offset := (filter.Page - 1) * filter.PageSize
 	queryArgs := append(args, filter.PageSize, offset)
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, code, name, kind, title, institution, analyst, rating, target_price, research_date, publish_time, source_url, source_type, source_key, summary, raw_payload, pdf_url, pdf_file_path, pdf_status, pdf_text, pdf_error, pdf_fetched_at, pdf_parsed_at, created_at, updated_at
+SELECT id, code, name, kind, title, institution, analyst, rating, target_price, research_date, publish_time, source_url, source_type, source_key, summary, raw_payload, pdf_url, pdf_file_path, pdf_status, pdf_text, pdf_error, pdf_fetched_at, pdf_parsed_at, nlp_score, nlp_rating, nlp_reason, nlp_scored_at, created_at, updated_at
 FROM stock_research_surveys `+where+`
 ORDER BY COALESCE(NULLIF(research_date, ''), publish_time) DESC, id DESC
 LIMIT ? OFFSET ?`, queryArgs...)
@@ -165,7 +173,7 @@ LIMIT ? OFFSET ?`, queryArgs...)
 
 func (s *Store) GetStockResearchSurvey(ctx context.Context, id int64) (model.StockResearchSurvey, error) {
 	row := s.db.QueryRowContext(ctx, `
-SELECT id, code, name, kind, title, institution, analyst, rating, target_price, research_date, publish_time, source_url, source_type, source_key, summary, raw_payload, pdf_url, pdf_file_path, pdf_status, pdf_text, pdf_error, pdf_fetched_at, pdf_parsed_at, created_at, updated_at
+SELECT id, code, name, kind, title, institution, analyst, rating, target_price, research_date, publish_time, source_url, source_type, source_key, summary, raw_payload, pdf_url, pdf_file_path, pdf_status, pdf_text, pdf_error, pdf_fetched_at, pdf_parsed_at, nlp_score, nlp_rating, nlp_reason, nlp_scored_at, created_at, updated_at
 FROM stock_research_surveys
 WHERE id = ?`, id)
 	return scanStockResearchSurvey(row)
@@ -174,7 +182,7 @@ WHERE id = ?`, id)
 func (s *Store) UpdateStockResearchPDF(ctx context.Context, id int64, update model.StockResearchPDFUpdate) (model.StockResearchSurvey, error) {
 	res, err := s.db.ExecContext(ctx, `
 UPDATE stock_research_surveys
-SET pdf_url = ?, pdf_file_path = ?, pdf_status = ?, pdf_text = ?, pdf_error = ?, pdf_fetched_at = ?, pdf_parsed_at = ?, updated_at = ?
+SET pdf_url = ?, pdf_file_path = ?, pdf_status = ?, pdf_text = ?, pdf_error = ?, pdf_fetched_at = ?, pdf_parsed_at = ?, nlp_score = ?, nlp_rating = ?, nlp_reason = ?, nlp_scored_at = ?, updated_at = ?
 WHERE id = ?`,
 		strings.TrimSpace(update.PDFURL),
 		strings.TrimSpace(update.PDFFilePath),
@@ -183,6 +191,10 @@ WHERE id = ?`,
 		strings.TrimSpace(update.PDFError),
 		strings.TrimSpace(update.PDFFetchedAt),
 		strings.TrimSpace(update.PDFParsedAt),
+		update.NLPScore,
+		strings.TrimSpace(update.NLPRating),
+		strings.TrimSpace(update.NLPReason),
+		strings.TrimSpace(update.NLPScoredAt),
 		time.Now().UTC().Format(time.RFC3339),
 		id,
 	)
@@ -275,6 +287,10 @@ func scanStockResearchSurvey(scanner scanner) (model.StockResearchSurvey, error)
 		&item.PDFError,
 		&item.PDFFetchedAt,
 		&item.PDFParsedAt,
+		&item.NLPScore,
+		&item.NLPRating,
+		&item.NLPReason,
+		&item.NLPScoredAt,
 		&createdAt,
 		&updatedAt,
 	); err != nil {

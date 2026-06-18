@@ -184,10 +184,10 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	if err := json.Unmarshal(listRR.Body.Bytes(), &listEnvelope); err != nil {
 		t.Fatalf("unmarshal jobs list: %v", err)
 	}
-	if len(listEnvelope.Data) != 30 {
-		t.Fatalf("expected 30 scheduler jobs, got %d", len(listEnvelope.Data))
+	if len(listEnvelope.Data) != 31 {
+		t.Fatalf("expected 31 scheduler jobs, got %d", len(listEnvelope.Data))
 	}
-	var heartbeatJob, hotJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningPreviewJob, aStockMorningJob, aStockAfternoonPreviewJob, aStockAfternoonJob, aStockAuctionJob, aStockHoldingsJob, stockResearchJob Job
+	var heartbeatJob, hotJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningPreviewJob, aStockMorningJob, aStockAfternoonPreviewJob, aStockAfternoonJob, aStockAuctionJob, aStockHoldingsJob, stockResearchJob, investorRelationsJob Job
 	for _, job := range listEnvelope.Data {
 		switch job.Name {
 		case "crawl-link-heartbeat":
@@ -220,6 +220,8 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 			aStockHoldingsJob = job
 		case "stock-research-crawl":
 			stockResearchJob = job
+		case "investor-relations-crawl":
+			investorRelationsJob = job
 		}
 	}
 	if hotJob.JavaQuartzName != "HotDataSchedule" || hotJob.Cron == "" || hotJob.NextRunAt == nil {
@@ -260,6 +262,9 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	}
 	if stockResearchJob.Cron != "0 30 16 * * ?" || stockResearchJob.Enabled {
 		t.Fatalf("expected stock research crawl disabled by default in test config, got %+v", stockResearchJob)
+	}
+	if investorRelationsJob.Cron != "0 45 16 * * ?" || investorRelationsJob.Enabled {
+		t.Fatalf("expected investor relations crawl disabled by default in test config, got %+v", investorRelationsJob)
 	}
 	if cryptoXJob.Enabled || cryptoTelegramJob.Enabled || foresightJob.Enabled || coindeskJob.Enabled || panewsJob.Enabled || theBlockJob.Enabled {
 		t.Fatalf("expected crypto jobs disabled without endpoint urls, got x=%+v telegram=%+v foresight=%+v coindesk=%+v panews=%+v theblock=%+v", cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob)
@@ -917,6 +922,53 @@ func TestRunStockResearchBackfillSkipsUnavailablePublicSources(t *testing.T) {
 	}
 	if len(captured) != 0 {
 		t.Fatalf("expected empty stock research payload, got %+v", captured)
+	}
+}
+
+func TestFetchCNInfoInvestorRelationsPaginatesAndBuildsPDFItems(t *testing.T) {
+	var pages []string
+	cninfo := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("searchTypes") != "4" || r.URL.Query().Get("stockCode") != "300250" {
+			t.Fatalf("unexpected cninfo query: %s", r.URL.RawQuery)
+		}
+		pages = append(pages, r.URL.Query().Get("pageNo"))
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Query().Get("pageNo") {
+		case "1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"pageNo": 1, "pageSize": 1, "totalRecord": 2, "totalPage": 2,
+				"results": []map[string]any{{
+					"indexId": "ir-1", "mainContent": "初灵信息投资者关系管理信息20260617", "attachmentUrl": "finalpage/2026-06-18/1225377390.PDF", "stockCode": "300250", "companyShortName": "初灵信息", "pubDate": "1781768047000", "filetype": "PDF",
+				}},
+			})
+		case "2":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"pageNo": 2, "pageSize": 1, "totalRecord": 2, "totalPage": 2,
+				"results": []map[string]any{{
+					"indexId": "ir-2", "mainContent": "初灵信息投资者关系活动记录表", "attachmentUrl": "http://static.cninfo.com.cn/finalpage/2026-06-17/1225000000.PDF", "stockCode": "300250", "companyShortName": "初灵信息", "pubDate": "1781681647000", "filetype": "PDF",
+				}},
+			})
+		default:
+			t.Fatalf("unexpected page: %s", r.URL.Query().Get("pageNo"))
+		}
+	}))
+	defer cninfo.Close()
+
+	worker := NewWorker(config.Config{
+		InvestorRelationsURL: cninfo.URL + "/newircs/index/search",
+		HTTPTimeout:          time.Second,
+		ExternalRetryWait:    time.Millisecond,
+		ExternalRetryCount:   0,
+	})
+	items, err := worker.fetchCNInfoInvestorRelations(context.Background(), stockResearchCrawlOptions{Code: "300250", Start: "2026-06-17", End: "2026-06-18"})
+	if err != nil {
+		t.Fatalf("fetchCNInfoInvestorRelations error: %v", err)
+	}
+	if strings.Join(pages, ",") != "1,2" {
+		t.Fatalf("expected two cninfo pages, got %+v", pages)
+	}
+	if len(items) != 2 || items[0].SourceType != investorRelationsSourceType || items[0].Kind != "survey" || !strings.HasPrefix(items[0].PDFURL, cninfoStaticBaseURL) || items[1].PDFURL == "" {
+		t.Fatalf("unexpected investor relation items: %+v", items)
 	}
 }
 

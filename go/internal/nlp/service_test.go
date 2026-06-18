@@ -69,6 +69,24 @@ func TestHandleSummarize(t *testing.T) {
 	}
 }
 
+func TestHandleStockScore(t *testing.T) {
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/nlp/stock-score", strings.NewReader(`{"code":"002230","name":"科大讯飞","title":"投资者关系活动记录","text":"公司AI订单增长，客户需求提升，盈利改善。风险可控。"}`))
+	NewService().handleStockScore(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected stock-score 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	var envelope struct {
+		Data model.NLPStockScoreResponse `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode stock-score response: %v", err)
+	}
+	if envelope.Data.Score <= 50 || envelope.Data.Rating == "" || !strings.Contains(envelope.Data.Reason, "信号") {
+		t.Fatalf("unexpected stock-score response: %+v", envelope.Data)
+	}
+}
+
 func TestHandleOCRAndImageClassify(t *testing.T) {
 	imgData := testPNG(t)
 

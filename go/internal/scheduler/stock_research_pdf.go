@@ -27,6 +27,7 @@ type stockResearchPDFParseOptions struct {
 	ID      int64
 	Code    string
 	Company string
+	Source  string
 	Start   string
 	End     string
 }
@@ -80,12 +81,19 @@ func (w *Worker) loadStockResearchPDFCandidates(ctx context.Context, opts stockR
 	}
 	query := url.Values{}
 	query.Set("page_size", "200")
-	query.Set("kind", "report")
+	if strings.TrimSpace(opts.Source) == "cninfo_investor_relation" {
+		query.Set("kind", "survey")
+	} else {
+		query.Set("kind", "report")
+	}
 	if opts.Code != "" {
 		query.Set("code", opts.Code)
 	}
 	if opts.Company != "" {
 		query.Set("company", opts.Company)
+	}
+	if opts.Source != "" {
+		query.Set("source", opts.Source)
 	}
 	if opts.Start != "" {
 		query.Set("start", opts.Start)
@@ -129,7 +137,73 @@ func (w *Worker) buildStockResearchPDFUpdate(ctx context.Context, item model.Sto
 	if text == "" {
 		return model.StockResearchPDFUpdate{PDFURL: pdfURL, PDFFilePath: filePath, PDFStatus: "no_text", PDFError: "PDF 可能为扫描版或图片型研报", PDFFetchedAt: now, PDFParsedAt: now}
 	}
-	return model.StockResearchPDFUpdate{PDFURL: pdfURL, PDFFilePath: filePath, PDFStatus: "parsed", PDFText: text, PDFFetchedAt: now, PDFParsedAt: now}
+	if item.SourceType == "cninfo_investor_relation" {
+		text = stockResearchPDFMarkdown(item, text)
+	}
+	update := model.StockResearchPDFUpdate{PDFURL: pdfURL, PDFFilePath: filePath, PDFStatus: "parsed", PDFText: text, PDFFetchedAt: now, PDFParsedAt: now}
+	if score, ok := w.scoreStockResearchPDF(ctx, item, text); ok {
+		update.NLPScore = score.Score
+		update.NLPRating = score.Rating
+		update.NLPReason = score.Reason
+		update.NLPScoredAt = now
+	}
+	return update
+}
+
+func (w *Worker) scoreStockResearchPDF(ctx context.Context, item model.StockResearchSurvey, text string) (model.NLPStockScoreResponse, bool) {
+	baseURL := strings.TrimRight(strings.TrimSpace(w.cfg.NLPURL), "/")
+	if baseURL == "" || strings.TrimSpace(text) == "" {
+		return model.NLPStockScoreResponse{}, false
+	}
+	var envelope struct {
+		Data model.NLPStockScoreResponse `json:"data"`
+	}
+	resp, err := w.client.R().
+		SetContext(ctx).
+		SetResult(&envelope).
+		SetBody(model.NLPStockScoreRequest{
+			Code:  item.Code,
+			Name:  item.Name,
+			Title: item.Title,
+			Text:  text,
+		}).
+		Post(baseURL + "/api/v1/nlp/stock-score")
+	if err != nil || !resp.IsSuccess() {
+		return model.NLPStockScoreResponse{}, false
+	}
+	if envelope.Data.Status == "" && len(resp.Body()) > 0 {
+		_ = json.Unmarshal(resp.Body(), &envelope)
+	}
+	return envelope.Data, true
+}
+
+func stockResearchPDFMarkdown(item model.StockResearchSurvey, text string) string {
+	var b strings.Builder
+	title := strings.TrimSpace(item.Title)
+	if title == "" {
+		title = strings.TrimSpace(item.Code + " " + item.Name + " 投资者关系活动记录")
+	}
+	b.WriteString("# ")
+	b.WriteString(title)
+	b.WriteString("\n\n")
+	if stock := strings.TrimSpace(item.Code + " " + item.Name); stock != "" {
+		b.WriteString("- 股票: ")
+		b.WriteString(stock)
+		b.WriteString("\n")
+	}
+	if date := strings.TrimSpace(nonEmptyText(item.ResearchDate, item.PublishTime)); date != "" {
+		b.WriteString("- 日期: ")
+		b.WriteString(date)
+		b.WriteString("\n")
+	}
+	if pdfURL := strings.TrimSpace(nonEmptyText(item.PDFURL, item.SourceURL)); pdfURL != "" {
+		b.WriteString("- PDF: ")
+		b.WriteString(pdfURL)
+		b.WriteString("\n")
+	}
+	b.WriteString("\n## PDF 原文\n\n")
+	b.WriteString(strings.TrimSpace(text))
+	return b.String()
 }
 
 func (w *Worker) resolveStockResearchPDFURL(ctx context.Context, item model.StockResearchSurvey) (string, error) {

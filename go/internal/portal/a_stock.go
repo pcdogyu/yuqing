@@ -124,6 +124,11 @@ type aStockPeriod struct {
 	WindowLabel string
 }
 
+type aStockNewsSourceCount struct {
+	Label string
+	Count int
+}
+
 const (
 	aStockDrawdownFilterThreshold = -15.0
 	aStockSectorDrawdownPenalty   = 15
@@ -425,32 +430,42 @@ func renderAStockNewsSection(b *strings.Builder, ctx aStockContext) {
 		b.WriteString(html.EscapeString(ctx.Date))
 		b.WriteString(` `)
 		b.WriteString(html.EscapeString(ctx.WindowLabel))
-		b.WriteString(` 窗口内已有财经新闻源入库。</div><table><tr><th>标题</th><th>来源</th><th>时间</th><th>命中关键词</th></tr><tr><td colspan="4">暂无 `)
+		b.WriteString(` 窗口内已有财经新闻源入库。</div><table><tr><th>网站</th><th>新闻条数</th></tr><tr><td colspan="2">暂无 `)
 		b.WriteString(html.EscapeString(ctx.WindowLabel))
 		b.WriteString(` 新闻</td></tr></table></section>`)
 		return
 	}
-	b.WriteString(`<table><tr><th>标题</th><th>来源</th><th>时间</th><th>命中关键词</th></tr>`)
-	for _, item := range ctx.PagedArticles {
-		b.WriteString(`<tr><td><a class="inline" href="/articles/`)
-		b.WriteString(fmt.Sprintf("%d", item.ID))
-		b.WriteString(`?return_to=`)
-		b.WriteString(url.QueryEscape(aStockPageHref(ctx.Date, ctx.Period, ctx.NewsPage, ctx.IgnoreRecent)))
-		b.WriteString(`">`)
-		b.WriteString(html.EscapeString(item.Title))
-		b.WriteString(`</a></td><td>`)
-		b.WriteString(html.EscapeString(articleSourceSiteLabel(item)))
-		b.WriteString(` / `)
-		b.WriteString(html.EscapeString(item.SourceType))
+	b.WriteString(`<table><tr><th>网站</th><th>新闻条数</th></tr>`)
+	for _, source := range summarizeAStockNewsSources(ctx.Articles) {
+		b.WriteString(`<tr><td>`)
+		b.WriteString(html.EscapeString(source.Label))
 		b.WriteString(`</td><td>`)
-		b.WriteString(html.EscapeString(formatShanghaiTime(item.CapturedAt)))
-		b.WriteString(`</td><td>`)
-		b.WriteString(html.EscapeString(strings.Join(aStockMatchedKeywords(item), "、")))
+		b.WriteString(fmt.Sprintf("%d条", source.Count))
 		b.WriteString(`</td></tr>`)
 	}
-	b.WriteString(`</table>`)
-	renderAStockNewsPagination(b, ctx)
-	b.WriteString(`</section>`)
+	b.WriteString(`</table></section>`)
+}
+
+func summarizeAStockNewsSources(items []model.Item) []aStockNewsSourceCount {
+	counts := make(map[string]int)
+	for _, item := range items {
+		label := strings.TrimSpace(articleSourceSiteLabel(item))
+		if label == "" {
+			label = "未知来源"
+		}
+		counts[label]++
+	}
+	summary := make([]aStockNewsSourceCount, 0, len(counts))
+	for label, count := range counts {
+		summary = append(summary, aStockNewsSourceCount{Label: label, Count: count})
+	}
+	sort.Slice(summary, func(i, j int) bool {
+		if summary[i].Count != summary[j].Count {
+			return summary[i].Count > summary[j].Count
+		}
+		return summary[i].Label < summary[j].Label
+	})
+	return summary
 }
 
 func renderAStockNewsPagination(b *strings.Builder, ctx aStockContext) {

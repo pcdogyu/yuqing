@@ -151,6 +151,10 @@ CREATE TABLE IF NOT EXISTS stock_research_surveys (
 	pdf_error TEXT NOT NULL DEFAULT '',
 	pdf_fetched_at TEXT NOT NULL DEFAULT '',
 	pdf_parsed_at TEXT NOT NULL DEFAULT '',
+	nlp_score REAL NOT NULL DEFAULT 0,
+	nlp_rating TEXT NOT NULL DEFAULT '',
+	nlp_reason TEXT NOT NULL DEFAULT '',
+	nlp_scored_at TEXT NOT NULL DEFAULT '',
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL,
 	UNIQUE (source_type, source_key)
@@ -653,6 +657,10 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_action_created_at ON audit_logs(action
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE stock_research_surveys ADD COLUMN pdf_error TEXT NOT NULL DEFAULT ''`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE stock_research_surveys ADD COLUMN pdf_fetched_at TEXT NOT NULL DEFAULT ''`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE stock_research_surveys ADD COLUMN pdf_parsed_at TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE stock_research_surveys ADD COLUMN nlp_score REAL NOT NULL DEFAULT 0`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE stock_research_surveys ADD COLUMN nlp_rating TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE stock_research_surveys ADD COLUMN nlp_reason TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE stock_research_surveys ADD COLUMN nlp_scored_at TEXT NOT NULL DEFAULT ''`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE platform_bindings ADD COLUMN bound INTEGER NOT NULL DEFAULT 0`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE public_options ADD COLUMN detail_status INTEGER NOT NULL DEFAULT 3`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE warning_settings ADD COLUMN warning_setting_id INTEGER NOT NULL DEFAULT 0`)

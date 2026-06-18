@@ -23,10 +23,39 @@ func (w *Worker) Router() http.Handler {
 	r.Post("/api/v1/scheduler/jobs/{name}/run", w.handleRunJob)
 	r.Post("/api/v1/scheduler/stock-research/backfill", w.handleRunStockResearchBackfill)
 	r.Post("/api/v1/scheduler/stock-research/pdf/parse", w.handleRunStockResearchPDFParse)
+	r.Post("/api/v1/scheduler/investor-relations/backfill", w.handleRunInvestorRelationsBackfill)
 	r.Post("/api/v1/scheduler/a-stock/auction/latest", w.handleRunAStockAuctionLatest)
 	r.Post("/api/v1/scheduler/a-stock/auction/backfill", w.handleRunAStockAuctionBackfill)
 	r.Post("/api/v1/scheduler/a-stock/holdings/backfill", w.handleRunAStockHoldingsBackfill)
 	return r
+}
+
+func (w *Worker) handleRunInvestorRelationsBackfill(wr http.ResponseWriter, r *http.Request) {
+	if strings.TrimSpace(r.Header.Get("X-Service-Token")) != strings.TrimSpace(w.cfg.ServiceToken) {
+		apiutil.WriteJSON(wr, http.StatusUnauthorized, "unauthorized", nil)
+		return
+	}
+	opts := stockResearchCrawlOptions{
+		Code:    strings.TrimSpace(r.URL.Query().Get("code")),
+		Company: strings.TrimSpace(r.URL.Query().Get("company")),
+		Start:   strings.TrimSpace(r.URL.Query().Get("start")),
+		End:     strings.TrimSpace(r.URL.Query().Get("end")),
+	}
+	startedAt := time.Now().UTC()
+	err := w.runInvestorRelationsBackfill(r.Context(), opts)
+	finishedAt := time.Now().UTC()
+	status := "success"
+	message := "investor relations backfill completed"
+	if err != nil {
+		status = "failed"
+		message = err.Error()
+	}
+	_ = w.recordTaskRun(r.Context(), "investor-relations-backfill", status, message, startedAt, &finishedAt)
+	if err != nil {
+		apiutil.WriteJSON(wr, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(wr, http.StatusOK, "ok", map[string]string{"status": "triggered"})
 }
 
 func (w *Worker) handleListJobs(wr http.ResponseWriter, r *http.Request) {
@@ -96,6 +125,7 @@ func (w *Worker) handleRunStockResearchPDFParse(wr http.ResponseWriter, r *http.
 		ID:      id,
 		Code:    strings.TrimSpace(r.URL.Query().Get("code")),
 		Company: strings.TrimSpace(r.URL.Query().Get("company")),
+		Source:  strings.TrimSpace(r.URL.Query().Get("source")),
 		Start:   strings.TrimSpace(r.URL.Query().Get("start")),
 		End:     strings.TrimSpace(r.URL.Query().Get("end")),
 	}

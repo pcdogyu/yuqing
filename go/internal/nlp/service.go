@@ -36,6 +36,7 @@ func (s *Service) Router() http.Handler {
 	r.Post("/api/v1/nlp/summarize", s.handleSummarize)
 	r.Post("/api/v1/nlp/title", s.handleTitle)
 	r.Post("/api/v1/nlp/keywords", s.handleKeywords)
+	r.Post("/api/v1/nlp/stock-score", s.handleStockScore)
 	r.Post("/api/v1/nlp/ocr", s.handleOCR)
 	r.Post("/api/v1/nlp/image", s.handleImageClassify)
 	r.Post("/api/v1/nlp/report-preview", s.handleReportPreview)
@@ -69,6 +70,21 @@ func (s *Service) handleKeywords(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	apiutil.WriteJSON(w, http.StatusOK, "ok", model.NLPResponse{Keywords: extractKeywords(req.Text)})
+}
+
+func (s *Service) handleStockScore(w http.ResponseWriter, r *http.Request) {
+	var req model.NLPStockScoreRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid body", nil)
+		return
+	}
+	text := strings.TrimSpace(req.Text)
+	if text == "" {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "text required", nil)
+		return
+	}
+	result := scoreStockResearchText(req, text)
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
 }
 
 func (s *Service) handleOCR(w http.ResponseWriter, r *http.Request) {
@@ -145,6 +161,14 @@ func (s *Service) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 			Method:      http.MethodPost,
 			Path:        "/api/v1/nlp/keywords",
 			Description: "提取关键词。",
+			AuthMode:    "direct service call",
+			Enabled:     true,
+		},
+		{
+			Name:        "stock-score",
+			Method:      http.MethodPost,
+			Path:        "/api/v1/nlp/stock-score",
+			Description: "根据投资者关系活动记录文本给股票生成 0-100 规则评分、评级和理由。",
 			AuthMode:    "direct service call",
 			Enabled:     true,
 		},
@@ -345,6 +369,71 @@ func writeNLPJSON(w http.ResponseWriter, code int, msg string, results any) {
 		"msg":     msg,
 		"results": results,
 	})
+}
+
+func scoreStockResearchText(req model.NLPStockScoreRequest, text string) model.NLPStockScoreResponse {
+	joined := strings.ToLower(strings.Join([]string{req.Title, req.Name, text}, "\n"))
+	score := 50.0
+	reasons := make([]string, 0)
+	positive := map[string]float64{
+		"增长": 6, "提升": 4, "订单": 5, "中标": 5, "产能": 3, "扩产": 4, "客户": 3,
+		"ai": 5, "人工智能": 5, "算力": 5, "低空": 4, "半导体": 4, "国产替代": 4,
+		"回购": 4, "分红": 4, "机构调研": 3, "投资者关系": 2, "海外": 3, "盈利": 5,
+	}
+	negative := map[string]float64{
+		"下滑": 6, "下降": 5, "亏损": 8, "风险": 4, "不确定": 4, "减值": 7, "诉讼": 6,
+		"处罚": 8, "退市": 12, "产能利用率不足": 6, "需求不足": 5, "竞争加剧": 4,
+	}
+	for term, weight := range positive {
+		if strings.Contains(joined, term) {
+			score += weight
+			reasons = append(reasons, "命中积极信号："+term)
+		}
+	}
+	for term, weight := range negative {
+		if strings.Contains(joined, term) {
+			score -= weight
+			reasons = append(reasons, "命中风险信号："+term)
+		}
+	}
+	if strings.Count(joined, "？")+strings.Count(joined, "?") >= 8 {
+		score += 3
+		reasons = append(reasons, "问答信息密度较高")
+	}
+	if len([]rune(text)) >= 1800 {
+		score += 3
+		reasons = append(reasons, "披露文本较充分")
+	}
+	if score < 0 {
+		score = 0
+	}
+	if score > 100 {
+		score = 100
+	}
+	rating := "中性"
+	switch {
+	case score >= 75:
+		rating = "积极"
+	case score >= 60:
+		rating = "偏积极"
+	case score < 40:
+		rating = "偏谨慎"
+	}
+	if len(reasons) == 0 {
+		reasons = append(reasons, "未命中显著积极或风险信号")
+	}
+	if len(reasons) > 5 {
+		reasons = reasons[:5]
+	}
+	return model.NLPStockScoreResponse{
+		Code:     strings.TrimSpace(req.Code),
+		Name:     strings.TrimSpace(req.Name),
+		Score:    float64(int(score*100+0.5)) / 100,
+		Rating:   rating,
+		Reason:   strings.Join(reasons, "；"),
+		Keywords: extractKeywords(strings.Join([]string{req.Title, text}, "\n")),
+		Status:   "ok",
+	}
 }
 
 func decodeRequest(w http.ResponseWriter, r *http.Request) (model.NLPRequest, bool) {

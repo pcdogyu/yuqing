@@ -26,6 +26,10 @@ type StockResearchSurvey struct {
 	PDFError     string    `json:"pdf_error"`
 	PDFFetchedAt string    `json:"pdf_fetched_at"`
 	PDFParsedAt  string    `json:"pdf_parsed_at"`
+	NLPScore     float64   `json:"nlp_score"`
+	NLPRating    string    `json:"nlp_rating"`
+	NLPReason    string    `json:"nlp_reason"`
+	NLPScoredAt  string    `json:"nlp_scored_at"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
@@ -64,11 +68,15 @@ type StockResearchUpsertResult struct {
 }
 
 type StockResearchPDFUpdate struct {
-	PDFURL       string `json:"pdf_url"`
-	PDFFilePath  string `json:"pdf_file_path"`
-	PDFStatus    string `json:"pdf_status"`
-	PDFText      string `json:"pdf_text"`
-	PDFError     string `json:"pdf_error"`
-	PDFFetchedAt string `json:"pdf_fetched_at"`
-	PDFParsedAt  string `json:"pdf_parsed_at"`
+	PDFURL       string  `json:"pdf_url"`
+	PDFFilePath  string  `json:"pdf_file_path"`
+	PDFStatus    string  `json:"pdf_status"`
+	PDFText      string  `json:"pdf_text"`
+	PDFError     string  `json:"pdf_error"`
+	PDFFetchedAt string  `json:"pdf_fetched_at"`
+	PDFParsedAt  string  `json:"pdf_parsed_at"`
+	NLPScore     float64 `json:"nlp_score"`
+	NLPRating    string  `json:"nlp_rating"`
+	NLPReason    string  `json:"nlp_reason"`
+	NLPScoredAt  string  `json:"nlp_scored_at"`
 }

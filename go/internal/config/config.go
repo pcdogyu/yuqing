@@ -50,6 +50,7 @@ type Config struct {
 	AStockHoldingURL           string
 	StockResearchURL           string
 	StockResearchPDFDir        string
+	InvestorRelationsURL       string
 	TuShareToken               string
 	StockResearchPublicEnabled bool
 	SinaFinanceReportURL       string
@@ -156,6 +157,7 @@ func Load() Config {
 		AStockHoldingURL:           envOrDefault("YUQING_ASTOCK_HOLDING_URL", ""),
 		StockResearchURL:           envOrDefault("YUQING_STOCK_RESEARCH_URL", ""),
 		StockResearchPDFDir:        envOrDefault("YUQING_STOCK_RESEARCH_PDF_DIR", filepath.Join("data", "stock-research-pdfs")),
+		InvestorRelationsURL:       envOrDefaultAllowEmpty("YUQING_INVESTOR_RELATIONS_URL", "https://irm.cninfo.com.cn/newircs/index/search"),
 		TuShareToken:               envOrDefault("YUQING_TUSHARE_TOKEN", ""),
 		StockResearchPublicEnabled: envBool(true, "YUQING_STOCK_RESEARCH_PUBLIC_ENABLED"),
 		SinaFinanceReportURL:       envOrDefaultAllowEmpty("YUQING_SINA_FINANCE_REPORT_URL", "https://stock.finance.sina.com.cn/stock/go.php/vReport_List/kind/company/index.phtml"),
