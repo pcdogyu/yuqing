@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 
+	"github.com/pcdogyu/yuqing/go/internal/model"
 	"github.com/pcdogyu/yuqing/go/internal/provider"
 )
 
@@ -112,4 +113,54 @@ func TestProviderFetchUsesEastMoneyListAPI(t *testing.T) {
 	if len(items) < 2 || items[0].Title != "东方财富快讯" {
 		t.Fatalf("unexpected items: %+v", items)
 	}
+}
+
+func TestProviderFetchWithOptionsPaginatesToHistoricalWindow(t *testing.T) {
+	sortEnds := make([]string, 0)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/comm/web/getFastNewsList":
+			sortEnd := r.URL.Query().Get("sortEnd")
+			sortEnds = append(sortEnds, sortEnd)
+			switch sortEnd {
+			case "":
+				_, _ = w.Write([]byte(`{"code":"1","data":{"fastNewsList":[{"summary":"今日新闻","code":"20260618001","realSort":"300","showTime":"2026-06-18 09:10:00","title":"今日A股新闻","stockList":[],"image":[]},{"summary":"今日新闻2","code":"20260618002","realSort":"200","showTime":"2026-06-18 09:00:00","title":"今日A股新闻2","stockList":[],"image":[]}]}}`))
+			case "200":
+				_, _ = w.Write([]byte(`{"code":"1","data":{"fastNewsList":[{"summary":"历史新闻","code":"20260616001","realSort":"100","showTime":"2026-06-16 09:05:00","title":"6月16日上午A股新闻","stockList":["1.601068"],"image":[]},{"summary":"历史新闻2","code":"20260616002","realSort":"050","showTime":"2026-06-16 07:59:00","title":"6月16日早间新闻","stockList":[],"image":[]}]}}`))
+			default:
+				_, _ = w.Write([]byte(`{"code":"1","data":{"fastNewsList":[]}}`))
+			}
+		case "/search/jsonp":
+			_, _ = w.Write([]byte(`yuqing({"result":{"cmsArticleWebOld":[]}})`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	prov := NewProvider(resty.New().SetRetryCount(0), server.URL+"/comm/web/getFastNewsList")
+	prov.searchAPIURL = server.URL + "/search/jsonp"
+	items, err := prov.FetchWithOptions(context.Background(), model.CrawlOptions{
+		Start:     "2026-06-16 08:00:00",
+		End:       "2026-06-16 09:30:59",
+		TimeField: "publish_time",
+	})
+	if err != nil {
+		t.Fatalf("FetchWithOptions error: %v", err)
+	}
+	if strings.Join(sortEnds, ",") != ",200" {
+		t.Fatalf("expected historical pagination with sortEnd, got %v", sortEnds)
+	}
+	if !containsEastMoneyTitle(items, "6月16日上午A股新闻") {
+		t.Fatalf("expected historical morning item to be fetched, got %+v", items)
+	}
+}
+
+func containsEastMoneyTitle(items []model.Item, title string) bool {
+	for _, item := range items {
+		if item.Title == title {
+			return true
+		}
+	}
+	return false
 }

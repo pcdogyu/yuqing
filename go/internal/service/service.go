@@ -78,7 +78,7 @@ func (c *Crawler) RunWithOptions(ctx context.Context, sourceType string, options
 		return model.CrawlSummary{}, err
 	}
 
-	items, fetchErr := prov.Fetch(ctx)
+	items, fetchErr := fetchProviderItems(ctx, prov, options)
 	summary := model.CrawlSummary{
 		SourceType:   sourceType,
 		FetchedCount: len(items),
@@ -142,6 +142,13 @@ func (c *Crawler) RunWithOptions(ctx context.Context, sourceType string, options
 	finishedAt := time.Now().UTC()
 	_ = c.store.RecordTaskRun(ctx, "crawl:"+sourceType, "success", "crawl completed", startedAt, &finishedAt)
 	return summary, nil
+}
+
+func fetchProviderItems(ctx context.Context, prov provider.Provider, options model.CrawlOptions) ([]model.Item, error) {
+	if windowed, ok := prov.(provider.WindowedProvider); ok && (strings.TrimSpace(options.Start) != "" || strings.TrimSpace(options.End) != "") {
+		return windowed.FetchWithOptions(ctx, options)
+	}
+	return prov.Fetch(ctx)
 }
 
 func filterCrawlItemsByOptions(items []model.Item, options model.CrawlOptions) []model.Item {

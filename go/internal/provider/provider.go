@@ -61,6 +61,11 @@ type Provider interface {
 	Fetch(context.Context) ([]model.Item, error)
 }
 
+type WindowedProvider interface {
+	Provider
+	FetchWithOptions(context.Context, model.CrawlOptions) ([]model.Item, error)
+}
+
 type Registry struct {
 	Flash              Provider
 	Headline           Provider
