@@ -829,6 +829,40 @@ func TestAStockBackfillAuctionActionUsesSelectedDate(t *testing.T) {
 	}
 }
 
+func TestAStockBackfillAuctionActionExplainsHistoryUnavailable(t *testing.T) {
+	scheduler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/scheduler/a-stock/auction/backfill" {
+			t.Fatalf("unexpected scheduler request: %s %s", r.Method, r.URL.String())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"message": "a-stock auction backfill skipped all dates without usable data: 2026-06-17: AKShare auction adapter only serves the latest trading day (2026-06-18) without a usable local cache for the requested date.",
+		})
+	}))
+	defer scheduler.Close()
+
+	srv := NewServer(config.Config{SchedulerURL: scheduler.URL, ServiceToken: "secret-token"})
+	form := url.Values{"date": {"2026-06-17"}, "period": {"afternoon"}, "action": {"backfill_auction"}}
+	req := httptest.NewRequest(http.MethodPost, "/a-stock", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d", rr.Code)
+	}
+	loc, _ := url.QueryUnescape(rr.Header().Get("Location"))
+	for _, want := range []string{"date=2026-06-17", "period=afternoon", "集合竞价无可补录数据", "历史集合竞价金额保持 --"} {
+		if !strings.Contains(loc, want) {
+			t.Fatalf("expected history unavailable message %q, got %q", want, loc)
+		}
+	}
+	if strings.Contains(loc, "集合竞价补录失败") {
+		t.Fatalf("expected history unavailable message not to be marked as failure, got %q", loc)
+	}
+}
+
 func TestAStockBackfillWindowActionPassesMorningWindow(t *testing.T) {
 	var mu sync.Mutex
 	seen := map[string]bool{}

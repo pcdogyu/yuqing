@@ -444,6 +444,9 @@ func (s *Server) triggerAStockAuctionBackfillDate(date string) string {
 		if detail == "" {
 			detail = resp.Status()
 		}
+		if isAStockAuctionHistoryUnavailableMessage(detail) {
+			return fmt.Sprintf("%s 集合竞价无可补录数据：AKShare 适配服务没有该交易日缓存，历史集合竞价金额保持 --；推荐股票仍按已入库新闻和行情生成。需要显示真实金额时，请导入该日 09:30 抓取缓存或业务库记录。", date)
+		}
 		return "集合竞价补录失败：" + detail
 	}
 	result := decodeSchedulerAuctionBackfillResult(resp.Body())
@@ -454,6 +457,17 @@ func (s *Server) triggerAStockAuctionBackfillDate(date string) string {
 		return fmt.Sprintf("%s 集合竞价未写入：跳过 %d 天，失败 %d 天。%s", date, result.Skipped, result.Failed, strings.Join(result.Errors, "；"))
 	}
 	return fmt.Sprintf("%s 集合竞价补录任务已触发，请稍后刷新后重新生成推荐。", date)
+}
+
+func isAStockAuctionHistoryUnavailableMessage(message string) bool {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return false
+	}
+	return (strings.Contains(message, "skipped all dates without usable data") ||
+		strings.Contains(message, "only serves the latest trading day") ||
+		strings.Contains(message, "only serves the current trading day")) &&
+		strings.Contains(message, "usable local cache")
 }
 
 func decodeSchedulerAuctionBackfillResult(body []byte) struct {
