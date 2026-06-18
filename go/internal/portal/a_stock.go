@@ -179,6 +179,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-overview-table .astock-muted{display:block;margin-bottom:8px}
 		.astock-overview-table .astock-overview-sub-label{margin-top:16px}
 		.astock-overview-table strong{display:block;font-size:24px;line-height:1.25}
+		.astock-filter-toggle{display:inline-flex;align-items:center;margin-top:8px;padding:6px 10px;border:1px solid #d6ccbb;border-radius:8px;color:#214e34;text-decoration:none;background:#fff;font-size:13px;font-weight:600}
 		.astock-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
 		.astock-actions form{margin:0}
 		.astock-actions button{margin:0}
@@ -203,6 +204,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-history-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:0 0 18px}
 		.astock-history-actions form{margin:0}
 		.astock-history-actions button{margin:0;min-height:38px;padding:8px 12px}
+		.astock-history-actions .astock-filter-toggle{min-height:38px;box-sizing:border-box;background:#214e34;color:#fff;border-color:#214e34;padding:8px 12px}
 		.astock-pagination{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:14px}
 		.astock-up{color:#b3261e;font-weight:700}
 		.astock-down{color:#1b7f3a;font-weight:700}
@@ -367,12 +369,40 @@ func writeAStockOverviewPeriodCells(b *strings.Builder, ctx aStockContext) {
 	writeAStockOverviewCell(b, "财经新闻数", fmt.Sprintf("%d", len(ctx.Articles)), "")
 	writeAStockOverviewCell(b, "候选热点数", fmt.Sprintf("%d", len(ctx.Hotspots)), "")
 	writeAStockOverviewCell(b, "推荐股票数", fmt.Sprintf("%d", len(ctx.Recommendations)), "")
+	writeAStockOverviewFilterCell(b, ctx)
+	writeAStockOverviewCell(b, "回测状态", aStockOverviewBacktestStatus(ctx), "")
+}
+
+func writeAStockOverviewFilterCell(b *strings.Builder, ctx aStockContext) {
 	filterStatus := "已启用"
 	if ctx.IgnoreRecent {
 		filterStatus = "已关闭"
 	}
-	writeAStockOverviewCell(b, "5日内过滤", filterStatus, "")
-	writeAStockOverviewCell(b, "回测状态", ctx.BacktestStatus, "")
+	b.WriteString(`<td><span class="astock-muted">5日内过滤</span><strong>`)
+	b.WriteString(html.EscapeString(filterStatus))
+	b.WriteString(`</strong><a class="astock-filter-toggle" data-preserve-scroll="1" href="`)
+	b.WriteString(html.EscapeString(aStockFilterToggleHref(ctx.Date, ctx.Period, ctx.NewsPage, ctx.IgnoreRecent)))
+	b.WriteString(`">`)
+	b.WriteString(html.EscapeString(aStockFilterToggleLabel(ctx.IgnoreRecent)))
+	b.WriteString(`</a></td>`)
+}
+
+func aStockOverviewBacktestStatus(ctx aStockContext) string {
+	status := strings.TrimSpace(ctx.BacktestStatus)
+	if status == "" {
+		status = "--"
+	}
+	reasons := make([]string, 0, 2)
+	if ctx.RecentFiltered > 0 {
+		reasons = append(reasons, fmt.Sprintf("5日内重复过滤股票 %d", ctx.RecentFiltered))
+	}
+	if ctx.SameDayMorningFiltered > 0 {
+		reasons = append(reasons, fmt.Sprintf("过滤上午已推荐股票 %d", ctx.SameDayMorningFiltered))
+	}
+	if len(reasons) > 0 {
+		status += "，" + strings.Join(reasons, "，")
+	}
+	return status
 }
 
 func writeAStockOverviewCell(b *strings.Builder, label string, value string, attrs string) {
@@ -614,13 +644,17 @@ func renderAStockRecommendationHistoryActions(b *strings.Builder, strategyDate s
 		recomputeAction = "generate_morning_stock"
 	}
 	b.WriteString(`<div class="astock-history-actions">`)
+	b.WriteString(`<a class="astock-filter-toggle" data-preserve-scroll="1" href="`)
+	b.WriteString(html.EscapeString(aStockFilterToggleHref(strategyDate, normalizedPeriod, 1, ignoreRecent)))
+	b.WriteString(`">`)
+	b.WriteString(html.EscapeString(aStockFilterToggleLabel(ignoreRecent)))
+	b.WriteString(`</a>`)
 	for _, action := range []struct {
 		Name  string
 		Label string
 	}{
 		{Name: "backfill_window_news", Label: "补抓并重新生成当前窗口"},
 		{Name: recomputeAction, Label: "重新生成当前推荐"},
-		{Name: "generate_ignore_recent_stock", Label: "忽略5日内重复过滤重新生成"},
 		{Name: "backfill_auction", Label: "补录集合竞价"},
 		{Name: "refresh_backtest", Label: "刷新当前回测"},
 	} {
@@ -728,7 +762,7 @@ func aStockRecommendationEmptyReason(ctx aStockContext) string {
 		return fmt.Sprintf("暂无推荐股票：%s %s 有新闻和热点，也有 %d 条集合竞价候选，但新闻没有明确匹配到股票名称或代码。", ctx.PeriodLabel, ctx.WindowLabel, ctx.MarketCandidateCount)
 	}
 	if ctx.RecentFiltered > 0 {
-		return fmt.Sprintf("暂无推荐股票：%s %s 已生成候选，但5日内重复推荐过滤 %d 只。可点击“忽略5日内重复过滤重新生成”。", ctx.PeriodLabel, ctx.WindowLabel, ctx.RecentFiltered)
+		return fmt.Sprintf("暂无推荐股票：%s %s 已生成候选，但5日内重复推荐过滤 %d 只。可关闭5日过滤后重新生成。", ctx.PeriodLabel, ctx.WindowLabel, ctx.RecentFiltered)
 	}
 	if ctx.SameDayMorningFiltered > 0 {
 		return fmt.Sprintf("暂无推荐股票：%s %s 已生成候选，但过滤上午已推荐股票 %d 只。", ctx.PeriodLabel, ctx.WindowLabel, ctx.SameDayMorningFiltered)
@@ -2513,6 +2547,17 @@ func aStockPageHref(strategyDate string, period string, newsPage int, ignoreRece
 		href += "&ignore_recent=1"
 	}
 	return href
+}
+
+func aStockFilterToggleHref(strategyDate string, period string, newsPage int, ignoreRecent bool) string {
+	return aStockPageHref(strategyDate, period, newsPage, !ignoreRecent)
+}
+
+func aStockFilterToggleLabel(ignoreRecent bool) string {
+	if ignoreRecent {
+		return "启用5日过滤"
+	}
+	return "关闭5日过滤"
 }
 
 func aStockPeriods() []aStockPeriod {
