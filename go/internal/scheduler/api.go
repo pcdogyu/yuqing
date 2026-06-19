@@ -26,6 +26,7 @@ func (w *Worker) Router() http.Handler {
 	r.Post("/api/v1/scheduler/investor-relations/backfill", w.handleRunInvestorRelationsBackfill)
 	r.Post("/api/v1/scheduler/a-stock/auction/latest", w.handleRunAStockAuctionLatest)
 	r.Post("/api/v1/scheduler/a-stock/auction/backfill", w.handleRunAStockAuctionBackfill)
+	r.Get("/api/v1/scheduler/a-stock/trading-day", w.handleGetAStockTradingDay)
 	r.Post("/api/v1/scheduler/a-stock/holdings/backfill", w.handleRunAStockHoldingsBackfill)
 	return r
 }
@@ -186,6 +187,15 @@ func (w *Worker) handleRunAStockAuctionLatest(wr http.ResponseWriter, r *http.Re
 	startedAt := time.Now().UTC()
 	go w.runAStockAuctionLatestTask(context.Background(), startedAt)
 	apiutil.WriteJSON(wr, http.StatusOK, "ok", map[string]any{"status": "triggered"})
+}
+
+func (w *Worker) handleGetAStockTradingDay(wr http.ResponseWriter, r *http.Request) {
+	status, err := w.loadAStockTradingDayStatus(r.Context(), strings.TrimSpace(r.URL.Query().Get("date")))
+	if err != nil {
+		apiutil.WriteJSON(wr, http.StatusServiceUnavailable, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(wr, http.StatusOK, "ok", status)
 }
 
 func (w *Worker) runAStockAuctionLatestTask(ctx context.Context, startedAt time.Time) {

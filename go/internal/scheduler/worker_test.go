@@ -304,6 +304,20 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 
 func TestRunAStockRecommendationCrawlsSourcesAndQueriesWindow(t *testing.T) {
 	var sources []string
+	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/a-stock/trading-day" || r.URL.Query().Get("date") != "2026-06-16" {
+			t.Fatalf("unexpected trading-day request: %s", r.URL.String())
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"date":           "2026-06-16",
+			"is_trading_day": true,
+			"source":         "test",
+			"reason":         "trading_day",
+			"message":        "open",
+		})
+	}))
+	defer akshare.Close()
+
 	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/admin/tasks/crawl" {
 			t.Fatalf("unexpected crawler request: %s %s", r.Method, r.URL.String())
@@ -328,6 +342,7 @@ func TestRunAStockRecommendationCrawlsSourcesAndQueriesWindow(t *testing.T) {
 	defer content.Close()
 
 	worker := NewWorker(config.Config{
+		AStockAuctionURL:      akshare.URL,
 		CrawlerURL:            crawler.URL,
 		ContentURL:            content.URL,
 		HTTPTimeout:           time.Second,
@@ -341,6 +356,147 @@ func TestRunAStockRecommendationCrawlsSourcesAndQueriesWindow(t *testing.T) {
 	sort.Strings(sources)
 	if strings.Join(sources, ",") != "cls_telegraph,eastmoney_kuaixun,flash,headline,jin10_full,sina_finance_7x24,wallstreetcn_a_stock" {
 		t.Fatalf("expected all A股 sources to be crawled, got %v", sources)
+	}
+}
+
+func TestRunAStockRecommendationSkipsNonTradingDay(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "scheduler-skip.db")
+	store, err := sqlitestore.New(dbPath)
+	if err != nil {
+		t.Fatalf("New store error: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/a-stock/trading-day" || r.URL.Query().Get("date") != "2026-06-19" {
+			t.Fatalf("unexpected trading-day request: %s", r.URL.String())
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"date":               "2026-06-19",
+			"is_trading_day":     false,
+			"latest_trading_day": "2026-06-18",
+			"next_trading_day":   "2026-06-22",
+			"source":             "test",
+			"reason":             "market_closed",
+			"message":            "A-share market is closed; stock recommendations are disabled.",
+		})
+	}))
+	defer akshare.Close()
+
+	var crawlerCalls int
+	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		crawlerCalls++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer crawler.Close()
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("content should not be called on non-trading day: %s", r.URL.String())
+	}))
+	defer content.Close()
+
+	worker := NewWorker(config.Config{
+		DatabasePath:          dbPath,
+		AStockAuctionURL:      akshare.URL,
+		CrawlerURL:            crawler.URL,
+		ContentURL:            content.URL,
+		HTTPTimeout:           time.Second,
+		SchedulerCrawlTimeout: time.Second,
+		ServiceToken:          "secret-token",
+	})
+	defer func() { _ = worker.Close() }()
+
+	job := jobDefinition{
+		Name:    "a-stock-morning-recommendation",
+		Enabled: true,
+		Run: func(ctx context.Context) error {
+			return worker.runAStockRecommendationForDate(ctx, "2026-06-19", "morning")
+		},
+	}
+	if err := worker.runJob(context.Background(), job); err != nil {
+		t.Fatalf("expected skipped job not to return error, got %v", err)
+	}
+	if crawlerCalls != 0 {
+		t.Fatalf("expected no crawler calls on non-trading day, got %d", crawlerCalls)
+	}
+	runs, err := store.ListTaskRuns(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("ListTaskRuns error: %v", err)
+	}
+	if len(runs) != 1 || runs[0].Status != "skipped" || !strings.Contains(runs[0].Message, "2026-06-19") {
+		t.Fatalf("expected skipped task run, got %+v", runs)
+	}
+}
+
+func TestRunAStockRecommendationFailsClosedWhenTradingCalendarUnavailable(t *testing.T) {
+	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/a-stock/trading-day" {
+			t.Fatalf("unexpected trading-day request: %s", r.URL.String())
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]any{"message": "calendar unavailable"})
+	}))
+	defer akshare.Close()
+
+	var crawlerCalls int
+	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		crawlerCalls++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer crawler.Close()
+
+	worker := NewWorker(config.Config{
+		AStockAuctionURL:      akshare.URL,
+		CrawlerURL:            crawler.URL,
+		ContentURL:            "http://127.0.0.1:1",
+		HTTPTimeout:           time.Second,
+		SchedulerCrawlTimeout: time.Second,
+		ServiceToken:          "secret-token",
+	})
+	err := worker.runAStockRecommendationForDate(context.Background(), "2026-06-19", "morning")
+	if err == nil || !strings.Contains(err.Error(), "trading calendar unavailable") {
+		t.Fatalf("expected fail-closed calendar error, got %v", err)
+	}
+	if crawlerCalls != 0 {
+		t.Fatalf("expected no crawler calls when calendar is unavailable, got %d", crawlerCalls)
+	}
+}
+
+func TestSchedulerAStockTradingDayProxy(t *testing.T) {
+	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/a-stock/trading-day" || r.URL.Query().Get("date") != "2026-06-19" {
+			t.Fatalf("unexpected trading-day request: %s", r.URL.String())
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"date":               "2026-06-19",
+			"is_trading_day":     false,
+			"latest_trading_day": "2026-06-18",
+			"next_trading_day":   "2026-06-22",
+			"source":             "test",
+			"reason":             "market_closed",
+			"message":            "closed",
+		})
+	}))
+	defer akshare.Close()
+
+	worker := NewWorker(config.Config{
+		AStockAuctionURL:      akshare.URL,
+		HTTPTimeout:           time.Second,
+		SchedulerCrawlTimeout: time.Second,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/scheduler/a-stock/trading-day?date=2026-06-19", nil)
+	rr := httptest.NewRecorder()
+	worker.Router().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected trading-day proxy 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	var envelope struct {
+		Data aStockTradingDayStatus `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal trading-day proxy: %v", err)
+	}
+	if envelope.Data.Date != "2026-06-19" || envelope.Data.IsTradingDay {
+		t.Fatalf("unexpected trading-day proxy payload: %+v", envelope.Data)
 	}
 }
 

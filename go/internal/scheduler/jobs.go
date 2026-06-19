@@ -523,8 +523,15 @@ func (w *Worker) runJob(ctx context.Context, job jobDefinition) error {
 	status := "success"
 	message := "scheduler job completed"
 	if err != nil {
-		status = "failed"
-		message = err.Error()
+		var skipped jobSkippedError
+		if errors.As(err, &skipped) {
+			status = "skipped"
+			message = skipped.Error()
+			err = nil
+		} else {
+			status = "failed"
+			message = err.Error()
+		}
 	}
 	if recordErr := w.recordTaskRun(ctx, job.Name, status, message, startedAt, &finishedAt); recordErr != nil {
 		log.Warn().Err(recordErr).Str("task", job.Name).Msg("record scheduler task run failed")

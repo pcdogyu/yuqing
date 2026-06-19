@@ -1380,6 +1380,40 @@ func setAStockNowForTest(t *testing.T, now time.Time) {
 	})
 }
 
+func newAStockTradingDayServer(t *testing.T, isTradingDay bool) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/scheduler/a-stock/trading-day" {
+			t.Fatalf("unexpected trading-day path: %s", r.URL.String())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		date := r.URL.Query().Get("date")
+		if date == "" {
+			date = "2026-06-16"
+		}
+		reason := "trading_day"
+		message := "open"
+		if !isTradingDay {
+			reason = "market_closed"
+			message = "该日 A 股休市，不生成股票推荐。"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    200,
+			"message": "ok",
+			"data": map[string]any{
+				"date":                 date,
+				"is_trading_day":       isTradingDay,
+				"latest_trading_day":   "2026-06-18",
+				"previous_trading_day": "2026-06-18",
+				"next_trading_day":     "2026-06-22",
+				"source":               "test",
+				"reason":               reason,
+				"message":              message,
+			},
+		})
+	}))
+}
+
 func setAStockEastmoneyKlineURLForTest(t *testing.T, rawURL string) {
 	t.Helper()
 	previous := aStockEastmoneyKlineURL
@@ -1559,7 +1593,10 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 	}))
 	defer content.Close()
 
-	srv := NewServer(config.Config{ContentURL: content.URL})
+	scheduler := newAStockTradingDayServer(t, true)
+	defer scheduler.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL, SchedulerURL: scheduler.URL})
 	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-16", nil)
 	rr := httptest.NewRecorder()
 	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
@@ -1594,6 +1631,74 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 	}
 	if !strings.Contains(body, `class="astock-up"`) || !strings.Contains(body, `class="astock-down"`) {
 		t.Fatalf("expected A股 page to color上涨/下跌 percentages, got %s", body)
+	}
+}
+
+func TestAStockPageBlocksRecommendationsOnNonTradingDay(t *testing.T) {
+	scheduler := newAStockTradingDayServer(t, false)
+	defer scheduler.Close()
+
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/v1/a-stock/auction" {
+			t.Fatalf("auction candidates should not be loaded on non-trading day")
+		}
+		if r.URL.Path != "/api/v1/articles" {
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    200,
+			"message": "ok",
+			"data": model.ItemListResult{
+				Items: []model.Item{{
+					ID:         700,
+					SourceType: "flash",
+					Title:      "AI infrastructure policy update",
+					Summary:    "AI industry chain activity",
+					TagFlags:   "0.002230",
+					CapturedAt: time.Date(2026, 6, 19, 1, 5, 0, 0, time.UTC),
+				}},
+				Page: 1, PageSize: 200, Total: 1,
+			},
+		})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL, SchedulerURL: scheduler.URL})
+	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-19", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "该日 A 股休市，不生成股票推荐") {
+		t.Fatalf("expected non-trading day message, got %s", body)
+	}
+	if strings.Contains(body, "002230") {
+		t.Fatalf("expected no stock recommendation code on non-trading day, got %s", body)
+	}
+}
+
+func TestAStockRecommendationActionBlockedOnNonTradingDay(t *testing.T) {
+	scheduler := newAStockTradingDayServer(t, false)
+	defer scheduler.Close()
+	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("crawler should not be called on non-trading day")
+	}))
+	defer crawler.Close()
+
+	srv := NewServer(config.Config{SchedulerURL: scheduler.URL, CrawlerURL: crawler.URL})
+	req := httptest.NewRequest(http.MethodPost, "/a-stock", strings.NewReader("date=2026-06-19&period=morning&action=backfill_window_news"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d", rr.Code)
+	}
+	loc, _ := url.QueryUnescape(rr.Header().Get("Location"))
+	if !strings.Contains(loc, "该日 A 股休市，不生成股票推荐") {
+		t.Fatalf("expected non-trading day redirect message, got %q", loc)
 	}
 }
 
@@ -1772,7 +1877,10 @@ func TestAStockContextCanIgnoreRecentRecommendationFilter(t *testing.T) {
 	}))
 	defer content.Close()
 
-	srv := NewServer(config.Config{ContentURL: content.URL})
+	scheduler := newAStockTradingDayServer(t, true)
+	defer scheduler.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL, SchedulerURL: scheduler.URL})
 	filtered := srv.loadAStockContext("2026-06-16", "morning", 1, false)
 	if filtered.RecentFiltered == 0 || len(filtered.Recommendations) != 0 {
 		t.Fatalf("expected recent filter to remove recommendations, got filtered=%d recommendations=%+v", filtered.RecentFiltered, filtered.Recommendations)
@@ -2165,7 +2273,10 @@ func TestAStockContextFallsBackToLatestAuctionDictionary(t *testing.T) {
 	}))
 	defer content.Close()
 
-	srv := NewServer(config.Config{ContentURL: content.URL})
+	scheduler := newAStockTradingDayServer(t, true)
+	defer scheduler.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL, SchedulerURL: scheduler.URL})
 	ctx := srv.loadAStockContext("2026-06-17", "morning", 1, true)
 
 	if len(ctx.Recommendations) != 1 {

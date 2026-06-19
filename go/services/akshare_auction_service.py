@@ -148,6 +148,58 @@ def latest_trading_day(ak: Any, today: str) -> str:
     return latest or today
 
 
+def trading_day_calendar(ak: Any) -> list[str]:
+    frame = ak.tool_trade_date_hist_sina()
+    dates: list[str] = []
+    try:
+        iterator = frame.iterrows()
+    except Exception:
+        return dates
+    for _, row in iterator:
+        value = first_existing(row, ["trade_date", "交易日", "date", "日期"])
+        parsed = parse_trade_date(value)
+        if parsed:
+            dates.append(parsed)
+    return sorted(set(dates))
+
+
+def trading_day_status(ak: Any, requested_date: str) -> dict[str, Any]:
+    date = normalize_date(requested_date)
+    dates = trading_day_calendar(ak)
+    if not dates:
+        return {
+            "_http_status": 503,
+            "date": date,
+            "is_trading_day": False,
+            "source": "akshare.tool_trade_date_hist_sina",
+            "reason": "calendar_unavailable",
+            "message": "A-share trading calendar is unavailable.",
+        }
+    previous = ""
+    next_date = ""
+    latest = ""
+    is_trading_day = date in set(dates)
+    for item in dates:
+        if item <= date:
+            latest = item
+        if item < date:
+            previous = item
+        if item > date and not next_date:
+            next_date = item
+    reason = "trading_day" if is_trading_day else "market_closed"
+    message = "A-share market is open." if is_trading_day else "A-share market is closed; stock recommendations are disabled."
+    return {
+        "date": date,
+        "is_trading_day": is_trading_day,
+        "latest_trading_day": latest,
+        "previous_trading_day": previous,
+        "next_trading_day": next_date,
+        "source": "akshare.tool_trade_date_hist_sina",
+        "reason": reason,
+        "message": message,
+    }
+
+
 def finite_float(value: Any) -> float:
     try:
         number = float(value)
@@ -595,6 +647,10 @@ class AuctionService:
         except Exception as exc:
             return {"status": "degraded", "akshare": "missing", "error": str(exc)}
 
+    def fetch_trading_day(self, query: dict[str, list[str]]) -> dict[str, Any]:
+        ak = load_akshare()
+        return trading_day_status(ak, first_query_value(query, "date") or local_today())
+
     def fetch(self, query: dict[str, list[str]]) -> dict[str, Any]:
         requested_date = first_query_value(query, "date")
         trade_date = normalize_date(requested_date)
@@ -764,6 +820,14 @@ class RequestHandler(BaseHTTPRequestHandler):
                     payload.pop("_http_status", None)
                 self.write_json(status, payload)
                 return
+            if parsed.path == "/api/a-stock/trading-day":
+                payload = self.service.fetch_trading_day(query)
+                status = int(payload.get("_http_status", 200))
+                if "_http_status" in payload:
+                    payload = dict(payload)
+                    payload.pop("_http_status", None)
+                self.write_json(status, payload)
+                return
             if parsed.path == "/api/stock-research":
                 payload = self.service.fetch_stock_research(query)
                 status = int(payload.get("_http_status", 200))
@@ -845,6 +909,17 @@ def run_self_test() -> None:
             return FakeFrame()
 
     assert latest_trading_day(FakeAK(), "2026-06-17") == "2026-06-15"
+    assert trading_day_calendar(FakeAK()) == ["2026-06-12", "2026-06-15", "2026-06-18"]
+    trading = trading_day_status(FakeAK(), "2026-06-15")
+    assert trading["date"] == "2026-06-15"
+    assert trading["is_trading_day"] is True
+    assert trading["previous_trading_day"] == "2026-06-12"
+    assert trading["next_trading_day"] == "2026-06-18"
+    closed = trading_day_status(FakeAK(), "2026-06-17")
+    assert closed["is_trading_day"] is False
+    assert closed["latest_trading_day"] == "2026-06-15"
+    assert closed["previous_trading_day"] == "2026-06-15"
+    assert closed["next_trading_day"] == "2026-06-18"
     report = research_report_item(
         {
             "股票代码": "2230",

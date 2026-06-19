@@ -42,6 +42,9 @@ type aStockContext struct {
 	GeneratedRecommendationCount int
 	AuctionAmountLabel           string
 	SameDayMorningFiltered       int
+	TradingDayBlocked            bool
+	TradingDayMessage            string
+	TradingDayReason             string
 }
 
 type aStockHotspot struct {
@@ -116,6 +119,17 @@ type aStockMarketCandidate struct {
 	Evidence      int
 	Keywords      []string
 	Fallback      bool
+}
+
+type aStockTradingDayStatus struct {
+	Date               string `json:"date"`
+	IsTradingDay       bool   `json:"is_trading_day"`
+	LatestTradingDay   string `json:"latest_trading_day"`
+	PreviousTradingDay string `json:"previous_trading_day"`
+	NextTradingDay     string `json:"next_trading_day"`
+	Source             string `json:"source"`
+	Reason             string `json:"reason"`
+	Message            string `json:"message"`
 }
 
 type aStockPeriod struct {
@@ -310,7 +324,16 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request) 
 	if normalizeAStockBool(r.FormValue("ignore_recent")) {
 		query.Set("ignore_recent", "1")
 	}
-	switch strings.TrimSpace(r.FormValue("action")) {
+	action := strings.TrimSpace(r.FormValue("action"))
+	if aStockActionRequiresTradingDay(action) {
+		date := normalizeAStockStrategyDate(r.FormValue("date"))
+		if blocked, message := s.aStockRecommendationBlockedMessage(date); blocked {
+			query.Set("msg", message)
+			http.Redirect(w, r, "/a-stock?"+query.Encode(), http.StatusSeeOther)
+			return
+		}
+	}
+	switch action {
 	case "crawl":
 		query.Set("msg", s.triggerAStockCrawl())
 	case "backfill_window_news":
@@ -732,6 +755,14 @@ func (s *Server) loadAStockContext(strategyDate string, periodKey string, newsPa
 	ctx.NewsTotal = len(ctx.Articles)
 	ctx.PagedArticles, ctx.NewsPage, ctx.NewsTotalPages = paginateAStockNews(ctx.Articles, newsPage, aStockNewsPageSize)
 	ctx.Hotspots = buildAStockHotspots(ctx.Articles)
+	if blocked, message, reason := s.aStockRecommendationBlockedStatus(strategyDate); blocked {
+		ctx.TradingDayBlocked = true
+		ctx.TradingDayMessage = message
+		ctx.TradingDayReason = reason
+		ctx.BacktestStatus = message
+		ctx.EmptyReason = aStockRecommendationEmptyReason(ctx)
+		return ctx
+	}
 	if len(ctx.Hotspots) > 0 {
 		candidates, candidateStatus, auctionResult := s.loadAStockMarketCandidatesWithStatus(strategyDate)
 		ctx.MarketCandidateStatus = candidateStatus
@@ -758,9 +789,73 @@ func formatAStockPublishTime(value time.Time) string {
 	return value.In(aStockLocation()).Format("2006-01-02 15:04:05")
 }
 
+func aStockActionRequiresTradingDay(action string) bool {
+	switch strings.TrimSpace(action) {
+	case "backfill_window_news", "backfill_morning_stock", "generate_morning_stock", "generate_afternoon_stock", "generate_ignore_recent_stock":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Server) aStockRecommendationBlockedMessage(strategyDate string) (bool, string) {
+	blocked, message, _ := s.aStockRecommendationBlockedStatus(strategyDate)
+	return blocked, message
+}
+
+func (s *Server) aStockRecommendationBlockedStatus(strategyDate string) (bool, string, string) {
+	status, err := s.loadAStockTradingDayStatus(strategyDate)
+	if err != nil {
+		return true, "交易日历不可用，不生成股票推荐：" + err.Error(), "calendar_unavailable"
+	}
+	if status.IsTradingDay {
+		return false, "", status.Reason
+	}
+	message := strings.TrimSpace(status.Message)
+	if message == "" {
+		message = "该日 A 股休市，不生成股票推荐。"
+	}
+	return true, message, status.Reason
+}
+
+func (s *Server) loadAStockTradingDayStatus(strategyDate string) (aStockTradingDayStatus, error) {
+	if strings.TrimSpace(s.cfg.SchedulerURL) == "" {
+		return aStockTradingDayStatus{
+			Date:         normalizeAStockStrategyDate(strategyDate),
+			IsTradingDay: true,
+			Source:       "scheduler_not_configured",
+			Reason:       "calendar_check_disabled",
+			Message:      "trading calendar check disabled because scheduler URL is not configured",
+		}, nil
+	}
+	date := normalizeAStockStrategyDate(strategyDate)
+	query := "/api/v1/scheduler/a-stock/trading-day"
+	if date != "" {
+		query += "?date=" + url.QueryEscape(date)
+	}
+	var status aStockTradingDayStatus
+	if err := s.getJSON(s.cfg.SchedulerURL+query, &status); err != nil {
+		return aStockTradingDayStatus{}, err
+	}
+	if strings.TrimSpace(status.Date) == "" {
+		status.Date = date
+	}
+	if strings.TrimSpace(status.Reason) == "" && !status.IsTradingDay {
+		status.Reason = "market_closed"
+	}
+	return status, nil
+}
+
 func aStockRecommendationEmptyReason(ctx aStockContext) string {
 	if len(ctx.Recommendations) > 0 {
 		return ""
+	}
+	if ctx.TradingDayBlocked {
+		message := strings.TrimSpace(ctx.TradingDayMessage)
+		if message == "" {
+			message = "该日 A 股休市，不生成股票推荐。"
+		}
+		return "暂无推荐股票：" + message
 	}
 	if ctx.NewsTotal == 0 {
 		return fmt.Sprintf("暂无推荐股票：%s %s 没有新闻，请先抓取或补抓财经信息。", ctx.PeriodLabel, ctx.WindowLabel)

@@ -67,6 +67,25 @@ type aStockAuctionCrawlResult struct {
 	Message string `json:"message,omitempty"`
 }
 
+type aStockTradingDayStatus struct {
+	Date               string `json:"date"`
+	IsTradingDay       bool   `json:"is_trading_day"`
+	LatestTradingDay   string `json:"latest_trading_day"`
+	PreviousTradingDay string `json:"previous_trading_day"`
+	NextTradingDay     string `json:"next_trading_day"`
+	Source             string `json:"source"`
+	Reason             string `json:"reason"`
+	Message            string `json:"message"`
+}
+
+type jobSkippedError struct {
+	message string
+}
+
+func (e jobSkippedError) Error() string {
+	return e.message
+}
+
 type aStockAuctionBackfillResult struct {
 	Days      int                        `json:"days"`
 	Succeeded int                        `json:"succeeded"`
@@ -372,6 +391,17 @@ func (w *Worker) fetchExternalAStockHoldings(ctx context.Context, period string,
 }
 
 func (w *Worker) runAStockRecommendationForDate(ctx context.Context, strategyDate string, period string) error {
+	tradingDay, err := w.loadAStockTradingDayStatus(ctx, strategyDate)
+	if err != nil {
+		return fmt.Errorf("a-stock trading calendar unavailable for %s: %w", strategyDate, err)
+	}
+	if !tradingDay.IsTradingDay {
+		message := strings.TrimSpace(tradingDay.Message)
+		if message == "" {
+			message = "A-share market is closed; stock recommendations are disabled."
+		}
+		return jobSkippedError{message: fmt.Sprintf("a-stock recommendation skipped for %s: %s", tradingDay.Date, message)}
+	}
 	for _, sourceType := range aStockRecommendationSources {
 		if err := w.runCrawl(ctx, sourceType); err != nil {
 			return err
@@ -400,6 +430,56 @@ func (w *Worker) runAStockRecommendationForDate(ctx context.Context, strategyDat
 		Str("window", label).
 		Msg("a-stock recommendation window generated")
 	return nil
+}
+
+func (w *Worker) loadAStockTradingDayStatus(ctx context.Context, strategyDate string) (aStockTradingDayStatus, error) {
+	baseURL := strings.TrimRight(strings.TrimSpace(w.cfg.AStockAuctionURL), "/")
+	if baseURL == "" {
+		return aStockTradingDayStatus{}, fmt.Errorf("YUQING_ASTOCK_AUCTION_URL not configured")
+	}
+	date := strings.TrimSpace(strategyDate)
+	if date == "" {
+		date = time.Now().In(aStockLocation()).Format("2006-01-02")
+	}
+	resp, err := w.crawlClient.R().
+		SetContext(ctx).
+		SetQueryParam("date", date).
+		Get(baseURL + "/api/a-stock/trading-day")
+	if err != nil {
+		return aStockTradingDayStatus{}, err
+	}
+	if !resp.IsSuccess() {
+		message := decodeAStockAuctionEndpointMessage(resp.Body(), resp.String())
+		if message == "" {
+			message = resp.Status()
+		}
+		return aStockTradingDayStatus{}, fmt.Errorf("akshare trading-day endpoint failed: %s", message)
+	}
+	status, err := decodeAStockTradingDayStatus(resp.Body())
+	if err != nil {
+		return aStockTradingDayStatus{}, err
+	}
+	if strings.TrimSpace(status.Date) == "" {
+		status.Date = date
+	}
+	return status, nil
+}
+
+func decodeAStockTradingDayStatus(body []byte) (aStockTradingDayStatus, error) {
+	var status aStockTradingDayStatus
+	if err := json.Unmarshal(body, &status); err != nil {
+		return status, err
+	}
+	if status.Date != "" || status.Source != "" || status.Reason != "" {
+		return status, nil
+	}
+	var envelope struct {
+		Data aStockTradingDayStatus `json:"data"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return status, err
+	}
+	return envelope.Data, nil
 }
 
 func aStockHoldingPeriods(opts aStockHoldingCrawlOptions) []string {
