@@ -29,11 +29,14 @@ func (s *Server) handleStockResearchPage(w http.ResponseWriter, r *http.Request,
 	ctx, err := s.loadStockResearchContext(filter)
 	var b strings.Builder
 	b.WriteString(`<style>
+body[data-page='stock-research'] header,body[data-page='stock-research'] main,body[data-page='stock-research'] .site-footer{max-width:none;width:100%;box-sizing:border-box}
 body[data-page='stock-research'] main{font-size:14px;line-height:1.45}
+body[data-page='stock-research'] section{width:100%;box-sizing:border-box}
+body[data-page='stock-research'] table{width:100%;min-width:100%}
 body[data-page='stock-research'] input,body[data-page='stock-research'] select,body[data-page='stock-research'] textarea,body[data-page='stock-research'] button{font-size:14px}
 .research-muted{color:#6a6257}.research-message{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}
 .research-toolbar{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;align-items:end}
-.research-toolbar button{margin:0}.research-actions{display:flex;gap:10px;flex-wrap:wrap}.research-scroll{overflow:auto}
+.research-toolbar button{margin:0}.research-actions{display:flex;gap:10px;flex-wrap:wrap}.research-scroll{width:100%;overflow:auto}
 .research-table{min-width:1320px;width:100%;table-layout:fixed}.research-table th,.research-table td{vertical-align:top}
 .research-col-date{width:7.5%}.research-col-stock{width:8.5%}.research-col-title{width:29%}.research-col-institution{width:10%}.research-col-analyst{width:8%}.research-col-rating{width:3.5%}.research-col-target{width:5.5%}.research-col-source{width:6%}.research-col-link{width:5%}.research-col-pdf{width:7%}.research-col-status{width:10%}
 .research-table th:nth-child(1),.research-table td:nth-child(1),.research-table th:nth-child(2),.research-table td:nth-child(2),.research-table th:nth-child(8),.research-table td:nth-child(8),.research-table th:nth-child(9),.research-table td:nth-child(9){white-space:nowrap}
