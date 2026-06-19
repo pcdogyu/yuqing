@@ -233,6 +233,11 @@ func (s *Service) Routes(r chi.Router) {
 	r.Put("/api/v1/system/warning-settings/{project_id}", s.handleUpdateWarningSetting)
 	r.Get("/api/v1/system/opinion-conditions/{project_id}", s.handleGetOpinionCondition)
 	r.Put("/api/v1/system/opinion-conditions/{project_id}", s.handleUpdateOpinionCondition)
+
+	r.Get("/api/v1/android/bootstrap", s.handleAndroidBootstrap)
+	r.Get("/api/v1/android/dashboard", s.handleAndroidDashboard)
+	r.Get("/api/v1/android/modules", s.handleAndroidModules)
+	r.Post("/api/v1/android/actions/{action}", s.handleAndroidAction)
 }
 
 func (s *Service) handleHealthz(w http.ResponseWriter, r *http.Request) {

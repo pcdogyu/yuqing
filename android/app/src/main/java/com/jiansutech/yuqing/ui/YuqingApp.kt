@@ -1,0 +1,462 @@
+package com.jiansutech.yuqing.ui
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Article
+import androidx.compose.material.icons.filled.Assessment
+import androidx.compose.material.icons.filled.Business
+import androidx.compose.material.icons.filled.Dashboard
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.Logout
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.ShowChart
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import com.jiansutech.yuqing.BuildConfig
+import com.jiansutech.yuqing.data.AndroidDashboard
+import com.jiansutech.yuqing.data.AndroidModule
+import com.jiansutech.yuqing.data.ArticleItem
+import com.jiansutech.yuqing.data.Project
+import com.jiansutech.yuqing.data.Report
+import com.jiansutech.yuqing.data.SchedulerJob
+import com.jiansutech.yuqing.data.ServiceStatus
+import com.jiansutech.yuqing.data.StockHolding
+import com.jiansutech.yuqing.data.StockResearch
+
+@Composable
+fun YuqingApp(viewModel: YuqingViewModel) {
+    val state by viewModel.uiState.collectAsState()
+    YuqingTheme {
+        if (!state.session.loggedIn) {
+            LoginScreen(state, viewModel)
+        } else {
+            PortalScreen(state, viewModel)
+        }
+    }
+}
+
+@Composable
+private fun LoginScreen(state: YuqingUiState, viewModel: YuqingViewModel) {
+    var username by remember { mutableStateOf(state.session.username) }
+    var password by remember { mutableStateOf("") }
+    var authBaseUrl by remember { mutableStateOf(state.session.authBaseUrl.ifBlank { BuildConfig.DEFAULT_AUTH_BASE_URL }) }
+    var apiBaseUrl by remember { mutableStateOf(state.session.apiBaseUrl.ifBlank { BuildConfig.DEFAULT_API_BASE_URL }) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(20.dp),
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text("简速舆情", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Text("Android 原生工作台", style = MaterialTheme.typography.bodyMedium)
+        Spacer(Modifier.height(24.dp))
+        OutlinedTextField(username, { username = it }, label = { Text("账号") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(
+            password,
+            { password = it },
+            label = { Text("密码") },
+            modifier = Modifier.fillMaxWidth(),
+            visualTransformation = PasswordVisualTransformation(),
+            singleLine = true,
+        )
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(authBaseUrl, { authBaseUrl = it }, label = { Text("Auth API") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(apiBaseUrl, { apiBaseUrl = it }, label = { Text("Content/BFF API") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+        Spacer(Modifier.height(16.dp))
+        Button(
+            onClick = { viewModel.login(username, password, authBaseUrl, apiBaseUrl) },
+            enabled = !state.loading,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(if (state.loading) "登录中" else "登录")
+        }
+        StatusMessages(state)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PortalScreen(state: YuqingUiState, viewModel: YuqingViewModel) {
+    val modules = state.modules.ifEmpty { fallbackModules() }
+    val selected = modules.firstOrNull { it.key == state.selectedModuleKey } ?: modules.first()
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Column {
+                        Text(selected.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(state.session.username, style = MaterialTheme.typography.labelMedium)
+                    }
+                },
+                actions = {
+                    IconButton(onClick = viewModel::refreshAll) { Icon(Icons.Default.Refresh, contentDescription = "刷新") }
+                    IconButton(onClick = viewModel::logout) { Icon(Icons.Default.Logout, contentDescription = "退出") }
+                },
+            )
+        },
+        bottomBar = {
+            NavigationBar {
+                listOf("dashboard", "articles", "search", "a_stock", "system").forEach { key ->
+                    val module = modules.firstOrNull { it.key == key } ?: AndroidModule(key = key, title = key)
+                    NavigationBarItem(
+                        selected = selected.key == key,
+                        onClick = { viewModel.selectModule(key) },
+                        icon = { Icon(moduleIcon(key), contentDescription = module.title) },
+                        label = { Text(module.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    )
+                }
+            }
+        },
+    ) { padding ->
+        Column(Modifier.padding(padding).fillMaxSize()) {
+            StatusMessages(state)
+            ModuleStrip(modules, selected.key, viewModel)
+            if (state.loading) {
+                Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.Center) {
+                    CircularProgressIndicator()
+                }
+            }
+            ModuleContent(selected.key, state.dashboard, state, viewModel)
+        }
+    }
+    state.pendingAction?.let { pending ->
+        AlertDialog(
+            onDismissRequest = viewModel::dismissAction,
+            title = { Text("确认操作") },
+            text = { Text("将执行：${pending.title}") },
+            confirmButton = { Button(onClick = viewModel::runPendingAction) { Text("执行") } },
+            dismissButton = { TextButton(onClick = viewModel::dismissAction) { Text("取消") } },
+        )
+    }
+}
+
+@Composable
+private fun StatusMessages(state: YuqingUiState) {
+    if (state.error.isNotBlank()) {
+        Text(state.error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(vertical = 8.dp))
+    }
+    if (state.message.isNotBlank()) {
+        Text(state.message, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(vertical = 8.dp))
+    }
+}
+
+@Composable
+private fun ModuleStrip(modules: List<AndroidModule>, selectedKey: String, viewModel: YuqingViewModel) {
+    LazyRow(
+        modifier = Modifier.height(64.dp),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items(modules) { module ->
+            FilterChip(
+                selected = module.key == selectedKey,
+                onClick = { viewModel.selectModule(module.key) },
+                label = { Text(module.title, maxLines = 1) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun ModuleContent(key: String, dashboard: AndroidDashboard?, state: YuqingUiState, viewModel: YuqingViewModel) {
+    if (dashboard == null) {
+        EmptyState("暂无缓存数据，请刷新")
+        return
+    }
+    when (key) {
+        "dashboard" -> DashboardModule(dashboard)
+        "projects" -> ProjectsModule(dashboard.projects, dashboard.rules)
+        "articles" -> ArticlesModule(dashboard.articles.items)
+        "search" -> SearchModule(state, viewModel)
+        "analysis" -> AnalysisModule(dashboard)
+        "reports" -> ReportsModule(dashboard.reports, viewModel)
+        "a_stock" -> AStockModule(dashboard, viewModel)
+        "stock_research" -> StockResearchModule(dashboard.stockResearch.items, viewModel)
+        "holdings" -> HoldingsModule(dashboard.holdings.items)
+        "system" -> SystemModule(dashboard, viewModel)
+        else -> GenericModule(key, dashboard)
+    }
+}
+
+@Composable
+private fun DashboardModule(dashboard: AndroidDashboard) {
+    LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                MetricCard("文章", dashboard.overview.articleCount.toString(), Modifier.weight(1f))
+                MetricCard("项目", dashboard.overview.projectCount.toString(), Modifier.weight(1f))
+            }
+        }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                MetricCard("报告", dashboard.overview.reportCount.toString(), Modifier.weight(1f))
+                MetricCard("任务", dashboard.overview.crawlRunCount.toString(), Modifier.weight(1f))
+            }
+        }
+        item { SectionTitle("最新文章") }
+        items(dashboard.articles.items) { ArticleRow(it) }
+        item { SectionTitle("最近任务") }
+        items(dashboard.taskRuns) { SimpleRow(it.taskName, "${it.status} ${it.message}") }
+    }
+}
+
+@Composable
+private fun ProjectsModule(projects: List<Project>, rules: List<com.jiansutech.yuqing.data.MonitorRule>) {
+    LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item { SectionTitle("项目") }
+        items(projects) { SimpleRow(it.name, "${it.status} ${it.keywords}") }
+        item { SectionTitle("监测规则") }
+        items(rules) { SimpleRow(it.name, "${it.status} ${it.includeKeywords}") }
+    }
+}
+
+@Composable
+private fun ArticlesModule(items: List<ArticleItem>) {
+    LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        items(items) { ArticleRow(it) }
+    }
+}
+
+@Composable
+private fun SearchModule(state: YuqingUiState, viewModel: YuqingViewModel) {
+    LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = state.searchKeyword,
+                    onValueChange = viewModel::updateSearchKeyword,
+                    label = { Text("全文搜索") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                )
+                Spacer(Modifier.width(8.dp))
+                IconButton(onClick = viewModel::search) { Icon(Icons.Default.Search, contentDescription = "搜索") }
+            }
+        }
+        state.searchResult?.let { result ->
+            item { SectionTitle("搜索结果 ${result.total}") }
+            items(result.items) { ArticleRow(it) }
+        }
+    }
+}
+
+@Composable
+private fun AnalysisModule(dashboard: AndroidDashboard) {
+    LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item { SectionTitle("舆情概览") }
+        item { SimpleRow("系统状态", if (dashboard.operations.ready) "ready" else "needs attention") }
+        item { SimpleRow("服务数量", dashboard.operations.services.size.toString()) }
+        item { SimpleRow("调度任务", dashboard.operations.schedulerJobs.size.toString()) }
+        items(dashboard.notices) { SimpleRow(it.title, it.content) }
+    }
+}
+
+@Composable
+private fun ReportsModule(reports: List<Report>, viewModel: YuqingViewModel) {
+    LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item {
+            Button(onClick = { viewModel.requestAction("refresh_analysis", "刷新分析") }) {
+                Text("刷新分析")
+            }
+        }
+        items(reports) { SimpleRow(it.title, "${it.status} ${it.summary}") }
+    }
+}
+
+@Composable
+private fun AStockModule(dashboard: AndroidDashboard, viewModel: YuqingViewModel) {
+    val auction = dashboard.aStock.auction
+    LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { viewModel.requestAction("a_stock_auction_latest", "抓取最新集合竞价") }) { Text("抓取最新") }
+                Button(onClick = { viewModel.requestAction("a_stock_auction_backfill", "回补集合竞价", mapOf("days" to "30")) }) { Text("回补") }
+            }
+        }
+        item { SimpleRow("日期", auction.latestDate.ifBlank { auction.date }) }
+        item { SimpleRow("总金额", "%.2f".format(auction.totalAmount)) }
+        items(auction.items) { SimpleRow("${it.code} ${it.name}", "${it.auctionPrice} / ${it.auctionAmount}") }
+    }
+}
+
+@Composable
+private fun StockResearchModule(items: List<StockResearch>, viewModel: YuqingViewModel) {
+    LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { viewModel.requestAction("stock_research_backfill", "回补研报调研") }) { Text("回补") }
+                Button(onClick = { viewModel.requestAction("stock_research_pdf_parse", "解析研报 PDF") }) { Text("解析PDF") }
+            }
+        }
+        items(items) { SimpleRow("${it.code} ${it.name}", "${it.title} ${it.institution} ${it.pdfStatus}") }
+    }
+}
+
+@Composable
+private fun HoldingsModule(items: List<StockHolding>) {
+    LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        items(items) { SimpleRow("${it.stockCode} ${it.stockName}", "${it.holderName} ${it.holderType} ${it.floatRatio}%") }
+    }
+}
+
+@Composable
+private fun SystemModule(dashboard: AndroidDashboard, viewModel: YuqingViewModel) {
+    LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item { SectionTitle("服务") }
+        items(dashboard.operations.services) { ServiceRow(it, viewModel) }
+        item { SectionTitle("调度任务") }
+        items(dashboard.operations.schedulerJobs) { SchedulerJobRow(it, viewModel) }
+        item { SectionTitle("最近任务") }
+        items(dashboard.taskRuns) { SimpleRow(it.taskName, "${it.status} ${it.message}") }
+    }
+}
+
+@Composable
+private fun GenericModule(key: String, dashboard: AndroidDashboard) {
+    LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item { SectionTitle(key) }
+        item { SimpleRow("入口", "该模块已纳入原生导航，后续按现有 BFF/API 数据扩展详情页。") }
+        item { SimpleRow("当前数据", "文章 ${dashboard.overview.articleCount} / 项目 ${dashboard.overview.projectCount}") }
+    }
+}
+
+@Composable
+private fun ServiceRow(service: ServiceStatus, viewModel: YuqingViewModel) {
+    Card {
+        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(service.name, fontWeight = FontWeight.SemiBold)
+                Text(if (service.healthy) "healthy" else service.message, style = MaterialTheme.typography.bodySmall)
+            }
+            TextButton(onClick = { viewModel.requestAction("service_restart", "重启 ${service.name}", mapOf("service" to service.name)) }) {
+                Text("重启")
+            }
+        }
+    }
+}
+
+@Composable
+private fun SchedulerJobRow(job: SchedulerJob, viewModel: YuqingViewModel) {
+    Card {
+        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(job.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("${job.group} ${job.lastStatus}", style = MaterialTheme.typography.bodySmall)
+            }
+            TextButton(onClick = { viewModel.requestAction("run_scheduler_job", "运行 ${job.name}", mapOf("name" to job.name)) }) {
+                Text("运行")
+            }
+        }
+    }
+}
+
+@Composable
+private fun MetricCard(title: String, value: String, modifier: Modifier = Modifier) {
+    Card(modifier = modifier) {
+        Column(Modifier.padding(14.dp)) {
+            Text(title, style = MaterialTheme.typography.labelMedium)
+            Text(value, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun ArticleRow(item: ArticleItem) {
+    SimpleRow(item.title, listOf(item.sourceType, item.publishTimeText, item.summary).filter { it.isNotBlank() }.joinToString("  "))
+}
+
+@Composable
+private fun SimpleRow(title: String, subtitle: String) {
+    Card {
+        Column(Modifier.fillMaxWidth().padding(12.dp)) {
+            Text(title.ifBlank { "--" }, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (subtitle.isNotBlank()) {
+                Spacer(Modifier.height(4.dp))
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SectionTitle(title: String) {
+    Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+}
+
+@Composable
+private fun EmptyState(text: String) {
+    Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(text)
+    }
+}
+
+private fun fallbackModules(): List<AndroidModule> = listOf(
+    AndroidModule("dashboard", "总览", "", "dashboard", "workbench"),
+    AndroidModule("projects", "项目", "", "projects", "public_opinion"),
+    AndroidModule("articles", "文章", "", "articles", "public_opinion"),
+    AndroidModule("search", "搜索", "", "search", "public_opinion"),
+    AndroidModule("analysis", "分析", "", "analysis", "public_opinion"),
+    AndroidModule("reports", "报告", "", "reports", "public_opinion"),
+    AndroidModule("a_stock", "A股", "", "a-stock", "finance"),
+    AndroidModule("stock_research", "研报", "", "stock-research", "finance"),
+    AndroidModule("holdings", "持仓", "", "holdings", "finance"),
+    AndroidModule("system", "系统", "", "system", "admin"),
+)
+
+private fun moduleIcon(key: String): ImageVector = when (key) {
+    "dashboard" -> Icons.Default.Dashboard
+    "projects" -> Icons.Default.Business
+    "articles" -> Icons.Default.Article
+    "search" -> Icons.Default.Search
+    "analysis" -> Icons.Default.Assessment
+    "reports" -> Icons.Default.Description
+    "a_stock" -> Icons.Default.ShowChart
+    "stock_research" -> Icons.Default.ShowChart
+    "holdings" -> Icons.Default.Groups
+    else -> Icons.Default.Settings
+}

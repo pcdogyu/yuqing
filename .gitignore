@@ -22,6 +22,12 @@ go/.venv/
 go/services/__pycache__/
 go/services/**/*.pyc
 
+# Android build output and local SDK config
+android/.gradle/
+android/local.properties
+android/app/build/
+android/build/
+
 # Local Git pack/index artifacts are handled by the run script; keep them out of the tree if they surface during maintenance.
 .git/objects/pack/*.idx
 .git/objects/pack/*.pack

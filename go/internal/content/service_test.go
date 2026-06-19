@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/pcdogyu/yuqing/go/internal/apiutil"
 	"github.com/pcdogyu/yuqing/go/internal/config"
 	"github.com/pcdogyu/yuqing/go/internal/model"
 	sqlitestore "github.com/pcdogyu/yuqing/go/internal/store/sqlite"
@@ -432,6 +433,110 @@ func TestOperationsAndAlertsAPI(t *testing.T) {
 	router.ServeHTTP(alertRR, alertReq)
 	if alertRR.Code != http.StatusOK || !strings.Contains(alertRR.Body.String(), "failed_task_runs") || !strings.Contains(alertRR.Body.String(), "consecutive_task_failures") || !strings.Contains(alertRR.Body.String(), "crypto_social_no_recent_insert") {
 		t.Fatalf("expected failed task alert, got status=%d body=%s", alertRR.Code, alertRR.Body.String())
+	}
+}
+
+func TestAndroidBootstrapModulesAndDashboard(t *testing.T) {
+	ctx := context.Background()
+	store := newContentSearchTestStore(t)
+	if _, err := store.CreateProject(ctx, model.Project{Name: "mobile project", Keywords: "android", Status: "active"}); err != nil {
+		t.Fatalf("CreateProject error: %v", err)
+	}
+	if _, err := store.CreateMonitorRule(ctx, model.MonitorRule{ProjectID: 1, Name: "mobile warning", IncludeKeywords: "android", Status: "active"}); err != nil {
+		t.Fatalf("CreateMonitorRule error: %v", err)
+	}
+	if _, err := store.CreateReport(ctx, model.Report{ProjectID: 1, Title: "mobile report", Content: "content", Status: "generated"}); err != nil {
+		t.Fatalf("CreateReport error: %v", err)
+	}
+	now := time.Now().UTC()
+	if _, _, err := store.UpsertItems(ctx, []model.Item{{
+		SourceType: "headline",
+		SourceKey:  "android-1",
+		Title:      "Android article",
+		Content:    "content",
+		Summary:    "summary",
+		SourceURL:  "https://example.com/android",
+		CapturedAt: now,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}}); err != nil {
+		t.Fatalf("UpsertItems error: %v", err)
+	}
+	svc := NewService(config.Config{HTTPTimeout: time.Second}, store)
+	router := svc.Router()
+
+	bootstrapReq := httptest.NewRequest(http.MethodGet, "/api/v1/android/bootstrap", nil)
+	bootstrapReq.Header.Set("X-User-ID", "42")
+	bootstrapReq.Header.Set("X-User-Name", "admin")
+	bootstrapRR := httptest.NewRecorder()
+	router.ServeHTTP(bootstrapRR, bootstrapReq)
+	if bootstrapRR.Code != http.StatusOK {
+		t.Fatalf("expected bootstrap 200, got %d body=%s", bootstrapRR.Code, bootstrapRR.Body.String())
+	}
+	var bootstrapEnvelope struct {
+		Data androidBootstrap `json:"data"`
+	}
+	if err := json.Unmarshal(bootstrapRR.Body.Bytes(), &bootstrapEnvelope); err != nil {
+		t.Fatalf("unmarshal bootstrap: %v", err)
+	}
+	if bootstrapEnvelope.Data.PackageName != androidPackageName || bootstrapEnvelope.Data.User.ID != 42 {
+		t.Fatalf("unexpected bootstrap payload: %+v", bootstrapEnvelope.Data)
+	}
+	if len(bootstrapEnvelope.Data.Modules) < 10 || len(bootstrapEnvelope.Data.Actions) == 0 {
+		t.Fatalf("expected full portal modules and actions, got %+v", bootstrapEnvelope.Data)
+	}
+
+	dashboardReq := httptest.NewRequest(http.MethodGet, "/api/v1/android/dashboard", nil)
+	dashboardRR := httptest.NewRecorder()
+	router.ServeHTTP(dashboardRR, dashboardReq)
+	if dashboardRR.Code != http.StatusOK {
+		t.Fatalf("expected dashboard 200, got %d body=%s", dashboardRR.Code, dashboardRR.Body.String())
+	}
+	var dashboardEnvelope struct {
+		Data androidDashboard `json:"data"`
+	}
+	if err := json.Unmarshal(dashboardRR.Body.Bytes(), &dashboardEnvelope); err != nil {
+		t.Fatalf("unmarshal dashboard: %v", err)
+	}
+	if dashboardEnvelope.Data.Overview.ArticleCount != 1 || dashboardEnvelope.Data.Overview.ProjectCount != 1 || dashboardEnvelope.Data.Overview.ReportCount != 1 {
+		t.Fatalf("unexpected dashboard overview: %+v", dashboardEnvelope.Data.Overview)
+	}
+	if len(dashboardEnvelope.Data.Articles.Items) != 1 || len(dashboardEnvelope.Data.Projects) != 1 {
+		t.Fatalf("expected dashboard lists, got %+v", dashboardEnvelope.Data)
+	}
+}
+
+func TestAndroidActionProxiesSchedulerWithServiceToken(t *testing.T) {
+	store := newContentSearchTestStore(t)
+	var gotToken string
+	var gotPath string
+	var gotQuery string
+	scheduler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotToken = r.Header.Get("X-Service-Token")
+		gotPath = r.URL.Path
+		gotQuery = r.URL.RawQuery
+		apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]string{"status": "triggered"})
+	}))
+	defer scheduler.Close()
+
+	svc := NewService(config.Config{
+		ServiceToken: "secret",
+		SchedulerURL: scheduler.URL,
+		HTTPTimeout:  time.Second,
+	}, store)
+	router := svc.Router()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/android/actions/stock_research_backfill", strings.NewReader(`{"params":{"code":"002230","start":"2026-06-01","end":"2026-06-18"}}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected action 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if gotToken != "secret" || gotPath != "/api/v1/scheduler/stock-research/backfill" {
+		t.Fatalf("unexpected proxied request token=%q path=%q", gotToken, gotPath)
+	}
+	if !strings.Contains(gotQuery, "code=002230") || !strings.Contains(gotQuery, "start=2026-06-01") || !strings.Contains(gotQuery, "end=2026-06-18") {
+		t.Fatalf("unexpected proxied query: %s", gotQuery)
 	}
 }
 
