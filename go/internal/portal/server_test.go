@@ -528,12 +528,12 @@ func TestStockResearchPageLoadsFiltersAndRows(t *testing.T) {
 		t.Fatalf("expected stock research page 200, got %d body=%s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"研报调研", "科大讯飞深度研究", "中金公司", "张三", "买入", "50.12", "新浪财经", "搜狐财经", "回补近一年", "解析当前筛选研报PDF", "下载PDF", "查看文本", "已解析", "重新解析", `value="科大"`, `href="/a-stock">A股</a><a href="/stock-research">研报调研</a><a href="/investor-relations">投资者关系</a><a href="/a-stock/holdings">机构持仓</a>`, "body[data-page='stock-research'] header,body[data-page='stock-research'] main,body[data-page='stock-research'] .site-footer{max-width:none;width:100%;box-sizing:border-box}", "body[data-page='stock-research'] main{font-size:14px;line-height:1.45}", "body[data-page='stock-research'] section{width:100%;box-sizing:border-box}", ".research-scroll{width:100%;overflow:auto}", ".research-table{width:100%;min-width:0;table-layout:fixed}", ".research-col-date{width:7.5%}", ".research-col-stock{width:8.5%}", ".research-col-source{width:6%}", ".research-col-link{width:5%}", "<th>日期</th><th>股票</th><th>标题</th>"} {
+	for _, want := range []string{"研报调研", "深度研究", "中金公司", "张三", "新浪财经", "搜狐财经", "回补近一年", "解析当前筛选研报PDF", "下载PDF", "查看文本", "已解析", "重新解析", `value="科大"`, `href="/a-stock">A股</a><a href="/stock-research">研报调研</a><a href="/investor-relations">投资者关系</a><a href="/a-stock/holdings">机构持仓</a>`, "body[data-page='stock-research'] header,body[data-page='stock-research'] main,body[data-page='stock-research'] .site-footer{max-width:none;width:100%;box-sizing:border-box}", "body[data-page='stock-research'] main{font-size:14px;line-height:1.45}", "body[data-page='stock-research'] section{width:100%;box-sizing:border-box}", ".research-scroll{width:100%;overflow:auto}", ".research-table{width:100%;min-width:0;table-layout:fixed}", ".research-col-title{width:32.6%}", ".research-col-pdf{width:8.4%}", ".research-col-status{width:14%}", ".research-col-date{width:7.5%}", ".research-col-stock{width:8.5%}", ".research-col-source{width:6%}", ".research-col-link{width:5%}", "<th>日期</th><th>股票</th><th>标题</th>"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected stock research page to contain %q, got %s", want, body)
 		}
 	}
-	for _, notWant := range []string{"50.123456", "<th>日期</th><th>股票</th><th>类型</th>"} {
+	for _, notWant := range []string{"科大讯飞深度研究", "买入", "50.12", "50.123456", "<th>评级</th>", "<th>目标价</th>", "<th>日期</th><th>股票</th><th>类型</th>"} {
 		if strings.Contains(body, notWant) {
 			t.Fatalf("expected stock research page not to contain %q, got %s", notWant, body)
 		}
@@ -640,7 +640,7 @@ func TestInvestorRelationsPageLoadsRowsAndUsesSourceFilter(t *testing.T) {
 		t.Fatalf("expected investor relations page 200, got %d body=%s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"投资者关系", "初灵信息投资者关系管理信息20260617", "互动易投资者关系", "抓取近一年并解析PDF", "NLP 76.00 积极", "AI订单增长", `href="/stock-research/11/pdf/text"`} {
+	for _, want := range []string{"投资者关系", "投资者关系管理信息20260617", "互动易投资者关系", "抓取近一年并解析PDF", "NLP 76.00 积极", "AI订单增长", `href="/stock-research/11/pdf/text"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected investor relations page to contain %q, got %s", want, body)
 		}
