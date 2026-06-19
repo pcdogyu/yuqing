@@ -4738,7 +4738,7 @@ func TestSystemDatabaseSectionRendersPostgresConfig(t *testing.T) {
 		t.Fatalf("expected system database page 200, got %d body=%s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	for _, snippet := range []string{"数据库配置", "数据库连接检测与切换", "已选择驱动", "切换到 PostgreSQL", "切回 SQLite", "database_switch_postgres", "database_switch_sqlite", "YUQING_DB_DRIVER", "postgres_dsn"} {
+	for _, snippet := range []string{"数据库配置", "数据库连接检测与切换", "已选择驱动", "切换到 PostgreSQL", "切回 SQLite", "database_save_postgres", "database_switch_postgres", "database_switch_sqlite", "YUQING_DB_DRIVER", "postgres_dsn"} {
 		if !strings.Contains(body, snippet) {
 			t.Fatalf("expected database section to contain %q, got %s", snippet, body)
 		}
@@ -4804,6 +4804,16 @@ func TestSystemDatabaseSwitchRedirectsWithSuccess(t *testing.T) {
 	srv.handleSystem(rr, req, map[string]any{"id": int64(1), "username": "admin"})
 	if rr.Code != http.StatusSeeOther {
 		t.Fatalf("expected redirect after sqlite switch, got %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	form.Set("form_type", "database_save_postgres")
+	form.Set("driver", "sqlite")
+	req = httptest.NewRequest(http.MethodPost, "/system?section=database", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr = httptest.NewRecorder()
+	srv.handleSystem(rr, req, map[string]any{"id": int64(1), "username": "admin"})
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect after postgres config save and switch, got %d body=%s", rr.Code, rr.Body.String())
 	}
 }
 
