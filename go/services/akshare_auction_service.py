@@ -55,6 +55,43 @@ EASTMONEY_HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
     ),
 }
+ASTOCK_2026_MARKET_HOLIDAYS = {
+    # 2026 State Council holiday schedule. A-share recommendation jobs must
+    # stay closed on these dates even if an upstream calendar source drifts.
+    "2026-01-01",
+    "2026-01-02",
+    "2026-01-03",
+    "2026-02-15",
+    "2026-02-16",
+    "2026-02-17",
+    "2026-02-18",
+    "2026-02-19",
+    "2026-02-20",
+    "2026-02-21",
+    "2026-02-22",
+    "2026-02-23",
+    "2026-04-04",
+    "2026-04-05",
+    "2026-04-06",
+    "2026-05-01",
+    "2026-05-02",
+    "2026-05-03",
+    "2026-05-04",
+    "2026-05-05",
+    "2026-06-19",
+    "2026-06-20",
+    "2026-06-21",
+    "2026-09-25",
+    "2026-09-26",
+    "2026-09-27",
+    "2026-10-01",
+    "2026-10-02",
+    "2026-10-03",
+    "2026-10-04",
+    "2026-10-05",
+    "2026-10-06",
+    "2026-10-07",
+}
 
 _akshare_module: Any | None = None
 _akshare_error: str | None = None
@@ -140,10 +177,14 @@ def latest_trading_day(ak: Any, today: str) -> str:
         iterator = frame.iterrows()
     except Exception:
         return today
+    dates: list[str] = []
     for _, row in iterator:
         value = first_existing(row, ["trade_date", "交易日", "date", "日期"])
         parsed = parse_trade_date(value)
-        if parsed and parsed <= today and parsed > latest:
+        if parsed:
+            dates.append(parsed)
+    for parsed in normalize_a_stock_trading_dates(dates):
+        if parsed <= today and parsed > latest:
             latest = parsed
     return latest or today
 
@@ -160,7 +201,25 @@ def trading_day_calendar(ak: Any) -> list[str]:
         parsed = parse_trade_date(value)
         if parsed:
             dates.append(parsed)
-    return sorted(set(dates))
+    return normalize_a_stock_trading_dates(dates)
+
+
+def normalize_a_stock_trading_dates(dates: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for value in dates:
+        parsed = parse_trade_date(value)
+        if not parsed:
+            continue
+        try:
+            day = dt.datetime.strptime(parsed, "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        if day.weekday() >= 5:
+            continue
+        if parsed in ASTOCK_2026_MARKET_HOLIDAYS:
+            continue
+        normalized.append(parsed)
+    return sorted(set(normalized))
 
 
 def trading_day_status(ak: Any, requested_date: str) -> dict[str, Any]:
@@ -901,6 +960,9 @@ def run_self_test() -> None:
                     (0, {"trade_date": "2026-06-12"}),
                     (1, {"trade_date": "2026-06-15"}),
                     (2, {"trade_date": "2026-06-18"}),
+                    (3, {"trade_date": "2026-06-19"}),
+                    (4, {"trade_date": "2026-06-20"}),
+                    (5, {"trade_date": "2026-06-22"}),
                 ]
             )
 
@@ -909,7 +971,7 @@ def run_self_test() -> None:
             return FakeFrame()
 
     assert latest_trading_day(FakeAK(), "2026-06-17") == "2026-06-15"
-    assert trading_day_calendar(FakeAK()) == ["2026-06-12", "2026-06-15", "2026-06-18"]
+    assert trading_day_calendar(FakeAK()) == ["2026-06-12", "2026-06-15", "2026-06-18", "2026-06-22"]
     trading = trading_day_status(FakeAK(), "2026-06-15")
     assert trading["date"] == "2026-06-15"
     assert trading["is_trading_day"] is True
@@ -920,6 +982,10 @@ def run_self_test() -> None:
     assert closed["latest_trading_day"] == "2026-06-15"
     assert closed["previous_trading_day"] == "2026-06-15"
     assert closed["next_trading_day"] == "2026-06-18"
+    holiday = trading_day_status(FakeAK(), "2026-06-19")
+    assert holiday["is_trading_day"] is False
+    assert holiday["previous_trading_day"] == "2026-06-18"
+    assert holiday["next_trading_day"] == "2026-06-22"
     report = research_report_item(
         {
             "股票代码": "2230",

@@ -789,7 +789,7 @@ func formatAStockPublishTime(value time.Time) string {
 
 func aStockActionRequiresTradingDay(action string) bool {
 	switch strings.TrimSpace(action) {
-	case "backfill_window_news", "backfill_morning_stock", "generate_morning_stock", "generate_afternoon_stock", "generate_ignore_recent_stock":
+	case "crawl", "backfill_window_news", "backfill_morning_stock", "generate_morning_stock", "generate_afternoon_stock", "generate_ignore_recent_stock", "generate":
 		return true
 	default:
 		return false

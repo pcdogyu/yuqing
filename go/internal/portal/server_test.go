@@ -1696,24 +1696,28 @@ func TestAStockPageBlocksRecommendationsOnNonTradingDay(t *testing.T) {
 }
 
 func TestAStockRecommendationActionBlockedOnNonTradingDay(t *testing.T) {
-	scheduler := newAStockTradingDayServer(t, false)
-	defer scheduler.Close()
-	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatalf("crawler should not be called on non-trading day")
-	}))
-	defer crawler.Close()
+	for _, action := range []string{"backfill_window_news", "crawl"} {
+		t.Run(action, func(t *testing.T) {
+			scheduler := newAStockTradingDayServer(t, false)
+			defer scheduler.Close()
+			crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				t.Fatalf("crawler should not be called on non-trading day")
+			}))
+			defer crawler.Close()
 
-	srv := NewServer(config.Config{SchedulerURL: scheduler.URL, CrawlerURL: crawler.URL})
-	req := httptest.NewRequest(http.MethodPost, "/a-stock", strings.NewReader("date=2026-06-19&period=morning&action=backfill_window_news"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	rr := httptest.NewRecorder()
-	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
-	if rr.Code != http.StatusSeeOther {
-		t.Fatalf("expected redirect, got %d", rr.Code)
-	}
-	loc, _ := url.QueryUnescape(rr.Header().Get("Location"))
-	if !strings.Contains(loc, "该日 A 股休市，不生成股票推荐") {
-		t.Fatalf("expected non-trading day redirect message, got %q", loc)
+			srv := NewServer(config.Config{SchedulerURL: scheduler.URL, CrawlerURL: crawler.URL})
+			req := httptest.NewRequest(http.MethodPost, "/a-stock", strings.NewReader("date=2026-06-19&period=morning&action="+action))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			rr := httptest.NewRecorder()
+			srv.handleAStockPage(rr, req, map[string]any{"id": 1})
+			if rr.Code != http.StatusSeeOther {
+				t.Fatalf("expected redirect, got %d", rr.Code)
+			}
+			loc, _ := url.QueryUnescape(rr.Header().Get("Location"))
+			if !strings.Contains(loc, "该日 A 股休市，不生成股票推荐") {
+				t.Fatalf("expected non-trading day redirect message, got %q", loc)
+			}
+		})
 	}
 }
 
