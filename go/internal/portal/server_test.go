@@ -291,6 +291,7 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		"重新生成上午推荐",
 		"重新生成下午推荐",
 		`class="astock-action-form"`,
+		`class="astock-action-grid"`,
 		"astock-action-running",
 		`aria-busy`,
 		`button.disabled=true`,
@@ -991,9 +992,23 @@ func TestAStockPageShowsBackfillCurrentWindowAction(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"astock-action-table", "抓取全部财经信息", "补录上午新闻", "重新生成上午推荐", "同步行情", "补录集合竞价", "刷新回测结果", "生成全部推荐股票", "补录下午新闻", "重新生成下午推荐", `name="action" value="backfill_window_news"`, `name="period" value="morning"`, `name="period" value="afternoon"`, `name="action" value="backfill_auction"`} {
+	for _, want := range []string{"astock-action-grid", "抓取全部财经信息", "补录上午新闻", "重新生成上午推荐", "同步行情", "补录集合竞价", "刷新回测结果", "生成全部推荐股票", "补录下午新闻", "重新生成下午推荐", `name="action" value="backfill_window_news"`, `name="period" value="morning"`, `name="period" value="afternoon"`, `name="action" value="backfill_auction"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected backfill action %q, got %s", want, body)
+		}
+	}
+	actionStart := strings.Index(body, `<section><h2>操作区</h2>`)
+	if actionStart < 0 {
+		t.Fatalf("expected action section, got %s", body)
+	}
+	actionEnd := strings.Index(body[actionStart:], `<p class="astock-muted">`)
+	if actionEnd < 0 {
+		t.Fatalf("expected action section footer, got %s", body)
+	}
+	actionHTML := body[actionStart : actionStart+actionEnd]
+	for _, notWant := range []string{"astock-action-table", "<table", "<tbody", "<tr", "<td"} {
+		if strings.Contains(actionHTML, notWant) {
+			t.Fatalf("expected action section to use buttons without table markup %q, got %s", notWant, actionHTML)
 		}
 	}
 	expectedOrder := []string{"抓取全部财经信息", "补录上午新闻", "重新生成上午推荐", "同步行情", "补录集合竞价", "刷新回测结果", "生成全部推荐股票", "补录下午新闻", "重新生成下午推荐"}

@@ -263,14 +263,12 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-overview-table .astock-overview-sub-label{margin-top:16px}
 		.astock-overview-table strong{display:block;font-size:24px;line-height:1.25}
 		.astock-filter-toggle{display:inline-flex;align-items:center;margin-top:8px;padding:6px 10px;border:1px solid #d6ccbb;border-radius:8px;color:#214e34;text-decoration:none;background:#fff;font-size:13px;font-weight:600}
-		.astock-actions{width:100%;overflow:auto}
-		.astock-action-table{width:auto;min-width:840px;border-collapse:collapse;table-layout:auto}
-		.astock-action-table td{border:1px solid #111;padding:0;background:#fff;vertical-align:middle;height:32px}
-		.astock-action-table td.astock-action-empty{background:#faf8f2}
+		.astock-actions{width:100%}
+		.astock-action-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;align-items:stretch}
 		.astock-actions form{margin:0}
-		.astock-actions button{display:block;width:100%;min-height:32px;margin:0;padding:4px 8px;border:0;border-radius:0;background:#fff;color:#07131f;text-align:left;font-size:18px;line-height:1.2;white-space:nowrap}
-		.astock-actions button:hover{background:#eef4ec;color:#214e34}
-		.astock-actions button.astock-action-running{background:#8f6a20;cursor:progress}
+		.astock-actions button{display:inline-flex;align-items:center;justify-content:center;width:100%;min-height:40px;margin:0;padding:8px 12px;border:1px solid #d6ccbb;border-radius:8px;background:#fff;color:#214e34;text-align:center;font-size:14px;font-weight:700;line-height:1.2;white-space:nowrap}
+		.astock-actions button:hover{background:#eef4ec;border-color:#b7c9b8;color:#153823}
+		.astock-actions button.astock-action-running{background:#8f6a20;border-color:#8f6a20;color:#fff;cursor:progress}
 		.astock-actions button:disabled{opacity:.78;cursor:wait}
 		.astock-muted{color:#6a6257}
 		.astock-empty{padding:18px;border:1px dashed #d0c8b8;border-radius:12px;background:#fff;color:#6a6257}
@@ -342,47 +340,34 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 	renderAStockDatePeriodTabs(&b, ctx.Date, ctx.Period, ctx.IgnoreRecent, false)
 	renderAStockOverviewSection(&b, morningCtx, afternoonCtx)
 
-	b.WriteString(`<section><h2>操作区</h2><div class="astock-actions"><table class="astock-action-table"><tbody>`)
-	actions := [][]struct {
+	b.WriteString(`<section><h2>操作区</h2><div class="astock-actions"><div class="astock-action-grid">`)
+	actions := []struct {
 		Name   string
 		Label  string
 		Period string
 	}{
-		{
-			{Name: "crawl", Label: "抓取全部财经信息", Period: ctx.Period},
-			{Name: "backfill_window_news", Label: "补录上午新闻", Period: "morning"},
-			{Name: "generate_morning_stock", Label: "重新生成上午推荐", Period: "morning"},
-			{Name: "sync_market", Label: "同步行情", Period: ctx.Period},
-			{Name: "backfill_auction", Label: "补录集合竞价", Period: ctx.Period},
-			{Name: "refresh_backtest", Label: "刷新回测结果", Period: ctx.Period},
-		},
-		{
-			{Name: "generate", Label: "生成全部推荐股票", Period: ctx.Period},
-			{Name: "backfill_window_news", Label: "补录下午新闻", Period: "afternoon"},
-			{Name: "generate_afternoon_stock", Label: "重新生成下午推荐", Period: "afternoon"},
-		},
+		{Name: "crawl", Label: "抓取全部财经信息", Period: ctx.Period},
+		{Name: "backfill_window_news", Label: "补录上午新闻", Period: "morning"},
+		{Name: "generate_morning_stock", Label: "重新生成上午推荐", Period: "morning"},
+		{Name: "sync_market", Label: "同步行情", Period: ctx.Period},
+		{Name: "backfill_auction", Label: "补录集合竞价", Period: ctx.Period},
+		{Name: "refresh_backtest", Label: "刷新回测结果", Period: ctx.Period},
+		{Name: "generate", Label: "生成全部推荐股票", Period: ctx.Period},
+		{Name: "backfill_window_news", Label: "补录下午新闻", Period: "afternoon"},
+		{Name: "generate_afternoon_stock", Label: "重新生成下午推荐", Period: "afternoon"},
 	}
-	for _, row := range actions {
-		b.WriteString(`<tr>`)
-		for i := 0; i < 6; i++ {
-			if i >= len(row) {
-				b.WriteString(`<td class="astock-action-empty"></td>`)
-				continue
-			}
-			action := row[i]
-			b.WriteString(`<td><form class="astock-action-form" method="post"><input type="hidden" name="date" value="`)
-			b.WriteString(html.EscapeString(ctx.Date))
-			b.WriteString(`"><input type="hidden" name="period" value="`)
-			b.WriteString(html.EscapeString(action.Period))
-			b.WriteString(`"><input type="hidden" name="action" value="`)
-			b.WriteString(html.EscapeString(action.Name))
-			b.WriteString(`"><button type="submit">`)
-			b.WriteString(html.EscapeString(action.Label))
-			b.WriteString(`</button></form></td>`)
-		}
-		b.WriteString(`</tr>`)
+	for _, action := range actions {
+		b.WriteString(`<form class="astock-action-form" method="post"><input type="hidden" name="date" value="`)
+		b.WriteString(html.EscapeString(ctx.Date))
+		b.WriteString(`"><input type="hidden" name="period" value="`)
+		b.WriteString(html.EscapeString(action.Period))
+		b.WriteString(`"><input type="hidden" name="action" value="`)
+		b.WriteString(html.EscapeString(action.Name))
+		b.WriteString(`"><button type="submit">`)
+		b.WriteString(html.EscapeString(action.Label))
+		b.WriteString(`</button></form>`)
 	}
-	b.WriteString(`</tbody></table></div><p class="astock-muted">已接入已有新闻抓取链路：抓取按钮会触发金十快讯、金十资讯、金十全站信息、东方财富网快讯、华尔街见闻、财联社和新浪财经，页面按策略日期和推荐窗口聚合财经新闻。行情接口读取 `)
+	b.WriteString(`</div></div><p class="astock-muted">已接入已有新闻抓取链路：抓取按钮会触发金十快讯、金十资讯、金十全站信息、东方财富网快讯、华尔街见闻、财联社和新浪财经，页面按策略日期和推荐窗口聚合财经新闻。行情接口读取 `)
 	b.WriteString(aStockMarketConfigHint())
 	b.WriteString(`，用于展示昨日收盘价、现价、涨跌幅和消息回测。</p><div class="astock-source-list"><span class="astock-badge">flash: https://www.jin10.com/</span><span class="astock-badge">headline: https://xnews.jin10.com/</span><span class="astock-badge">jin10_full: 金十全站</span><span class="astock-badge">eastmoney_kuaixun: 东方财富网</span><span class="astock-badge">wallstreetcn_a_stock: 华尔街见闻</span><span class="astock-badge">cls_telegraph: 财联社</span><span class="astock-badge">sina_finance_7x24: 新浪财经</span></div></section>`)
 
