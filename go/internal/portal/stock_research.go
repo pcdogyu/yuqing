@@ -44,6 +44,7 @@ body[data-page='stock-research'] input,body[data-page='stock-research'] select,b
 .research-tab{display:inline-flex;align-items:center;padding:8px 12px;border:1px solid #d6ccbb;border-radius:8px;color:#214e34;text-decoration:none;background:#fff}
 .research-source{font-size:12px;padding:3px 8px;border-radius:999px;background:#eff6f0;color:#214e34}
 .research-action-form{display:inline}.research-table form{display:inline}.research-status{font-size:12px;padding:3px 8px;border-radius:999px;background:#f4efe6;color:#5b4a32;white-space:nowrap}
+.research-status-actions{display:flex;align-items:center;gap:8px;white-space:nowrap}.research-status-actions .research-action-form{flex:0 0 50%;min-width:0}.research-status-actions button{width:100%;margin:0;padding:8px 10px}
 .research-status.parsed{background:#e7f4ea;color:#214e34}.research-status.failed{background:#fdecea;color:#8a1f11}.research-status.no_text,.research-status.no_pdf{background:#fff7df;color:#695000}
 </style>`)
 	b.WriteString(`<section><h2>研报调研</h2><p class="research-muted">搜索上市公司研报和机构调研记录，支持文本型 PDF 下载与解析；扫描版 PDF 暂标记为无文本。</p></section>`)
@@ -94,6 +95,7 @@ body[data-page='investor-relations'] input,body[data-page='investor-relations'] 
 .research-tab{display:inline-flex;align-items:center;padding:8px 12px;border:1px solid #d6ccbb;border-radius:8px;color:#214e34;text-decoration:none;background:#fff}
 .research-source{font-size:12px;padding:3px 8px;border-radius:999px;background:#eff6f0;color:#214e34}
 .research-action-form{display:inline}.research-table form{display:inline}.research-status{font-size:12px;padding:3px 8px;border-radius:999px;background:#f4efe6;color:#5b4a32;white-space:nowrap}
+.research-status-actions{display:flex;align-items:center;gap:8px;white-space:nowrap}.research-status-actions .research-action-form{flex:0 0 50%;min-width:0}.research-status-actions button{width:100%;margin:0;padding:8px 10px}
 .research-status.parsed{background:#e7f4ea;color:#214e34}.research-status.failed{background:#fdecea;color:#8a1f11}.research-status.no_text,.research-status.no_pdf{background:#fff7df;color:#695000}
 </style>`)
 	b.WriteString(`<section><h2>投资者关系</h2><p class="research-muted">抓取互动易投资者关系活动记录 PDF，解析为 Markdown 文本，并调用本地 NLP 服务生成股票评分。</p></section>`)
@@ -396,12 +398,17 @@ func renderStockResearchTable(b *strings.Builder, ctx model.StockResearchListRes
 				b.WriteString(fmt.Sprintf("%d", item.ID))
 				b.WriteString(`/pdf/text" target="_blank" rel="noreferrer">查看文本</a>`)
 			}
-			b.WriteString(`</td><td><span class="research-status `)
+			b.WriteString(`</td><td><div class="research-status-actions"><span class="research-status `)
 			b.WriteString(html.EscapeString(stockResearchPDFStatusClass(item.PDFStatus)))
 			b.WriteString(`">`)
 			b.WriteString(html.EscapeString(stockResearchPDFStatusLabel(item.PDFStatus)))
+			b.WriteString(`</span><form method="post" class="research-action-form"><input type="hidden" name="action" value="parse_pdf_one"><input type="hidden" name="id" value="`)
+			b.WriteString(fmt.Sprintf("%d", item.ID))
+			b.WriteString(`">`)
+			stockResearchHiddenFields(b, ctx)
+			b.WriteString(`<button type="submit">重新解析</button></form></div>`)
 			if strings.TrimSpace(item.NLPScoredAt) != "" {
-				b.WriteString(`</span><div class="research-muted">NLP `)
+				b.WriteString(`<div class="research-muted">NLP `)
 				b.WriteString(html.EscapeString(formatStockResearchTargetPrice(fmt.Sprintf("%.2f", item.NLPScore))))
 				if strings.TrimSpace(item.NLPRating) != "" {
 					b.WriteString(` `)
@@ -411,13 +418,9 @@ func renderStockResearchTable(b *strings.Builder, ctx model.StockResearchListRes
 					b.WriteString(`：`)
 					b.WriteString(html.EscapeString(item.NLPReason))
 				}
-				b.WriteString(`</div><span>`)
+				b.WriteString(`</div>`)
 			}
-			b.WriteString(`</span> <form method="post" class="research-action-form"><input type="hidden" name="action" value="parse_pdf_one"><input type="hidden" name="id" value="`)
-			b.WriteString(fmt.Sprintf("%d", item.ID))
-			b.WriteString(`">`)
-			stockResearchHiddenFields(b, ctx)
-			b.WriteString(`<button type="submit">重新解析</button></form></td></tr>`)
+			b.WriteString(`</td></tr>`)
 		}
 	}
 	b.WriteString(`</table></div>`)
