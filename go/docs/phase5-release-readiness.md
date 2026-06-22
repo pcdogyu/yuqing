@@ -197,7 +197,7 @@ $env:YUQING_CRYPTO_MOCK_URL = "http://127.0.0.1:19090"
 - `smoke-test.ps1` 使用同一份 `DatabasePath` 执行备份和恢复；提供 `YUQING_CRYPTO_MOCK_URL` 时会检查非 200、坏 JSON、空数据、重复数据 mock 样本。
 - `backup-sqlite.ps1` 复制前执行 WAL checkpoint，备份后的校验库不依赖源库旁路 WAL 文件。
 - `smoke-test.ps1` 对 scheduler jobs 运行态做短重试，避免服务刚启动时的短暂空窗误报。
-- `release-check.ps1` 会检测默认 gateway 端口 `80` 和 scheduler 端口 `8086` 是否已被本机其他服务占用；冲突时自动切到 `18080` / `18086` 起的空闲端口，并同步对应环境变量。
+- `release-check.ps1` 会检测默认 gateway 端口 `8080` 和 scheduler 端口 `8086` 是否已被本机其他服务占用；冲突时自动切到 `18080` / `18086` 起的空闲端口，并同步对应环境变量。
 - `health-check.ps1` 会校验健康检查 JSON 结构，避免外部 HTML 页面被误判为本项目服务健康。
 - `stop-all.ps1` 除 PID 文件外，也会清理 `go run` 留下的服务子进程，保证发布验收结束后本机端口释放。
 - 第五批复核已确认 `gateway-web /healthz`、`/fullsearch/getSearchResult` 旧入口 `410 Gone`、WAL checkpoint 备份、恢复计数比对、scheduler 端口自适应和 release-check JSON 输出均与脚本实现一致。

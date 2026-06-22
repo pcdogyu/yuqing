@@ -189,7 +189,7 @@ func Load() Config {
 		WechatPushEnabled:          envBool(false, "YUQING_WECHAT_PUSH_ENABLED"),
 		WechatPushWebhookURL:       envOrDefault("YUQING_WECHAT_PUSH_WEBHOOK_URL", ""),
 
-		GatewayWebAddr: envOrDefaultWithAliases("YUQING_GATEWAY_ADDR", ":80", "JIN10_PORTAL_WEB_ADDR"),
+		GatewayWebAddr: envOrDefaultWithAliases("YUQING_GATEWAY_ADDR", ":8080", "JIN10_PORTAL_WEB_ADDR"),
 		AuthAddr:       envOrDefault("YUQING_AUTH_ADDR", ":8081"),
 		WechatAddr:     envOrDefault("YUQING_WECHAT_ADDR", ":8088"),
 		ContentAddr:    envOrDefaultWithAliases("YUQING_CONTENT_ADDR", ":8082", "JIN10_CONTENT_ADDR"),
@@ -198,7 +198,7 @@ func Load() Config {
 		NLPAddr:        envOrDefaultWithAliases("YUQING_NLP_ADDR", ":8085", "JIN10_NLP_ADDR"),
 		SchedulerAddr:  envOrDefaultWithAliases("YUQING_SCHEDULER_ADDR", ":8086", "JIN10_SCHEDULER_ADDR"),
 
-		GatewayWebURL: envOrDefaultWithAliases("YUQING_GATEWAY_URL", "http://127.0.0.1", "JIN10_PORTAL_WEB_URL"),
+		GatewayWebURL: envOrDefaultWithAliases("YUQING_GATEWAY_URL", "http://127.0.0.1:8080", "JIN10_PORTAL_WEB_URL"),
 		AuthURL:       envOrDefault("YUQING_AUTH_URL", "http://127.0.0.1:8081"),
 		WechatURL:     envOrDefault("YUQING_WECHAT_URL", "http://127.0.0.1:8088"),
 		ContentURL:    envOrDefaultWithAliases("YUQING_CONTENT_URL", "http://127.0.0.1:8082", "JIN10_CONTENT_URL"),

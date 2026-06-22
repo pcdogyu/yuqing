@@ -143,7 +143,7 @@ http://127.0.0.1/crypto?pair=eth
 
 ## 默认端口
 
-- `gateway-web`: `80`
+- `gateway-web`: `8080`
 - `auth-service`: `8081`
 - `wechat-service`: `8088`
 - `akshare-service`: `8087`（`run.bat` 默认用于集合竞价）

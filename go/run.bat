@@ -22,6 +22,7 @@ if not defined YUQING_GO_TEST_FLAGS (
 )
 set "AKSHARE_AUCTION_PORT=8087"
 set "AKSHARE_AUCTION_HOST=127.0.0.1"
+set "GATEWAY_WEB_PORT=8080"
 set "WECHAT_SERVICE_PORT=8088"
 set "YUQING_ASTOCK_AUCTION_URL_DEFAULTED=0"
 set "YUQING_ASTOCK_HOLDING_URL_DEFAULTED=0"
@@ -40,9 +41,9 @@ if not defined YUQING_ASTOCK_HOLDING_URL (
     set "YUQING_ASTOCK_HOLDING_URL=http://127.0.0.1:%AKSHARE_AUCTION_PORT%"
     set "YUQING_ASTOCK_HOLDING_URL_DEFAULTED=1"
 )
-set "SERVICE_PORTS=80 8081 8082 8083 8084 8085 %AKSHARE_AUCTION_PORT% %WECHAT_SERVICE_PORT%"
+set "SERVICE_PORTS=%GATEWAY_WEB_PORT% 8081 8082 8083 8084 8085 %AKSHARE_AUCTION_PORT% %WECHAT_SERVICE_PORT%"
 set "SERVICE_NAMES=auth-service wechat-service content-service crawler-service analysis-service nlp-service gateway-web scheduler-service akshare-service"
-set "PORT_CHECKS=auth-service:8081 wechat-service:%WECHAT_SERVICE_PORT% content-service:8082 crawler-service:8083 analysis-service:8084 nlp-service:8085 gateway-web:80"
+set "PORT_CHECKS=auth-service:8081 wechat-service:%WECHAT_SERVICE_PORT% content-service:8082 crawler-service:8083 analysis-service:8084 nlp-service:8085 gateway-web:%GATEWAY_WEB_PORT%"
 set "YUQING_LOG_LEVEL=debug"
 set "YUQING_RUN_VERSION=local"
 set "TEMP_BOOTSTRAP=%TEMP%\yuqing-run-bootstrap-%RANDOM%-%RANDOM%.cmd"
@@ -165,7 +166,7 @@ if errorlevel 1 goto :fail
 call :start_process_core gateway-web
 if errorlevel 1 goto :fail
 call :start_akshare_auction_service
-powershell -NoProfile -Command "$checks = @(@{Name='auth-service';Port=8081}, @{Name='wechat-service';Port=%WECHAT_SERVICE_PORT%}, @{Name='content-service';Port=8082}, @{Name='crawler-service';Port=8083}, @{Name='analysis-service';Port=8084}, @{Name='nlp-service';Port=8085}, @{Name='gateway-web';Port=80}); $counts = @{}; foreach ($check in $checks) { $counts[$check.Name] = 0 }; while ($true) { Start-Sleep -Seconds 3; $allDone = $true; foreach ($check in $checks) { if ($counts[$check.Name] -ge 3) { Write-Host ('[{0}] check {1}/3: port {2} is listening.' -f $check.Name, $counts[$check.Name], $check.Port); continue }; $listening = Get-NetTCPConnection -LocalPort $check.Port -State Listen -ErrorAction SilentlyContinue; if ($listening) { $counts[$check.Name]++; Write-Host ('[{0}] check {1}/3: port {2} is listening.' -f $check.Name, $counts[$check.Name], $check.Port) } else { Write-Host ('[{0}] check {1}/3: port {2} is not listening.' -f $check.Name, $counts[$check.Name], $check.Port); exit 1 }; if ($counts[$check.Name] -lt 3) { $allDone = $false } }; if ($allDone) { break } }"
+powershell -NoProfile -Command "$checks = @(@{Name='auth-service';Port=8081}, @{Name='wechat-service';Port=%WECHAT_SERVICE_PORT%}, @{Name='content-service';Port=8082}, @{Name='crawler-service';Port=8083}, @{Name='analysis-service';Port=8084}, @{Name='nlp-service';Port=8085}, @{Name='gateway-web';Port=%GATEWAY_WEB_PORT%}); $counts = @{}; foreach ($check in $checks) { $counts[$check.Name] = 0 }; while ($true) { Start-Sleep -Seconds 3; $allDone = $true; foreach ($check in $checks) { if ($counts[$check.Name] -ge 3) { Write-Host ('[{0}] check {1}/3: port {2} is listening.' -f $check.Name, $counts[$check.Name], $check.Port); continue }; $listening = Get-NetTCPConnection -LocalPort $check.Port -State Listen -ErrorAction SilentlyContinue; if ($listening) { $counts[$check.Name]++; Write-Host ('[{0}] check {1}/3: port {2} is listening.' -f $check.Name, $counts[$check.Name], $check.Port) } else { Write-Host ('[{0}] check {1}/3: port {2} is not listening.' -f $check.Name, $counts[$check.Name], $check.Port); exit 1 }; if ($counts[$check.Name] -lt 3) { $allDone = $false } }; if ($allDone) { break } }"
 if errorlevel 1 goto :fail
 for %%C in (%PORT_CHECKS%) do (
     for /f "tokens=1,2 delims=:" %%A in ("%%C") do (
@@ -176,7 +177,7 @@ call :start_process_service scheduler-service
 if errorlevel 1 goto :fail
 
 echo Final port checks:
-call :print_port_status gateway-web 80
+call :print_port_status gateway-web %GATEWAY_WEB_PORT%
 call :print_port_status auth-service 8081
 call :print_port_status wechat-service %WECHAT_SERVICE_PORT%
 call :print_port_status content-service 8082
@@ -192,7 +193,7 @@ call :print_port_status scheduler-service %YUQING_SCHEDULER_PORT%
 
 echo.
 echo Services started.
-echo Gateway: http://127.0.0.1
+echo Gateway: http://127.0.0.1:%GATEWAY_WEB_PORT%
 echo Wechat: %YUQING_WECHAT_URL%
 echo Scheduler: %YUQING_SCHEDULER_URL%
 if defined YUQING_ASTOCK_AUCTION_URL (

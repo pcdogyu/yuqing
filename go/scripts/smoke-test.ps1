@@ -6,7 +6,7 @@ param(
     [string]$CrawlerUrl = "http://127.0.0.1:8083",
     [string]$AnalysisUrl = "http://127.0.0.1:8084",
     [string]$NlpUrl = "http://127.0.0.1:8085",
-    [string]$GatewayUrl = "http://127.0.0.1",
+    [string]$GatewayUrl = "http://127.0.0.1:8080",
     [string]$DatabasePath = $env:YUQING_DB_PATH,
     [string]$CryptoMockUrl = $env:YUQING_CRYPTO_MOCK_URL,
     [string]$ServiceToken = $(if ($env:YUQING_SERVICE_TOKEN) { $env:YUQING_SERVICE_TOKEN } else { "stonedt-internal-token" })

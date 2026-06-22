@@ -25,7 +25,7 @@
 
 | 服务 | 默认端口 | 说明 |
 | --- | ---: | --- |
-| `gateway-web` | `80` | 统一入口 |
+| `gateway-web` | `8080` | 统一入口 |
 | `auth-service` | `8081` | 登录、会话、Token |
 | `content-service` | `8082` | 业务数据与内部 API |
 | `crawler-service` | `8083` | 抓取任务 |
@@ -47,7 +47,7 @@ cd D:\yuqing\go
 启动后访问：
 
 ```text
-http://127.0.0.1
+http://127.0.0.1:8080
 ```
 
 停止服务：

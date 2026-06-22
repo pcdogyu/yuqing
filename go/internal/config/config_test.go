@@ -70,7 +70,7 @@ func TestLoadUsesDefaults(t *testing.T) {
 	if cfg.ListenAddr != ":8090" {
 		t.Fatalf("expected default listen addr, got %q", cfg.ListenAddr)
 	}
-	if cfg.GatewayWebAddr != ":80" {
+	if cfg.GatewayWebAddr != ":8080" {
 		t.Fatalf("expected default gateway addr, got %q", cfg.GatewayWebAddr)
 	}
 	if cfg.WechatAddr != ":8088" {
@@ -148,7 +148,7 @@ func TestLoadUsesDefaults(t *testing.T) {
 	if cfg.LogLevel != "info" {
 		t.Fatalf("expected default log level, got %q", cfg.LogLevel)
 	}
-	if cfg.GatewayWebURL != "http://127.0.0.1" {
+	if cfg.GatewayWebURL != "http://127.0.0.1:8080" {
 		t.Fatalf("expected default gateway url, got %q", cfg.GatewayWebURL)
 	}
 	if cfg.WechatURL != "http://127.0.0.1:8088" {
