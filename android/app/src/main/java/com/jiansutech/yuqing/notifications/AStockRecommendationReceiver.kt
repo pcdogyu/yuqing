@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import com.jiansutech.yuqing.MainActivity
+import com.jiansutech.yuqing.astock.AStockTradingCalendar
 import com.jiansutech.yuqing.data.AStockRecommendation
 import com.jiansutech.yuqing.data.ApiFactory
 import com.jiansutech.yuqing.data.SessionStore
@@ -63,7 +64,9 @@ class AStockRecommendationReceiver : BroadcastReceiver() {
 
     private suspend fun loadNotificationContent(context: Context, slot: AStockRecommendationSlot): String {
         val session = SessionStore(context).state.first()
-        val date = LocalDate.now(ZoneId.of("Asia/Shanghai")).toString()
+        val date = AStockTradingCalendar
+            .latestSelectableTradingDay(LocalDate.now(ZoneId.of("Asia/Shanghai")))
+            .toString()
         return runCatching {
             val snapshot = ApiFactory.yuqing(session.apiBaseUrl, session.token)
                 .aStockRecommendations(date = date, period = slot.period)

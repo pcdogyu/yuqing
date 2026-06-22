@@ -321,14 +321,14 @@ private fun AStockModule(state: YuqingUiState, viewModel: YuqingViewModel) {
                 Text("日期选择", style = MaterialTheme.typography.labelMedium)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = { viewModel.shiftAStockRecommendationDate(-1) }) {
-                        Text("前一日")
+                        Text("前一交易日")
                     }
                     Text(window.date, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
                     TextButton(onClick = viewModel::resetAStockRecommendationDate) {
                         Text("今日")
                     }
                     TextButton(onClick = { viewModel.shiftAStockRecommendationDate(1) }) {
-                        Text("后一日")
+                        Text("后一交易日")
                     }
                 }
             }

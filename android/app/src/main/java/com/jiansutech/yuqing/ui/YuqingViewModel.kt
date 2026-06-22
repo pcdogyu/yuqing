@@ -3,6 +3,7 @@ package com.jiansutech.yuqing.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.jiansutech.yuqing.astock.AStockTradingCalendar
 import com.jiansutech.yuqing.data.AndroidActionRequest
 import com.jiansutech.yuqing.data.AndroidDashboard
 import com.jiansutech.yuqing.data.AndroidModule
@@ -50,7 +51,9 @@ data class YuqingUiState(
     val dashboard: AndroidDashboard? = null,
     val articleList: ItemListResult? = null,
     val aStockAuction: AStockAuctionListResult = AStockAuctionListResult(),
-    val aStockAuctionDate: String = LocalDate.now(ZoneId.of("Asia/Shanghai")).toString(),
+    val aStockAuctionDate: String = AStockTradingCalendar.latestSelectableTradingDay(
+        LocalDate.now(ZoneId.of("Asia/Shanghai")),
+    ).toString(),
     val aStockRecommendation: AStockRecommendationSnapshot? = null,
     val aStockRecommendations: List<AStockRecommendation> = emptyList(),
     val morningAStockRecommendation: AStockRecommendationSnapshot? = null,
@@ -228,23 +231,34 @@ class YuqingViewModel(
 
     fun shiftAStockRecommendationDate(days: Long) {
         val zone = ZoneId.of("Asia/Shanghai")
-        val today = LocalDate.now(zone)
+        val latestTradingDay = AStockTradingCalendar.latestSelectableTradingDay(LocalDate.now(zone))
         val current = _uiState.value.aStockRecommendationWindow
-        val currentDate = runCatching { LocalDate.parse(current.date) }.getOrDefault(today)
-        val targetDate = currentDate.plusDays(days).let { if (it.isAfter(today)) today else it }
+        val currentDate = runCatching { LocalDate.parse(current.date) }.getOrDefault(latestTradingDay)
+        val currentTradingDate = AStockTradingCalendar.previousOrSameTradingDay(currentDate)
+        val targetDate = when {
+            days < 0 -> AStockTradingCalendar.previousTradingDay(currentTradingDate)
+            days > 0 -> AStockTradingCalendar.nextTradingDay(currentTradingDate)
+                .let { if (it.isAfter(latestTradingDay)) latestTradingDay else it }
+            else -> currentTradingDate
+        }
         loadAStockRecommendationDay(targetDate.toString())
     }
 
     fun resetAStockRecommendationDate() {
-        val today = LocalDate.now(ZoneId.of("Asia/Shanghai")).toString()
-        loadAStockRecommendationDay(today)
+        val today = AStockTradingCalendar.latestSelectableTradingDay(LocalDate.now(ZoneId.of("Asia/Shanghai")))
+        loadAStockRecommendationDay(today.toString())
     }
 
     fun loadAStockRecommendationDay(date: String = _uiState.value.aStockRecommendationWindow.date) {
         viewModelScope.launch {
             _uiState.update { it.copy(loading = true, error = "", message = "") }
             val session = sessionStore.state.first()
-            val requestedDate = date.ifBlank { LocalDate.now(ZoneId.of("Asia/Shanghai")).toString() }
+            val zone = ZoneId.of("Asia/Shanghai")
+            val latestTradingDay = AStockTradingCalendar.latestSelectableTradingDay(LocalDate.now(zone))
+            val parsedDate = runCatching { LocalDate.parse(date) }.getOrDefault(latestTradingDay)
+            val requestedTradingDate = AStockTradingCalendar.previousOrSameTradingDay(parsedDate)
+                .let { if (it.isAfter(latestTradingDay)) latestTradingDay else it }
+            val requestedDate = requestedTradingDate.toString()
             runCatching {
                 val api = ApiFactory.yuqing(session.apiBaseUrl, session.token)
                 val morning = api.aStockRecommendations(date = requestedDate, period = "morning")
@@ -334,7 +348,7 @@ private fun currentAStockRecommendationWindow(): AStockRecommendationWindow {
     val now = LocalTime.now(zone)
     val period = if (now.isBefore(LocalTime.of(9, 31))) "morning" else "afternoon"
     return aStockRecommendationWindow(
-        date = LocalDate.now(zone).toString(),
+        date = AStockTradingCalendar.latestSelectableTradingDay(LocalDate.now(zone)).toString(),
         period = period,
     )
 }

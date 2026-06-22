@@ -8,6 +8,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import com.jiansutech.yuqing.astock.AStockTradingCalendar
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
@@ -83,9 +84,11 @@ object AStockRecommendationScheduler {
 
     private fun nextTriggerMillis(slot: AStockRecommendationSlot): Long {
         val now = LocalDateTime.now(zone)
-        var target = LocalDateTime.of(LocalDate.now(zone), LocalTime.of(slot.hour, slot.minute))
+        var targetDate = AStockTradingCalendar.nextOrSameTradingDay(LocalDate.now(zone))
+        var target = LocalDateTime.of(targetDate, LocalTime.of(slot.hour, slot.minute))
         if (!target.isAfter(now)) {
-            target = target.plusDays(1)
+            targetDate = AStockTradingCalendar.nextTradingDay(targetDate)
+            target = LocalDateTime.of(targetDate, LocalTime.of(slot.hour, slot.minute))
         }
         return target.atZone(zone).toInstant().toEpochMilli()
     }
