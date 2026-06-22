@@ -26,6 +26,19 @@ interface YuqingApi {
     @GET("api/v1/android/dashboard")
     suspend fun dashboard(): ApiEnvelope<AndroidDashboard>
 
+    @GET("api/v1/articles")
+    suspend fun articles(
+        @Query("page") page: Int = 1,
+        @Query("page_size") pageSize: Int = 10,
+    ): ApiEnvelope<ItemListResult>
+
+    @GET("api/v1/a-stock/auction")
+    suspend fun aStockAuction(
+        @Query("date") date: String = "",
+        @Query("page") page: Int = 1,
+        @Query("page_size") pageSize: Int = 20,
+    ): ApiEnvelope<AStockAuctionListResult>
+
     @GET("api/v1/search/full")
     suspend fun searchFull(
         @Query("keyword") keyword: String,

@@ -6,9 +6,11 @@ import androidx.lifecycle.viewModelScope
 import com.jiansutech.yuqing.data.AndroidActionRequest
 import com.jiansutech.yuqing.data.AndroidDashboard
 import com.jiansutech.yuqing.data.AndroidModule
+import com.jiansutech.yuqing.data.AStockAuctionListResult
 import com.jiansutech.yuqing.data.ApiFactory
 import com.jiansutech.yuqing.data.DashboardCacheDao
 import com.jiansutech.yuqing.data.DashboardCacheEntity
+import com.jiansutech.yuqing.data.ItemListResult
 import com.jiansutech.yuqing.data.LoginRequest
 import com.jiansutech.yuqing.data.SearchResult
 import com.jiansutech.yuqing.data.SessionState
@@ -35,6 +37,9 @@ data class YuqingUiState(
     val modules: List<AndroidModule> = emptyList(),
     val selectedModuleKey: String = "dashboard",
     val dashboard: AndroidDashboard? = null,
+    val articleList: ItemListResult? = null,
+    val aStockAuction: AStockAuctionListResult? = null,
+    val aStockAuctionDate: String = "",
     val searchKeyword: String = "",
     val searchResult: SearchResult? = null,
     val pendingAction: PendingAction? = null,
@@ -54,7 +59,13 @@ class YuqingViewModel(
                 runCatching {
                     ApiFactory.json.decodeFromString<AndroidDashboard>(cached)
                 }.onSuccess { dashboard ->
-                    _uiState.update { it.copy(dashboard = dashboard) }
+                    _uiState.update {
+                        it.copy(
+                            dashboard = dashboard,
+                            aStockAuction = dashboard.aStock.auction,
+                            aStockAuctionDate = dashboard.aStock.auction.displayDate(),
+                        )
+                    }
                 }
             }
             sessionStore.state.collect { session ->
@@ -69,10 +80,20 @@ class YuqingViewModel(
 
     fun selectModule(key: String) {
         _uiState.update { it.copy(selectedModuleKey = key) }
+        if (key == "articles") {
+            loadArticles(1)
+        }
+        if (key == "a_stock" && _uiState.value.aStockAuction == null) {
+            loadAStockAuction(_uiState.value.dashboard?.aStock?.auction?.displayDate().orEmpty())
+        }
     }
 
     fun updateSearchKeyword(value: String) {
         _uiState.update { it.copy(searchKeyword = value) }
+    }
+
+    fun updateAStockAuctionDate(value: String) {
+        _uiState.update { it.copy(aStockAuctionDate = value) }
     }
 
     fun login(username: String, password: String, authBaseUrl: String, apiBaseUrl: String) {
@@ -116,6 +137,9 @@ class YuqingViewModel(
                     it.copy(
                         modules = bootstrap?.modules.orEmpty(),
                         dashboard = dashboard,
+                        articleList = if (it.selectedModuleKey == "articles") it.articleList else null,
+                        aStockAuction = dashboard.aStock.auction,
+                        aStockAuctionDate = dashboard.aStock.auction.displayDate(),
                         message = "数据已刷新",
                     )
                 }
@@ -123,6 +147,9 @@ class YuqingViewModel(
                 _uiState.update { it.copy(error = throwable.message ?: "刷新失败") }
             }
             _uiState.update { it.copy(loading = false) }
+            if (_uiState.value.selectedModuleKey == "articles") {
+                loadArticles(1)
+            }
         }
     }
 
@@ -143,6 +170,56 @@ class YuqingViewModel(
             }
             _uiState.update { it.copy(loading = false) }
         }
+    }
+
+    fun loadArticles(page: Int) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(loading = true, error = "", message = "") }
+            val session = sessionStore.state.first()
+            runCatching {
+                val result = ApiFactory.yuqing(session.apiBaseUrl, session.token)
+                    .articles(page = page.coerceAtLeast(1), pageSize = 10)
+                    .data ?: error("文章数据为空")
+                _uiState.update { it.copy(articleList = result, message = "文章已加载") }
+            }.onFailure { throwable ->
+                _uiState.update { it.copy(error = throwable.message ?: "文章加载失败") }
+            }
+            _uiState.update { it.copy(loading = false) }
+        }
+    }
+
+    fun loadAStockAuction(date: String = _uiState.value.aStockAuctionDate) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(loading = true, error = "", message = "") }
+            val session = sessionStore.state.first()
+            val requestedDate = date.trim()
+            runCatching {
+                val result = ApiFactory.yuqing(session.apiBaseUrl, session.token)
+                    .aStockAuction(date = requestedDate, page = 1, pageSize = 20)
+                    .data ?: error("集合竞价数据为空")
+                _uiState.update {
+                    it.copy(
+                        aStockAuction = result,
+                        aStockAuctionDate = result.displayDate().ifBlank { requestedDate },
+                        message = "集合竞价已加载",
+                    )
+                }
+            }.onFailure { throwable ->
+                _uiState.update { it.copy(error = throwable.message ?: "集合竞价加载失败") }
+            }
+            _uiState.update { it.copy(loading = false) }
+        }
+    }
+
+    fun selectAdjacentAStockAuctionDate(direction: Int) {
+        val state = _uiState.value
+        val auction = state.aStockAuction ?: state.dashboard?.aStock?.auction ?: return
+        val dates = auction.dates
+        if (dates.isEmpty()) return
+        val current = state.aStockAuctionDate.ifBlank { auction.displayDate() }
+        val currentIndex = dates.indexOf(current).takeIf { it >= 0 } ?: dates.indexOf(auction.displayDate()).takeIf { it >= 0 } ?: 0
+        val nextIndex = (currentIndex + direction).coerceIn(0, dates.lastIndex)
+        loadAStockAuction(dates[nextIndex])
     }
 
     fun requestAction(action: String, title: String, params: Map<String, String> = emptyMap()) {
@@ -169,6 +246,10 @@ class YuqingViewModel(
             _uiState.update { it.copy(loading = false) }
         }
     }
+}
+
+private fun AStockAuctionListResult.displayDate(): String {
+    return date.ifBlank { latestDate }
 }
 
 class YuqingViewModelFactory(

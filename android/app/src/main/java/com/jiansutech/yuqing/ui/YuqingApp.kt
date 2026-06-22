@@ -57,13 +57,17 @@ import androidx.compose.ui.unit.dp
 import com.jiansutech.yuqing.BuildConfig
 import com.jiansutech.yuqing.data.AndroidDashboard
 import com.jiansutech.yuqing.data.AndroidModule
+import com.jiansutech.yuqing.data.AStockAuctionAmount
+import com.jiansutech.yuqing.data.AStockAuctionListResult
 import com.jiansutech.yuqing.data.ArticleItem
+import com.jiansutech.yuqing.data.ItemListResult
 import com.jiansutech.yuqing.data.Project
 import com.jiansutech.yuqing.data.Report
 import com.jiansutech.yuqing.data.SchedulerJob
 import com.jiansutech.yuqing.data.ServiceStatus
 import com.jiansutech.yuqing.data.StockHolding
 import com.jiansutech.yuqing.data.StockResearch
+import com.jiansutech.yuqing.data.TaskRun
 
 @Composable
 fun YuqingApp(viewModel: YuqingViewModel) {
@@ -211,20 +215,21 @@ private fun ModuleContent(key: String, dashboard: AndroidDashboard?, state: Yuqi
     when (key) {
         "dashboard" -> DashboardModule(dashboard)
         "projects" -> ProjectsModule(dashboard.projects, dashboard.rules)
-        "articles" -> ArticlesModule(dashboard.articles.items)
+        "articles" -> ArticlesModule(state.articleList ?: ItemListResult(), viewModel)
         "search" -> SearchModule(state, viewModel)
         "analysis" -> AnalysisModule(dashboard)
         "reports" -> ReportsModule(dashboard.reports, viewModel)
-        "a_stock" -> AStockModule(dashboard, viewModel)
+        "a_stock" -> AStockModule(state.aStockAuction ?: dashboard.aStock.auction, state, viewModel)
         "stock_research" -> StockResearchModule(dashboard.stockResearch.items, viewModel)
         "holdings" -> HoldingsModule(dashboard.holdings.items)
-        "system" -> SystemModule(dashboard, viewModel)
+        "system" -> SystemModule(dashboard, state, viewModel)
         else -> GenericModule(key, dashboard)
     }
 }
 
 @Composable
 private fun DashboardModule(dashboard: AndroidDashboard) {
+    val recentTasks = dashboard.recentTaskRunsForDisplay()
     LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -241,7 +246,10 @@ private fun DashboardModule(dashboard: AndroidDashboard) {
         item { SectionTitle("最新文章") }
         items(dashboard.articles.items) { ArticleRow(it) }
         item { SectionTitle("最近任务") }
-        items(dashboard.taskRuns) { SimpleRow(it.taskName, "${it.status} ${it.message}") }
+        if (recentTasks.isEmpty()) {
+            item { SimpleRow("暂无任务记录", "") }
+        }
+        items(recentTasks) { SimpleRow(it.taskName, "${it.status} ${it.message}") }
     }
 }
 
@@ -256,9 +264,28 @@ private fun ProjectsModule(projects: List<Project>, rules: List<com.jiansutech.y
 }
 
 @Composable
-private fun ArticlesModule(items: List<ArticleItem>) {
+private fun ArticlesModule(result: ItemListResult, viewModel: YuqingViewModel) {
+    val pageSize = result.pageSize.coerceAtLeast(1)
+    val canGoPrevious = result.page > 1
+    val canGoNext = result.page * pageSize < result.total
+    val totalPages = if (result.total <= 0) 1 else ((result.total + pageSize - 1) / pageSize).coerceAtLeast(1)
     LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        items(items) { ArticleRow(it) }
+        items(result.items) { ArticleRow(it) }
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Button(onClick = { viewModel.loadArticles(result.page - 1) }, enabled = canGoPrevious) {
+                    Text("上一页")
+                }
+                Text("第 ${result.page} / $totalPages 页", style = MaterialTheme.typography.bodySmall)
+                Button(onClick = { viewModel.loadArticles(result.page + 1) }, enabled = canGoNext) {
+                    Text("下一页")
+                }
+            }
+        }
     }
 }
 
@@ -309,18 +336,74 @@ private fun ReportsModule(reports: List<Report>, viewModel: YuqingViewModel) {
 }
 
 @Composable
-private fun AStockModule(dashboard: AndroidDashboard, viewModel: YuqingViewModel) {
-    val auction = dashboard.aStock.auction
+private fun AStockModule(auction: AStockAuctionListResult, state: YuqingUiState, viewModel: YuqingViewModel) {
+    val dates = auction.dates
+    val currentDate = state.aStockAuctionDate.ifBlank { auction.date.ifBlank { auction.latestDate } }
+    val currentIndex = dates.indexOf(currentDate)
+    val canGoNewer = currentIndex > 0
+    val canGoOlder = currentIndex >= 0 && currentIndex < dates.lastIndex
     LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 Button(onClick = { viewModel.requestAction("a_stock_auction_latest", "抓取最新集合竞价") }) { Text("抓取最新") }
                 Button(onClick = { viewModel.requestAction("a_stock_auction_backfill", "回补集合竞价", mapOf("days" to "30")) }) { Text("回补") }
             }
         }
-        item { SimpleRow("日期", auction.latestDate.ifBlank { auction.date }) }
-        item { SimpleRow("总金额", "%.2f".format(auction.totalAmount)) }
-        items(auction.items) { SimpleRow("${it.code} ${it.name}", "${it.auctionPrice} / ${it.auctionAmount}") }
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = currentDate,
+                    onValueChange = viewModel::updateAStockAuctionDate,
+                    label = { Text("交易日期") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                )
+                Spacer(Modifier.width(8.dp))
+                Button(onClick = { viewModel.loadAStockAuction(currentDate) }) { Text("查询") }
+            }
+        }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                Button(
+                    onClick = { viewModel.selectAdjacentAStockAuctionDate(1) },
+                    enabled = canGoOlder,
+                    modifier = Modifier.weight(1f),
+                ) { Text("前一日") }
+                Button(
+                    onClick = { viewModel.selectAdjacentAStockAuctionDate(-1) },
+                    enabled = canGoNewer,
+                    modifier = Modifier.weight(1f),
+                ) { Text("后一日") }
+            }
+        }
+        item {
+            SimpleRow(
+                "集合竞价 ${auction.date.ifBlank { currentDate }}",
+                listOf(
+                    "股票 ${auction.summaryCount.ifZero(auction.total)}",
+                    "总金额 ${formatAStockMoney(auction.totalAmount)}",
+                    "最新 ${auction.latestDate.ifBlank { "--" }}",
+                ).joinToString("  "),
+            )
+        }
+        auction.maxItem?.let { maxItem ->
+            item {
+                SimpleRow(
+                    "最大成交额 ${maxItem.code} ${maxItem.name}",
+                    "金额 ${formatAStockMoney(maxItem.auctionAmount)}  价格 ${formatAStockNumber(maxItem.auctionPrice)}  成交量 ${formatAStockVolume(maxItem.auctionVolume)}",
+                )
+            }
+        }
+        item {
+            SimpleRow(
+                "更新时间",
+                auction.fetchedAt.ifBlank { auction.items.firstOrNull()?.fetchedAt.orEmpty() }.ifBlank { "--" },
+            )
+        }
+        if (auction.items.isEmpty()) {
+            item { SimpleRow("暂无集合竞价数据", "可切换日期或先执行抓取/回补") }
+        }
+        items(auction.items) { AStockAuctionRow(it) }
     }
 }
 
@@ -345,14 +428,46 @@ private fun HoldingsModule(items: List<StockHolding>) {
 }
 
 @Composable
-private fun SystemModule(dashboard: AndroidDashboard, viewModel: YuqingViewModel) {
+private fun SystemModule(dashboard: AndroidDashboard, state: YuqingUiState, viewModel: YuqingViewModel) {
+    val recentTasks = dashboard.recentTaskRunsForDisplay()
+    val database = dashboard.operations.database
     LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item { SectionTitle("连接") }
+        item { SimpleRow("API 地址", state.session.apiBaseUrl) }
+        item {
+            SimpleRow(
+                "数据库",
+                listOf(
+                    "driver ${database.driver.ifBlank { "--" }}",
+                    "runtime ${database.runtimeDriver.ifBlank { "--" }}",
+                    "status ${database.status.ifBlank { "--" }}",
+                ).joinToString("  "),
+            )
+        }
+        if (database.sqlitePath.isNotBlank()) {
+            item { SimpleRow("SQLite", database.sqlitePath) }
+        }
+        if (database.postgresHost.isNotBlank() || database.postgresDsn.isNotBlank()) {
+            item {
+                SimpleRow(
+                    "PostgreSQL",
+                    database.postgresDsn.ifBlank {
+                        listOf(database.postgresHost, database.postgresPort, database.postgresDatabase, database.postgresUser)
+                            .filter { it.isNotBlank() }
+                            .joinToString("  ")
+                    },
+                )
+            }
+        }
         item { SectionTitle("服务") }
         items(dashboard.operations.services) { ServiceRow(it, viewModel) }
         item { SectionTitle("调度任务") }
         items(dashboard.operations.schedulerJobs) { SchedulerJobRow(it, viewModel) }
         item { SectionTitle("最近任务") }
-        items(dashboard.taskRuns) { SimpleRow(it.taskName, "${it.status} ${it.message}") }
+        if (recentTasks.isEmpty()) {
+            item { SimpleRow("暂无任务记录", "") }
+        }
+        items(recentTasks) { SimpleRow(it.taskName, "${it.status} ${it.message}") }
     }
 }
 
@@ -408,6 +523,50 @@ private fun MetricCard(title: String, value: String, modifier: Modifier = Modifi
 @Composable
 private fun ArticleRow(item: ArticleItem) {
     SimpleRow(item.title, listOf(item.sourceType, item.publishTimeText, item.summary).filter { it.isNotBlank() }.joinToString("  "))
+}
+
+@Composable
+private fun AStockAuctionRow(item: AStockAuctionAmount) {
+    SimpleRow(
+        "${item.code} ${item.name}",
+        listOf(
+            "价格 ${formatAStockNumber(item.auctionPrice)}",
+            "成交量 ${formatAStockVolume(item.auctionVolume)}",
+            "金额 ${formatAStockMoney(item.auctionAmount)}",
+            item.status,
+            item.source,
+        ).filter { it.isNotBlank() }.joinToString("  "),
+    )
+}
+
+private fun AndroidDashboard.recentTaskRunsForDisplay(): List<TaskRun> {
+    return if (taskRuns.isNotEmpty()) taskRuns else operations.recentTaskRuns
+}
+
+private fun Int.ifZero(fallback: Int): Int {
+    return if (this == 0) fallback else this
+}
+
+private fun formatAStockNumber(value: Double): String {
+    return if (value == 0.0) "--" else "%.2f".format(value)
+}
+
+private fun formatAStockVolume(value: Double): String {
+    return when {
+        value >= 100000000 -> "%.2f亿".format(value / 100000000)
+        value >= 10000 -> "%.2f万".format(value / 10000)
+        value > 0 -> "%.0f".format(value)
+        else -> "--"
+    }
+}
+
+private fun formatAStockMoney(value: Double): String {
+    return when {
+        value >= 100000000 -> "%.2f亿".format(value / 100000000)
+        value >= 10000 -> "%.2f万".format(value / 10000)
+        value > 0 -> "%.2f".format(value)
+        else -> "--"
+    }
 }
 
 @Composable

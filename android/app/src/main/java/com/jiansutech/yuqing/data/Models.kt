@@ -169,6 +169,26 @@ data class OperationsSummary(
     val services: List<ServiceStatus> = emptyList(),
     @SerialName("scheduler_jobs") val schedulerJobs: List<SchedulerJob> = emptyList(),
     @SerialName("recent_task_runs") val recentTaskRuns: List<TaskRun> = emptyList(),
+    val database: DatabaseConfigStatus = DatabaseConfigStatus(),
+)
+
+@Serializable
+data class DatabaseConfigStatus(
+    val driver: String = "",
+    @SerialName("configured_driver") val configuredDriver: String = "",
+    @SerialName("runtime_driver") val runtimeDriver: String = "",
+    val status: String = "",
+    val message: String = "",
+    @SerialName("config_path") val configPath: String = "",
+    @SerialName("restart_required") val restartRequired: Boolean = false,
+    @SerialName("sqlite_path") val sqlitePath: String = "",
+    @SerialName("postgres_host") val postgresHost: String = "",
+    @SerialName("postgres_port") val postgresPort: String = "",
+    @SerialName("postgres_database") val postgresDatabase: String = "",
+    @SerialName("postgres_user") val postgresUser: String = "",
+    @SerialName("postgres_sslmode") val postgresSslMode: String = "",
+    @SerialName("postgres_configured") val postgresConfigured: Boolean = false,
+    @SerialName("postgres_dsn") val postgresDsn: String = "",
 )
 
 @Serializable
@@ -194,19 +214,41 @@ data class AStockDashboard(val auction: AStockAuctionListResult = AStockAuctionL
 @Serializable
 data class AStockAuctionListResult(
     val items: List<AStockAuctionAmount> = emptyList(),
+    val page: Int = 1,
+    @SerialName("page_size") val pageSize: Int = 20,
     val total: Int = 0,
     val date: String = "",
+    val keyword: String = "",
     @SerialName("latest_date") val latestDate: String = "",
+    val dates: List<String> = emptyList(),
+    @SerialName("summary_count") val summaryCount: Int = 0,
     @SerialName("total_amount") val totalAmount: Double = 0.0,
+    @SerialName("max_item") val maxItem: AStockAuctionAmount? = null,
+    @SerialName("fetched_at") val fetchedAt: String = "",
+    val trend: List<AStockAuctionTrend> = emptyList(),
 )
 
 @Serializable
 data class AStockAuctionAmount(
+    @SerialName("trade_date") val tradeDate: String = "",
     val code: String = "",
     val name: String = "",
     @SerialName("auction_price") val auctionPrice: Double = 0.0,
+    @SerialName("auction_volume") val auctionVolume: Double = 0.0,
     @SerialName("auction_amount") val auctionAmount: Double = 0.0,
+    val source: String = "",
     val status: String = "",
+    @SerialName("fetched_at") val fetchedAt: String = "",
+)
+
+@Serializable
+data class AStockAuctionTrend(
+    val date: String = "",
+    @SerialName("stock_count") val stockCount: Int = 0,
+    @SerialName("total_volume") val totalVolume: Double = 0.0,
+    @SerialName("total_amount") val totalAmount: Double = 0.0,
+    @SerialName("max_stock_code") val maxStockCode: String = "",
+    @SerialName("max_stock_name") val maxStockName: String = "",
 )
 
 @Serializable
