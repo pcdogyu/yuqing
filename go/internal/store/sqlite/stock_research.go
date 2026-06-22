@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/pcdogyu/yuqing/go/internal/model"
 )
@@ -57,8 +58,33 @@ ON CONFLICT(source_type, source_key) DO UPDATE SET
 
 	now := time.Now().UTC()
 	for _, item := range items {
-		sourceType := strings.TrimSpace(item.SourceType)
-		sourceKey := strings.TrimSpace(item.SourceKey)
+		item.Code = strings.TrimSpace(item.Code)
+		item.Name = strings.TrimSpace(item.Name)
+		item.Kind = stockResearchKind(item.Kind)
+		item.Title = strings.TrimSpace(item.Title)
+		item.Institution = strings.TrimSpace(item.Institution)
+		item.Analyst = strings.TrimSpace(item.Analyst)
+		item.Rating = strings.TrimSpace(item.Rating)
+		item.TargetPrice = strings.TrimSpace(item.TargetPrice)
+		item.ResearchDate = strings.TrimSpace(item.ResearchDate)
+		item.PublishTime = strings.TrimSpace(item.PublishTime)
+		item.SourceURL = strings.TrimSpace(item.SourceURL)
+		item.SourceType = strings.TrimSpace(item.SourceType)
+		item.SourceKey = strings.TrimSpace(item.SourceKey)
+		item.Summary = strings.TrimSpace(item.Summary)
+		item.RawPayload = nonEmpty(strings.TrimSpace(item.RawPayload), "{}")
+		item.PDFURL = strings.TrimSpace(item.PDFURL)
+		item.PDFFilePath = strings.TrimSpace(item.PDFFilePath)
+		item.PDFStatus = stockResearchPDFStatus(item.PDFStatus)
+		item.PDFText = strings.TrimSpace(item.PDFText)
+		item.PDFError = strings.TrimSpace(item.PDFError)
+		item.PDFFetchedAt = strings.TrimSpace(item.PDFFetchedAt)
+		item.PDFParsedAt = strings.TrimSpace(item.PDFParsedAt)
+		item.NLPRating = strings.TrimSpace(item.NLPRating)
+		item.NLPReason = strings.TrimSpace(item.NLPReason)
+		item.NLPScoredAt = strings.TrimSpace(item.NLPScoredAt)
+		sourceType := item.SourceType
+		sourceKey := item.SourceKey
 		if sourceType == "" || sourceKey == "" {
 			continue
 		}
@@ -77,36 +103,58 @@ ON CONFLICT(source_type, source_key) DO UPDATE SET
 		if updatedAt.IsZero() {
 			updatedAt = now
 		}
+		item.CreatedAt = createdAt
+		item.UpdatedAt = updatedAt
+		if !existed {
+			equivalent, equivalentOK, equivalentErr := s.findEquivalentStockResearchSurveyTx(ctx, tx, item)
+			if equivalentErr != nil {
+				err = equivalentErr
+				return result, err
+			}
+			if equivalentOK {
+				if err = s.updateEquivalentStockResearchSurveyTx(ctx, tx, equivalent, item, updatedAt); err != nil {
+					return result, err
+				}
+				if err = s.collapseEquivalentStockResearchSurveysTx(ctx, tx, item); err != nil {
+					return result, err
+				}
+				result.Updated++
+				continue
+			}
+		}
 		if _, err = stmt.ExecContext(ctx,
-			strings.TrimSpace(item.Code),
-			strings.TrimSpace(item.Name),
-			stockResearchKind(item.Kind),
-			strings.TrimSpace(item.Title),
-			strings.TrimSpace(item.Institution),
-			strings.TrimSpace(item.Analyst),
-			strings.TrimSpace(item.Rating),
-			strings.TrimSpace(item.TargetPrice),
-			strings.TrimSpace(item.ResearchDate),
-			strings.TrimSpace(item.PublishTime),
-			strings.TrimSpace(item.SourceURL),
+			item.Code,
+			item.Name,
+			item.Kind,
+			item.Title,
+			item.Institution,
+			item.Analyst,
+			item.Rating,
+			item.TargetPrice,
+			item.ResearchDate,
+			item.PublishTime,
+			item.SourceURL,
 			sourceType,
 			sourceKey,
-			strings.TrimSpace(item.Summary),
-			nonEmpty(strings.TrimSpace(item.RawPayload), "{}"),
-			strings.TrimSpace(item.PDFURL),
-			strings.TrimSpace(item.PDFFilePath),
-			stockResearchPDFStatus(item.PDFStatus),
-			strings.TrimSpace(item.PDFText),
-			strings.TrimSpace(item.PDFError),
-			strings.TrimSpace(item.PDFFetchedAt),
-			strings.TrimSpace(item.PDFParsedAt),
+			item.Summary,
+			item.RawPayload,
+			item.PDFURL,
+			item.PDFFilePath,
+			item.PDFStatus,
+			item.PDFText,
+			item.PDFError,
+			item.PDFFetchedAt,
+			item.PDFParsedAt,
 			item.NLPScore,
-			strings.TrimSpace(item.NLPRating),
-			strings.TrimSpace(item.NLPReason),
-			strings.TrimSpace(item.NLPScoredAt),
+			item.NLPRating,
+			item.NLPReason,
+			item.NLPScoredAt,
 			createdAt.UTC().Format(time.RFC3339),
 			updatedAt.UTC().Format(time.RFC3339),
 		); err != nil {
+			return result, err
+		}
+		if err = s.collapseEquivalentStockResearchSurveysTx(ctx, tx, item); err != nil {
 			return result, err
 		}
 		if existed {
@@ -117,6 +165,180 @@ ON CONFLICT(source_type, source_key) DO UPDATE SET
 	}
 	err = tx.Commit()
 	return result, err
+}
+
+func (s *Store) findEquivalentStockResearchSurveyTx(ctx context.Context, tx *Tx, item model.StockResearchSurvey) (model.StockResearchSurvey, bool, error) {
+	key := stockResearchEquivalentKey(item)
+	if key == "" {
+		return model.StockResearchSurvey{}, false, nil
+	}
+	rows, err := tx.QueryContext(ctx, `
+SELECT id, code, name, kind, title, institution, analyst, rating, target_price, research_date, publish_time, source_url, source_type, source_key, summary, raw_payload, pdf_url, pdf_file_path, pdf_status, pdf_text, pdf_error, pdf_fetched_at, pdf_parsed_at, nlp_score, nlp_rating, nlp_reason, nlp_scored_at, created_at, updated_at
+FROM stock_research_surveys
+WHERE kind = ? AND code = ? AND COALESCE(NULLIF(research_date, ''), publish_time) >= ? AND COALESCE(NULLIF(research_date, ''), publish_time) <= ?`,
+		item.Kind, item.Code, stockResearchEquivalentDate(item), stockResearchEquivalentDate(item)+" 23:59:59")
+	if err != nil {
+		return model.StockResearchSurvey{}, false, err
+	}
+	defer rows.Close()
+	var found model.StockResearchSurvey
+	for rows.Next() {
+		candidate, scanErr := scanStockResearchSurvey(rows)
+		if scanErr != nil {
+			return model.StockResearchSurvey{}, false, scanErr
+		}
+		if stockResearchEquivalentKey(candidate) != key {
+			continue
+		}
+		if found.ID == 0 || stockResearchSourceRank(candidate) > stockResearchSourceRank(found) {
+			found = candidate
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return model.StockResearchSurvey{}, false, err
+	}
+	return found, found.ID > 0, nil
+}
+
+func (s *Store) updateEquivalentStockResearchSurveyTx(ctx context.Context, tx *Tx, existing, incoming model.StockResearchSurvey, updatedAt time.Time) error {
+	preferred := mergePreferredStockResearch(existing, incoming)
+	if preferred.CreatedAt.IsZero() {
+		preferred.CreatedAt = existing.CreatedAt
+	}
+	if preferred.UpdatedAt.IsZero() || updatedAt.After(preferred.UpdatedAt) {
+		preferred.UpdatedAt = updatedAt
+	}
+	_, err := tx.ExecContext(ctx, `
+UPDATE stock_research_surveys
+SET code = ?, name = ?, kind = ?, title = ?, institution = ?, analyst = ?, rating = ?, target_price = ?, research_date = ?, publish_time = ?, source_url = ?, source_type = ?, source_key = ?, summary = ?, raw_payload = ?,
+	pdf_url = CASE WHEN ? <> '' THEN ? ELSE pdf_url END,
+	pdf_file_path = CASE WHEN ? <> '' THEN ? ELSE pdf_file_path END,
+	pdf_status = CASE WHEN ? <> '' THEN ? ELSE pdf_status END,
+	pdf_text = CASE WHEN ? <> '' THEN ? ELSE pdf_text END,
+	pdf_error = CASE WHEN ? <> '' THEN ? ELSE pdf_error END,
+	pdf_fetched_at = CASE WHEN ? <> '' THEN ? ELSE pdf_fetched_at END,
+	pdf_parsed_at = CASE WHEN ? <> '' THEN ? ELSE pdf_parsed_at END,
+	nlp_score = CASE WHEN ? <> '' THEN ? ELSE nlp_score END,
+	nlp_rating = CASE WHEN ? <> '' THEN ? ELSE nlp_rating END,
+	nlp_reason = CASE WHEN ? <> '' THEN ? ELSE nlp_reason END,
+	nlp_scored_at = CASE WHEN ? <> '' THEN ? ELSE nlp_scored_at END,
+	updated_at = ?
+WHERE id = ?`,
+		preferred.Code,
+		preferred.Name,
+		preferred.Kind,
+		preferred.Title,
+		preferred.Institution,
+		preferred.Analyst,
+		preferred.Rating,
+		preferred.TargetPrice,
+		preferred.ResearchDate,
+		preferred.PublishTime,
+		preferred.SourceURL,
+		preferred.SourceType,
+		preferred.SourceKey,
+		preferred.Summary,
+		preferred.RawPayload,
+		incoming.PDFURL, incoming.PDFURL,
+		incoming.PDFFilePath, incoming.PDFFilePath,
+		incoming.PDFStatus, incoming.PDFStatus,
+		incoming.PDFText, incoming.PDFText,
+		incoming.PDFError, incoming.PDFError,
+		incoming.PDFFetchedAt, incoming.PDFFetchedAt,
+		incoming.PDFParsedAt, incoming.PDFParsedAt,
+		incoming.NLPScoredAt, incoming.NLPScore,
+		incoming.NLPRating, incoming.NLPRating,
+		incoming.NLPReason, incoming.NLPReason,
+		incoming.NLPScoredAt, incoming.NLPScoredAt,
+		preferred.UpdatedAt.UTC().Format(time.RFC3339),
+		existing.ID,
+	)
+	return err
+}
+
+func (s *Store) collapseEquivalentStockResearchSurveysTx(ctx context.Context, tx *Tx, item model.StockResearchSurvey) error {
+	key := stockResearchEquivalentKey(item)
+	if key == "" {
+		return nil
+	}
+	rows, err := tx.QueryContext(ctx, `
+SELECT id, code, name, kind, title, institution, analyst, rating, target_price, research_date, publish_time, source_url, source_type, source_key, summary, raw_payload, pdf_url, pdf_file_path, pdf_status, pdf_text, pdf_error, pdf_fetched_at, pdf_parsed_at, nlp_score, nlp_rating, nlp_reason, nlp_scored_at, created_at, updated_at
+FROM stock_research_surveys
+WHERE kind = ? AND code = ? AND COALESCE(NULLIF(research_date, ''), publish_time) >= ? AND COALESCE(NULLIF(research_date, ''), publish_time) <= ?`,
+		item.Kind, item.Code, stockResearchEquivalentDate(item), stockResearchEquivalentDate(item)+" 23:59:59")
+	if err != nil {
+		return err
+	}
+	candidates := make([]model.StockResearchSurvey, 0)
+	for rows.Next() {
+		candidate, scanErr := scanStockResearchSurvey(rows)
+		if scanErr != nil {
+			rows.Close()
+			return scanErr
+		}
+		if stockResearchEquivalentKey(candidate) == key {
+			candidates = append(candidates, candidate)
+		}
+	}
+	if rowErr := rows.Err(); rowErr != nil {
+		rows.Close()
+		return rowErr
+	}
+	rows.Close()
+	if len(candidates) < 2 {
+		return nil
+	}
+	winner := candidates[0]
+	for _, candidate := range candidates[1:] {
+		if stockResearchSourceRank(candidate) > stockResearchSourceRank(winner) {
+			winner = candidate
+		}
+	}
+	for _, candidate := range candidates {
+		if candidate.ID == winner.ID {
+			continue
+		}
+		if err := mergeStockResearchRowFieldsTx(ctx, tx, winner.ID, candidate); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM stock_research_surveys WHERE id = ?`, candidate.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func mergeStockResearchRowFieldsTx(ctx context.Context, tx *Tx, winnerID int64, loser model.StockResearchSurvey) error {
+	_, err := tx.ExecContext(ctx, `
+UPDATE stock_research_surveys
+SET pdf_url = CASE WHEN pdf_url = '' THEN ? ELSE pdf_url END,
+	pdf_file_path = CASE WHEN pdf_file_path = '' THEN ? ELSE pdf_file_path END,
+	pdf_status = CASE WHEN pdf_status = '' THEN ? ELSE pdf_status END,
+	pdf_text = CASE WHEN pdf_text = '' THEN ? ELSE pdf_text END,
+	pdf_error = CASE WHEN pdf_error = '' THEN ? ELSE pdf_error END,
+	pdf_fetched_at = CASE WHEN pdf_fetched_at = '' THEN ? ELSE pdf_fetched_at END,
+	pdf_parsed_at = CASE WHEN pdf_parsed_at = '' THEN ? ELSE pdf_parsed_at END,
+	nlp_score = CASE WHEN nlp_scored_at = '' THEN ? ELSE nlp_score END,
+	nlp_rating = CASE WHEN nlp_rating = '' THEN ? ELSE nlp_rating END,
+	nlp_reason = CASE WHEN nlp_reason = '' THEN ? ELSE nlp_reason END,
+	nlp_scored_at = CASE WHEN nlp_scored_at = '' THEN ? ELSE nlp_scored_at END,
+	updated_at = ?
+WHERE id = ?`,
+		loser.PDFURL,
+		loser.PDFFilePath,
+		loser.PDFStatus,
+		loser.PDFText,
+		loser.PDFError,
+		loser.PDFFetchedAt,
+		loser.PDFParsedAt,
+		loser.NLPScore,
+		loser.NLPRating,
+		loser.NLPReason,
+		loser.NLPScoredAt,
+		time.Now().UTC().Format(time.RFC3339),
+		winnerID,
+	)
+	return err
 }
 
 func (s *Store) ListStockResearchSurveys(ctx context.Context, filter model.StockResearchFilter) (model.StockResearchListResult, error) {
@@ -317,4 +539,188 @@ func stockResearchPDFStatus(value string) string {
 	default:
 		return strings.TrimSpace(value)
 	}
+}
+
+func mergePreferredStockResearch(current, incoming model.StockResearchSurvey) model.StockResearchSurvey {
+	preferred, fallback := current, incoming
+	if stockResearchSourceRank(incoming) > stockResearchSourceRank(current) {
+		preferred, fallback = incoming, current
+		preferred.ID = current.ID
+	}
+	if strings.TrimSpace(preferred.Code) == "" {
+		preferred.Code = fallback.Code
+	}
+	if strings.TrimSpace(preferred.Name) == "" {
+		preferred.Name = fallback.Name
+	}
+	if strings.TrimSpace(preferred.Kind) == "" {
+		preferred.Kind = fallback.Kind
+	}
+	if strings.TrimSpace(preferred.Title) == "" {
+		preferred.Title = fallback.Title
+	}
+	if strings.TrimSpace(preferred.Institution) == "" {
+		preferred.Institution = fallback.Institution
+	}
+	if strings.TrimSpace(preferred.Analyst) == "" {
+		preferred.Analyst = fallback.Analyst
+	}
+	if strings.TrimSpace(preferred.Rating) == "" {
+		preferred.Rating = fallback.Rating
+	}
+	if strings.TrimSpace(preferred.TargetPrice) == "" {
+		preferred.TargetPrice = fallback.TargetPrice
+	}
+	if strings.TrimSpace(preferred.ResearchDate) == "" {
+		preferred.ResearchDate = fallback.ResearchDate
+	}
+	if strings.TrimSpace(preferred.PublishTime) == "" {
+		preferred.PublishTime = fallback.PublishTime
+	}
+	if strings.TrimSpace(preferred.SourceURL) == "" {
+		preferred.SourceURL = fallback.SourceURL
+	}
+	if strings.TrimSpace(preferred.Summary) == "" {
+		preferred.Summary = fallback.Summary
+	}
+	if strings.TrimSpace(preferred.RawPayload) == "" || strings.TrimSpace(preferred.RawPayload) == "{}" {
+		preferred.RawPayload = fallback.RawPayload
+	}
+	if strings.TrimSpace(preferred.PDFURL) == "" {
+		preferred.PDFURL = fallback.PDFURL
+	}
+	if strings.TrimSpace(preferred.PDFFilePath) == "" {
+		preferred.PDFFilePath = fallback.PDFFilePath
+	}
+	if strings.TrimSpace(preferred.PDFStatus) == "" {
+		preferred.PDFStatus = fallback.PDFStatus
+	}
+	if strings.TrimSpace(preferred.PDFText) == "" {
+		preferred.PDFText = fallback.PDFText
+	}
+	if strings.TrimSpace(preferred.PDFError) == "" {
+		preferred.PDFError = fallback.PDFError
+	}
+	if strings.TrimSpace(preferred.PDFFetchedAt) == "" {
+		preferred.PDFFetchedAt = fallback.PDFFetchedAt
+	}
+	if strings.TrimSpace(preferred.PDFParsedAt) == "" {
+		preferred.PDFParsedAt = fallback.PDFParsedAt
+	}
+	if preferred.NLPScore == 0 {
+		preferred.NLPScore = fallback.NLPScore
+	}
+	if strings.TrimSpace(preferred.NLPRating) == "" {
+		preferred.NLPRating = fallback.NLPRating
+	}
+	if strings.TrimSpace(preferred.NLPReason) == "" {
+		preferred.NLPReason = fallback.NLPReason
+	}
+	if strings.TrimSpace(preferred.NLPScoredAt) == "" {
+		preferred.NLPScoredAt = fallback.NLPScoredAt
+	}
+	return preferred
+}
+
+func stockResearchSourceRank(item model.StockResearchSurvey) int {
+	switch strings.TrimSpace(item.SourceType) {
+	case "eastmoney_report":
+		if strings.HasPrefix(strings.TrimSpace(item.SourceKey), "AP") || strings.TrimSpace(item.PDFURL) != "" {
+			return 40
+		}
+		return 35
+	case "akshare_stock_research":
+		return 30
+	case "sina_finance_report":
+		return 20
+	case "sohu_finance_report":
+		return 10
+	default:
+		return 0
+	}
+}
+
+func stockResearchEquivalentKey(item model.StockResearchSurvey) string {
+	if stockResearchKind(item.Kind) != "report" {
+		return ""
+	}
+	code := strings.TrimSpace(item.Code)
+	date := stockResearchEquivalentDate(item)
+	institution := stockResearchComparableText(item.Institution)
+	title := stockResearchComparableTitle(item)
+	if code == "" || date == "" || institution == "" || title == "" {
+		return ""
+	}
+	return strings.Join([]string{code, date, institution, title}, "|")
+}
+
+func stockResearchEquivalentDate(item model.StockResearchSurvey) string {
+	date := strings.TrimSpace(item.ResearchDate)
+	if date == "" {
+		date = strings.TrimSpace(item.PublishTime)
+	}
+	if idx := strings.Index(date, " "); idx > 0 && strings.Contains(date[:idx], "-") {
+		date = date[:idx]
+	}
+	return date
+}
+
+func stockResearchComparableTitle(item model.StockResearchSurvey) string {
+	title := strings.TrimSpace(item.Title)
+	if title == "" {
+		return ""
+	}
+	colonIdx, colonSize := stockResearchComparableTitleColonIndex(title)
+	if colonIdx >= 0 {
+		prefix := title[:colonIdx]
+		if strings.Contains(prefix, strings.TrimSpace(item.Code)) || strings.Contains(prefix, strings.TrimSpace(item.Name)) || stockResearchTitleHasStockCode(prefix) {
+			title = title[colonIdx+colonSize:]
+		}
+	}
+	return stockResearchComparableText(title)
+}
+
+func stockResearchComparableTitleColonIndex(title string) (int, int) {
+	half := strings.Index(title, ":")
+	full := strings.Index(title, "：")
+	switch {
+	case half < 0:
+		if full < 0 {
+			return -1, 0
+		}
+		return full, len("：")
+	case full < 0 || half < full:
+		return half, len(":")
+	default:
+		return full, len("：")
+	}
+}
+
+func stockResearchTitleHasStockCode(value string) bool {
+	for i := 0; i+6 <= len(value); i++ {
+		part := value[i : i+6]
+		allDigits := true
+		for _, r := range part {
+			if r < '0' || r > '9' {
+				allDigits = false
+				break
+			}
+		}
+		if allDigits {
+			return true
+		}
+	}
+	return false
+}
+
+func stockResearchComparableText(value string) string {
+	value = strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(value)), " "))
+	var b strings.Builder
+	for _, r := range value {
+		if unicode.IsSpace(r) || unicode.IsPunct(r) || unicode.IsSymbol(r) {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }

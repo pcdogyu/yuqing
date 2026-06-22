@@ -975,6 +975,41 @@ func TestParseEastMoneyReportDocumentAndDetail(t *testing.T) {
 	}
 }
 
+func TestDedupeStockResearchPrefersEastMoneyPDFAcrossSources(t *testing.T) {
+	items := dedupeStockResearch([]model.StockResearchSurvey{
+		{
+			Code:         "603100",
+			Name:         "川仪股份",
+			Kind:         "report",
+			Title:        "川仪股份(603100)：工业自动化仪表龙头，国产替代持续推进",
+			Institution:  "国投证券股份有限公司",
+			ResearchDate: "2026-06-21",
+			SourceType:   "sina_finance_report",
+			SourceKey:    "sina-603100",
+			SourceURL:    "https://stock.finance.sina.com.cn/report/603100.html",
+		},
+		{
+			Code:         "603100",
+			Name:         "川仪股份",
+			Kind:         "report",
+			Title:        "工业自动化仪表龙头，国产替代持续推进",
+			Institution:  "国投证券股份有限公司",
+			ResearchDate: "2026-06-21",
+			SourceType:   "eastmoney_report",
+			SourceKey:    "AP202606211823706310",
+			SourceURL:    "https://data.eastmoney.com/report/info/AP202606211823706310.html",
+			PDFURL:       "https://pdf.dfcfw.com/pdf/H3_AP202606211823706310_1.pdf?1782037122000.pdf",
+			PDFStatus:    "pending",
+		},
+	})
+	if len(items) != 1 {
+		t.Fatalf("expected one deduped item, got %+v", items)
+	}
+	if items[0].SourceType != "eastmoney_report" || items[0].SourceKey != "AP202606211823706310" || !strings.Contains(items[0].PDFURL, "AP202606211823706310") {
+		t.Fatalf("expected eastmoney report with PDF to win, got %+v", items[0])
+	}
+}
+
 func TestRunStockResearchBackfillFetchesExternalAndWritesContent(t *testing.T) {
 	var captured []model.StockResearchSurvey
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

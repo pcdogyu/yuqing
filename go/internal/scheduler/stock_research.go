@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/rs/zerolog/log"
@@ -732,20 +733,192 @@ func stockResearchDateInRange(value, start, end string) bool {
 }
 
 func dedupeStockResearch(items []model.StockResearchSurvey) []model.StockResearchSurvey {
-	seen := map[string]struct{}{}
+	seenSource := map[string]int{}
+	seenEquivalent := map[string]int{}
 	out := make([]model.StockResearchSurvey, 0, len(items))
 	for _, item := range items {
 		key := item.SourceType + "|" + item.SourceKey
 		if strings.TrimSpace(item.Title) == "" || strings.TrimSpace(item.SourceKey) == "" {
 			continue
 		}
-		if _, ok := seen[key]; ok {
+		if idx, ok := seenSource[key]; ok {
+			out[idx] = mergePreferredStockResearch(out[idx], item)
 			continue
 		}
-		seen[key] = struct{}{}
+		equivalentKey := stockResearchEquivalentKey(item)
+		if equivalentKey != "" {
+			if idx, ok := seenEquivalent[equivalentKey]; ok {
+				out[idx] = mergePreferredStockResearch(out[idx], item)
+				seenSource[out[idx].SourceType+"|"+out[idx].SourceKey] = idx
+				continue
+			}
+			seenEquivalent[equivalentKey] = len(out)
+		}
+		seenSource[key] = len(out)
 		out = append(out, item)
 	}
 	return out
+}
+
+func mergePreferredStockResearch(current, incoming model.StockResearchSurvey) model.StockResearchSurvey {
+	preferred, fallback := current, incoming
+	if stockResearchSourceRank(incoming) > stockResearchSourceRank(current) {
+		preferred, fallback = incoming, current
+	}
+	if strings.TrimSpace(preferred.Code) == "" {
+		preferred.Code = fallback.Code
+	}
+	if strings.TrimSpace(preferred.Name) == "" {
+		preferred.Name = fallback.Name
+	}
+	if strings.TrimSpace(preferred.Kind) == "" {
+		preferred.Kind = fallback.Kind
+	}
+	if strings.TrimSpace(preferred.Title) == "" {
+		preferred.Title = fallback.Title
+	}
+	if strings.TrimSpace(preferred.Institution) == "" {
+		preferred.Institution = fallback.Institution
+	}
+	if strings.TrimSpace(preferred.Analyst) == "" {
+		preferred.Analyst = fallback.Analyst
+	}
+	if strings.TrimSpace(preferred.Rating) == "" {
+		preferred.Rating = fallback.Rating
+	}
+	if strings.TrimSpace(preferred.TargetPrice) == "" {
+		preferred.TargetPrice = fallback.TargetPrice
+	}
+	if strings.TrimSpace(preferred.ResearchDate) == "" {
+		preferred.ResearchDate = fallback.ResearchDate
+	}
+	if strings.TrimSpace(preferred.PublishTime) == "" {
+		preferred.PublishTime = fallback.PublishTime
+	}
+	if strings.TrimSpace(preferred.SourceURL) == "" {
+		preferred.SourceURL = fallback.SourceURL
+	}
+	if strings.TrimSpace(preferred.Summary) == "" {
+		preferred.Summary = fallback.Summary
+	}
+	if strings.TrimSpace(preferred.RawPayload) == "" || strings.TrimSpace(preferred.RawPayload) == "{}" {
+		preferred.RawPayload = fallback.RawPayload
+	}
+	if strings.TrimSpace(preferred.PDFURL) == "" {
+		preferred.PDFURL = fallback.PDFURL
+	}
+	if strings.TrimSpace(preferred.PDFFilePath) == "" {
+		preferred.PDFFilePath = fallback.PDFFilePath
+	}
+	if strings.TrimSpace(preferred.PDFStatus) == "" {
+		preferred.PDFStatus = fallback.PDFStatus
+	}
+	if strings.TrimSpace(preferred.PDFText) == "" {
+		preferred.PDFText = fallback.PDFText
+	}
+	if strings.TrimSpace(preferred.PDFError) == "" {
+		preferred.PDFError = fallback.PDFError
+	}
+	if strings.TrimSpace(preferred.PDFFetchedAt) == "" {
+		preferred.PDFFetchedAt = fallback.PDFFetchedAt
+	}
+	if strings.TrimSpace(preferred.PDFParsedAt) == "" {
+		preferred.PDFParsedAt = fallback.PDFParsedAt
+	}
+	if preferred.NLPScore == 0 {
+		preferred.NLPScore = fallback.NLPScore
+	}
+	if strings.TrimSpace(preferred.NLPRating) == "" {
+		preferred.NLPRating = fallback.NLPRating
+	}
+	if strings.TrimSpace(preferred.NLPReason) == "" {
+		preferred.NLPReason = fallback.NLPReason
+	}
+	if strings.TrimSpace(preferred.NLPScoredAt) == "" {
+		preferred.NLPScoredAt = fallback.NLPScoredAt
+	}
+	if preferred.CreatedAt.IsZero() || (!fallback.CreatedAt.IsZero() && fallback.CreatedAt.Before(preferred.CreatedAt)) {
+		preferred.CreatedAt = fallback.CreatedAt
+	}
+	if fallback.UpdatedAt.After(preferred.UpdatedAt) {
+		preferred.UpdatedAt = fallback.UpdatedAt
+	}
+	return preferred
+}
+
+func stockResearchSourceRank(item model.StockResearchSurvey) int {
+	switch strings.TrimSpace(item.SourceType) {
+	case "eastmoney_report":
+		if strings.HasPrefix(strings.TrimSpace(item.SourceKey), "AP") || strings.TrimSpace(item.PDFURL) != "" {
+			return 40
+		}
+		return 35
+	case "akshare_stock_research":
+		return 30
+	case "sina_finance_report":
+		return 20
+	case "sohu_finance_report":
+		return 10
+	default:
+		return 0
+	}
+}
+
+func stockResearchEquivalentKey(item model.StockResearchSurvey) string {
+	if stockResearchKindText(item.Kind) != "report" {
+		return ""
+	}
+	code := strings.TrimSpace(item.Code)
+	date := normalizeStockResearchDate(nonEmptyText(item.ResearchDate, item.PublishTime))
+	institution := stockResearchComparableText(item.Institution)
+	title := stockResearchComparableTitle(item)
+	if code == "" || date == "" || institution == "" || title == "" {
+		return ""
+	}
+	return strings.Join([]string{code, date, institution, title}, "|")
+}
+
+func stockResearchComparableTitle(item model.StockResearchSurvey) string {
+	title := cleanStockResearchText(item.Title)
+	if title == "" {
+		return ""
+	}
+	colonIdx, colonSize := stockResearchComparableTitleColonIndex(title)
+	if colonIdx >= 0 {
+		prefix := title[:colonIdx]
+		if strings.Contains(prefix, strings.TrimSpace(item.Code)) || strings.Contains(prefix, strings.TrimSpace(item.Name)) || stockResearchCodePattern.MatchString(prefix) {
+			title = title[colonIdx+colonSize:]
+		}
+	}
+	return stockResearchComparableText(title)
+}
+
+func stockResearchComparableTitleColonIndex(title string) (int, int) {
+	half := strings.Index(title, ":")
+	full := strings.Index(title, "：")
+	switch {
+	case half < 0:
+		if full < 0 {
+			return -1, 0
+		}
+		return full, len("：")
+	case full < 0 || half < full:
+		return half, len(":")
+	default:
+		return full, len("：")
+	}
+}
+
+func stockResearchComparableText(value string) string {
+	value = strings.ToLower(cleanStockResearchText(value))
+	var b strings.Builder
+	for _, r := range value {
+		if unicode.IsSpace(r) || unicode.IsPunct(r) || unicode.IsSymbol(r) {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 func stockResearchToday() time.Time {

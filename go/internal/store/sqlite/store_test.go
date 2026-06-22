@@ -213,6 +213,84 @@ func TestStockResearchSurveysUpsertAndFilter(t *testing.T) {
 	}
 }
 
+func TestStockResearchUpsertMergesEquivalentReportsPreferringEastMoney(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	if _, err := store.UpsertStockResearchSurveys(ctx, []model.StockResearchSurvey{{
+		Code:         "603100",
+		Name:         "川仪股份",
+		Kind:         "report",
+		Title:        "川仪股份(603100)：工业自动化仪表龙头，国产替代持续推进",
+		Institution:  "国投证券股份有限公司",
+		ResearchDate: "2026-06-21",
+		SourceType:   "sina_finance_report",
+		SourceKey:    "sina-603100",
+		SourceURL:    "https://stock.finance.sina.com.cn/report/603100.html",
+		RawPayload:   "{}",
+	}}); err != nil {
+		t.Fatalf("insert sina stock research: %v", err)
+	}
+	before, err := store.ListStockResearchSurveys(ctx, model.StockResearchFilter{Code: "603100", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("list before eastmoney upsert: %v", err)
+	}
+	if before.Total != 1 {
+		t.Fatalf("expected one sina row before merge, got %+v", before)
+	}
+	firstID := before.Items[0].ID
+
+	if _, err := store.UpsertStockResearchSurveys(ctx, []model.StockResearchSurvey{{
+		Code:         "603100",
+		Name:         "川仪股份",
+		Kind:         "report",
+		Title:        "工业自动化仪表龙头，国产替代持续推进",
+		Institution:  "国投证券股份有限公司",
+		ResearchDate: "2026-06-21",
+		SourceType:   "eastmoney_report",
+		SourceKey:    "AP202606211823706310",
+		SourceURL:    "https://data.eastmoney.com/report/info/AP202606211823706310.html",
+		PDFURL:       "https://pdf.dfcfw.com/pdf/H3_AP202606211823706310_1.pdf?1782037122000.pdf",
+		PDFStatus:    "pending",
+		RawPayload:   "{}",
+	}}); err != nil {
+		t.Fatalf("upsert equivalent eastmoney stock research: %v", err)
+	}
+	merged, err := store.ListStockResearchSurveys(ctx, model.StockResearchFilter{Code: "603100", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("list after eastmoney merge: %v", err)
+	}
+	if merged.Total != 1 || len(merged.Items) != 1 {
+		t.Fatalf("expected one merged row, got %+v", merged)
+	}
+	item := merged.Items[0]
+	if item.ID != firstID || item.SourceType != "eastmoney_report" || item.SourceKey != "AP202606211823706310" || !strings.Contains(item.SourceURL, "data.eastmoney.com/report/info/AP202606211823706310.html") || !strings.Contains(item.PDFURL, "AP202606211823706310") {
+		t.Fatalf("expected existing row upgraded to eastmoney with PDF, got %+v", item)
+	}
+
+	if _, err := store.UpsertStockResearchSurveys(ctx, []model.StockResearchSurvey{{
+		Code:         "603100",
+		Name:         "川仪股份",
+		Kind:         "report",
+		Title:        "川仪股份(603100)：工业自动化仪表龙头，国产替代持续推进",
+		Institution:  "国投证券股份有限公司",
+		ResearchDate: "2026-06-21",
+		SourceType:   "sina_finance_report",
+		SourceKey:    "sina-603100-late",
+		SourceURL:    "https://stock.finance.sina.com.cn/report/603100-late.html",
+		RawPayload:   "{}",
+	}}); err != nil {
+		t.Fatalf("upsert late sina equivalent stock research: %v", err)
+	}
+	afterLateSina, err := store.ListStockResearchSurveys(ctx, model.StockResearchFilter{Code: "603100", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("list after late sina upsert: %v", err)
+	}
+	if afterLateSina.Total != 1 || afterLateSina.Items[0].SourceType != "eastmoney_report" || afterLateSina.Items[0].SourceKey != "AP202606211823706310" {
+		t.Fatalf("expected late sina equivalent not to downgrade eastmoney row, got %+v", afterLateSina)
+	}
+}
+
 func TestStockInstitutionHoldingsUpsertListAndSummary(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
