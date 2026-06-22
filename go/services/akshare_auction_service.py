@@ -35,6 +35,7 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8087
 DEFAULT_WORKERS = 12
 DEFAULT_CACHE_DIR = Path("data") / "akshare-cache" / "a-stock-auction"
+DEFAULT_TRADING_DAY_CACHE_TTL_SEC = 6 * 60 * 60
 DEFAULT_RESEARCH_SYMBOLS = ["002230", "300059", "000001", "600519", "300750", "000858", "601318"]
 HOLDING_DETAIL_TYPES = ["基金", "QFII", "社保", "券商", "信托", "保险"]
 HOLDING_DETAIL_CHANGES = ["新进", "增加", "不变", "减少"]
@@ -99,6 +100,15 @@ ASTOCK_2026_MARKET_HOLIDAYS = {
 _akshare_module: Any | None = None
 _akshare_error: str | None = None
 _akshare_lock = threading.Lock()
+_trading_day_cache_lock = threading.Lock()
+_trading_day_cache: dict[str, Any] = {"fetched_at": 0.0, "dates": []}
+
+
+def trading_day_cache_ttl_sec() -> int:
+    try:
+        return int(os.getenv("AKSHARE_TRADING_DAY_CACHE_TTL_SEC", str(DEFAULT_TRADING_DAY_CACHE_TTL_SEC)))
+    except ValueError:
+        return DEFAULT_TRADING_DAY_CACHE_TTL_SEC
 
 
 def load_akshare() -> Any:
@@ -172,27 +182,23 @@ def parse_trade_date(value: Any) -> str:
 
 def latest_trading_day(ak: Any, today: str) -> str:
     try:
-        frame = ak.tool_trade_date_hist_sina()
+        dates = trading_day_calendar(ak)
     except Exception:
         return today
     latest = ""
-    try:
-        iterator = frame.iterrows()
-    except Exception:
-        return today
-    dates: list[str] = []
-    for _, row in iterator:
-        value = first_existing(row, ["trade_date", "交易日", "date", "日期"])
-        parsed = parse_trade_date(value)
-        if parsed:
-            dates.append(parsed)
-    for parsed in normalize_a_stock_trading_dates(dates):
+    for parsed in dates:
         if parsed <= today and parsed > latest:
             latest = parsed
     return latest or today
 
 
-def trading_day_calendar(ak: Any) -> list[str]:
+def reset_trading_day_calendar_cache() -> None:
+    with _trading_day_cache_lock:
+        _trading_day_cache["fetched_at"] = 0.0
+        _trading_day_cache["dates"] = []
+
+
+def fetch_trading_day_calendar(ak: Any) -> list[str]:
     frame = ak.tool_trade_date_hist_sina()
     dates: list[str] = []
     try:
@@ -205,6 +211,24 @@ def trading_day_calendar(ak: Any) -> list[str]:
         if parsed:
             dates.append(parsed)
     return normalize_a_stock_trading_dates(dates)
+
+
+def trading_day_calendar(ak: Any) -> list[str]:
+    now = time.time()
+    ttl = trading_day_cache_ttl_sec()
+    if ttl > 0:
+        with _trading_day_cache_lock:
+            cached_dates = list(_trading_day_cache.get("dates") or [])
+            fetched_at = float(_trading_day_cache.get("fetched_at") or 0)
+        if cached_dates and now - fetched_at < ttl:
+            return cached_dates
+
+    dates = fetch_trading_day_calendar(ak)
+    if dates and ttl > 0:
+        with _trading_day_cache_lock:
+            _trading_day_cache["dates"] = list(dates)
+            _trading_day_cache["fetched_at"] = now
+    return dates
 
 
 def normalize_a_stock_trading_dates(dates: list[str]) -> list[str]:
@@ -1177,12 +1201,27 @@ def run_self_test() -> None:
             )
 
     class FakeAK:
+        def __init__(self) -> None:
+            self.calls = 0
+
         def tool_trade_date_hist_sina(self) -> Any:
+            self.calls += 1
             return FakeFrame()
 
-    assert latest_trading_day(FakeAK(), "2026-06-17") == "2026-06-15"
-    assert trading_day_calendar(FakeAK()) == ["2026-06-12", "2026-06-15", "2026-06-18", "2026-06-22"]
-    trading = trading_day_status(FakeAK(), "2026-06-15")
+    reset_trading_day_calendar_cache()
+    latest_fake = FakeAK()
+    assert latest_trading_day(latest_fake, "2026-06-17") == "2026-06-15"
+    assert latest_fake.calls == 1
+    assert latest_trading_day(latest_fake, "2026-06-17") == "2026-06-15"
+    assert latest_fake.calls == 1
+
+    reset_trading_day_calendar_cache()
+    calendar_fake = FakeAK()
+    assert trading_day_calendar(calendar_fake) == ["2026-06-12", "2026-06-15", "2026-06-18", "2026-06-22"]
+    assert trading_day_calendar(calendar_fake) == ["2026-06-12", "2026-06-15", "2026-06-18", "2026-06-22"]
+    assert calendar_fake.calls == 1
+    trading = trading_day_status(calendar_fake, "2026-06-15")
+    assert calendar_fake.calls == 1
     assert trading["date"] == "2026-06-15"
     assert trading["is_trading_day"] is True
     assert trading["previous_trading_day"] == "2026-06-12"

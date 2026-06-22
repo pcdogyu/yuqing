@@ -1558,6 +1558,59 @@ func newAStockTradingDayServer(t *testing.T, isTradingDay bool) *httptest.Server
 	}))
 }
 
+func TestAStockPageReusesTradingDayStatusWithinRequest(t *testing.T) {
+	var mu sync.Mutex
+	tradingDayCalls := 0
+	scheduler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/scheduler/a-stock/trading-day" {
+			t.Fatalf("unexpected trading-day path: %s", r.URL.String())
+		}
+		mu.Lock()
+		tradingDayCalls++
+		mu.Unlock()
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{
+				"date":                 r.URL.Query().Get("date"),
+				"is_trading_day":       true,
+				"latest_trading_day":   "2026-06-16",
+				"previous_trading_day": "2026-06-15",
+				"next_trading_day":     "2026-06-17",
+				"source":               "test",
+				"reason":               "trading_day",
+				"message":              "open",
+			},
+		})
+	}))
+	defer scheduler.Close()
+
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/articles" {
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0},
+		})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL, SchedulerURL: scheduler.URL})
+	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-16&period=morning", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	mu.Lock()
+	got := tradingDayCalls
+	mu.Unlock()
+	if got != 1 {
+		t.Fatalf("expected one trading-day request within page render, got %d", got)
+	}
+}
+
 func setAStockEastmoneyKlineURLForTest(t *testing.T, rawURL string) {
 	t.Helper()
 	previous := aStockEastmoneyKlineURL
@@ -1989,6 +2042,78 @@ func TestFilterRecentAStockRecommendationsDropsPast5DayCodes(t *testing.T) {
 	}
 	if filtered[0].Rank != 1 || filtered[0].Code != "000099" {
 		t.Fatalf("expected remaining recommendation to be reranked, got %+v", filtered)
+	}
+}
+
+func TestAStockRecentRecommendationCodesUseRequestCache(t *testing.T) {
+	var mu sync.Mutex
+	articleCalls := 0
+	auctionCalls := 0
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/articles":
+			mu.Lock()
+			articleCalls++
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": model.ItemListResult{
+					Items: []model.Item{{
+						ID:         900,
+						SourceType: "flash",
+						Title:      "AI 算力政策加码，科大讯飞活跃",
+						Summary:    "人工智能产业链活跃",
+						TagFlags:   "0.002230",
+						CapturedAt: time.Date(2026, 6, 15, 1, 5, 0, 0, time.UTC),
+					}},
+					Page: 1, PageSize: 200, Total: 1,
+				},
+			})
+		case "/api/v1/a-stock/auction":
+			mu.Lock()
+			auctionCalls++
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": model.AStockAuctionListResult{
+					Date: r.URL.Query().Get("date"),
+					Items: []model.AStockAuctionAmount{{
+						TradeDate: r.URL.Query().Get("date"),
+						Code:      "002230",
+						Name:      "科大讯飞",
+						Status:    "ok",
+					}},
+				},
+			})
+		default:
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	cache := newAStockRequestCache()
+	first := srv.loadRecentAStockRecommendationCodesWithCache("2026-06-16", 5, cache)
+	if _, ok := first["002230"]; !ok {
+		t.Fatalf("expected recent code 002230, got %+v", first)
+	}
+	mu.Lock()
+	firstArticleCalls := articleCalls
+	firstAuctionCalls := auctionCalls
+	mu.Unlock()
+	if firstArticleCalls == 0 || firstAuctionCalls == 0 {
+		t.Fatalf("expected first scan to load articles and auction candidates, got articles=%d auction=%d", firstArticleCalls, firstAuctionCalls)
+	}
+
+	second := srv.loadRecentAStockRecommendationCodesWithCache("2026-06-16", 5, cache)
+	if _, ok := second["002230"]; !ok {
+		t.Fatalf("expected cached recent code 002230, got %+v", second)
+	}
+	mu.Lock()
+	gotArticleCalls := articleCalls
+	gotAuctionCalls := auctionCalls
+	mu.Unlock()
+	if gotArticleCalls != firstArticleCalls || gotAuctionCalls != firstAuctionCalls {
+		t.Fatalf("expected cached scan to reuse first result, article calls %d->%d auction calls %d->%d", firstArticleCalls, gotArticleCalls, firstAuctionCalls, gotAuctionCalls)
 	}
 }
 

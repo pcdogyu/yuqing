@@ -132,6 +132,16 @@ type aStockTradingDayStatus struct {
 	Message            string `json:"message"`
 }
 
+type aStockRequestCache struct {
+	tradingDay  map[string]aStockTradingDayCacheEntry
+	recentCodes map[string]map[string]struct{}
+}
+
+type aStockTradingDayCacheEntry struct {
+	status aStockTradingDayStatus
+	err    error
+}
+
 type aStockPeriod struct {
 	Key         string
 	Label       string
@@ -173,14 +183,15 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 	period := normalizeAStockPeriod(r.URL.Query().Get("period"))
 	newsPage := normalizeAStockNewsPage(r.URL.Query().Get("news_page"))
 	ignoreRecent := normalizeAStockIgnoreRecent(r.URL.Query())
-	ctx := s.loadAStockContext(strategyDate, period.Key, newsPage, ignoreRecent)
+	requestCache := newAStockRequestCache()
+	ctx := s.loadAStockContextWithCache(strategyDate, period.Key, newsPage, ignoreRecent, requestCache)
 	morningCtx := ctx
 	if ctx.Period != "morning" {
-		morningCtx = s.loadAStockContext(strategyDate, "morning", 1, ignoreRecent)
+		morningCtx = s.loadAStockContextWithCache(strategyDate, "morning", 1, ignoreRecent, requestCache)
 	}
 	afternoonCtx := ctx
 	if ctx.Period != "afternoon" {
-		afternoonCtx = s.loadAStockContext(strategyDate, "afternoon", 1, ignoreRecent)
+		afternoonCtx = s.loadAStockContextWithCache(strategyDate, "afternoon", 1, ignoreRecent, requestCache)
 	}
 	message := strings.TrimSpace(r.URL.Query().Get("msg"))
 	if message == "" {
@@ -730,6 +741,17 @@ func writeAStockDateTab(b *strings.Builder, label string, date string, period st
 }
 
 func (s *Server) loadAStockContext(strategyDate string, periodKey string, newsPage int, ignoreRecent bool) aStockContext {
+	return s.loadAStockContextWithCache(strategyDate, periodKey, newsPage, ignoreRecent, newAStockRequestCache())
+}
+
+func newAStockRequestCache() *aStockRequestCache {
+	return &aStockRequestCache{
+		tradingDay:  make(map[string]aStockTradingDayCacheEntry),
+		recentCodes: make(map[string]map[string]struct{}),
+	}
+}
+
+func (s *Server) loadAStockContextWithCache(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, cache *aStockRequestCache) aStockContext {
 	period := normalizeAStockPeriod(periodKey)
 	start, end := aStockWindow(strategyDate, period.Key)
 	ctx := aStockContext{
@@ -753,7 +775,7 @@ func (s *Server) loadAStockContext(strategyDate string, periodKey string, newsPa
 	ctx.NewsTotal = len(ctx.Articles)
 	ctx.PagedArticles, ctx.NewsPage, ctx.NewsTotalPages = paginateAStockNews(ctx.Articles, newsPage, aStockNewsPageSize)
 	ctx.Hotspots = buildAStockHotspots(ctx.Articles)
-	if blocked, message, reason := s.aStockRecommendationBlockedStatus(strategyDate); blocked {
+	if blocked, message, reason := s.aStockRecommendationBlockedStatusWithCache(strategyDate, cache); blocked {
 		ctx.TradingDayBlocked = true
 		ctx.TradingDayMessage = message
 		ctx.TradingDayReason = reason
@@ -774,7 +796,7 @@ func (s *Server) loadAStockContext(strategyDate string, periodKey string, newsPa
 		}
 	}
 	if len(ctx.Recommendations) > 0 && !ctx.IgnoreRecent {
-		recentCodes := s.loadRecentAStockRecommendationCodes(strategyDate, aStockRecentLookbackDays)
+		recentCodes := s.loadRecentAStockRecommendationCodesWithCache(strategyDate, aStockRecentLookbackDays, cache)
 		ctx.Recommendations, ctx.RecentFiltered = filterRecentAStockRecommendations(ctx.Recommendations, recentCodes)
 	}
 	ctx.Recommendations = s.applyAStockHoldingSummaries(ctx.Recommendations)
@@ -803,6 +825,15 @@ func (s *Server) aStockRecommendationBlockedMessage(strategyDate string) (bool, 
 
 func (s *Server) aStockRecommendationBlockedStatus(strategyDate string) (bool, string, string) {
 	status, err := s.loadAStockTradingDayStatus(strategyDate)
+	return aStockBlockedStatusFromTradingDay(status, err)
+}
+
+func (s *Server) aStockRecommendationBlockedStatusWithCache(strategyDate string, cache *aStockRequestCache) (bool, string, string) {
+	status, err := s.loadAStockTradingDayStatusWithCache(strategyDate, cache)
+	return aStockBlockedStatusFromTradingDay(status, err)
+}
+
+func aStockBlockedStatusFromTradingDay(status aStockTradingDayStatus, err error) (bool, string, string) {
 	if err != nil {
 		return true, "交易日历不可用，不生成股票推荐：" + err.Error(), "calendar_unavailable"
 	}
@@ -814,6 +845,19 @@ func (s *Server) aStockRecommendationBlockedStatus(strategyDate string) (bool, s
 		message = "该日 A 股休市，不生成股票推荐。"
 	}
 	return true, message, status.Reason
+}
+
+func (s *Server) loadAStockTradingDayStatusWithCache(strategyDate string, cache *aStockRequestCache) (aStockTradingDayStatus, error) {
+	if cache == nil {
+		return s.loadAStockTradingDayStatus(strategyDate)
+	}
+	date := normalizeAStockStrategyDate(strategyDate)
+	if entry, ok := cache.tradingDay[date]; ok {
+		return entry.status, entry.err
+	}
+	status, err := s.loadAStockTradingDayStatus(strategyDate)
+	cache.tradingDay[date] = aStockTradingDayCacheEntry{status: status, err: err}
+	return status, err
 }
 
 func (s *Server) loadAStockTradingDayStatus(strategyDate string) (aStockTradingDayStatus, error) {
@@ -928,10 +972,21 @@ func paginateAStockNews(items []model.Item, page int, pageSize int) ([]model.Ite
 }
 
 func (s *Server) loadRecentAStockRecommendationCodes(strategyDate string, lookbackDays int) map[string]struct{} {
+	return s.loadRecentAStockRecommendationCodesWithCache(strategyDate, lookbackDays, nil)
+}
+
+func (s *Server) loadRecentAStockRecommendationCodesWithCache(strategyDate string, lookbackDays int, cache *aStockRequestCache) map[string]struct{} {
 	if lookbackDays <= 0 {
 		return nil
 	}
-	day, err := time.ParseInLocation("2006-01-02", strategyDate, aStockLocation())
+	dateKey := normalizeAStockStrategyDate(strategyDate)
+	cacheKey := dateKey + "|" + fmt.Sprint(lookbackDays)
+	if cache != nil {
+		if cached, ok := cache.recentCodes[cacheKey]; ok {
+			return cached
+		}
+	}
+	day, err := time.ParseInLocation("2006-01-02", dateKey, aStockLocation())
 	if err != nil {
 		return nil
 	}
@@ -952,6 +1007,9 @@ func (s *Server) loadRecentAStockRecommendationCodes(strategyDate string, lookba
 				}
 			}
 		}
+	}
+	if cache != nil {
+		cache.recentCodes[cacheKey] = result
 	}
 	return result
 }
