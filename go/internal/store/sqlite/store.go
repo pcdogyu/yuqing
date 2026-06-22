@@ -564,6 +564,8 @@ CREATE TABLE IF NOT EXISTS a_stock_recommendation_snapshots (
 	generated_count INTEGER NOT NULL DEFAULT 0,
 	recent_filtered INTEGER NOT NULL DEFAULT 0,
 	same_day_morning_filtered INTEGER NOT NULL DEFAULT 0,
+	limit_up_filter_enabled INTEGER NOT NULL DEFAULT 0,
+	limit_up_filtered INTEGER NOT NULL DEFAULT 0,
 	market_candidate_status TEXT NOT NULL DEFAULT '',
 	market_candidate_count INTEGER NOT NULL DEFAULT 0,
 	auction_amount_label TEXT NOT NULL DEFAULT '',
@@ -681,6 +683,8 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_action_created_at ON audit_logs(action
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE stock_research_surveys ADD COLUMN nlp_rating TEXT NOT NULL DEFAULT ''`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE stock_research_surveys ADD COLUMN nlp_reason TEXT NOT NULL DEFAULT ''`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE stock_research_surveys ADD COLUMN nlp_scored_at TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN limit_up_filter_enabled INTEGER NOT NULL DEFAULT 0`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN limit_up_filtered INTEGER NOT NULL DEFAULT 0`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE platform_bindings ADD COLUMN bound INTEGER NOT NULL DEFAULT 0`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE public_options ADD COLUMN detail_status INTEGER NOT NULL DEFAULT 3`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE warning_settings ADD COLUMN warning_setting_id INTEGER NOT NULL DEFAULT 0`)
@@ -706,6 +710,12 @@ func (s *Store) migratePostgres(ctx context.Context) error {
 		return fmt.Errorf("read postgres schema %s: %w", schemaPath, err)
 	}
 	if _, err := s.db.ExecContext(ctx, string(schema)); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN IF NOT EXISTS limit_up_filter_enabled INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN IF NOT EXISTS limit_up_filtered INTEGER NOT NULL DEFAULT 0`); err != nil {
 		return err
 	}
 	return nil

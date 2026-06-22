@@ -1872,13 +1872,14 @@ func TestAStockContextLoadsPersistedRecommendationSnapshot(t *testing.T) {
 		case "/api/v1/a-stock/recommendations":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"data": model.AStockRecommendationSnapshot{
-					Found:               true,
-					StrategyDate:        "2026-06-22",
-					Period:              "afternoon",
-					RecommendationsJSON: `[{"Rank":1,"Hotspot":"人工智能","Code":"002230","Name":"科大讯飞","Reason":"snapshot"}]`,
-					BacktestsJSON:       `[]`,
-					BacktestStatus:      "已读取推荐快照",
-					GeneratedCount:      1,
+					Found:                true,
+					StrategyDate:         "2026-06-22",
+					Period:               "afternoon",
+					RecommendationsJSON:  `[{"Rank":1,"Hotspot":"人工智能","Code":"002230","Name":"科大讯飞","Reason":"snapshot"}]`,
+					BacktestsJSON:        `[]`,
+					BacktestStatus:       "已读取推荐快照",
+					GeneratedCount:       1,
+					LimitUpFilterEnabled: true,
 				},
 			})
 		default:
@@ -1894,6 +1895,9 @@ func TestAStockContextLoadsPersistedRecommendationSnapshot(t *testing.T) {
 	ctx := srv.loadAStockContext("2026-06-22", "afternoon", 1, false)
 	if len(ctx.Recommendations) != 1 || ctx.Recommendations[0].Code != "002230" || ctx.BacktestStatus != "已读取推荐快照" {
 		t.Fatalf("expected persisted recommendation snapshot, got recs=%+v status=%q", ctx.Recommendations, ctx.BacktestStatus)
+	}
+	if !ctx.LimitUpFilterEnabled {
+		t.Fatalf("expected persisted afternoon snapshot to preserve limit-up filter state")
 	}
 }
 
@@ -2008,7 +2012,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"金十快讯", "金十资讯", "1条", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "5日内过滤", "关闭5日过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "推荐历史", "补抓并重新生成当前窗口", "重新生成当前推荐", "刷新当前回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="refresh_backtest"`, "2026-06-16 AM", "2026-06-16 PM", "2026-06-15 AM", "2026-06-15 PM", "2026-06-11 AM", "2026-06-11 PM", "T+0 收益", "astock-recommendation-table", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
+	for _, want := range []string{"金十快讯", "金十资讯", "1条", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "5日内过滤", "涨停过滤", "关闭5日过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "推荐历史", "补抓并重新生成当前窗口", "重新生成当前推荐", "刷新当前回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="refresh_backtest"`, "2026-06-16 AM", "2026-06-16 PM", "2026-06-15 AM", "2026-06-15 PM", "2026-06-11 AM", "2026-06-11 PM", "T+0 收益", "astock-recommendation-table", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}
@@ -2254,8 +2258,9 @@ func TestAStockOverviewBacktestStatusIncludesFilterReasons(t *testing.T) {
 		BacktestStatus:         "已回测 3/3",
 		RecentFiltered:         2,
 		SameDayMorningFiltered: 1,
+		LimitUpFiltered:        3,
 	})
-	for _, want := range []string{"已回测 3/3", "5日内重复过滤股票 2", "过滤上午已推荐股票 1"} {
+	for _, want := range []string{"已回测 3/3", "5日内重复过滤股票 2", "过滤上午已推荐股票 1", "涨停过滤股票 3"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected overview status to contain %q, got %q", want, got)
 		}
@@ -2434,7 +2439,7 @@ func TestAStockMarketViewFiltersDeepDrawdownsAndPenalizesSector(t *testing.T) {
 		{Code: "000004", Date: "2026-06-15", Close: 98, Pct: 2},
 	}
 
-	filtered, rows, status := applyAStockMarketBars("2026-06-16", recommendations, bars)
+	filtered, rows, status, _ := applyAStockMarketBars("2026-06-16", recommendations, bars, false)
 
 	if len(filtered) != 2 {
 		t.Fatalf("expected one deep-drawdown recommendation to be filtered, got %+v", filtered)
@@ -2471,6 +2476,36 @@ func TestAStockMarketViewFiltersDeepDrawdownsAndPenalizesSector(t *testing.T) {
 	}
 	if !strings.Contains(status, "过滤回撤股票 1") || !strings.Contains(status, "过滤无当日行情股票 1") {
 		t.Fatalf("expected status to mention drawdown and missing price filtering, got %q", status)
+	}
+}
+
+func TestAStockMarketViewFiltersLimitUpStocksForAfternoon(t *testing.T) {
+	recommendations := initializeAStockRecommendationMarket([]aStockRecommendation{
+		{Rank: 1, Hotspot: "黄金有色", Code: "600172", Name: "黄河旋风", HotspotScore: 80, MarketScore: 80, Reason: "热度分 80"},
+		{Rank: 2, Hotspot: "新能源", Code: "300179", Name: "四方达", HotspotScore: 79, MarketScore: 79, Reason: "热度分 79"},
+		{Rank: 3, Hotspot: "半导体", Code: "688662", Name: "富信科技", HotspotScore: 78, MarketScore: 78, Reason: "热度分 78"},
+		{Rank: 4, Hotspot: "金融券商", Code: "000001", Name: "平安银行", HotspotScore: 77, MarketScore: 77, Reason: "热度分 77"},
+	})
+	bars := []aStockMarketBar{
+		{Code: "600172", Date: "2026-06-22", Open: 15.41, Close: 15.41, Pct: 9.99},
+		{Code: "300179", Date: "2026-06-22", Open: 46.75, Close: 46.75, Pct: 20.00},
+		{Code: "688662", Date: "2026-06-22", Open: 158.66, Close: 158.66, Pct: 19.99},
+		{Code: "000001", Date: "2026-06-22", Open: 12.3, Close: 12.5, Pct: 1.63},
+	}
+
+	filtered, rows, status, limitUpFiltered := applyAStockMarketBars("2026-06-22", recommendations, bars, true)
+
+	if limitUpFiltered != 3 {
+		t.Fatalf("expected three limit-up stocks filtered, got %d status=%q recommendations=%+v", limitUpFiltered, status, filtered)
+	}
+	if len(filtered) != 1 || filtered[0].Code != "000001" || filtered[0].Rank != 1 {
+		t.Fatalf("expected only non-limit-up stock to remain and rerank, got %+v", filtered)
+	}
+	if len(rows) != 1 || strings.Contains(rows[0].Stock, "600172") || strings.Contains(rows[0].Stock, "300179") || strings.Contains(rows[0].Stock, "688662") {
+		t.Fatalf("expected backtest rows to exclude limit-up stocks, got %+v", rows)
+	}
+	if !strings.Contains(status, "过滤涨停股票 3") {
+		t.Fatalf("expected status to mention limit-up filter, got %q", status)
 	}
 }
 

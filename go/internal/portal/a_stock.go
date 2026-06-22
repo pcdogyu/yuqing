@@ -871,6 +871,7 @@ func (s *Server) loadAStockContextWithCache(strategyDate string, periodKey strin
 		BacktestStatus: "等待行情接口",
 		IgnoreRecent:   ignoreRecent,
 	}
+	ctx.LimitUpFilterEnabled = period.Key == "afternoon"
 	ctx.SourceRuns = s.loadAStockSourceRunsWithCache(cache)
 	articles, err := s.loadAStockWindowArticles(start, end)
 	if err != nil {
@@ -911,7 +912,7 @@ func (s *Server) loadAStockContextWithCache(strategyDate string, periodKey strin
 		ctx.Recommendations, ctx.RecentFiltered = filterRecentAStockRecommendations(ctx.Recommendations, recentCodes)
 	}
 	ctx.Recommendations = s.applyAStockHoldingSummaries(ctx.Recommendations)
-	ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus = s.loadAStockMarketView(strategyDate, ctx.Recommendations)
+	ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus, ctx.LimitUpFiltered = s.loadAStockMarketView(strategyDate, ctx.Recommendations, ctx.LimitUpFilterEnabled)
 	ctx.EmptyReason = aStockRecommendationEmptyReason(ctx)
 	if err := s.saveAStockRecommendationSnapshot(ctx); err != nil {
 		if ctx.LoadMessage == "" {
@@ -937,6 +938,9 @@ func (s *Server) applyAStockRecommendationSnapshot(ctx *aStockContext) bool {
 	if err := s.getJSON(s.cfg.ContentURL+query, &snapshot); err != nil || !snapshot.Found {
 		return false
 	}
+	if ctx.Period == "afternoon" && !snapshot.LimitUpFilterEnabled {
+		return false
+	}
 	var recommendations []aStockRecommendation
 	if err := json.Unmarshal([]byte(nonEmpty(snapshot.RecommendationsJSON, "[]")), &recommendations); err != nil {
 		return false
@@ -951,6 +955,8 @@ func (s *Server) applyAStockRecommendationSnapshot(ctx *aStockContext) bool {
 	ctx.GeneratedRecommendationCount = snapshot.GeneratedCount
 	ctx.RecentFiltered = snapshot.RecentFiltered
 	ctx.SameDayMorningFiltered = snapshot.SameDayMorningFiltered
+	ctx.LimitUpFilterEnabled = snapshot.LimitUpFilterEnabled
+	ctx.LimitUpFiltered = snapshot.LimitUpFiltered
 	ctx.MarketCandidateStatus = snapshot.MarketCandidateStatus
 	ctx.MarketCandidateCount = snapshot.MarketCandidateCount
 	ctx.AuctionAmountLabel = snapshot.AuctionAmountLabel
@@ -983,6 +989,8 @@ func (s *Server) saveAStockRecommendationSnapshot(ctx aStockContext) error {
 		GeneratedCount:         ctx.GeneratedRecommendationCount,
 		RecentFiltered:         ctx.RecentFiltered,
 		SameDayMorningFiltered: ctx.SameDayMorningFiltered,
+		LimitUpFilterEnabled:   ctx.LimitUpFilterEnabled,
+		LimitUpFiltered:        ctx.LimitUpFiltered,
 		MarketCandidateStatus:  ctx.MarketCandidateStatus,
 		MarketCandidateCount:   ctx.MarketCandidateCount,
 		AuctionAmountLabel:     ctx.AuctionAmountLabel,
@@ -1274,6 +1282,9 @@ func aStockRecommendationEmptyReason(ctx aStockContext) string {
 	if ctx.SameDayMorningFiltered > 0 {
 		return fmt.Sprintf("暂无推荐股票：%s %s 已生成候选，但过滤上午已推荐股票 %d 只。", ctx.PeriodLabel, ctx.WindowLabel, ctx.SameDayMorningFiltered)
 	}
+	if ctx.LimitUpFiltered > 0 {
+		return fmt.Sprintf("暂无推荐股票：%s %s 已生成候选，但涨停过滤 %d 只。", ctx.PeriodLabel, ctx.WindowLabel, ctx.LimitUpFiltered)
+	}
 	if strings.Contains(ctx.BacktestStatus, "无当日行情") || strings.Contains(ctx.BacktestStatus, "过滤无当日行情") {
 		return fmt.Sprintf("暂无推荐股票：%s %s 已生成 %d 只候选，但没有当日行情或开盘价。请点击“同步行情”后重试。", ctx.PeriodLabel, ctx.WindowLabel, ctx.GeneratedRecommendationCount)
 	}
@@ -1544,10 +1555,10 @@ func rerankAStockRecommendations(recommendations []aStockRecommendation) []aStoc
 	return recommendations
 }
 
-func (s *Server) loadAStockMarketView(strategyDate string, recommendations []aStockRecommendation) ([]aStockRecommendation, []aStockBacktestRow, string) {
+func (s *Server) loadAStockMarketView(strategyDate string, recommendations []aStockRecommendation, filterLimitUp bool) ([]aStockRecommendation, []aStockBacktestRow, string, int) {
 	recommendations = initializeAStockRecommendationMarket(recommendations)
 	if len(recommendations) == 0 {
-		return recommendations, nil, "无推荐股票"
+		return recommendations, nil, "无推荐股票", 0
 	}
 	endpoint := aStockMarketEndpoint()
 	codes := make([]string, 0, len(recommendations))
@@ -1556,9 +1567,9 @@ func (s *Server) loadAStockMarketView(strategyDate string, recommendations []aSt
 	}
 	bars, err := s.loadAStockMarketBars(strategyDate, codes, endpoint)
 	if err != nil {
-		return recommendations, buildAStockBacktestRows(strategyDate, recommendations, nil), "行情读取失败"
+		return recommendations, buildAStockBacktestRows(strategyDate, recommendations, nil), "行情读取失败", 0
 	}
-	return applyAStockMarketBars(strategyDate, recommendations, bars)
+	return applyAStockMarketBars(strategyDate, recommendations, bars, filterLimitUp)
 }
 
 func (s *Server) loadAStockMarketBars(strategyDate string, codes []string, endpoint string) ([]aStockMarketBar, error) {
@@ -1776,11 +1787,12 @@ func initializeAStockRecommendationMarket(recommendations []aStockRecommendation
 	return recommendations
 }
 
-func applyAStockMarketBars(strategyDate string, recommendations []aStockRecommendation, bars []aStockMarketBar) ([]aStockRecommendation, []aStockBacktestRow, string) {
+func applyAStockMarketBars(strategyDate string, recommendations []aStockRecommendation, bars []aStockMarketBar, filterLimitUp bool) ([]aStockRecommendation, []aStockBacktestRow, string, int) {
 	byCode := groupAStockMarketBars(bars)
 	withPrev := 0
 	sectorPenalties := make(map[string]int)
 	filteredCount := 0
+	limitUpFilteredCount := 0
 	noEntryPriceCount := 0
 	filtered := make([]aStockRecommendation, 0, len(recommendations))
 	for i := range recommendations {
@@ -1794,6 +1806,10 @@ func applyAStockMarketBars(strategyDate string, recommendations []aStockRecommen
 			recommendations[i].CurrentPrice = formatAStockPrice(entry.Close)
 			recommendations[i].TodayPct = formatAStockPct(entry.Pct)
 			recommendations[i].TodayPctClass = aStockPctClass(entry.Pct)
+		}
+		if filterLimitUp && isAStockLimitUpPct(recommendations[i].Code, recommendations[i].Name, entry.Pct) {
+			limitUpFilteredCount++
+			continue
 		}
 		if prev, ok := previousAStockBar(byCode[recommendations[i].Code], strategyDate); ok {
 			recommendations[i].PrevClose = formatAStockPrice(prev.Close)
@@ -1857,8 +1873,14 @@ func applyAStockMarketBars(strategyDate string, recommendations []aStockRecommen
 	if filteredCount > 0 {
 		status = fmt.Sprintf("%s，过滤回撤股票 %d", status, filteredCount)
 	}
+	if limitUpFilteredCount > 0 {
+		status = fmt.Sprintf("%s，过滤涨停股票 %d", status, limitUpFilteredCount)
+	}
 	if noEntryPriceCount > 0 {
 		status = fmt.Sprintf("%s，过滤无当日行情股票 %d", status, noEntryPriceCount)
+	}
+	if len(recommendations) == 0 && limitUpFilteredCount > 0 {
+		status = fmt.Sprintf("涨停过滤后无推荐股票，过滤涨停股票 %d", limitUpFilteredCount)
 	}
 	if len(recommendations) == 0 && filteredCount > 0 {
 		status = fmt.Sprintf("回撤过滤后无推荐股票，过滤回撤股票 %d", filteredCount)
@@ -1869,10 +1891,30 @@ func applyAStockMarketBars(strategyDate string, recommendations []aStockRecommen
 			status = fmt.Sprintf("%s，过滤回撤股票 %d", status, filteredCount)
 		}
 	}
-	if withPrev == 0 && completed == 0 && filteredCount == 0 && noEntryPriceCount == 0 {
+	if withPrev == 0 && completed == 0 && filteredCount == 0 && limitUpFilteredCount == 0 && noEntryPriceCount == 0 {
 		status = "无匹配行情"
 	}
-	return recommendations, rows, status
+	return recommendations, rows, status, limitUpFilteredCount
+}
+
+func isAStockLimitUpPct(code string, name string, pct float64) bool {
+	return pct >= aStockLimitUpPctThreshold(code, name)
+}
+
+func aStockLimitUpPctThreshold(code string, name string) float64 {
+	upperName := strings.ToUpper(strings.TrimSpace(name))
+	if strings.Contains(upperName, "ST") {
+		return 4.8
+	}
+	code = normalizeAStockCode(code)
+	switch {
+	case strings.HasPrefix(code, "300"), strings.HasPrefix(code, "301"), strings.HasPrefix(code, "688"):
+		return 19.8
+	case strings.HasPrefix(code, "8"), strings.HasPrefix(code, "4"), strings.HasPrefix(code, "92"):
+		return 29.8
+	default:
+		return 9.8
+	}
 }
 
 func groupAStockMarketBars(bars []aStockMarketBar) map[string][]aStockMarketBar {

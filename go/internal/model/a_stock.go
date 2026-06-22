@@ -66,6 +66,8 @@ type AStockRecommendationSnapshot struct {
 	GeneratedCount         int       `json:"generated_count"`
 	RecentFiltered         int       `json:"recent_filtered"`
 	SameDayMorningFiltered int       `json:"same_day_morning_filtered"`
+	LimitUpFilterEnabled   bool      `json:"limit_up_filter_enabled"`
+	LimitUpFiltered        int       `json:"limit_up_filtered"`
 	MarketCandidateStatus  string    `json:"market_candidate_status"`
 	MarketCandidateCount   int       `json:"market_candidate_count"`
 	AuctionAmountLabel     string    `json:"auction_amount_label"`

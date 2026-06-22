@@ -191,12 +191,14 @@ func TestAStockRecommendationSnapshotUpsertAndGet(t *testing.T) {
 	}
 
 	second, err := store.UpsertAStockRecommendationSnapshot(ctx, model.AStockRecommendationSnapshot{
-		StrategyDate:        "2026-06-22",
-		Period:              "afternoon",
-		RecommendationsJSON: `[{"Code":"000001"}]`,
-		BacktestsJSON:       `[]`,
-		BacktestStatus:      "已回测 1/1",
-		GeneratedCount:      1,
+		StrategyDate:         "2026-06-22",
+		Period:               "afternoon",
+		RecommendationsJSON:  `[{"Code":"000001"}]`,
+		BacktestsJSON:        `[]`,
+		BacktestStatus:       "已回测 1/1",
+		GeneratedCount:       1,
+		LimitUpFilterEnabled: true,
+		LimitUpFiltered:      2,
 	})
 	if err != nil {
 		t.Fatalf("UpsertAStockRecommendationSnapshot update error: %v", err)
@@ -209,7 +211,7 @@ func TestAStockRecommendationSnapshotUpsertAndGet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAStockRecommendationSnapshot error: %v", err)
 	}
-	if !found || snapshot.RecommendationsJSON != `[{"Code":"000001"}]` || snapshot.GeneratedCount != 1 {
+	if !found || snapshot.RecommendationsJSON != `[{"Code":"000001"}]` || snapshot.GeneratedCount != 1 || !snapshot.LimitUpFilterEnabled || snapshot.LimitUpFiltered != 2 {
 		t.Fatalf("unexpected snapshot: found=%v %+v", found, snapshot)
 	}
 }

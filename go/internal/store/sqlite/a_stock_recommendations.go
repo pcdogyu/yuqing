@@ -20,6 +20,10 @@ func (s *Store) UpsertAStockRecommendationSnapshot(ctx context.Context, snapshot
 	if snapshot.IgnoreRecent {
 		ignoreRecent = 1
 	}
+	limitUpFilterEnabled := 0
+	if snapshot.LimitUpFilterEnabled {
+		limitUpFilterEnabled = 1
+	}
 	existed := false
 	if err := s.db.QueryRowContext(ctx, `SELECT 1 FROM a_stock_recommendation_snapshots WHERE strategy_date = ? AND period = ? AND ignore_recent = ?`, snapshot.StrategyDate, snapshot.Period, ignoreRecent).Scan(new(int)); err == nil {
 		existed = true
@@ -46,9 +50,10 @@ func (s *Store) UpsertAStockRecommendationSnapshot(ctx context.Context, snapshot
 	_, err := s.db.ExecContext(ctx, `
 INSERT INTO a_stock_recommendation_snapshots (
 	strategy_date, period, ignore_recent, recommendations_json, backtests_json, backtest_status,
-	generated_count, recent_filtered, same_day_morning_filtered, market_candidate_status,
+	generated_count, recent_filtered, same_day_morning_filtered, limit_up_filter_enabled,
+	limit_up_filtered, market_candidate_status,
 	market_candidate_count, auction_amount_label, empty_reason, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(strategy_date, period, ignore_recent) DO UPDATE SET
 	recommendations_json = excluded.recommendations_json,
 	backtests_json = excluded.backtests_json,
@@ -56,6 +61,8 @@ ON CONFLICT(strategy_date, period, ignore_recent) DO UPDATE SET
 	generated_count = excluded.generated_count,
 	recent_filtered = excluded.recent_filtered,
 	same_day_morning_filtered = excluded.same_day_morning_filtered,
+	limit_up_filter_enabled = excluded.limit_up_filter_enabled,
+	limit_up_filtered = excluded.limit_up_filtered,
 	market_candidate_status = excluded.market_candidate_status,
 	market_candidate_count = excluded.market_candidate_count,
 	auction_amount_label = excluded.auction_amount_label,
@@ -70,6 +77,8 @@ ON CONFLICT(strategy_date, period, ignore_recent) DO UPDATE SET
 		snapshot.GeneratedCount,
 		snapshot.RecentFiltered,
 		snapshot.SameDayMorningFiltered,
+		limitUpFilterEnabled,
+		snapshot.LimitUpFiltered,
 		strings.TrimSpace(snapshot.MarketCandidateStatus),
 		snapshot.MarketCandidateCount,
 		strings.TrimSpace(snapshot.AuctionAmountLabel),
@@ -95,7 +104,8 @@ func (s *Store) GetAStockRecommendationSnapshot(ctx context.Context, strategyDat
 	}
 	row := s.db.QueryRowContext(ctx, `
 SELECT strategy_date, period, ignore_recent, recommendations_json, backtests_json, backtest_status,
-	generated_count, recent_filtered, same_day_morning_filtered, market_candidate_status,
+	generated_count, recent_filtered, same_day_morning_filtered, limit_up_filter_enabled,
+	limit_up_filtered, market_candidate_status,
 	market_candidate_count, auction_amount_label, empty_reason, created_at, updated_at
 FROM a_stock_recommendation_snapshots
 WHERE strategy_date = ? AND period = ? AND ignore_recent = ?`,
@@ -117,6 +127,7 @@ WHERE strategy_date = ? AND period = ? AND ignore_recent = ?`,
 func scanAStockRecommendationSnapshot(scanner scanner) (model.AStockRecommendationSnapshot, error) {
 	var snapshot model.AStockRecommendationSnapshot
 	var ignoreRecent int
+	var limitUpFilterEnabled int
 	var createdAt, updatedAt string
 	if err := scanner.Scan(
 		&snapshot.StrategyDate,
@@ -128,6 +139,8 @@ func scanAStockRecommendationSnapshot(scanner scanner) (model.AStockRecommendati
 		&snapshot.GeneratedCount,
 		&snapshot.RecentFiltered,
 		&snapshot.SameDayMorningFiltered,
+		&limitUpFilterEnabled,
+		&snapshot.LimitUpFiltered,
 		&snapshot.MarketCandidateStatus,
 		&snapshot.MarketCandidateCount,
 		&snapshot.AuctionAmountLabel,
@@ -138,6 +151,7 @@ func scanAStockRecommendationSnapshot(scanner scanner) (model.AStockRecommendati
 		return snapshot, err
 	}
 	snapshot.IgnoreRecent = ignoreRecent != 0
+	snapshot.LimitUpFilterEnabled = limitUpFilterEnabled != 0
 	snapshot.CreatedAt = mustParseRFC3339(createdAt)
 	snapshot.UpdatedAt = mustParseRFC3339(updatedAt)
 	return snapshot, nil
