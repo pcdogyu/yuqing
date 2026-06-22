@@ -70,6 +70,8 @@ import com.jiansutech.yuqing.data.ServiceStatus
 import com.jiansutech.yuqing.data.StockHolding
 import com.jiansutech.yuqing.data.StockResearch
 import com.jiansutech.yuqing.data.TaskRun
+import java.time.DayOfWeek
+import java.time.LocalDate
 
 @Composable
 fun YuqingApp(viewModel: YuqingViewModel) {
@@ -323,7 +325,11 @@ private fun AStockModule(state: YuqingUiState, viewModel: YuqingViewModel) {
                     TextButton(onClick = { viewModel.shiftAStockRecommendationDate(-1) }) {
                         Text("前一交易日")
                     }
-                    Text(window.date, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                    Text(
+                        formatAStockDateWithWeekday(window.date),
+                        modifier = Modifier.weight(1f),
+                        fontWeight = FontWeight.SemiBold,
+                    )
                     TextButton(onClick = viewModel::resetAStockRecommendationDate) {
                         Text("今日")
                     }
@@ -644,6 +650,20 @@ private fun cleanAStockRecommendationReason(value: String): String {
         .replace("集合竞价候选为空，", "")
         .replace("集合竞价", "行情")
         .trim { it.isWhitespace() || it == '；' || it == '，' }
+}
+
+private fun formatAStockDateWithWeekday(value: String): String {
+    val date = runCatching { LocalDate.parse(value) }.getOrNull() ?: return value
+    val weekday = when (date.dayOfWeek) {
+        DayOfWeek.MONDAY -> "周一"
+        DayOfWeek.TUESDAY -> "周二"
+        DayOfWeek.WEDNESDAY -> "周三"
+        DayOfWeek.THURSDAY -> "周四"
+        DayOfWeek.FRIDAY -> "周五"
+        DayOfWeek.SATURDAY -> "周六"
+        DayOfWeek.SUNDAY -> "周日"
+    }
+    return "$value（$weekday）"
 }
 
 private fun formatAuctionAmount(value: Double): String {
