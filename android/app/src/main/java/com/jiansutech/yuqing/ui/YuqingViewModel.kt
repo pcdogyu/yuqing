@@ -235,11 +235,16 @@ class YuqingViewModel(
         val current = _uiState.value.aStockRecommendationWindow
         val currentDate = runCatching { LocalDate.parse(current.date) }.getOrDefault(latestTradingDay)
         val currentTradingDate = AStockTradingCalendar.previousOrSameTradingDay(currentDate)
-        val targetDate = when {
-            days < 0 -> AStockTradingCalendar.previousTradingDay(currentTradingDate)
-            days > 0 -> AStockTradingCalendar.nextTradingDay(currentTradingDate)
-                .let { if (it.isAfter(latestTradingDay)) latestTradingDay else it }
-            else -> currentTradingDate
+        var targetDate = currentTradingDate
+        repeat(kotlin.math.abs(days).toInt()) {
+            targetDate = if (days < 0) {
+                AStockTradingCalendar.previousTradingDay(targetDate)
+            } else if (days > 0) {
+                AStockTradingCalendar.nextTradingDay(targetDate)
+                    .let { if (it.isAfter(latestTradingDay)) latestTradingDay else it }
+            } else {
+                targetDate
+            }
         }
         loadAStockRecommendationDay(targetDate.toString())
     }

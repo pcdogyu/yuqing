@@ -2,6 +2,7 @@ package com.jiansutech.yuqing.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -56,12 +57,15 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.jiansutech.yuqing.astock.AStockTradingCalendar
 import com.jiansutech.yuqing.data.AndroidDashboard
 import com.jiansutech.yuqing.data.AndroidModule
 import com.jiansutech.yuqing.data.AStockAuctionAmount
 import com.jiansutech.yuqing.data.AStockAuctionListResult
+import com.jiansutech.yuqing.data.AStockBacktestRow
 import com.jiansutech.yuqing.data.AStockRecommendation
 import com.jiansutech.yuqing.data.ArticleItem
+import com.jiansutech.yuqing.data.ApiFactory
 import com.jiansutech.yuqing.data.ItemListResult
 import com.jiansutech.yuqing.data.Project
 import com.jiansutech.yuqing.data.Report
@@ -70,8 +74,10 @@ import com.jiansutech.yuqing.data.ServiceStatus
 import com.jiansutech.yuqing.data.StockHolding
 import com.jiansutech.yuqing.data.StockResearch
 import com.jiansutech.yuqing.data.TaskRun
+import kotlinx.serialization.decodeFromString
 import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.ZoneId
 
 @Composable
 fun YuqingApp(viewModel: YuqingViewModel) {
@@ -317,24 +323,36 @@ private fun AStockModule(state: YuqingUiState, viewModel: YuqingViewModel) {
     val morningRecommendations = state.morningAStockRecommendations
     val afternoonSnapshot = state.afternoonAStockRecommendation
     val afternoonRecommendations = state.afternoonAStockRecommendations
+    val morningBacktests = remember(morningSnapshot?.backtestsJson) { parseAStockBacktests(morningSnapshot?.backtestsJson) }
+    val afternoonBacktests = remember(afternoonSnapshot?.backtestsJson) { parseAStockBacktests(afternoonSnapshot?.backtestsJson) }
+    var selectedBacktest by remember { mutableStateOf<AStockBacktestDialogState?>(null) }
+    val isLatestDate = isLatestSelectableAStockDate(window.date)
+    selectedBacktest?.let {
+        AStockBacktestDialog(it, onDismiss = { selectedBacktest = null })
+    }
     LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("日期选择", style = MaterialTheme.typography.labelMedium)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = { viewModel.shiftAStockRecommendationDate(-1) }) {
-                        Text("前一交易日")
-                    }
-                    Text(
-                        formatAStockDateWithWeekday(window.date),
-                        modifier = Modifier.weight(1f),
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    TextButton(onClick = viewModel::resetAStockRecommendationDate) {
-                        Text("今日")
-                    }
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = { viewModel.shiftAStockRecommendationDate(-2) }) {
+                    Text("前两日")
+                }
+                TextButton(onClick = { viewModel.shiftAStockRecommendationDate(-1) }) {
+                    Text("前一日")
+                }
+                Text(
+                    formatAStockDateWithWeekday(window.date),
+                    modifier = Modifier.weight(1f),
+                    fontWeight = FontWeight.SemiBold,
+                )
+                TextButton(onClick = viewModel::resetAStockRecommendationDate) {
+                    Text("今日")
+                }
+                if (!isLatestDate) {
                     TextButton(onClick = { viewModel.shiftAStockRecommendationDate(1) }) {
-                        Text("后一交易日")
+                        Text("后一日")
+                    }
+                    TextButton(onClick = { viewModel.shiftAStockRecommendationDate(2) }) {
+                        Text("后两日")
                     }
                 }
             }
@@ -353,13 +371,21 @@ private fun AStockModule(state: YuqingUiState, viewModel: YuqingViewModel) {
         if (morningRecommendations.isEmpty()) {
             item { SimpleRow("暂无上午推荐", morningSnapshot?.emptyReason.ifNullOrBlank("08:00-09:30 暂无推荐股票")) }
         }
-        items(morningRecommendations) { AStockRecommendationRow(it) }
+        items(morningRecommendations) { item ->
+            AStockRecommendationRow(item) {
+                selectedBacktest = AStockBacktestDialogState(item, findAStockBacktest(morningBacktests, item))
+            }
+        }
         item { RecommendationSeparator() }
         item { SectionTitle("下午推荐") }
         if (afternoonRecommendations.isEmpty()) {
             item { SimpleRow("暂无下午推荐", afternoonSnapshot?.emptyReason.ifNullOrBlank("09:30-13:00 暂无推荐股票")) }
         }
-        items(afternoonRecommendations) { AStockRecommendationRow(it) }
+        items(afternoonRecommendations) { item ->
+            AStockRecommendationRow(item) {
+                selectedBacktest = AStockBacktestDialogState(item, findAStockBacktest(afternoonBacktests, item))
+            }
+        }
     }
 }
 
@@ -533,8 +559,39 @@ private fun ArticleRow(item: ArticleItem) {
     SimpleRow(item.title, listOf(item.sourceType, item.publishTimeText, item.summary).filter { it.isNotBlank() }.joinToString("  "))
 }
 
+private data class AStockBacktestDialogState(
+    val recommendation: AStockRecommendation,
+    val row: AStockBacktestRow?,
+)
+
 @Composable
-private fun AStockRecommendationRow(item: AStockRecommendation) {
+private fun AStockBacktestDialog(state: AStockBacktestDialogState, onDismiss: () -> Unit) {
+    val row = state.row
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
+        title = { Text("${state.recommendation.code} ${state.recommendation.name}") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (row == null) {
+                    Text("暂无回测结果，请先在 A股页面刷新当前回测。")
+                } else {
+                    Text("买入价 ${row.entryOpen.ifBlank { "--" }}")
+                    Text("T+0 ${row.t0Return.ifBlank { "--" }}")
+                    (0 until 5).forEach { index ->
+                        val cell = row.days.getOrNull(index)
+                        Text("T+${index + 1} ${cell?.returnPct?.ifBlank { "--" } ?: "--"}")
+                    }
+                    Text("五日内最高涨幅 ${row.bestReturn.ifBlank { "--" }}")
+                    Text("状态 ${row.status.ifBlank { "--" }}")
+                }
+            }
+        },
+    )
+}
+
+@Composable
+private fun AStockRecommendationRow(item: AStockRecommendation, onClick: () -> Unit = {}) {
     SimpleRow(
         "#${item.rank.coerceAtLeast(1)} ${item.code} ${item.name}",
         listOf(
@@ -545,6 +602,7 @@ private fun AStockRecommendationRow(item: AStockRecommendation) {
             "机构 ${item.holdingSummary.ifBlank { "--" }}",
             cleanAStockRecommendationReason(item.reason),
         ).filter { it.isNotBlank() }.joinToString("  "),
+        Modifier.clickable(onClick = onClick),
     )
 }
 
@@ -666,6 +724,30 @@ private fun formatAStockDateWithWeekday(value: String): String {
     return "$value（$weekday）"
 }
 
+private fun isLatestSelectableAStockDate(value: String): Boolean {
+    val date = runCatching { LocalDate.parse(value) }.getOrNull() ?: return false
+    val latest = AStockTradingCalendar.latestSelectableTradingDay(LocalDate.now(ZoneId.of("Asia/Shanghai")))
+    return !date.isBefore(latest)
+}
+
+private fun parseAStockBacktests(raw: String?): List<AStockBacktestRow> {
+    val payload = raw.orEmpty().trim().ifBlank { "[]" }
+    return runCatching {
+        ApiFactory.json.decodeFromString<List<AStockBacktestRow>>(payload)
+    }.getOrDefault(emptyList())
+}
+
+private fun findAStockBacktest(rows: List<AStockBacktestRow>, item: AStockRecommendation): AStockBacktestRow? {
+    val code = item.code.trim()
+    if (code.isBlank()) {
+        return null
+    }
+    return rows.firstOrNull { row ->
+        val stock = row.stock.trim()
+        stock == code || stock.startsWith("$code ")
+    }
+}
+
 private fun formatAuctionAmount(value: Double): String {
     return when {
         value >= 100_000_000 -> String.format("%.2f亿", value / 100_000_000)
@@ -676,8 +758,8 @@ private fun formatAuctionAmount(value: Double): String {
 }
 
 @Composable
-private fun SimpleRow(title: String, subtitle: String) {
-    Card {
+private fun SimpleRow(title: String, subtitle: String, modifier: Modifier = Modifier) {
+    Card(modifier = modifier) {
         Column(Modifier.fillMaxWidth().padding(12.dp)) {
             Text(title.ifBlank { "--" }, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (subtitle.isNotBlank()) {

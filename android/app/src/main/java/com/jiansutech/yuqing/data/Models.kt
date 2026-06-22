@@ -221,6 +221,7 @@ data class AStockRecommendationSnapshot(
     val period: String = "",
     @SerialName("ignore_recent") val ignoreRecent: Boolean = false,
     @SerialName("recommendations_json") val recommendationsJson: String = "[]",
+    @SerialName("backtests_json") val backtestsJson: String = "[]",
     @SerialName("backtest_status") val backtestStatus: String = "",
     @SerialName("generated_count") val generatedCount: Int = 0,
     @SerialName("recent_filtered") val recentFiltered: Int = 0,
@@ -250,6 +251,22 @@ data class AStockRecommendation(
     @SerialName("HoldingSummary") val holdingSummary: String = "",
     @SerialName("HoldingRatio") val holdingRatio: String = "",
     @SerialName("Reason") val reason: String = "",
+)
+
+@Serializable
+data class AStockBacktestRow(
+    @SerialName("Stock") val stock: String = "",
+    @SerialName("EntryOpen") val entryOpen: String = "",
+    @SerialName("T0Return") val t0Return: String = "",
+    @SerialName("Days") val days: List<AStockBacktestCell> = emptyList(),
+    @SerialName("BestReturn") val bestReturn: String = "",
+    @SerialName("Status") val status: String = "",
+)
+
+@Serializable
+data class AStockBacktestCell(
+    @SerialName("Close") val close: String = "",
+    @SerialName("Return") val returnPct: String = "",
 )
 
 @Serializable
