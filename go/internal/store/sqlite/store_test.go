@@ -93,6 +93,26 @@ func TestListItemsCanFilterByPublishTime(t *testing.T) {
 	}
 }
 
+func TestListCrawlRunsAllowsNullErrorText(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	startedAt := time.Date(2026, 6, 22, 5, 0, 0, 0, time.UTC).Format(time.RFC3339)
+
+	if _, err := store.db.ExecContext(ctx, `
+INSERT INTO crawl_runs (source_type, template_id, template_name, template_snapshot, started_at, status, fetched_count, inserted_count, updated_count, error_text)
+VALUES (?, 0, '', '', ?, 'failed', 0, 0, 0, NULL)`, "jin10_full", startedAt); err != nil {
+		t.Fatalf("insert crawl run error: %v", err)
+	}
+
+	runs, err := store.ListCrawlRuns(ctx, 10, "jin10_full")
+	if err != nil {
+		t.Fatalf("ListCrawlRuns should allow NULL error_text, got %v", err)
+	}
+	if len(runs) != 1 || runs[0].SourceType != "jin10_full" || runs[0].ErrorText != "" {
+		t.Fatalf("unexpected crawl runs: %+v", runs)
+	}
+}
+
 func TestAStockAuctionAmountsUpsertAndList(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()

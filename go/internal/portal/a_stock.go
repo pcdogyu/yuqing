@@ -960,11 +960,11 @@ func (s *Server) loadAStockSourceRunsWithCache(cache *aStockRequestCache) []aSto
 
 func (s *Server) loadAStockSourceRuns() []aStockSourceRun {
 	if strings.TrimSpace(s.cfg.CrawlerURL) == "" {
-		return []aStockSourceRun{}
+		return aStockUnavailableSourceRuns("抓取状态接口未配置")
 	}
 	var runs []model.CrawlRun
 	if err := s.getJSON(s.cfg.CrawlerURL+"/api/v1/admin/tasks/crawl/runs?limit=50", &runs); err != nil {
-		return []aStockSourceRun{}
+		return aStockUnavailableSourceRuns(err.Error())
 	}
 	latest := make(map[string]aStockSourceRun)
 	for _, run := range runs {
@@ -988,6 +988,18 @@ func (s *Server) loadAStockSourceRuns() []aStockSourceRun {
 	out := make([]aStockSourceRun, 0, len(aStockCrawlSources()))
 	for _, sourceType := range aStockCrawlSources() {
 		out = append(out, latest[sourceType])
+	}
+	return out
+}
+
+func aStockUnavailableSourceRuns(message string) []aStockSourceRun {
+	out := make([]aStockSourceRun, 0, len(aStockCrawlSources()))
+	for _, sourceType := range aStockCrawlSources() {
+		out = append(out, aStockSourceRun{
+			SourceType: sourceType,
+			Status:     "unavailable",
+			ErrorText:  message,
+		})
 	}
 	return out
 }

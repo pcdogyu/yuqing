@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -354,8 +355,59 @@ func TestRunAStockRecommendationCrawlsSourcesAndQueriesWindow(t *testing.T) {
 		t.Fatalf("runAStockRecommendationForDate error: %v", err)
 	}
 	sort.Strings(sources)
-	if strings.Join(sources, ",") != "cls_telegraph,eastmoney_kuaixun,flash,headline,jin10_full,sina_finance_7x24,wallstreetcn_a_stock" {
+	if strings.Join(sources, ",") != "cls_telegraph,eastmoney_kuaixun,flash,headline,sina_finance_7x24,wallstreetcn_a_stock" {
 		t.Fatalf("expected all A股 sources to be crawled, got %v", sources)
+	}
+}
+
+func TestRunAStockRecommendationContinuesWhenOneSourceFails(t *testing.T) {
+	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"date":           "2026-06-16",
+			"is_trading_day": true,
+			"source":         "test",
+			"reason":         "trading_day",
+			"message":        "open",
+		})
+	}))
+	defer akshare.Close()
+
+	var sources []string
+	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sourceType := r.URL.Query().Get("source_type")
+		sources = append(sources, sourceType)
+		if sourceType == "headline" {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"code":502,"message":"headline timeout","data":null}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer crawler.Close()
+
+	var contentQueried bool
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		contentQueried = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer content.Close()
+
+	worker := NewWorker(config.Config{
+		AStockAuctionURL:      akshare.URL,
+		CrawlerURL:            crawler.URL,
+		ContentURL:            content.URL,
+		HTTPTimeout:           time.Second,
+		SchedulerCrawlTimeout: time.Second,
+	})
+
+	if err := worker.runAStockRecommendationForDate(context.Background(), "2026-06-16", "afternoon"); err != nil {
+		t.Fatalf("runAStockRecommendationForDate should continue after one source failure, got %v", err)
+	}
+	if !contentQueried {
+		t.Fatal("expected recommendation window to be queried after partial crawl failure")
+	}
+	if !slices.Contains(sources, "eastmoney_kuaixun") || !slices.Contains(sources, "sina_finance_7x24") {
+		t.Fatalf("expected later A股 sources to run after headline failure, got %v", sources)
 	}
 }
 

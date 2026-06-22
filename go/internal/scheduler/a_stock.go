@@ -402,10 +402,23 @@ func (w *Worker) runAStockRecommendationForDate(ctx context.Context, strategyDat
 		}
 		return jobSkippedError{message: fmt.Sprintf("a-stock recommendation skipped for %s: %s", tradingDay.Date, message)}
 	}
-	for _, sourceType := range aStockRecommendationSources {
+	failedSources := make([]string, 0)
+	successCount := 0
+	for _, sourceType := range w.aStockRecommendationCrawlSources() {
 		if err := w.runCrawl(ctx, sourceType); err != nil {
-			return err
+			failedSources = append(failedSources, sourceType+": "+err.Error())
+			log.Warn().
+				Err(err).
+				Str("source_type", sourceType).
+				Str("strategy_date", strategyDate).
+				Str("period", period).
+				Msg("a-stock recommendation crawl source failed")
+			continue
 		}
+		successCount++
+	}
+	if successCount == 0 && len(failedSources) > 0 {
+		return fmt.Errorf("a-stock recommendation crawl failed for all sources: %s", strings.Join(failedSources, "; "))
 	}
 	start, end, label, err := aStockRecommendationWindow(strategyDate, period)
 	if err != nil {
@@ -430,6 +443,17 @@ func (w *Worker) runAStockRecommendationForDate(ctx context.Context, strategyDat
 		Str("window", label).
 		Msg("a-stock recommendation window generated")
 	return nil
+}
+
+func (w *Worker) aStockRecommendationCrawlSources() []string {
+	sources := make([]string, 0, len(aStockRecommendationSources))
+	for _, sourceType := range aStockRecommendationSources {
+		if sourceType == "jin10_full" && !w.cfg.Jin10FullEnabled {
+			continue
+		}
+		sources = append(sources, sourceType)
+	}
+	return sources
 }
 
 func (w *Worker) loadAStockTradingDayStatus(ctx context.Context, strategyDate string) (aStockTradingDayStatus, error) {

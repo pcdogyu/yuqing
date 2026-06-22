@@ -1790,6 +1790,19 @@ func TestAStockNewsSectionShowsSourceRunDiagnostics(t *testing.T) {
 	}
 }
 
+func TestLoadAStockSourceRunsShowsUnavailableWhenCrawlerURLMissing(t *testing.T) {
+	srv := NewServer(config.Config{})
+	runs := srv.loadAStockSourceRuns()
+	if len(runs) == 0 {
+		t.Fatal("expected unavailable source runs")
+	}
+	for _, run := range runs {
+		if run.SourceType == "" || run.Status != "unavailable" || !strings.Contains(run.ErrorText, "抓取状态接口未配置") {
+			t.Fatalf("unexpected unavailable run: %+v", run)
+		}
+	}
+}
+
 func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 	setAStockNowForTest(t, time.Date(2026, 6, 16, 9, 30, 0, 0, time.FixedZone("CST", 8*3600)))
 

@@ -928,13 +928,17 @@ func (s *Store) ListCrawlRuns(ctx context.Context, limit int, sourceType string)
 		var run model.CrawlRun
 		var startedAt string
 		var finishedAt sql.NullString
-		if err := rows.Scan(&run.ID, &run.SourceType, &run.TemplateID, &run.TemplateName, &run.TemplateSnapshot, &startedAt, &finishedAt, &run.Status, &run.FetchedCount, &run.InsertedCount, &run.UpdatedCount, &run.ErrorText); err != nil {
+		var errorText sql.NullString
+		if err := rows.Scan(&run.ID, &run.SourceType, &run.TemplateID, &run.TemplateName, &run.TemplateSnapshot, &startedAt, &finishedAt, &run.Status, &run.FetchedCount, &run.InsertedCount, &run.UpdatedCount, &errorText); err != nil {
 			return nil, err
 		}
 		run.StartedAt = mustParseRFC3339(startedAt)
 		if finishedAt.Valid {
 			value := mustParseRFC3339(finishedAt.String)
 			run.FinishedAt = &value
+		}
+		if errorText.Valid {
+			run.ErrorText = errorText.String
 		}
 		runs = append(runs, run)
 	}
