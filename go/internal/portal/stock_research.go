@@ -29,7 +29,7 @@ func (s *Server) handleStockResearchPage(w http.ResponseWriter, r *http.Request,
 	ctx, err := s.loadStockResearchContext(filter)
 	var b strings.Builder
 	b.WriteString(`<style>
-body[data-page='stock-research'] header,body[data-page='stock-research'] main,body[data-page='stock-research'] .site-footer{max-width:none;width:100%;box-sizing:border-box}
+body[data-page='stock-research'] main,body[data-page='stock-research'] .site-footer{max-width:none;width:100%;box-sizing:border-box}
 body[data-page='stock-research'] main{font-size:14px;line-height:1.45}
 body[data-page='stock-research'] section{width:100%;box-sizing:border-box}
 body[data-page='stock-research'] table{width:100%;min-width:100%}
