@@ -2349,11 +2349,13 @@ func TestAStockOverviewLimitUpFilterToggle(t *testing.T) {
 	writeAStockOverviewLimitUpFilterCell(&enabled, aStockContext{
 		Date:                 "2026-06-22",
 		Period:               "afternoon",
+		NewsPage:             2,
+		IgnoreRecent:         true,
 		LimitUpFilterEnabled: true,
 		LimitUpFiltered:      9,
 	})
 	enabledBody := enabled.String()
-	for _, want := range []string{"涨停过滤", "已过滤 9", "关闭涨停过滤", `href="/a-stock?date=2026-06-22&amp;period=afternoon&amp;ignore_limit_up=1"`} {
+	for _, want := range []string{"涨停过滤", "已过滤 9", "关闭涨停过滤", `<form class="astock-filter-toggle-form" method="get" action="/a-stock">`, `name="date" value="2026-06-22"`, `name="period" value="afternoon"`, `name="news_page" value="2"`, `name="ignore_recent" value="1"`, `name="ignore_limit_up" value="1"`, `<button class="astock-filter-toggle" type="submit"`} {
 		if !strings.Contains(enabledBody, want) {
 			t.Fatalf("expected enabled limit-up filter cell to contain %q, got %s", want, enabledBody)
 		}
@@ -2366,7 +2368,7 @@ func TestAStockOverviewLimitUpFilterToggle(t *testing.T) {
 		IgnoreLimitUp: true,
 	})
 	disabledBody := disabled.String()
-	for _, want := range []string{"涨停过滤", "已关闭", "启用涨停过滤", `href="/a-stock?date=2026-06-22&amp;period=afternoon"`} {
+	for _, want := range []string{"涨停过滤", "已关闭", "启用涨停过滤", `<form class="astock-filter-toggle-form" method="get" action="/a-stock">`, `name="date" value="2026-06-22"`, `name="period" value="afternoon"`, `<button class="astock-filter-toggle" type="submit"`} {
 		if !strings.Contains(disabledBody, want) {
 			t.Fatalf("expected disabled limit-up filter cell to contain %q, got %s", want, disabledBody)
 		}
@@ -2378,7 +2380,7 @@ func TestAStockOverviewLimitUpFilterToggle(t *testing.T) {
 	var morning strings.Builder
 	writeAStockOverviewLimitUpFilterCell(&morning, aStockContext{Date: "2026-06-22", Period: "morning"})
 	morningBody := morning.String()
-	if !strings.Contains(morningBody, "不适用") || strings.Contains(morningBody, "涨停过滤</a>") {
+	if !strings.Contains(morningBody, "不适用") || strings.Contains(morningBody, "astock-filter-toggle-form") || strings.Contains(morningBody, "<button") {
 		t.Fatalf("expected morning limit-up filter cell to be non-interactive, got %s", morningBody)
 	}
 }

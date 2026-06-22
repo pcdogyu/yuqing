@@ -267,7 +267,8 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-overview-table .astock-muted{display:block;margin-bottom:8px}
 		.astock-overview-table .astock-overview-sub-label{margin-top:16px}
 		.astock-overview-table strong{display:block;font-size:24px;line-height:1.25}
-		.astock-filter-toggle{display:inline-flex;align-items:center;margin-top:8px;padding:6px 10px;border:1px solid #d6ccbb;border-radius:8px;color:#214e34;text-decoration:none;background:#fff;font-size:13px;font-weight:600}
+		.astock-filter-toggle-form{margin:0}
+		.astock-filter-toggle{display:inline-flex;align-items:center;margin-top:8px;padding:6px 10px;border:1px solid #d6ccbb;border-radius:8px;color:#214e34;text-decoration:none;background:#fff;font-size:13px;font-weight:600;font-family:inherit;line-height:1.2;cursor:pointer}
 		.astock-actions{width:100%}
 		.astock-action-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;align-items:stretch}
 		.astock-actions form{margin:0}
@@ -518,11 +519,23 @@ func writeAStockOverviewLimitUpFilterCell(b *strings.Builder, ctx aStockContext)
 	b.WriteString(html.EscapeString(status))
 	b.WriteString(`</strong>`)
 	if ctx.Period == "afternoon" {
-		b.WriteString(`<a class="astock-filter-toggle" data-preserve-scroll="1" href="`)
-		b.WriteString(html.EscapeString(aStockLimitUpFilterToggleHref(ctx.Date, ctx.Period, ctx.NewsPage, ctx.IgnoreRecent, ctx.IgnoreLimitUp)))
-		b.WriteString(`">`)
+		b.WriteString(`<form class="astock-filter-toggle-form" method="get" action="/a-stock"><input type="hidden" name="date" value="`)
+		b.WriteString(html.EscapeString(ctx.Date))
+		b.WriteString(`"><input type="hidden" name="period" value="afternoon">`)
+		if ctx.NewsPage > 1 {
+			b.WriteString(`<input type="hidden" name="news_page" value="`)
+			b.WriteString(html.EscapeString(fmt.Sprintf("%d", ctx.NewsPage)))
+			b.WriteString(`">`)
+		}
+		if ctx.IgnoreRecent {
+			b.WriteString(`<input type="hidden" name="ignore_recent" value="1">`)
+		}
+		if !ctx.IgnoreLimitUp {
+			b.WriteString(`<input type="hidden" name="ignore_limit_up" value="1">`)
+		}
+		b.WriteString(`<button class="astock-filter-toggle" type="submit" data-preserve-scroll="1">`)
 		b.WriteString(html.EscapeString(aStockLimitUpFilterToggleLabel(ctx.IgnoreLimitUp)))
-		b.WriteString(`</a>`)
+		b.WriteString(`</button></form>`)
 	}
 	b.WriteString(`</td>`)
 }
