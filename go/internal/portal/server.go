@@ -4596,7 +4596,7 @@ const portalSourceFilterOptions = `<option value="">全部来源</option><option
 const portalChannelPlaceholder = `来源，如 flash,headline,jin10_full,eastmoney_kuaixun,wallstreetcn_a_stock,cls_telegraph,sina_finance_7x24,crypto_x,crypto_telegram,foresight_newsflash,coindesk_zh_latest,panews_newsflash,theblock_latest`
 
 const loginTemplate = `
-{{define "login"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `main{max-width:420px}</style></head><body><main><section><h1>Go 舆情系统</h1>{{if .Error}}<p style="color:#9b1c1c">{{.Error}}</p>{{end}}<form method="post"><input type="hidden" name="reference" value="{{.Reference}}"><input name="username" placeholder="用户名" value="admin"><input name="password" type="password" placeholder="密码" value="admin123"><button type="submit">登录</button></form></section></main>{{template "footer" .}}</body></html>{{end}}
+{{define "login"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `main{max-width:420px}</style></head><body><main><section><h1>简苏舆情</h1>{{if .Error}}<p style="color:#9b1c1c">{{.Error}}</p>{{end}}<form method="post"><input type="hidden" name="reference" value="{{.Reference}}"><input name="username" placeholder="用户名" value="admin"><input name="password" type="password" placeholder="密码" value="admin123"><button type="submit">登录</button></form></section></main>{{template "footer" .}}</body></html>{{end}}
 `
 
 const dashboardTemplate = `

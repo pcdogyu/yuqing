@@ -76,7 +76,7 @@ type androidActionResponse struct {
 func (s *Service) handleAndroidBootstrap(w http.ResponseWriter, r *http.Request) {
 	apiutil.WriteJSON(w, http.StatusOK, "ok", androidBootstrap{
 		PackageName: androidPackageName,
-		AppName:     "简速舆情",
+		AppName:     "简苏舆情",
 		APIVersion:  "v1",
 		GeneratedAt: time.Now().UTC(),
 		User: androidUser{

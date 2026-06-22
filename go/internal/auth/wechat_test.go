@@ -31,7 +31,7 @@ func TestWechatLegacyFlow(t *testing.T) {
 	svc := NewService(config.Config{
 		SessionTTL:        time.Hour,
 		WechatPrivateKey:  "wechat-private-key",
-		WechatAccountName: "Go 舆情系统",
+		WechatAccountName: "简苏舆情",
 		AuthURL:           "http://127.0.0.1:8081",
 		WechatURL:         "http://127.0.0.1:8087",
 		GatewayWebURL:     "http://127.0.0.1",
@@ -129,7 +129,7 @@ func TestWechatPendingLoginAndBind(t *testing.T) {
 	svc := NewService(config.Config{
 		SessionTTL:        time.Hour,
 		WechatPrivateKey:  "wechat-private-key",
-		WechatAccountName: "Go 舆情系统",
+		WechatAccountName: "简苏舆情",
 		AuthURL:           "http://127.0.0.1:8081",
 		WechatURL:         "http://127.0.0.1:8087",
 		GatewayWebURL:     "http://127.0.0.1",

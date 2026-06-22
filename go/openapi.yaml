@@ -1,6 +1,6 @@
 openapi: 3.1.0
 info:
-  title: Stonedt Go Portal API
+  title: 简苏舆情 Go Portal API
   version: 0.1.0
   description: Go 重构版舆情门户开放接口说明。
 servers:

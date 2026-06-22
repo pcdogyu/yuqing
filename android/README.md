@@ -1,4 +1,4 @@
-# 简速舆情 Android
+# 简苏舆情 Android
 
 原生 Android APK 工程，包名 `com.jiansutech.yuqing`。
 

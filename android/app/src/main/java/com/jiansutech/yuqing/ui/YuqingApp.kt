@@ -90,7 +90,7 @@ private fun LoginScreen(state: YuqingUiState, viewModel: YuqingViewModel) {
             .padding(20.dp),
         verticalArrangement = Arrangement.Center,
     ) {
-        Text("简速舆情", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Text("简苏舆情", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         Text("Android 原生工作台", style = MaterialTheme.typography.bodyMedium)
         Spacer(Modifier.height(24.dp))
         OutlinedTextField(username, { username = it }, label = { Text("账号") }, modifier = Modifier.fillMaxWidth(), singleLine = true)

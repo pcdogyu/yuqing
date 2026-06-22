@@ -35,7 +35,7 @@ func TestWechatProxyRoutes(t *testing.T) {
 				"status": 200,
 				"msg":    "OK",
 				"data": map[string]any{
-					"name":      "Go 舆情系统",
+					"name":      "简苏舆情",
 					"sceneStr":  "yuqing:bind",
 					"qrcodeUrl": "data:image/svg+xml;base64,ZmFrZQ==",
 				},

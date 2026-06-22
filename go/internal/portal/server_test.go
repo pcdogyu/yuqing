@@ -4681,7 +4681,7 @@ func TestLegacyLoginCompatRoutes(t *testing.T) {
 	loginBakReq := httptest.NewRequest(http.MethodGet, "/loginbak", nil)
 	loginBakRR := httptest.NewRecorder()
 	srv.Router().ServeHTTP(loginBakRR, loginBakReq)
-	if loginBakRR.Code != http.StatusOK || !strings.Contains(loginBakRR.Body.String(), "Go 舆情系统") {
+	if loginBakRR.Code != http.StatusOK || !strings.Contains(loginBakRR.Body.String(), "简苏舆情") {
 		t.Fatalf("unexpected loginbak response: code=%d body=%s", loginBakRR.Code, loginBakRR.Body.String())
 	}
 

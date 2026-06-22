@@ -185,7 +185,7 @@ func Load() Config {
 		ServiceToken:               envOrDefaultWithAliases("YUQING_SERVICE_TOKEN", "stonedt-internal-token", "JIN10_SERVICE_TOKEN"),
 		SessionTTL:                 envDurationSeconds(86400, "YUQING_SESSION_TTL_SEC", "JIN10_SESSION_TTL_SEC"),
 		WechatPrivateKey:           envOrDefaultWithAliases("YUQING_WECHAT_PRIVATE_KEY", "yuqing-wechat-private-key", "JIN10_TOKEN_PRIVATE_KEY"),
-		WechatAccountName:          envOrDefaultWithAliases("YUQING_WECHAT_NAME", "Go 舆情系统", "JIN10_WECHAT_NAME"),
+		WechatAccountName:          envOrDefaultWithAliases("YUQING_WECHAT_NAME", "简苏舆情", "JIN10_WECHAT_NAME"),
 		WechatPushEnabled:          envBool(false, "YUQING_WECHAT_PUSH_ENABLED"),
 		WechatPushWebhookURL:       envOrDefault("YUQING_WECHAT_PUSH_WEBHOOK_URL", ""),
 
