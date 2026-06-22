@@ -167,6 +167,41 @@ var (
 	aStockNow               = time.Now
 	aStockEastmoneyKlineURL = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
 	aStockYahooChartURL     = "https://query1.finance.yahoo.com/v8/finance/chart/"
+	aStockMarketHolidays    = map[string]struct{}{
+		"2026-01-01": {},
+		"2026-01-02": {},
+		"2026-01-03": {},
+		"2026-02-15": {},
+		"2026-02-16": {},
+		"2026-02-17": {},
+		"2026-02-18": {},
+		"2026-02-19": {},
+		"2026-02-20": {},
+		"2026-02-21": {},
+		"2026-02-22": {},
+		"2026-02-23": {},
+		"2026-04-04": {},
+		"2026-04-05": {},
+		"2026-04-06": {},
+		"2026-05-01": {},
+		"2026-05-02": {},
+		"2026-05-03": {},
+		"2026-05-04": {},
+		"2026-05-05": {},
+		"2026-06-19": {},
+		"2026-06-20": {},
+		"2026-06-21": {},
+		"2026-09-25": {},
+		"2026-09-26": {},
+		"2026-09-27": {},
+		"2026-10-01": {},
+		"2026-10-02": {},
+		"2026-10-03": {},
+		"2026-10-04": {},
+		"2026-10-05": {},
+		"2026-10-06": {},
+		"2026-10-07": {},
+	}
 )
 
 func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user any) {
@@ -877,7 +912,7 @@ func (s *Server) loadAStockTradingDayStatus(strategyDate string) (aStockTradingD
 	}
 	var status aStockTradingDayStatus
 	if err := s.getJSON(s.cfg.SchedulerURL+query, &status); err != nil {
-		return aStockTradingDayStatus{}, err
+		return localAStockTradingDayStatus(date), nil
 	}
 	if strings.TrimSpace(status.Date) == "" {
 		status.Date = date
@@ -886,6 +921,66 @@ func (s *Server) loadAStockTradingDayStatus(strategyDate string) (aStockTradingD
 		status.Reason = "market_closed"
 	}
 	return status, nil
+}
+
+func localAStockTradingDayStatus(strategyDate string) aStockTradingDayStatus {
+	date := normalizeAStockStrategyDate(strategyDate)
+	if strings.TrimSpace(date) == "" {
+		date = aStockTodayDate()
+	}
+	isTradingDay := isLocalAStockTradingDay(date)
+	reason := "trading_day"
+	message := "A-share market is open."
+	if !isTradingDay {
+		reason = "market_closed"
+		message = "该日 A 股休市，不生成股票推荐。"
+	}
+	return aStockTradingDayStatus{
+		Date:               date,
+		IsTradingDay:       isTradingDay,
+		LatestTradingDay:   localAStockAdjacentTradingDay(date, 0),
+		PreviousTradingDay: localAStockAdjacentTradingDay(date, -1),
+		NextTradingDay:     localAStockAdjacentTradingDay(date, 1),
+		Source:             "portal_local_calendar_fallback",
+		Reason:             reason,
+		Message:            message,
+	}
+}
+
+func isLocalAStockTradingDay(date string) bool {
+	day, err := time.ParseInLocation("2006-01-02", date, aStockLocation())
+	if err != nil {
+		return false
+	}
+	if day.Weekday() == time.Saturday || day.Weekday() == time.Sunday {
+		return false
+	}
+	_, holiday := aStockMarketHolidays[date]
+	return !holiday
+}
+
+func localAStockAdjacentTradingDay(date string, direction int) string {
+	day, err := time.ParseInLocation("2006-01-02", date, aStockLocation())
+	if err != nil {
+		return ""
+	}
+	if direction == 0 {
+		if isLocalAStockTradingDay(date) {
+			return date
+		}
+		return localAStockAdjacentTradingDay(date, -1)
+	}
+	step := 1
+	if direction < 0 {
+		step = -1
+	}
+	for offset := step; offset >= -14 && offset <= 14; offset += step {
+		candidate := day.AddDate(0, 0, offset).Format("2006-01-02")
+		if isLocalAStockTradingDay(candidate) {
+			return candidate
+		}
+	}
+	return ""
 }
 
 func aStockRecommendationEmptyReason(ctx aStockContext) string {

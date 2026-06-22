@@ -1877,6 +1877,32 @@ func TestAStockPageBlocksRecommendationsOnNonTradingDay(t *testing.T) {
 	}
 }
 
+func TestAStockTradingDayFallsBackWhenSchedulerUnavailable(t *testing.T) {
+	deadScheduler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	deadScheduler.Close()
+	srv := NewServer(config.Config{SchedulerURL: deadScheduler.URL})
+
+	tradingStatus, err := srv.loadAStockTradingDayStatus("2026-06-15")
+	if err != nil {
+		t.Fatalf("expected local trading-day fallback, got error %v", err)
+	}
+	if !tradingStatus.IsTradingDay || tradingStatus.Source != "portal_local_calendar_fallback" || tradingStatus.Reason != "trading_day" {
+		t.Fatalf("expected 2026-06-15 to fall back as trading day, got %+v", tradingStatus)
+	}
+	blocked, message, reason := srv.aStockRecommendationBlockedStatus("2026-06-15")
+	if blocked || message != "" || reason != "trading_day" {
+		t.Fatalf("expected fallback trading day not blocked, got blocked=%v message=%q reason=%q", blocked, message, reason)
+	}
+
+	holidayStatus, err := srv.loadAStockTradingDayStatus("2026-06-19")
+	if err != nil {
+		t.Fatalf("expected local holiday fallback, got error %v", err)
+	}
+	if holidayStatus.IsTradingDay || holidayStatus.Reason != "market_closed" || holidayStatus.LatestTradingDay != "2026-06-18" || holidayStatus.NextTradingDay != "2026-06-22" {
+		t.Fatalf("expected 2026-06-19 to fall back as holiday, got %+v", holidayStatus)
+	}
+}
+
 func TestAStockRecommendationActionBlockedOnNonTradingDay(t *testing.T) {
 	for _, action := range []string{"backfill_window_news", "crawl"} {
 		t.Run(action, func(t *testing.T) {
