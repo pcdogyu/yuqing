@@ -37,6 +37,7 @@ type aStockContext struct {
 	EmptyReason                  string
 	RecentFiltered               int
 	IgnoreRecent                 bool
+	IgnoreLimitUp                bool
 	LimitUpFilterEnabled         bool
 	LimitUpFiltered              int
 	MarketCandidateStatus        string
@@ -234,16 +235,17 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 	period := normalizeAStockPeriod(r.URL.Query().Get("period"))
 	newsPage := normalizeAStockNewsPage(r.URL.Query().Get("news_page"))
 	ignoreRecent := normalizeAStockIgnoreRecent(r.URL.Query())
+	ignoreLimitUp := normalizeAStockIgnoreLimitUp(r.URL.Query())
 	forceRecommendationRefresh := normalizeAStockBool(r.URL.Query().Get("refresh_recommendations"))
 	requestCache := newAStockRequestCache()
-	ctx := s.loadAStockContextWithCache(strategyDate, period.Key, newsPage, ignoreRecent, forceRecommendationRefresh, requestCache)
+	ctx := s.loadAStockContextWithCache(strategyDate, period.Key, newsPage, ignoreRecent, ignoreLimitUp, forceRecommendationRefresh, requestCache)
 	morningCtx := ctx
 	if ctx.Period != "morning" {
-		morningCtx = s.loadAStockContextWithCache(strategyDate, "morning", 1, ignoreRecent, false, requestCache)
+		morningCtx = s.loadAStockContextWithCache(strategyDate, "morning", 1, ignoreRecent, ignoreLimitUp, false, requestCache)
 	}
 	afternoonCtx := ctx
 	if ctx.Period != "afternoon" {
-		afternoonCtx = s.loadAStockContextWithCache(strategyDate, "afternoon", 1, ignoreRecent, false, requestCache)
+		afternoonCtx = s.loadAStockContextWithCache(strategyDate, "afternoon", 1, ignoreRecent, ignoreLimitUp, false, requestCache)
 	}
 	message := strings.TrimSpace(r.URL.Query().Get("msg"))
 	if message == "" {
@@ -337,7 +339,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		b.WriteString(`</p></section>`)
 	}
 
-	renderAStockDatePeriodTabs(&b, ctx.Date, ctx.Period, ctx.IgnoreRecent, false)
+	renderAStockDatePeriodTabs(&b, ctx.Date, ctx.Period, ctx.IgnoreRecent, ctx.IgnoreLimitUp, false)
 	renderAStockOverviewSection(&b, morningCtx, afternoonCtx)
 
 	b.WriteString(`<section><h2>操作区</h2><div class="astock-actions"><div class="astock-action-grid">`)
@@ -363,7 +365,11 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		b.WriteString(html.EscapeString(action.Period))
 		b.WriteString(`"><input type="hidden" name="action" value="`)
 		b.WriteString(html.EscapeString(action.Name))
-		b.WriteString(`"><button type="submit">`)
+		b.WriteString(`">`)
+		if ctx.IgnoreLimitUp {
+			b.WriteString(`<input type="hidden" name="ignore_limit_up" value="1">`)
+		}
+		b.WriteString(`<button type="submit">`)
 		b.WriteString(html.EscapeString(action.Label))
 		b.WriteString(`</button></form>`)
 	}
@@ -374,7 +380,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 	renderAStockNewsSection(&b, ctx)
 	renderAStockHotspotSection(&b, ctx.Hotspots)
 	renderAStockRecommendationSection(&b, ctx)
-	renderAStockBacktestSection(&b, ctx.Date, ctx.Period, ctx.IgnoreRecent, ctx.Recommendations, ctx.Backtests)
+	renderAStockBacktestSection(&b, ctx.Date, ctx.Period, ctx.IgnoreRecent, ctx.IgnoreLimitUp, ctx.Recommendations, ctx.Backtests)
 
 	_ = s.writeSimplePage(w, "a-stock", "A股", b.String())
 }
@@ -389,6 +395,9 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request) 
 	query.Set("period", period.Key)
 	if normalizeAStockBool(r.FormValue("ignore_recent")) {
 		query.Set("ignore_recent", "1")
+	}
+	if normalizeAStockBool(r.FormValue("ignore_limit_up")) {
+		query.Set("ignore_limit_up", "1")
 	}
 	action := strings.TrimSpace(r.FormValue("action"))
 	if aStockActionRequiresTradingDay(action) {
@@ -486,7 +495,7 @@ func writeAStockOverviewFilterCell(b *strings.Builder, ctx aStockContext) {
 	b.WriteString(`<td><span class="astock-muted">5日内过滤</span><strong>`)
 	b.WriteString(html.EscapeString(filterStatus))
 	b.WriteString(`</strong><a class="astock-filter-toggle" data-preserve-scroll="1" href="`)
-	b.WriteString(html.EscapeString(aStockFilterToggleHref(ctx.Date, ctx.Period, ctx.NewsPage, ctx.IgnoreRecent)))
+	b.WriteString(html.EscapeString(aStockFilterToggleHref(ctx.Date, ctx.Period, ctx.NewsPage, ctx.IgnoreRecent, ctx.IgnoreLimitUp)))
 	b.WriteString(`">`)
 	b.WriteString(html.EscapeString(aStockFilterToggleLabel(ctx.IgnoreRecent)))
 	b.WriteString(`</a></td>`)
@@ -494,7 +503,9 @@ func writeAStockOverviewFilterCell(b *strings.Builder, ctx aStockContext) {
 
 func writeAStockOverviewLimitUpFilterCell(b *strings.Builder, ctx aStockContext) {
 	status := "不适用"
-	if ctx.LimitUpFilterEnabled {
+	if ctx.Period == "afternoon" && !ctx.LimitUpFilterEnabled {
+		status = "已关闭"
+	} else if ctx.LimitUpFilterEnabled {
 		status = "已启用"
 		if ctx.LimitUpFiltered > 0 {
 			status = fmt.Sprintf("已过滤 %d", ctx.LimitUpFiltered)
@@ -502,7 +513,15 @@ func writeAStockOverviewLimitUpFilterCell(b *strings.Builder, ctx aStockContext)
 	}
 	b.WriteString(`<td><span class="astock-muted">涨停过滤</span><strong>`)
 	b.WriteString(html.EscapeString(status))
-	b.WriteString(`</strong></td>`)
+	b.WriteString(`</strong>`)
+	if ctx.Period == "afternoon" {
+		b.WriteString(`<a class="astock-filter-toggle" data-preserve-scroll="1" href="`)
+		b.WriteString(html.EscapeString(aStockLimitUpFilterToggleHref(ctx.Date, ctx.Period, ctx.NewsPage, ctx.IgnoreRecent, ctx.IgnoreLimitUp)))
+		b.WriteString(`">`)
+		b.WriteString(html.EscapeString(aStockLimitUpFilterToggleLabel(ctx.IgnoreLimitUp)))
+		b.WriteString(`</a>`)
+	}
+	b.WriteString(`</td>`)
 }
 
 func aStockOverviewBacktestStatus(ctx aStockContext) string {
@@ -619,7 +638,7 @@ func renderAStockNewsPageLink(b *strings.Builder, ctx aStockContext, page int, l
 	if disabled {
 		b.WriteString(`#`)
 	} else {
-		b.WriteString(aStockPageHref(ctx.Date, ctx.Period, page, ctx.IgnoreRecent))
+		b.WriteString(aStockPageHref(ctx.Date, ctx.Period, page, ctx.IgnoreRecent, ctx.IgnoreLimitUp))
 	}
 	b.WriteString(`">`)
 	b.WriteString(html.EscapeString(label))
@@ -705,10 +724,10 @@ func renderAStockRecommendationSection(b *strings.Builder, ctx aStockContext) {
 	b.WriteString(`</table></div></section>`)
 }
 
-func renderAStockBacktestSection(b *strings.Builder, strategyDate string, period string, ignoreRecent bool, recommendations []aStockRecommendation, rows []aStockBacktestRow) {
+func renderAStockBacktestSection(b *strings.Builder, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, recommendations []aStockRecommendation, rows []aStockBacktestRow) {
 	b.WriteString(`<section><h2>消息回测</h2><p class="astock-muted">买入价采用当日开盘价；T+0 显示行情源返回的今日实时/收盘涨跌幅，T+1 到 T+5 按后续交易日收盘价计算收益，并展示五日内最高收益。</p>`)
-	renderAStockRecommendationHistoryTabs(b, strategyDate, period, ignoreRecent)
-	renderAStockRecommendationHistoryActions(b, strategyDate, period, ignoreRecent)
+	renderAStockRecommendationHistoryTabs(b, strategyDate, period, ignoreRecent, ignoreLimitUp)
+	renderAStockRecommendationHistoryActions(b, strategyDate, period, ignoreRecent, ignoreLimitUp)
 	b.WriteString(`<div class="astock-scroll"><table class="astock-table"><tr><th>股票</th><th>当日开盘价</th><th>T+0 收益</th><th>T+1 收益</th><th>T+2 收益</th><th>T+3 收益</th><th>T+4 收益</th><th>T+5 收益</th><th>五日内最高收益</th><th>命中状态</th></tr>`)
 	if len(rows) == 0 {
 		b.WriteString(`<tr><td colspan="10">暂无回测结果，等待行情同步。</td></tr>`)
@@ -747,11 +766,11 @@ func renderAStockBacktestSection(b *strings.Builder, strategyDate string, period
 	b.WriteString(`</table></div></section>`)
 }
 
-func renderAStockRecommendationHistoryTabs(b *strings.Builder, strategyDate string, period string, ignoreRecent bool) {
-	renderAStockDatePeriodTabs(b, strategyDate, period, ignoreRecent, true)
+func renderAStockRecommendationHistoryTabs(b *strings.Builder, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool) {
+	renderAStockDatePeriodTabs(b, strategyDate, period, ignoreRecent, ignoreLimitUp, true)
 }
 
-func renderAStockDatePeriodTabs(b *strings.Builder, strategyDate string, period string, ignoreRecent bool, withHeading bool) {
+func renderAStockDatePeriodTabs(b *strings.Builder, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, withHeading bool) {
 	if withHeading {
 		b.WriteString(`<h3>推荐历史</h3>`)
 	}
@@ -769,13 +788,13 @@ func renderAStockDatePeriodTabs(b *strings.Builder, strategyDate string, period 
 				periodLabel = "AM"
 			}
 			active := strategyDate == date && normalizedPeriod == option.Key
-			writeAStockDateTab(b, date+" "+periodLabel, date, option.Key, active, ignoreRecent)
+			writeAStockDateTab(b, date+" "+periodLabel, date, option.Key, active, ignoreRecent, ignoreLimitUp)
 		}
 	}
 	b.WriteString(`</div>`)
 }
 
-func renderAStockRecommendationHistoryActions(b *strings.Builder, strategyDate string, period string, ignoreRecent bool) {
+func renderAStockRecommendationHistoryActions(b *strings.Builder, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool) {
 	normalizedPeriod := normalizeAStockPeriod(period).Key
 	recomputeAction := "generate_afternoon_stock"
 	if normalizedPeriod == "morning" {
@@ -783,7 +802,7 @@ func renderAStockRecommendationHistoryActions(b *strings.Builder, strategyDate s
 	}
 	b.WriteString(`<div class="astock-history-actions">`)
 	b.WriteString(`<a class="astock-filter-toggle" data-preserve-scroll="1" href="`)
-	b.WriteString(html.EscapeString(aStockFilterToggleHref(strategyDate, normalizedPeriod, 1, ignoreRecent)))
+	b.WriteString(html.EscapeString(aStockFilterToggleHref(strategyDate, normalizedPeriod, 1, ignoreRecent, ignoreLimitUp)))
 	b.WriteString(`">`)
 	b.WriteString(html.EscapeString(aStockFilterToggleLabel(ignoreRecent)))
 	b.WriteString(`</a>`)
@@ -804,6 +823,9 @@ func renderAStockRecommendationHistoryActions(b *strings.Builder, strategyDate s
 		if ignoreRecent {
 			b.WriteString(`<input type="hidden" name="ignore_recent" value="1">`)
 		}
+		if ignoreLimitUp {
+			b.WriteString(`<input type="hidden" name="ignore_limit_up" value="1">`)
+		}
 		b.WriteString(`<input type="hidden" name="action" value="`)
 		b.WriteString(html.EscapeString(action.Name))
 		b.WriteString(`"><button type="submit" data-preserve-scroll="1">`)
@@ -813,7 +835,7 @@ func renderAStockRecommendationHistoryActions(b *strings.Builder, strategyDate s
 	b.WriteString(`</div>`)
 }
 
-func writeAStockDateTab(b *strings.Builder, label string, date string, period string, active bool, ignoreRecent bool) {
+func writeAStockDateTab(b *strings.Builder, label string, date string, period string, active bool, ignoreRecent bool, ignoreLimitUp bool) {
 	b.WriteString(`<a class="astock-tab`)
 	if active {
 		b.WriteString(` active`)
@@ -825,13 +847,16 @@ func writeAStockDateTab(b *strings.Builder, label string, date string, period st
 	if ignoreRecent {
 		b.WriteString(`&ignore_recent=1`)
 	}
+	if ignoreLimitUp {
+		b.WriteString(`&ignore_limit_up=1`)
+	}
 	b.WriteString(`">`)
 	b.WriteString(html.EscapeString(label))
 	b.WriteString(`</a>`)
 }
 
 func (s *Server) loadAStockContext(strategyDate string, periodKey string, newsPage int, ignoreRecent bool) aStockContext {
-	return s.loadAStockContextWithCache(strategyDate, periodKey, newsPage, ignoreRecent, false, newAStockRequestCache())
+	return s.loadAStockContextWithCache(strategyDate, periodKey, newsPage, ignoreRecent, false, false, newAStockRequestCache())
 }
 
 func newAStockRequestCache() *aStockRequestCache {
@@ -841,7 +866,7 @@ func newAStockRequestCache() *aStockRequestCache {
 	}
 }
 
-func (s *Server) loadAStockContextWithCache(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, forceRecommendationRefresh bool, cache *aStockRequestCache) aStockContext {
+func (s *Server) loadAStockContextWithCache(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, forceRecommendationRefresh bool, cache *aStockRequestCache) aStockContext {
 	period := normalizeAStockPeriod(periodKey)
 	start, end := aStockWindow(strategyDate, period.Key)
 	ctx := aStockContext{
@@ -855,8 +880,9 @@ func (s *Server) loadAStockContextWithCache(strategyDate string, periodKey strin
 		WindowEnd:      end,
 		BacktestStatus: "等待行情接口",
 		IgnoreRecent:   ignoreRecent,
+		IgnoreLimitUp:  ignoreLimitUp,
 	}
-	ctx.LimitUpFilterEnabled = period.Key == "afternoon"
+	ctx.LimitUpFilterEnabled = period.Key == "afternoon" && !ignoreLimitUp
 	ctx.SourceRuns = s.loadAStockSourceRunsWithCache(cache)
 	articles, err := s.loadAStockWindowArticles(start, end)
 	if err != nil {
@@ -923,7 +949,7 @@ func (s *Server) applyAStockRecommendationSnapshot(ctx *aStockContext) bool {
 	if err := s.getJSON(s.cfg.ContentURL+query, &snapshot); err != nil || !snapshot.Found {
 		return false
 	}
-	if ctx.Period == "afternoon" && !snapshot.LimitUpFilterEnabled {
+	if ctx.Period == "afternoon" && snapshot.LimitUpFilterEnabled != ctx.LimitUpFilterEnabled {
 		return false
 	}
 	var recommendations []aStockRecommendation
@@ -1294,6 +1320,16 @@ func normalizeAStockIgnoreRecent(query url.Values) bool {
 	}
 	if _, ok := query["ignore_recent"]; ok {
 		return normalizeAStockBool(query.Get("ignore_recent"))
+	}
+	return false
+}
+
+func normalizeAStockIgnoreLimitUp(query url.Values) bool {
+	if normalizeAStockBool(query.Get("filter_limit_up")) {
+		return false
+	}
+	if _, ok := query["ignore_limit_up"]; ok {
+		return normalizeAStockBool(query.Get("ignore_limit_up"))
 	}
 	return false
 }
@@ -3367,7 +3403,7 @@ func normalizeAStockNewsPage(raw string) int {
 	return page
 }
 
-func aStockPageHref(strategyDate string, period string, newsPage int, ignoreRecent bool) string {
+func aStockPageHref(strategyDate string, period string, newsPage int, ignoreRecent bool, ignoreLimitUp bool) string {
 	href := "/a-stock?date=" + url.QueryEscape(normalizeAStockStrategyDate(strategyDate)) + "&period=" + url.QueryEscape(normalizeAStockPeriod(period).Key)
 	if newsPage > 1 {
 		href += "&news_page=" + url.QueryEscape(fmt.Sprintf("%d", newsPage))
@@ -3375,11 +3411,14 @@ func aStockPageHref(strategyDate string, period string, newsPage int, ignoreRece
 	if ignoreRecent {
 		href += "&ignore_recent=1"
 	}
+	if ignoreLimitUp {
+		href += "&ignore_limit_up=1"
+	}
 	return href
 }
 
-func aStockFilterToggleHref(strategyDate string, period string, newsPage int, ignoreRecent bool) string {
-	return aStockPageHref(strategyDate, period, newsPage, !ignoreRecent)
+func aStockFilterToggleHref(strategyDate string, period string, newsPage int, ignoreRecent bool, ignoreLimitUp bool) string {
+	return aStockPageHref(strategyDate, period, newsPage, !ignoreRecent, ignoreLimitUp)
 }
 
 func aStockFilterToggleLabel(ignoreRecent bool) string {
@@ -3387,6 +3426,17 @@ func aStockFilterToggleLabel(ignoreRecent bool) string {
 		return "启用5日过滤"
 	}
 	return "关闭5日过滤"
+}
+
+func aStockLimitUpFilterToggleHref(strategyDate string, period string, newsPage int, ignoreRecent bool, ignoreLimitUp bool) string {
+	return aStockPageHref(strategyDate, period, newsPage, ignoreRecent, !ignoreLimitUp)
+}
+
+func aStockLimitUpFilterToggleLabel(ignoreLimitUp bool) string {
+	if ignoreLimitUp {
+		return "启用涨停过滤"
+	}
+	return "关闭涨停过滤"
 }
 
 func aStockPeriods() []aStockPeriod {

@@ -1403,6 +1403,18 @@ func TestAStockRecentFilterDefaultsOn(t *testing.T) {
 	}
 }
 
+func TestAStockLimitUpFilterDefaultsOnForAfternoon(t *testing.T) {
+	if normalizeAStockIgnoreLimitUp(url.Values{}) {
+		t.Fatal("expected limit-up filter to be enabled by default")
+	}
+	if normalizeAStockIgnoreLimitUp(url.Values{"filter_limit_up": {"1"}}) {
+		t.Fatal("expected filter_limit_up=1 to enable the limit-up filter")
+	}
+	if !normalizeAStockIgnoreLimitUp(url.Values{"ignore_limit_up": {"1"}}) {
+		t.Fatal("expected ignore_limit_up=1 to disable the limit-up filter")
+	}
+}
+
 func TestAStockPageLoadsAfternoonWindow(t *testing.T) {
 	market := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -1916,6 +1928,32 @@ func TestAStockContextLoadsPersistedRecommendationSnapshot(t *testing.T) {
 	}
 }
 
+func TestAStockContextRejectsMismatchedLimitUpSnapshot(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/a-stock/recommendations" {
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": model.AStockRecommendationSnapshot{
+				Found:                true,
+				StrategyDate:         "2026-06-22",
+				Period:               "afternoon",
+				RecommendationsJSON:  `[{"Rank":1,"Code":"002230","Name":"科大讯飞"}]`,
+				BacktestsJSON:        `[]`,
+				LimitUpFilterEnabled: true,
+			},
+		})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	ctx := aStockContext{Date: "2026-06-22", Period: "afternoon", IgnoreLimitUp: true, LimitUpFilterEnabled: false}
+	if srv.applyAStockRecommendationSnapshot(&ctx) {
+		t.Fatalf("expected disabled limit-up filter context to reject enabled snapshot, got %+v", ctx)
+	}
+}
+
 func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 	setAStockNowForTest(t, time.Date(2026, 6, 16, 9, 30, 0, 0, time.FixedZone("CST", 8*3600)))
 
@@ -2027,7 +2065,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"金十快讯", "金十资讯", "1条", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "5日内过滤", "涨停过滤", "关闭5日过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "推荐历史", "补抓并重新生成当前窗口", "重新生成当前推荐", "刷新当前回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="refresh_backtest"`, "2026-06-16 AM", "2026-06-16 PM", "2026-06-15 AM", "2026-06-15 PM", "2026-06-11 AM", "2026-06-11 PM", "T+0 收益", "astock-recommendation-table", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
+	for _, want := range []string{"金十快讯", "金十资讯", "1条", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "5日内过滤", "涨停过滤", "关闭5日过滤", "关闭涨停过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "推荐历史", "补抓并重新生成当前窗口", "重新生成当前推荐", "刷新当前回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="refresh_backtest"`, "2026-06-16 AM", "2026-06-16 PM", "2026-06-15 AM", "2026-06-15 PM", "2026-06-11 AM", "2026-06-11 PM", "T+0 收益", "astock-recommendation-table", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}
@@ -2160,7 +2198,7 @@ func TestAStockRecommendationActionBlockedOnNonTradingDay(t *testing.T) {
 func TestAStockRecommendationHistoryRendersDateTabs(t *testing.T) {
 	setAStockNowForTest(t, time.Date(2026, 6, 16, 9, 30, 0, 0, time.FixedZone("CST", 8*3600)))
 	var b strings.Builder
-	renderAStockRecommendationHistoryTabs(&b, "2026-06-18", "afternoon", false)
+	renderAStockRecommendationHistoryTabs(&b, "2026-06-18", "afternoon", false, false)
 
 	body := b.String()
 	for _, want := range []string{
@@ -2196,7 +2234,7 @@ func TestAStockRecommendationHistoryRendersDateTabs(t *testing.T) {
 func TestAStockDatePeriodTabsCanRenderWithoutHeading(t *testing.T) {
 	setAStockNowForTest(t, time.Date(2026, 6, 18, 9, 30, 0, 0, time.FixedZone("CST", 8*3600)))
 	var b strings.Builder
-	renderAStockDatePeriodTabs(&b, "2026-06-18", "morning", true, false)
+	renderAStockDatePeriodTabs(&b, "2026-06-18", "morning", true, false, false)
 
 	body := b.String()
 	for _, want := range []string{
@@ -2221,7 +2259,7 @@ func TestAStockDatePeriodTabsCanRenderWithoutHeading(t *testing.T) {
 
 func TestAStockRecommendationHistoryActionsUseSelectedPeriod(t *testing.T) {
 	var b strings.Builder
-	renderAStockRecommendationHistoryActions(&b, "2026-06-16", "afternoon", false)
+	renderAStockRecommendationHistoryActions(&b, "2026-06-16", "afternoon", false, false)
 	body := b.String()
 	for _, want := range []string{
 		`name="date" value="2026-06-16"`,
@@ -2246,7 +2284,7 @@ func TestAStockRecommendationHistoryActionsUseSelectedPeriod(t *testing.T) {
 
 func TestAStockIgnoreRecentStatePersistsInHistoryNavigation(t *testing.T) {
 	var tabs strings.Builder
-	renderAStockRecommendationHistoryTabs(&tabs, "2026-06-16", "morning", true)
+	renderAStockRecommendationHistoryTabs(&tabs, "2026-06-16", "morning", true, false)
 	tabsBody := tabs.String()
 	for _, want := range []string{
 		`/a-stock?date=2026-06-16&period=morning&ignore_recent=1`,
@@ -2258,13 +2296,37 @@ func TestAStockIgnoreRecentStatePersistsInHistoryNavigation(t *testing.T) {
 	}
 
 	var actions strings.Builder
-	renderAStockRecommendationHistoryActions(&actions, "2026-06-16", "morning", true)
+	renderAStockRecommendationHistoryActions(&actions, "2026-06-16", "morning", true, false)
 	actionsBody := actions.String()
 	if !strings.Contains(actionsBody, `name="ignore_recent" value="1"`) {
 		t.Fatalf("expected history actions to preserve ignore_recent, got %s", actionsBody)
 	}
 	if !strings.Contains(actionsBody, "启用5日过滤") || !strings.Contains(actionsBody, `href="/a-stock?date=2026-06-16&amp;period=morning"`) {
 		t.Fatalf("expected history actions to offer enabling 5-day filter, got %s", actionsBody)
+	}
+}
+
+func TestAStockIgnoreLimitUpStatePersistsInNavigationAndActions(t *testing.T) {
+	var tabs strings.Builder
+	renderAStockRecommendationHistoryTabs(&tabs, "2026-06-16", "afternoon", false, true)
+	tabsBody := tabs.String()
+	for _, want := range []string{
+		`/a-stock?date=2026-06-16&period=morning&ignore_limit_up=1`,
+		`/a-stock?date=2026-06-16&period=afternoon&ignore_limit_up=1`,
+	} {
+		if !strings.Contains(tabsBody, want) {
+			t.Fatalf("expected history tab to preserve ignore_limit_up %q, got %s", want, tabsBody)
+		}
+	}
+
+	var actions strings.Builder
+	renderAStockRecommendationHistoryActions(&actions, "2026-06-16", "afternoon", false, true)
+	actionsBody := actions.String()
+	if !strings.Contains(actionsBody, `name="ignore_limit_up" value="1"`) {
+		t.Fatalf("expected history actions to preserve ignore_limit_up, got %s", actionsBody)
+	}
+	if !strings.Contains(actionsBody, `href="/a-stock?date=2026-06-16&amp;period=afternoon&amp;ignore_recent=1&amp;ignore_limit_up=1"`) {
+		t.Fatalf("expected 5-day filter toggle to preserve ignore_limit_up, got %s", actionsBody)
 	}
 }
 
@@ -2279,6 +2341,45 @@ func TestAStockOverviewBacktestStatusIncludesFilterReasons(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected overview status to contain %q, got %q", want, got)
 		}
+	}
+}
+
+func TestAStockOverviewLimitUpFilterToggle(t *testing.T) {
+	var enabled strings.Builder
+	writeAStockOverviewLimitUpFilterCell(&enabled, aStockContext{
+		Date:                 "2026-06-22",
+		Period:               "afternoon",
+		LimitUpFilterEnabled: true,
+		LimitUpFiltered:      9,
+	})
+	enabledBody := enabled.String()
+	for _, want := range []string{"涨停过滤", "已过滤 9", "关闭涨停过滤", `href="/a-stock?date=2026-06-22&amp;period=afternoon&amp;ignore_limit_up=1"`} {
+		if !strings.Contains(enabledBody, want) {
+			t.Fatalf("expected enabled limit-up filter cell to contain %q, got %s", want, enabledBody)
+		}
+	}
+
+	var disabled strings.Builder
+	writeAStockOverviewLimitUpFilterCell(&disabled, aStockContext{
+		Date:          "2026-06-22",
+		Period:        "afternoon",
+		IgnoreLimitUp: true,
+	})
+	disabledBody := disabled.String()
+	for _, want := range []string{"涨停过滤", "已关闭", "启用涨停过滤", `href="/a-stock?date=2026-06-22&amp;period=afternoon"`} {
+		if !strings.Contains(disabledBody, want) {
+			t.Fatalf("expected disabled limit-up filter cell to contain %q, got %s", want, disabledBody)
+		}
+	}
+	if strings.Contains(disabledBody, "ignore_limit_up=1") {
+		t.Fatalf("expected enabled link to remove ignore_limit_up flag, got %s", disabledBody)
+	}
+
+	var morning strings.Builder
+	writeAStockOverviewLimitUpFilterCell(&morning, aStockContext{Date: "2026-06-22", Period: "morning"})
+	morningBody := morning.String()
+	if !strings.Contains(morningBody, "不适用") || strings.Contains(morningBody, "涨停过滤</a>") {
+		t.Fatalf("expected morning limit-up filter cell to be non-interactive, got %s", morningBody)
 	}
 }
 
