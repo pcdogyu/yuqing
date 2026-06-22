@@ -263,6 +263,53 @@ func TestStockInstitutionHoldingsUpsertListAndSummary(t *testing.T) {
 	}
 }
 
+func TestStockInstitutionHoldingSignalsComparePeriods(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	fetchedAt := time.Date(2026, 6, 17, 2, 35, 0, 0, time.UTC)
+	items := []model.StockInstitutionHolding{
+		{StockCode: "002230", StockName: "科大讯飞", ReportPeriod: "20251231", HolderName: "易方达基金", HolderType: "fund", HolderCode: "old-1", Shares: 1000, FloatRatio: 1, MarketValue: 10000, SourceType: "stock_institute_hold_detail", FetchedAt: fetchedAt},
+		{StockCode: "300059", StockName: "东方财富", ReportPeriod: "20251231", HolderName: "华夏基金", HolderType: "fund", HolderCode: "old-2", Shares: 1000, FloatRatio: 1, MarketValue: 10000, SourceType: "stock_institute_hold_detail", FetchedAt: fetchedAt},
+		{StockCode: "002230", StockName: "科大讯飞", ReportPeriod: "20260331", HolderName: "易方达基金", HolderType: "fund", HolderCode: "old-1", Shares: 1200, FloatRatio: 1.2, MarketValue: 12000, SourceType: "stock_institute_hold_detail", FetchedAt: fetchedAt},
+		{StockCode: "002230", StockName: "科大讯飞", ReportPeriod: "20260331", HolderName: "南方基金", HolderType: "fund", HolderCode: "new-1", Shares: 1000, FloatRatio: 0.8, MarketValue: 20000, SourceType: "stock_institute_hold_detail", FetchedAt: fetchedAt},
+		{StockCode: "002230", StockName: "科大讯飞", ReportPeriod: "20260331", HolderName: "嘉实基金", HolderType: "fund", HolderCode: "new-2", Shares: 1000, FloatRatio: 0.8, MarketValue: 19000, SourceType: "stock_institute_hold_detail", FetchedAt: fetchedAt},
+		{StockCode: "002230", StockName: "科大讯飞", ReportPeriod: "20260331", HolderName: "社保基金一一八组合", HolderType: "social_security", HolderCode: "new-3", Shares: 1000, FloatRatio: 1.1, MarketValue: 50000, SourceType: "stock_institute_hold_detail", FetchedAt: fetchedAt},
+		{StockCode: "002230", StockName: "科大讯飞", ReportPeriod: "20260331", HolderName: "QFII Alpha", HolderType: "qfii", HolderCode: "new-4", Shares: 1000, FloatRatio: 0.7, MarketValue: 18000, SourceType: "stock_institute_hold_detail", FetchedAt: fetchedAt},
+		{StockCode: "002230", StockName: "科大讯飞", ReportPeriod: "20260331", HolderName: "保险资管", HolderType: "insurance", HolderCode: "new-5", Shares: 1000, FloatRatio: 0.4, MarketValue: 17000, SourceType: "stock_institute_hold_detail", FetchedAt: fetchedAt},
+		{StockCode: "300059", StockName: "东方财富", ReportPeriod: "20260331", HolderName: "华夏基金", HolderType: "fund", HolderCode: "old-2", Shares: 2000, FloatRatio: 4, MarketValue: 60000, SourceType: "stock_institute_hold_detail", FetchedAt: fetchedAt},
+		{StockCode: "300059", StockName: "东方财富", ReportPeriod: "20260331", HolderName: "香港中央结算有限公司", HolderType: "institution", HolderCode: "new-6", Shares: 2000, FloatRatio: 3, MarketValue: 70000, SourceType: "stock_institute_hold_detail", FetchedAt: fetchedAt},
+	}
+	if _, err := store.UpsertStockInstitutionHoldings(ctx, items); err != nil {
+		t.Fatalf("UpsertStockInstitutionHoldings error: %v", err)
+	}
+
+	signals, err := store.ListStockInstitutionHoldingSignals(ctx, model.StockInstitutionHoldingSignalFilter{Period: "20260331", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListStockInstitutionHoldingSignals error: %v", err)
+	}
+	if signals.Total != 2 || signals.CurrentPeriod != "20260331" || signals.PreviousPeriod != "20251231" {
+		t.Fatalf("unexpected signal metadata: %+v", signals)
+	}
+	if signals.Items[0].StockCode != "300059" || signals.Items[0].Level != "high" || signals.Items[0].FloatRatioChange != 6 {
+		t.Fatalf("expected high float-ratio signal first, got %+v", signals.Items[0])
+	}
+	second := signals.Items[1]
+	if second.StockCode != "002230" || second.HolderCountChange != 5 || second.FundCountChange != 2 || second.FloatRatioChange != 4 {
+		t.Fatalf("unexpected 002230 signal: %+v", second)
+	}
+	if len(second.NewMajorHolders) == 0 || second.NewMajorHolders[0] != "社保基金一一八组合" {
+		t.Fatalf("expected new major holders sorted by market value, got %+v", second.NewMajorHolders)
+	}
+
+	filtered, err := store.ListStockInstitutionHoldingSignals(ctx, model.StockInstitutionHoldingSignalFilter{Code: "002230", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("filtered ListStockInstitutionHoldingSignals error: %v", err)
+	}
+	if filtered.Total != 1 || filtered.Items[0].StockCode != "002230" {
+		t.Fatalf("expected one filtered signal for 002230, got %+v", filtered)
+	}
+}
+
 func TestNewStoreSetsBusyTimeout(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()

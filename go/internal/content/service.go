@@ -101,6 +101,7 @@ type Store interface {
 	UpsertStockInstitutionHoldings(rctx context.Context, items []model.StockInstitutionHolding) (model.StockInstitutionHoldingUpsertResult, error)
 	ListStockInstitutionHoldings(rctx context.Context, filter model.StockInstitutionHoldingFilter) (model.StockInstitutionHoldingListResult, error)
 	GetStockInstitutionHoldingSummary(rctx context.Context, code string, period string) (model.StockInstitutionHoldingSummary, error)
+	ListStockInstitutionHoldingSignals(rctx context.Context, filter model.StockInstitutionHoldingSignalFilter) (model.StockInstitutionHoldingSignalListResult, error)
 }
 
 type Service struct {
@@ -173,6 +174,7 @@ func (s *Service) Routes(r chi.Router) {
 	r.Post("/api/v1/internal/stock-research/{id}/pdf", s.handleUpdateStockResearchPDF)
 	r.Get("/api/v1/a-stock/holdings", s.handleListStockInstitutionHoldings)
 	r.Get("/api/v1/a-stock/holdings/summary", s.handleGetStockInstitutionHoldingSummary)
+	r.Get("/api/v1/a-stock/holdings/signals", s.handleListStockInstitutionHoldingSignals)
 	r.Post("/api/v1/internal/a-stock/holdings/batch", s.handleUpsertStockInstitutionHoldings)
 	r.Get("/api/v1/search/articles", s.handleSearchArticles)
 	r.Get("/api/v1/search/full", s.handleSearchFull)
@@ -856,6 +858,22 @@ func (s *Service) handleGetStockInstitutionHoldingSummary(w http.ResponseWriter,
 	code := normalizeAStockContentCode(r.URL.Query().Get("code"))
 	period := normalizeStockHoldingPeriod(r.URL.Query().Get("period"))
 	result, err := s.store.GetStockInstitutionHoldingSummary(r.Context(), code, period)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleListStockInstitutionHoldingSignals(w http.ResponseWriter, r *http.Request) {
+	filter := model.StockInstitutionHoldingSignalFilter{
+		Code:     normalizeAStockContentCode(r.URL.Query().Get("code")),
+		Company:  strings.TrimSpace(nonEmpty(r.URL.Query().Get("company"), r.URL.Query().Get("q"))),
+		Period:   normalizeStockHoldingPeriod(r.URL.Query().Get("period")),
+		Page:     apiutil.IntQuery(r, "page", 1),
+		PageSize: apiutil.IntQuery(r, "page_size", 20),
+	}
+	result, err := s.store.ListStockInstitutionHoldingSignals(r.Context(), filter)
 	if err != nil {
 		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
 		return

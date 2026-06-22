@@ -14,6 +14,7 @@ import (
 type aStockHoldingsContext struct {
 	model.StockInstitutionHoldingListResult
 	Summary model.StockInstitutionHoldingSummary
+	Signals model.StockInstitutionHoldingSignalListResult
 }
 
 func (s *Server) handleAStockHoldingsPage(w http.ResponseWriter, r *http.Request, user any) {
@@ -33,9 +34,10 @@ body[data-page='a-stock-holdings'] main,body[data-page='a-stock-holdings'] .site
 .holding-muted{color:#6a6257}.holding-message{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}
 .holding-toolbar{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;align-items:end}
 .holding-toolbar button{margin:0}.holding-actions{display:flex;gap:10px;flex-wrap:wrap}.holding-scroll{overflow:auto}
-.holding-table{min-width:1280px}.holding-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.holding-table{min-width:1280px}.holding-signal-table{min-width:1180px}.holding-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 .holding-tab{display:inline-flex;align-items:center;padding:8px 12px;border:1px solid #d6ccbb;border-radius:8px;color:#214e34;text-decoration:none;background:#fff}
 .holding-source{font-size:12px;padding:3px 8px;border-radius:999px;background:#eff6f0;color:#214e34}
+.holding-level{font-size:12px;padding:3px 8px;border-radius:999px;background:#f6e9c6;color:#6a4b00}.holding-level-high{background:#f9d8d2;color:#7a2618}
 .holding-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
 .holding-card{padding:14px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.holding-card strong{display:block;font-size:22px;margin-top:6px}
 </style>`)
@@ -52,6 +54,7 @@ body[data-page='a-stock-holdings'] main,body[data-page='a-stock-holdings'] .site
 		_ = s.writeSimplePage(w, "a-stock-holdings", "机构持仓", b.String())
 		return
 	}
+	renderAStockHoldingSignals(&b, ctx.Signals)
 	renderAStockHoldingSummary(&b, ctx.Summary)
 	renderAStockHoldingFilters(&b, ctx.StockInstitutionHoldingListResult)
 	renderAStockHoldingTable(&b, ctx.StockInstitutionHoldingListResult)
@@ -78,6 +81,8 @@ func (s *Server) loadAStockHoldingsContext(filter model.StockInstitutionHoldingF
 	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/a-stock/holdings?"+query.Encode(), &list); err != nil {
 		return aStockHoldingsContext{}, err
 	}
+	var signals model.StockInstitutionHoldingSignalListResult
+	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/a-stock/holdings/signals?"+aStockHoldingSignalQuery(filter).Encode(), &signals)
 	summaryQuery := url.Values{}
 	if filter.Code != "" {
 		summaryQuery.Set("code", filter.Code)
@@ -87,7 +92,7 @@ func (s *Server) loadAStockHoldingsContext(filter model.StockInstitutionHoldingF
 	}
 	var summary model.StockInstitutionHoldingSummary
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/a-stock/holdings/summary?"+summaryQuery.Encode(), &summary)
-	return aStockHoldingsContext{StockInstitutionHoldingListResult: list, Summary: summary}, nil
+	return aStockHoldingsContext{StockInstitutionHoldingListResult: list, Summary: summary, Signals: signals}, nil
 }
 
 func aStockHoldingQuery(filter model.StockInstitutionHoldingFilter) url.Values {
@@ -113,6 +118,76 @@ func aStockHoldingQuery(filter model.StockInstitutionHoldingFilter) url.Values {
 		query.Set("source", filter.Source)
 	}
 	return query
+}
+
+func aStockHoldingSignalQuery(filter model.StockInstitutionHoldingFilter) url.Values {
+	query := url.Values{}
+	query.Set("page", "1")
+	query.Set("page_size", "20")
+	if filter.Code != "" {
+		query.Set("code", filter.Code)
+	}
+	if filter.Company != "" {
+		query.Set("company", filter.Company)
+	}
+	if filter.Period != "" {
+		query.Set("period", filter.Period)
+	}
+	return query
+}
+
+func renderAStockHoldingSignals(b *strings.Builder, signals model.StockInstitutionHoldingSignalListResult) {
+	b.WriteString(`<section><h2>机构持仓异动</h2><p class="holding-muted">按当前报告期与上一可用报告期对比，命中机构数、基金数或流通占比显著增加的股票；该结果来自季度披露数据，不代表盘中实时持仓。</p>`)
+	if signals.CurrentPeriod != "" || signals.PreviousPeriod != "" {
+		b.WriteString(`<p class="holding-muted">对比区间：`)
+		b.WriteString(html.EscapeString(nonEmptyText(formatAStockHoldingPeriod(signals.PreviousPeriod), "--")))
+		b.WriteString(` -> `)
+		b.WriteString(html.EscapeString(nonEmptyText(formatAStockHoldingPeriod(signals.CurrentPeriod), "--")))
+		b.WriteString(`；阈值：机构数 +`)
+		b.WriteString(fmt.Sprintf("%d", signals.Thresholds.HolderCountChange))
+		b.WriteString(` / 基金数 +`)
+		b.WriteString(fmt.Sprintf("%d", signals.Thresholds.FundCountChange))
+		b.WriteString(` / 流通占比 +`)
+		b.WriteString(html.EscapeString(formatAStockHoldingPct(signals.Thresholds.FloatRatioChange)))
+		b.WriteString(`</p>`)
+	}
+	b.WriteString(`<div class="holding-scroll"><table class="holding-signal-table"><tr><th>等级</th><th>股票</th><th>报告期对比</th><th>机构数变化</th><th>基金数变化</th><th>流通占比变化</th><th>持股数变化</th><th>市值变化</th><th>新增主要机构</th><th>原因</th></tr>`)
+	if len(signals.Items) == 0 {
+		b.WriteString(`<tr><td colspan="10">暂无机构持仓异动结果：需要至少两个报告期的数据，且变化达到监控阈值。</td></tr>`)
+	} else {
+		for _, item := range signals.Items {
+			levelClass := "holding-level"
+			if item.Level == "high" {
+				levelClass += " holding-level-high"
+			}
+			b.WriteString(`<tr><td><span class="`)
+			b.WriteString(levelClass)
+			b.WriteString(`">`)
+			b.WriteString(html.EscapeString(stockHoldingSignalLevelLabel(item.Level)))
+			b.WriteString(`</span></td><td>`)
+			b.WriteString(html.EscapeString(strings.TrimSpace(item.StockCode + " " + item.StockName)))
+			b.WriteString(`</td><td>`)
+			b.WriteString(html.EscapeString(formatAStockHoldingPeriod(item.PreviousPeriod)))
+			b.WriteString(` -> `)
+			b.WriteString(html.EscapeString(formatAStockHoldingPeriod(item.CurrentPeriod)))
+			b.WriteString(`</td><td>`)
+			b.WriteString(html.EscapeString(formatAStockHoldingSignedInt(item.HolderCountChange)))
+			b.WriteString(`</td><td>`)
+			b.WriteString(html.EscapeString(formatAStockHoldingSignedInt(item.FundCountChange)))
+			b.WriteString(`</td><td>`)
+			b.WriteString(html.EscapeString(formatAStockHoldingSignedPct(item.FloatRatioChange)))
+			b.WriteString(`</td><td>`)
+			b.WriteString(html.EscapeString(formatAStockHoldingSignedNumber(item.SharesChange)))
+			b.WriteString(`</td><td>`)
+			b.WriteString(html.EscapeString(formatAStockHoldingSignedMoney(item.MarketValueChange)))
+			b.WriteString(`</td><td>`)
+			b.WriteString(html.EscapeString(nonEmptyText(strings.Join(item.NewMajorHolders, "、"), "--")))
+			b.WriteString(`</td><td>`)
+			b.WriteString(html.EscapeString(nonEmptyText(item.Reason, "--")))
+			b.WriteString(`</td></tr>`)
+		}
+	}
+	b.WriteString(`</table></div></section>`)
 }
 
 func renderAStockHoldingSummary(b *strings.Builder, summary model.StockInstitutionHoldingSummary) {
@@ -339,6 +414,17 @@ func stockHoldingSourceLabel(source string) string {
 	}
 }
 
+func stockHoldingSignalLevelLabel(value string) string {
+	switch value {
+	case "high":
+		return "强异动"
+	case "medium":
+		return "异动"
+	default:
+		return nonEmptyText(value, "--")
+	}
+}
+
 func formatAStockHoldingPeriod(value string) string {
 	value = strings.TrimSpace(value)
 	if len(value) != 8 {
@@ -366,6 +452,23 @@ func formatAStockHoldingNumber(value float64) string {
 	return fmt.Sprintf("%.0f", value)
 }
 
+func formatAStockHoldingSignedInt(value int) string {
+	if value > 0 {
+		return fmt.Sprintf("+%d", value)
+	}
+	return fmt.Sprintf("%d", value)
+}
+
+func formatAStockHoldingSignedNumber(value float64) string {
+	if value == 0 {
+		return "--"
+	}
+	if value > 0 {
+		return "+" + formatAStockHoldingNumber(value)
+	}
+	return "-" + formatAStockHoldingNumber(-value)
+}
+
 func formatAStockHoldingMoney(value float64) string {
 	if value == 0 {
 		return "--"
@@ -379,11 +482,31 @@ func formatAStockHoldingMoney(value float64) string {
 	return fmt.Sprintf("%.0f", value)
 }
 
+func formatAStockHoldingSignedMoney(value float64) string {
+	if value == 0 {
+		return "--"
+	}
+	if value > 0 {
+		return "+" + formatAStockHoldingMoney(value)
+	}
+	return "-" + formatAStockHoldingMoney(-value)
+}
+
 func formatAStockHoldingPct(value float64) string {
 	if value == 0 {
 		return "--"
 	}
 	return fmt.Sprintf("%.2f%%", value)
+}
+
+func formatAStockHoldingSignedPct(value float64) string {
+	if value == 0 {
+		return "--"
+	}
+	if value > 0 {
+		return "+" + formatAStockHoldingPct(value)
+	}
+	return "-" + formatAStockHoldingPct(-value)
 }
 
 func decodeAStockHoldingSummary(body []byte) (model.StockInstitutionHoldingSummary, error) {

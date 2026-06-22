@@ -309,6 +309,48 @@ func TestStockInstitutionHoldingAPIUpsertsListsAndSummarizes(t *testing.T) {
 	}
 }
 
+func TestStockInstitutionHoldingSignalsAPI(t *testing.T) {
+	store := newContentSearchTestStore(t)
+	svc := NewService(config.Config{}, store)
+	router := svc.Router()
+
+	payload := `{"items":[
+		{"stock_code":"002230","stock_name":"科大讯飞","report_period":"20251231","holder_name":"易方达基金","holder_type":"基金","holder_code":"old-1","shares":1000,"float_ratio":1,"market_value":10000,"source_type":"stock_institute_hold_detail"},
+		{"stock_code":"002230","stock_name":"科大讯飞","report_period":"20260331","holder_name":"易方达基金","holder_type":"基金","holder_code":"old-1","shares":1200,"float_ratio":1.2,"market_value":12000,"source_type":"stock_institute_hold_detail"},
+		{"stock_code":"002230","stock_name":"科大讯飞","report_period":"20260331","holder_name":"南方基金","holder_type":"基金","holder_code":"new-1","shares":1000,"float_ratio":0.8,"market_value":20000,"source_type":"stock_institute_hold_detail"},
+		{"stock_code":"002230","stock_name":"科大讯飞","report_period":"20260331","holder_name":"嘉实基金","holder_type":"基金","holder_code":"new-2","shares":1000,"float_ratio":0.8,"market_value":19000,"source_type":"stock_institute_hold_detail"},
+		{"stock_code":"002230","stock_name":"科大讯飞","report_period":"20260331","holder_name":"社保基金一一八组合","holder_type":"社保基金","holder_code":"new-3","shares":1000,"float_ratio":1.1,"market_value":50000,"source_type":"stock_institute_hold_detail"},
+		{"stock_code":"002230","stock_name":"科大讯飞","report_period":"20260331","holder_name":"QFII Alpha","holder_type":"QFII","holder_code":"new-4","shares":1000,"float_ratio":0.7,"market_value":18000,"source_type":"stock_institute_hold_detail"},
+		{"stock_code":"002230","stock_name":"科大讯飞","report_period":"20260331","holder_name":"保险资管","holder_type":"保险","holder_code":"new-5","shares":1000,"float_ratio":0.4,"market_value":17000,"source_type":"stock_institute_hold_detail"}
+	]}`
+	postReq := httptest.NewRequest(http.MethodPost, "/api/v1/internal/a-stock/holdings/batch", strings.NewReader(payload))
+	postRR := httptest.NewRecorder()
+	router.ServeHTTP(postRR, postReq)
+	if postRR.Code != http.StatusOK {
+		t.Fatalf("expected holdings upsert 200, got %d body=%s", postRR.Code, postRR.Body.String())
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/holdings/signals?code=SH.002230&page=1&page_size=20", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected holdings signals 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	var envelope struct {
+		Data model.StockInstitutionHoldingSignalListResult `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal holdings signals: %v", err)
+	}
+	if envelope.Data.Total != 1 || envelope.Data.CurrentPeriod != "20260331" || envelope.Data.PreviousPeriod != "20251231" {
+		t.Fatalf("unexpected holdings signals metadata: %+v", envelope.Data)
+	}
+	signal := envelope.Data.Items[0]
+	if signal.StockCode != "002230" || signal.HolderCountChange != 5 || signal.FloatRatioChange != 4 {
+		t.Fatalf("unexpected holdings signal payload: %+v", signal)
+	}
+}
+
 func TestAuditMiddlewareWritesSanitizedAccessLog(t *testing.T) {
 	store := newContentSearchTestStore(t)
 	svc := NewService(config.Config{}, store)

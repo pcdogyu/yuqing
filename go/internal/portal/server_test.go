@@ -778,6 +778,38 @@ func TestAStockHoldingsPageLoadsSummaryRowsAndFilters(t *testing.T) {
 				MaxHolderType:   "fund",
 				MaxHolderShares: 1000,
 			}})
+		case "/api/v1/a-stock/holdings/signals":
+			if r.URL.Query().Get("code") != "002230" || r.URL.Query().Get("period") != "20260331" {
+				t.Fatalf("unexpected holdings signals query: %s", r.URL.RawQuery)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockInstitutionHoldingSignalListResult{
+				Page:           1,
+				PageSize:       20,
+				Total:          1,
+				Code:           "002230",
+				Period:         "20260331",
+				CurrentPeriod:  "20260331",
+				PreviousPeriod: "20251231",
+				Thresholds: model.StockInstitutionSignalThreshold{
+					HolderCountChange: 5,
+					FundCountChange:   3,
+					FloatRatioChange:  3,
+				},
+				Items: []model.StockInstitutionHoldingSignal{{
+					StockCode:         "002230",
+					StockName:         "科大讯飞",
+					CurrentPeriod:     "20260331",
+					PreviousPeriod:    "20251231",
+					HolderCountChange: 5,
+					FundCountChange:   3,
+					FloatRatioChange:  4,
+					SharesChange:      6000,
+					MarketValueChange: 120000,
+					NewMajorHolders:   []string{"社保基金一一八组合"},
+					Level:             "medium",
+					Reason:            "机构数 +5，基金数 +3，流通占比 +4.00%",
+				}},
+			}})
 		default:
 			t.Fatalf("unexpected holdings content path: %s", r.URL.String())
 		}
@@ -792,7 +824,7 @@ func TestAStockHoldingsPageLoadsSummaryRowsAndFilters(t *testing.T) {
 		t.Fatalf("expected holdings page 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"机构持仓", "共持摘要", "2026-Q1", "易方达基金", "基金", "3.50%"} {
+	for _, want := range []string{"机构持仓", "机构持仓异动", "2025-Q4 -> 2026-Q1", "社保基金一一八组合", "+4.00%", "共持摘要", "2026-Q1", "易方达基金", "基金", "3.50%"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected holdings page to contain %q, got %s", want, body)
 		}
