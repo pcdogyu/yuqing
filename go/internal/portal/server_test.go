@@ -558,6 +558,47 @@ func TestStockResearchPageLoadsFiltersAndRows(t *testing.T) {
 	}
 }
 
+func TestCleanStockResearchTitleRemovesLeadingMarkers(t *testing.T) {
+	tests := []struct {
+		name string
+		item model.StockResearchSurvey
+		want string
+	}{
+		{
+			name: "leading zero colon",
+			item: model.StockResearchSurvey{Title: "0：预计天气扰动短期节奏 看好其他饮料放量"},
+			want: "预计天气扰动短期节奏 看好其他饮料放量",
+		},
+		{
+			name: "parenthesized prefix",
+			item: model.StockResearchSurvey{Title: "（公司点评）：经营韧性凸显 底部逐步夯实"},
+			want: "经营韧性凸显 底部逐步夯实",
+		},
+		{
+			name: "zero company comment prefix",
+			item: model.StockResearchSurvey{Title: "0公司点评：经营韧性凸显 底部逐步夯实"},
+			want: "经营韧性凸显 底部逐步夯实",
+		},
+		{
+			name: "zero report comment prefix",
+			item: model.StockResearchSurvey{Title: "02026年一季报点评：低猪价使公司业绩承压 养殖成本持续下降"},
+			want: "低猪价使公司业绩承压 养殖成本持续下降",
+		},
+		{
+			name: "stock identity removed",
+			item: model.StockResearchSurvey{Code: "000885", Name: "城发环境", Title: "000885 城发环境 2025年报点评，归母净利同比增+8.3%"},
+			want: "2025年报点评，归母净利同比增+8.3%",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := cleanStockResearchTitle(tc.item); got != tc.want {
+				t.Fatalf("expected %q, got %q", tc.want, got)
+			}
+		})
+	}
+}
+
 func TestStockResearchPagePostTriggersBackfill(t *testing.T) {
 	var schedulerCalled bool
 	scheduler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -673,11 +673,117 @@ func cleanStockResearchTitle(item model.StockResearchSurvey) string {
 		title = strings.ReplaceAll(title, token, "")
 	}
 	title = strings.TrimSpace(title)
+	title = cleanStockResearchTitlePrefix(title)
 	title = strings.Trim(title, " \t\r\n:：-—_｜|·,，、;；")
 	if title == "" {
 		return "--"
 	}
 	return strings.Join(strings.Fields(title), " ")
+}
+
+func cleanStockResearchTitlePrefix(title string) string {
+	for {
+		before := title
+		title = strings.TrimSpace(title)
+		title = trimStockResearchLeadingParenthesized(title)
+		title = trimStockResearchLeadingZeroMarker(title)
+		title = trimStockResearchLeadingColonPrefix(title)
+		title = strings.TrimLeft(title, " \t\r\n:：-—_｜|·,，、;；")
+		if title == before {
+			return title
+		}
+	}
+}
+
+func trimStockResearchLeadingParenthesized(title string) string {
+	if title == "" {
+		return title
+	}
+	pairs := []struct {
+		Open  string
+		Close string
+	}{{"(", ")"}, {"（", "）"}}
+	for _, pair := range pairs {
+		if !strings.HasPrefix(title, pair.Open) {
+			continue
+		}
+		closeIdx := strings.Index(title, pair.Close)
+		if closeIdx < 0 {
+			return title
+		}
+		prefix := title[:closeIdx+len(pair.Close)]
+		if len([]rune(prefix)) > 24 {
+			return title
+		}
+		return title[closeIdx+len(pair.Close):]
+	}
+	return title
+}
+
+func trimStockResearchLeadingZeroMarker(title string) string {
+	if title == "" {
+		return title
+	}
+	trimmed := strings.TrimLeft(title, "0")
+	if trimmed == "" || trimmed == title {
+		return title
+	}
+	if strings.HasPrefix(trimmed, ":") || strings.HasPrefix(trimmed, "：") || stockResearchTitlePrefixHasColon(trimmed) {
+		return trimmed
+	}
+	return title
+}
+
+func trimStockResearchLeadingColonPrefix(title string) string {
+	colonIdx, colonSize := stockResearchTitleColonIndex(title)
+	if colonIdx < 0 {
+		return title
+	}
+	prefix := strings.TrimSpace(title[:colonIdx])
+	if prefix == "" || len([]rune(prefix)) > 24 {
+		return title
+	}
+	if stockResearchTitlePrefixIsNoise(prefix) {
+		return title[colonIdx+colonSize:]
+	}
+	return title
+}
+
+func stockResearchTitlePrefixHasColon(title string) bool {
+	colonIdx, _ := stockResearchTitleColonIndex(title)
+	return colonIdx >= 0 && len([]rune(strings.TrimSpace(title[:colonIdx]))) <= 24
+}
+
+func stockResearchTitleColonIndex(title string) (int, int) {
+	half := strings.Index(title, ":")
+	full := strings.Index(title, "：")
+	switch {
+	case half < 0:
+		if full < 0 {
+			return -1, 0
+		}
+		return full, len("：")
+	case full < 0 || half < full:
+		return half, len(":")
+	default:
+		return full, len("：")
+	}
+}
+
+func stockResearchTitlePrefixIsNoise(prefix string) bool {
+	prefix = strings.Trim(prefix, " \t\r\n()（）:：-—_｜|·,，、;；")
+	if prefix == "" || prefix == "0" {
+		return true
+	}
+	if strings.Contains(prefix, "点评") || strings.Contains(prefix, "报告") || strings.Contains(prefix, "深度") || strings.Contains(prefix, "跟踪") {
+		return true
+	}
+	for _, r := range prefix {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func formatStockResearchTargetPrice(value string) string {
