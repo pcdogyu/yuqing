@@ -24,6 +24,7 @@ set "AKSHARE_AUCTION_PORT=8087"
 set "AKSHARE_AUCTION_HOST=127.0.0.1"
 set "WECHAT_SERVICE_PORT=8088"
 set "YUQING_ASTOCK_AUCTION_URL_DEFAULTED=0"
+set "YUQING_ASTOCK_HOLDING_URL_DEFAULTED=0"
 set "YUQING_AKSHARE_AUCTION_STARTED=0"
 if not defined YUQING_WECHAT_ADDR (
     set "YUQING_WECHAT_ADDR=:%WECHAT_SERVICE_PORT%"
@@ -34,6 +35,10 @@ if not defined YUQING_WECHAT_URL (
 if not defined YUQING_ASTOCK_AUCTION_URL (
     set "YUQING_ASTOCK_AUCTION_URL=http://127.0.0.1:%AKSHARE_AUCTION_PORT%"
     set "YUQING_ASTOCK_AUCTION_URL_DEFAULTED=1"
+)
+if not defined YUQING_ASTOCK_HOLDING_URL (
+    set "YUQING_ASTOCK_HOLDING_URL=http://127.0.0.1:%AKSHARE_AUCTION_PORT%"
+    set "YUQING_ASTOCK_HOLDING_URL_DEFAULTED=1"
 )
 set "SERVICE_PORTS=80 8081 8082 8083 8084 8085 %AKSHARE_AUCTION_PORT% %WECHAT_SERVICE_PORT%"
 set "SERVICE_NAMES=auth-service wechat-service content-service crawler-service analysis-service nlp-service gateway-web scheduler-service akshare-service"
@@ -200,6 +205,11 @@ if defined YUQING_STOCK_RESEARCH_URL (
 ) else (
     echo StockResearch: public sources only ^(AKShare service not available^)
 )
+if defined YUQING_ASTOCK_HOLDING_URL (
+    echo AStockHolding: %YUQING_ASTOCK_HOLDING_URL%
+) else (
+    echo AStockHolding: disabled ^(Python/AKShare service not available^)
+)
 echo LogLevel: %YUQING_LOG_LEVEL%
 echo Version: %YUQING_RUN_VERSION%
 echo Commit: %YUQING_GIT_COMMIT%
@@ -253,6 +263,7 @@ exit /b 0
 call :ensure_akshare_deps
 if errorlevel 1 (
     if "%YUQING_ASTOCK_AUCTION_URL_DEFAULTED%"=="1" set "YUQING_ASTOCK_AUCTION_URL="
+    if "%YUQING_ASTOCK_HOLDING_URL_DEFAULTED%"=="1" set "YUQING_ASTOCK_HOLDING_URL="
     exit /b 0
 )
 set "TARGET_SERVICE=akshare-service"
@@ -265,12 +276,14 @@ powershell -NoProfile -Command "$argsList = @('--host','%AKSHARE_AUCTION_HOST%',
 if errorlevel 1 (
     echo WARNING: Failed to start %TARGET_SERVICE%.
     if "%YUQING_ASTOCK_AUCTION_URL_DEFAULTED%"=="1" set "YUQING_ASTOCK_AUCTION_URL="
+    if "%YUQING_ASTOCK_HOLDING_URL_DEFAULTED%"=="1" set "YUQING_ASTOCK_HOLDING_URL="
     exit /b 0
 )
 call :wait_for_port %TARGET_SERVICE% %AKSHARE_AUCTION_PORT%
 if errorlevel 1 (
     echo WARNING: %TARGET_SERVICE% did not open port %AKSHARE_AUCTION_PORT%.
     if "%YUQING_ASTOCK_AUCTION_URL_DEFAULTED%"=="1" set "YUQING_ASTOCK_AUCTION_URL="
+    if "%YUQING_ASTOCK_HOLDING_URL_DEFAULTED%"=="1" set "YUQING_ASTOCK_HOLDING_URL="
     exit /b 0
 )
 set "YUQING_AKSHARE_AUCTION_STARTED=1"

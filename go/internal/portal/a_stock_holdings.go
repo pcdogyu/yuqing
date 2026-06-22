@@ -33,7 +33,8 @@ func (s *Server) handleAStockHoldingsPage(w http.ResponseWriter, r *http.Request
 body[data-page='a-stock-holdings'] main,body[data-page='a-stock-holdings'] .site-footer{max-width:1534px}
 .holding-muted{color:#6a6257}.holding-message{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}
 .holding-toolbar{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;align-items:end}
-.holding-toolbar button{margin:0}.holding-actions{display:flex;gap:10px;flex-wrap:wrap}.holding-scroll{overflow:auto}
+.holding-toolbar button{margin:0}.holding-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:end}.holding-actions form{margin:0}.holding-actions button{margin:0}
+.holding-danger{background:#8f6a20}.holding-scroll{overflow:auto}
 .holding-table{min-width:1280px}.holding-signal-table{min-width:1180px}.holding-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 .holding-tab{display:inline-flex;align-items:center;padding:8px 12px;border:1px solid #d6ccbb;border-radius:8px;color:#214e34;text-decoration:none;background:#fff}
 .holding-source{font-size:12px;padding:3px 8px;border-radius:999px;background:#eff6f0;color:#214e34}
@@ -253,7 +254,7 @@ func renderAStockHoldingFilters(b *strings.Builder, ctx model.StockInstitutionHo
 		b.WriteString(html.EscapeString(stockHoldingSourceLabel(source)))
 		b.WriteString(`</option>`)
 	}
-	b.WriteString(`</select></div><div class="holding-actions"><button type="submit">查询</button></form><form method="post"><input type="hidden" name="action" value="backfill">`)
+	b.WriteString(`</select></div><div class="holding-actions"><button type="submit">查询</button></div></form><div class="holding-actions"><form method="post"><input type="hidden" name="action" value="backfill">`)
 	for key, value := range map[string]string{"code": ctx.Code, "company": ctx.Company, "period": ctx.Period, "holder": ctx.Holder, "holder_type": ctx.HolderType, "source": ctx.Source} {
 		b.WriteString(`<input type="hidden" name="`)
 		b.WriteString(key)
@@ -261,13 +262,13 @@ func renderAStockHoldingFilters(b *strings.Builder, ctx model.StockInstitutionHo
 		b.WriteString(html.EscapeString(value))
 		b.WriteString(`">`)
 	}
-	b.WriteString(`<button type="submit">回补持仓</button></form></div></section>`)
+	b.WriteString(`<button type="submit">回补当前筛选持仓</button></form><form method="post"><input type="hidden" name="action" value="backfill_all"><button class="holding-danger" type="submit">抓取全量股票历史持仓</button></form></div><p class="holding-muted">全量抓取会调用 scheduler 的机构持仓回补接口，不带股票代码时按最近可用报告期抓取全市场数据。</p></section>`)
 }
 
 func renderAStockHoldingTable(b *strings.Builder, ctx model.StockInstitutionHoldingListResult) {
 	b.WriteString(`<section><h2>持仓明细</h2><div class="holding-scroll"><table class="holding-table"><tr><th>报告期</th><th>股票</th><th>持有人</th><th>类型</th><th>排名</th><th>持股数</th><th>变化</th><th>变化比例</th><th>流通占比</th><th>持股市值</th><th>公告日</th><th>来源</th></tr>`)
 	if len(ctx.Items) == 0 {
-		b.WriteString(`<tr><td colspan="12">暂无机构持仓数据，请点击“回补持仓”或配置定时抓取任务。</td></tr>`)
+		b.WriteString(`<tr><td colspan="12">暂无机构持仓数据，请点击“抓取全量股票历史持仓”或配置定时抓取任务。</td></tr>`)
 	} else {
 		for _, item := range ctx.Items {
 			b.WriteString(`<tr><td>`)
@@ -339,8 +340,12 @@ func (s *Server) handleAStockHoldingsAction(w http.ResponseWriter, r *http.Reque
 		Page:       1,
 		PageSize:   50,
 	}
+	action := strings.TrimSpace(r.FormValue("action"))
 	message := "未知操作"
-	if strings.TrimSpace(r.FormValue("action")) == "backfill" {
+	if action == "backfill" {
+		message = s.triggerAStockHoldingsBackfill(filter)
+	} else if action == "backfill_all" {
+		filter = model.StockInstitutionHoldingFilter{Page: 1, PageSize: 50}
 		message = s.triggerAStockHoldingsBackfill(filter)
 	}
 	query := aStockHoldingQuery(filter)

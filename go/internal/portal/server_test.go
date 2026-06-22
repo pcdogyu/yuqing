@@ -827,7 +827,7 @@ func TestAStockHoldingsPageLoadsSummaryRowsAndFilters(t *testing.T) {
 		t.Fatalf("expected holdings page 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"机构持仓", "机构持仓异动", "2025-Q4 -> 2026-Q1", "社保基金一一八组合", "+4.00%", "共持摘要", "2026-Q1", "易方达基金", "基金", "3.50%"} {
+	for _, want := range []string{"机构持仓", "机构持仓异动", "2025-Q4 -> 2026-Q1", "社保基金一一八组合", "+4.00%", "共持摘要", "2026-Q1", "易方达基金", "基金", "3.50%", "抓取全量股票历史持仓"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected holdings page to contain %q, got %s", want, body)
 		}
@@ -865,6 +865,41 @@ func TestAStockHoldingsPagePostTriggersBackfill(t *testing.T) {
 	}
 	if location := rr.Header().Get("Location"); !strings.Contains(location, "/a-stock/holdings?") || !strings.Contains(location, "msg=") {
 		t.Fatalf("expected redirect back to holdings with msg, got %s", location)
+	}
+}
+
+func TestAStockHoldingsPagePostTriggersFullMarketBackfill(t *testing.T) {
+	var called bool
+	scheduler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/scheduler/a-stock/holdings/backfill" {
+			t.Fatalf("unexpected scheduler holdings request: %s %s", r.Method, r.URL.String())
+		}
+		if r.URL.RawQuery != "" {
+			t.Fatalf("expected full-market holdings backfill without filters, got query: %s", r.URL.RawQuery)
+		}
+		if r.Header.Get("X-Service-Token") != "secret-token" {
+			t.Fatalf("expected service token header, got %q", r.Header.Get("X-Service-Token"))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"status": "triggered"}})
+	}))
+	defer scheduler.Close()
+
+	srv := NewServer(config.Config{SchedulerURL: scheduler.URL, ServiceToken: "secret-token"})
+	form := url.Values{"action": {"backfill_all"}, "code": {"002230"}, "period": {"20260331"}, "holder_type": {"fund"}}
+	req := httptest.NewRequest(http.MethodPost, "/a-stock/holdings", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	srv.handleAStockHoldingsPage(rr, req, map[string]any{"id": 1})
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !called {
+		t.Fatal("expected scheduler holdings full-market backfill call")
+	}
+	location, _ := url.QueryUnescape(rr.Header().Get("Location"))
+	if !strings.Contains(location, "/a-stock/holdings?") || strings.Contains(location, "code=002230") || !strings.Contains(location, "机构持仓回补任务已触发") {
+		t.Fatalf("expected redirect back to unfiltered holdings with msg, got %s", location)
 	}
 }
 

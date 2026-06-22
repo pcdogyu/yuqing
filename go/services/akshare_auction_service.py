@@ -3,6 +3,7 @@
 
 The Go scheduler calls:
   GET /api/a-stock/auction?date=YYYY-MM-DD
+  GET /api/a-stock/holdings?period=YYYYMMDD&code=002230
   GET /api/stock-research?code=002230&start=YYYY-MM-DD&end=YYYY-MM-DD
 
 This service uses AKShare's Eastmoney pre-market minute API and returns the
@@ -35,6 +36,8 @@ DEFAULT_PORT = 8087
 DEFAULT_WORKERS = 12
 DEFAULT_CACHE_DIR = Path("data") / "akshare-cache" / "a-stock-auction"
 DEFAULT_RESEARCH_SYMBOLS = ["002230", "300059", "000001", "600519", "300750", "000858", "601318"]
+HOLDING_DETAIL_TYPES = ["基金", "QFII", "社保", "券商", "信托", "保险"]
+HOLDING_DETAIL_CHANGES = ["新进", "增加", "不变", "减少"]
 EASTMONEY_CLIST_URLS = [
     "https://push2delay.eastmoney.com/api/qt/clist/get",
     "http://push2delay.eastmoney.com/api/qt/clist/get",
@@ -693,6 +696,172 @@ def fetch_research_reports_for_symbol(ak: Any, symbol: str, start: str, end: str
     return items
 
 
+def normalize_holding_period(value: str | None) -> str:
+    text = text_value(value).replace("-", "").replace("/", "").replace(".", "")
+    if len(text) == 8 and text.isdigit():
+        return text
+    parsed = normalize_optional_date(value)
+    compact = parsed.replace("-", "") if parsed else ""
+    return compact if len(compact) == 8 and compact.isdigit() else ""
+
+
+def holding_period_to_sina_quarter(period: str) -> str:
+    period = normalize_holding_period(period)
+    if len(period) != 8:
+        return ""
+    quarter_map = {"0331": "1", "0630": "2", "0930": "3", "1231": "4"}
+    quarter = quarter_map.get(period[4:])
+    return period[:4] + quarter if quarter else ""
+
+
+def normalize_holder_type(value: Any) -> str:
+    text = text_value(value).lower()
+    if not text:
+        return "other"
+    if "基金" in text or "fund" in text:
+        return "fund"
+    if "社保" in text or "social" in text:
+        return "social_security"
+    if "qfii" in text or "rqfii" in text:
+        return "qfii"
+    if "券商" in text or "证券" in text or "broker" in text:
+        return "broker"
+    if "保险" in text or "insurance" in text:
+        return "insurance"
+    if "信托" in text or "trust" in text:
+        return "trust"
+    if "银行" in text or "理财" in text:
+        return "bank_wealth"
+    if "个人" in text or "自然人" in text:
+        return "natural_person"
+    if "机构" in text or "公司" in text:
+        return "institution"
+    return "other"
+
+
+def compact_stock_code(value: Any) -> str:
+    text = text_value(value)
+    digits = "".join(ch for ch in text if ch.isdigit())
+    if len(digits) >= 6:
+        return digits[-6:]
+    return text.zfill(6) if text else ""
+
+
+def holding_row_item(row: Any, source_type: str, fallback_period: str, fallback_code: str = "", fallback_name: str = "") -> dict[str, Any] | None:
+    code = compact_stock_code(first_existing(row, ["股票代码", "stock_code", "code"])) or compact_stock_code(fallback_code)
+    name = text_value(first_existing(row, ["股票简称", "股票名称", "name", "stock_name"])) or fallback_name
+    period = normalize_holding_period(first_existing(row, ["报告期", "截止日期", "END_DATE", "date"])) or normalize_holding_period(fallback_period)
+    holder_name = text_value(first_existing(row, ["股东名称", "基金名称", "持股机构简称", "持股机构全称", "holder_name"]))
+    holder_code = text_value(first_existing(row, ["基金代码", "持股机构代码", "holder_code"]))
+    holder_type_raw = first_existing(row, ["股东类型", "持股机构类型", "holder_type"])
+    holder_type = normalize_holder_type(holder_type_raw or holder_name)
+    if not code or not period or not holder_name:
+        return None
+    shares = finite_float(first_existing(row, ["期末持股-数量", "持仓数量", "持股数", "最新持股数", "shares"]))
+    shares_change = finite_float(first_existing(row, ["期末持股-数量变化", "shares_change"]))
+    change_ratio = finite_float(first_existing(row, ["期末持股-数量变化比例", "持股比例增幅", "change_ratio"]))
+    float_ratio = finite_float(first_existing(row, ["期末持股-持股占流通股比", "占流通股比例", "最新占流通股比例", "float_ratio"]))
+    market_value = finite_float(first_existing(row, ["期末持股-流通市值", "持股市值", "market_value"]))
+    announce = normalize_optional_date(text_value(first_existing(row, ["公告日", "UPDATE_DATE", "NOTICE_DATE", "announce_date"])))
+    rank = text_value(first_existing(row, ["股东排名", "序号", "rank"]))
+    raw_payload = json.dumps(json_safe_row(row), ensure_ascii=False, separators=(",", ":"))
+    return {
+        "stock_code": code,
+        "stock_name": name,
+        "report_period": period,
+        "announce_date": announce,
+        "holder_name": holder_name,
+        "holder_type": holder_type,
+        "holder_code": holder_code,
+        "holder_rank": rank,
+        "shares": shares,
+        "shares_change": shares_change,
+        "change_ratio": change_ratio,
+        "float_ratio": float_ratio,
+        "market_value": market_value,
+        "source_type": source_type,
+        "source_url": "https://data.eastmoney.com/gdfx/HoldingAnalyse.html"
+        if source_type.startswith("stock_gdfx_")
+        else "https://vip.stock.finance.sina.com.cn/",
+        "source_key": source_key([source_type, period, code, holder_name, holder_type, holder_code]),
+        "raw_payload": raw_payload,
+        "fetched_at": utc_now_iso(),
+    }
+
+
+def holding_frame_items(frame: Any, source_type: str, period: str, code: str = "", name: str = "") -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    try:
+        iterator = frame.iterrows()
+    except Exception:
+        return items
+    for _, row in iterator:
+        item = holding_row_item(row, source_type, period, code, name)
+        if item is not None:
+            items.append(item)
+    return items
+
+
+def dedupe_holding_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[tuple[str, str, str, str, str, str]] = set()
+    out: list[dict[str, Any]] = []
+    for item in items:
+        key = (
+            text_value(item.get("source_type")),
+            text_value(item.get("report_period")),
+            text_value(item.get("stock_code")),
+            text_value(item.get("holder_name")),
+            text_value(item.get("holder_type")),
+            text_value(item.get("holder_code")),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+    return out
+
+
+def fetch_market_holdings_for_period(ak: Any, period: str) -> tuple[list[dict[str, Any]], list[str]]:
+    items: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    try:
+        frame = ak.stock_gdfx_free_holding_detail_em(date=period)
+        items.extend(holding_frame_items(frame, "stock_gdfx_free_holding_detail_em", period))
+    except Exception as exc:  # pragma: no cover - external service variability
+        warnings.append(f"stock_gdfx_free_holding_detail_em {period}: {exc}")
+
+    for holder_type in HOLDING_DETAIL_TYPES:
+        for change in HOLDING_DETAIL_CHANGES:
+            try:
+                frame = ak.stock_gdfx_holding_detail_em(date=period, indicator=holder_type, symbol=change)
+                items.extend(holding_frame_items(frame, "stock_gdfx_holding_detail_em", period))
+            except Exception as exc:  # pragma: no cover - external service variability
+                warnings.append(f"stock_gdfx_holding_detail_em {period} {holder_type}/{change}: {exc}")
+    return dedupe_holding_items(items), warnings
+
+
+def fetch_symbol_holdings_for_period(ak: Any, period: str, code: str) -> tuple[list[dict[str, Any]], list[str]]:
+    items: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    sina_quarter = holding_period_to_sina_quarter(period)
+    if sina_quarter:
+        try:
+            frame = ak.stock_institute_hold_detail(stock=code, quarter=sina_quarter)
+            items.extend(holding_frame_items(frame, "stock_institute_hold_detail", period, code))
+        except Exception as exc:  # pragma: no cover - external service variability
+            warnings.append(f"stock_institute_hold_detail {code} {sina_quarter}: {exc}")
+    try:
+        frame = ak.stock_fund_stock_holder(symbol=code)
+        fund_items = holding_frame_items(frame, "stock_fund_stock_holder", period, code)
+        normalized_period = normalize_holding_period(period)
+        if normalized_period:
+            fund_items = [item for item in fund_items if item.get("report_period") == normalized_period]
+        items.extend(fund_items)
+    except Exception as exc:  # pragma: no cover - external service variability
+        warnings.append(f"stock_fund_stock_holder {code}: {exc}")
+    return dedupe_holding_items(items), warnings
+
+
 class AuctionService:
     def __init__(self, cache_dir: Path, workers: int, default_limit: int):
         self.cache_dir = cache_dir
@@ -840,6 +1009,39 @@ class AuctionService:
             payload["_http_status"] = 502
         return payload
 
+    def fetch_holdings(self, query: dict[str, list[str]]) -> dict[str, Any]:
+        ak = load_akshare()
+        period = normalize_holding_period(first_query_value(query, "period"))
+        if not period:
+            return {
+                "_http_status": 400,
+                "items": [],
+                "message": "period is required, e.g. 20260331",
+                "fetched_at": utc_now_iso(),
+            }
+        code = compact_stock_code(first_query_value(query, "code") or first_query_value(query, "symbol") or "")
+        limit = int_value(first_query_value(query, "limit"), 0)
+        started = time.time()
+        if code:
+            items, warnings = fetch_symbol_holdings_for_period(ak, period, code)
+        else:
+            items, warnings = fetch_market_holdings_for_period(ak, period)
+        if limit > 0:
+            items = items[:limit]
+        payload: dict[str, Any] = {
+            "items": items,
+            "count": len(items),
+            "period": period,
+            "code": code,
+            "elapsed_sec": round(time.time() - started, 3),
+            "fetched_at": utc_now_iso(),
+        }
+        if warnings:
+            payload["warning"] = "; ".join(warnings)
+        if not items and warnings:
+            payload["_http_status"] = 502
+        return payload
+
 
 def first_query_value(query: dict[str, list[str]], key: str) -> str | None:
     values = query.get(key)
@@ -881,6 +1083,14 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/a-stock/trading-day":
                 payload = self.service.fetch_trading_day(query)
+                status = int(payload.get("_http_status", 200))
+                if "_http_status" in payload:
+                    payload = dict(payload)
+                    payload.pop("_http_status", None)
+                self.write_json(status, payload)
+                return
+            if parsed.path == "/api/a-stock/holdings":
+                payload = self.service.fetch_holdings(query)
                 status = int(payload.get("_http_status", 200))
                 if "_http_status" in payload:
                     payload = dict(payload)
@@ -1004,6 +1214,31 @@ def run_self_test() -> None:
     assert report["source_type"] == "akshare_stock_research"
     assert report["pdf_status"] == "pending"
     assert date_in_range("2026-06-16", "2026-06-01", "2026-06-30")
+    assert normalize_holding_period("2026-Q1") == ""
+    assert normalize_holding_period("2026-03-31") == "20260331"
+    assert holding_period_to_sina_quarter("20260331") == "20261"
+    holding = holding_row_item(
+        {
+            "股票代码": "2230",
+            "股票简称": "科大讯飞",
+            "报告期": "2026-03-31",
+            "股东名称": "全国社保基金一一八组合",
+            "股东类型": "社保",
+            "股东排名": 2,
+            "期末持股-数量": "1000",
+            "期末持股-数量变化": "100",
+            "期末持股-持股占流通股比": "1.5",
+            "期末持股-流通市值": "50000",
+            "公告日": "2026-04-30",
+        },
+        "stock_gdfx_free_holding_detail_em",
+        "20260331",
+    )
+    assert holding is not None
+    assert holding["stock_code"] == "002230"
+    assert holding["report_period"] == "20260331"
+    assert holding["holder_type"] == "social_security"
+    assert holding["shares"] == 1000
     print("akshare auction service self-test passed")
 
 

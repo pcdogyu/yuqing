@@ -79,7 +79,9 @@ Invoke-WebRequest -Method Post "http://127.0.0.1:8083/api/v1/admin/tasks/crawl?s
 
 A 股策略工作台 `/a-stock` 默认按 `Asia/Shanghai` 增加四个推荐任务：上午 `a-stock-morning-recommendation-preview` 每日 `09:25` 预生成、`a-stock-morning-recommendation` 每日 `09:30` 再生成；下午 `a-stock-afternoon-recommendation-preview` 每日 `12:55` 预生成、`a-stock-afternoon-recommendation` 每日 `13:00` 再生成。上午推荐按 `08:00-09:25` 与 `08:00-09:30` 两个快照合并去重；下午推荐按 `09:30-12:55` 与 `09:30-13:00` 两个快照合并去重，并过滤当天上午已推荐股票。任务会触发 `flash`、`headline`、`jin10_full`、`eastmoney_kuaixun`、`wallstreetcn_a_stock`、`cls_telegraph`、`sina_finance_7x24` 新闻源，可用对应 `YUQING_SCHEDULER_<JOB_NAME>_CRON` 覆盖执行时间。
 
-集合竞价页面 `/a-stock/auction` 展示全市场 A 股 09:25 开盘集合竞价金额。`run.bat` 默认构建并启动仓库内 AKShare 适配服务 `bin\akshare-service.exe`，地址为 `http://127.0.0.1:8087`，并自动设置 `YUQING_ASTOCK_AUCTION_URL`。`a-stock-auction-crawl` 会在每日 `09:30` 抓取 `/api/a-stock/auction?date=YYYY-MM-DD` 并通过 content-service 写入当前 `YUQING_DB_DRIVER` 对应的业务库；生产建议使用 PostgreSQL 配置。可用 `YUQING_SCHEDULER_A_STOCK_AUCTION_CRAWL_CRON` 覆盖执行时间。若 09:30 定时任务漏抓，门户“获取最新交易日集合竞价金额”会调用 scheduler 的 latest 接口，不带日期请求 AKShare 适配服务并按适配服务识别到的最新交易日写库；更早历史交易日仍依赖过去抓取形成的本地缓存或业务库记录。
+集合竞价页面 `/a-stock/auction` 展示全市场 A 股 09:25 开盘集合竞价金额。`run.bat` 默认构建并启动仓库内 AKShare 适配服务 `bin\akshare-service.exe`，地址为 `http://127.0.0.1:8087`，并自动设置 `YUQING_ASTOCK_AUCTION_URL` 和 `YUQING_ASTOCK_HOLDING_URL`。`a-stock-auction-crawl` 会在每日 `09:30` 抓取 `/api/a-stock/auction?date=YYYY-MM-DD` 并通过 content-service 写入当前 `YUQING_DB_DRIVER` 对应的业务库；生产建议使用 PostgreSQL 配置。可用 `YUQING_SCHEDULER_A_STOCK_AUCTION_CRAWL_CRON` 覆盖执行时间。若 09:30 定时任务漏抓，门户“获取最新交易日集合竞价金额”会调用 scheduler 的 latest 接口，不带日期请求 AKShare 适配服务并按适配服务识别到的最新交易日写库；更早历史交易日仍依赖过去抓取形成的本地缓存或业务库记录。
+
+机构持仓页面 `/a-stock/holdings` 的“抓取全量股票历史持仓”按钮会触发 scheduler 的 `/api/v1/scheduler/a-stock/holdings/backfill`，不带股票代码时按最近 4 个报告期抓取全市场持仓。AKShare 适配服务提供 `/api/a-stock/holdings?period=YYYYMMDD&code=002230`，其中 `code` 可选；全市场抓取优先读取东方财富十大股东/十大流通股东，单股回补会叠加新浪机构持股和基金持股。
 
 AKShare 集合竞价服务可单独启动和检查：
 
@@ -89,6 +91,7 @@ python -m pip install -r .\requirements-akshare.txt
 go run .\cmd\akshare-service --host 127.0.0.1 --port 8087
 Invoke-RestMethod "http://127.0.0.1:8087/healthz"
 Invoke-RestMethod "http://127.0.0.1:8087/api/a-stock/auction?date=2026-06-17&code=002230"
+Invoke-RestMethod "http://127.0.0.1:8087/api/a-stock/holdings?period=20260331&code=002230"
 ```
 
 如果服务器未把 Python 加入 `PATH`，可以在启动前指定解释器路径：
