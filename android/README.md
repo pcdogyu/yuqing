@@ -13,11 +13,11 @@
 - Auth API: `http://yuqin.jiansutech.com:8081/`
 - Content/BFF API: `http://yuqin.jiansutech.com:8082/`
 
-本地调试时，可在登录页临时改为局域网或模拟器服务地址。
+本地调试时，可在 `app/build.gradle.kts` 中临时改为局域网或模拟器服务地址后重新构建。
 
 ## 功能
 
-- 账号登录、Bearer Token 持久化、退出登录。
+- 免登录进入原生工作台，默认连接远端 Auth 和 Content/BFF API。
 - 全量门户原生导航：总览、项目、文章、搜索、分析、报告、A 股、研报调研、机构持仓、加密资讯、系统。
 - 系统操作通过 `/api/v1/android/actions/{action}` 统一触发，并在 App 内二次确认。
 - 低网速下展示最近一次缓存的 Dashboard 数据。

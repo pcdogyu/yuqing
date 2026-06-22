@@ -11,7 +11,6 @@ import com.jiansutech.yuqing.data.ApiFactory
 import com.jiansutech.yuqing.data.DashboardCacheDao
 import com.jiansutech.yuqing.data.DashboardCacheEntity
 import com.jiansutech.yuqing.data.ItemListResult
-import com.jiansutech.yuqing.data.LoginRequest
 import com.jiansutech.yuqing.data.SearchResult
 import com.jiansutech.yuqing.data.SessionState
 import com.jiansutech.yuqing.data.SessionStore
@@ -68,10 +67,11 @@ class YuqingViewModel(
                     }
                 }
             }
+            var refreshed = false
             sessionStore.state.collect { session ->
-                val wasLoggedOut = !_uiState.value.session.loggedIn
                 _uiState.update { it.copy(session = session) }
-                if (session.loggedIn && wasLoggedOut) {
+                if (!refreshed) {
+                    refreshed = true
                     refreshAll()
                 }
             }
@@ -94,29 +94,6 @@ class YuqingViewModel(
 
     fun updateAStockAuctionDate(value: String) {
         _uiState.update { it.copy(aStockAuctionDate = value) }
-    }
-
-    fun login(username: String, password: String, authBaseUrl: String, apiBaseUrl: String) {
-        viewModelScope.launch {
-            _uiState.update { it.copy(loading = true, error = "", message = "") }
-            runCatching {
-                sessionStore.saveServers(authBaseUrl, apiBaseUrl)
-                val response = ApiFactory.auth(authBaseUrl).login(LoginRequest(username.trim(), password))
-                val data = response.data ?: error(response.message.ifBlank { "登录失败" })
-                if (data.sessionToken.isBlank()) error("登录响应缺少 session token")
-                sessionStore.saveLogin(data.sessionToken, data.user.username.ifBlank { username.trim() }, authBaseUrl, apiBaseUrl)
-            }.onFailure { throwable ->
-                _uiState.update { it.copy(error = throwable.message ?: "登录失败") }
-            }
-            _uiState.update { it.copy(loading = false) }
-        }
-    }
-
-    fun logout() {
-        viewModelScope.launch {
-            sessionStore.clear()
-            _uiState.update { YuqingUiState(session = it.session.copy(token = "", username = "")) }
-        }
     }
 
     fun refreshAll() {

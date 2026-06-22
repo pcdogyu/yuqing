@@ -12,30 +12,19 @@ private val Context.sessionDataStore by preferencesDataStore("yuqing_session")
 
 data class SessionState(
     val token: String = "",
-    val username: String = "",
+    val username: String = "admin",
     val authBaseUrl: String = BuildConfig.DEFAULT_AUTH_BASE_URL,
     val apiBaseUrl: String = BuildConfig.DEFAULT_API_BASE_URL,
 ) {
-    val loggedIn: Boolean get() = token.isNotBlank()
+    val loggedIn: Boolean get() = true
 }
 
 class SessionStore(private val context: Context) {
     val state: Flow<SessionState> = context.sessionDataStore.data.map { preferences ->
-        val token = preferences[tokenKey].orEmpty()
-        val loggedIn = token.isNotBlank()
         SessionState(
-            token = token,
-            username = preferences[usernameKey].orEmpty(),
-            authBaseUrl = if (loggedIn) {
-                preferences[authBaseUrlKey] ?: BuildConfig.DEFAULT_AUTH_BASE_URL
-            } else {
-                BuildConfig.DEFAULT_AUTH_BASE_URL
-            },
-            apiBaseUrl = if (loggedIn) {
-                preferences[apiBaseUrlKey] ?: BuildConfig.DEFAULT_API_BASE_URL
-            } else {
-                BuildConfig.DEFAULT_API_BASE_URL
-            },
+            username = preferences[usernameKey].orEmpty().ifBlank { "admin" },
+            authBaseUrl = BuildConfig.DEFAULT_AUTH_BASE_URL,
+            apiBaseUrl = BuildConfig.DEFAULT_API_BASE_URL,
         )
     }
 

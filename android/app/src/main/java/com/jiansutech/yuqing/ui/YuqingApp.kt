@@ -20,7 +20,6 @@ import androidx.compose.material.icons.filled.Business
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Groups
-import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -44,17 +43,12 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.jiansutech.yuqing.BuildConfig
 import com.jiansutech.yuqing.data.AndroidDashboard
 import com.jiansutech.yuqing.data.AndroidModule
 import com.jiansutech.yuqing.data.AStockAuctionAmount
@@ -73,53 +67,7 @@ import com.jiansutech.yuqing.data.TaskRun
 fun YuqingApp(viewModel: YuqingViewModel) {
     val state by viewModel.uiState.collectAsState()
     YuqingTheme {
-        if (!state.session.loggedIn) {
-            LoginScreen(state, viewModel)
-        } else {
-            PortalScreen(state, viewModel)
-        }
-    }
-}
-
-@Composable
-private fun LoginScreen(state: YuqingUiState, viewModel: YuqingViewModel) {
-    var username by remember { mutableStateOf(state.session.username) }
-    var password by remember { mutableStateOf("") }
-    var authBaseUrl by remember { mutableStateOf(state.session.authBaseUrl.ifBlank { BuildConfig.DEFAULT_AUTH_BASE_URL }) }
-    var apiBaseUrl by remember { mutableStateOf(state.session.apiBaseUrl.ifBlank { BuildConfig.DEFAULT_API_BASE_URL }) }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(20.dp),
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Text("简苏舆情", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        Text("Android 原生工作台", style = MaterialTheme.typography.bodyMedium)
-        Spacer(Modifier.height(24.dp))
-        OutlinedTextField(username, { username = it }, label = { Text("账号") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-        Spacer(Modifier.height(10.dp))
-        OutlinedTextField(
-            password,
-            { password = it },
-            label = { Text("密码") },
-            modifier = Modifier.fillMaxWidth(),
-            visualTransformation = PasswordVisualTransformation(),
-            singleLine = true,
-        )
-        Spacer(Modifier.height(10.dp))
-        OutlinedTextField(authBaseUrl, { authBaseUrl = it }, label = { Text("Auth API") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-        Spacer(Modifier.height(10.dp))
-        OutlinedTextField(apiBaseUrl, { apiBaseUrl = it }, label = { Text("Content/BFF API") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-        Spacer(Modifier.height(16.dp))
-        Button(
-            onClick = { viewModel.login(username, password, authBaseUrl, apiBaseUrl) },
-            enabled = !state.loading,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(if (state.loading) "登录中" else "登录")
-        }
-        StatusMessages(state)
+        PortalScreen(state, viewModel)
     }
 }
 
@@ -139,7 +87,6 @@ private fun PortalScreen(state: YuqingUiState, viewModel: YuqingViewModel) {
                 },
                 actions = {
                     IconButton(onClick = viewModel::refreshAll) { Icon(Icons.Default.Refresh, contentDescription = "刷新") }
-                    IconButton(onClick = viewModel::logout) { Icon(Icons.Default.Logout, contentDescription = "退出") }
                 },
             )
         },
