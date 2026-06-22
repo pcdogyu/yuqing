@@ -988,10 +988,22 @@ func TestAStockPageShowsBackfillCurrentWindowAction(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"补抓当前窗口新闻", `name="action" value="backfill_window_news"`, "补录上午新闻并生成推荐", `name="action" value="backfill_morning_stock"`, "补录集合竞价", `name="action" value="backfill_auction"`} {
+	for _, want := range []string{"astock-action-table", "抓取全部财经信息", "补录上午新闻", "重新生成上午推荐", "同步行情", "补录集合竞价", "刷新回测结果", "生成全部推荐股票", "补录下午新闻", "重新生成下午推荐", `name="action" value="backfill_window_news"`, `name="period" value="morning"`, `name="period" value="afternoon"`, `name="action" value="backfill_auction"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected backfill action %q, got %s", want, body)
 		}
+	}
+	expectedOrder := []string{"抓取全部财经信息", "补录上午新闻", "重新生成上午推荐", "同步行情", "补录集合竞价", "刷新回测结果", "生成全部推荐股票", "补录下午新闻", "重新生成下午推荐"}
+	last := -1
+	for _, want := range expectedOrder {
+		idx := strings.Index(body, want)
+		if idx < 0 {
+			t.Fatalf("expected action %q, got %s", want, body)
+		}
+		if idx < last {
+			t.Fatalf("expected action %q to render after previous action, got %s", want, body)
+		}
+		last = idx
 	}
 }
 
