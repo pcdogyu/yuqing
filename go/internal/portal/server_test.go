@@ -1232,6 +1232,21 @@ func TestAStockRecentFilterDefaultsOn(t *testing.T) {
 }
 
 func TestAStockPageLoadsAfternoonWindow(t *testing.T) {
+	market := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{"items": []map[string]any{
+				{"code": "300777", "date": "2026-04-17", "open": 20.00, "close": 20.00, "pct": 0},
+				{"code": "300777", "date": "2026-05-16", "open": 20.00, "close": 20.00, "pct": 0},
+				{"code": "300777", "date": "2026-06-15", "open": 20.80, "close": 21.00, "pct": 1.00},
+				{"code": "300777", "date": "2026-06-16", "open": 21.60, "close": 22.00, "pct": 4.76},
+				{"code": "300777", "date": "2026-06-17", "open": 22.20, "close": 23.00, "pct": 4.55},
+			}},
+		})
+	}))
+	defer market.Close()
+	t.Setenv("YUQING_ASTOCK_MARKET_URL", market.URL)
+
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/api/v1/a-stock/holdings/summary" {
@@ -1710,6 +1725,7 @@ func TestAStockRecommendationHistoryRendersDateTabs(t *testing.T) {
 	body := b.String()
 	for _, want := range []string{
 		"推荐历史",
+		"2026-06-08 AM",
 		"2026-06-11 AM",
 		"2026-06-11 PM",
 		"2026-06-15 AM",
@@ -1729,6 +1745,9 @@ func TestAStockRecommendationHistoryRendersDateTabs(t *testing.T) {
 	if strings.Contains(body, "astock-history-card") || strings.Contains(body, "山东黄金") {
 		t.Fatalf("expected history stock table/card to be removed, got %s", body)
 	}
+	if strings.Contains(body, "2026-06-13 AM") || strings.Contains(body, "2026-06-14 AM") {
+		t.Fatalf("expected weekend history tabs to be filtered, got %s", body)
+	}
 	if strings.Index(body, "2026-06-11 AM") > strings.Index(body, "2026-06-16 PM") {
 		t.Fatalf("expected history tabs to render oldest date first, got %s", body)
 	}
@@ -1741,7 +1760,7 @@ func TestAStockDatePeriodTabsCanRenderWithoutHeading(t *testing.T) {
 
 	body := b.String()
 	for _, want := range []string{
-		"2026-06-13 AM",
+		"2026-06-10 AM",
 		"2026-06-18 AM",
 		"2026-06-18 PM",
 		`/a-stock?date=2026-06-18&period=morning&ignore_recent=1`,
@@ -1754,6 +1773,9 @@ func TestAStockDatePeriodTabsCanRenderWithoutHeading(t *testing.T) {
 	}
 	if strings.Contains(body, "推荐历史") {
 		t.Fatalf("expected top date tabs to render without history heading, got %s", body)
+	}
+	if strings.Contains(body, "2026-06-13 AM") || strings.Contains(body, "2026-06-14 AM") {
+		t.Fatalf("expected weekend top date tabs to be filtered, got %s", body)
 	}
 }
 
@@ -1941,18 +1963,15 @@ func TestAStockMarketViewFiltersDeepDrawdownsAndPenalizesSector(t *testing.T) {
 	if filtered[1].CurrentPrice != "94.00" || filtered[1].TodayPct != "+2.00%" || filtered[1].TodayPctClass != "astock-up" {
 		t.Fatalf("expected penalized current day market fields to be filled, got %+v", filtered[1])
 	}
-	if len(rows) != 4 {
-		t.Fatalf("expected backtest rows to keep generated candidates before market filtering, got %+v", rows)
+	if len(rows) != 2 {
+		t.Fatalf("expected backtest rows to match filtered recommendations, got %+v", rows)
 	}
-	if rows[2].T0Return != "+1.00%" || rows[2].T0ReturnClass != "astock-up" {
-		t.Fatalf("expected T+0 return to use strategy-day realtime/close pct field, got %+v", rows[2])
+	if rows[0].T0Return != "+1.00%" || rows[0].T0ReturnClass != "astock-up" {
+		t.Fatalf("expected T+0 return to use strategy-day realtime/close pct field, got %+v", rows[0])
 	}
-	rowStocks := strings.Join([]string{rows[0].Stock, rows[1].Stock, rows[2].Stock, rows[3].Stock}, " ")
-	if !strings.Contains(rowStocks, "000001") || !strings.Contains(rowStocks, "000004") {
-		t.Fatalf("expected backtest rows to include market-filtered candidates, got %+v", rows)
-	}
-	if rows[3].Status != "等待当日开盘价" {
-		t.Fatalf("expected missing entry candidate to show waiting status, got %+v", rows[3])
+	rowStocks := strings.Join([]string{rows[0].Stock, rows[1].Stock}, " ")
+	if strings.Contains(rowStocks, "000001") || strings.Contains(rowStocks, "000004") {
+		t.Fatalf("expected backtest rows to exclude market-filtered candidates, got %+v", rows)
 	}
 	if !strings.Contains(status, "过滤回撤股票 1") || !strings.Contains(status, "过滤无当日行情股票 1") {
 		t.Fatalf("expected status to mention drawdown and missing price filtering, got %q", status)

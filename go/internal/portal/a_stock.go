@@ -216,9 +216,9 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-recommendation-table th,.astock-recommendation-table td{vertical-align:top}
 		.astock-recommendation-table th:nth-child(2),.astock-recommendation-table td:nth-child(2){width:7.5%;white-space:nowrap}
 		.astock-recommendation-table th:last-child,.astock-recommendation-table td:last-child{width:36%}
-		.astock-date-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0 18px}
+		.astock-date-tabs{display:flex;gap:8px;flex-wrap:nowrap;margin:14px 0 18px;overflow-x:auto;padding-bottom:6px;scrollbar-width:thin}
 		.astock-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
-		.astock-tab{display:inline-flex;align-items:center;padding:8px 12px;border:1px solid #d6ccbb;border-radius:8px;color:#214e34;text-decoration:none;background:#fff}
+		.astock-tab{display:inline-flex;align-items:center;flex:0 0 auto;padding:8px 12px;border:1px solid #d6ccbb;border-radius:8px;color:#214e34;text-decoration:none;background:#fff}
 		.astock-tab.active{background:#214e34;color:#fff;border-color:#214e34}
 		.astock-tab.disabled{color:#9a9388;border-color:#ece7dc;background:#faf8f2;pointer-events:none}
 		.astock-history-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:0 0 18px}
@@ -656,14 +656,12 @@ func renderAStockDatePeriodTabs(b *strings.Builder, strategyDate string, period 
 	}
 	b.WriteString(`<div class="astock-date-tabs">`)
 	normalizedPeriod := normalizeAStockPeriod(period).Key
-	today := aStockTodayDate()
-	day, err := time.Parse("2006-01-02", today)
-	if err != nil {
+	dates := recentAStockWeekdayDates(aStockTodayDate(), 7)
+	if len(dates) == 0 {
 		b.WriteString(`<span class="astock-muted">暂无推荐历史日期</span></div>`)
 		return
 	}
-	for offset := 5; offset >= 0; offset-- {
-		date := day.AddDate(0, 0, -offset).Format("2006-01-02")
+	for _, date := range dates {
 		for _, option := range aStockPeriods() {
 			periodLabel := "PM"
 			if option.Key == "morning" {
@@ -1352,7 +1350,6 @@ func initializeAStockRecommendationMarket(recommendations []aStockRecommendation
 
 func applyAStockMarketBars(strategyDate string, recommendations []aStockRecommendation, bars []aStockMarketBar) ([]aStockRecommendation, []aStockBacktestRow, string) {
 	byCode := groupAStockMarketBars(bars)
-	backtestRecommendations := append([]aStockRecommendation(nil), recommendations...)
 	withPrev := 0
 	sectorPenalties := make(map[string]int)
 	filteredCount := 0
@@ -1421,7 +1418,7 @@ func applyAStockMarketBars(strategyDate string, recommendations []aStockRecommen
 	for i := range recommendations {
 		recommendations[i].Rank = i + 1
 	}
-	rows := buildAStockBacktestRows(strategyDate, backtestRecommendations, byCode)
+	rows := buildAStockBacktestRows(strategyDate, recommendations, byCode)
 	completed := 0
 	for _, row := range rows {
 		if row.Status == "已回测" || strings.HasPrefix(row.Status, "已回测") {
@@ -1962,6 +1959,27 @@ func aStockDateOffset(strategyDate string, days int) (string, error) {
 		return "", err
 	}
 	return day.AddDate(0, 0, days).Format("2006-01-02"), nil
+}
+
+func recentAStockWeekdayDates(endDate string, count int) []string {
+	if count <= 0 {
+		return nil
+	}
+	day, err := time.ParseInLocation("2006-01-02", normalizeAStockStrategyDate(endDate), aStockLocation())
+	if err != nil {
+		return nil
+	}
+	dates := make([]string, 0, count)
+	for len(dates) < count {
+		if day.Weekday() != time.Saturday && day.Weekday() != time.Sunday {
+			dates = append(dates, day.Format("2006-01-02"))
+		}
+		day = day.AddDate(0, 0, -1)
+	}
+	for i, j := 0, len(dates)-1; i < j; i, j = i+1, j-1 {
+		dates[i], dates[j] = dates[j], dates[i]
+	}
+	return dates
 }
 
 func eastmoneyAStockSecID(code string) string {
