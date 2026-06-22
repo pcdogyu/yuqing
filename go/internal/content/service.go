@@ -94,6 +94,8 @@ type Store interface {
 	DeletePublicOption(rctx context.Context, id int64) error
 	UpsertAStockAuctionAmounts(rctx context.Context, tradeDate string, items []model.AStockAuctionAmount) (model.AStockAuctionUpsertResult, error)
 	ListAStockAuctionAmounts(rctx context.Context, filter model.AStockAuctionFilter) (model.AStockAuctionListResult, error)
+	UpsertAStockRecommendationSnapshot(rctx context.Context, snapshot model.AStockRecommendationSnapshot) (model.AStockRecommendationSnapshotUpsertResult, error)
+	GetAStockRecommendationSnapshot(rctx context.Context, strategyDate string, period string, ignoreRecent bool) (model.AStockRecommendationSnapshot, bool, error)
 	UpsertStockResearchSurveys(rctx context.Context, items []model.StockResearchSurvey) (model.StockResearchUpsertResult, error)
 	ListStockResearchSurveys(rctx context.Context, filter model.StockResearchFilter) (model.StockResearchListResult, error)
 	GetStockResearchSurvey(rctx context.Context, id int64) (model.StockResearchSurvey, error)
@@ -166,6 +168,8 @@ func (s *Service) Routes(r chi.Router) {
 	r.Post("/api/v1/articles/{id}/share", s.handleShareArticle)
 	r.Get("/api/v1/a-stock/auction", s.handleListAStockAuctionAmounts)
 	r.Post("/api/v1/admin/a-stock/auction", s.handleUpsertAStockAuctionAmounts)
+	r.Get("/api/v1/a-stock/recommendations", s.handleGetAStockRecommendationSnapshot)
+	r.Post("/api/v1/internal/a-stock/recommendations", s.handleUpsertAStockRecommendationSnapshot)
 	r.Get("/api/v1/stock-research", s.handleListStockResearchSurveys)
 	r.Get("/api/v1/stock-research/{id}", s.handleGetStockResearchSurvey)
 	r.Get("/api/v1/stock-research/{id}/pdf", s.handleGetStockResearchPDF)
@@ -606,6 +610,52 @@ func (s *Service) handleUpsertAStockAuctionAmounts(w http.ResponseWriter, r *htt
 		return
 	}
 	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleGetAStockRecommendationSnapshot(w http.ResponseWriter, r *http.Request) {
+	date := strings.TrimSpace(r.URL.Query().Get("date"))
+	period := strings.TrimSpace(r.URL.Query().Get("period"))
+	if date == "" || period == "" {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "date and period required", nil)
+		return
+	}
+	ignoreRecent := normalizeBoolQuery(r.URL.Query().Get("ignore_recent"))
+	snapshot, found, err := s.store.GetAStockRecommendationSnapshot(r.Context(), date, period, ignoreRecent)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	snapshot.Found = found
+	apiutil.WriteJSON(w, http.StatusOK, "ok", snapshot)
+}
+
+func (s *Service) handleUpsertAStockRecommendationSnapshot(w http.ResponseWriter, r *http.Request) {
+	var snapshot model.AStockRecommendationSnapshot
+	if err := json.NewDecoder(r.Body).Decode(&snapshot); err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid json", nil)
+		return
+	}
+	snapshot.StrategyDate = strings.TrimSpace(snapshot.StrategyDate)
+	snapshot.Period = strings.TrimSpace(snapshot.Period)
+	if snapshot.StrategyDate == "" || snapshot.Period == "" {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "strategy_date and period required", nil)
+		return
+	}
+	result, err := s.store.UpsertAStockRecommendationSnapshot(r.Context(), snapshot)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func normalizeBoolQuery(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Service) handleListStockResearchSurveys(w http.ResponseWriter, r *http.Request) {

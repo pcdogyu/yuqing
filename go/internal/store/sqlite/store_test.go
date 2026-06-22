@@ -171,6 +171,49 @@ func TestAStockAuctionAmountsUpsertAndList(t *testing.T) {
 	}
 }
 
+func TestAStockRecommendationSnapshotUpsertAndGet(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	first, err := store.UpsertAStockRecommendationSnapshot(ctx, model.AStockRecommendationSnapshot{
+		StrategyDate:        "2026-06-22",
+		Period:              "afternoon",
+		RecommendationsJSON: `[{"Code":"600000"}]`,
+		BacktestsJSON:       `[]`,
+		BacktestStatus:      "已回测 1/1",
+		GeneratedCount:      1,
+	})
+	if err != nil {
+		t.Fatalf("UpsertAStockRecommendationSnapshot insert error: %v", err)
+	}
+	if first.Inserted != 1 || first.Updated != 0 {
+		t.Fatalf("unexpected first upsert result: %+v", first)
+	}
+
+	second, err := store.UpsertAStockRecommendationSnapshot(ctx, model.AStockRecommendationSnapshot{
+		StrategyDate:        "2026-06-22",
+		Period:              "afternoon",
+		RecommendationsJSON: `[{"Code":"000001"}]`,
+		BacktestsJSON:       `[]`,
+		BacktestStatus:      "已回测 1/1",
+		GeneratedCount:      1,
+	})
+	if err != nil {
+		t.Fatalf("UpsertAStockRecommendationSnapshot update error: %v", err)
+	}
+	if second.Inserted != 0 || second.Updated != 1 {
+		t.Fatalf("unexpected second upsert result: %+v", second)
+	}
+
+	snapshot, found, err := store.GetAStockRecommendationSnapshot(ctx, "2026-06-22", "afternoon", false)
+	if err != nil {
+		t.Fatalf("GetAStockRecommendationSnapshot error: %v", err)
+	}
+	if !found || snapshot.RecommendationsJSON != `[{"Code":"000001"}]` || snapshot.GeneratedCount != 1 {
+		t.Fatalf("unexpected snapshot: found=%v %+v", found, snapshot)
+	}
+}
+
 func TestStockResearchSurveysUpsertAndFilter(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()

@@ -85,6 +85,9 @@ func TestArticleBodyTextSkipsTitleOnlyContent(t *testing.T) {
 func TestMonitorCompatGetArticle(t *testing.T) {
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if handleAStockRecommendationSnapshotTestEndpoint(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/api/v1/search/full":
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -1236,6 +1239,9 @@ func TestAStockBackfillMorningStockActionSelectsMorningWindow(t *testing.T) {
 func TestAStockPageExplainsMorningNoNews(t *testing.T) {
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if handleAStockRecommendationSnapshotTestEndpoint(w, r) {
+			return
+		}
 		if r.URL.Path == "/api/v1/a-stock/holdings/summary" {
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "message": "ok", "data": model.StockInstitutionHoldingSummary{}})
 			return
@@ -1282,6 +1288,9 @@ func TestAStockPageExplainsMorningNoNews(t *testing.T) {
 func TestAStockPageExplainsNewsAndHotspotsWithoutAuction(t *testing.T) {
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if handleAStockRecommendationSnapshotTestEndpoint(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/api/v1/a-stock/holdings/summary":
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockInstitutionHoldingSummary{}})
@@ -1320,6 +1329,9 @@ func TestAStockPageExplainsNewsAndHotspotsWithoutAuction(t *testing.T) {
 func TestAStockPageExplainsNewsWithoutHotspots(t *testing.T) {
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if handleAStockRecommendationSnapshotTestEndpoint(w, r) {
+			return
+		}
 		if r.URL.Path == "/api/v1/a-stock/holdings/summary" {
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "message": "ok", "data": model.StockInstitutionHoldingSummary{}})
 			return
@@ -1394,6 +1406,9 @@ func TestAStockPageLoadsAfternoonWindow(t *testing.T) {
 
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if handleAStockRecommendationSnapshotTestEndpoint(w, r) {
+			return
+		}
 		if r.URL.Path == "/api/v1/a-stock/holdings/summary" {
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "message": "ok", "data": model.StockInstitutionHoldingSummary{}})
 			return
@@ -1479,6 +1494,9 @@ func TestAStockPageOffersTodayNavigationAndAfterAlias(t *testing.T) {
 	setAStockNowForTest(t, time.Date(2026, 6, 16, 9, 30, 0, 0, time.FixedZone("CST", 8*3600)))
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if handleAStockRecommendationSnapshotTestEndpoint(w, r) {
+			return
+		}
 		if r.URL.Path != "/api/v1/articles" {
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
@@ -1610,6 +1628,9 @@ func TestAStockPageReusesTradingDayStatusWithinRequest(t *testing.T) {
 
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if handleAStockRecommendationSnapshotTestEndpoint(w, r) {
+			return
+		}
 		if r.URL.Path != "/api/v1/articles" {
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
@@ -1658,6 +1679,9 @@ func TestAStockWindowArticlesFallbackToCapturedAt(t *testing.T) {
 	var seenCapturedQuery bool
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if handleAStockRecommendationSnapshotTestEndpoint(w, r) {
+			return
+		}
 		if r.URL.Path != "/api/v1/articles" {
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
@@ -1724,6 +1748,9 @@ func TestAStockNewsSectionSummarizesSources(t *testing.T) {
 	}
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if handleAStockRecommendationSnapshotTestEndpoint(w, r) {
+			return
+		}
 		if r.URL.Path != "/api/v1/articles" {
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
@@ -1815,6 +1842,61 @@ func TestLoadAStockSourceRunsShowsUnavailableWhenCrawlerURLMissing(t *testing.T)
 	}
 }
 
+func handleAStockRecommendationSnapshotTestEndpoint(w http.ResponseWriter, r *http.Request) bool {
+	switch r.URL.Path {
+	case "/api/v1/a-stock/recommendations":
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    http.StatusOK,
+			"message": "ok",
+			"data":    model.AStockRecommendationSnapshot{Found: false},
+		})
+		return true
+	case "/api/v1/internal/a-stock/recommendations":
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    http.StatusOK,
+			"message": "ok",
+			"data":    model.AStockRecommendationSnapshotUpsertResult{Inserted: 1},
+		})
+		return true
+	default:
+		return false
+	}
+}
+
+func TestAStockContextLoadsPersistedRecommendationSnapshot(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/articles":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0}})
+		case "/api/v1/a-stock/recommendations":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": model.AStockRecommendationSnapshot{
+					Found:               true,
+					StrategyDate:        "2026-06-22",
+					Period:              "afternoon",
+					RecommendationsJSON: `[{"Rank":1,"Hotspot":"人工智能","Code":"002230","Name":"科大讯飞","Reason":"snapshot"}]`,
+					BacktestsJSON:       `[]`,
+					BacktestStatus:      "已读取推荐快照",
+					GeneratedCount:      1,
+				},
+			})
+		default:
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	scheduler := newAStockTradingDayServer(t, true)
+	defer scheduler.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL, SchedulerURL: scheduler.URL})
+	ctx := srv.loadAStockContext("2026-06-22", "afternoon", 1, false)
+	if len(ctx.Recommendations) != 1 || ctx.Recommendations[0].Code != "002230" || ctx.BacktestStatus != "已读取推荐快照" {
+		t.Fatalf("expected persisted recommendation snapshot, got recs=%+v status=%q", ctx.Recommendations, ctx.BacktestStatus)
+	}
+}
+
 func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 	setAStockNowForTest(t, time.Date(2026, 6, 16, 9, 30, 0, 0, time.FixedZone("CST", 8*3600)))
 
@@ -1852,6 +1934,9 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if handleAStockRecommendationSnapshotTestEndpoint(w, r) {
+			return
+		}
 		if r.URL.Path == "/api/v1/a-stock/holdings/summary" {
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "message": "ok", "data": model.StockInstitutionHoldingSummary{}})
 			return
@@ -1958,6 +2043,9 @@ func TestAStockPageBlocksRecommendationsOnNonTradingDay(t *testing.T) {
 
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if handleAStockRecommendationSnapshotTestEndpoint(w, r) {
+			return
+		}
 		if r.URL.Path == "/api/v1/a-stock/auction" {
 			t.Fatalf("auction candidates should not be loaded on non-trading day")
 		}
@@ -2279,6 +2367,9 @@ func TestAStockContextCanIgnoreRecentRecommendationFilter(t *testing.T) {
 
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if handleAStockRecommendationSnapshotTestEndpoint(w, r) {
+			return
+		}
 		if r.URL.Path == "/api/v1/a-stock/holdings/summary" {
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockInstitutionHoldingSummary{}})
 			return
@@ -2671,6 +2762,9 @@ func TestAStockContextFallsBackToLatestAuctionDictionary(t *testing.T) {
 	auctionQueries := make([]string, 0)
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if handleAStockRecommendationSnapshotTestEndpoint(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/api/v1/a-stock/holdings/summary":
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockInstitutionHoldingSummary{}})

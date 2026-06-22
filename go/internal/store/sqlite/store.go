@@ -554,6 +554,25 @@ CREATE TABLE IF NOT EXISTS a_stock_auction_amounts (
 	PRIMARY KEY (trade_date, code)
 );
 
+CREATE TABLE IF NOT EXISTS a_stock_recommendation_snapshots (
+	strategy_date TEXT NOT NULL,
+	period TEXT NOT NULL,
+	ignore_recent INTEGER NOT NULL DEFAULT 0,
+	recommendations_json TEXT NOT NULL DEFAULT '[]',
+	backtests_json TEXT NOT NULL DEFAULT '[]',
+	backtest_status TEXT NOT NULL DEFAULT '',
+	generated_count INTEGER NOT NULL DEFAULT 0,
+	recent_filtered INTEGER NOT NULL DEFAULT 0,
+	same_day_morning_filtered INTEGER NOT NULL DEFAULT 0,
+	market_candidate_status TEXT NOT NULL DEFAULT '',
+	market_candidate_count INTEGER NOT NULL DEFAULT 0,
+	auction_amount_label TEXT NOT NULL DEFAULT '',
+	empty_reason TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	PRIMARY KEY (strategy_date, period, ignore_recent)
+);
+
 CREATE TABLE IF NOT EXISTS task_runs (
 	id INTEGER PRIMARY KEY,
 	task_name TEXT NOT NULL,
@@ -617,6 +636,7 @@ CREATE INDEX IF NOT EXISTS idx_stock_holdings_type_period ON stock_institution_h
 CREATE INDEX IF NOT EXISTS idx_crawl_templates_enabled_updated ON crawl_templates(enabled, updated_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_a_stock_auction_date_amount ON a_stock_auction_amounts(trade_date DESC, auction_amount DESC);
 CREATE INDEX IF NOT EXISTS idx_a_stock_auction_code ON a_stock_auction_amounts(code);
+CREATE INDEX IF NOT EXISTS idx_a_stock_recommendations_updated ON a_stock_recommendation_snapshots(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_projects_group_id ON projects(group_id);
 CREATE INDEX IF NOT EXISTS idx_monitor_rules_project_id ON monitor_rules(project_id);
 CREATE INDEX IF NOT EXISTS idx_reports_project_id ON reports(project_id);

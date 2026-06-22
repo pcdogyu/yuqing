@@ -464,6 +464,25 @@ CREATE TABLE IF NOT EXISTS a_stock_auction_amounts (
 	PRIMARY KEY (trade_date, code)
 );
 
+CREATE TABLE IF NOT EXISTS a_stock_recommendation_snapshots (
+	strategy_date TEXT NOT NULL,
+	period TEXT NOT NULL,
+	ignore_recent INTEGER NOT NULL DEFAULT 0,
+	recommendations_json TEXT NOT NULL DEFAULT '[]',
+	backtests_json TEXT NOT NULL DEFAULT '[]',
+	backtest_status TEXT NOT NULL DEFAULT '',
+	generated_count INTEGER NOT NULL DEFAULT 0,
+	recent_filtered INTEGER NOT NULL DEFAULT 0,
+	same_day_morning_filtered INTEGER NOT NULL DEFAULT 0,
+	market_candidate_status TEXT NOT NULL DEFAULT '',
+	market_candidate_count INTEGER NOT NULL DEFAULT 0,
+	auction_amount_label TEXT NOT NULL DEFAULT '',
+	empty_reason TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	PRIMARY KEY (strategy_date, period, ignore_recent)
+);
+
 CREATE TABLE IF NOT EXISTS task_runs (
 	id BIGSERIAL PRIMARY KEY,
 	task_name TEXT NOT NULL,
@@ -542,6 +561,7 @@ CREATE INDEX IF NOT EXISTS idx_crypto_price_candles_lookup ON crypto_price_candl
 CREATE INDEX IF NOT EXISTS idx_crypto_insight_snapshots_expiry ON crypto_insight_snapshots(expires_at, pair);
 CREATE INDEX IF NOT EXISTS idx_a_stock_auction_date_amount ON a_stock_auction_amounts(trade_date DESC, auction_amount DESC);
 CREATE INDEX IF NOT EXISTS idx_a_stock_auction_code ON a_stock_auction_amounts(code);
+CREATE INDEX IF NOT EXISTS idx_a_stock_recommendations_updated ON a_stock_recommendation_snapshots(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_wechat_challenges_expires_at ON wechat_challenges(expires_at);
 CREATE INDEX IF NOT EXISTS idx_wechat_bindings_openid ON wechat_bindings(openid);
 CREATE INDEX IF NOT EXISTS idx_public_options_user_updated ON public_options(user_id, updatetime DESC, id DESC);
