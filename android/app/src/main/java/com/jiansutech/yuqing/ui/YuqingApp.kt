@@ -360,6 +360,8 @@ private fun AStockModule(state: YuqingUiState, viewModel: YuqingViewModel) {
 @Composable
 private fun AStockAuctionModule(result: AStockAuctionListResult, viewModel: YuqingViewModel) {
     var trendDays by remember { mutableStateOf(7) }
+    val storedCount = result.summaryCount.takeIf { it > 0 } ?: result.total
+    val completenessText = if (storedCount in 1 until 4000) "数据可能不全" else ""
     val shenzhenLeaders = result.items
         .filter { it.code.startsWith("0") || it.code.startsWith("3") }
         .sortedByDescending { it.auctionAmount }
@@ -372,11 +374,16 @@ private fun AStockAuctionModule(result: AStockAuctionListResult, viewModel: Yuqi
             SimpleRow(
                 "今日集合竞价 ${result.date.ifBlank { result.latestDate.ifBlank { "--" } }}",
                 listOf(
-                    "股票 ${result.total}",
+                    "入库 $storedCount",
+                    "本页 ${result.items.size}",
                     "总额 ${formatAuctionAmount(result.totalAmount)}",
+                    completenessText,
                     result.fetchedAt,
                 ).filter { it.isNotBlank() }.joinToString("  "),
             )
+        }
+        if (completenessText.isNotBlank()) {
+            item { SimpleRow("集合竞价数据可能不全", "当前交易日仅入库 $storedCount 只股票，正常全市场应为数千只；请重新抓取最新交易日或回补当日集合竞价。") }
         }
         item {
             TextButton(onClick = { viewModel.loadAStockAuction() }) {

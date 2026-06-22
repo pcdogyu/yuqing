@@ -256,7 +256,7 @@ data class AStockRecommendation(
 data class AStockAuctionListResult(
     val items: List<AStockAuctionAmount> = emptyList(),
     val page: Int = 1,
-    @SerialName("page_size") val pageSize: Int = 20,
+    @SerialName("page_size") val pageSize: Int = 6000,
     val total: Int = 0,
     val date: String = "",
     val keyword: String = "",

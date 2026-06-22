@@ -286,7 +286,7 @@ class YuqingViewModel(
             val requestedDate = date.ifBlank { LocalDate.now(ZoneId.of("Asia/Shanghai")).toString() }
             runCatching {
                 ApiFactory.yuqing(session.apiBaseUrl, session.token)
-                    .aStockAuction(date = requestedDate, page = 1, pageSize = 100)
+                    .aStockAuction(date = requestedDate, page = 1, pageSize = 6000)
                     .data ?: error("集合竞价数据为空")
             }.onSuccess { result ->
                 _uiState.update {

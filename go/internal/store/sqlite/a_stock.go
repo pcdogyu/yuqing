@@ -103,8 +103,8 @@ ON CONFLICT(trade_date, code) DO UPDATE SET
 func (s *Store) ListAStockAuctionAmounts(ctx context.Context, filter model.AStockAuctionFilter) (model.AStockAuctionListResult, error) {
 	filter.Page = max(filter.Page, 1)
 	filter.PageSize = max(filter.PageSize, 1)
-	if filter.PageSize > 200 {
-		filter.PageSize = 200
+	if filter.PageSize > 6000 {
+		filter.PageSize = 6000
 	}
 	result := model.AStockAuctionListResult{Page: filter.Page, PageSize: filter.PageSize, Keyword: strings.TrimSpace(filter.Keyword)}
 	dates, err := s.latestAStockAuctionDates(ctx, 7)
