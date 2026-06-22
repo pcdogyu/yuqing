@@ -1090,7 +1090,7 @@ func (s *Server) loadRecentAStockRecommendationCodesWithCache(strategyDate strin
 		date := day.AddDate(0, 0, -offset).Format("2006-01-02")
 		for _, period := range aStockPeriods() {
 			start, end := aStockWindow(date, period.Key)
-			items, err := s.loadAStockWindowArticles(start, end)
+			items, err := s.loadAStockWindowArticlesByPublishTime(start, end)
 			if err != nil || len(items) == 0 {
 				continue
 			}
@@ -1165,6 +1165,22 @@ func aStockHoldingScore(summary model.StockInstitutionHoldingSummary) int {
 }
 
 func (s *Server) loadAStockWindowArticles(start time.Time, end time.Time) ([]model.Item, error) {
+	filtered, err := s.loadAStockWindowArticlesByPublishTime(start, end)
+	if err != nil {
+		return nil, err
+	}
+	if len(filtered) > 0 {
+		return filtered, nil
+	}
+	fallbackResult := model.ItemListResult{}
+	fallbackQuery := "/api/v1/articles?page=1&page_size=200&time_field=captured_at&start=" + url.QueryEscape(start.UTC().Format(time.RFC3339)) + "&end=" + url.QueryEscape(end.UTC().Format(time.RFC3339))
+	if err := s.getJSON(s.cfg.ContentURL+fallbackQuery, &fallbackResult); err != nil {
+		return filtered, nil
+	}
+	return filterAStockNews(fallbackResult.Items), nil
+}
+
+func (s *Server) loadAStockWindowArticlesByPublishTime(start time.Time, end time.Time) ([]model.Item, error) {
 	result := model.ItemListResult{}
 	query := "/api/v1/articles?page=1&page_size=200&time_field=publish_time&start=" + url.QueryEscape(formatAStockPublishTime(start)) + "&end=" + url.QueryEscape(formatAStockPublishTime(end))
 	if err := s.getJSON(s.cfg.ContentURL+query, &result); err != nil {

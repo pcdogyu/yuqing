@@ -1231,6 +1231,10 @@ func TestAStockPageExplainsMorningNoNews(t *testing.T) {
 		if r.URL.Path != "/api/v1/articles" {
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
+		if r.URL.Query().Get("time_field") == "captured_at" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0}})
+			return
+		}
 		if r.URL.Query().Get("time_field") != "publish_time" {
 			t.Fatalf("unexpected A股 morning window query: %s", r.URL.RawQuery)
 		}
@@ -1407,6 +1411,10 @@ func TestAStockPageLoadsAfternoonWindow(t *testing.T) {
 		if r.URL.Path != "/api/v1/articles" {
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
+		if r.URL.Query().Get("time_field") == "captured_at" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0}})
+			return
+		}
 		if r.URL.Query().Get("time_field") != "publish_time" {
 			t.Fatalf("unexpected A股 afternoon window query: %s", r.URL.RawQuery)
 		}
@@ -1461,6 +1469,10 @@ func TestAStockPageOffersTodayNavigationAndAfterAlias(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path != "/api/v1/articles" {
 			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+		if r.URL.Query().Get("time_field") == "captured_at" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0}})
+			return
 		}
 		if r.URL.Query().Get("time_field") != "publish_time" {
 			t.Fatalf("expected after alias to use afternoon window, got query: %s", r.URL.RawQuery)
@@ -1629,6 +1641,60 @@ func setAStockYahooChartURLForTest(t *testing.T, rawURL string) {
 	})
 }
 
+func TestAStockWindowArticlesFallbackToCapturedAt(t *testing.T) {
+	var seenPublishQuery bool
+	var seenCapturedQuery bool
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/articles" {
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+		switch r.URL.Query().Get("time_field") {
+		case "publish_time":
+			seenPublishQuery = true
+			if r.URL.Query().Get("start") != "2026-06-22 09:30:00" || r.URL.Query().Get("end") != "2026-06-22 13:00:59" {
+				t.Fatalf("unexpected publish_time query: %s", r.URL.RawQuery)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0},
+			})
+		case "captured_at":
+			seenCapturedQuery = true
+			if r.URL.Query().Get("start") != "2026-06-22T01:30:00Z" || r.URL.Query().Get("end") != "2026-06-22T05:00:59Z" {
+				t.Fatalf("unexpected captured_at fallback query: %s", r.URL.RawQuery)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": model.ItemListResult{
+					Items: []model.Item{{
+						ID:         701,
+						SourceType: "flash",
+						Title:      "午间机器人板块活跃",
+						Summary:    "机器人产业链升温",
+						CapturedAt: time.Date(2026, 6, 22, 3, 15, 0, 0, time.UTC),
+					}},
+					Page: 1, PageSize: 200, Total: 1,
+				},
+			})
+		default:
+			t.Fatalf("unexpected article time_field: %s", r.URL.RawQuery)
+		}
+	}))
+	defer content.Close()
+
+	start, end := aStockWindow("2026-06-22", "afternoon")
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	items, err := srv.loadAStockWindowArticles(start, end)
+	if err != nil {
+		t.Fatalf("loadAStockWindowArticles error: %v", err)
+	}
+	if !seenPublishQuery || !seenCapturedQuery {
+		t.Fatalf("expected publish_time and captured_at queries, got publish=%v captured=%v", seenPublishQuery, seenCapturedQuery)
+	}
+	if len(items) != 1 || items[0].ID != 701 {
+		t.Fatalf("expected captured_at fallback item, got %+v", items)
+	}
+}
+
 func TestAStockNewsSectionSummarizesSources(t *testing.T) {
 	items := make([]model.Item, 0, 12)
 	for i := 1; i <= 12; i++ {
@@ -1648,6 +1714,10 @@ func TestAStockNewsSectionSummarizesSources(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path != "/api/v1/articles" {
 			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+		if r.URL.Query().Get("time_field") == "captured_at" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0}})
+			return
 		}
 		if r.URL.Query().Get("time_field") != "publish_time" {
 			t.Fatalf("unexpected A股 afternoon window query: %s", r.URL.RawQuery)
@@ -1762,6 +1832,10 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		}
 		if r.URL.Path != "/api/v1/articles" {
 			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+		if r.URL.Query().Get("time_field") == "captured_at" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0}})
+			return
 		}
 		if r.URL.Query().Get("time_field") != "publish_time" {
 			t.Fatalf("unexpected A股 window query: %s", r.URL.RawQuery)
