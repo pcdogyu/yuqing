@@ -1,6 +1,7 @@
 package com.jiansutech.yuqing.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -9,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -45,12 +47,16 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.jiansutech.yuqing.data.AndroidDashboard
 import com.jiansutech.yuqing.data.AndroidModule
+import com.jiansutech.yuqing.data.AStockAuctionAmount
+import com.jiansutech.yuqing.data.AStockAuctionListResult
 import com.jiansutech.yuqing.data.AStockRecommendation
 import com.jiansutech.yuqing.data.ArticleItem
 import com.jiansutech.yuqing.data.ItemListResult
@@ -74,9 +80,16 @@ fun YuqingApp(viewModel: YuqingViewModel) {
 @Composable
 private fun PortalScreen(state: YuqingUiState, viewModel: YuqingViewModel) {
     val modules = state.modules.ifEmpty { fallbackModules() }
-    val selected = modules.firstOrNull { it.key == state.selectedModuleKey } ?: modules.first()
+    val fallback = fallbackModules()
+    val selected = modules.firstOrNull { it.key == state.selectedModuleKey }
+        ?: fallback.firstOrNull { it.key == state.selectedModuleKey }
+        ?: modules.first()
+    val hideHeaderContent = selected.key == "dashboard" || selected.key == "search" || selected.key == "a_stock" || selected.key == "auction"
     Scaffold(
-        topBar = {
+        topBar = if (hideHeaderContent) {
+            {}
+        } else {
+            {
             TopAppBar(
                 title = {
                     Column {
@@ -88,11 +101,14 @@ private fun PortalScreen(state: YuqingUiState, viewModel: YuqingViewModel) {
                     IconButton(onClick = viewModel::refreshAll) { Icon(Icons.Default.Refresh, contentDescription = "刷新") }
                 },
             )
+            }
         },
         bottomBar = {
             NavigationBar {
-                listOf("dashboard", "articles", "search", "a_stock", "system").forEach { key ->
-                    val module = modules.firstOrNull { it.key == key } ?: AndroidModule(key = key, title = key)
+                listOf("dashboard", "articles", "a_stock", "auction", "system").forEach { key ->
+                    val module = modules.firstOrNull { it.key == key }
+                        ?: fallback.firstOrNull { it.key == key }
+                        ?: AndroidModule(key = key, title = key)
                     NavigationBarItem(
                         selected = selected.key == key,
                         onClick = { viewModel.selectModule(key) },
@@ -103,9 +119,16 @@ private fun PortalScreen(state: YuqingUiState, viewModel: YuqingViewModel) {
             }
         },
     ) { padding ->
-        Column(Modifier.padding(padding).fillMaxSize()) {
-            StatusMessages(state)
-            ModuleStrip(modules, selected.key, viewModel)
+        val contentModifier = if (hideHeaderContent) {
+            Modifier.padding(padding).fillMaxSize().statusBarsPadding()
+        } else {
+            Modifier.padding(padding).fillMaxSize()
+        }
+        Column(contentModifier) {
+            if (!hideHeaderContent) {
+                StatusMessages(state)
+                ModuleStrip(modules, selected.key, viewModel)
+            }
             if (state.loading) {
                 Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.Center) {
                     CircularProgressIndicator()
@@ -163,9 +186,10 @@ private fun ModuleContent(key: String, dashboard: AndroidDashboard?, state: Yuqi
         "projects" -> ProjectsModule(dashboard.projects, dashboard.rules)
         "articles" -> ArticlesModule(state.articleList ?: ItemListResult(), viewModel)
         "search" -> SearchModule(state, viewModel)
+        "auction" -> AStockAuctionModule(state.aStockAuction, viewModel)
         "analysis" -> AnalysisModule(dashboard)
         "reports" -> ReportsModule(dashboard.reports, viewModel)
-        "a_stock" -> AStockModule(state)
+        "a_stock" -> AStockModule(state, viewModel)
         "stock_research" -> StockResearchModule(dashboard.stockResearch.items, viewModel)
         "holdings" -> HoldingsModule(dashboard.holdings.items)
         "system" -> SystemModule(dashboard, state, viewModel)
@@ -282,28 +306,86 @@ private fun ReportsModule(reports: List<Report>, viewModel: YuqingViewModel) {
 }
 
 @Composable
-private fun AStockModule(state: YuqingUiState) {
+private fun AStockModule(state: YuqingUiState, viewModel: YuqingViewModel) {
     val window = state.aStockRecommendationWindow
-    val snapshot = state.aStockRecommendation
-    val recommendations = state.aStockRecommendations
+    val morningSnapshot = state.morningAStockRecommendation
+    val morningRecommendations = state.morningAStockRecommendations
+    val afternoonSnapshot = state.afternoonAStockRecommendation
+    val afternoonRecommendations = state.afternoonAStockRecommendations
     LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("日期选择", style = MaterialTheme.typography.labelMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = { viewModel.shiftAStockRecommendationDate(-1) }) {
+                        Text("前一日")
+                    }
+                    Text(window.date, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                    TextButton(onClick = viewModel::resetAStockRecommendationDate) {
+                        Text("今日")
+                    }
+                    TextButton(onClick = { viewModel.shiftAStockRecommendationDate(1) }) {
+                        Text("后一日")
+                    }
+                }
+            }
+        }
+        item {
             SimpleRow(
-                "当前推荐 ${snapshot?.strategyDate?.ifBlank { window.date } ?: window.date}",
+                "当日全部推荐 ${window.date}",
                 listOf(
-                    window.periodLabel,
-                    window.windowLabel,
-                    "股票 ${recommendations.size}",
-                    snapshot?.backtestStatus.orEmpty(),
+                    "上午 ${morningRecommendations.size}",
+                    "下午 ${afternoonRecommendations.size}",
+                    "合计 ${morningRecommendations.size + afternoonRecommendations.size}",
                 ).joinToString("  "),
             )
         }
-        if (snapshot == null || !snapshot.found) {
-            item { SimpleRow("暂无当前推荐", "${window.periodLabel} ${window.windowLabel} 暂未生成推荐股票") }
-        } else if (recommendations.isEmpty()) {
-            item { SimpleRow("暂无推荐股票", "${window.periodLabel} ${window.windowLabel} 没有可展示的推荐结果") }
+        item { SectionTitle("上午推荐") }
+        if (morningRecommendations.isEmpty()) {
+            item { SimpleRow("暂无上午推荐", morningSnapshot?.emptyReason.ifNullOrBlank("08:00-09:30 暂无推荐股票")) }
         }
-        items(recommendations) { AStockRecommendationRow(it) }
+        items(morningRecommendations) { AStockRecommendationRow(it) }
+        item { RecommendationSeparator() }
+        item { SectionTitle("下午推荐") }
+        if (afternoonRecommendations.isEmpty()) {
+            item { SimpleRow("暂无下午推荐", afternoonSnapshot?.emptyReason.ifNullOrBlank("09:30-13:00 暂无推荐股票")) }
+        }
+        items(afternoonRecommendations) { AStockRecommendationRow(it) }
+    }
+}
+
+@Composable
+private fun AStockAuctionModule(result: AStockAuctionListResult, viewModel: YuqingViewModel) {
+    val shenzhenLeaders = result.items
+        .filter { it.code.startsWith("0") || it.code.startsWith("3") }
+        .sortedByDescending { it.auctionAmount }
+        .take(2)
+    LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item {
+            SimpleRow(
+                "今日集合竞价 ${result.date.ifBlank { result.latestDate.ifBlank { "--" } }}",
+                listOf(
+                    "股票 ${result.total}",
+                    "总额 ${formatAuctionAmount(result.totalAmount)}",
+                    result.fetchedAt,
+                ).filter { it.isNotBlank() }.joinToString("  "),
+            )
+        }
+        item {
+            TextButton(onClick = { viewModel.loadAStockAuction() }) {
+                Text("刷新集合竞价")
+            }
+        }
+        item { SectionTitle("深市金额最高") }
+        if (shenzhenLeaders.isEmpty()) {
+            item { SimpleRow("暂无深市集合竞价数据", "请刷新或等待交易日数据写入") }
+        }
+        items(shenzhenLeaders) { AStockAuctionRow(it) }
+        item { SectionTitle("历史金额走势") }
+        item { AStockAuctionTrendChart(result) }
+        if (result.trend.isEmpty()) {
+            item { SimpleRow("暂无历史走势", "接口暂未返回历史集合竞价金额") }
+        }
     }
 }
 
@@ -440,6 +522,66 @@ private fun AStockRecommendationRow(item: AStockRecommendation) {
     )
 }
 
+@Composable
+private fun AStockAuctionRow(item: AStockAuctionAmount) {
+    SimpleRow(
+        "${item.code} ${item.name}",
+        listOf(
+            "价格 ${item.auctionPrice}",
+            "成交量 ${formatAuctionAmount(item.auctionVolume)}",
+            "成交额 ${formatAuctionAmount(item.auctionAmount)}",
+            item.status,
+        ).filter { it.isNotBlank() }.joinToString("  "),
+    )
+}
+
+@Composable
+private fun AStockAuctionTrendChart(result: AStockAuctionListResult) {
+    val trend = result.trend.filter { it.totalAmount > 0 }
+    if (trend.isEmpty()) {
+        return
+    }
+    val lineColor = MaterialTheme.colorScheme.primary
+    val gridColor = MaterialTheme.colorScheme.outlineVariant
+    val maxAmount = trend.maxOf { it.totalAmount }.coerceAtLeast(1.0)
+    Card {
+        Column(Modifier.fillMaxWidth().padding(12.dp)) {
+            Text("金额最高 ${formatAuctionAmount(maxAmount)}", style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.height(8.dp))
+            Canvas(Modifier.fillMaxWidth().height(150.dp)) {
+                val left = 8f
+                val right = size.width - 8f
+                val top = 10f
+                val bottom = size.height - 18f
+                repeat(4) { index ->
+                    val y = top + (bottom - top) * index / 3f
+                    drawLine(gridColor, Offset(left, y), Offset(right, y), strokeWidth = 1f)
+                }
+                val points = trend.mapIndexed { index, item ->
+                    val x = if (trend.size == 1) {
+                        (left + right) / 2f
+                    } else {
+                        left + (right - left) * index / (trend.size - 1).toFloat()
+                    }
+                    val y = bottom - ((item.totalAmount / maxAmount).toFloat() * (bottom - top))
+                    Offset(x, y)
+                }
+                points.zipWithNext().forEach { (start, end) ->
+                    drawLine(lineColor, start, end, strokeWidth = 5f, cap = StrokeCap.Round)
+                }
+                points.forEach { point ->
+                    drawCircle(lineColor, radius = 5f, center = point)
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(trend.first().date, style = MaterialTheme.typography.labelSmall)
+                Text(trend.last().date, style = MaterialTheme.typography.labelSmall)
+            }
+        }
+    }
+}
+
 private fun AndroidDashboard.recentTaskRunsForDisplay(): List<TaskRun> {
     return if (taskRuns.isNotEmpty()) taskRuns else operations.recentTaskRuns
 }
@@ -450,6 +592,15 @@ private fun cleanAStockRecommendationReason(value: String): String {
         .replace("集合竞价候选为空，", "")
         .replace("集合竞价", "行情")
         .trim { it.isWhitespace() || it == '；' || it == '，' }
+}
+
+private fun formatAuctionAmount(value: Double): String {
+    return when {
+        value >= 100_000_000 -> String.format("%.2f亿", value / 100_000_000)
+        value >= 10_000 -> String.format("%.2f万", value / 10_000)
+        value > 0 -> String.format("%.0f", value)
+        else -> "0"
+    }
 }
 
 @Composable
@@ -471,10 +622,23 @@ private fun SectionTitle(title: String) {
 }
 
 @Composable
+private fun RecommendationSeparator() {
+    val lineColor = MaterialTheme.colorScheme.outline
+    Canvas(Modifier.fillMaxWidth().height(20.dp)) {
+        val y = size.height / 2f
+        drawLine(lineColor, Offset(0f, y), Offset(size.width, y), strokeWidth = 2f, cap = StrokeCap.Round)
+    }
+}
+
+@Composable
 private fun EmptyState(text: String) {
     Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
         Text(text)
     }
+}
+
+private fun String?.ifNullOrBlank(fallback: String): String {
+    return if (isNullOrBlank()) fallback else this
 }
 
 private fun fallbackModules(): List<AndroidModule> = listOf(
@@ -485,6 +649,7 @@ private fun fallbackModules(): List<AndroidModule> = listOf(
     AndroidModule("analysis", "分析", "", "analysis", "public_opinion"),
     AndroidModule("reports", "报告", "", "reports", "public_opinion"),
     AndroidModule("a_stock", "A股", "", "a-stock", "finance"),
+    AndroidModule("auction", "集合", "", "a-stock/auction", "finance"),
     AndroidModule("stock_research", "研报", "", "stock-research", "finance"),
     AndroidModule("holdings", "持仓", "", "holdings", "finance"),
     AndroidModule("system", "系统", "", "system", "admin"),
@@ -498,6 +663,7 @@ private fun moduleIcon(key: String): ImageVector = when (key) {
     "analysis" -> Icons.Default.Assessment
     "reports" -> Icons.Default.Description
     "a_stock" -> Icons.Default.ShowChart
+    "auction" -> Icons.Default.Assessment
     "stock_research" -> Icons.Default.ShowChart
     "holdings" -> Icons.Default.Groups
     else -> Icons.Default.Settings
