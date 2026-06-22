@@ -176,6 +176,9 @@ const (
 	aStockNewsPageSize            = 10
 	aStockRecentLookbackDays      = 5
 	aStockMarketCandidateLimit    = 5000
+	aStockRecommendationLimit     = 12
+	aStockReplacementPoolLimit    = 36
+	aStockReplacementPerHotspot   = 12
 	aStockMarketRankScoreBase     = 200
 	aStockStocksPerHotspot        = 3
 )
@@ -906,13 +909,22 @@ func (s *Server) loadAStockContextWithCache(strategyDate string, periodKey strin
 			return ctx
 		}
 	}
+	recommendationTarget := 0
 	if len(ctx.Hotspots) > 0 {
 		candidates, candidateStatus, auctionResult := s.loadAStockMarketCandidatesWithStatus(strategyDate)
 		ctx.MarketCandidateStatus = candidateStatus
 		ctx.MarketCandidateCount = len(candidates)
 		ctx.AuctionAmountLabel = formatAStockAuctionSummaryAmount(auctionResult)
-		ctx.Recommendations = buildAStockSnapshotRecommendations(strategyDate, period.Key, ctx.Articles, candidates)
-		ctx.GeneratedRecommendationCount = len(ctx.Recommendations)
+		baseRecommendations := buildAStockSnapshotRecommendations(strategyDate, period.Key, ctx.Articles, candidates)
+		recommendationTarget = len(baseRecommendations)
+		ctx.GeneratedRecommendationCount = recommendationTarget
+		ctx.Recommendations = baseRecommendations
+		if ctx.LimitUpFilterEnabled && recommendationTarget > 0 {
+			replacementPool := buildAStockSnapshotRecommendationsWithLimit(strategyDate, period.Key, ctx.Articles, candidates, aStockReplacementPoolLimit, aStockReplacementPerHotspot)
+			if len(replacementPool) > len(ctx.Recommendations) {
+				ctx.Recommendations = replacementPool
+			}
+		}
 		if period.Key == "afternoon" && len(ctx.Recommendations) > 0 {
 			morningCodes := s.loadSameDayMorningAStockRecommendationCodes(strategyDate, candidates)
 			ctx.Recommendations, ctx.SameDayMorningFiltered = filterAStockRecommendationsByCodes(ctx.Recommendations, morningCodes)
@@ -923,7 +935,7 @@ func (s *Server) loadAStockContextWithCache(strategyDate string, periodKey strin
 		ctx.Recommendations, ctx.RecentFiltered = filterRecentAStockRecommendations(ctx.Recommendations, recentCodes)
 	}
 	ctx.Recommendations = s.applyAStockHoldingSummaries(ctx.Recommendations)
-	ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus, ctx.LimitUpFiltered = s.loadAStockMarketView(strategyDate, ctx.Recommendations, ctx.LimitUpFilterEnabled)
+	ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus, ctx.LimitUpFiltered = s.loadAStockMarketView(strategyDate, ctx.Recommendations, ctx.LimitUpFilterEnabled, recommendationTarget)
 	ctx.EmptyReason = aStockRecommendationEmptyReason(ctx)
 	if err := s.saveAStockRecommendationSnapshot(ctx); err != nil {
 		if ctx.LoadMessage == "" {
@@ -958,6 +970,9 @@ func (s *Server) applyAStockRecommendationSnapshot(ctx *aStockContext) bool {
 	}
 	var backtests []aStockBacktestRow
 	if err := json.Unmarshal([]byte(nonEmpty(snapshot.BacktestsJSON, "[]")), &backtests); err != nil {
+		return false
+	}
+	if ctx.Period == "afternoon" && !isFreshAStockLimitUpReplacementSnapshot(snapshot, recommendations) {
 		return false
 	}
 	ctx.Recommendations = recommendations
@@ -1576,7 +1591,21 @@ func rerankAStockRecommendations(recommendations []aStockRecommendation) []aStoc
 	return recommendations
 }
 
-func (s *Server) loadAStockMarketView(strategyDate string, recommendations []aStockRecommendation, filterLimitUp bool) ([]aStockRecommendation, []aStockBacktestRow, string, int) {
+func isFreshAStockLimitUpReplacementSnapshot(snapshot model.AStockRecommendationSnapshot, recommendations []aStockRecommendation) bool {
+	if !snapshot.LimitUpFilterEnabled || snapshot.LimitUpFiltered == 0 {
+		return true
+	}
+	status := strings.TrimSpace(snapshot.BacktestStatus)
+	if !strings.Contains(status, "过滤涨停股票") && !strings.Contains(status, "涨停过滤后无推荐股票") {
+		return true
+	}
+	if strings.Contains(status, "已按热度递补") || strings.Contains(status, "候选不足未补满") {
+		return true
+	}
+	return len(recommendations) >= snapshot.GeneratedCount
+}
+
+func (s *Server) loadAStockMarketView(strategyDate string, recommendations []aStockRecommendation, filterLimitUp bool, maxRecommendations int) ([]aStockRecommendation, []aStockBacktestRow, string, int) {
 	recommendations = initializeAStockRecommendationMarket(recommendations)
 	if len(recommendations) == 0 {
 		return recommendations, nil, "无推荐股票", 0
@@ -1590,7 +1619,7 @@ func (s *Server) loadAStockMarketView(strategyDate string, recommendations []aSt
 	if err != nil {
 		return recommendations, buildAStockBacktestRows(strategyDate, recommendations, nil), "行情读取失败", 0
 	}
-	return applyAStockMarketBars(strategyDate, recommendations, bars, filterLimitUp)
+	return applyAStockMarketBars(strategyDate, recommendations, bars, filterLimitUp, maxRecommendations)
 }
 
 func (s *Server) loadAStockMarketBars(strategyDate string, codes []string, endpoint string) ([]aStockMarketBar, error) {
@@ -1808,7 +1837,7 @@ func initializeAStockRecommendationMarket(recommendations []aStockRecommendation
 	return recommendations
 }
 
-func applyAStockMarketBars(strategyDate string, recommendations []aStockRecommendation, bars []aStockMarketBar, filterLimitUp bool) ([]aStockRecommendation, []aStockBacktestRow, string, int) {
+func applyAStockMarketBars(strategyDate string, recommendations []aStockRecommendation, bars []aStockMarketBar, filterLimitUp bool, maxRecommendations int) ([]aStockRecommendation, []aStockBacktestRow, string, int) {
 	byCode := groupAStockMarketBars(bars)
 	withPrev := 0
 	sectorPenalties := make(map[string]int)
@@ -1883,6 +1912,13 @@ func applyAStockMarketBars(strategyDate string, recommendations []aStockRecommen
 	for i := range recommendations {
 		recommendations[i].Rank = i + 1
 	}
+	preLimitCount := len(recommendations)
+	if maxRecommendations > 0 && len(recommendations) > maxRecommendations {
+		recommendations = recommendations[:maxRecommendations]
+	}
+	for i := range recommendations {
+		recommendations[i].Rank = i + 1
+	}
 	rows := buildAStockBacktestRows(strategyDate, recommendations, byCode)
 	completed := 0
 	for _, row := range rows {
@@ -1910,6 +1946,13 @@ func applyAStockMarketBars(strategyDate string, recommendations []aStockRecommen
 		status = fmt.Sprintf("无当日行情可推荐，过滤无当日行情股票 %d", noEntryPriceCount)
 		if filteredCount > 0 {
 			status = fmt.Sprintf("%s，过滤回撤股票 %d", status, filteredCount)
+		}
+	}
+	if filterLimitUp && limitUpFilteredCount > 0 && maxRecommendations > 0 {
+		if preLimitCount >= maxRecommendations {
+			status = fmt.Sprintf("%s，已按热度递补", status)
+		} else {
+			status = fmt.Sprintf("%s，候选不足未补满", status)
 		}
 	}
 	if withPrev == 0 && completed == 0 && filteredCount == 0 && limitUpFilteredCount == 0 && noEntryPriceCount == 0 {
@@ -2748,6 +2791,10 @@ func buildAStockHotspots(items []model.Item) []aStockHotspot {
 }
 
 func buildAStockRecommendations(hotspots []aStockHotspot, candidates []aStockMarketCandidate) []aStockRecommendation {
+	return buildAStockRecommendationsWithLimit(hotspots, candidates, aStockRecommendationLimit, aStockStocksPerHotspot)
+}
+
+func buildAStockRecommendationsWithLimit(hotspots []aStockHotspot, candidates []aStockMarketCandidate, maxRecommendations int, maxPerHotspot int) []aStockRecommendation {
 	if len(candidates) == 0 {
 		candidates = newsDerivedAStockMarketCandidates(hotspots)
 		if len(candidates) == 0 {
@@ -2756,6 +2803,12 @@ func buildAStockRecommendations(hotspots []aStockHotspot, candidates []aStockMar
 	}
 	if len(hotspots) > 3 {
 		hotspots = hotspots[:3]
+	}
+	if maxRecommendations <= 0 {
+		maxRecommendations = aStockRecommendationLimit
+	}
+	if maxPerHotspot <= 0 {
+		maxPerHotspot = aStockStocksPerHotspot
 	}
 	recommendations := make([]aStockRecommendation, 0)
 	seen := make(map[string]struct{})
@@ -2805,11 +2858,11 @@ func buildAStockRecommendations(hotspots []aStockHotspot, candidates []aStockMar
 				Reason:       reason,
 			})
 			picked++
-			if picked >= aStockStocksPerHotspot || len(recommendations) >= 12 {
+			if picked >= maxPerHotspot || len(recommendations) >= maxRecommendations {
 				break
 			}
 		}
-		if len(recommendations) >= 12 {
+		if len(recommendations) >= maxRecommendations {
 			return recommendations
 		}
 	}
@@ -2823,9 +2876,13 @@ type aStockRecommendationSnapshot struct {
 }
 
 func buildAStockSnapshotRecommendations(strategyDate string, periodKey string, articles []model.Item, candidates []aStockMarketCandidate) []aStockRecommendation {
+	return buildAStockSnapshotRecommendationsWithLimit(strategyDate, periodKey, articles, candidates, aStockRecommendationLimit, aStockStocksPerHotspot)
+}
+
+func buildAStockSnapshotRecommendationsWithLimit(strategyDate string, periodKey string, articles []model.Item, candidates []aStockMarketCandidate, maxRecommendations int, maxPerHotspot int) []aStockRecommendation {
 	snapshots := aStockRecommendationSnapshots(strategyDate, periodKey)
 	if len(snapshots) == 0 {
-		return buildAStockRecommendations(buildAStockHotspots(articles), candidates)
+		return buildAStockRecommendationsWithLimit(buildAStockHotspots(articles), candidates, maxRecommendations, maxPerHotspot)
 	}
 	combined := make([]aStockRecommendation, 0)
 	seen := make(map[string]struct{})
@@ -2834,7 +2891,7 @@ func buildAStockSnapshotRecommendations(strategyDate string, periodKey string, a
 		if len(snapshotArticles) == 0 {
 			continue
 		}
-		for _, rec := range buildAStockRecommendations(buildAStockHotspots(snapshotArticles), candidates) {
+		for _, rec := range buildAStockRecommendationsWithLimit(buildAStockHotspots(snapshotArticles), candidates, maxRecommendations, maxPerHotspot) {
 			code := normalizeAStockCode(rec.Code)
 			if code == "" {
 				continue
@@ -2849,10 +2906,13 @@ func buildAStockSnapshotRecommendations(strategyDate string, periodKey string, a
 				rec.Reason = rec.Reason + "，生成点 " + snapshot.Label
 			}
 			combined = append(combined, rec)
+			if maxRecommendations > 0 && len(combined) >= maxRecommendations {
+				return combined
+			}
 		}
 	}
 	if len(combined) == 0 && len(articles) > 0 {
-		return buildAStockRecommendations(buildAStockHotspots(articles), candidates)
+		return buildAStockRecommendationsWithLimit(buildAStockHotspots(articles), candidates, maxRecommendations, maxPerHotspot)
 	}
 	return combined
 }

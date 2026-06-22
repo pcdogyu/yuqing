@@ -2555,7 +2555,7 @@ func TestAStockMarketViewFiltersDeepDrawdownsAndPenalizesSector(t *testing.T) {
 		{Code: "000004", Date: "2026-06-15", Close: 98, Pct: 2},
 	}
 
-	filtered, rows, status, _ := applyAStockMarketBars("2026-06-16", recommendations, bars, false)
+	filtered, rows, status, _ := applyAStockMarketBars("2026-06-16", recommendations, bars, false, 0)
 
 	if len(filtered) != 2 {
 		t.Fatalf("expected one deep-drawdown recommendation to be filtered, got %+v", filtered)
@@ -2609,7 +2609,7 @@ func TestAStockMarketViewFiltersLimitUpStocksForAfternoon(t *testing.T) {
 		{Code: "000001", Date: "2026-06-22", Open: 12.3, Close: 12.5, Pct: 1.63},
 	}
 
-	filtered, rows, status, limitUpFiltered := applyAStockMarketBars("2026-06-22", recommendations, bars, true)
+	filtered, rows, status, limitUpFiltered := applyAStockMarketBars("2026-06-22", recommendations, bars, true, 0)
 
 	if limitUpFiltered != 3 {
 		t.Fatalf("expected three limit-up stocks filtered, got %d status=%q recommendations=%+v", limitUpFiltered, status, filtered)
@@ -2622,6 +2622,37 @@ func TestAStockMarketViewFiltersLimitUpStocksForAfternoon(t *testing.T) {
 	}
 	if !strings.Contains(status, "过滤涨停股票 3") {
 		t.Fatalf("expected status to mention limit-up filter, got %q", status)
+	}
+}
+
+func TestAStockMarketViewBackfillsLimitUpStocksByHeat(t *testing.T) {
+	recommendations := initializeAStockRecommendationMarket([]aStockRecommendation{
+		{Rank: 1, Hotspot: "黄金有色", Code: "600172", Name: "黄河旋风", HotspotScore: 90, MarketScore: 90, Reason: "热度分 90"},
+		{Rank: 2, Hotspot: "黄金有色", Code: "000001", Name: "平安银行", HotspotScore: 85, MarketScore: 85, Reason: "热度分 85"},
+		{Rank: 3, Hotspot: "黄金有色", Code: "000002", Name: "万科A", HotspotScore: 84, MarketScore: 84, Reason: "热度分 84"},
+		{Rank: 4, Hotspot: "黄金有色", Code: "000003", Name: "国华网安", HotspotScore: 83, MarketScore: 83, Reason: "热度分 83"},
+	})
+	bars := []aStockMarketBar{
+		{Code: "600172", Date: "2026-06-22", Open: 15.41, Close: 15.41, Pct: 9.99},
+		{Code: "000001", Date: "2026-06-22", Open: 12.3, Close: 12.5, Pct: 1.63},
+		{Code: "000002", Date: "2026-06-22", Open: 8.2, Close: 8.4, Pct: 2.44},
+		{Code: "000003", Date: "2026-06-22", Open: 9.1, Close: 9.2, Pct: 1.1},
+	}
+
+	filtered, rows, status, limitUpFiltered := applyAStockMarketBars("2026-06-22", recommendations, bars, true, 3)
+
+	if limitUpFiltered != 1 {
+		t.Fatalf("expected one limit-up stock filtered, got %d status=%q", limitUpFiltered, status)
+	}
+	if len(filtered) != 3 || len(rows) != 3 {
+		t.Fatalf("expected next hot stock to backfill to target size, got recommendations=%+v rows=%+v", filtered, rows)
+	}
+	gotCodes := []string{filtered[0].Code, filtered[1].Code, filtered[2].Code}
+	if strings.Join(gotCodes, ",") != "000001,000002,000003" {
+		t.Fatalf("expected non-limit-up stocks to fill by heat order, got %+v", filtered)
+	}
+	if !strings.Contains(status, "过滤涨停股票 1") || !strings.Contains(status, "已按热度递补") {
+		t.Fatalf("expected status to mention limit-up replacement, got %q", status)
 	}
 }
 
