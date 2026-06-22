@@ -209,7 +209,48 @@ data class SchedulerJob(
 )
 
 @Serializable
-data class AStockDashboard(val auction: AStockAuctionListResult = AStockAuctionListResult())
+data class AStockDashboard(
+    val auction: AStockAuctionListResult = AStockAuctionListResult(),
+    val recommendation: AStockRecommendationSnapshot = AStockRecommendationSnapshot(),
+)
+
+@Serializable
+data class AStockRecommendationSnapshot(
+    val found: Boolean = false,
+    @SerialName("strategy_date") val strategyDate: String = "",
+    val period: String = "",
+    @SerialName("ignore_recent") val ignoreRecent: Boolean = false,
+    @SerialName("recommendations_json") val recommendationsJson: String = "[]",
+    @SerialName("backtest_status") val backtestStatus: String = "",
+    @SerialName("generated_count") val generatedCount: Int = 0,
+    @SerialName("recent_filtered") val recentFiltered: Int = 0,
+    @SerialName("same_day_morning_filtered") val sameDayMorningFiltered: Int = 0,
+    @SerialName("limit_up_filter_enabled") val limitUpFilterEnabled: Boolean = false,
+    @SerialName("limit_up_filtered") val limitUpFiltered: Int = 0,
+    @SerialName("market_candidate_status") val marketCandidateStatus: String = "",
+    @SerialName("market_candidate_count") val marketCandidateCount: Int = 0,
+    @SerialName("empty_reason") val emptyReason: String = "",
+    @SerialName("updated_at") val updatedAt: String = "",
+)
+
+@Serializable
+data class AStockRecommendation(
+    @SerialName("Rank") val rank: Int = 0,
+    @SerialName("Hotspot") val hotspot: String = "",
+    @SerialName("Code") val code: String = "",
+    @SerialName("Name") val name: String = "",
+    @SerialName("HotspotScore") val hotspotScore: Int = 0,
+    @SerialName("MarketScore") val marketScore: Int = 0,
+    @SerialName("PrevClose") val prevClose: String = "",
+    @SerialName("PrevPct") val prevPct: String = "",
+    @SerialName("Change30") val change30: String = "",
+    @SerialName("Change60") val change60: String = "",
+    @SerialName("CurrentPrice") val currentPrice: String = "",
+    @SerialName("TodayPct") val todayPct: String = "",
+    @SerialName("HoldingSummary") val holdingSummary: String = "",
+    @SerialName("HoldingRatio") val holdingRatio: String = "",
+    @SerialName("Reason") val reason: String = "",
+)
 
 @Serializable
 data class AStockAuctionListResult(

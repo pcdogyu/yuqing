@@ -51,8 +51,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.jiansutech.yuqing.data.AndroidDashboard
 import com.jiansutech.yuqing.data.AndroidModule
-import com.jiansutech.yuqing.data.AStockAuctionAmount
-import com.jiansutech.yuqing.data.AStockAuctionListResult
+import com.jiansutech.yuqing.data.AStockRecommendation
 import com.jiansutech.yuqing.data.ArticleItem
 import com.jiansutech.yuqing.data.ItemListResult
 import com.jiansutech.yuqing.data.Project
@@ -166,7 +165,7 @@ private fun ModuleContent(key: String, dashboard: AndroidDashboard?, state: Yuqi
         "search" -> SearchModule(state, viewModel)
         "analysis" -> AnalysisModule(dashboard)
         "reports" -> ReportsModule(dashboard.reports, viewModel)
-        "a_stock" -> AStockModule(state.aStockAuction ?: dashboard.aStock.auction, state, viewModel)
+        "a_stock" -> AStockModule(state)
         "stock_research" -> StockResearchModule(dashboard.stockResearch.items, viewModel)
         "holdings" -> HoldingsModule(dashboard.holdings.items)
         "system" -> SystemModule(dashboard, state, viewModel)
@@ -283,74 +282,28 @@ private fun ReportsModule(reports: List<Report>, viewModel: YuqingViewModel) {
 }
 
 @Composable
-private fun AStockModule(auction: AStockAuctionListResult, state: YuqingUiState, viewModel: YuqingViewModel) {
-    val dates = auction.dates
-    val currentDate = state.aStockAuctionDate.ifBlank { auction.date.ifBlank { auction.latestDate } }
-    val currentIndex = dates.indexOf(currentDate)
-    val canGoNewer = currentIndex > 0
-    val canGoOlder = currentIndex >= 0 && currentIndex < dates.lastIndex
+private fun AStockModule(state: YuqingUiState) {
+    val window = state.aStockRecommendationWindow
+    val snapshot = state.aStockRecommendation
+    val recommendations = state.aStockRecommendations
     LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                Button(onClick = { viewModel.requestAction("a_stock_auction_latest", "抓取最新集合竞价") }) { Text("抓取最新") }
-                Button(onClick = { viewModel.requestAction("a_stock_auction_backfill", "回补集合竞价", mapOf("days" to "30")) }) { Text("回补") }
-            }
-        }
-        item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(
-                    value = currentDate,
-                    onValueChange = viewModel::updateAStockAuctionDate,
-                    label = { Text("交易日期") },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true,
-                )
-                Spacer(Modifier.width(8.dp))
-                Button(onClick = { viewModel.loadAStockAuction(currentDate) }) { Text("查询") }
-            }
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                Button(
-                    onClick = { viewModel.selectAdjacentAStockAuctionDate(1) },
-                    enabled = canGoOlder,
-                    modifier = Modifier.weight(1f),
-                ) { Text("前一日") }
-                Button(
-                    onClick = { viewModel.selectAdjacentAStockAuctionDate(-1) },
-                    enabled = canGoNewer,
-                    modifier = Modifier.weight(1f),
-                ) { Text("后一日") }
-            }
-        }
-        item {
             SimpleRow(
-                "集合竞价 ${auction.date.ifBlank { currentDate }}",
+                "当前推荐 ${snapshot?.strategyDate?.ifBlank { window.date } ?: window.date}",
                 listOf(
-                    "股票 ${auction.summaryCount.ifZero(auction.total)}",
-                    "总金额 ${formatAStockMoney(auction.totalAmount)}",
-                    "最新 ${auction.latestDate.ifBlank { "--" }}",
+                    window.periodLabel,
+                    window.windowLabel,
+                    "股票 ${recommendations.size}",
+                    snapshot?.backtestStatus.orEmpty(),
                 ).joinToString("  "),
             )
         }
-        auction.maxItem?.let { maxItem ->
-            item {
-                SimpleRow(
-                    "最大成交额 ${maxItem.code} ${maxItem.name}",
-                    "金额 ${formatAStockMoney(maxItem.auctionAmount)}  价格 ${formatAStockNumber(maxItem.auctionPrice)}  成交量 ${formatAStockVolume(maxItem.auctionVolume)}",
-                )
-            }
+        if (snapshot == null || !snapshot.found) {
+            item { SimpleRow("暂无当前推荐", "${window.periodLabel} ${window.windowLabel} 暂未生成推荐股票") }
+        } else if (recommendations.isEmpty()) {
+            item { SimpleRow("暂无推荐股票", "${window.periodLabel} ${window.windowLabel} 没有可展示的推荐结果") }
         }
-        item {
-            SimpleRow(
-                "更新时间",
-                auction.fetchedAt.ifBlank { auction.items.firstOrNull()?.fetchedAt.orEmpty() }.ifBlank { "--" },
-            )
-        }
-        if (auction.items.isEmpty()) {
-            item { SimpleRow("暂无集合竞价数据", "可切换日期或先执行抓取/回补") }
-        }
-        items(auction.items) { AStockAuctionRow(it) }
+        items(recommendations) { AStockRecommendationRow(it) }
     }
 }
 
@@ -473,15 +426,16 @@ private fun ArticleRow(item: ArticleItem) {
 }
 
 @Composable
-private fun AStockAuctionRow(item: AStockAuctionAmount) {
+private fun AStockRecommendationRow(item: AStockRecommendation) {
     SimpleRow(
-        "${item.code} ${item.name}",
+        "#${item.rank.coerceAtLeast(1)} ${item.code} ${item.name}",
         listOf(
-            "价格 ${formatAStockNumber(item.auctionPrice)}",
-            "成交量 ${formatAStockVolume(item.auctionVolume)}",
-            "金额 ${formatAStockMoney(item.auctionAmount)}",
-            item.status,
-            item.source,
+            "热点 ${item.hotspot.ifBlank { "--" }}",
+            "综合分 ${item.marketScore}",
+            "现价 ${item.currentPrice.ifBlank { "--" }}",
+            "今日 ${item.todayPct.ifBlank { "--" }}",
+            "机构 ${item.holdingSummary.ifBlank { "--" }}",
+            cleanAStockRecommendationReason(item.reason),
         ).filter { it.isNotBlank() }.joinToString("  "),
     )
 }
@@ -490,30 +444,12 @@ private fun AndroidDashboard.recentTaskRunsForDisplay(): List<TaskRun> {
     return if (taskRuns.isNotEmpty()) taskRuns else operations.recentTaskRuns
 }
 
-private fun Int.ifZero(fallback: Int): Int {
-    return if (this == 0) fallback else this
-}
-
-private fun formatAStockNumber(value: Double): String {
-    return if (value == 0.0) "--" else "%.2f".format(value)
-}
-
-private fun formatAStockVolume(value: Double): String {
-    return when {
-        value >= 100000000 -> "%.2f亿".format(value / 100000000)
-        value >= 10000 -> "%.2f万".format(value / 10000)
-        value > 0 -> "%.0f".format(value)
-        else -> "--"
-    }
-}
-
-private fun formatAStockMoney(value: Double): String {
-    return when {
-        value >= 100000000 -> "%.2f亿".format(value / 100000000)
-        value >= 10000 -> "%.2f万".format(value / 10000)
-        value > 0 -> "%.2f".format(value)
-        else -> "--"
-    }
+private fun cleanAStockRecommendationReason(value: String): String {
+    return value
+        .replace("；集合竞价候选为空，", "；")
+        .replace("集合竞价候选为空，", "")
+        .replace("集合竞价", "行情")
+        .trim { it.isWhitespace() || it == '；' || it == '，' }
 }
 
 @Composable

@@ -6,7 +6,8 @@ import androidx.lifecycle.viewModelScope
 import com.jiansutech.yuqing.data.AndroidActionRequest
 import com.jiansutech.yuqing.data.AndroidDashboard
 import com.jiansutech.yuqing.data.AndroidModule
-import com.jiansutech.yuqing.data.AStockAuctionListResult
+import com.jiansutech.yuqing.data.AStockRecommendation
+import com.jiansutech.yuqing.data.AStockRecommendationSnapshot
 import com.jiansutech.yuqing.data.ApiFactory
 import com.jiansutech.yuqing.data.DashboardCacheDao
 import com.jiansutech.yuqing.data.DashboardCacheEntity
@@ -21,11 +22,21 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
+import java.time.LocalDate
+import java.time.LocalTime
+import java.time.ZoneId
 
 data class PendingAction(
     val action: String,
     val title: String,
     val params: Map<String, String> = emptyMap(),
+)
+
+data class AStockRecommendationWindow(
+    val date: String,
+    val period: String,
+    val periodLabel: String,
+    val windowLabel: String,
 )
 
 data class YuqingUiState(
@@ -37,8 +48,9 @@ data class YuqingUiState(
     val selectedModuleKey: String = "dashboard",
     val dashboard: AndroidDashboard? = null,
     val articleList: ItemListResult? = null,
-    val aStockAuction: AStockAuctionListResult? = null,
-    val aStockAuctionDate: String = "",
+    val aStockRecommendation: AStockRecommendationSnapshot? = null,
+    val aStockRecommendations: List<AStockRecommendation> = emptyList(),
+    val aStockRecommendationWindow: AStockRecommendationWindow = currentAStockRecommendationWindow(),
     val searchKeyword: String = "",
     val searchResult: SearchResult? = null,
     val pendingAction: PendingAction? = null,
@@ -61,8 +73,8 @@ class YuqingViewModel(
                     _uiState.update {
                         it.copy(
                             dashboard = dashboard,
-                            aStockAuction = dashboard.aStock.auction,
-                            aStockAuctionDate = dashboard.aStock.auction.displayDate(),
+                            aStockRecommendation = dashboard.aStock.recommendation.takeIf { snapshot -> snapshot.found },
+                            aStockRecommendations = parseAStockRecommendations(dashboard.aStock.recommendation.recommendationsJson),
                         )
                     }
                 }
@@ -83,17 +95,13 @@ class YuqingViewModel(
         if (key == "articles") {
             loadArticles(1)
         }
-        if (key == "a_stock" && _uiState.value.aStockAuction == null) {
-            loadAStockAuction(_uiState.value.dashboard?.aStock?.auction?.displayDate().orEmpty())
+        if (key == "a_stock" && _uiState.value.aStockRecommendation == null) {
+            loadAStockRecommendations()
         }
     }
 
     fun updateSearchKeyword(value: String) {
         _uiState.update { it.copy(searchKeyword = value) }
-    }
-
-    fun updateAStockAuctionDate(value: String) {
-        _uiState.update { it.copy(aStockAuctionDate = value) }
     }
 
     fun refreshAll() {
@@ -115,8 +123,8 @@ class YuqingViewModel(
                         modules = bootstrap?.modules.orEmpty(),
                         dashboard = dashboard,
                         articleList = if (it.selectedModuleKey == "articles") it.articleList else null,
-                        aStockAuction = dashboard.aStock.auction,
-                        aStockAuctionDate = dashboard.aStock.auction.displayDate(),
+                        aStockRecommendation = dashboard.aStock.recommendation.takeIf { snapshot -> snapshot.found },
+                        aStockRecommendations = parseAStockRecommendations(dashboard.aStock.recommendation.recommendationsJson),
                         message = "数据已刷新",
                     )
                 }
@@ -126,6 +134,9 @@ class YuqingViewModel(
             _uiState.update { it.copy(loading = false) }
             if (_uiState.value.selectedModuleKey == "articles") {
                 loadArticles(1)
+            }
+            if (_uiState.value.selectedModuleKey == "a_stock") {
+                loadAStockRecommendations()
             }
         }
     }
@@ -165,38 +176,32 @@ class YuqingViewModel(
         }
     }
 
-    fun loadAStockAuction(date: String = _uiState.value.aStockAuctionDate) {
+    fun loadAStockRecommendations(window: AStockRecommendationWindow = currentAStockRecommendationWindow()) {
         viewModelScope.launch {
             _uiState.update { it.copy(loading = true, error = "", message = "") }
             val session = sessionStore.state.first()
-            val requestedDate = date.trim()
             runCatching {
                 val result = ApiFactory.yuqing(session.apiBaseUrl, session.token)
-                    .aStockAuction(date = requestedDate, page = 1, pageSize = 20)
-                    .data ?: error("集合竞价数据为空")
+                    .aStockRecommendations(date = window.date, period = window.period)
+                    .data ?: error("推荐股票数据为空")
+                val recommendations = parseAStockRecommendations(result.recommendationsJson)
+                val resultWindow = aStockRecommendationWindow(
+                    date = result.strategyDate.ifBlank { window.date },
+                    period = result.period.ifBlank { window.period },
+                )
                 _uiState.update {
                     it.copy(
-                        aStockAuction = result,
-                        aStockAuctionDate = result.displayDate().ifBlank { requestedDate },
-                        message = "集合竞价已加载",
+                        aStockRecommendation = result,
+                        aStockRecommendations = recommendations,
+                        aStockRecommendationWindow = resultWindow,
+                        message = if (recommendations.isEmpty()) "当前推荐暂无股票" else "推荐股票已加载",
                     )
                 }
             }.onFailure { throwable ->
-                _uiState.update { it.copy(error = throwable.message ?: "集合竞价加载失败") }
+                _uiState.update { it.copy(error = throwable.message ?: "推荐股票加载失败") }
             }
             _uiState.update { it.copy(loading = false) }
         }
-    }
-
-    fun selectAdjacentAStockAuctionDate(direction: Int) {
-        val state = _uiState.value
-        val auction = state.aStockAuction ?: state.dashboard?.aStock?.auction ?: return
-        val dates = auction.dates
-        if (dates.isEmpty()) return
-        val current = state.aStockAuctionDate.ifBlank { auction.displayDate() }
-        val currentIndex = dates.indexOf(current).takeIf { it >= 0 } ?: dates.indexOf(auction.displayDate()).takeIf { it >= 0 } ?: 0
-        val nextIndex = (currentIndex + direction).coerceIn(0, dates.lastIndex)
-        loadAStockAuction(dates[nextIndex])
     }
 
     fun requestAction(action: String, title: String, params: Map<String, String> = emptyMap()) {
@@ -225,8 +230,31 @@ class YuqingViewModel(
     }
 }
 
-private fun AStockAuctionListResult.displayDate(): String {
-    return date.ifBlank { latestDate }
+private fun currentAStockRecommendationWindow(): AStockRecommendationWindow {
+    val zone = ZoneId.of("Asia/Shanghai")
+    val now = LocalTime.now(zone)
+    val period = if (now.isBefore(LocalTime.of(9, 31))) "morning" else "afternoon"
+    return aStockRecommendationWindow(
+        date = LocalDate.now(zone).toString(),
+        period = period,
+    )
+}
+
+private fun aStockRecommendationWindow(date: String, period: String): AStockRecommendationWindow {
+    val normalizedPeriod = if (period == "afternoon" || period == "pm" || period == "after") "afternoon" else "morning"
+    return AStockRecommendationWindow(
+        date = date,
+        period = normalizedPeriod,
+        periodLabel = if (normalizedPeriod == "afternoon") "下午推荐" else "上午推荐",
+        windowLabel = if (normalizedPeriod == "afternoon") "09:30-13:00" else "08:00-09:30",
+    )
+}
+
+private fun parseAStockRecommendations(raw: String): List<AStockRecommendation> {
+    val payload = raw.trim().ifBlank { "[]" }
+    return runCatching {
+        ApiFactory.json.decodeFromString<List<AStockRecommendation>>(payload)
+    }.getOrDefault(emptyList())
 }
 
 class YuqingViewModelFactory(

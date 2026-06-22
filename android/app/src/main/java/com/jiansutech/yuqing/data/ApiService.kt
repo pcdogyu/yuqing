@@ -39,6 +39,13 @@ interface YuqingApi {
         @Query("page_size") pageSize: Int = 20,
     ): ApiEnvelope<AStockAuctionListResult>
 
+    @GET("api/v1/a-stock/recommendations")
+    suspend fun aStockRecommendations(
+        @Query("date") date: String,
+        @Query("period") period: String,
+        @Query("ignore_recent") ignoreRecent: Boolean = false,
+    ): ApiEnvelope<AStockRecommendationSnapshot>
+
     @GET("api/v1/search/full")
     suspend fun searchFull(
         @Query("keyword") keyword: String,
