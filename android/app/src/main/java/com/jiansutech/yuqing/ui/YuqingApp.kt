@@ -45,6 +45,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -356,6 +359,7 @@ private fun AStockModule(state: YuqingUiState, viewModel: YuqingViewModel) {
 
 @Composable
 private fun AStockAuctionModule(result: AStockAuctionListResult, viewModel: YuqingViewModel) {
+    var trendDays by remember { mutableStateOf(7) }
     val shenzhenLeaders = result.items
         .filter { it.code.startsWith("0") || it.code.startsWith("3") }
         .sortedByDescending { it.auctionAmount }
@@ -381,8 +385,8 @@ private fun AStockAuctionModule(result: AStockAuctionListResult, viewModel: Yuqi
             item { SimpleRow("暂无深市集合竞价数据", "请刷新或等待交易日数据写入") }
         }
         items(shenzhenLeaders) { AStockAuctionRow(it) }
-        item { SectionTitle("历史金额走势") }
-        item { AStockAuctionTrendChart(result) }
+        item { AuctionTrendHeader(trendDays, onPeriodSelected = { trendDays = it }) }
+        item { AStockAuctionTrendChart(result, trendDays) }
         if (result.trend.isEmpty()) {
             item { SimpleRow("暂无历史走势", "接口暂未返回历史集合竞价金额") }
         }
@@ -536,8 +540,40 @@ private fun AStockAuctionRow(item: AStockAuctionAmount) {
 }
 
 @Composable
-private fun AStockAuctionTrendChart(result: AStockAuctionListResult) {
-    val trend = result.trend.filter { it.totalAmount > 0 }
+private fun AuctionTrendHeader(selectedDays: Int, onPeriodSelected: (Int) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        SectionTitle("历史金额走势")
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            AuctionTrendPeriodChip("近7天", 7, selectedDays, onPeriodSelected)
+            AuctionTrendPeriodChip("近两周", 14, selectedDays, onPeriodSelected)
+            AuctionTrendPeriodChip("近30天", 30, selectedDays, onPeriodSelected)
+        }
+    }
+}
+
+@Composable
+private fun AuctionTrendPeriodChip(
+    label: String,
+    days: Int,
+    selectedDays: Int,
+    onPeriodSelected: (Int) -> Unit,
+) {
+    FilterChip(
+        selected = selectedDays == days,
+        onClick = { onPeriodSelected(days) },
+        label = { Text(label, maxLines = 1) },
+    )
+}
+
+@Composable
+private fun AStockAuctionTrendChart(result: AStockAuctionListResult, days: Int) {
+    val trend = result.trend
+        .filter { it.totalAmount > 0 }
+        .takeLast(days)
     if (trend.isEmpty()) {
         return
     }
