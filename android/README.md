@@ -8,12 +8,12 @@
 2. 用 Android Studio 打开 `android/`。
 3. 在 Android Studio 的 Gradle 面板执行 `:app:assembleRelease`；或安装 Gradle 后在 `android/` 下执行 `gradle :app:assembleRelease`。输出位于 `app/build/outputs/apk/release/`。
 
-默认地址面向 Android 模拟器：
+默认地址指向远端服务：
 
-- Auth API: `http://10.0.2.2:8081/`
-- Content/BFF API: `http://10.0.2.2:8082/`
+- Auth API: `http://yuqin.jiansutech.com:8081/`
+- Content/BFF API: `http://yuqin.jiansutech.com:8082/`
 
-真机安装时，在登录页修改为局域网或正式服务地址。
+本地调试时，可在登录页临时改为局域网或模拟器服务地址。
 
 ## 功能
 

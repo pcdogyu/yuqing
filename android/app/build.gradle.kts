@@ -18,8 +18,8 @@ android {
         versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        buildConfigField("String", "DEFAULT_AUTH_BASE_URL", "\"http://10.0.2.2:8081/\"")
-        buildConfigField("String", "DEFAULT_API_BASE_URL", "\"http://10.0.2.2:8082/\"")
+        buildConfigField("String", "DEFAULT_AUTH_BASE_URL", "\"http://yuqin.jiansutech.com:8081/\"")
+        buildConfigField("String", "DEFAULT_API_BASE_URL", "\"http://yuqin.jiansutech.com:8082/\"")
     }
 
     buildTypes {

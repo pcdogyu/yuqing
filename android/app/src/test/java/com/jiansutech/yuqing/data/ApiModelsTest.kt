@@ -11,6 +11,14 @@ class ApiModelsTest {
     }
 
     @Test
+    fun normalizeBaseUrlUsesFallbackForBlankValue() {
+        assertEquals(
+            "http://yuqin.jiansutech.com:8081/",
+            ApiFactory.normalizeBaseUrl("", "http://yuqin.jiansutech.com:8081/"),
+        )
+    }
+
+    @Test
     fun dashboardSerializationKeepsPortalCounts() {
         val dashboard = AndroidDashboard(
             overview = Overview(articleCount = 3, projectCount = 2, reportCount = 1),

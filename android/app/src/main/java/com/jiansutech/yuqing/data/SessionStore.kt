@@ -21,11 +21,21 @@ data class SessionState(
 
 class SessionStore(private val context: Context) {
     val state: Flow<SessionState> = context.sessionDataStore.data.map { preferences ->
+        val token = preferences[tokenKey].orEmpty()
+        val loggedIn = token.isNotBlank()
         SessionState(
-            token = preferences[tokenKey].orEmpty(),
+            token = token,
             username = preferences[usernameKey].orEmpty(),
-            authBaseUrl = preferences[authBaseUrlKey] ?: BuildConfig.DEFAULT_AUTH_BASE_URL,
-            apiBaseUrl = preferences[apiBaseUrlKey] ?: BuildConfig.DEFAULT_API_BASE_URL,
+            authBaseUrl = if (loggedIn) {
+                preferences[authBaseUrlKey] ?: BuildConfig.DEFAULT_AUTH_BASE_URL
+            } else {
+                BuildConfig.DEFAULT_AUTH_BASE_URL
+            },
+            apiBaseUrl = if (loggedIn) {
+                preferences[apiBaseUrlKey] ?: BuildConfig.DEFAULT_API_BASE_URL
+            } else {
+                BuildConfig.DEFAULT_API_BASE_URL
+            },
         )
     }
 
@@ -33,15 +43,15 @@ class SessionStore(private val context: Context) {
         context.sessionDataStore.edit { preferences ->
             preferences[tokenKey] = token
             preferences[usernameKey] = username
-            preferences[authBaseUrlKey] = ApiFactory.normalizeBaseUrl(authBaseUrl)
-            preferences[apiBaseUrlKey] = ApiFactory.normalizeBaseUrl(apiBaseUrl)
+            preferences[authBaseUrlKey] = ApiFactory.normalizeBaseUrl(authBaseUrl, BuildConfig.DEFAULT_AUTH_BASE_URL)
+            preferences[apiBaseUrlKey] = ApiFactory.normalizeBaseUrl(apiBaseUrl, BuildConfig.DEFAULT_API_BASE_URL)
         }
     }
 
     suspend fun saveServers(authBaseUrl: String, apiBaseUrl: String) {
         context.sessionDataStore.edit { preferences ->
-            preferences[authBaseUrlKey] = ApiFactory.normalizeBaseUrl(authBaseUrl)
-            preferences[apiBaseUrlKey] = ApiFactory.normalizeBaseUrl(apiBaseUrl)
+            preferences[authBaseUrlKey] = ApiFactory.normalizeBaseUrl(authBaseUrl, BuildConfig.DEFAULT_AUTH_BASE_URL)
+            preferences[apiBaseUrlKey] = ApiFactory.normalizeBaseUrl(apiBaseUrl, BuildConfig.DEFAULT_API_BASE_URL)
         }
     }
 
@@ -49,6 +59,8 @@ class SessionStore(private val context: Context) {
         context.sessionDataStore.edit { preferences ->
             preferences.remove(tokenKey)
             preferences.remove(usernameKey)
+            preferences.remove(authBaseUrlKey)
+            preferences.remove(apiBaseUrlKey)
         }
     }
 

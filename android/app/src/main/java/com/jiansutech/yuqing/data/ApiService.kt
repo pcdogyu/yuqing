@@ -61,14 +61,14 @@ object ApiFactory {
     }
 
     fun auth(baseUrl: String = BuildConfig.DEFAULT_AUTH_BASE_URL): AuthApi {
-        return retrofit(baseUrl, null).create(AuthApi::class.java)
+        return retrofit(baseUrl, null, BuildConfig.DEFAULT_AUTH_BASE_URL).create(AuthApi::class.java)
     }
 
     fun yuqing(baseUrl: String = BuildConfig.DEFAULT_API_BASE_URL, token: String? = null): YuqingApi {
-        return retrofit(baseUrl, token).create(YuqingApi::class.java)
+        return retrofit(baseUrl, token, BuildConfig.DEFAULT_API_BASE_URL).create(YuqingApi::class.java)
     }
 
-    private fun retrofit(rawBaseUrl: String, token: String?): Retrofit {
+    private fun retrofit(rawBaseUrl: String, token: String?, fallbackBaseUrl: String): Retrofit {
         val logging = HttpLoggingInterceptor().apply {
             level = if (BuildConfig.DEBUG) HttpLoggingInterceptor.Level.BASIC else HttpLoggingInterceptor.Level.NONE
         }
@@ -85,14 +85,14 @@ object ApiFactory {
             .addInterceptor(logging)
             .build()
         return Retrofit.Builder()
-            .baseUrl(normalizeBaseUrl(rawBaseUrl))
+            .baseUrl(normalizeBaseUrl(rawBaseUrl, fallbackBaseUrl))
             .client(client)
             .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
             .build()
     }
 
-    fun normalizeBaseUrl(value: String): String {
-        val trimmed = value.trim().ifBlank { BuildConfig.DEFAULT_API_BASE_URL }
+    fun normalizeBaseUrl(value: String, fallback: String = BuildConfig.DEFAULT_API_BASE_URL): String {
+        val trimmed = value.trim().ifBlank { fallback }
         return if (trimmed.endsWith("/")) trimmed else "$trimmed/"
     }
 }
