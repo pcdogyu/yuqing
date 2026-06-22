@@ -45,6 +45,7 @@ type aStockContext struct {
 	TradingDayBlocked            bool
 	TradingDayMessage            string
 	TradingDayReason             string
+	SourceRuns                   []aStockSourceRun
 }
 
 type aStockHotspot struct {
@@ -135,6 +136,7 @@ type aStockTradingDayStatus struct {
 type aStockRequestCache struct {
 	tradingDay  map[string]aStockTradingDayCacheEntry
 	recentCodes map[string]map[string]struct{}
+	sourceRuns  []aStockSourceRun
 }
 
 type aStockTradingDayCacheEntry struct {
@@ -149,8 +151,20 @@ type aStockPeriod struct {
 }
 
 type aStockNewsSourceCount struct {
-	Label string
-	Count int
+	SourceType string
+	Label      string
+	Count      int
+	Run        aStockSourceRun
+}
+
+type aStockSourceRun struct {
+	SourceType    string
+	Status        string
+	FetchedCount  int
+	InsertedCount int
+	UpdatedCount  int
+	ErrorText     string
+	StartedAt     time.Time
 }
 
 const (
@@ -499,41 +513,50 @@ func renderAStockNewsSection(b *strings.Builder, ctx aStockContext) {
 		b.WriteString(html.EscapeString(ctx.Date))
 		b.WriteString(` `)
 		b.WriteString(html.EscapeString(ctx.WindowLabel))
-		b.WriteString(` 窗口内已有财经新闻源入库。</div><table><tr><th>网站</th><th>新闻条数</th></tr><tr><td colspan="2">暂无 `)
-		b.WriteString(html.EscapeString(ctx.WindowLabel))
-		b.WriteString(` 新闻</td></tr></table></section>`)
-		return
+		b.WriteString(` 窗口内已有财经新闻源入库。</div>`)
 	}
-	b.WriteString(`<table><tr><th>网站</th><th>新闻条数</th></tr>`)
-	for _, source := range summarizeAStockNewsSources(ctx.Articles) {
+	b.WriteString(`<table><tr><th>来源</th><th>新闻条数</th><th>最近抓取</th><th>抓取/入库/更新</th><th>说明</th></tr>`)
+	for _, source := range summarizeAStockNewsSources(ctx.Articles, ctx.SourceRuns) {
 		b.WriteString(`<tr><td>`)
 		b.WriteString(html.EscapeString(source.Label))
 		b.WriteString(`</td><td>`)
 		b.WriteString(fmt.Sprintf("%d条", source.Count))
+		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(formatAStockCrawlRunStatus(source.Run)))
+		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(formatAStockCrawlRunCounts(source.Run)))
+		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(formatAStockCrawlRunNote(source.Run)))
 		b.WriteString(`</td></tr>`)
 	}
 	b.WriteString(`</table></section>`)
 }
 
-func summarizeAStockNewsSources(items []model.Item) []aStockNewsSourceCount {
+func summarizeAStockNewsSources(items []model.Item, runs []aStockSourceRun) []aStockNewsSourceCount {
 	counts := make(map[string]int)
 	for _, item := range items {
-		label := strings.TrimSpace(articleSourceSiteLabel(item))
-		if label == "" {
-			label = "未知来源"
+		sourceType := strings.TrimSpace(item.SourceType)
+		if sourceType == "" {
+			sourceType = "unknown"
 		}
-		counts[label]++
+		counts[sourceType]++
 	}
-	summary := make([]aStockNewsSourceCount, 0, len(counts))
-	for label, count := range counts {
-		summary = append(summary, aStockNewsSourceCount{Label: label, Count: count})
-	}
-	sort.Slice(summary, func(i, j int) bool {
-		if summary[i].Count != summary[j].Count {
-			return summary[i].Count > summary[j].Count
+	runBySource := make(map[string]aStockSourceRun, len(runs))
+	for _, run := range runs {
+		if run.SourceType != "" {
+			runBySource[run.SourceType] = run
 		}
-		return summary[i].Label < summary[j].Label
-	})
+	}
+	sources := aStockCrawlSources()
+	summary := make([]aStockNewsSourceCount, 0, len(sources))
+	for _, sourceType := range sources {
+		summary = append(summary, aStockNewsSourceCount{
+			SourceType: sourceType,
+			Label:      aStockNewsSourceLabel(sourceType),
+			Count:      counts[sourceType],
+			Run:        runBySource[sourceType],
+		})
+	}
 	return summary
 }
 
@@ -801,6 +824,7 @@ func (s *Server) loadAStockContextWithCache(strategyDate string, periodKey strin
 		BacktestStatus: "等待行情接口",
 		IgnoreRecent:   ignoreRecent,
 	}
+	ctx.SourceRuns = s.loadAStockSourceRunsWithCache(cache)
 	articles, err := s.loadAStockWindowArticles(start, end)
 	if err != nil {
 		ctx.LoadMessage = "A股新闻读取失败：" + err.Error()
@@ -921,6 +945,97 @@ func (s *Server) loadAStockTradingDayStatus(strategyDate string) (aStockTradingD
 		status.Reason = "market_closed"
 	}
 	return status, nil
+}
+
+func (s *Server) loadAStockSourceRunsWithCache(cache *aStockRequestCache) []aStockSourceRun {
+	if cache == nil {
+		return s.loadAStockSourceRuns()
+	}
+	if cache.sourceRuns != nil {
+		return cache.sourceRuns
+	}
+	cache.sourceRuns = s.loadAStockSourceRuns()
+	return cache.sourceRuns
+}
+
+func (s *Server) loadAStockSourceRuns() []aStockSourceRun {
+	if strings.TrimSpace(s.cfg.CrawlerURL) == "" {
+		return []aStockSourceRun{}
+	}
+	var runs []model.CrawlRun
+	if err := s.getJSON(s.cfg.CrawlerURL+"/api/v1/admin/tasks/crawl/runs?limit=50", &runs); err != nil {
+		return []aStockSourceRun{}
+	}
+	latest := make(map[string]aStockSourceRun)
+	for _, run := range runs {
+		sourceType := strings.TrimSpace(run.SourceType)
+		if sourceType == "" {
+			continue
+		}
+		if _, ok := latest[sourceType]; ok {
+			continue
+		}
+		latest[sourceType] = aStockSourceRun{
+			SourceType:    sourceType,
+			Status:        run.Status,
+			FetchedCount:  run.FetchedCount,
+			InsertedCount: run.InsertedCount,
+			UpdatedCount:  run.UpdatedCount,
+			ErrorText:     run.ErrorText,
+			StartedAt:     run.StartedAt,
+		}
+	}
+	out := make([]aStockSourceRun, 0, len(aStockCrawlSources()))
+	for _, sourceType := range aStockCrawlSources() {
+		out = append(out, latest[sourceType])
+	}
+	return out
+}
+
+func formatAStockCrawlRunStatus(run aStockSourceRun) string {
+	if strings.TrimSpace(run.SourceType) == "" {
+		return "--"
+	}
+	status := strings.TrimSpace(run.Status)
+	if status == "" {
+		status = "--"
+	}
+	if !run.StartedAt.IsZero() {
+		return status + " " + run.StartedAt.In(aStockLocation()).Format("15:04")
+	}
+	return status
+}
+
+func formatAStockCrawlRunCounts(run aStockSourceRun) string {
+	if strings.TrimSpace(run.SourceType) == "" {
+		return "--"
+	}
+	return fmt.Sprintf("%d/%d/%d", run.FetchedCount, run.InsertedCount, run.UpdatedCount)
+}
+
+func formatAStockCrawlRunNote(run aStockSourceRun) string {
+	if strings.TrimSpace(run.SourceType) == "" {
+		return "暂无抓取记录"
+	}
+	if strings.TrimSpace(run.ErrorText) != "" {
+		return truncateAStockText(run.ErrorText, 80)
+	}
+	if run.FetchedCount == 0 {
+		return "源站返回 0 条或窗口过滤后为 0"
+	}
+	if run.InsertedCount == 0 && run.UpdatedCount == 0 {
+		return "抓到内容但没有新增/更新"
+	}
+	return ""
+}
+
+func truncateAStockText(text string, limit int) string {
+	text = strings.TrimSpace(text)
+	if limit <= 0 || len([]rune(text)) <= limit {
+		return text
+	}
+	runes := []rune(text)
+	return string(runes[:limit]) + "..."
 }
 
 func localAStockTradingDayStatus(strategyDate string) aStockTradingDayStatus {
@@ -2267,6 +2382,27 @@ func (s *Server) triggerAStockWindowCrawl(strategyDate string, periodKey string)
 
 func aStockCrawlSources() []string {
 	return []string{"flash", "headline", "jin10_full", "eastmoney_kuaixun", "wallstreetcn_a_stock", "cls_telegraph", "sina_finance_7x24"}
+}
+
+func aStockNewsSourceLabel(sourceType string) string {
+	switch strings.TrimSpace(sourceType) {
+	case "flash":
+		return "金十快讯"
+	case "headline":
+		return "金十资讯"
+	case "jin10_full":
+		return "金十全站"
+	case "eastmoney_kuaixun":
+		return "东方财富网"
+	case "wallstreetcn_a_stock":
+		return "华尔街见闻"
+	case "cls_telegraph":
+		return "财联社"
+	case "sina_finance_7x24":
+		return "新浪财经"
+	default:
+		return nonEmpty(strings.TrimSpace(sourceType), "未知来源")
+	}
 }
 
 type aStockWindowCrawlResult struct {

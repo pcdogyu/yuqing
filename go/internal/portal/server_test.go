@@ -1756,7 +1756,7 @@ func TestAStockNewsSectionSummarizesSources(t *testing.T) {
 		t.Fatalf("expected first page 200, got %d", firstRR.Code)
 	}
 	firstBody := firstRR.Body.String()
-	for _, want := range []string{"网站", "新闻条数", "金十", "7条", "东方财富网", "5条", `财经新闻数</span><strong>12</strong>`} {
+	for _, want := range []string{"来源", "新闻条数", "最近抓取", "金十快讯", "7条", "东方财富网", "5条", "财联社", "0条", `财经新闻数</span><strong>12</strong>`} {
 		if !strings.Contains(firstBody, want) {
 			t.Fatalf("expected news summary to contain %q, got %s", want, firstBody)
 		}
@@ -1764,6 +1764,28 @@ func TestAStockNewsSectionSummarizesSources(t *testing.T) {
 	for _, notWant := range []string{"分页新闻01", "分页新闻10", "分页新闻11", "分页新闻12", "新闻分页：", `news_page=2`} {
 		if strings.Contains(firstBody, notWant) {
 			t.Fatalf("expected news summary not to contain detail %q, got %s", notWant, firstBody)
+		}
+	}
+}
+
+func TestAStockNewsSectionShowsSourceRunDiagnostics(t *testing.T) {
+	ctx := aStockContext{
+		Date:        "2026-06-22",
+		WindowLabel: "09:30-13:00",
+		Articles: []model.Item{
+			{SourceType: "flash", Title: "金十新闻"},
+		},
+		SourceRuns: []aStockSourceRun{
+			{SourceType: "flash", Status: "success", FetchedCount: 18, InsertedCount: 18, StartedAt: time.Date(2026, 6, 22, 5, 1, 0, 0, time.UTC)},
+			{SourceType: "sina_finance_7x24", Status: "failed", ErrorText: "upstream timeout", StartedAt: time.Date(2026, 6, 22, 5, 2, 0, 0, time.UTC)},
+		},
+	}
+	var b strings.Builder
+	renderAStockNewsSection(&b, ctx)
+	body := b.String()
+	for _, want := range []string{"金十快讯", "1条", "success", "18/18/0", "新浪财经", "failed", "upstream timeout", "东方财富网", "0条"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected A股 news diagnostics to contain %q, got %s", want, body)
 		}
 	}
 }
@@ -1876,7 +1898,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"金十", "2条", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "5日内过滤", "关闭5日过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "推荐历史", "补抓并重新生成当前窗口", "重新生成当前推荐", "刷新当前回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="refresh_backtest"`, "2026-06-16 AM", "2026-06-16 PM", "2026-06-15 AM", "2026-06-15 PM", "2026-06-11 AM", "2026-06-11 PM", "T+0 收益", "astock-recommendation-table", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
+	for _, want := range []string{"金十快讯", "金十资讯", "1条", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "5日内过滤", "关闭5日过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "推荐历史", "补抓并重新生成当前窗口", "重新生成当前推荐", "刷新当前回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="refresh_backtest"`, "2026-06-16 AM", "2026-06-16 PM", "2026-06-15 AM", "2026-06-15 PM", "2026-06-11 AM", "2026-06-11 PM", "T+0 收益", "astock-recommendation-table", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}
