@@ -371,10 +371,11 @@ private fun AStockAuctionModule(result: AStockAuctionListResult, viewModel: Yuqi
     val shenzhenLeaders = result.items
         .filter { it.code.startsWith("0") || it.code.startsWith("3") }
         .sortedByDescending { it.auctionAmount }
-        .take(2)
-    val shanghaiLeader = result.items
+        .take(3)
+    val shanghaiLeaders = result.items
         .filter { it.code.startsWith("6") }
-        .maxByOrNull { it.auctionAmount }
+        .sortedByDescending { it.auctionAmount }
+        .take(3)
     LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
             SimpleRow(
@@ -396,17 +397,16 @@ private fun AStockAuctionModule(result: AStockAuctionListResult, viewModel: Yuqi
                 Text("刷新集合竞价")
             }
         }
+        item { SectionTitle("沪市金额最高") }
+        if (shanghaiLeaders.isEmpty()) {
+            item { SimpleRow("暂无沪市集合竞价数据", "请刷新或等待交易日数据写入") }
+        }
+        items(shanghaiLeaders) { AStockAuctionRow(it) }
         item { SectionTitle("深市金额最高") }
         if (shenzhenLeaders.isEmpty()) {
             item { SimpleRow("暂无深市集合竞价数据", "请刷新或等待交易日数据写入") }
         }
         items(shenzhenLeaders) { AStockAuctionRow(it) }
-        item { SectionTitle("沪市金额最高") }
-        if (shanghaiLeader == null) {
-            item { SimpleRow("暂无沪市集合竞价数据", "请刷新或等待交易日数据写入") }
-        } else {
-            item { AStockAuctionRow(shanghaiLeader) }
-        }
         item { AuctionTrendHeader(trendDays, onPeriodSelected = { trendDays = it }) }
         item { AStockAuctionTrendChart(result, trendDays) }
         if (result.trend.isEmpty()) {
