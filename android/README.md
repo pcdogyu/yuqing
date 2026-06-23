@@ -8,6 +8,8 @@
 2. 用 Android Studio 打开 `android/`。
 3. 在 Android Studio 的 Gradle 面板执行 `:app:assembleRelease`；或安装 Gradle 后在 `android/` 下执行 `gradle :app:assembleRelease`。输出位于 `app/build/outputs/apk/release/`。
 
+APK 的 `versionName` 和产物文件名会自动使用最近一次 Git 提交信息，格式为 `YYYYMMDD-HHMMSS-<8位hash>`，例如 `20260622-171314-be52d75c`。
+
 默认地址指向远端服务：
 
 - Auth API: `http://yuqin.jiansutech.com:8081/`

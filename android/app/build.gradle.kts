@@ -1,3 +1,5 @@
+import com.android.build.gradle.internal.api.ApkVariantOutputImpl
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -5,6 +7,27 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
     id("com.google.devtools.ksp")
 }
+
+fun gitOutput(vararg args: String): String? {
+    return try {
+        val process = ProcessBuilder(listOf("git", *args))
+            .directory(rootDir)
+            .redirectErrorStream(true)
+            .start()
+        val output = process.inputStream.bufferedReader().use { it.readText().trim() }
+        if (process.waitFor() == 0) {
+            output.takeIf { it.isNotEmpty() }
+        } else {
+            null
+        }
+    } catch (_: Exception) {
+        null
+    }
+}
+
+val commitTimestamp = gitOutput("log", "-1", "--format=%cd", "--date=format:%Y%m%d-%H%M%S")
+val commitHash = gitOutput("rev-parse", "--short=8", "HEAD")
+val commitVersion = listOfNotNull(commitTimestamp, commitHash).joinToString("-").ifBlank { "unknown" }
 
 android {
     namespace = "com.jiansutech.yuqing"
@@ -15,7 +38,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = 1
-        versionName = "1.0.0"
+        versionName = commitVersion
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "DEFAULT_AUTH_BASE_URL", "\"http://yuqin.jiansutech.com:8081/\"")
@@ -42,6 +65,12 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+
+    applicationVariants.all {
+        outputs.all {
+            (this as ApkVariantOutputImpl).outputFileName = "yuqing-${commitVersion}-${buildType.name}.apk"
+        }
     }
 }
 
