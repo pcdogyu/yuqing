@@ -1,7 +1,9 @@
 package com.jiansutech.yuqing.ui
 
 import java.time.Duration
+import java.time.Instant
 import java.time.LocalDateTime
+import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
@@ -46,6 +48,12 @@ private fun relativeMinutes(value: String): Long? {
 }
 
 private fun parseArticleTime(value: String): LocalDateTime? {
+    runCatching {
+        OffsetDateTime.parse(value).atZoneSameInstant(ZoneId.of("Asia/Shanghai")).toLocalDateTime()
+    }.getOrNull()?.let { return it }
+    runCatching {
+        Instant.parse(value).atZone(ZoneId.of("Asia/Shanghai")).toLocalDateTime()
+    }.getOrNull()?.let { return it }
     for (formatter in articleTimeFormats) {
         val parsed = runCatching { LocalDateTime.parse(value, formatter) }.getOrNull()
         if (parsed != null) {

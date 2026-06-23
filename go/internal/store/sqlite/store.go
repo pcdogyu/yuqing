@@ -853,7 +853,7 @@ func (s *Store) ListItems(ctx context.Context, filter model.ArticleFilter) (mode
 		return model.ItemListResult{}, err
 	}
 
-	query := "SELECT DISTINCT items.id, items.source_type, items.source_key, items.title, items.content, items.summary, items.publish_time, items.publish_time_text, items.detail_url, items.source_url, items.tag_flags, items.from_text, items.external_source_host, items.is_vip, items.has_image, items.raw_payload, items.captured_at, items.created_at, items.updated_at FROM items " + joins + " " + where + " ORDER BY items.captured_at DESC, items.id DESC LIMIT ? OFFSET ?"
+	query := "SELECT DISTINCT items.id, items.source_type, items.source_key, items.title, items.content, items.summary, items.publish_time, items.publish_time_text, items.detail_url, items.source_url, items.tag_flags, items.from_text, items.external_source_host, items.is_vip, items.has_image, items.raw_payload, items.captured_at, items.created_at, items.updated_at FROM items " + joins + " " + where + " ORDER BY " + itemListOrderClause(filter.Sort) + " LIMIT ? OFFSET ?"
 	queryArgs := append(args, filter.PageSize, offset)
 	rows, err := s.db.QueryContext(ctx, query, queryArgs...)
 	if err != nil {
@@ -1065,6 +1065,27 @@ func itemFilterTimeColumn(raw string) string {
 	default:
 		return "captured_at"
 	}
+}
+
+func itemListOrderClause(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "captured_at_asc":
+		return "items.captured_at ASC, items.id ASC"
+	case "publish_time_asc", "published_at_asc":
+		return itemPublishTimePresenceExpr() + " DESC, " + itemPublishTimeSortExpr() + " ASC, items.captured_at ASC, items.id ASC"
+	case "publish_time_desc", "published_at_desc":
+		return itemPublishTimePresenceExpr() + " DESC, " + itemPublishTimeSortExpr() + " DESC, items.captured_at DESC, items.id DESC"
+	default:
+		return "items.captured_at DESC, items.id DESC"
+	}
+}
+
+func itemPublishTimePresenceExpr() string {
+	return "CASE WHEN TRIM(items.publish_time) <> '' OR items.publish_time_text LIKE '____-__-__%' OR items.publish_time_text LIKE '____/__/__%' THEN 1 ELSE 0 END"
+}
+
+func itemPublishTimeSortExpr() string {
+	return "REPLACE(REPLACE(REPLACE(CASE WHEN TRIM(items.publish_time) <> '' THEN items.publish_time WHEN items.publish_time_text LIKE '____-__-__%' OR items.publish_time_text LIKE '____/__/__%' THEN items.publish_time_text ELSE items.captured_at END, '/', '-'), 'T', ' '), 'Z', '')"
 }
 
 func (s *Store) attachProjectIDs(ctx context.Context, items []model.Item) error {

@@ -571,6 +571,34 @@ func TestAndroidBootstrapModulesAndDashboard(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("UpsertItems error: %v", err)
 	}
+	if _, _, err := store.UpsertItems(ctx, []model.Item{
+		{
+			SourceType:  "flash",
+			SourceKey:   "android-recrawled-old",
+			Title:       "旧快讯",
+			Content:     "content",
+			Summary:     "summary",
+			SourceURL:   "https://example.com/old",
+			PublishTime: "2026-06-19 16:57:53",
+			CapturedAt:  time.Date(2026, 6, 23, 4, 9, 16, 0, time.UTC),
+			CreatedAt:   time.Date(2026, 6, 19, 8, 58, 21, 0, time.UTC),
+			UpdatedAt:   time.Date(2026, 6, 23, 4, 9, 16, 0, time.UTC),
+		},
+		{
+			SourceType:  "panews_newsflash",
+			SourceKey:   "android-latest-news",
+			Title:       "最新新闻",
+			Content:     "content",
+			Summary:     "summary",
+			SourceURL:   "https://example.com/latest",
+			PublishTime: "2026-06-23T03:58:00Z",
+			CapturedAt:  time.Date(2026, 6, 23, 4, 0, 0, 0, time.UTC),
+			CreatedAt:   time.Date(2026, 6, 23, 4, 0, 0, 0, time.UTC),
+			UpdatedAt:   time.Date(2026, 6, 23, 4, 0, 0, 0, time.UTC),
+		},
+	}); err != nil {
+		t.Fatalf("UpsertItems error: %v", err)
+	}
 	svc := NewService(config.Config{HTTPTimeout: time.Second}, store)
 	router := svc.Router()
 
@@ -607,11 +635,14 @@ func TestAndroidBootstrapModulesAndDashboard(t *testing.T) {
 	if err := json.Unmarshal(dashboardRR.Body.Bytes(), &dashboardEnvelope); err != nil {
 		t.Fatalf("unmarshal dashboard: %v", err)
 	}
-	if dashboardEnvelope.Data.Overview.ArticleCount != 1 || dashboardEnvelope.Data.Overview.ProjectCount != 1 || dashboardEnvelope.Data.Overview.ReportCount != 1 {
+	if dashboardEnvelope.Data.Overview.ArticleCount != 3 || dashboardEnvelope.Data.Overview.ProjectCount != 1 || dashboardEnvelope.Data.Overview.ReportCount != 1 {
 		t.Fatalf("unexpected dashboard overview: %+v", dashboardEnvelope.Data.Overview)
 	}
-	if len(dashboardEnvelope.Data.Articles.Items) != 1 || len(dashboardEnvelope.Data.Projects) != 1 {
+	if len(dashboardEnvelope.Data.Articles.Items) != 3 || len(dashboardEnvelope.Data.Projects) != 1 {
 		t.Fatalf("expected dashboard lists, got %+v", dashboardEnvelope.Data)
+	}
+	if dashboardEnvelope.Data.Articles.Items[0].SourceKey != "android-latest-news" {
+		t.Fatalf("expected android dashboard to show latest published news first, got %+v", dashboardEnvelope.Data.Articles.Items)
 	}
 }
 

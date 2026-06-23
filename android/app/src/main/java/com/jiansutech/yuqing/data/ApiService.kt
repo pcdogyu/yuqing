@@ -32,6 +32,7 @@ interface YuqingApi {
     suspend fun articles(
         @Query("page") page: Int = 1,
         @Query("page_size") pageSize: Int = 10,
+        @Query("sort") sort: String = "publish_time_desc",
     ): ApiEnvelope<ItemListResult>
 
     @GET("api/v1/a-stock/auction")

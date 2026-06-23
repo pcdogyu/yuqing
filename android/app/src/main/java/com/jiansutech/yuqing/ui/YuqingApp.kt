@@ -596,7 +596,10 @@ private fun MetricCard(title: String, value: String, modifier: Modifier = Modifi
 
 @Composable
 private fun ArticleRow(item: ArticleItem) {
-    val relativeTime = remember(item.publishTimeText) { formatArticleRelativeTime(item.publishTimeText) }
+    val displayTime = remember(item.publishTime, item.publishTimeText) {
+        item.publishTimeText.ifBlank { item.publishTime }
+    }
+    val relativeTime = remember(displayTime) { formatArticleRelativeTime(displayTime) }
     Card {
         Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(

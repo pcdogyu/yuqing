@@ -93,6 +93,43 @@ func TestListItemsCanFilterByPublishTime(t *testing.T) {
 	}
 }
 
+func TestListItemsCanSortByPublishTimeDesc(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	recrawledOld := sampleItem("flash", "flash-key-recrawled-old", "旧快讯被重复抓取")
+	recrawledOld.PublishTime = "2026-06-19 16:57:53"
+	recrawledOld.CapturedAt = time.Date(2026, 6, 23, 4, 9, 16, 0, time.UTC)
+	recrawledOld.CreatedAt = time.Date(2026, 6, 19, 8, 58, 21, 0, time.UTC)
+	recrawledOld.UpdatedAt = recrawledOld.CapturedAt
+
+	latestPublished := sampleItem("panews_newsflash", "panews-key-latest", "真正的最新新闻")
+	latestPublished.PublishTime = "2026-06-23T03:58:00Z"
+	latestPublished.CapturedAt = time.Date(2026, 6, 23, 4, 0, 0, 0, time.UTC)
+	latestPublished.CreatedAt = latestPublished.CapturedAt
+	latestPublished.UpdatedAt = latestPublished.CapturedAt
+
+	if _, _, err := store.UpsertItems(ctx, []model.Item{recrawledOld, latestPublished}); err != nil {
+		t.Fatalf("UpsertItems error: %v", err)
+	}
+
+	defaultList, err := store.ListItems(ctx, model.ArticleFilter{Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListItems default sort error: %v", err)
+	}
+	if len(defaultList.Items) != 2 || defaultList.Items[0].SourceKey != recrawledOld.SourceKey {
+		t.Fatalf("expected default captured_at sort to keep recrawled old item first, got %+v", defaultList.Items)
+	}
+
+	publishTimeList, err := store.ListItems(ctx, model.ArticleFilter{Page: 1, PageSize: 10, Sort: "publish_time_desc"})
+	if err != nil {
+		t.Fatalf("ListItems publish_time_desc error: %v", err)
+	}
+	if len(publishTimeList.Items) != 2 || publishTimeList.Items[0].SourceKey != latestPublished.SourceKey {
+		t.Fatalf("expected publish_time_desc to prefer latest published item, got %+v", publishTimeList.Items)
+	}
+}
+
 func TestListCrawlRunsAllowsNullErrorText(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
