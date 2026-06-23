@@ -2245,7 +2245,7 @@ func (s *Server) loadEastmoneyAStock0930Prices(strategyDate string, codes []stri
 }
 
 func (s *Server) loadEastmoneyAStock1300Prices(strategyDate string, codes []string) map[string]float64 {
-	return s.loadEastmoneyAStockSessionPrices(strategyDate, codes, "13:00", decodeEastmoneyAStock1300Price)
+	return s.loadEastmoneyAStockSessionPrices(strategyDate, codes, "13:01", decodeEastmoneyAStock1300Price)
 }
 
 func (s *Server) loadEastmoneyAStockSessionPrices(strategyDate string, codes []string, endTime string, decoder func([]byte, string) (float64, bool)) map[string]float64 {
@@ -2953,7 +2953,13 @@ func decodeEastmoneyAStock0930Price(body []byte, strategyDate string) (float64, 
 func decodeEastmoneyAStock1300Price(body []byte, strategyDate string) (float64, bool) {
 	klines := collectAStockKlineStringsFromJSON(body)
 	for _, raw := range klines {
-		price, ok := eastmoneySessionKlinePrice(raw, strategyDate, "13:00")
+		price, ok := eastmoneySessionKlineOpen(raw, strategyDate, "13:01")
+		if ok {
+			return price, true
+		}
+	}
+	for _, raw := range klines {
+		price, ok := eastmoneySessionKlineOpen(raw, strategyDate, "13:00")
 		if ok {
 			return price, true
 		}
@@ -3018,6 +3024,22 @@ func eastmoneySessionKlinePrice(raw string, strategyDate string, session string)
 	if closeValue > 0 {
 		return closeValue, true
 	}
+	if open > 0 {
+		return open, true
+	}
+	return 0, false
+}
+
+func eastmoneySessionKlineOpen(raw string, strategyDate string, session string) (float64, bool) {
+	parts := strings.Split(raw, ",")
+	if len(parts) < 2 {
+		return 0, false
+	}
+	timestamp := strings.TrimSpace(parts[0])
+	if !strings.HasPrefix(timestamp, strategyDate+" ") || !strings.Contains(timestamp, session) {
+		return 0, false
+	}
+	open := parseAStockFloat(parts[1])
 	if open > 0 {
 		return open, true
 	}

@@ -3164,8 +3164,8 @@ func TestDecodeEastmoneyAStock1300Price(t *testing.T) {
 
 	price, ok := decodeEastmoneyAStock1300Price(body, "2026-06-18")
 
-	if !ok || price != 66.8 {
-		t.Fatalf("expected 13:00 open price 66.8, got price=%v ok=%v", price, ok)
+	if !ok || price != 67.1 {
+		t.Fatalf("expected 13:01 open price 67.1, got price=%v ok=%v", price, ok)
 	}
 }
 
@@ -3186,7 +3186,7 @@ func TestAStockMarketBarsFallbackToEastmoneyWhenCustomEndpointEmpty(t *testing.T
 				"data": map[string]any{
 					"klines": []string{
 						"2026-06-16 09:30,12.20,12.30,0,0,0,0,0,0",
-						"2026-06-16 13:00,12.80,12.90,0,0,0,0,0,0",
+						"2026-06-16 13:01,12.80,12.90,0,0,0,0,0,0",
 					},
 				},
 			})
@@ -3213,7 +3213,7 @@ func TestAStockMarketBarsFallbackToEastmoneyWhenCustomEndpointEmpty(t *testing.T
 		t.Fatalf("unexpected fallback bars: %+v", bars)
 	}
 	if bars[1].EntryPrice != 12.3 || bars[1].AfternoonEntryPrice != 12.8 {
-		t.Fatalf("expected fallback bars to include 09:30 and 13:00 entry prices, got %+v", bars[1])
+		t.Fatalf("expected fallback bars to include 09:30 and 13:01 entry prices, got %+v", bars[1])
 	}
 }
 
@@ -3224,7 +3224,7 @@ func TestAStockMarketBarsCustomEndpointSupplementsMissingSessionPricesFromEastmo
 			"data": map[string]any{
 				"items": []map[string]any{
 					{"code": "002008", "date": "2026-06-22", "open": 131.93, "close": 131.93, "pct": -2.20},
-					{"code": "002008", "date": "2026-06-23", "open": 135.54, "close": 145.00, "pct": 7.57},
+					{"code": "002008", "date": "2026-06-23", "open": 135.54, "close": 145.11, "pct": 9.99},
 				},
 			},
 		})
@@ -3243,7 +3243,7 @@ func TestAStockMarketBarsCustomEndpointSupplementsMissingSessionPricesFromEastmo
 			"data": map[string]any{
 				"klines": []string{
 					"2026-06-23 09:30,135.54,136.20,0,0,0,0,0,0",
-					"2026-06-23 13:00,142.00,142.20,0,0,0,0,0,0",
+					"2026-06-23 13:01,141.98,142.20,0,0,0,0,0,0",
 				},
 			},
 		})
@@ -3259,7 +3259,7 @@ func TestAStockMarketBarsCustomEndpointSupplementsMissingSessionPricesFromEastmo
 	if len(bars) != 2 {
 		t.Fatalf("expected two market bars, got %+v", bars)
 	}
-	if bars[1].EntryPrice != 136.2 || bars[1].AfternoonEntryPrice != 142.0 {
+	if bars[1].EntryPrice != 136.2 || bars[1].AfternoonEntryPrice != 141.98 {
 		t.Fatalf("expected custom bars to include supplemented session prices, got %+v", bars[1])
 	}
 
@@ -3267,11 +3267,11 @@ func TestAStockMarketBarsCustomEndpointSupplementsMissingSessionPricesFromEastmo
 	if len(rows) != 1 {
 		t.Fatalf("expected one backtest row, got %+v", rows)
 	}
-	if rows[0].AfternoonOpen != "142.00" {
-		t.Fatalf("expected afternoon backtest to use supplemented 13:00 price, got %+v", rows[0])
+	if rows[0].AfternoonOpen != "141.98" {
+		t.Fatalf("expected afternoon backtest to use supplemented 13:01 price, got %+v", rows[0])
 	}
-	if rows[0].T0Return != "+2.11%" {
-		t.Fatalf("expected T+0 return to use supplemented 13:00 price, got %+v", rows[0])
+	if rows[0].T0Return != "+2.20%" {
+		t.Fatalf("expected T+0 return to use supplemented 13:01 price, got %+v", rows[0])
 	}
 }
 
