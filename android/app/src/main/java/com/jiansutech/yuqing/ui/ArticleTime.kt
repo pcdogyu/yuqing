@@ -35,6 +35,21 @@ internal fun formatArticleRelativeTime(
     return value
 }
 
+internal fun formatArticleCapturedTime(raw: String): String {
+    val value = raw.trim()
+    if (value.isBlank()) {
+        return ""
+    }
+    val withoutZone = value
+        .replace('T', ' ')
+        .replace(Regex("""(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"""), "")
+        .trim()
+    return when {
+        withoutZone.length >= 16 -> withoutZone.substring(0, 16)
+        else -> withoutZone
+    }
+}
+
 private fun relativeMinutes(value: String): Long? {
     val minuteMatch = Regex("""^(\d+)\s*分钟前$""").matchEntire(value)
     if (minuteMatch != null) {

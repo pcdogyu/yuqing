@@ -627,7 +627,7 @@ func TestAndroidBootstrapModulesAndDashboard(t *testing.T) {
 	if _, err := store.CreateReport(ctx, model.Report{ProjectID: 1, Title: "mobile report", Content: "content", Status: "generated"}); err != nil {
 		t.Fatalf("CreateReport error: %v", err)
 	}
-	now := time.Now().UTC()
+	now := time.Date(2026, 6, 23, 3, 50, 0, 0, time.UTC)
 	if _, _, err := store.UpsertItems(ctx, []model.Item{{
 		SourceType: "headline",
 		SourceKey:  "android-1",
@@ -711,8 +711,8 @@ func TestAndroidBootstrapModulesAndDashboard(t *testing.T) {
 	if len(dashboardEnvelope.Data.Articles.Items) != 3 || len(dashboardEnvelope.Data.Projects) != 1 {
 		t.Fatalf("expected dashboard lists, got %+v", dashboardEnvelope.Data)
 	}
-	if dashboardEnvelope.Data.Articles.Items[0].SourceKey != "android-latest-news" {
-		t.Fatalf("expected android dashboard to show latest published news first, got %+v", dashboardEnvelope.Data.Articles.Items)
+	if dashboardEnvelope.Data.Articles.Items[0].SourceKey != "android-recrawled-old" {
+		t.Fatalf("expected android dashboard to show latest captured news first, got %+v", dashboardEnvelope.Data.Articles.Items)
 	}
 }
 

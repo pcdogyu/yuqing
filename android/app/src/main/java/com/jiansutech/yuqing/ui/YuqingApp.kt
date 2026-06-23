@@ -655,10 +655,10 @@ private fun MetricCard(title: String, value: String, modifier: Modifier = Modifi
 
 @Composable
 private fun ArticleRow(item: ArticleItem) {
-    val displayTime = remember(item.publishTime, item.publishTimeText) {
-        item.publishTimeText.ifBlank { item.publishTime }
+    val displayTime = remember(item.capturedAt, item.publishTime, item.publishTimeText) {
+        formatArticleCapturedTime(item.capturedAt)
+            .ifBlank { item.publishTimeText.ifBlank { item.publishTime } }
     }
-    val relativeTime = remember(displayTime) { formatArticleRelativeTime(displayTime) }
     Card {
         Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(
@@ -673,9 +673,9 @@ private fun ArticleRow(item: ArticleItem) {
                     maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
                 )
-                if (relativeTime.isNotBlank()) {
+                if (displayTime.isNotBlank()) {
                     Text(
-                        relativeTime,
+                        displayTime,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,

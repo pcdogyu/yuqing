@@ -181,7 +181,7 @@ class YuqingViewModel(
                     val latestArticles = api.articles(page = 1, pageSize = 50).data?.items.orEmpty()
                     Log.i(
                         STARTUP_TAG,
-                        "YuqingViewModel.refreshAll latestArticles loaded count=${latestArticles.size} firstPublishTime=${latestArticles.firstOrNull()?.publishTime.orEmpty()} firstTitle=${latestArticles.firstOrNull()?.title.orEmpty()} elapsedMs=${SystemClock.elapsedRealtime() - latestArticlesStartedAt}",
+                        "YuqingViewModel.refreshAll latestArticles loaded count=${latestArticles.size} firstCapturedAt=${latestArticles.firstOrNull()?.capturedAt.orEmpty()} firstTitle=${latestArticles.firstOrNull()?.title.orEmpty()} elapsedMs=${SystemClock.elapsedRealtime() - latestArticlesStartedAt}",
                     )
                     patchDashboardLatestArticles(dashboard, latestArticles)
                 }.onFailure { throwable ->
@@ -480,6 +480,7 @@ private fun patchDashboardLatestArticles(dashboard: AndroidDashboard, latestArti
             compareByDescending<DashboardLatestArticleSortEntry> { it.sortTime }
                 .thenByDescending { it.item.publishTime }
                 .thenByDescending { it.item.publishTimeText }
+                .thenByDescending { it.item.capturedAt }
                 .thenByDescending { it.item.id },
         )
         .map { it.item }
@@ -490,7 +491,7 @@ private fun patchDashboardLatestArticles(dashboard: AndroidDashboard, latestArti
     val topItem = patchedItems.first()
     Log.i(
         STARTUP_TAG,
-        "YuqingViewModel.latestArticles patched size=${patchedItems.size} topTitle=${topItem.title} topPublishTime=${topItem.publishTime} topPublishTimeText=${topItem.publishTimeText}",
+        "YuqingViewModel.latestArticles patched size=${patchedItems.size} topTitle=${topItem.title} topCapturedAt=${topItem.capturedAt} topPublishTime=${topItem.publishTime} topPublishTimeText=${topItem.publishTimeText}",
     )
     return dashboard.copy(
         articles = dashboard.articles.copy(items = patchedItems),
@@ -498,7 +499,7 @@ private fun patchDashboardLatestArticles(dashboard: AndroidDashboard, latestArti
 }
 
 private fun articleIdentity(item: ArticleItem): String {
-    return listOf(item.id.toString(), item.sourceUrl, item.publishTime, item.title)
+    return listOf(item.id.toString(), item.sourceUrl, item.capturedAt, item.title)
         .joinToString("|")
 }
 
@@ -508,7 +509,8 @@ private data class DashboardLatestArticleSortEntry(
 )
 
 private fun articleSortTime(item: ArticleItem, referenceNow: Instant): Instant? {
-    return parseArticleInstant(item.publishTime, referenceNow)
+    return parseArticleInstant(item.capturedAt, referenceNow)
+        ?: parseArticleInstant(item.publishTime, referenceNow)
         ?: parseArticleInstant(item.publishTimeText, referenceNow)
 }
 

@@ -127,6 +127,7 @@ data class ArticleItem(
     val summary: String = "",
     @SerialName("publish_time") val publishTime: String = "",
     @SerialName("publish_time_text") val publishTimeText: String = "",
+    @SerialName("captured_at") val capturedAt: String = "",
     @SerialName("source_url") val sourceUrl: String = "",
     val favorited: Boolean = false,
     val read: Boolean = false,

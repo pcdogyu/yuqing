@@ -4164,7 +4164,7 @@ func TestHotPageCompat(t *testing.T) {
 	}
 }
 
-func TestArticlesPagePresentationUsesShanghaiTimeAndNoFavoriteAction(t *testing.T) {
+func TestArticlesPagePresentationUsesInternalCaptureTimeAndNoFavoriteAction(t *testing.T) {
 	oldCommit, oldBuildTime, oldBranch := app.GitCommit, app.BuildTime, app.BranchName
 	app.GitCommit = "abcdef1"
 	app.BuildTime = "2026-06-12T06:17:25Z"
@@ -4259,7 +4259,7 @@ func TestArticlesPagePresentationUsesShanghaiTimeAndNoFavoriteAction(t *testing.
 		`PANews`,
 		`CoinDesk`,
 		`Foresight`,
-		`2026-06-12 14:17`,
+		`2026-06-12 06:17`,
 		`隐藏文章`,
 		`Code By Yuhao@jiansutech.com - 2026-06-12 14:17:25 UTC+8 - abcdef1 - golang-jin10-sqlite`,
 	} {
@@ -4269,6 +4269,9 @@ func TestArticlesPagePresentationUsesShanghaiTimeAndNoFavoriteAction(t *testing.
 	}
 	if strings.Contains(renderedText, `删除文章`) {
 		t.Fatalf("expected article list to stop showing delete label, got %s", body)
+	}
+	if strings.Contains(renderedText, `2026-06-12 14:17</td>`) {
+		t.Fatalf("expected article list to show internal capture time instead of shifted Shanghai time, got %s", body)
 	}
 }
 

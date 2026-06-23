@@ -34,4 +34,10 @@ class ArticleTimeTest {
         assertEquals("2小时之前", formatArticleRelativeTime("2小时前", now))
         assertEquals("刚刚", formatArticleRelativeTime("刚刚", now))
     }
+
+    @Test
+    fun capturedTimestampKeepsInternalClockWithoutTimezoneShift() {
+        assertEquals("2026-06-23 10:20", formatArticleCapturedTime("2026-06-23T10:20:01Z"))
+        assertEquals("2026-06-23 10:20", formatArticleCapturedTime("2026-06-23 10:20:01"))
+    }
 }
