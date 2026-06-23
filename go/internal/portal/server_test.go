@@ -3902,7 +3902,10 @@ func TestSystemTemplateGroupsRepeatedPanelsBySection(t *testing.T) {
 		`{{if eq .SectionKey "contracts"}}<section class="section-block"><h2>外部契约与审计</h2>`,
 		`{{if eq .SectionKey "announcements"}}<section class="section-block"><h2>公告与任务</h2>`,
 		`.feedback-textarea{min-height:168px;resize:vertical}`,
+		`.feedback-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(360px,.55fr);gap:16px;align-items:start}`,
 		`<textarea class="feedback-textarea" name="content" placeholder="问题描述或需求"></textarea>`,
+		`<h3>建议列表</h3>`,
+		`{{range .FeedbackItems}}`,
 	} {
 		if !strings.Contains(systemTemplate, expected) {
 			t.Fatalf("expected system template to include grouped fragment %q", expected)
@@ -3922,6 +3925,24 @@ func TestSystemTemplateGroupsRepeatedPanelsBySection(t *testing.T) {
 	}
 	if strings.Contains(systemTemplate, `</section><section class="section-block"><h2>外部契约与审计</h2>`) {
 		t.Fatal("expected external contract audit panel to move out of operations section")
+	}
+}
+
+func TestSystemFeedbackSectionRendersSubmittedFeedbackList(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/system?section=feedback", nil)
+	rr := httptest.NewRecorder()
+	srv.handleSystem(rr, req, map[string]any{"id": int64(1), "username": "admin"})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected system feedback page 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"反馈建议", "建议列表", "右侧显示建议标题", "右侧显示建议内容", "用户 1"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected feedback page to contain %q, got %s", want, body)
+		}
 	}
 }
 
@@ -5633,6 +5654,9 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 	warningSettings := map[int64]model.WarningSetting{}
 	createdUsers := map[string]model.User{}
 	auditLogs := []model.AuditLog{}
+	feedbackItems := []model.Feedback{
+		{ID: 1, UserID: 1, Title: "右侧显示建议标题", Content: "右侧显示建议内容", CreatedAt: time.Now().UTC()},
+	}
 	apiTokens := map[string]model.APIToken{
 		"legacy-token": {Token: "legacy-token", UserID: 1, Name: "legacy-api", CreatedAt: time.Now().UTC()},
 	}
@@ -6517,6 +6541,20 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 			writeEnvelope(http.StatusOK, "ok", []model.SystemNotice{
 				{ID: 1, Title: "系统公告", Content: "兼容测试公告", CreatedAt: time.Now().UTC()},
 			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/system/feedback":
+			mu.Lock()
+			items := append([]model.Feedback(nil), feedbackItems...)
+			mu.Unlock()
+			writeEnvelope(http.StatusOK, "ok", items)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/system/feedback":
+			var item model.Feedback
+			_ = json.NewDecoder(r.Body).Decode(&item)
+			item.ID = int64(len(feedbackItems) + 1)
+			item.CreatedAt = time.Now().UTC()
+			mu.Lock()
+			feedbackItems = append([]model.Feedback{item}, feedbackItems...)
+			mu.Unlock()
+			writeEnvelope(http.StatusOK, "ok", item)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/articles/") && !strings.Contains(strings.TrimPrefix(r.URL.Path, "/api/v1/articles/"), "/"):
 			id := parseTestInt64(strings.TrimPrefix(r.URL.Path, "/api/v1/articles/"))
 			mu.Lock()

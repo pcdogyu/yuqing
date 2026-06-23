@@ -150,6 +150,7 @@ type pageData struct {
 	Reports                    []model.Report
 	Report                     model.Report
 	Notices                    []model.SystemNotice
+	FeedbackItems              []model.Feedback
 	AuditLogs                  []model.AuditLog
 	TaskRuns                   []model.TaskRun
 	SchedulerJobs              []model.OperationSchedulerJob
@@ -3092,6 +3093,7 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) 
 			}
 		case "feedback":
 			resp, err := s.client.R().SetBody(map[string]any{
+				"user_id": userIDFromMap(user),
 				"title":   r.FormValue("title"),
 				"content": r.FormValue("content"),
 			}).Post(s.cfg.ContentURL + "/api/v1/system/feedback")
@@ -3160,6 +3162,7 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) 
 	}
 
 	notices := []model.SystemNotice{}
+	feedbackItems := []model.Feedback{}
 	taskRuns := []model.TaskRun{}
 	auditLogs := []model.AuditLog{}
 	schedulerJobs := []model.OperationSchedulerJob{}
@@ -3181,6 +3184,9 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) 
 	warningArticleOpenFlag := parsePositiveInt(r.URL.Query().Get("openFlag"), 0)
 	warningArticleKeyword := strings.TrimSpace(r.URL.Query().Get("keyword"))
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/system/notices", &notices)
+	if sectionKey == "feedback" {
+		_ = s.getJSON(s.cfg.ContentURL+"/api/v1/system/feedback?limit=20", &feedbackItems)
+	}
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/system/task-runs?limit=20", &taskRuns)
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/system/audit-logs?limit=20", &auditLogs)
 	_ = s.getJSON(s.cfg.CrawlerURL+"/api/v1/admin/tasks/crawl/runs?limit=20", &crawlRuns)
@@ -3296,6 +3302,7 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) 
 		User:                     user,
 		SectionKey:               sectionKey,
 		Notices:                  notices,
+		FeedbackItems:            feedbackItems,
 		AuditLogs:                auditLogs,
 		TaskRuns:                 taskRuns,
 		SchedulerJobs:            schedulerJobs,
@@ -4657,6 +4664,10 @@ const systemFullWidthStyles = `body>main,body>.site-footer{max-width:none;width:
 
 func buildSystemTemplate() string {
 	template := strings.NewReplacer(
+		`.feedback-textarea{min-height:168px;resize:vertical}`,
+		`.feedback-textarea{min-height:168px;resize:vertical}.feedback-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(360px,.55fr);gap:16px;align-items:start}.feedback-list{display:grid;gap:10px}.feedback-item{border:1px solid #ece7dc;border-radius:8px;padding:12px;background:#faf8f2}.feedback-item h3{margin:0 0 6px;font-size:16px}.feedback-meta{font-size:12px;color:#6a6257;margin-bottom:8px}.feedback-content{white-space:pre-wrap;word-break:break-word}@media (max-width:920px){.feedback-layout{grid-template-columns:1fr}}`,
+		`{{if eq .SectionKey "feedback"}}<section class="section-block"><h2>反馈建议</h2><form method="post"><input type="hidden" name="form_type" value="feedback"><input type="hidden" name="section" value="feedback"><input name="title" placeholder="标题"><textarea class="feedback-textarea" name="content" placeholder="问题描述或需求"></textarea><button type="submit">提交</button></form></section>{{end}}`,
+		`{{if eq .SectionKey "feedback"}}<section class="section-block"><h2>反馈建议</h2><div class="feedback-layout"><form method="post"><input type="hidden" name="form_type" value="feedback"><input type="hidden" name="section" value="feedback"><input name="title" placeholder="标题"><textarea class="feedback-textarea" name="content" placeholder="问题描述或需求"></textarea><button type="submit">提交</button></form><div><h3>建议列表</h3><div class="feedback-list">{{range .FeedbackItems}}<article class="feedback-item"><h3>{{.Title}}</h3><div class="feedback-meta">用户 {{.UserID}} · {{.CreatedAt.Format "2006-01-02 15:04"}}</div><div class="feedback-content">{{.Content}}</div></article>{{else}}<p class="muted">暂无反馈建议</p>{{end}}</div></div></div></section>{{end}}`,
 		`<div class="tabs"><a class="{{if eq .SectionKey "account"}}active{{end}}" href="/system?section=account">账号安全</a><a class="{{if eq .SectionKey "preferences"}}active{{end}}" href="/system?section=preferences">偏好设置</a><a class="{{if eq .SectionKey "database"}}active{{end}}" href="/system?section=database">数据库配置</a><a class="{{if eq .SectionKey "favorites"}}active{{end}}" href="/system?section=favorites{{if .FavoriteProjectID}}&project_id={{.FavoriteProjectID}}{{end}}">收藏夹</a><a class="{{if eq .SectionKey "warningmsg"}}active{{end}}" href="/system?section=warningmsg{{if .WarningArticleProjectID}}&project_id={{.WarningArticleProjectID}}{{end}}{{if .WarningArticleKeyword}}&keyword={{.WarningArticleKeyword}}{{end}}">预警消息</a><a class="{{if eq .SectionKey "warning"}}active{{end}}" href="/system?section=warning{{if .WarningSetting.ProjectID}}&project_id={{.WarningSetting.ProjectID}}{{end}}">预警设置</a><a class="{{if eq .SectionKey "feedback"}}active{{end}}" href="/system?section=feedback">反馈建议</a><a class="{{if eq .SectionKey "operations"}}active{{end}}" href="/system?section=operations">生产运行</a></div>`,
 		`<div class="tabs"><a class="{{if eq .SectionKey "services"}}active{{end}}" href="/system?section=services">服务状态</a><a class="{{if eq .SectionKey "legacy"}}active{{end}}" href="/system?section=legacy">Legacy注册表</a><a class="{{if eq .SectionKey "account"}}active{{end}}" href="/system?section=account">账号安全</a><a class="{{if eq .SectionKey "preferences"}}active{{end}}" href="/system?section=preferences">偏好设置</a><a class="{{if eq .SectionKey "database"}}active{{end}}" href="/system?section=database">数据库配置</a><a class="{{if eq .SectionKey "favorites"}}active{{end}}" href="/system?section=favorites{{if .FavoriteProjectID}}&project_id={{.FavoriteProjectID}}{{end}}">收藏夹</a><a class="{{if eq .SectionKey "warningmsg"}}active{{end}}" href="/system?section=warningmsg{{if .WarningArticleProjectID}}&project_id={{.WarningArticleProjectID}}{{end}}{{if .WarningArticleKeyword}}&keyword={{.WarningArticleKeyword}}{{end}}">预警消息</a><a class="{{if eq .SectionKey "warning"}}active{{end}}" href="/system?section=warning{{if .WarningSetting.ProjectID}}&project_id={{.WarningSetting.ProjectID}}{{end}}">预警设置</a><a class="{{if eq .SectionKey "feedback"}}active{{end}}" href="/system?section=feedback">反馈建议</a><a class="{{if eq .SectionKey "operations"}}active{{end}}" href="/system?section=operations">生产运行</a><a class="{{if eq .SectionKey "opactions"}}active{{end}}" href="/system?section=opactions">运营操作</a><a class="{{if eq .SectionKey "contracts"}}active{{end}}" href="/system?section=contracts">外部契约与审计</a><a class="{{if eq .SectionKey "announcements"}}active{{end}}" href="/system?section=announcements">公告与任务</a></div>`,
 		`</section><section><h2>服务状态</h2>`,

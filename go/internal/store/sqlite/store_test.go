@@ -113,6 +113,31 @@ VALUES (?, 0, '', '', ?, 'failed', 0, 0, 0, NULL)`, "jin10_full", startedAt); er
 	}
 }
 
+func TestFeedbackCreateAndList(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	first, err := store.CreateFeedback(ctx, model.Feedback{UserID: 7, Title: "第一个建议", Content: "先提交的内容"})
+	if err != nil {
+		t.Fatalf("CreateFeedback first error: %v", err)
+	}
+	second, err := store.CreateFeedback(ctx, model.Feedback{UserID: 8, Title: "第二个建议", Content: "后提交的内容"})
+	if err != nil {
+		t.Fatalf("CreateFeedback second error: %v", err)
+	}
+	if first.ID <= 0 || second.ID <= first.ID {
+		t.Fatalf("expected increasing feedback ids, got first=%+v second=%+v", first, second)
+	}
+
+	items, err := store.ListFeedback(ctx, 1)
+	if err != nil {
+		t.Fatalf("ListFeedback error: %v", err)
+	}
+	if len(items) != 1 || items[0].ID != second.ID || items[0].Title != "第二个建议" || items[0].UserID != 8 || items[0].CreatedAt.IsZero() {
+		t.Fatalf("expected latest feedback first with limit applied, got %+v", items)
+	}
+}
+
 func TestAStockAuctionAmountsUpsertAndList(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()

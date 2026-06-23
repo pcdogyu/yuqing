@@ -114,6 +114,36 @@ func TestParseID(t *testing.T) {
 	})
 }
 
+func TestSystemFeedbackAPIUpsertsAndLists(t *testing.T) {
+	store := newContentSearchTestStore(t)
+	svc := NewService(config.Config{}, store)
+	router := svc.Router()
+
+	payload := `{"user_id":7,"title":"列表建议","content":"右侧显示这条建议"}`
+	postReq := httptest.NewRequest(http.MethodPost, "/api/v1/system/feedback", strings.NewReader(payload))
+	postRR := httptest.NewRecorder()
+	router.ServeHTTP(postRR, postReq)
+	if postRR.Code != http.StatusOK {
+		t.Fatalf("expected feedback upsert 200, got %d body=%s", postRR.Code, postRR.Body.String())
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/system/feedback?limit=20", nil)
+	listRR := httptest.NewRecorder()
+	router.ServeHTTP(listRR, listReq)
+	if listRR.Code != http.StatusOK {
+		t.Fatalf("expected feedback list 200, got %d body=%s", listRR.Code, listRR.Body.String())
+	}
+	var envelope struct {
+		Data []model.Feedback `json:"data"`
+	}
+	if err := json.Unmarshal(listRR.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal feedback list: %v", err)
+	}
+	if len(envelope.Data) != 1 || envelope.Data[0].UserID != 7 || envelope.Data[0].Title != "列表建议" || envelope.Data[0].Content != "右侧显示这条建议" {
+		t.Fatalf("unexpected feedback list payload: %+v", envelope.Data)
+	}
+}
+
 func TestAStockAuctionAmountAPIUpsertsAndLists(t *testing.T) {
 	store := newContentSearchTestStore(t)
 	svc := NewService(config.Config{}, store)

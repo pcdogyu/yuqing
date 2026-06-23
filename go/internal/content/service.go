@@ -64,6 +64,7 @@ type Store interface {
 	BatchUpdateReportStatus(rctx context.Context, ids []int64, status string) error
 	ListNotices(rctx context.Context) ([]model.SystemNotice, error)
 	CreateFeedback(rctx context.Context, feedback model.Feedback) (model.Feedback, error)
+	ListFeedback(rctx context.Context, limit int) ([]model.Feedback, error)
 	ListTaskRuns(rctx context.Context, limit int) ([]model.TaskRun, error)
 	CreateAuditLog(rctx context.Context, entry model.AuditLog) (model.AuditLog, error)
 	ListAuditLogs(rctx context.Context, limit int, userID int64, action string) ([]model.AuditLog, error)
@@ -217,6 +218,7 @@ func (s *Service) Routes(r chi.Router) {
 	r.Post("/api/v1/reports/batch-status", s.handleBatchUpdateReportStatus)
 
 	r.Get("/api/v1/system/notices", s.handleListNotices)
+	r.Get("/api/v1/system/feedback", s.handleListFeedback)
 	r.Post("/api/v1/system/feedback", s.handleCreateFeedback)
 	r.Get("/api/v1/system/task-runs", s.handleListTaskRuns)
 	r.Get("/api/v1/system/audit-logs", s.handleListAuditLogs)
@@ -2487,6 +2489,15 @@ func (s *Service) handleCreateFeedback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	apiutil.WriteJSON(w, http.StatusOK, "ok", created)
+}
+
+func (s *Service) handleListFeedback(w http.ResponseWriter, r *http.Request) {
+	items, err := s.store.ListFeedback(r.Context(), apiutil.IntQuery(r, "limit", 20))
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", items)
 }
 
 func (s *Service) handleListTaskRuns(w http.ResponseWriter, r *http.Request) {

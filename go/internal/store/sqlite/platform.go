@@ -911,6 +911,29 @@ func (s *Store) CreateFeedback(ctx context.Context, feedback model.Feedback) (mo
 	return feedback, nil
 }
 
+func (s *Store) ListFeedback(ctx context.Context, limit int) ([]model.Feedback, error) {
+	limit = max(limit, 1)
+	if limit > 100 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, user_id, title, content, created_at FROM feedback ORDER BY created_at DESC, id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]model.Feedback, 0, limit)
+	for rows.Next() {
+		var item model.Feedback
+		var createdAt string
+		if err := rows.Scan(&item.ID, &item.UserID, &item.Title, &item.Content, &createdAt); err != nil {
+			return nil, err
+		}
+		item.CreatedAt = mustParseRFC3339(createdAt)
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 func (s *Store) MarkItemRead(ctx context.Context, userID, itemID int64) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO item_reads (user_id, item_id, created_at) VALUES (?, ?, ?)`, userID, itemID, now)
