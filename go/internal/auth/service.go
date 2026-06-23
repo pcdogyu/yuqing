@@ -67,7 +67,10 @@ func (s *Service) Router() http.Handler {
 func (s *Service) WechatRouter() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]string{"status": "ok"})
+		apiutil.WriteHealth(w, "wechat-service", "ok", "ok")
+	})
+	r.Get("/healthy", func(w http.ResponseWriter, r *http.Request) {
+		apiutil.WriteHealth(w, "wechat-service", "ok", "ok")
 	})
 	s.WechatRoutes(r)
 	return r
@@ -75,7 +78,10 @@ func (s *Service) WechatRouter() http.Handler {
 
 func (s *Service) Routes(r chi.Router) {
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]string{"status": "ok"})
+		apiutil.WriteHealth(w, "auth-service", "ok", "ok")
+	})
+	r.Get("/healthy", func(w http.ResponseWriter, r *http.Request) {
+		apiutil.WriteHealth(w, "auth-service", "ok", "ok")
 	})
 	r.Post("/api/v1/auth/login", s.handleLogin)
 	r.Post("/api/v1/auth/logout", s.handleLogout)

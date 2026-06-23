@@ -196,6 +196,7 @@ data class DatabaseConfigStatus(
 data class ServiceStatus(
     val name: String = "",
     val url: String = "",
+    val status: String = "",
     val healthy: Boolean = false,
     val message: String = "",
 )

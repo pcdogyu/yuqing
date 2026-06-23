@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/pcdogyu/yuqing/go/internal/apiutil"
 	"github.com/pcdogyu/yuqing/go/internal/config"
 	"github.com/pcdogyu/yuqing/go/internal/model"
 	"github.com/pcdogyu/yuqing/go/internal/provider"
@@ -26,6 +27,7 @@ func NewServer(cfg config.Config, crawler *service.Crawler, _ any) *Server {
 func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/healthz", s.handleHealthz)
+	r.Get("/healthy", s.handleHealthz)
 	r.Get("/api/v1/items", s.handleListItems)
 	r.Get("/api/v1/items/latest", s.handleLatestItems)
 	r.Get("/api/v1/items/{id}", s.handleGetItem)
@@ -35,7 +37,7 @@ func (s *Server) Router() http.Handler {
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, "ok", map[string]any{"status": "ok"})
+	writeJSON(w, http.StatusOK, "ok", apiutil.NewHealthPayload("crawler-service", "ok", "ok"))
 }
 
 func (s *Server) handleListItems(w http.ResponseWriter, r *http.Request) {

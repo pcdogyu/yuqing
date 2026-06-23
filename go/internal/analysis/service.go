@@ -61,6 +61,7 @@ func NewService(cfg config.Config, store Store) *Service {
 func (s *Service) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/healthz", s.handleHealthz)
+	r.Get("/healthy", s.handleHealthz)
 	r.Get("/api/v1/analysis/overview", s.handleOverview)
 	r.Get("/api/v1/analysis/trends", s.handleTrends)
 	r.Get("/api/v1/analysis/sources", s.handleSources)
@@ -79,7 +80,7 @@ func (s *Service) Router() http.Handler {
 }
 
 func (s *Service) handleHealthz(w http.ResponseWriter, r *http.Request) {
-	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]string{"status": "ok"})
+	apiutil.WriteHealth(w, "analysis-service", "ok", "ok")
 }
 
 func (s *Service) handleOverview(w http.ResponseWriter, r *http.Request) {

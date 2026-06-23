@@ -142,6 +142,29 @@ func TestSystemFeedbackAPIUpsertsAndLists(t *testing.T) {
 	if len(envelope.Data) != 1 || envelope.Data[0].UserID != 7 || envelope.Data[0].Title != "列表建议" || envelope.Data[0].Content != "右侧显示这条建议" {
 		t.Fatalf("unexpected feedback list payload: %+v", envelope.Data)
 	}
+
+	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/v1/system/feedback/"+strconv.FormatInt(envelope.Data[0].ID, 10), nil)
+	deleteRR := httptest.NewRecorder()
+	router.ServeHTTP(deleteRR, deleteReq)
+	if deleteRR.Code != http.StatusOK {
+		t.Fatalf("expected feedback delete 200, got %d body=%s", deleteRR.Code, deleteRR.Body.String())
+	}
+
+	listAfterDeleteReq := httptest.NewRequest(http.MethodGet, "/api/v1/system/feedback?limit=20", nil)
+	listAfterDeleteRR := httptest.NewRecorder()
+	router.ServeHTTP(listAfterDeleteRR, listAfterDeleteReq)
+	if listAfterDeleteRR.Code != http.StatusOK {
+		t.Fatalf("expected feedback list after delete 200, got %d body=%s", listAfterDeleteRR.Code, listAfterDeleteRR.Body.String())
+	}
+	envelope = struct {
+		Data []model.Feedback `json:"data"`
+	}{}
+	if err := json.Unmarshal(listAfterDeleteRR.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal feedback list after delete: %v", err)
+	}
+	if len(envelope.Data) != 0 {
+		t.Fatalf("expected feedback list empty after delete, got %+v", envelope.Data)
+	}
 }
 
 func TestAStockAuctionAmountAPIUpsertsAndLists(t *testing.T) {
@@ -479,7 +502,7 @@ func TestOperationsAndAlertsAPI(t *testing.T) {
 	}
 	healthy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/healthz", "/api/v1/nlp/capabilities":
+		case "/healthz", "/healthy", "/api/v1/nlp/capabilities":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"code":200,"message":"ok","data":{"status":"ok"}}`))
 		case "/api/v1/scheduler/jobs":
@@ -524,6 +547,13 @@ func TestOperationsAndAlertsAPI(t *testing.T) {
 	if len(opsEnvelope.Data.Services) != 8 || len(opsEnvelope.Data.FailedTaskRuns) != 2 {
 		t.Fatalf("unexpected operations summary: %+v", opsEnvelope.Data)
 	}
+	serviceStatuses := map[string]model.OperationServiceStatus{}
+	for _, service := range opsEnvelope.Data.Services {
+		serviceStatuses[service.Name] = service
+	}
+	if !serviceStatuses["gateway-web"].Healthy || serviceStatuses["gateway-web"].Status != "ok" {
+		t.Fatalf("expected gateway-web healthy ok status, got %+v", serviceStatuses["gateway-web"])
+	}
 	if len(opsEnvelope.Data.SchedulerJobs) != 1 || opsEnvelope.Data.SchedulerJobs[0].Name != "analysis-refresh" {
 		t.Fatalf("expected scheduler job summary, got %+v", opsEnvelope.Data.SchedulerJobs)
 	}
@@ -542,6 +572,13 @@ func TestOperationsAndAlertsAPI(t *testing.T) {
 	router.ServeHTTP(alertRR, alertReq)
 	if alertRR.Code != http.StatusOK || !strings.Contains(alertRR.Body.String(), "failed_task_runs") || !strings.Contains(alertRR.Body.String(), "consecutive_task_failures") || !strings.Contains(alertRR.Body.String(), "crypto_social_no_recent_insert") {
 		t.Fatalf("expected failed task alert, got status=%d body=%s", alertRR.Code, alertRR.Body.String())
+	}
+
+	healthyReq := httptest.NewRequest(http.MethodGet, "/healthy", nil)
+	healthyRR := httptest.NewRecorder()
+	router.ServeHTTP(healthyRR, healthyReq)
+	if healthyRR.Code != http.StatusOK || !strings.Contains(healthyRR.Body.String(), `"status":"ok"`) {
+		t.Fatalf("expected healthy endpoint response, got status=%d body=%s", healthyRR.Code, healthyRR.Body.String())
 	}
 }
 

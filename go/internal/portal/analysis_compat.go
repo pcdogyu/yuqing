@@ -110,11 +110,7 @@ func (s *Server) handleAnalysisEntry(w http.ResponseWriter, r *http.Request, use
 		b.WriteString(`<tr><td>`)
 		b.WriteString(html.EscapeString(service.Name))
 		b.WriteString(`</td><td>`)
-		if service.Healthy {
-			b.WriteString(`正常`)
-		} else {
-			b.WriteString(`异常`)
-		}
+		b.WriteString(serviceStatusLabel(service))
 		b.WriteString(`</td><td>`)
 		b.WriteString(html.EscapeString(service.Message))
 		b.WriteString(`</td></tr>`)

@@ -64,13 +64,17 @@ func TestValidSourceType(t *testing.T) {
 
 func TestRouterHealthz(t *testing.T) {
 	svc := &Service{}
-	recorder := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	for _, path := range []string{"/healthz", "/healthy"} {
+		t.Run(path, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, path, nil)
 
-	svc.Router().ServeHTTP(recorder, req)
+			svc.Router().ServeHTTP(recorder, req)
 
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d", recorder.Code)
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("expected status 200, got %d", recorder.Code)
+			}
+		})
 	}
 }
 

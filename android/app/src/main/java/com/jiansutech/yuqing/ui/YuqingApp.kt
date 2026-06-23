@@ -1,6 +1,7 @@
 package com.jiansutech.yuqing.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.Canvas
@@ -13,11 +14,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Article
@@ -55,6 +58,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -546,10 +550,12 @@ private fun HoldingsModule(items: List<StockHolding>) {
 private fun SystemModule(dashboard: AndroidDashboard, state: YuqingUiState, viewModel: YuqingViewModel) {
     val recentTasks = dashboard.recentTaskRunsForDisplay()
     val database = dashboard.operations.database
+    val servicesByName = dashboard.operations.services.associateBy { it.name }
     LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item { SectionTitle("连接") }
-        item { SimpleRow("网页地址", "http://yuqin.jiansutech.com:8079/") }
-        item { SimpleRow("API 地址", state.session.apiBaseUrl) }
+        item { ConnectionRow("网页地址", "http://yuqin.jiansutech.com:8079/", servicesByName["gateway-web"]) }
+        item { ConnectionRow("内容服务地址", state.session.apiBaseUrl, servicesByName["content-service"]) }
+        item { ConnectionRow("API 地址", state.session.authBaseUrl, servicesByName["auth-service"]) }
         item {
             SimpleRow(
                 "数据库",
@@ -598,12 +604,23 @@ private fun GenericModule(key: String, dashboard: AndroidDashboard) {
 
 @Composable
 private fun ServiceRow(service: ServiceStatus, viewModel: YuqingViewModel) {
+    val statusKey = connectionStatusKey(service)
+    val statusText = buildString {
+        append(connectionStatusLabel(statusKey))
+        val detail = service.message.trim()
+        if (detail.isNotBlank() && !detail.equals("ok", ignoreCase = true) && !detail.equals("working", ignoreCase = true)) {
+            append(" ")
+            append(detail)
+        }
+    }
     Card {
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(service.name, fontWeight = FontWeight.SemiBold)
-                Text(if (service.healthy) "healthy" else service.message, style = MaterialTheme.typography.bodySmall)
+                Text(statusText, style = MaterialTheme.typography.bodySmall)
             }
+            ConnectionStatusDot(statusKey)
+            Spacer(Modifier.width(12.dp))
             TextButton(onClick = { viewModel.requestAction("service_restart", "重启 ${service.name}", mapOf("service" to service.name)) }) {
                 Text("重启")
             }
@@ -943,6 +960,64 @@ private fun SimpleRow(title: String, subtitle: String, modifier: Modifier = Modi
                 Text(subtitle, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
             }
         }
+    }
+}
+
+@Composable
+private fun ConnectionRow(title: String, value: String, service: ServiceStatus?) {
+    val statusKey = connectionStatusKey(service)
+    Card {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(title.ifBlank { "--" }, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (value.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(value, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            ConnectionStatusDot(statusKey)
+        }
+    }
+}
+
+@Composable
+private fun ConnectionStatusDot(statusKey: String) {
+    Box(
+        modifier = Modifier
+            .size(12.dp)
+            .background(connectionStatusColor(statusKey), CircleShape),
+    )
+}
+
+private fun connectionStatusKey(service: ServiceStatus?): String {
+    if (service == null) {
+        return "failed"
+    }
+    val normalized = when (service.status.trim().lowercase()) {
+        "", "ok", "healthy", "normal", "ready" -> "ok"
+        "working", "busy", "running", "starting", "warming" -> "working"
+        else -> "failed"
+    }
+    return if (normalized == "ok" && !service.healthy) "failed" else normalized
+}
+
+private fun connectionStatusLabel(statusKey: String): String {
+    return when (statusKey) {
+        "ok" -> "正常"
+        "working" -> "工作中"
+        else -> "异常"
+    }
+}
+
+private fun connectionStatusColor(statusKey: String): Color {
+    return when (statusKey) {
+        "ok" -> Color(0xFF2E7D32)
+        "working" -> Color(0xFF1565C0)
+        else -> Color(0xFFC62828)
     }
 }
 

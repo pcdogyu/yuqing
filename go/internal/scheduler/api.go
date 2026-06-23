@@ -17,7 +17,10 @@ import (
 func (w *Worker) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/healthz", func(wr http.ResponseWriter, r *http.Request) {
-		apiutil.WriteJSON(wr, http.StatusOK, "ok", map[string]string{"status": "ok"})
+		apiutil.WriteHealth(wr, "scheduler-service", "ok", "ok")
+	})
+	r.Get("/healthy", func(wr http.ResponseWriter, r *http.Request) {
+		apiutil.WriteHealth(wr, "scheduler-service", "ok", "ok")
 	})
 	r.Get("/api/v1/scheduler/jobs", w.handleListJobs)
 	r.Post("/api/v1/scheduler/jobs/{name}/run", w.handleRunJob)

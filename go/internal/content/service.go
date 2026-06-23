@@ -65,6 +65,7 @@ type Store interface {
 	ListNotices(rctx context.Context) ([]model.SystemNotice, error)
 	CreateFeedback(rctx context.Context, feedback model.Feedback) (model.Feedback, error)
 	ListFeedback(rctx context.Context, limit int) ([]model.Feedback, error)
+	DeleteFeedback(rctx context.Context, id int64) error
 	ListTaskRuns(rctx context.Context, limit int) ([]model.TaskRun, error)
 	CreateAuditLog(rctx context.Context, entry model.AuditLog) (model.AuditLog, error)
 	ListAuditLogs(rctx context.Context, limit int, userID int64, action string) ([]model.AuditLog, error)
@@ -132,6 +133,7 @@ func (s *Service) Router() http.Handler {
 
 func (s *Service) Routes(r chi.Router) {
 	r.Get("/healthz", s.handleHealthz)
+	r.Get("/healthy", s.handleHealthz)
 
 	r.Get("/api/v1/project-groups", s.handleListProjectGroups)
 	r.Post("/api/v1/project-groups", s.handleCreateProjectGroup)
@@ -220,6 +222,7 @@ func (s *Service) Routes(r chi.Router) {
 	r.Get("/api/v1/system/notices", s.handleListNotices)
 	r.Get("/api/v1/system/feedback", s.handleListFeedback)
 	r.Post("/api/v1/system/feedback", s.handleCreateFeedback)
+	r.Delete("/api/v1/system/feedback/{id}", s.handleDeleteFeedback)
 	r.Get("/api/v1/system/task-runs", s.handleListTaskRuns)
 	r.Get("/api/v1/system/audit-logs", s.handleListAuditLogs)
 	r.Post("/api/v1/system/audit-logs", s.handleCreateAuditLog)
@@ -249,7 +252,7 @@ func (s *Service) Routes(r chi.Router) {
 }
 
 func (s *Service) handleHealthz(w http.ResponseWriter, r *http.Request) {
-	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]string{"status": "ok"})
+	apiutil.WriteHealth(w, "content-service", "ok", "ok")
 }
 
 func (s *Service) handleListProjectGroups(w http.ResponseWriter, r *http.Request) {
@@ -2500,6 +2503,18 @@ func (s *Service) handleListFeedback(w http.ResponseWriter, r *http.Request) {
 	apiutil.WriteJSON(w, http.StatusOK, "ok", items)
 }
 
+func (s *Service) handleDeleteFeedback(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	if err := s.store.DeleteFeedback(r.Context(), id); err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]any{"deleted": true, "id": id})
+}
+
 func (s *Service) handleListTaskRuns(w http.ResponseWriter, r *http.Request) {
 	runs, err := s.store.ListTaskRuns(r.Context(), apiutil.IntQuery(r, "limit", 20))
 	if err != nil {
@@ -2746,19 +2761,31 @@ func (s *Service) operationServiceStatuses(ctx context.Context) []model.Operatio
 		if strings.TrimSpace(target.url) == "" {
 			continue
 		}
-		status := model.OperationServiceStatus{Name: target.name, URL: strings.TrimRight(target.url, "/") + "/healthz"}
-		resp, err := s.client.R().SetContext(ctx).Get(status.URL)
-		if err != nil {
-			status.Message = err.Error()
-		} else if resp.IsSuccess() {
-			status.Healthy = true
-			status.Message = "ok"
-		} else {
-			status.Message = resp.Status()
-		}
-		result = append(result, status)
+		result = append(result, s.probeOperationServiceStatus(ctx, target.name, target.url))
 	}
 	return result
+}
+
+func (s *Service) probeOperationServiceStatus(ctx context.Context, name string, baseURL string) model.OperationServiceStatus {
+	status := model.OperationServiceStatus{
+		Name:   name,
+		URL:    strings.TrimRight(baseURL, "/") + "/healthy",
+		Status: "failed",
+	}
+	resp, err := s.client.R().SetContext(ctx).Get(status.URL)
+	if err != nil {
+		status.Message = err.Error()
+		return status
+	}
+	fallbackMessage := resp.Status()
+	if resp.IsSuccess() {
+		fallbackMessage = "ok"
+	}
+	health := apiutil.CoerceHealthPayload(resp.IsSuccess(), name, resp.Body(), fallbackMessage)
+	status.Status = health.Status
+	status.Healthy = health.Healthy
+	status.Message = health.Message
+	return status
 }
 
 func (s *Service) externalIntegrationStatuses(ctx context.Context) []model.OperationExternalStatus {

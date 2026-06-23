@@ -27,7 +27,10 @@ func NewService(cfg config.Config, crawler *service.Crawler) *Service {
 func (s *Service) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]string{"status": "ok"})
+		apiutil.WriteHealth(w, "crawler-service", "ok", "ok")
+	})
+	r.Get("/healthy", func(w http.ResponseWriter, r *http.Request) {
+		apiutil.WriteHealth(w, "crawler-service", "ok", "ok")
 	})
 	r.Get("/api/v1/articles/latest", s.handleLatest)
 	r.Post("/api/v1/admin/tasks/crawl", s.handleRunCrawl)

@@ -342,6 +342,7 @@ type NLPCapability struct {
 type OperationServiceStatus struct {
 	Name    string `json:"name"`
 	URL     string `json:"url"`
+	Status  string `json:"status,omitempty"`
 	Healthy bool   `json:"healthy"`
 	Message string `json:"message"`
 }

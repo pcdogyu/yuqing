@@ -286,11 +286,11 @@ func (s *Server) handleDisplayBoard(w http.ResponseWriter, r *http.Request, user
 		b.WriteString(`<tr><td>`)
 		b.WriteString(html.EscapeString(service.Name))
 		b.WriteString(`</td><td>`)
-		if service.Healthy {
-			b.WriteString(`<span class="ok">正常</span>`)
-		} else {
-			b.WriteString(`<span class="bad">异常</span>`)
-		}
+		b.WriteString(`<span class="`)
+		b.WriteString(serviceStatusClass(service))
+		b.WriteString(`">`)
+		b.WriteString(serviceStatusLabel(service))
+		b.WriteString(`</span>`)
 		b.WriteString(`</td><td>`)
 		b.WriteString(html.EscapeString(service.Message))
 		b.WriteString(`</td></tr>`)
@@ -620,11 +620,7 @@ func (s *Server) handleMobileMonitor(w http.ResponseWriter, r *http.Request, use
 		b.WriteString("<tr><td>")
 		b.WriteString(html.EscapeString(service.Name))
 		b.WriteString("</td><td>")
-		if service.Healthy {
-			b.WriteString("正常")
-		} else {
-			b.WriteString("异常")
-		}
+		b.WriteString(serviceStatusLabel(service))
 		b.WriteString("</td></tr>")
 	}
 	b.WriteString("</table></section>")

@@ -62,6 +62,7 @@ func (s *Service) auditMiddleware(next http.Handler) http.Handler {
 
 func skipAuditPath(path string) bool {
 	return path == "/healthz" ||
+		path == "/healthy" ||
 		strings.HasPrefix(path, "/api/v1/system/audit-logs") ||
 		strings.HasPrefix(path, "/api/v1/system/task-runs")
 }
