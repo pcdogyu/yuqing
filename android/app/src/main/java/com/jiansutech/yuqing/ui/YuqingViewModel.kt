@@ -51,6 +51,7 @@ data class AStockRecommendationWindow(
 data class YuqingUiState(
     val session: SessionState = SessionState(),
     val loading: Boolean = false,
+    val articleLoading: Boolean = false,
     val error: String = "",
     val message: String = "",
     val modules: List<AndroidModule> = emptyList(),
@@ -250,7 +251,15 @@ class YuqingViewModel(
 
     fun loadArticles(page: Int) {
         viewModelScope.launch {
-            _uiState.update { it.copy(loading = true, error = "", message = "") }
+            _uiState.update {
+                it.copy(
+                    loading = true,
+                    articleLoading = true,
+                    articleList = null,
+                    error = "",
+                    message = "新闻获取中",
+                )
+            }
             val session = sessionStore.state.first()
             runCatching {
                 val result = ApiFactory.yuqing(session.apiBaseUrl, session.token)
@@ -258,9 +267,15 @@ class YuqingViewModel(
                     .data ?: error("文章数据为空")
                 _uiState.update { it.copy(articleList = result, message = "文章已加载") }
             }.onFailure { throwable ->
-                _uiState.update { it.copy(error = throwable.message ?: "文章加载失败") }
+                _uiState.update {
+                    it.copy(
+                        articleList = null,
+                        error = throwable.message ?: "文章加载失败",
+                        message = "新闻获取中，请检查网络连接",
+                    )
+                }
             }
-            _uiState.update { it.copy(loading = false) }
+            _uiState.update { it.copy(loading = false, articleLoading = false) }
         }
     }
 

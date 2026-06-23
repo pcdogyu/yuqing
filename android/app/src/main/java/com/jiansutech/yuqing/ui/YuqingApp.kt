@@ -242,7 +242,7 @@ private fun ModuleContent(
     when (key) {
         "dashboard" -> DashboardModule(dashboard)
         "projects" -> ProjectsModule(dashboard.projects, dashboard.rules)
-        "articles" -> ArticlesModule(state.articleList ?: ItemListResult(), viewModel)
+        "articles" -> ArticlesModule(state.articleList, state.articleLoading, state.error, viewModel)
         "search" -> SearchModule(state, viewModel)
         "auction" -> AStockAuctionModule(state.aStockAuction, viewModel)
         "analysis" -> AnalysisModule(dashboard)
@@ -281,7 +281,33 @@ private fun ProjectsModule(projects: List<Project>, rules: List<com.jiansutech.y
 }
 
 @Composable
-private fun ArticlesModule(result: ItemListResult, viewModel: YuqingViewModel) {
+private fun ArticlesModule(
+    result: ItemListResult?,
+    loading: Boolean,
+    error: String,
+    viewModel: YuqingViewModel,
+) {
+    if (result == null || result.items.isEmpty()) {
+        LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            item {
+                EmptyState(
+                    when {
+                        loading -> "新闻获取中"
+                        error.isNotBlank() -> "新闻获取中，请检查网络连接"
+                        else -> "暂无最新新闻"
+                    },
+                )
+            }
+            item {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                    TextButton(onClick = { viewModel.loadArticles(1) }, enabled = !loading) {
+                        Text(if (loading) "获取中..." else "重新获取")
+                    }
+                }
+            }
+        }
+        return
+    }
     val pageSize = result.pageSize.coerceAtLeast(1)
     val canGoPrevious = result.page > 1
     val canGoNext = result.page * pageSize < result.total
