@@ -706,7 +706,7 @@ func TestInvestorRelationsPageLoadsRowsAndUsesSourceFilter(t *testing.T) {
 		t.Fatalf("expected investor relations page 200, got %d body=%s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"投资者关系", "投资者关系管理信息20260617", "互动易投资者关系", "抓取近一年并解析PDF", "NLP 76.00 积极", "AI订单增长", `href="/stock-research/11/pdf/text"`} {
+	for _, want := range []string{"投资者关系", "投资者关系管理信息20260617", "互动易投资者关系", "抓取近一年并解析PDF", "NLP 76.00 积极", "AI订单增长", `href="/stock-research/11/pdf/text"`, "body[data-page='investor-relations'] main,body[data-page='investor-relations'] .site-footer{max-width:none;width:100%;box-sizing:border-box}", "body[data-page='investor-relations'] section{width:100%;box-sizing:border-box}", "body[data-page='investor-relations'] table{width:100%;min-width:100%}", ".research-scroll{width:100%;overflow:auto}"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected investor relations page to contain %q, got %s", want, body)
 		}
