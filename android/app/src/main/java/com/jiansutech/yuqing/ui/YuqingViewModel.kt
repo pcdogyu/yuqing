@@ -1,5 +1,7 @@
 package com.jiansutech.yuqing.ui
 
+import android.os.SystemClock
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -75,11 +77,26 @@ class YuqingViewModel(
 
     init {
         viewModelScope.launch {
+            val initStartedAt = SystemClock.elapsedRealtime()
+            Log.i(STARTUP_TAG, "YuqingViewModel.init start")
+            val cacheQueryStartedAt = SystemClock.elapsedRealtime()
+            Log.i(STARTUP_TAG, "YuqingViewModel.cache query start")
             val cached = dashboardCacheDao.get()?.payload
+            Log.i(
+                STARTUP_TAG,
+                "YuqingViewModel.cache query end elapsedMs=${SystemClock.elapsedRealtime() - cacheQueryStartedAt}",
+            )
+            Log.i(STARTUP_TAG, "YuqingViewModel.cache payloadPresent=${!cached.isNullOrBlank()} payloadLength=${cached?.length ?: 0}")
             if (!cached.isNullOrBlank()) {
+                val decodeStartedAt = SystemClock.elapsedRealtime()
+                Log.i(STARTUP_TAG, "YuqingViewModel.cache decode start")
                 runCatching {
                     ApiFactory.json.decodeFromString<AndroidDashboard>(cached)
                 }.onSuccess { dashboard ->
+                    Log.i(
+                        STARTUP_TAG,
+                        "YuqingViewModel.cache decode success articleCount=${dashboard.overview.articleCount} elapsedMs=${SystemClock.elapsedRealtime() - decodeStartedAt}",
+                    )
                     _uiState.update {
                         it.copy(
                             dashboard = dashboard,
@@ -89,13 +106,24 @@ class YuqingViewModel(
                             aStockRecommendations = parseAStockRecommendations(dashboard.aStock.recommendation.recommendationsJson),
                         )
                     }
+                }.onFailure { throwable ->
+                    Log.e(
+                        STARTUP_TAG,
+                        "YuqingViewModel.cache decode failure elapsedMs=${SystemClock.elapsedRealtime() - decodeStartedAt}",
+                        throwable,
+                    )
                 }
             }
             var refreshed = false
             sessionStore.state.collect { session ->
+                Log.i(
+                    STARTUP_TAG,
+                    "YuqingViewModel.session update authBaseUrl=${session.authBaseUrl} apiBaseUrl=${session.apiBaseUrl} tokenPresent=${session.token.isNotBlank()} refreshed=$refreshed",
+                )
                 _uiState.update { it.copy(session = session) }
                 if (!refreshed) {
                     refreshed = true
+                    Log.i(STARTUP_TAG, "YuqingViewModel.init trigger refreshAll elapsedMs=${SystemClock.elapsedRealtime() - initStartedAt}")
                     refreshAll()
                 }
             }
@@ -121,8 +149,13 @@ class YuqingViewModel(
 
     fun refreshAll() {
         viewModelScope.launch {
+            val startedAt = SystemClock.elapsedRealtime()
             _uiState.update { it.copy(loading = true, error = "", message = "") }
             val session = sessionStore.state.first()
+            Log.i(
+                STARTUP_TAG,
+                "YuqingViewModel.refreshAll start selectedModule=${_uiState.value.selectedModuleKey} apiBaseUrl=${session.apiBaseUrl} tokenPresent=${session.token.isNotBlank()}",
+            )
             runCatching {
                 val api = ApiFactory.yuqing(session.apiBaseUrl, session.token)
                 val bootstrap = api.bootstrap().data
@@ -145,10 +178,19 @@ class YuqingViewModel(
                         message = "数据已刷新",
                     )
                 }
+                Log.i(
+                    STARTUP_TAG,
+                    "YuqingViewModel.refreshAll success modules=${bootstrap?.modules.orEmpty().size} articleCount=${dashboard.overview.articleCount} taskCount=${dashboard.overview.crawlRunCount}",
+                )
             }.onFailure { throwable ->
+                Log.e(STARTUP_TAG, "YuqingViewModel.refreshAll failure", throwable)
                 _uiState.update { it.copy(error = throwable.message ?: "刷新失败") }
             }
             _uiState.update { it.copy(loading = false) }
+            Log.i(
+                STARTUP_TAG,
+                "YuqingViewModel.refreshAll end elapsedMs=${SystemClock.elapsedRealtime() - startedAt} error=${_uiState.value.error.isNotBlank()}",
+            )
             if (_uiState.value.selectedModuleKey == "articles") {
                 loadArticles(1)
             }
@@ -347,6 +389,8 @@ class YuqingViewModel(
         }
     }
 }
+
+private const val STARTUP_TAG = "YuqingStartup"
 
 private fun currentAStockRecommendationWindow(): AStockRecommendationWindow {
     val zone = ZoneId.of("Asia/Shanghai")
