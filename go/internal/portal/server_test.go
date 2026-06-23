@@ -4185,9 +4185,9 @@ func TestSystemTemplateGroupsRepeatedPanelsBySection(t *testing.T) {
 		`{{if eq .SectionKey "contracts"}}<section class="section-block"><h2>外部契约与审计</h2>`,
 		`{{if eq .SectionKey "announcements"}}<section class="section-block"><h2>公告与任务</h2>`,
 		`.feedback-textarea{min-height:168px;resize:vertical}`,
-		`.feedback-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(360px,.55fr);gap:16px;align-items:start}`,
 		`<textarea class="feedback-textarea" name="content" placeholder="问题描述或需求"></textarea>`,
-		`<h3>建议列表</h3>`,
+		`href="/system?section=feedbacklist">建议列表</a>`,
+		`{{if eq .SectionKey "feedbacklist"}}<section class="section-block"><h2>建议列表</h2>`,
 		`{{range .FeedbackItems}}`,
 		`class="feedback-delete-form"`,
 		`name="form_type" value="delete_feedback"`,
@@ -4214,7 +4214,7 @@ func TestSystemTemplateGroupsRepeatedPanelsBySection(t *testing.T) {
 	}
 }
 
-func TestSystemFeedbackSectionRendersSubmittedFeedbackList(t *testing.T) {
+func TestSystemFeedbackSectionOnlyRendersSubmitForm(t *testing.T) {
 	srv, cleanup := newPortalCompatServer(t)
 	defer cleanup()
 
@@ -4225,10 +4225,36 @@ func TestSystemFeedbackSectionRendersSubmittedFeedbackList(t *testing.T) {
 		t.Fatalf("expected system feedback page 200, got %d body=%s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"反馈建议", "建议列表", "右侧显示建议标题", "右侧显示建议内容", "用户 1", "删除"} {
+	for _, want := range []string{"反馈建议", "建议列表", "name=\"form_type\" value=\"feedback\"", "问题描述或需求"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected feedback page to contain %q, got %s", want, body)
 		}
+	}
+	for _, unwanted := range []string{"右侧显示建议标题", "右侧显示建议内容", "name=\"form_type\" value=\"delete_feedback\""} {
+		if strings.Contains(body, unwanted) {
+			t.Fatalf("expected feedback page to exclude %q after moving suggestion list, got %s", unwanted, body)
+		}
+	}
+}
+
+func TestSystemFeedbackListSectionRendersSubmittedFeedbackList(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/system?section=feedbacklist", nil)
+	rr := httptest.NewRecorder()
+	srv.handleSystem(rr, req, map[string]any{"id": int64(1), "username": "admin"})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected feedback list page 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"建议列表", "右侧显示建议标题", "右侧显示建议内容", "用户 1", "删除"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected feedback list page to contain %q, got %s", want, body)
+		}
+	}
+	if strings.Contains(body, "name=\"form_type\" value=\"feedback\"") {
+		t.Fatalf("expected feedback list page to exclude submit form, got %s", body)
 	}
 }
 
@@ -4238,10 +4264,10 @@ func TestSystemFeedbackDeleteRemovesSubmittedSuggestion(t *testing.T) {
 
 	form := url.Values{
 		"form_type":   {"delete_feedback"},
-		"section":     {"feedback"},
+		"section":     {"feedbacklist"},
 		"feedback_id": {"1"},
 	}
-	req := httptest.NewRequest(http.MethodPost, "/system?section=feedback", strings.NewReader(form.Encode()))
+	req := httptest.NewRequest(http.MethodPost, "/system?section=feedbacklist", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rr := httptest.NewRecorder()
 	srv.handleSystem(rr, req, map[string]any{"id": int64(1), "username": "admin"})
@@ -4249,15 +4275,15 @@ func TestSystemFeedbackDeleteRemovesSubmittedSuggestion(t *testing.T) {
 		t.Fatalf("expected delete redirect 303, got %d body=%s", rr.Code, rr.Body.String())
 	}
 	location := rr.Header().Get("Location")
-	if !strings.Contains(location, "msg=") || !strings.Contains(location, "section=feedback") {
-		t.Fatalf("expected redirect with feedback section and message, got %q", location)
+	if !strings.Contains(location, "msg=") || !strings.Contains(location, "section=feedbacklist") {
+		t.Fatalf("expected redirect with feedback list section and message, got %q", location)
 	}
 
-	viewReq := httptest.NewRequest(http.MethodGet, "/system?section=feedback", nil)
+	viewReq := httptest.NewRequest(http.MethodGet, "/system?section=feedbacklist", nil)
 	viewRR := httptest.NewRecorder()
 	srv.handleSystem(viewRR, viewReq, map[string]any{"id": int64(1), "username": "admin"})
 	if viewRR.Code != http.StatusOK {
-		t.Fatalf("expected feedback page 200 after delete, got %d body=%s", viewRR.Code, viewRR.Body.String())
+		t.Fatalf("expected feedback list page 200 after delete, got %d body=%s", viewRR.Code, viewRR.Body.String())
 	}
 	body := viewRR.Body.String()
 	if strings.Contains(body, "右侧显示建议标题") {
