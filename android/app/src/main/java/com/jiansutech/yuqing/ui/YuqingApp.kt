@@ -104,11 +104,12 @@ private fun PortalScreen(state: YuqingUiState, viewModel: YuqingViewModel) {
     BackHandler(enabled = detail != null) {
         backtestDetail = null
     }
-    val hideHeaderContent = selected.key == "dashboard" ||
+    val hideTopBar = selected.key == "dashboard" ||
         selected.key == "articles" ||
         selected.key == "search" ||
         selected.key == "a_stock" ||
         selected.key == "auction"
+    val hideModuleStrip = hideTopBar || selected.key == "system"
     Scaffold(
         topBar = if (detail != null) {
             {
@@ -121,7 +122,7 @@ private fun PortalScreen(state: YuqingUiState, viewModel: YuqingViewModel) {
                     },
                 )
             }
-        } else if (hideHeaderContent) {
+        } else if (hideTopBar) {
             {}
         } else {
             {
@@ -158,15 +159,17 @@ private fun PortalScreen(state: YuqingUiState, viewModel: YuqingViewModel) {
     ) { padding ->
         val contentModifier = if (detail != null) {
             Modifier.padding(padding).fillMaxSize()
-        } else if (hideHeaderContent) {
+        } else if (hideTopBar) {
             Modifier.padding(padding).fillMaxSize().statusBarsPadding()
         } else {
             Modifier.padding(padding).fillMaxSize()
         }
         Column(contentModifier) {
-            if (!hideHeaderContent) {
+            if (!hideModuleStrip) {
                 StatusMessages(state)
                 ModuleStrip(modules, selected.key, viewModel)
+            } else if (!hideTopBar) {
+                StatusMessages(state)
             }
             if (state.loading) {
                 Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.Center) {
