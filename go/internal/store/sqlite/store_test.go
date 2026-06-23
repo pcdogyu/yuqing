@@ -121,11 +121,16 @@ func TestAStockAuctionAmountsUpsertAndList(t *testing.T) {
 	first, err := store.UpsertAStockAuctionAmounts(ctx, "2026-06-16", []model.AStockAuctionAmount{
 		{Code: "002230", Name: "科大讯飞", AuctionPrice: 41.2, AuctionVolume: 123400, AuctionAmount: 5084080, Source: "akshare_pre_min", Status: "ok", FetchedAt: fetchedAt},
 		{Code: "600000", Name: "浦发银行", AuctionPrice: 8.8, AuctionVolume: 90000, AuctionAmount: 792000, Source: "akshare_pre_min", Status: "ok", FetchedAt: fetchedAt},
+		{Code: "601398", Name: "工商银行", AuctionPrice: 5.2, AuctionVolume: 120000, AuctionAmount: 900000, Source: "akshare_pre_min", Status: "ok", FetchedAt: fetchedAt},
+		{Code: "000001", Name: "平安银行", AuctionPrice: 12, AuctionVolume: 100000, AuctionAmount: 1200000, Source: "akshare_pre_min", Status: "ok", FetchedAt: fetchedAt},
+		{Code: "300750", Name: "宁德时代", AuctionPrice: 210, AuctionVolume: 20000, AuctionAmount: 800000, Source: "akshare_pre_min", Status: "ok", FetchedAt: fetchedAt},
+		{Code: "920118", Name: "太湖远大", AuctionPrice: 18, AuctionVolume: 10000, AuctionAmount: 700000, Source: "akshare_pre_min", Status: "ok", FetchedAt: fetchedAt},
+		{Code: "831526", Name: "凯华材料", AuctionPrice: 15, AuctionVolume: 12000, AuctionAmount: 600000, Source: "akshare_pre_min", Status: "ok", FetchedAt: fetchedAt},
 	})
 	if err != nil {
 		t.Fatalf("UpsertAStockAuctionAmounts insert error: %v", err)
 	}
-	if first.Inserted != 2 || first.Updated != 0 {
+	if first.Inserted != 7 || first.Updated != 0 {
 		t.Fatalf("unexpected insert result: %+v", first)
 	}
 
@@ -149,17 +154,34 @@ func TestAStockAuctionAmountsUpsertAndList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListAStockAuctionAmounts latest error: %v", err)
 	}
-	if latest.Date != "2026-06-16" || latest.LatestDate != "2026-06-16" || latest.Total != 2 || len(latest.Items) != 2 {
+	if latest.Date != "2026-06-16" || latest.LatestDate != "2026-06-16" || latest.Total != 7 || len(latest.Items) != 7 {
 		t.Fatalf("unexpected latest auction list: %+v", latest)
 	}
-	if latest.Items[0].Code != "002230" || latest.Items[0].AuctionAmount != 4200000 || latest.TotalAmount != 4992000 {
+	if latest.Items[0].Code != "002230" || latest.Items[0].AuctionAmount != 4200000 || latest.TotalAmount != 9192000 {
 		t.Fatalf("expected updated highest amount row and total amount, got %+v", latest)
 	}
 	if latest.MaxItem == nil || latest.MaxItem.Code != "002230" {
 		t.Fatalf("expected max item, got %+v", latest.MaxItem)
 	}
-	if len(latest.Trend) != 2 || latest.Trend[0].Date != "2026-06-15" || latest.Trend[1].Date != "2026-06-16" || latest.Trend[1].TotalVolume != 190000 {
+	if len(latest.Trend) != 2 || latest.Trend[0].Date != "2026-06-15" || latest.Trend[1].Date != "2026-06-16" || latest.Trend[1].TotalVolume != 452000 {
 		t.Fatalf("expected two-day auction trend, got %+v", latest.Trend)
+	}
+	marketTop := func(market string) []model.AStockAuctionAmount {
+		for _, group := range latest.Trend[1].MarketTop {
+			if group.Market == market {
+				return group.Items
+			}
+		}
+		return nil
+	}
+	if got := marketTop("沪市"); len(got) != 2 || got[0].Code != "601398" || got[1].Code != "600000" {
+		t.Fatalf("expected Shanghai market top stocks by auction amount, got %+v", got)
+	}
+	if got := marketTop("深市"); len(got) != 3 || got[0].Code != "002230" || got[1].Code != "000001" || got[2].Code != "300750" {
+		t.Fatalf("expected Shenzhen market top 3 stocks by auction amount, got %+v", got)
+	}
+	if got := marketTop("北交所"); len(got) != 2 || got[0].Code != "920118" || got[1].Code != "831526" {
+		t.Fatalf("expected Beijing market top stocks by auction amount, got %+v", got)
 	}
 
 	filtered, err := store.ListAStockAuctionAmounts(ctx, model.AStockAuctionFilter{Date: "2026-06-16", Keyword: "浦发", Page: 1, PageSize: 10})

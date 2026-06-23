@@ -47,12 +47,18 @@ type AStockAuctionUpsertResult struct {
 }
 
 type AStockAuctionTrend struct {
-	Date         string  `json:"date"`
-	StockCount   int     `json:"stock_count"`
-	TotalVolume  float64 `json:"total_volume"`
-	TotalAmount  float64 `json:"total_amount"`
-	MaxStockCode string  `json:"max_stock_code"`
-	MaxStockName string  `json:"max_stock_name"`
+	Date         string                   `json:"date"`
+	StockCount   int                      `json:"stock_count"`
+	TotalVolume  float64                  `json:"total_volume"`
+	TotalAmount  float64                  `json:"total_amount"`
+	MaxStockCode string                   `json:"max_stock_code"`
+	MaxStockName string                   `json:"max_stock_name"`
+	MarketTop    []AStockAuctionMarketTop `json:"market_top,omitempty"`
+}
+
+type AStockAuctionMarketTop struct {
+	Market string                `json:"market"`
+	Items  []AStockAuctionAmount `json:"items"`
 }
 
 type AStockRecommendationSnapshot struct {

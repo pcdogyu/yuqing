@@ -335,6 +335,9 @@ func TestAStockAuctionPageLoadsSummaryAndRows(t *testing.T) {
 		if r.URL.Query().Get("date") != "2026-06-16" || r.URL.Query().Get("keyword") != "科" {
 			t.Fatalf("unexpected auction query: %s", r.URL.RawQuery)
 		}
+		if r.URL.Query().Get("page_size") != "6000" {
+			t.Fatalf("expected auction page to request full-market page_size=6000, got %s", r.URL.RawQuery)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"code":    200,
@@ -347,7 +350,7 @@ func TestAStockAuctionPageLoadsSummaryAndRows(t *testing.T) {
 				SummaryCount: 2,
 				Total:        1,
 				Page:         1,
-				PageSize:     50,
+				PageSize:     6000,
 				TotalAmount:  151000000,
 				MaxItem: &model.AStockAuctionAmount{
 					TradeDate:     "2026-06-16",
@@ -370,7 +373,32 @@ func TestAStockAuctionPageLoadsSummaryAndRows(t *testing.T) {
 				}},
 				Trend: []model.AStockAuctionTrend{
 					{Date: "2026-06-15", StockCount: 2, TotalVolume: 180000, TotalAmount: 4500000, MaxStockCode: "600000", MaxStockName: "浦发银行"},
-					{Date: "2026-06-16", StockCount: 2, TotalVolume: 213400, TotalAmount: 5876080, MaxStockCode: "002230", MaxStockName: "科大讯飞"},
+					{
+						Date:         "2026-06-16",
+						StockCount:   2,
+						TotalVolume:  213400,
+						TotalAmount:  5876080,
+						MaxStockCode: "002230",
+						MaxStockName: "科大讯飞",
+						MarketTop: []model.AStockAuctionMarketTop{
+							{
+								Market: "沪市",
+								Items: []model.AStockAuctionAmount{{
+									Code:          "600000",
+									Name:          "浦发银行",
+									AuctionAmount: 792000,
+								}},
+							},
+							{
+								Market: "深市",
+								Items: []model.AStockAuctionAmount{{
+									Code:          "002230",
+									Name:          "科大讯飞",
+									AuctionAmount: 5084080,
+								}},
+							},
+						},
+					},
 				},
 			},
 		})
@@ -385,7 +413,7 @@ func TestAStockAuctionPageLoadsSummaryAndRows(t *testing.T) {
 		t.Fatalf("expected auction page 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"集合竞价", "操作区", "获取最新交易日集合竞价金额", "回溯近30天集合竞价", "当日汇总", "近30日资金趋势", "2026-06-16", "科大讯飞", "股票数", "2", "1.51亿", "508.41万", "12.34万", "akshare_pre_min", `value="科"`, `<svg class="auction-chart"`} {
+	for _, want := range []string{"集合竞价", "操作区", "获取最新交易日集合竞价金额", "回溯近30天集合竞价", "当日汇总", "近30日资金趋势", "每个市场集合竞价金额最高的3只股票", "沪市金额前三", "深市金额前三", "北交所金额前三", "2026-06-16", "科大讯飞", "浦发银行", "股票数", "2", "1.51亿", "508.41万", "79.20万", "12.34万", "akshare_pre_min", `value="科"`, `<svg class="auction-chart"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected auction page to contain %q, got %s", want, body)
 		}

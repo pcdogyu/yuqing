@@ -50,6 +50,7 @@ func (s *Server) handleAStockAuctionPage(w http.ResponseWriter, r *http.Request,
 		.auction-chart-label{font-size:12px;fill:#6a6257}
 		.auction-chart-dot{fill:#214e34}
 		.auction-trend-table{margin-top:12px}
+		.auction-market-top{min-width:220px}
 		@media (max-width:760px){.auction-toolbar{grid-template-columns:1fr}}
 	</style>`)
 	b.WriteString(`<section><h2>集合竞价</h2><p class="auction-muted">每日 09:30 抓取全市场 A 股 09:25 开盘集合竞价成交金额，历史数据来自 PostgreSQL 配置下的业务库。</p></section>`)
@@ -95,7 +96,7 @@ func (s *Server) handleAStockAuctionAction(w http.ResponseWriter, r *http.Reques
 func (s *Server) loadAStockAuctionContext(date string, keyword string, page int) (model.AStockAuctionListResult, error) {
 	query := url.Values{}
 	query.Set("page", fmt.Sprintf("%d", page))
-	query.Set("page_size", "50")
+	query.Set("page_size", "6000")
 	if date != "" {
 		query.Set("date", date)
 	}
@@ -138,9 +139,9 @@ func renderAStockAuctionTrend(b *strings.Builder, ctx model.AStockAuctionListRes
 		b.WriteString(`<div class="auction-empty">暂无趋势数据。请先点击“回溯近30天集合竞价”，或检查 YUQING_ASTOCK_AUCTION_URL 指向的 AKShare 业务服务。</div></section>`)
 		return
 	}
-	b.WriteString(`<p class="auction-muted">折线按每日集合竞价总成交额绘制，明细表同步展示总成交量。</p>`)
+	b.WriteString(`<p class="auction-muted">折线按每日集合竞价总成交额绘制，明细表同步展示总成交量和每个市场集合竞价金额最高的3只股票。</p>`)
 	b.WriteString(aStockAuctionTrendSVG(ctx.Trend))
-	b.WriteString(`<div class="auction-scroll"><table class="auction-table auction-trend-table"><tr><th>日期</th><th>股票数</th><th>集合竞价总金额</th><th>成交量</th><th>最大金额股票</th></tr>`)
+	b.WriteString(`<div class="auction-scroll"><table class="auction-table auction-trend-table"><tr><th>日期</th><th>股票数</th><th>集合竞价总金额</th><th>成交量</th><th>最大金额股票</th><th class="auction-market-top">沪市金额前三</th><th class="auction-market-top">深市金额前三</th><th class="auction-market-top">北交所金额前三</th></tr>`)
 	start := max(len(ctx.Trend)-8, 0)
 	for _, point := range ctx.Trend[start:] {
 		b.WriteString(`<tr><td>`)
@@ -153,9 +154,45 @@ func renderAStockAuctionTrend(b *strings.Builder, ctx model.AStockAuctionListRes
 		b.WriteString(formatAStockAuctionVolume(point.TotalVolume))
 		b.WriteString(`</td><td>`)
 		b.WriteString(html.EscapeString(nonEmptyText(strings.TrimSpace(point.MaxStockCode+" "+point.MaxStockName), "--")))
+		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(aStockAuctionMarketTopText(point, "沪市")))
+		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(aStockAuctionMarketTopText(point, "深市")))
+		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(aStockAuctionMarketTopText(point, "北交所")))
 		b.WriteString(`</td></tr>`)
 	}
 	b.WriteString(`</table></div></section>`)
+}
+
+func aStockAuctionMarketTopText(point model.AStockAuctionTrend, market string) string {
+	for _, group := range point.MarketTop {
+		if group.Market == market {
+			return formatAStockAuctionTopItems(group.Items)
+		}
+	}
+	return "--"
+}
+
+func formatAStockAuctionTopItems(items []model.AStockAuctionAmount) string {
+	if len(items) == 0 {
+		return "--"
+	}
+	parts := make([]string, 0, min(len(items), 3))
+	for i, item := range items {
+		if i >= 3 {
+			break
+		}
+		label := strings.TrimSpace(item.Code + " " + item.Name)
+		if label == "" {
+			label = "--"
+		}
+		parts = append(parts, label+" "+formatAStockAuctionMoney(item.AuctionAmount))
+	}
+	if len(parts) == 0 {
+		return "--"
+	}
+	return strings.Join(parts, "；")
 }
 
 func renderAStockAuctionFilters(b *strings.Builder, ctx model.AStockAuctionListResult) {

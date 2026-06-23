@@ -232,7 +232,112 @@ ORDER BY daily.trade_date ASC`, limit)
 		}
 		out = append(out, point)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	marketTop, err := s.listAStockAuctionTrendMarketTop(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].MarketTop = marketTop[out[i].Date]
+	}
+	return out, nil
+}
+
+func (s *Store) listAStockAuctionTrendMarketTop(ctx context.Context, limit int) (map[string][]model.AStockAuctionMarketTop, error) {
+	limit = max(limit, 1)
+	rows, err := s.db.QueryContext(ctx, `
+WITH recent_dates AS (
+	SELECT DISTINCT trade_date
+	FROM a_stock_auction_amounts
+	ORDER BY trade_date DESC
+	LIMIT ?
+),
+classified AS (
+	SELECT
+		trade_date,
+		CASE
+			WHEN code LIKE '6%' THEN '沪市'
+			WHEN code LIKE '0%' OR code LIKE '3%' THEN '深市'
+			WHEN code LIKE '92%' OR code LIKE '8%' OR code LIKE '4%' THEN '北交所'
+			ELSE '其他'
+		END AS market,
+		code, name, auction_price, auction_volume, auction_amount, source, status, fetched_at, created_at, updated_at
+	FROM a_stock_auction_amounts
+	WHERE trade_date IN (SELECT trade_date FROM recent_dates)
+	  AND auction_amount > 0
+),
+ranked AS (
+	SELECT
+		*,
+		ROW_NUMBER() OVER (
+			PARTITION BY trade_date, market
+			ORDER BY auction_amount DESC, code ASC
+		) AS rn
+	FROM classified
+)
+SELECT trade_date, market, code, name, auction_price, auction_volume, auction_amount, source, status, fetched_at, created_at, updated_at
+FROM ranked
+WHERE rn <= 3
+ORDER BY trade_date ASC,
+	CASE market
+		WHEN '沪市' THEN 1
+		WHEN '深市' THEN 2
+		WHEN '北交所' THEN 3
+		ELSE 4
+	END,
+	rn ASC`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	byDateMarket := map[string]map[string][]model.AStockAuctionAmount{}
+	for rows.Next() {
+		var item model.AStockAuctionAmount
+		var market string
+		var fetchedAt, createdAt, updatedAt string
+		if err := rows.Scan(
+			&item.TradeDate,
+			&market,
+			&item.Code,
+			&item.Name,
+			&item.AuctionPrice,
+			&item.AuctionVolume,
+			&item.AuctionAmount,
+			&item.Source,
+			&item.Status,
+			&fetchedAt,
+			&createdAt,
+			&updatedAt,
+		); err != nil {
+			return nil, err
+		}
+		item.FetchedAt = mustParseRFC3339(fetchedAt)
+		item.CreatedAt = mustParseRFC3339(createdAt)
+		item.UpdatedAt = mustParseRFC3339(updatedAt)
+		if byDateMarket[item.TradeDate] == nil {
+			byDateMarket[item.TradeDate] = map[string][]model.AStockAuctionAmount{}
+		}
+		byDateMarket[item.TradeDate][market] = append(byDateMarket[item.TradeDate][market], item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make(map[string][]model.AStockAuctionMarketTop, len(byDateMarket))
+	marketOrder := []string{"沪市", "深市", "北交所", "其他"}
+	for date, markets := range byDateMarket {
+		groups := make([]model.AStockAuctionMarketTop, 0, len(markets))
+		for _, market := range marketOrder {
+			items := markets[market]
+			if len(items) == 0 {
+				continue
+			}
+			groups = append(groups, model.AStockAuctionMarketTop{Market: market, Items: items})
+		}
+		out[date] = groups
+	}
+	return out, nil
 }
 
 func (s *Store) loadAStockAuctionSummary(ctx context.Context, result *model.AStockAuctionListResult) error {

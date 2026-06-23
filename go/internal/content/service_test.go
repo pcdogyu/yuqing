@@ -148,6 +148,13 @@ func TestAStockAuctionAmountAPIUpsertsAndLists(t *testing.T) {
 	if len(envelope.Data.Trend) != 1 || envelope.Data.Trend[0].TotalAmount != 5876080 || envelope.Data.Trend[0].TotalVolume != 213400 {
 		t.Fatalf("expected auction trend totals, got %+v", envelope.Data.Trend)
 	}
+	if len(envelope.Data.Trend[0].MarketTop) != 2 ||
+		envelope.Data.Trend[0].MarketTop[0].Market != "沪市" ||
+		envelope.Data.Trend[0].MarketTop[0].Items[0].Code != "600000" ||
+		envelope.Data.Trend[0].MarketTop[1].Market != "深市" ||
+		envelope.Data.Trend[0].MarketTop[1].Items[0].Code != "002230" {
+		t.Fatalf("expected per-market auction amount top stocks, got %+v", envelope.Data.Trend[0].MarketTop)
+	}
 }
 
 func TestAStockRecommendationSnapshotAPIUpsertsAndGets(t *testing.T) {

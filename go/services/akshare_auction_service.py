@@ -420,6 +420,10 @@ def load_symbols(ak: Any, explicit_codes: list[str], limit: int) -> list[dict[st
     return symbols
 
 
+def normalize_symbol_limit(limit: int) -> int:
+    return max(0, limit)
+
+
 def fetch_market_snapshot(ak: Any, trade_date: str, limit: int) -> list[dict[str, Any]]:
     frame = ak.stock_zh_a_spot_em()
     items: list[dict[str, Any]] = []
@@ -950,8 +954,7 @@ class AuctionService:
                     items = fetch_eastmoney_snapshot(trade_date, limit)
                     warning = f"stock_zh_a_spot_em failed, used direct Eastmoney snapshot: {exc}"
                 except Exception as eastmoney_exc:
-                    fallback_limit = int(os.getenv("AKSHARE_AUCTION_FALLBACK_LIMIT", "300"))
-                    effective_limit = limit if limit > 0 else max(0, fallback_limit)
+                    effective_limit = normalize_symbol_limit(limit)
                     try:
                         symbols = load_symbols(ak, [], effective_limit)
                         with concurrent.futures.ThreadPoolExecutor(max_workers=self.workers) as pool:
@@ -1177,6 +1180,9 @@ def run_self_test() -> None:
     assert finite_float("nan") == 0.0
     assert payload_has_usable_items({"items": [{"status": "ok", "auction_amount": 1}]})
     assert not payload_has_usable_items({"items": [{"status": "no_auction_amount", "auction_amount": 0}]})
+    assert normalize_symbol_limit(0) == 0
+    assert normalize_symbol_limit(6000) == 6000
+    assert normalize_symbol_limit(-1) == 0
     eastmoney_items = eastmoney_rows_to_items(
         [{"f12": "1", "f14": "平安银行", "f2": "12.3", "f5": "1000", "f6": "12300"}],
         "2026-06-18",
