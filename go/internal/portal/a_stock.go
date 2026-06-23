@@ -1142,6 +1142,15 @@ func (s *Server) loadAStockContextWithCache(strategyDate string, periodKey strin
 		ctx.EmptyReason = aStockRecommendationEmptyReason(ctx)
 		return ctx
 	}
+	if isAStockOfficialSelectionContext(ignoreRecent, ignoreLimitUp) && s.applyAStockRecommendationSelections(&ctx) {
+		ctx.Recommendations = s.applyAStockHoldingSummaries(ctx.Recommendations)
+		ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus, ctx.LimitUpFiltered = s.loadAStockLockedMarketView(strategyDate, ctx.Period, ctx.Recommendations)
+		ctx.EmptyReason = aStockRecommendationEmptyReason(ctx)
+		if err := s.saveAStockRecommendationSnapshot(ctx); err != nil && ctx.LoadMessage == "" {
+			ctx.LoadMessage = "A股推荐保存失败：" + err.Error()
+		}
+		return ctx
+	}
 	if !forceRecommendationRefresh {
 		if s.applyAStockRecommendationSnapshot(&ctx) {
 			return ctx
@@ -1174,6 +1183,11 @@ func (s *Server) loadAStockContextWithCache(strategyDate string, periodKey strin
 	}
 	ctx.Recommendations = s.applyAStockHoldingSummaries(ctx.Recommendations)
 	ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus, ctx.LimitUpFiltered = s.loadAStockMarketView(strategyDate, ctx.Period, ctx.Recommendations, ctx.LimitUpFilterEnabled, recommendationTarget)
+	if shouldPersistAStockRecommendationSelections(ignoreRecent, ignoreLimitUp, forceRecommendationRefresh) && len(ctx.Recommendations) > 0 {
+		if err := s.saveAStockRecommendationSelections(ctx); err != nil && ctx.LoadMessage == "" {
+			ctx.LoadMessage = "A股已选股票保存失败：" + err.Error()
+		}
+	}
 	ctx.EmptyReason = aStockRecommendationEmptyReason(ctx)
 	if err := s.saveAStockRecommendationSnapshot(ctx); err != nil {
 		if ctx.LoadMessage == "" {
@@ -1183,8 +1197,29 @@ func (s *Server) loadAStockContextWithCache(strategyDate string, periodKey strin
 	return ctx
 }
 
+func isAStockOfficialSelectionContext(ignoreRecent bool, ignoreLimitUp bool) bool {
+	return !ignoreRecent && !ignoreLimitUp
+}
+
+func shouldPersistAStockRecommendationSelections(ignoreRecent bool, ignoreLimitUp bool, forceRecommendationRefresh bool) bool {
+	return forceRecommendationRefresh && isAStockOfficialSelectionContext(ignoreRecent, ignoreLimitUp)
+}
+
 func formatAStockPublishTime(value time.Time) string {
 	return value.In(aStockLocation()).Format("2006-01-02 15:04:05")
+}
+
+func (s *Server) applyAStockRecommendationSelections(ctx *aStockContext) bool {
+	if ctx == nil || !isAStockOfficialSelectionContext(ctx.IgnoreRecent, ctx.IgnoreLimitUp) {
+		return false
+	}
+	result, ok := s.loadAStockRecommendationSelections(ctx.Date, ctx.Period)
+	if !ok || len(result.Items) == 0 {
+		return false
+	}
+	ctx.Recommendations = aStockRecommendationSelectionsToRecommendations(result.Items)
+	ctx.GeneratedRecommendationCount = len(ctx.Recommendations)
+	return true
 }
 
 func (s *Server) applyAStockRecommendationSnapshot(ctx *aStockContext) bool {
@@ -1246,6 +1281,39 @@ func (s *Server) loadAStockRecommendationSnapshot(strategyDate string, period st
 	return snapshot, true
 }
 
+func (s *Server) loadAStockRecommendationSelections(strategyDate string, period string) (model.AStockRecommendationSelectionListResult, bool) {
+	if strings.TrimSpace(s.cfg.ContentURL) == "" {
+		return model.AStockRecommendationSelectionListResult{}, false
+	}
+	query := "/api/v1/a-stock/recommendation-selections?date=" + url.QueryEscape(normalizeAStockStrategyDate(strategyDate)) + "&period=" + url.QueryEscape(normalizeAStockPeriod(period).Key)
+	result := model.AStockRecommendationSelectionListResult{}
+	if err := s.getJSON(s.cfg.ContentURL+query, &result); err != nil || !result.Found || len(result.Items) == 0 {
+		return model.AStockRecommendationSelectionListResult{}, false
+	}
+	return result, true
+}
+
+func (s *Server) saveAStockRecommendationSelections(ctx aStockContext) error {
+	if strings.TrimSpace(s.cfg.ContentURL) == "" {
+		return nil
+	}
+	selectionSet := model.AStockRecommendationSelectionSet{
+		StrategyDate: ctx.Date,
+		Period:       ctx.Period,
+		Items:        aStockRecommendationsToSelectionItems(ctx.Recommendations, ctx.Date, ctx.Period),
+	}
+	resp, err := s.client.R().
+		SetBody(selectionSet).
+		Post(strings.TrimRight(s.cfg.ContentURL, "/") + "/api/v1/internal/a-stock/recommendation-selections")
+	if err != nil {
+		return err
+	}
+	if !resp.IsSuccess() {
+		return fmt.Errorf(resp.Status())
+	}
+	return nil
+}
+
 func (s *Server) saveAStockRecommendationSnapshot(ctx aStockContext) error {
 	if strings.TrimSpace(s.cfg.ContentURL) == "" {
 		return nil
@@ -1304,12 +1372,8 @@ func (s *Server) buildAStockAfternoonPopup(userID int64, strategyDate string) aS
 	if err == nil && ok && state.Dismissed {
 		return payload
 	}
-	snapshot, ok := s.loadAStockRecommendationSnapshot(date, "afternoon", false)
-	if !ok {
-		return payload
-	}
-	var recommendations []aStockRecommendation
-	if err := json.Unmarshal([]byte(nonEmpty(snapshot.RecommendationsJSON, "[]")), &recommendations); err != nil || len(recommendations) == 0 {
+	recommendations, updatedAt, ok := s.loadAStockAfternoonPopupRecommendations(date)
+	if !ok || len(recommendations) == 0 {
 		return payload
 	}
 	items := make([]aStockPopupRecommendation, 0, len(recommendations))
@@ -1323,13 +1387,28 @@ func (s *Server) buildAStockAfternoonPopup(userID int64, strategyDate string) aS
 		})
 	}
 	payload.Show = true
-	payload.UpdatedAt = formatShanghaiTime(snapshot.UpdatedAt)
+	payload.UpdatedAt = formatShanghaiTime(updatedAt)
 	payload.Meta = fmt.Sprintf("%s 09:30-13:00 窗口已生成 %d 只推荐股票", date, len(items))
 	if payload.UpdatedAt != "--" {
-		payload.Meta += "，快照更新时间 " + payload.UpdatedAt
+		payload.Meta += "，更新时间 " + payload.UpdatedAt
 	}
 	payload.Recommendations = items
 	return payload
+}
+
+func (s *Server) loadAStockAfternoonPopupRecommendations(strategyDate string) ([]aStockRecommendation, time.Time, bool) {
+	if result, ok := s.loadAStockRecommendationSelections(strategyDate, "afternoon"); ok && len(result.Items) > 0 {
+		return aStockRecommendationSelectionsToRecommendations(result.Items), result.UpdatedAt, true
+	}
+	snapshot, ok := s.loadAStockRecommendationSnapshot(strategyDate, "afternoon", false)
+	if !ok {
+		return nil, time.Time{}, false
+	}
+	var recommendations []aStockRecommendation
+	if err := json.Unmarshal([]byte(nonEmpty(snapshot.RecommendationsJSON, "[]")), &recommendations); err != nil || len(recommendations) == 0 {
+		return nil, time.Time{}, false
+	}
+	return recommendations, snapshot.UpdatedAt, true
 }
 
 func aStockAfternoonPopupKey(strategyDate string) string {
@@ -1728,6 +1807,12 @@ func (s *Server) loadRecentAStockRecommendationCodesWithCache(strategyDate strin
 	for offset := 1; offset <= lookbackDays; offset++ {
 		date := day.AddDate(0, 0, -offset).Format("2006-01-02")
 		for _, period := range aStockPeriods() {
+			if persisted := s.loadPersistedAStockRecommendationCodes(date, period.Key, false); len(persisted) > 0 {
+				for code := range persisted {
+					result[code] = struct{}{}
+				}
+				continue
+			}
 			start, end := aStockWindow(date, period.Key)
 			items, err := s.loadAStockWindowArticlesByPublishTime(start, end)
 			if err != nil || len(items) == 0 {
@@ -1749,12 +1834,32 @@ func (s *Server) loadRecentAStockRecommendationCodesWithCache(strategyDate strin
 }
 
 func (s *Server) loadSameDayMorningAStockRecommendationCodes(strategyDate string, candidates []aStockMarketCandidate) map[string]struct{} {
+	if persisted := s.loadPersistedAStockRecommendationCodes(strategyDate, "morning", false); len(persisted) > 0 {
+		return persisted
+	}
 	start, end := aStockWindow(strategyDate, "morning")
 	items, err := s.loadAStockWindowArticles(start, end)
 	if err != nil || len(items) == 0 {
 		return nil
 	}
 	return aStockRecommendationCodeSet(buildAStockSnapshotRecommendations(strategyDate, "morning", items, candidates))
+}
+
+func (s *Server) loadPersistedAStockRecommendationCodes(strategyDate string, period string, ignoreRecent bool) map[string]struct{} {
+	if !ignoreRecent {
+		if result, ok := s.loadAStockRecommendationSelections(strategyDate, period); ok && len(result.Items) > 0 {
+			return aStockRecommendationSelectionCodeSet(result.Items)
+		}
+	}
+	snapshot, ok := s.loadAStockRecommendationSnapshot(strategyDate, period, ignoreRecent)
+	if !ok {
+		return nil
+	}
+	var recommendations []aStockRecommendation
+	if err := json.Unmarshal([]byte(nonEmpty(snapshot.RecommendationsJSON, "[]")), &recommendations); err != nil {
+		return nil
+	}
+	return aStockRecommendationCodeSet(recommendations)
 }
 
 func (s *Server) applyAStockHoldingSummaries(recommendations []aStockRecommendation) []aStockRecommendation {
@@ -1967,6 +2072,23 @@ func (s *Server) loadAStockMarketView(strategyDate string, period string, recomm
 		return recommendations, buildAStockBacktestRows(strategyDate, period, recommendations, nil), "行情读取失败", 0
 	}
 	return applyAStockMarketBars(strategyDate, period, recommendations, bars, filterLimitUp, maxRecommendations)
+}
+
+func (s *Server) loadAStockLockedMarketView(strategyDate string, period string, recommendations []aStockRecommendation) ([]aStockRecommendation, []aStockBacktestRow, string, int) {
+	recommendations = initializeAStockRecommendationMarket(recommendations)
+	if len(recommendations) == 0 {
+		return recommendations, nil, "无推荐股票", 0
+	}
+	endpoint := aStockMarketEndpoint()
+	codes := make([]string, 0, len(recommendations))
+	for _, rec := range recommendations {
+		codes = append(codes, rec.Code)
+	}
+	bars, err := s.loadAStockMarketBars(strategyDate, codes, endpoint)
+	if err != nil {
+		return recommendations, buildAStockBacktestRows(strategyDate, period, recommendations, nil), "已锁定推荐股票，行情读取失败", 0
+	}
+	return applyAStockLockedMarketBars(strategyDate, period, recommendations, bars)
 }
 
 func (s *Server) loadAStockMarketBars(strategyDate string, codes []string, endpoint string) ([]aStockMarketBar, error) {
@@ -2384,6 +2506,69 @@ func applyAStockMarketBars(strategyDate string, period string, recommendations [
 		status = "无匹配行情"
 	}
 	return recommendations, rows, status, limitUpFilteredCount
+}
+
+func applyAStockLockedMarketBars(strategyDate string, period string, recommendations []aStockRecommendation, bars []aStockMarketBar) ([]aStockRecommendation, []aStockBacktestRow, string, int) {
+	byCode := groupAStockMarketBars(bars)
+	normalizedPeriod := normalizeAStockPeriod(period).Key
+	for i := range recommendations {
+		codeBars := byCode[recommendations[i].Code]
+		if entry, ok := aStockEntryBar(codeBars, strategyDate, period); ok {
+			if entry.Close > 0 {
+				recommendations[i].CurrentPrice = formatAStockPrice(entry.Close)
+				recommendations[i].TodayPct = formatAStockPct(entry.Pct)
+				recommendations[i].TodayPctClass = aStockPctClass(entry.Pct)
+			}
+		} else if normalizedPeriod == "afternoon" {
+			if sameDay, ok := sameDayAStockBar(codeBars, strategyDate); ok && sameDay.Close > 0 {
+				recommendations[i].CurrentPrice = formatAStockPrice(sameDay.Close)
+				recommendations[i].TodayPct = formatAStockPct(sameDay.Pct)
+				recommendations[i].TodayPctClass = aStockPctClass(sameDay.Pct)
+			}
+		}
+		if prev, ok := previousAStockBar(codeBars, strategyDate); ok {
+			recommendations[i].PrevClose = formatAStockPrice(prev.Close)
+			recommendations[i].PrevPct = formatAStockPct(prev.Pct)
+			recommendations[i].PrevPctClass = aStockPctClass(prev.Pct)
+			if change, ok := aStockLookbackChange(codeBars, strategyDate, 30, prev.Close); ok {
+				recommendations[i].Change30 = formatAStockPct(change)
+				recommendations[i].Change30Class = aStockPctClass(change)
+			}
+			if change, ok := aStockLookbackChange(codeBars, strategyDate, 60, prev.Close); ok {
+				recommendations[i].Change60 = formatAStockPct(change)
+				recommendations[i].Change60Class = aStockPctClass(change)
+			}
+		}
+	}
+	rows := buildAStockBacktestRows(strategyDate, period, recommendations, byCode)
+	completed := 0
+	waitingEntry := 0
+	noData := 0
+	for _, row := range rows {
+		switch {
+		case row.Status == "已回测" || strings.HasPrefix(row.Status, "已回测"):
+			completed++
+		case row.Status == "等待下午开盘价" || row.Status == "等待当日开盘价":
+			waitingEntry++
+		case row.Status == "无行情数据":
+			noData++
+		}
+	}
+	status := fmt.Sprintf("已锁定推荐股票，已回测 %d/%d", completed, len(rows))
+	if waitingEntry > 0 {
+		if normalizedPeriod == "afternoon" {
+			status = fmt.Sprintf("%s，等待下午开盘价股票 %d", status, waitingEntry)
+		} else {
+			status = fmt.Sprintf("%s，等待当日开盘价股票 %d", status, waitingEntry)
+		}
+	}
+	if noData > 0 {
+		status = fmt.Sprintf("%s，无行情数据股票 %d", status, noData)
+	}
+	if len(rows) == 0 {
+		status = "已锁定推荐股票，无回测结果"
+	}
+	return recommendations, rows, status, 0
 }
 
 func isAStockLimitUpPct(code string, name string, pct float64) bool {
@@ -3456,6 +3641,76 @@ func aStockRecommendationCodeSet(recommendations []aStockRecommendation) map[str
 		}
 	}
 	return codes
+}
+
+func aStockRecommendationSelectionCodeSet(items []model.AStockRecommendationSelection) map[string]struct{} {
+	if len(items) == 0 {
+		return nil
+	}
+	codes := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		if code := normalizeAStockCode(item.Code); code != "" {
+			codes[code] = struct{}{}
+		}
+	}
+	return codes
+}
+
+func aStockRecommendationSelectionsToRecommendations(items []model.AStockRecommendationSelection) []aStockRecommendation {
+	recommendations := make([]aStockRecommendation, 0, len(items))
+	for _, item := range items {
+		code := normalizeAStockCode(item.Code)
+		if code == "" {
+			continue
+		}
+		recommendations = append(recommendations, aStockRecommendation{
+			Rank:         item.Rank,
+			Hotspot:      strings.TrimSpace(item.Hotspot),
+			Code:         code,
+			Name:         strings.TrimSpace(item.Name),
+			HotspotScore: item.HotspotScore,
+			MarketScore:  item.MarketScore,
+			Reason:       strings.TrimSpace(item.Reason),
+		})
+	}
+	sort.SliceStable(recommendations, func(i, j int) bool {
+		if recommendations[i].Rank == recommendations[j].Rank {
+			return recommendations[i].Code < recommendations[j].Code
+		}
+		return recommendations[i].Rank < recommendations[j].Rank
+	})
+	for i := range recommendations {
+		if recommendations[i].Rank <= 0 {
+			recommendations[i].Rank = i + 1
+		}
+	}
+	return recommendations
+}
+
+func aStockRecommendationsToSelectionItems(recommendations []aStockRecommendation, strategyDate string, period string) []model.AStockRecommendationSelection {
+	items := make([]model.AStockRecommendationSelection, 0, len(recommendations))
+	for i, rec := range recommendations {
+		code := normalizeAStockCode(rec.Code)
+		if code == "" {
+			continue
+		}
+		rank := rec.Rank
+		if rank <= 0 {
+			rank = i + 1
+		}
+		items = append(items, model.AStockRecommendationSelection{
+			StrategyDate: strategyDate,
+			Period:       period,
+			Rank:         rank,
+			Hotspot:      strings.TrimSpace(rec.Hotspot),
+			Code:         code,
+			Name:         strings.TrimSpace(rec.Name),
+			HotspotScore: rec.HotspotScore,
+			MarketScore:  rec.MarketScore,
+			Reason:       strings.TrimSpace(rec.Reason),
+		})
+	}
+	return items
 }
 
 func filterAStockRecommendationsByCodes(recommendations []aStockRecommendation, blockedCodes map[string]struct{}) ([]aStockRecommendation, int) {

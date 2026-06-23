@@ -240,6 +240,39 @@ func TestAStockRecommendationSnapshotAPIUpsertsAndGets(t *testing.T) {
 	}
 }
 
+func TestAStockRecommendationSelectionsAPIUpsertsAndLists(t *testing.T) {
+	store := newContentSearchTestStore(t)
+	svc := NewService(config.Config{}, store)
+	router := svc.Router()
+
+	payload := `{"strategy_date":"2026-06-23","period":"afternoon","items":[{"rank":1,"code":"002008","name":"大族激光","hotspot":"机器人","market_score":91,"reason":"locked-1"},{"rank":2,"code":"688367","name":"工大高科","hotspot":"机器人","market_score":87,"reason":"locked-2"}]}`
+	postReq := httptest.NewRequest(http.MethodPost, "/api/v1/internal/a-stock/recommendation-selections", strings.NewReader(payload))
+	postRR := httptest.NewRecorder()
+	router.ServeHTTP(postRR, postReq)
+	if postRR.Code != http.StatusOK {
+		t.Fatalf("expected recommendation selections upsert 200, got %d body=%s", postRR.Code, postRR.Body.String())
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/recommendation-selections?date=2026-06-23&period=afternoon", nil)
+	getRR := httptest.NewRecorder()
+	router.ServeHTTP(getRR, getReq)
+	if getRR.Code != http.StatusOK {
+		t.Fatalf("expected recommendation selections get 200, got %d body=%s", getRR.Code, getRR.Body.String())
+	}
+	var envelope struct {
+		Data model.AStockRecommendationSelectionListResult `json:"data"`
+	}
+	if err := json.Unmarshal(getRR.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode selection response error: %v", err)
+	}
+	if !envelope.Data.Found || envelope.Data.StrategyDate != "2026-06-23" || envelope.Data.Period != "afternoon" || len(envelope.Data.Items) != 2 {
+		t.Fatalf("unexpected selection response: %+v", envelope.Data)
+	}
+	if envelope.Data.Items[0].Code != "002008" || envelope.Data.Items[1].Code != "688367" {
+		t.Fatalf("unexpected selection items: %+v", envelope.Data.Items)
+	}
+}
+
 func TestStockResearchAPIUpsertsAndLists(t *testing.T) {
 	store := newContentSearchTestStore(t)
 	svc := NewService(config.Config{}, store)

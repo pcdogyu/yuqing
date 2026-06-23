@@ -98,6 +98,8 @@ type Store interface {
 	ListAStockAuctionAmounts(rctx context.Context, filter model.AStockAuctionFilter) (model.AStockAuctionListResult, error)
 	UpsertAStockRecommendationSnapshot(rctx context.Context, snapshot model.AStockRecommendationSnapshot) (model.AStockRecommendationSnapshotUpsertResult, error)
 	GetAStockRecommendationSnapshot(rctx context.Context, strategyDate string, period string, ignoreRecent bool) (model.AStockRecommendationSnapshot, bool, error)
+	UpsertAStockRecommendationSelections(rctx context.Context, selectionSet model.AStockRecommendationSelectionSet) (model.AStockRecommendationSelectionUpsertResult, error)
+	ListAStockRecommendationSelections(rctx context.Context, strategyDate string, period string) (model.AStockRecommendationSelectionListResult, error)
 	UpsertStockResearchSurveys(rctx context.Context, items []model.StockResearchSurvey) (model.StockResearchUpsertResult, error)
 	ListStockResearchSurveys(rctx context.Context, filter model.StockResearchFilter) (model.StockResearchListResult, error)
 	GetStockResearchSurvey(rctx context.Context, id int64) (model.StockResearchSurvey, error)
@@ -173,6 +175,8 @@ func (s *Service) Routes(r chi.Router) {
 	r.Post("/api/v1/admin/a-stock/auction", s.handleUpsertAStockAuctionAmounts)
 	r.Get("/api/v1/a-stock/recommendations", s.handleGetAStockRecommendationSnapshot)
 	r.Post("/api/v1/internal/a-stock/recommendations", s.handleUpsertAStockRecommendationSnapshot)
+	r.Get("/api/v1/a-stock/recommendation-selections", s.handleListAStockRecommendationSelections)
+	r.Post("/api/v1/internal/a-stock/recommendation-selections", s.handleUpsertAStockRecommendationSelections)
 	r.Get("/api/v1/stock-research", s.handleListStockResearchSurveys)
 	r.Get("/api/v1/stock-research/{id}", s.handleGetStockResearchSurvey)
 	r.Get("/api/v1/stock-research/{id}/pdf", s.handleGetStockResearchPDF)
@@ -647,6 +651,42 @@ func (s *Service) handleUpsertAStockRecommendationSnapshot(w http.ResponseWriter
 		return
 	}
 	result, err := s.store.UpsertAStockRecommendationSnapshot(r.Context(), snapshot)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleListAStockRecommendationSelections(w http.ResponseWriter, r *http.Request) {
+	date := strings.TrimSpace(r.URL.Query().Get("date"))
+	period := strings.TrimSpace(r.URL.Query().Get("period"))
+	if date == "" || period == "" {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "date and period required", nil)
+		return
+	}
+	result, err := s.store.ListAStockRecommendationSelections(r.Context(), date, period)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	result.Found = len(result.Items) > 0
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleUpsertAStockRecommendationSelections(w http.ResponseWriter, r *http.Request) {
+	var selectionSet model.AStockRecommendationSelectionSet
+	if err := json.NewDecoder(r.Body).Decode(&selectionSet); err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid json", nil)
+		return
+	}
+	selectionSet.StrategyDate = strings.TrimSpace(selectionSet.StrategyDate)
+	selectionSet.Period = strings.TrimSpace(selectionSet.Period)
+	if selectionSet.StrategyDate == "" || selectionSet.Period == "" {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "strategy_date and period required", nil)
+		return
+	}
+	result, err := s.store.UpsertAStockRecommendationSelections(r.Context(), selectionSet)
 	if err != nil {
 		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
 		return

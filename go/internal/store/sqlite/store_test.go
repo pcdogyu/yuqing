@@ -311,6 +311,52 @@ func TestAStockRecommendationSnapshotUpsertAndGet(t *testing.T) {
 	}
 }
 
+func TestAStockRecommendationSelectionsUpsertAndList(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	first, err := store.UpsertAStockRecommendationSelections(ctx, model.AStockRecommendationSelectionSet{
+		StrategyDate: "2026-06-23",
+		Period:       "afternoon",
+		Items: []model.AStockRecommendationSelection{
+			{Rank: 1, Code: "002008", Name: "大族激光", Hotspot: "机器人", MarketScore: 91, Reason: "first"},
+			{Rank: 2, Code: "688367", Name: "工大高科", Hotspot: "机器人", MarketScore: 87, Reason: "second"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("UpsertAStockRecommendationSelections insert error: %v", err)
+	}
+	if first.Inserted != 2 || first.Updated != 0 || first.Total != 2 {
+		t.Fatalf("unexpected first selection upsert result: %+v", first)
+	}
+
+	second, err := store.UpsertAStockRecommendationSelections(ctx, model.AStockRecommendationSelectionSet{
+		StrategyDate: "2026-06-23",
+		Period:       "afternoon",
+		Items: []model.AStockRecommendationSelection{
+			{Rank: 1, Code: "002008", Name: "大族激光", Hotspot: "机器人", MarketScore: 93, Reason: "kept"},
+			{Rank: 2, Code: "688367", Name: "工大高科", Hotspot: "机器人", MarketScore: 88, Reason: "kept-too"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("UpsertAStockRecommendationSelections update error: %v", err)
+	}
+	if second.Inserted != 0 || second.Updated != 2 || second.Total != 2 {
+		t.Fatalf("unexpected second selection upsert result: %+v", second)
+	}
+
+	list, err := store.ListAStockRecommendationSelections(ctx, "2026-06-23", "afternoon")
+	if err != nil {
+		t.Fatalf("ListAStockRecommendationSelections error: %v", err)
+	}
+	if !list.Found || len(list.Items) != 2 {
+		t.Fatalf("expected two persisted selections, got %+v", list)
+	}
+	if list.Items[0].Code != "002008" || list.Items[0].MarketScore != 93 || list.Items[1].Code != "688367" {
+		t.Fatalf("unexpected persisted selections: %+v", list.Items)
+	}
+}
+
 func TestStockResearchSurveysUpsertAndFilter(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()

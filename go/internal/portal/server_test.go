@@ -2024,11 +2024,25 @@ func handleAStockRecommendationSnapshotTestEndpoint(w http.ResponseWriter, r *ht
 			"data":    model.AStockRecommendationSnapshot{Found: false},
 		})
 		return true
+	case "/api/v1/a-stock/recommendation-selections":
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    http.StatusOK,
+			"message": "ok",
+			"data":    model.AStockRecommendationSelectionListResult{Found: false},
+		})
+		return true
 	case "/api/v1/internal/a-stock/recommendations":
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"code":    http.StatusOK,
 			"message": "ok",
 			"data":    model.AStockRecommendationSnapshotUpsertResult{Inserted: 1},
+		})
+		return true
+	case "/api/v1/internal/a-stock/recommendation-selections":
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    http.StatusOK,
+			"message": "ok",
+			"data":    model.AStockRecommendationSelectionUpsertResult{Inserted: 1, Total: 1},
 		})
 		return true
 	default:
@@ -2042,6 +2056,8 @@ func TestAStockContextLoadsPersistedRecommendationSnapshot(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/articles":
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0}})
+		case "/api/v1/a-stock/recommendation-selections":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.AStockRecommendationSelectionListResult{Found: false}})
 		case "/api/v1/a-stock/recommendations":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"data": model.AStockRecommendationSnapshot{
@@ -2071,6 +2087,74 @@ func TestAStockContextLoadsPersistedRecommendationSnapshot(t *testing.T) {
 	}
 	if !ctx.LimitUpFilterEnabled {
 		t.Fatalf("expected persisted afternoon snapshot to preserve limit-up filter state")
+	}
+}
+
+func TestAStockContextRefreshKeepsPersistedRecommendationSelections(t *testing.T) {
+	t.Setenv("YUQING_ASTOCK_MARKET_URL", "")
+	market := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"items": []map[string]any{
+				{"code": "002008", "date": "2026-06-20", "close": 120.0, "pct": 1.2},
+				{"code": "002008", "date": "2026-06-23", "close": 135.54, "pct": 7.57, "afternoon_entry_price": 126.00},
+				{"code": "688367", "date": "2026-06-20", "close": 48.10, "pct": 0.8},
+				{"code": "688367", "date": "2026-06-23", "close": 50.87, "pct": 4.93, "afternoon_entry_price": 49.10},
+			},
+		})
+	}))
+	defer market.Close()
+	t.Setenv("YUQING_ASTOCK_MARKET_URL", market.URL)
+
+	snapshotGets := 0
+	selectionGets := 0
+	selectionPosts := 0
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/articles":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0}})
+		case "/api/v1/a-stock/recommendation-selections":
+			selectionGets++
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{
+				Found:        true,
+				StrategyDate: "2026-06-23",
+				Period:       "afternoon",
+				Items: []model.AStockRecommendationSelection{
+					{Rank: 1, Code: "002008", Name: "大族激光", Hotspot: "机器人", MarketScore: 91, Reason: "locked-1"},
+					{Rank: 2, Code: "688367", Name: "工大高科", Hotspot: "机器人", MarketScore: 87, Reason: "locked-2"},
+				},
+				UpdatedAt: time.Date(2026, 6, 23, 5, 5, 0, 0, time.UTC),
+			})
+		case "/api/v1/a-stock/recommendations":
+			snapshotGets++
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
+		case "/api/v1/internal/a-stock/recommendations":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Inserted: 1})
+		case "/api/v1/internal/a-stock/recommendation-selections":
+			selectionPosts++
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionUpsertResult{Inserted: 2, Total: 2})
+		case "/api/v1/a-stock/holdings/summary":
+			writeEnvelope(w, http.StatusOK, "ok", model.StockInstitutionHoldingSummary{})
+		default:
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	ctx := srv.loadAStockContextWithCache("2026-06-23", "afternoon", 1, false, false, true, newAStockRequestCache())
+	if len(ctx.Recommendations) != 2 || ctx.Recommendations[0].Code != "002008" || ctx.Recommendations[1].Code != "688367" {
+		t.Fatalf("expected locked afternoon selections to stay unchanged, got %+v", ctx.Recommendations)
+	}
+	if selectionGets == 0 {
+		t.Fatal("expected persisted selection lookup")
+	}
+	if snapshotGets != 0 {
+		t.Fatalf("expected locked selection path to bypass snapshot reads, got %d", snapshotGets)
+	}
+	if selectionPosts != 0 {
+		t.Fatalf("expected locked selection path to avoid rewriting selections, got %d", selectionPosts)
 	}
 }
 
@@ -2120,6 +2204,8 @@ func TestAStockPopupShowsAndDismissesAfternoonRecommendations(t *testing.T) {
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/a-stock/recommendation-selections":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{Found: false})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/a-stock/recommendations":
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{
 				Found:               true,
@@ -2749,6 +2835,10 @@ func TestAStockRecentRecommendationCodesUseRequestCache(t *testing.T) {
 					}},
 				},
 			})
+		case "/api/v1/a-stock/recommendation-selections":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.AStockRecommendationSelectionListResult{Found: false}})
+		case "/api/v1/a-stock/recommendations":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.AStockRecommendationSnapshot{Found: false}})
 		default:
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}

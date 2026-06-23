@@ -156,3 +156,201 @@ func scanAStockRecommendationSnapshot(scanner scanner) (model.AStockRecommendati
 	snapshot.UpdatedAt = mustParseRFC3339(updatedAt)
 	return snapshot, nil
 }
+
+func (s *Store) UpsertAStockRecommendationSelections(ctx context.Context, selectionSet model.AStockRecommendationSelectionSet) (model.AStockRecommendationSelectionUpsertResult, error) {
+	result := model.AStockRecommendationSelectionUpsertResult{}
+	strategyDate := strings.TrimSpace(selectionSet.StrategyDate)
+	period := strings.TrimSpace(selectionSet.Period)
+	if strategyDate == "" || period == "" {
+		return result, nil
+	}
+	items := normalizeAStockRecommendationSelections(strategyDate, period, selectionSet.Items)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return result, err
+	}
+	defer tx.Rollback()
+
+	existingCreatedAt := make(map[string]time.Time)
+	rows, err := tx.QueryContext(ctx, `
+SELECT code, created_at
+FROM a_stock_recommendation_selections
+WHERE strategy_date = ? AND period = ?`,
+		strategyDate,
+		period,
+	)
+	if err != nil {
+		return result, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var code string
+		var createdAt string
+		if err := rows.Scan(&code, &createdAt); err != nil {
+			return result, err
+		}
+		existingCreatedAt[strings.TrimSpace(code)] = mustParseRFC3339(createdAt)
+	}
+	if err := rows.Err(); err != nil {
+		return result, err
+	}
+
+	if len(items) == 0 {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM a_stock_recommendation_selections WHERE strategy_date = ? AND period = ?`, strategyDate, period); err != nil {
+			return result, err
+		}
+		if err := tx.Commit(); err != nil {
+			return result, err
+		}
+		return result, nil
+	}
+
+	deleteArgs := make([]any, 0, len(items)+2)
+	deleteArgs = append(deleteArgs, strategyDate, period)
+	placeholders := make([]string, 0, len(items))
+	for _, item := range items {
+		placeholders = append(placeholders, "?")
+		deleteArgs = append(deleteArgs, item.Code)
+	}
+	deleteQuery := `
+DELETE FROM a_stock_recommendation_selections
+WHERE strategy_date = ? AND period = ? AND code NOT IN (` + strings.Join(placeholders, ",") + `)`
+	if _, err := tx.ExecContext(ctx, deleteQuery, deleteArgs...); err != nil {
+		return result, err
+	}
+
+	now := time.Now().UTC()
+	for _, item := range items {
+		createdAt, existed := existingCreatedAt[item.Code]
+		if !existed {
+			createdAt = item.CreatedAt
+			if createdAt.IsZero() {
+				createdAt = now
+			}
+			result.Inserted++
+		} else {
+			result.Updated++
+		}
+		updatedAt := item.UpdatedAt
+		if updatedAt.IsZero() {
+			updatedAt = now
+		}
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO a_stock_recommendation_selections (
+	strategy_date, period, code, rank, hotspot, name, hotspot_score, market_score, reason, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(strategy_date, period, code) DO UPDATE SET
+	rank = excluded.rank,
+	hotspot = excluded.hotspot,
+	name = excluded.name,
+	hotspot_score = excluded.hotspot_score,
+	market_score = excluded.market_score,
+	reason = excluded.reason,
+	updated_at = excluded.updated_at`,
+			strategyDate,
+			period,
+			item.Code,
+			item.Rank,
+			item.Hotspot,
+			item.Name,
+			item.HotspotScore,
+			item.MarketScore,
+			item.Reason,
+			createdAt.UTC().Format(time.RFC3339),
+			updatedAt.UTC().Format(time.RFC3339),
+		); err != nil {
+			return result, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return result, err
+	}
+	result.Total = len(items)
+	return result, nil
+}
+
+func (s *Store) ListAStockRecommendationSelections(ctx context.Context, strategyDate string, period string) (model.AStockRecommendationSelectionListResult, error) {
+	result := model.AStockRecommendationSelectionListResult{
+		StrategyDate: strings.TrimSpace(strategyDate),
+		Period:       strings.TrimSpace(period),
+		Items:        make([]model.AStockRecommendationSelection, 0),
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT strategy_date, period, rank, hotspot, code, name, hotspot_score, market_score, reason, created_at, updated_at
+FROM a_stock_recommendation_selections
+WHERE strategy_date = ? AND period = ?
+ORDER BY rank ASC, code ASC`,
+		result.StrategyDate,
+		result.Period,
+	)
+	if err != nil {
+		return result, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		item, err := scanAStockRecommendationSelection(rows)
+		if err != nil {
+			return result, err
+		}
+		if result.CreatedAt.IsZero() || item.CreatedAt.Before(result.CreatedAt) {
+			result.CreatedAt = item.CreatedAt
+		}
+		if result.UpdatedAt.IsZero() || item.UpdatedAt.After(result.UpdatedAt) {
+			result.UpdatedAt = item.UpdatedAt
+		}
+		result.Items = append(result.Items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return result, err
+	}
+	result.Found = len(result.Items) > 0
+	return result, nil
+}
+
+func scanAStockRecommendationSelection(scanner scanner) (model.AStockRecommendationSelection, error) {
+	var item model.AStockRecommendationSelection
+	var createdAt, updatedAt string
+	if err := scanner.Scan(
+		&item.StrategyDate,
+		&item.Period,
+		&item.Rank,
+		&item.Hotspot,
+		&item.Code,
+		&item.Name,
+		&item.HotspotScore,
+		&item.MarketScore,
+		&item.Reason,
+		&createdAt,
+		&updatedAt,
+	); err != nil {
+		return item, err
+	}
+	item.CreatedAt = mustParseRFC3339(createdAt)
+	item.UpdatedAt = mustParseRFC3339(updatedAt)
+	return item, nil
+}
+
+func normalizeAStockRecommendationSelections(strategyDate string, period string, items []model.AStockRecommendationSelection) []model.AStockRecommendationSelection {
+	normalized := make([]model.AStockRecommendationSelection, 0, len(items))
+	seen := make(map[string]struct{})
+	for _, item := range items {
+		item.StrategyDate = strategyDate
+		item.Period = period
+		item.Code = strings.TrimSpace(item.Code)
+		item.Name = strings.TrimSpace(item.Name)
+		item.Hotspot = strings.TrimSpace(item.Hotspot)
+		item.Reason = strings.TrimSpace(item.Reason)
+		if item.Code == "" {
+			continue
+		}
+		if _, exists := seen[item.Code]; exists {
+			continue
+		}
+		seen[item.Code] = struct{}{}
+		if item.Rank <= 0 {
+			item.Rank = len(normalized) + 1
+		}
+		normalized = append(normalized, item)
+	}
+	return normalized
+}

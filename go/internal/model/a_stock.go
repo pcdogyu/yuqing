@@ -86,3 +86,38 @@ type AStockRecommendationSnapshotUpsertResult struct {
 	Inserted int `json:"inserted"`
 	Updated  int `json:"updated"`
 }
+
+type AStockRecommendationSelection struct {
+	StrategyDate string    `json:"strategy_date"`
+	Period       string    `json:"period"`
+	Rank         int       `json:"rank"`
+	Hotspot      string    `json:"hotspot"`
+	Code         string    `json:"code"`
+	Name         string    `json:"name"`
+	HotspotScore int       `json:"hotspot_score"`
+	MarketScore  int       `json:"market_score"`
+	Reason       string    `json:"reason"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+type AStockRecommendationSelectionSet struct {
+	StrategyDate string                          `json:"strategy_date"`
+	Period       string                          `json:"period"`
+	Items        []AStockRecommendationSelection `json:"items"`
+}
+
+type AStockRecommendationSelectionListResult struct {
+	Found        bool                            `json:"found"`
+	StrategyDate string                          `json:"strategy_date"`
+	Period       string                          `json:"period"`
+	Items        []AStockRecommendationSelection `json:"items"`
+	CreatedAt    time.Time                       `json:"created_at"`
+	UpdatedAt    time.Time                       `json:"updated_at"`
+}
+
+type AStockRecommendationSelectionUpsertResult struct {
+	Inserted int `json:"inserted"`
+	Updated  int `json:"updated"`
+	Total    int `json:"total"`
+}
