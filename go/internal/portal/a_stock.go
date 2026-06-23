@@ -950,21 +950,37 @@ func aStockDateTabs(strategyDate string) []aStockDateTab {
 	prevOne := localAStockAdjacentTradingDay(centerDate, -1)
 	prevTwo := localAStockAdjacentTradingDay(prevOne, -1)
 	if prevTwo != "" {
-		tabs = append(tabs, aStockDateTab{Label: "前两日", Date: prevTwo})
+		tabs = append(tabs, aStockDateTab{Label: aStockDateTabLabel(prevTwo), Date: prevTwo})
 	}
 	if prevOne != "" {
-		tabs = append(tabs, aStockDateTab{Label: "前一日", Date: prevOne})
+		tabs = append(tabs, aStockDateTab{Label: aStockDateTabLabel(prevOne), Date: prevOne})
 	}
-	tabs = append(tabs, aStockDateTab{Label: "今日", Date: centerDate})
+	tabs = append(tabs, aStockDateTab{Label: aStockDateTabLabel(centerDate), Date: centerDate})
 	nextOne := localAStockAdjacentTradingDay(centerDate, 1)
 	if nextOne != "" && nextOne <= latestDate {
-		tabs = append(tabs, aStockDateTab{Label: "后一日", Date: nextOne})
+		tabs = append(tabs, aStockDateTab{Label: aStockDateTabLabel(nextOne), Date: nextOne})
 		nextTwo := localAStockAdjacentTradingDay(nextOne, 1)
 		if nextTwo != "" && nextTwo <= latestDate {
-			tabs = append(tabs, aStockDateTab{Label: "后两日", Date: nextTwo})
+			tabs = append(tabs, aStockDateTab{Label: aStockDateTabLabel(nextTwo), Date: nextTwo})
 		}
 	}
 	return tabs
+}
+
+func aStockDateTabLabel(date string) string {
+	date = normalizeAStockStrategyDate(date)
+	if date == "" {
+		return ""
+	}
+	if date == aStockTodayDate() {
+		return "今日"
+	}
+	parsed, err := time.ParseInLocation("2006-01-02", date, aStockLocation())
+	if err != nil {
+		return date
+	}
+	weekday := [...]string{"周日", "周一", "周二", "周三", "周四", "周五", "周六"}[parsed.Weekday()]
+	return date + " " + weekday
 }
 
 func combineAStockBacktestRows(morningCtx aStockContext, afternoonCtx aStockContext) []aStockBacktestDisplayRow {

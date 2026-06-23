@@ -65,6 +65,31 @@ func TestNonEmpty(t *testing.T) {
 	}
 }
 
+func TestRouterHealthy(t *testing.T) {
+	srv := NewServer(config.Config{})
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/healthy", nil)
+
+	srv.Router().ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", recorder.Code)
+	}
+	var envelope struct {
+		Data struct {
+			Service string `json:"service"`
+			Status  string `json:"status"`
+			Healthy bool   `json:"healthy"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal healthy response: %v", err)
+	}
+	if envelope.Data.Service != "gateway-web" || envelope.Data.Status != "ok" || !envelope.Data.Healthy {
+		t.Fatalf("unexpected healthy payload: %+v", envelope.Data)
+	}
+}
+
 func TestArticleBodyTextSkipsTitleOnlyContent(t *testing.T) {
 	item := model.Item{
 		Title:   "金十图示：2026年06月16日（周二）亚盘市场行情",
@@ -1625,9 +1650,11 @@ func TestAStockPageOffersTodayNavigationAndAfterAlias(t *testing.T) {
 	body := rr.Body.String()
 	for _, want := range []string{
 		"下午推荐",
-		"今日",
-		"后一日",
-		"后两日",
+		"2026-06-09 周二",
+		"2026-06-10 周三",
+		"2026-06-11 周四",
+		"2026-06-12 周五",
+		"2026-06-15 周一",
 		`href="/a-stock?date=2026-06-15&period=afternoon"`,
 	} {
 		if !strings.Contains(body, want) {
@@ -2317,7 +2344,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"金十快讯", "金十资讯", "1条", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "5日内过滤", "涨停过滤", "关闭5日过滤", "关闭涨停过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "推荐历史", "上午推荐", "下午推荐", "推荐窗口", "上午开盘价", "下午开盘价", "补抓上午新闻", "重新生成上午推荐", "补抓下午新闻", "重新生成下午推荐", "刷新全部回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="refresh_backtest"`, "前两日", "前一日", "今日", "T+0 收益", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
+	for _, want := range []string{"金十快讯", "金十资讯", "1条", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "5日内过滤", "涨停过滤", "关闭5日过滤", "关闭涨停过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "推荐历史", "上午推荐", "下午推荐", "推荐窗口", "上午开盘价", "下午开盘价", "补抓上午新闻", "重新生成上午推荐", "补抓下午新闻", "重新生成下午推荐", "刷新全部回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="refresh_backtest"`, "2026-06-12 周五", "2026-06-15 周一", "今日", "T+0 收益", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}
@@ -2327,7 +2354,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 			t.Fatalf("expected A股 page not to render individual news title %q, got %s", notWant, body)
 		}
 	}
-	if strings.Index(body, "前两日") < 0 || strings.Index(body, "前两日") > strings.Index(body, "顶部概览") {
+	if strings.Index(body, "2026-06-12 周五") < 0 || strings.Index(body, "2026-06-12 周五") > strings.Index(body, "顶部概览") {
 		t.Fatalf("expected date tabs to render above overview, got %s", body)
 	}
 	if strings.Index(body, `<section><h2>推荐股票</h2>`) < strings.Index(body, "顶部概览") || strings.Index(body, `<section><h2>推荐股票</h2>`) > strings.Index(body, "操作区") {
@@ -2458,11 +2485,11 @@ func TestAStockRecommendationHistoryRendersDateTabs(t *testing.T) {
 	body := b.String()
 	for _, want := range []string{
 		"推荐历史",
-		"前两日",
-		"前一日",
+		"2026-06-12 周五",
+		"2026-06-15 周一",
+		"2026-06-16 周二",
+		"2026-06-17 周三",
 		"今日",
-		"后一日",
-		"后两日",
 		`/a-stock?date=2026-06-16&period=afternoon`,
 		`/a-stock?date=2026-06-15&period=afternoon`,
 		`/a-stock?date=2026-06-17&period=afternoon`,
@@ -2476,7 +2503,7 @@ func TestAStockRecommendationHistoryRendersDateTabs(t *testing.T) {
 	if strings.Contains(body, "astock-history-card") || strings.Contains(body, "山东黄金") {
 		t.Fatalf("expected history stock table/card to be removed, got %s", body)
 	}
-	if strings.Index(body, "前两日") > strings.Index(body, "后两日") {
+	if strings.Index(body, "2026-06-12 周五") > strings.Index(body, "今日") {
 		t.Fatalf("expected history tabs to render oldest date first, got %s", body)
 	}
 }
@@ -2488,8 +2515,8 @@ func TestAStockDatePeriodTabsCanRenderWithoutHeading(t *testing.T) {
 
 	body := b.String()
 	for _, want := range []string{
-		"前两日",
-		"前一日",
+		"2026-06-16 周二",
+		"2026-06-17 周三",
 		"今日",
 		`/a-stock?date=2026-06-18&period=morning&ignore_recent=1`,
 		`class="astock-tab active"`,
@@ -2504,6 +2531,17 @@ func TestAStockDatePeriodTabsCanRenderWithoutHeading(t *testing.T) {
 	}
 	if strings.Contains(body, "后一日") || strings.Contains(body, "后两日") {
 		t.Fatalf("expected latest trading day tabs to omit future labels, got %s", body)
+	}
+}
+
+func TestAStockDateTabLabelUsesTodayAndWeekday(t *testing.T) {
+	setAStockNowForTest(t, time.Date(2026, 6, 18, 9, 30, 0, 0, time.FixedZone("CST", 8*3600)))
+
+	if got := aStockDateTabLabel("2026-06-18"); got != "今日" {
+		t.Fatalf("expected today label, got %q", got)
+	}
+	if got := aStockDateTabLabel("2026-06-16"); got != "2026-06-16 周二" {
+		t.Fatalf("expected weekday label for prior trading day, got %q", got)
 	}
 }
 
