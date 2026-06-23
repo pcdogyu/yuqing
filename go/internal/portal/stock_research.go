@@ -317,6 +317,9 @@ func renderStockResearchFilters(b *strings.Builder, ctx model.StockResearchListR
 	}
 	b.WriteString(`</select></div><div><label>来源</label><select name="source"><option value="">全部</option>`)
 	for _, source := range ctx.Sources {
+		if source == investorRelationsSourceType {
+			continue
+		}
 		b.WriteString(`<option value="`)
 		b.WriteString(html.EscapeString(source))
 		b.WriteString(`"`)
@@ -374,9 +377,15 @@ func renderStockResearchTable(b *strings.Builder, ctx model.StockResearchListRes
 			b.WriteString(html.EscapeString(nonEmptyText(item.Institution, "--")))
 			b.WriteString(`</td><td>`)
 			b.WriteString(html.EscapeString(nonEmptyText(item.Analyst, "--")))
-			b.WriteString(`</td><td><span class="research-source">`)
-			b.WriteString(html.EscapeString(stockResearchSourceLabel(item.SourceType)))
-			b.WriteString(`</span></td><td>`)
+			b.WriteString(`</td><td>`)
+			if label := stockResearchPageSourceLabel(item.SourceType); label != "" {
+				b.WriteString(`<span class="research-source">`)
+				b.WriteString(html.EscapeString(label))
+				b.WriteString(`</span>`)
+			} else {
+				b.WriteString(`--`)
+			}
+			b.WriteString(`</td><td>`)
 			if strings.TrimSpace(item.SourceURL) != "" {
 				b.WriteString(`<a class="inline" href="`)
 				b.WriteString(html.EscapeString(item.SourceURL))
@@ -818,6 +827,13 @@ func stockResearchSourceLabel(source string) string {
 	default:
 		return nonEmptyText(source, "--")
 	}
+}
+
+func stockResearchPageSourceLabel(source string) string {
+	if source == investorRelationsSourceType {
+		return ""
+	}
+	return stockResearchSourceLabel(source)
 }
 
 func stockResearchPDFStatusLabel(status string) string {
