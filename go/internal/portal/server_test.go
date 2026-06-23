@@ -2968,6 +2968,31 @@ func TestAStockMarketViewBackfillsLimitUpStocksByHeat(t *testing.T) {
 	}
 }
 
+func TestAStockMarketViewKeepsAfternoonRecommendationWithout1300Price(t *testing.T) {
+	recommendations := initializeAStockRecommendationMarket([]aStockRecommendation{
+		{Rank: 1, Hotspot: "人工智能", Code: "000001", Name: "平安银行", HotspotScore: 80, MarketScore: 80, Reason: "热度分 80"},
+	})
+	bars := []aStockMarketBar{
+		{Code: "000001", Date: "2026-06-22", Close: 11.2, Pct: 1.1},
+		{Code: "000001", Date: "2026-06-23", Open: 11.3, Close: 11.5, Pct: 2.68},
+	}
+
+	filtered, rows, status, _ := applyAStockMarketBars("2026-06-23", "afternoon", recommendations, bars, false, 0)
+
+	if len(filtered) != 1 || filtered[0].Code != "000001" {
+		t.Fatalf("expected afternoon recommendation to remain without 13:00 price, got %+v", filtered)
+	}
+	if filtered[0].CurrentPrice != "11.50" || filtered[0].TodayPct != "+2.68%" {
+		t.Fatalf("expected same-day market fields to be retained, got %+v", filtered[0])
+	}
+	if len(rows) != 1 || rows[0].Status != "等待下午开盘价" || rows[0].AfternoonOpen != "--" {
+		t.Fatalf("expected backtest row to wait for afternoon entry price, got %+v", rows)
+	}
+	if !strings.Contains(status, "等待下午开盘价股票 1") || strings.Contains(status, "无当日行情可推荐") {
+		t.Fatalf("expected status to mention waiting afternoon entry price, got %q", status)
+	}
+}
+
 func TestAStockBacktestUses0930EntryPrice(t *testing.T) {
 	recommendations := []aStockRecommendation{{Code: "300285", Name: "国瓷材料"}}
 	byCode := groupAStockMarketBars([]aStockMarketBar{

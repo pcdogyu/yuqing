@@ -2249,15 +2249,27 @@ func initializeAStockRecommendationMarket(recommendations []aStockRecommendation
 
 func applyAStockMarketBars(strategyDate string, period string, recommendations []aStockRecommendation, bars []aStockMarketBar, filterLimitUp bool, maxRecommendations int) ([]aStockRecommendation, []aStockBacktestRow, string, int) {
 	byCode := groupAStockMarketBars(bars)
+	normalizedPeriod := normalizeAStockPeriod(period).Key
 	withPrev := 0
 	sectorPenalties := make(map[string]int)
 	filteredCount := 0
 	limitUpFilteredCount := 0
 	noEntryPriceCount := 0
+	waitingEntryPriceCount := 0
 	filtered := make([]aStockRecommendation, 0, len(recommendations))
 	for i := range recommendations {
 		blockedByDrawdown := false
-		entry, ok := aStockEntryBar(byCode[recommendations[i].Code], strategyDate, period)
+		codeBars := byCode[recommendations[i].Code]
+		entry, ok := aStockEntryBar(codeBars, strategyDate, period)
+		if !ok {
+			if normalizedPeriod == "afternoon" {
+				if sameDay, hasSameDay := sameDayAStockBar(codeBars, strategyDate); hasSameDay {
+					entry = sameDay
+					waitingEntryPriceCount++
+					ok = true
+				}
+			}
+		}
 		if !ok {
 			noEntryPriceCount++
 			continue
@@ -2346,6 +2358,9 @@ func applyAStockMarketBars(strategyDate string, period string, recommendations [
 	if noEntryPriceCount > 0 {
 		status = fmt.Sprintf("%s，过滤无当日行情股票 %d", status, noEntryPriceCount)
 	}
+	if waitingEntryPriceCount > 0 {
+		status = fmt.Sprintf("%s，等待下午开盘价股票 %d", status, waitingEntryPriceCount)
+	}
 	if len(recommendations) == 0 && limitUpFilteredCount > 0 {
 		status = fmt.Sprintf("涨停过滤后无推荐股票，过滤涨停股票 %d", limitUpFilteredCount)
 	}
@@ -2420,6 +2435,15 @@ func previousAStockBar(bars []aStockMarketBar, strategyDate string) (aStockMarke
 		ok = true
 	}
 	return found, ok
+}
+
+func sameDayAStockBar(bars []aStockMarketBar, strategyDate string) (aStockMarketBar, bool) {
+	for _, bar := range bars {
+		if bar.Date == strategyDate && (bar.Open > 0 || bar.Close > 0 || bar.Pct != 0) {
+			return bar, true
+		}
+	}
+	return aStockMarketBar{}, false
 }
 
 func aStockLookbackChange(bars []aStockMarketBar, strategyDate string, days int, prevClose float64) (float64, bool) {
