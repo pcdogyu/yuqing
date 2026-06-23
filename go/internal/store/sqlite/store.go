@@ -853,7 +853,7 @@ func (s *Store) ListItems(ctx context.Context, filter model.ArticleFilter) (mode
 		return model.ItemListResult{}, err
 	}
 
-	query := "SELECT DISTINCT items.id, items.source_type, items.source_key, items.title, items.content, items.summary, items.publish_time, items.publish_time_text, items.detail_url, items.source_url, items.tag_flags, items.from_text, items.external_source_host, items.is_vip, items.has_image, items.raw_payload, items.captured_at, items.created_at, items.updated_at FROM items " + joins + " " + where + " ORDER BY " + itemListOrderClause(filter.Sort) + " LIMIT ? OFFSET ?"
+	query := itemListQuery(s.driver, joins, where, itemListOrderClause(filter.Sort))
 	queryArgs := append(args, filter.PageSize, offset)
 	rows, err := s.db.QueryContext(ctx, query, queryArgs...)
 	if err != nil {
@@ -1065,6 +1065,15 @@ func itemFilterTimeColumn(raw string) string {
 	default:
 		return "captured_at"
 	}
+}
+
+const itemListSelectColumns = "items.id, items.source_type, items.source_key, items.title, items.content, items.summary, items.publish_time, items.publish_time_text, items.detail_url, items.source_url, items.tag_flags, items.from_text, items.external_source_host, items.is_vip, items.has_image, items.raw_payload, items.captured_at, items.created_at, items.updated_at"
+
+func itemListQuery(driver, joins, where, orderBy string) string {
+	if driver == "postgres" {
+		return "SELECT " + itemListSelectColumns + " FROM items JOIN (SELECT DISTINCT items.id FROM items " + joins + " " + where + ") filtered_items ON filtered_items.id = items.id ORDER BY " + orderBy + " LIMIT ? OFFSET ?"
+	}
+	return "SELECT DISTINCT " + itemListSelectColumns + " FROM items " + joins + " " + where + " ORDER BY " + orderBy + " LIMIT ? OFFSET ?"
 }
 
 func itemListOrderClause(raw string) string {
