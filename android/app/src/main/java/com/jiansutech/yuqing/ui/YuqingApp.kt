@@ -95,7 +95,11 @@ private fun PortalScreen(state: YuqingUiState, viewModel: YuqingViewModel) {
     val selected = modules.firstOrNull { it.key == state.selectedModuleKey }
         ?: fallback.firstOrNull { it.key == state.selectedModuleKey }
         ?: modules.first()
-    val hideHeaderContent = selected.key == "dashboard" || selected.key == "search" || selected.key == "a_stock" || selected.key == "auction"
+    val hideHeaderContent = selected.key == "dashboard" ||
+        selected.key == "articles" ||
+        selected.key == "search" ||
+        selected.key == "a_stock" ||
+        selected.key == "auction"
     Scaffold(
         topBar = if (hideHeaderContent) {
             {}
