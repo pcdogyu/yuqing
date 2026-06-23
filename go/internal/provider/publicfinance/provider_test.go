@@ -75,6 +75,22 @@ func TestParseCLSNextDataExtractsRollData(t *testing.T) {
 	}
 }
 
+func TestParseCLSNextDataIgnoresTrailingNextBootstrapScript(t *testing.T) {
+	body := []byte(`<script>
+	__NEXT_DATA__ = {"props":{"initialState":{"roll_data":[{"id":2406311,"modified_time":1782177964,"title":"港股人工智能股走强 海清智元涨近9%","content":"【港股人工智能股走强 海清智元涨近9%】财联社6月23日电，截至发稿，海清智元涨近9%。","brief":"财联社6月23日电，港股人工智能股走强。","shareurl":"https://api3.cls.cn/share/article/2406311?os=&sv=8.4.4&app=CailianpressWap","stock_list":[{"StockID":"hk01392","name":"海清智元"}]}]}},"pathname":"/index"}
+	module={}
+	__NEXT_LOADED_PAGES__ = []
+	</script>`)
+
+	items := parseCLSNextData(body, "https://www.cls.cn/telegraph", time.Date(2026, 6, 23, 1, 50, 0, 0, time.UTC))
+	if len(items) != 1 {
+		t.Fatalf("expected one cls item, got %+v", items)
+	}
+	if items[0].SourceKey != "2406311" || items[0].PublishTime != "2026-06-23 09:26:04" || items[0].TagFlags != "hk01392" {
+		t.Fatalf("unexpected cls metadata: %+v", items[0])
+	}
+}
+
 func TestParseWallStreetCNLivesExtractsAStockItems(t *testing.T) {
 	body := []byte(`{"code":20000,"message":"OK","data":{"items":[{"id":123,"content_text":"机器人概念股反复活跃，晋拓股份、天润工业涨停。","uri":"https://wallstreetcn.com/livenews/123","display_time":1781747577},{"id":124,"content_text":"美元指数小幅波动","display_time":1781747578}]}}`)
 

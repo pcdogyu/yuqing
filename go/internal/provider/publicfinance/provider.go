@@ -256,21 +256,10 @@ func parseWallStreetCNLives(body []byte, pageURL string, capturedAt time.Time) (
 
 func parseCLSNextData(body []byte, pageURL string, capturedAt time.Time) []model.Item {
 	raw := string(body)
-	start := strings.Index(raw, "__NEXT_DATA__")
-	if start < 0 {
+	raw = extractAssignedJSONObject(raw, "__NEXT_DATA__")
+	if raw == "" {
 		return nil
 	}
-	raw = raw[start:]
-	equal := strings.Index(raw, "=")
-	if equal < 0 {
-		return nil
-	}
-	raw = raw[equal+1:]
-	end := strings.Index(raw, "</script>")
-	if end >= 0 {
-		raw = raw[:end]
-	}
-	raw = strings.TrimSuffix(strings.TrimSpace(raw), ";")
 	var envelope struct {
 		Props struct {
 			InitialState struct {
@@ -281,6 +270,7 @@ func parseCLSNextData(body []byte, pageURL string, capturedAt time.Time) []model
 					Brief     string `json:"brief"`
 					ShareURL  string `json:"shareurl"`
 					CTime     int64  `json:"ctime"`
+					Modified  int64  `json:"modified_time"`
 					StockList []struct {
 						StockID string `json:"StockID"`
 						Name    string `json:"name"`
@@ -300,8 +290,12 @@ func parseCLSNextData(body []byte, pageURL string, capturedAt time.Time) []model
 		}
 		detailURL := nonEmpty(row.ShareURL, fmt.Sprintf("https://www.cls.cn/detail/%d", row.ID))
 		item := newItem(provider.SourceTypeCLSTelegraph, "财联社", title, cleanHTML(row.Brief), detailURL, pageURL, capturedAt)
-		if row.CTime > 0 {
-			item.PublishTime = time.Unix(row.CTime, 0).In(financeLocation()).Format("2006-01-02 15:04:05")
+		publishUnix := row.CTime
+		if publishUnix == 0 {
+			publishUnix = row.Modified
+		}
+		if publishUnix > 0 {
+			item.PublishTime = time.Unix(publishUnix, 0).In(financeLocation()).Format("2006-01-02 15:04:05")
 			item.PublishTimeText = item.PublishTime
 		}
 		item.SourceKey = strconv.FormatInt(row.ID, 10)
@@ -310,6 +304,49 @@ func parseCLSNextData(body []byte, pageURL string, capturedAt time.Time) []model
 		items = append(items, item)
 	}
 	return dedupe(items)
+}
+
+func extractAssignedJSONObject(raw string, marker string) string {
+	start := strings.Index(raw, marker)
+	if start < 0 {
+		return ""
+	}
+	brace := strings.Index(raw[start:], "{")
+	if brace < 0 {
+		return ""
+	}
+	brace += start
+	depth := 0
+	inString := false
+	escaped := false
+	for i := brace; i < len(raw); i++ {
+		ch := raw[i]
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			switch ch {
+			case '\\':
+				escaped = true
+			case '"':
+				inString = false
+			}
+			continue
+		}
+		switch ch {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return raw[brace : i+1]
+			}
+		}
+	}
+	return ""
 }
 
 func newItem(sourceType string, fromText string, title string, summary string, detailURL string, pageURL string, capturedAt time.Time) model.Item {

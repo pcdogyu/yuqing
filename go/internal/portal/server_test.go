@@ -1869,6 +1869,61 @@ func TestLoadAStockSourceRunsShowsUnavailableWhenCrawlerURLMissing(t *testing.T)
 	}
 }
 
+func TestLoadAStockSourceRunsBackfillsMissingSourcesBySourceType(t *testing.T) {
+	var sourceSpecificRequests int
+	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/admin/tasks/crawl/runs" {
+			t.Fatalf("unexpected crawler path: %s", r.URL.String())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		sourceType := r.URL.Query().Get("source_type")
+		if sourceType == "" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    200,
+				"message": "ok",
+				"data": []model.CrawlRun{{
+					SourceType:    "flash",
+					Status:        "success",
+					FetchedCount:  23,
+					InsertedCount: 23,
+					StartedAt:     time.Date(2026, 6, 23, 1, 16, 0, 0, time.UTC),
+				}},
+			})
+			return
+		}
+		sourceSpecificRequests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    200,
+			"message": "ok",
+			"data": []model.CrawlRun{{
+				SourceType:    sourceType,
+				Status:        "success",
+				FetchedCount:  5,
+				InsertedCount: 4,
+				UpdatedCount:  1,
+				StartedAt:     time.Date(2026, 6, 23, 1, 25, 0, 0, time.UTC),
+			}},
+		})
+	}))
+	defer crawler.Close()
+
+	srv := NewServer(config.Config{CrawlerURL: crawler.URL})
+	runs := srv.loadAStockSourceRuns()
+	if sourceSpecificRequests == 0 {
+		t.Fatal("expected source-specific fallback requests")
+	}
+	var eastmoney aStockSourceRun
+	for _, run := range runs {
+		if run.SourceType == "eastmoney_kuaixun" {
+			eastmoney = run
+			break
+		}
+	}
+	if eastmoney.Status != "success" || eastmoney.FetchedCount != 5 || eastmoney.InsertedCount != 4 || eastmoney.UpdatedCount != 1 {
+		t.Fatalf("expected source-specific eastmoney run, got %+v", eastmoney)
+	}
+}
+
 func handleAStockRecommendationSnapshotTestEndpoint(w http.ResponseWriter, r *http.Request) bool {
 	switch r.URL.Path {
 	case "/api/v1/a-stock/recommendations":

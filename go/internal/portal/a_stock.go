@@ -1166,9 +1166,35 @@ func (s *Server) loadAStockSourceRuns() []aStockSourceRun {
 	}
 	out := make([]aStockSourceRun, 0, len(aStockCrawlSources()))
 	for _, sourceType := range aStockCrawlSources() {
+		if latest[sourceType].SourceType == "" {
+			if run, ok := s.loadLatestAStockSourceRun(sourceType); ok {
+				latest[sourceType] = run
+			}
+		}
 		out = append(out, latest[sourceType])
 	}
 	return out
+}
+
+func (s *Server) loadLatestAStockSourceRun(sourceType string) (aStockSourceRun, bool) {
+	var runs []model.CrawlRun
+	query := "/api/v1/admin/tasks/crawl/runs?limit=1&source_type=" + url.QueryEscape(sourceType)
+	if err := s.getJSON(s.cfg.CrawlerURL+query, &runs); err != nil || len(runs) == 0 {
+		return aStockSourceRun{}, false
+	}
+	run := runs[0]
+	if strings.TrimSpace(run.SourceType) == "" {
+		run.SourceType = sourceType
+	}
+	return aStockSourceRun{
+		SourceType:    strings.TrimSpace(run.SourceType),
+		Status:        run.Status,
+		FetchedCount:  run.FetchedCount,
+		InsertedCount: run.InsertedCount,
+		UpdatedCount:  run.UpdatedCount,
+		ErrorText:     run.ErrorText,
+		StartedAt:     run.StartedAt,
+	}, true
 }
 
 func aStockUnavailableSourceRuns(message string) []aStockSourceRun {
