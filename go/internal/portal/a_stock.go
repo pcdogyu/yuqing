@@ -790,11 +790,11 @@ func renderAStockBacktestSection(b *strings.Builder, strategyDate string, period
 	if strings.TrimSpace(strategyDate) == "" {
 		strategyDate = nonEmpty(morningCtx.Date, afternoonCtx.Date)
 	}
-	b.WriteString(`<section><h2>消息回测</h2><p class="astock-muted">上午推荐按当日开盘价计算，下午推荐按下午开盘价计算；T+0 到 T+5 及五日内最高收益均按对应推荐窗口的基准价回测。</p>`)
+	b.WriteString(`<section><h2>消息回测</h2><p class="astock-muted">上午推荐按上午开盘价计算，下午推荐按下午开盘价计算；T+0 到 T+5 及五日内最高收益均按对应推荐窗口的基准价回测。</p>`)
 	renderAStockRecommendationHistoryTabs(b, strategyDate, period, ignoreRecent, ignoreLimitUp)
 	renderAStockRecommendationHistoryActions(b, strategyDate, period, ignoreRecent, ignoreLimitUp)
 	mergedRows := combineAStockBacktestRows(morningCtx, afternoonCtx)
-	b.WriteString(`<div class="astock-scroll"><table class="astock-table"><tr><th>推荐窗口</th><th>股票</th><th>当日开盘价</th><th>下午开盘价</th><th>T+0 收益</th><th>T+1 收益</th><th>T+2 收益</th><th>T+3 收益</th><th>T+4 收益</th><th>T+5 收益</th><th>五日内最高收益</th><th>命中状态</th></tr>`)
+	b.WriteString(`<div class="astock-scroll"><table class="astock-table"><tr><th>推荐窗口</th><th>股票</th><th>上午开盘价</th><th>下午开盘价</th><th>T+0 收益</th><th>T+1 收益</th><th>T+2 收益</th><th>T+3 收益</th><th>T+4 收益</th><th>T+5 收益</th><th>五日内最高收益</th><th>命中状态</th></tr>`)
 	if len(mergedRows) == 0 {
 		b.WriteString(`<tr><td colspan="12">暂无回测结果，等待行情同步。</td></tr>`)
 		b.WriteString(`</table></div></section>`)
@@ -802,14 +802,15 @@ func renderAStockBacktestSection(b *strings.Builder, strategyDate string, period
 	}
 	for _, display := range mergedRows {
 		row := display.Row
+		morningOpen, afternoonOpen := aStockBacktestDisplayOpenPrices(display.PeriodKey, row)
 		b.WriteString(`<tr><td>`)
 		b.WriteString(html.EscapeString(display.PeriodLabel))
 		b.WriteString(`</td><td>`)
 		b.WriteString(html.EscapeString(row.Stock))
 		b.WriteString(`</td><td>`)
-		b.WriteString(html.EscapeString(row.EntryOpen))
+		b.WriteString(html.EscapeString(morningOpen))
 		b.WriteString(`</td><td>`)
-		b.WriteString(html.EscapeString(row.AfternoonOpen))
+		b.WriteString(html.EscapeString(afternoonOpen))
 		b.WriteString(`</td><td><span class="`)
 		b.WriteString(html.EscapeString(row.T0ReturnClass))
 		b.WriteString(`">`)
@@ -929,6 +930,7 @@ type aStockDateTab struct {
 
 type aStockBacktestDisplayRow struct {
 	PeriodLabel string
+	PeriodKey   string
 	Row         aStockBacktestRow
 }
 
@@ -970,16 +972,33 @@ func combineAStockBacktestRows(morningCtx aStockContext, afternoonCtx aStockCont
 	for _, row := range morningCtx.Backtests {
 		rows = append(rows, aStockBacktestDisplayRow{
 			PeriodLabel: morningCtx.PeriodLabel,
+			PeriodKey:   morningCtx.Period,
 			Row:         row,
 		})
 	}
 	for _, row := range afternoonCtx.Backtests {
 		rows = append(rows, aStockBacktestDisplayRow{
 			PeriodLabel: afternoonCtx.PeriodLabel,
+			PeriodKey:   afternoonCtx.Period,
 			Row:         row,
 		})
 	}
 	return rows
+}
+
+func aStockBacktestDisplayOpenPrices(period string, row aStockBacktestRow) (string, string) {
+	morningOpen := nonEmpty(strings.TrimSpace(row.EntryOpen), "--")
+	afternoonOpen := nonEmpty(strings.TrimSpace(row.AfternoonOpen), "--")
+	if normalizeAStockPeriod(period).Key == "afternoon" {
+		if (afternoonOpen == "" || afternoonOpen == "--") && morningOpen != "" && morningOpen != "--" {
+			afternoonOpen = morningOpen
+		}
+		return "--", nonEmpty(afternoonOpen, "--")
+	}
+	if (morningOpen == "" || morningOpen == "--") && afternoonOpen != "" && afternoonOpen != "--" {
+		morningOpen = afternoonOpen
+	}
+	return nonEmpty(morningOpen, "--"), "--"
 }
 
 func (s *Server) loadAStockContext(strategyDate string, periodKey string, newsPage int, ignoreRecent bool) aStockContext {

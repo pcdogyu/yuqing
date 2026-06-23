@@ -282,7 +282,7 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		".astock-table th{white-space:nowrap}",
 		".astock-recommendation-table th:nth-child(2),.astock-recommendation-table td:nth-child(2){width:7.5%;white-space:nowrap}",
 		".astock-recommendation-table th:last-child,.astock-recommendation-table td:last-child{width:36%}",
-		"当日开盘价",
+		"上午开盘价",
 		"下午开盘价",
 		"推荐窗口",
 		"T+0 收益",
@@ -2317,7 +2317,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"金十快讯", "金十资讯", "1条", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "5日内过滤", "涨停过滤", "关闭5日过滤", "关闭涨停过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "推荐历史", "上午推荐", "下午推荐", "推荐窗口", "当日开盘价", "下午开盘价", "补抓上午新闻", "重新生成上午推荐", "补抓下午新闻", "重新生成下午推荐", "刷新全部回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="refresh_backtest"`, "前两日", "前一日", "今日", "T+0 收益", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
+	for _, want := range []string{"金十快讯", "金十资讯", "1条", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "5日内过滤", "涨停过滤", "关闭5日过滤", "关闭涨停过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "推荐历史", "上午推荐", "下午推荐", "推荐窗口", "上午开盘价", "下午开盘价", "补抓上午新闻", "重新生成上午推荐", "补抓下午新闻", "重新生成下午推荐", "刷新全部回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="refresh_backtest"`, "前两日", "前一日", "今日", "T+0 收益", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}
@@ -2969,6 +2969,17 @@ func TestAStockBacktestUsesAfternoonEntryPrice(t *testing.T) {
 	}
 	if rows[0].Days[0].Return != "+3.74%" {
 		t.Fatalf("expected T+1 return to use afternoon open price, got %+v", rows[0])
+	}
+}
+
+func TestAStockBacktestDisplayOpenPricesKeepsAfternoonRowsOutOfMorningColumn(t *testing.T) {
+	morningOpen, afternoonOpen := aStockBacktestDisplayOpenPrices("afternoon", aStockBacktestRow{
+		EntryOpen:     "135.54",
+		AfternoonOpen: "--",
+	})
+
+	if morningOpen != "--" || afternoonOpen != "135.54" {
+		t.Fatalf("expected afternoon display to move legacy entry price into afternoon column, got morning=%q afternoon=%q", morningOpen, afternoonOpen)
 	}
 }
 
