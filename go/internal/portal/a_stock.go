@@ -298,9 +298,11 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-card{padding:18px;border:1px solid #ece7dc;border-radius:14px;background:#fff}
 		.astock-overview-table{width:100%;min-width:100%;table-layout:fixed}
 		.astock-overview-table th,.astock-overview-table td{vertical-align:top}
-		.astock-overview-table .astock-muted{display:block;margin-bottom:8px}
+		.astock-overview-table .astock-muted{display:block;margin-bottom:8px;font-size:14px}
 		.astock-overview-table .astock-overview-sub-label{margin-top:16px}
-		.astock-overview-table strong{display:block;font-size:24px;line-height:1.25}
+		.astock-overview-table strong{display:block;font-size:22px;line-height:1.25}
+		.astock-overview-status{width:24%}
+		.astock-overview-status strong{white-space:normal;word-break:break-word}
 		.astock-filter-toggle-form{margin:0}
 		.astock-filter-toggle{display:inline-flex;align-items:center;margin-top:8px;padding:6px 10px;border:1px solid #d6ccbb;border-radius:8px;color:#214e34;text-decoration:none;background:#fff;font-size:13px;font-weight:600;font-family:inherit;line-height:1.2;cursor:pointer}
 		.astock-actions{width:100%}
@@ -355,6 +357,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 
 	renderAStockDateTabs(&b, ctx.Date, ctx.Period, ctx.IgnoreRecent, ctx.IgnoreLimitUp, false)
 	renderAStockOverviewSection(&b, morningCtx, afternoonCtx)
+	renderAStockRecommendationSection(&b, morningCtx, afternoonCtx)
 
 	b.WriteString(`<section><h2>操作区</h2><div class="astock-actions"><div class="astock-action-grid">`)
 	actions := []struct {
@@ -393,7 +396,6 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 
 	renderAStockNewsSection(&b, ctx)
 	renderAStockHotspotSection(&b, ctx.Hotspots)
-	renderAStockRecommendationSection(&b, morningCtx, afternoonCtx)
 	renderAStockBacktestSection(&b, ctx.Date, ctx.Period, ctx.IgnoreRecent, ctx.IgnoreLimitUp, morningCtx, afternoonCtx)
 
 	_ = s.writeSimplePage(w, "a-stock", "A股", b.String())
@@ -522,7 +524,7 @@ func writeAStockOverviewPeriodCells(b *strings.Builder, ctx aStockContext) {
 	writeAStockOverviewCell(b, "推荐股票数", fmt.Sprintf("%d", len(ctx.Recommendations)), "")
 	writeAStockOverviewFilterCell(b, ctx)
 	writeAStockOverviewLimitUpFilterCell(b, ctx)
-	writeAStockOverviewCell(b, "回测状态", aStockOverviewBacktestStatus(ctx), "")
+	writeAStockOverviewCell(b, "回测状态", aStockOverviewBacktestStatus(ctx), ` class="astock-overview-status"`)
 }
 
 func writeAStockOverviewFilterCell(b *strings.Builder, ctx aStockContext) {

@@ -258,6 +258,9 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 	}
 	for _, want := range []string{
 		`class="astock-overview-table"`,
+		`.astock-overview-table .astock-muted{display:block;margin-bottom:8px;font-size:14px}`,
+		`.astock-overview-table strong{display:block;font-size:22px;line-height:1.25}`,
+		`.astock-overview-status{width:24%}`,
 		`body[data-page='a-stock'] main{max-width:none;width:100%;box-sizing:border-box}`,
 		`body[data-page='a-stock'] table{width:100%;min-width:100%}`,
 		`.astock-scroll{width:100%;overflow:auto}`,
@@ -2326,6 +2329,9 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 	}
 	if strings.Index(body, "前两日") < 0 || strings.Index(body, "前两日") > strings.Index(body, "顶部概览") {
 		t.Fatalf("expected date tabs to render above overview, got %s", body)
+	}
+	if strings.Index(body, `<section><h2>推荐股票</h2>`) < strings.Index(body, "顶部概览") || strings.Index(body, `<section><h2>推荐股票</h2>`) > strings.Index(body, "操作区") {
+		t.Fatalf("expected recommendation section between overview and actions, got %s", body)
 	}
 	for _, notWant := range []string{"T+1 收盘价", "T+2 收盘价", "T+3 收盘价", "T+4 收盘价", "T+5 收盘价"} {
 		if strings.Contains(body, notWant) {
