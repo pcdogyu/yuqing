@@ -401,9 +401,22 @@ def call_pre_market_minute(ak: Any, code: str) -> Any:
         )
 
 
+def is_sh_sz_code(code: Any) -> bool:
+    normalized = text_value(code).zfill(6)
+    return normalized.startswith(("0", "3", "6"))
+
+
 def load_symbols(ak: Any, explicit_codes: list[str], limit: int) -> list[dict[str, str]]:
     if explicit_codes:
-        return [{"code": code, "name": ""} for code in explicit_codes]
+        symbols = []
+        for code in explicit_codes:
+            normalized = text_value(code).zfill(6)
+            if not is_sh_sz_code(normalized):
+                continue
+            symbols.append({"code": normalized, "name": ""})
+            if limit > 0 and len(symbols) >= limit:
+                break
+        return symbols
     try:
         frame = ak.stock_zh_a_spot_em()
     except Exception:
@@ -412,7 +425,7 @@ def load_symbols(ak: Any, explicit_codes: list[str], limit: int) -> list[dict[st
     for _, row in frame.iterrows():
         code = text_value(first_existing(row, ["代码", "code", "股票代码"]))
         name = text_value(first_existing(row, ["名称", "name", "股票名称"]))
-        if not code:
+        if not code or not is_sh_sz_code(code):
             continue
         symbols.append({"code": code.zfill(6), "name": name})
         if limit > 0 and len(symbols) >= limit:
@@ -431,7 +444,7 @@ def fetch_market_snapshot(ak: Any, trade_date: str, limit: int) -> list[dict[str
     for _, row in frame.iterrows():
         code = text_value(first_existing(row, ["代码", "code", "股票代码"]))
         name = text_value(first_existing(row, ["名称", "name", "股票名称"]))
-        if not code:
+        if not code or not is_sh_sz_code(code):
             continue
         price = finite_float(first_existing(row, ["最新价", "今开", "开盘", "price"]))
         volume = finite_float(first_existing(row, ["成交量", "volume"]))
@@ -460,7 +473,7 @@ def eastmoney_rows_to_items(rows: list[dict[str, Any]], trade_date: str, limit: 
     for row in rows:
         code = text_value(row.get("f12"))
         name = text_value(row.get("f14"))
-        if not code:
+        if not code or not is_sh_sz_code(code):
             continue
         price = finite_float(row.get("f2"))
         volume = finite_float(row.get("f5"))
@@ -1183,6 +1196,8 @@ def run_self_test() -> None:
     assert normalize_symbol_limit(0) == 0
     assert normalize_symbol_limit(6000) == 6000
     assert normalize_symbol_limit(-1) == 0
+    assert is_sh_sz_code("000001")
+    assert not is_sh_sz_code("920118")
     eastmoney_items = eastmoney_rows_to_items(
         [{"f12": "1", "f14": "平安银行", "f2": "12.3", "f5": "1000", "f6": "12300"}],
         "2026-06-18",
@@ -1192,6 +1207,11 @@ def run_self_test() -> None:
     assert eastmoney_items[0]["name"] == "平安银行"
     assert eastmoney_items[0]["source"] == "eastmoney_clist"
     assert eastmoney_items[0]["status"] == "ok"
+    assert not eastmoney_rows_to_items(
+        [{"f12": "920118", "f14": "太湖远大", "f2": "18", "f5": "1000", "f6": "18000"}],
+        "2026-06-18",
+        0,
+    )
 
     class FakeFrame:
         def iterrows(self) -> Any:

@@ -9,6 +9,8 @@ import (
 	"github.com/pcdogyu/yuqing/go/internal/model"
 )
 
+const aStockAuctionSHSZFilterSQL = `(code LIKE '6%' OR code LIKE '0%' OR code LIKE '3%')`
+
 func (s *Store) UpsertAStockAuctionAmounts(ctx context.Context, tradeDate string, items []model.AStockAuctionAmount) (model.AStockAuctionUpsertResult, error) {
 	tradeDate = strings.TrimSpace(tradeDate)
 	result := model.AStockAuctionUpsertResult{Date: tradeDate, Total: len(items)}
@@ -112,7 +114,7 @@ func (s *Store) ListAStockAuctionAmounts(ctx context.Context, filter model.AStoc
 		return result, err
 	}
 	result.Dates = dates
-	trend, err := s.listAStockAuctionTrend(ctx, 30)
+	trend, err := s.listAStockAuctionTrend(ctx, 7)
 	if err != nil {
 		return result, err
 	}
@@ -130,7 +132,7 @@ func (s *Store) ListAStockAuctionAmounts(ctx context.Context, filter model.AStoc
 		return result, nil
 	}
 
-	where := `WHERE trade_date = ?`
+	where := withAStockAuctionSHSZWhere(`WHERE trade_date = ?`)
 	args := []any{result.Date}
 	keyword := result.Keyword
 	if keyword != "" {
@@ -174,7 +176,7 @@ LIMIT ? OFFSET ?`, queryArgs...)
 
 func (s *Store) latestAStockAuctionDates(ctx context.Context, limit int) ([]string, error) {
 	limit = max(limit, 1)
-	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT trade_date FROM a_stock_auction_amounts ORDER BY trade_date DESC LIMIT ?`, limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT trade_date FROM a_stock_auction_amounts WHERE `+aStockAuctionSHSZFilterSQL+` ORDER BY trade_date DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -196,6 +198,7 @@ func (s *Store) listAStockAuctionTrend(ctx context.Context, limit int) ([]model.
 WITH recent_dates AS (
 	SELECT DISTINCT trade_date
 	FROM a_stock_auction_amounts
+	WHERE `+aStockAuctionSHSZFilterSQL+`
 	ORDER BY trade_date DESC
 	LIMIT ?
 ),
@@ -203,16 +206,19 @@ daily AS (
 	SELECT trade_date, COUNT(*) AS stock_count, COALESCE(SUM(auction_volume), 0) AS total_volume, COALESCE(SUM(auction_amount), 0) AS total_amount
 	FROM a_stock_auction_amounts
 	WHERE trade_date IN (SELECT trade_date FROM recent_dates)
+	  AND `+aStockAuctionSHSZFilterSQL+`
 	GROUP BY trade_date
 ),
 max_rows AS (
 	SELECT a.trade_date, a.code, a.name
 	FROM a_stock_auction_amounts a
 	WHERE a.trade_date IN (SELECT trade_date FROM recent_dates)
+	  AND `+aStockAuctionSHSZFilterSQL+`
 	  AND NOT EXISTS (
 		SELECT 1
 		FROM a_stock_auction_amounts b
 		WHERE b.trade_date = a.trade_date
+		  AND `+aStockAuctionSHSZFilterSQL+`
 		  AND (b.auction_amount > a.auction_amount OR (b.auction_amount = a.auction_amount AND b.code < a.code))
 	  )
 )
@@ -251,6 +257,7 @@ func (s *Store) listAStockAuctionTrendMarketTop(ctx context.Context, limit int) 
 WITH recent_dates AS (
 	SELECT DISTINCT trade_date
 	FROM a_stock_auction_amounts
+	WHERE `+aStockAuctionSHSZFilterSQL+`
 	ORDER BY trade_date DESC
 	LIMIT ?
 ),
@@ -260,12 +267,12 @@ classified AS (
 		CASE
 			WHEN code LIKE '6%' THEN '沪市'
 			WHEN code LIKE '0%' OR code LIKE '3%' THEN '深市'
-			WHEN code LIKE '92%' OR code LIKE '8%' OR code LIKE '4%' THEN '北交所'
-			ELSE '其他'
+			ELSE ''
 		END AS market,
 		code, name, auction_price, auction_volume, auction_amount, source, status, fetched_at, created_at, updated_at
 	FROM a_stock_auction_amounts
 	WHERE trade_date IN (SELECT trade_date FROM recent_dates)
+	  AND `+aStockAuctionSHSZFilterSQL+`
 	  AND auction_amount > 0
 ),
 ranked AS (
@@ -280,12 +287,12 @@ ranked AS (
 SELECT trade_date, market, code, name, auction_price, auction_volume, auction_amount, source, status, fetched_at, created_at, updated_at
 FROM ranked
 WHERE rn <= 3
+  AND market <> ''
 ORDER BY trade_date ASC,
 	CASE market
 		WHEN '沪市' THEN 1
 		WHEN '深市' THEN 2
-		WHEN '北交所' THEN 3
-		ELSE 4
+		ELSE 3
 	END,
 	rn ASC`, limit)
 	if err != nil {
@@ -325,7 +332,7 @@ ORDER BY trade_date ASC,
 		return nil, err
 	}
 	out := make(map[string][]model.AStockAuctionMarketTop, len(byDateMarket))
-	marketOrder := []string{"沪市", "深市", "北交所", "其他"}
+	marketOrder := []string{"沪市", "深市"}
 	for date, markets := range byDateMarket {
 		groups := make([]model.AStockAuctionMarketTop, 0, len(markets))
 		for _, market := range marketOrder {
@@ -345,7 +352,8 @@ func (s *Store) loadAStockAuctionSummary(ctx context.Context, result *model.ASto
 	if err := s.db.QueryRowContext(ctx, `
 SELECT COUNT(*), COALESCE(SUM(auction_amount), 0), MAX(fetched_at)
 FROM a_stock_auction_amounts
-WHERE trade_date = ?`, result.Date).Scan(&result.SummaryCount, &result.TotalAmount, &fetchedAt); err != nil {
+WHERE trade_date = ?
+  AND `+aStockAuctionSHSZFilterSQL, result.Date).Scan(&result.SummaryCount, &result.TotalAmount, &fetchedAt); err != nil {
 		return err
 	}
 	if fetchedAt.Valid {
@@ -356,6 +364,7 @@ WHERE trade_date = ?`, result.Date).Scan(&result.SummaryCount, &result.TotalAmou
 SELECT trade_date, code, name, auction_price, auction_volume, auction_amount, source, status, fetched_at, created_at, updated_at
 FROM a_stock_auction_amounts
 WHERE trade_date = ?
+  AND `+aStockAuctionSHSZFilterSQL+`
 ORDER BY auction_amount DESC, code ASC
 LIMIT 1`, result.Date)
 	maxItem, err := scanAStockAuctionAmount(row)
@@ -395,4 +404,12 @@ func scanAStockAuctionAmount(scanner scanner) (model.AStockAuctionAmount, error)
 
 func errorsIsNoRows(err error) bool {
 	return err == sql.ErrNoRows
+}
+
+func withAStockAuctionSHSZWhere(where string) string {
+	where = strings.TrimSpace(where)
+	if where == "" {
+		return `WHERE ` + aStockAuctionSHSZFilterSQL
+	}
+	return where + ` AND ` + aStockAuctionSHSZFilterSQL
 }

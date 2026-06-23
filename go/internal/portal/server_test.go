@@ -413,9 +413,14 @@ func TestAStockAuctionPageLoadsSummaryAndRows(t *testing.T) {
 		t.Fatalf("expected auction page 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"集合竞价", "操作区", "获取最新交易日集合竞价金额", "回溯近30天集合竞价", "当日汇总", "近30日资金趋势", "每个市场集合竞价金额最高的3只股票", "沪市金额前三", "深市金额前三", "北交所金额前三", "2026-06-16", "科大讯飞", "浦发银行", "股票数", "2", "1.51亿", "508.41万", "79.20万", "12.34万", "akshare_pre_min", `value="科"`, `<svg class="auction-chart"`} {
+	for _, want := range []string{"集合竞价", "操作区", "获取最新交易日集合竞价金额", "回溯近7天集合竞价", "当日汇总", "近7日资金趋势", "沪市金额前三", "深市金额前三", "2026-06-16", "科大讯飞", "浦发银行", "股票数", "2", "1.51亿", "508.41万", "79.20万", "12.34万", "akshare_pre_min", `value="科"`, `<svg class="auction-chart"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected auction page to contain %q, got %s", want, body)
+		}
+	}
+	for _, notWant := range []string{"近30日资金趋势", "北交所金额前三", "每个市场集合竞价金额最高的3只股票"} {
+		if strings.Contains(body, notWant) {
+			t.Fatalf("expected auction page not to contain %q, got %s", notWant, body)
 		}
 	}
 }
@@ -454,11 +459,11 @@ func TestAStockAuctionPagePostTriggersSchedulerJob(t *testing.T) {
 	}
 }
 
-func TestAStockAuctionPagePostTriggersBackfill30Days(t *testing.T) {
+func TestAStockAuctionPagePostTriggersBackfill7Days(t *testing.T) {
 	var schedulerCalled bool
 	scheduler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		schedulerCalled = true
-		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/scheduler/a-stock/auction/backfill" || r.URL.Query().Get("days") != "30" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/scheduler/a-stock/auction/backfill" || r.URL.Query().Get("days") != "7" {
 			t.Fatalf("unexpected scheduler request: %s %s", r.Method, r.URL.String())
 		}
 		if r.Header.Get("X-Service-Token") != "secret-token" {
@@ -470,7 +475,7 @@ func TestAStockAuctionPagePostTriggersBackfill30Days(t *testing.T) {
 	defer scheduler.Close()
 
 	srv := NewServer(config.Config{SchedulerURL: scheduler.URL, ServiceToken: "secret-token"})
-	req := httptest.NewRequest(http.MethodPost, "/a-stock/auction", strings.NewReader("action=backfill_30d_auction"))
+	req := httptest.NewRequest(http.MethodPost, "/a-stock/auction", strings.NewReader("action=backfill_7d_auction"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rr := httptest.NewRecorder()
 	srv.handleAStockAuctionPage(rr, req, map[string]any{"id": 1})
@@ -482,7 +487,7 @@ func TestAStockAuctionPagePostTriggersBackfill30Days(t *testing.T) {
 		t.Fatalf("expected redirect after auction backfill, got %d", rr.Code)
 	}
 	loc, _ := url.QueryUnescape(rr.Header().Get("Location"))
-	if !strings.Contains(loc, "近30天集合竞价回溯任务已触发") {
+	if !strings.Contains(loc, "近7天集合竞价回溯任务已触发") {
 		t.Fatalf("expected backfill success message, got %q", loc)
 	}
 }

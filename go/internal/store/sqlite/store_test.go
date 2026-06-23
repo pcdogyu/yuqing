@@ -179,16 +179,16 @@ func TestAStockAuctionAmountsUpsertAndList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListAStockAuctionAmounts latest error: %v", err)
 	}
-	if latest.Date != "2026-06-16" || latest.LatestDate != "2026-06-16" || latest.Total != 7 || len(latest.Items) != 7 {
+	if latest.Date != "2026-06-16" || latest.LatestDate != "2026-06-16" || latest.Total != 5 || len(latest.Items) != 5 {
 		t.Fatalf("unexpected latest auction list: %+v", latest)
 	}
-	if latest.Items[0].Code != "002230" || latest.Items[0].AuctionAmount != 4200000 || latest.TotalAmount != 9192000 {
+	if latest.Items[0].Code != "002230" || latest.Items[0].AuctionAmount != 4200000 || latest.TotalAmount != 7892000 {
 		t.Fatalf("expected updated highest amount row and total amount, got %+v", latest)
 	}
 	if latest.MaxItem == nil || latest.MaxItem.Code != "002230" {
 		t.Fatalf("expected max item, got %+v", latest.MaxItem)
 	}
-	if len(latest.Trend) != 2 || latest.Trend[0].Date != "2026-06-15" || latest.Trend[1].Date != "2026-06-16" || latest.Trend[1].TotalVolume != 452000 {
+	if len(latest.Trend) != 2 || latest.Trend[0].Date != "2026-06-15" || latest.Trend[1].Date != "2026-06-16" || latest.Trend[1].TotalVolume != 430000 {
 		t.Fatalf("expected two-day auction trend, got %+v", latest.Trend)
 	}
 	marketTop := func(market string) []model.AStockAuctionAmount {
@@ -205,8 +205,8 @@ func TestAStockAuctionAmountsUpsertAndList(t *testing.T) {
 	if got := marketTop("深市"); len(got) != 3 || got[0].Code != "002230" || got[1].Code != "000001" || got[2].Code != "300750" {
 		t.Fatalf("expected Shenzhen market top 3 stocks by auction amount, got %+v", got)
 	}
-	if got := marketTop("北交所"); len(got) != 2 || got[0].Code != "920118" || got[1].Code != "831526" {
-		t.Fatalf("expected Beijing market top stocks by auction amount, got %+v", got)
+	if got := marketTop("北交所"); got != nil {
+		t.Fatalf("expected Beijing market top stocks to be excluded, got %+v", got)
 	}
 
 	filtered, err := store.ListAStockAuctionAmounts(ctx, model.AStockAuctionFilter{Date: "2026-06-16", Keyword: "浦发", Page: 1, PageSize: 10})
