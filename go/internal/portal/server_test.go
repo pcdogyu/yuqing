@@ -2189,10 +2189,13 @@ func TestAStockAfternoonBacktestSnapshotRejectsLegacyEntryOpen(t *testing.T) {
 	if isFreshAStockBacktestSnapshot("afternoon", backtests) {
 		t.Fatalf("expected afternoon snapshot with legacy entry open to be rejected, got %+v", backtests)
 	}
-	if !isFreshAStockBacktestSnapshot("morning", backtests) {
-		t.Fatalf("expected morning snapshot to ignore afternoon freshness rule, got %+v", backtests)
+	if isFreshAStockBacktestSnapshot("morning", backtests) {
+		t.Fatalf("expected morning snapshot with T+0 return but missing close to be rejected, got %+v", backtests)
 	}
-	if !isFreshAStockBacktestSnapshot("afternoon", []aStockBacktestRow{{Stock: "002008 大族激光", EntryOpen: "--", AfternoonOpen: "142.00", T0Return: "+2.11%"}}) {
+	if !isFreshAStockBacktestSnapshot("morning", []aStockBacktestRow{{Stock: "603083 剑桥科技", EntryOpen: "240.00", T0Return: "+1.70%", T0Close: "238.37"}}) {
+		t.Fatal("expected morning snapshot with T+0 close to stay valid")
+	}
+	if !isFreshAStockBacktestSnapshot("afternoon", []aStockBacktestRow{{Stock: "002008 大族激光", EntryOpen: "--", AfternoonOpen: "142.00", T0Return: "+2.11%", T0Close: "145.11"}}) {
 		t.Fatal("expected afternoon snapshot with dedicated afternoon open to stay valid")
 	}
 }

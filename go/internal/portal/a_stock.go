@@ -2044,10 +2044,16 @@ func isFreshAStockLimitUpReplacementSnapshot(snapshot model.AStockRecommendation
 }
 
 func isFreshAStockBacktestSnapshot(period string, backtests []aStockBacktestRow) bool {
-	if normalizeAStockPeriod(period).Key != "afternoon" {
-		return true
-	}
+	normalizedPeriod := normalizeAStockPeriod(period).Key
 	for _, row := range backtests {
+		t0Return := strings.TrimSpace(row.T0Return)
+		t0Close := strings.TrimSpace(row.T0Close)
+		if t0Return != "" && t0Return != "--" && (t0Close == "" || t0Close == "--") {
+			return false
+		}
+		if normalizedPeriod != "afternoon" {
+			continue
+		}
 		morningOpen := strings.TrimSpace(row.EntryOpen)
 		afternoonOpen := strings.TrimSpace(row.AfternoonOpen)
 		if morningOpen != "" && morningOpen != "--" && (afternoonOpen == "" || afternoonOpen == "--") {

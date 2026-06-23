@@ -731,7 +731,7 @@ private fun AStockBacktestDetailScreen(state: AStockBacktestDetailState) {
                 Card {
                     Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         AStockBacktestMetricHeader()
-                        AStockBacktestMetricRow("T+0", row.t0Return.ifBlank { "--" }, row.t0Close.ifBlank { currentClosePrice })
+                        AStockBacktestMetricRow("T+0", row.t0Return.ifBlank { "--" }, row.t0Close.ifBlank { "--" })
                         (0 until 5).forEach { index ->
                             val cell = row.days.getOrNull(index)
                             AStockBacktestMetricRow(
