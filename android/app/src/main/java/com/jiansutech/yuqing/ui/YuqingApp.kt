@@ -506,6 +506,7 @@ private fun SystemModule(dashboard: AndroidDashboard, state: YuqingUiState, view
     val database = dashboard.operations.database
     LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item { SectionTitle("连接") }
+        item { SimpleRow("网页地址", "http://yuqin.jiansutech.com:8079/") }
         item { SimpleRow("API 地址", state.session.apiBaseUrl) }
         item {
             SimpleRow(
