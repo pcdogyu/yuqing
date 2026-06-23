@@ -253,21 +253,16 @@ private fun ModuleContent(
 @Composable
 private fun DashboardModule(dashboard: AndroidDashboard) {
     val recentTasks = dashboard.recentTaskRunsForDisplay()
+    val latestArticles = dashboard.articles.items.take(5)
     LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 MetricCard("文章", dashboard.overview.articleCount.toString(), Modifier.weight(1f))
-                MetricCard("项目", dashboard.overview.projectCount.toString(), Modifier.weight(1f))
-            }
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                MetricCard("报告", dashboard.overview.reportCount.toString(), Modifier.weight(1f))
                 MetricCard("任务", dashboard.overview.crawlRunCount.toString(), Modifier.weight(1f))
             }
         }
         item { SectionTitle("最新文章") }
-        items(dashboard.articles.items) { ArticleRow(it) }
+        items(latestArticles) { ArticleRow(it) }
         item { SectionTitle("最近任务") }
         if (recentTasks.isEmpty()) {
             item { SimpleRow("暂无任务记录", "") }
