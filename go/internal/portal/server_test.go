@@ -1642,6 +1642,16 @@ func setAStockNowForTest(t *testing.T, now time.Time) {
 	})
 }
 
+func writeEnvelope(w http.ResponseWriter, status int, message string, data any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"code":    status,
+		"message": message,
+		"data":    data,
+	})
+}
+
 func newAStockTradingDayServer(t *testing.T, isTradingDay bool) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2058,6 +2068,139 @@ func TestAStockContextRejectsMismatchedLimitUpSnapshot(t *testing.T) {
 	}
 }
 
+func TestAStockPopupShowsAndDismissesAfternoonRecommendations(t *testing.T) {
+	setAStockNowForTest(t, time.Date(2026, 6, 23, 13, 0, 0, 0, time.FixedZone("CST", 8*3600)))
+
+	popupStates := map[string]model.PopupState{}
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/a-stock/recommendations":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{
+				Found:               true,
+				StrategyDate:        "2026-06-23",
+				Period:              "afternoon",
+				RecommendationsJSON: `[{"Rank":1,"Code":"002230","Name":"科大讯飞","Hotspot":"人工智能","Reason":"消息驱动"},{"Rank":2,"Code":"688981","Name":"中芯国际","Hotspot":"半导体","Reason":"景气回升"}]`,
+				UpdatedAt:           time.Date(2026, 6, 23, 4, 55, 0, 0, time.UTC),
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/system/popup":
+			userID := parseTestInt64(r.URL.Query().Get("user_id"))
+			key := r.URL.Query().Get("key")
+			state, ok := popupStates[popupStateMapKey(userID, key)]
+			if !ok {
+				state = model.PopupState{UserID: userID, Key: key}
+			}
+			writeEnvelope(w, http.StatusOK, "ok", state)
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/system/popup":
+			var state model.PopupState
+			if err := json.NewDecoder(r.Body).Decode(&state); err != nil {
+				writeEnvelope(w, http.StatusBadRequest, err.Error(), nil)
+				return
+			}
+			now := time.Now().UTC()
+			state.UpdatedAt = now
+			if state.Dismissed && state.DismissedAt == nil {
+				state.DismissedAt = &now
+			}
+			popupStates[popupStateMapKey(state.UserID, state.Key)] = state
+			writeEnvelope(w, http.StatusOK, "ok", state)
+		default:
+			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	auth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/auth/session" || strings.TrimSpace(r.URL.Query().Get("session_token")) != "session-admin" {
+			t.Fatalf("unexpected auth request: %s", r.URL.String())
+		}
+		writeEnvelope(w, http.StatusOK, "ok", map[string]any{
+			"user": map[string]any{"id": int64(1), "username": "admin"},
+		})
+	}))
+	defer auth.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL, AuthURL: auth.URL, ServiceToken: "test-token"})
+	router := srv.Router()
+
+	req := httptest.NewRequest(http.MethodGet, "/a-stock/popup?date=2026-06-23", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "session-admin"})
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected popup 200, got %d", rr.Code)
+	}
+	var popup aStockPopupPayload
+	if err := json.Unmarshal(rr.Body.Bytes(), &popup); err != nil {
+		t.Fatalf("unmarshal popup payload: %v", err)
+	}
+	if !popup.Show || popup.Key != "a-stock-afternoon-recommendation-2026-06-23" || len(popup.Recommendations) != 2 {
+		t.Fatalf("expected popup to show afternoon recommendations, got %+v", popup)
+	}
+
+	dismissReq := httptest.NewRequest(http.MethodPost, "/a-stock/popup/dismiss", strings.NewReader(`{"key":"`+popup.Key+`"}`))
+	dismissReq.Header.Set("Content-Type", "application/json")
+	dismissReq.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "session-admin"})
+	dismissRR := httptest.NewRecorder()
+	router.ServeHTTP(dismissRR, dismissReq)
+	if dismissRR.Code != http.StatusOK {
+		t.Fatalf("expected dismiss 200, got %d body=%s", dismissRR.Code, dismissRR.Body.String())
+	}
+
+	reqAfter := httptest.NewRequest(http.MethodGet, "/a-stock/popup?date=2026-06-23", nil)
+	reqAfter.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "session-admin"})
+	rrAfter := httptest.NewRecorder()
+	router.ServeHTTP(rrAfter, reqAfter)
+	var popupAfter aStockPopupPayload
+	if err := json.Unmarshal(rrAfter.Body.Bytes(), &popupAfter); err != nil {
+		t.Fatalf("unmarshal popup payload after dismiss: %v", err)
+	}
+	if popupAfter.Show {
+		t.Fatalf("expected popup to stay hidden after dismiss, got %+v", popupAfter)
+	}
+}
+
+func TestAStockPopupWaitsUntil1300(t *testing.T) {
+	setAStockNowForTest(t, time.Date(2026, 6, 23, 12, 59, 0, 0, time.FixedZone("CST", 8*3600)))
+
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/a-stock/recommendations" {
+			t.Fatalf("unexpected content request before 13:00: %s", r.URL.String())
+		}
+		writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{
+			Found:               true,
+			StrategyDate:        "2026-06-23",
+			Period:              "afternoon",
+			RecommendationsJSON: `[{"Rank":1,"Code":"002230","Name":"科大讯飞","Hotspot":"人工智能","Reason":"消息驱动"}]`,
+		})
+	}))
+	defer content.Close()
+
+	auth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeEnvelope(w, http.StatusOK, "ok", map[string]any{
+			"user": map[string]any{"id": int64(1), "username": "admin"},
+		})
+	}))
+	defer auth.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL, AuthURL: auth.URL, ServiceToken: "test-token"})
+	req := httptest.NewRequest(http.MethodGet, "/a-stock/popup?date=2026-06-23", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "session-admin"})
+	rr := httptest.NewRecorder()
+	srv.Router().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected popup 200 before 13:00, got %d", rr.Code)
+	}
+	var popup aStockPopupPayload
+	if err := json.Unmarshal(rr.Body.Bytes(), &popup); err != nil {
+		t.Fatalf("unmarshal popup payload before 13:00: %v", err)
+	}
+	if popup.Show {
+		t.Fatalf("expected popup to stay hidden before 13:00, got %+v", popup)
+	}
+}
+
 func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 	setAStockNowForTest(t, time.Date(2026, 6, 16, 9, 30, 0, 0, time.FixedZone("CST", 8*3600)))
 
@@ -2169,7 +2312,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"金十快讯", "金十资讯", "1条", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "5日内过滤", "涨停过滤", "关闭5日过滤", "关闭涨停过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "推荐历史", "补抓并重新生成当前窗口", "重新生成当前推荐", "刷新当前回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="refresh_backtest"`, "2026-06-16 AM", "2026-06-16 PM", "2026-06-15 AM", "2026-06-15 PM", "2026-06-11 AM", "2026-06-11 PM", "T+0 收益", "astock-recommendation-table", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
+	for _, want := range []string{"金十快讯", "金十资讯", "1条", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "5日内过滤", "涨停过滤", "关闭5日过滤", "关闭涨停过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "推荐历史", "补抓并重新生成当前窗口", "重新生成当前推荐", "刷新当前回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="refresh_backtest"`, "2026-06-16 AM", "2026-06-16 PM", "2026-06-15 AM", "2026-06-15 PM", "2026-06-11 AM", "2026-06-11 PM", "T+0 收益", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}

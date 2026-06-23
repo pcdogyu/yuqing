@@ -437,12 +437,44 @@ func (w *Worker) runAStockRecommendationForDate(ctx context.Context, strategyDat
 	if !resp.IsSuccess() {
 		return fmt.Errorf("a-stock %s recommendation content warmup failed: %s", label, resp.Status())
 	}
+	if normalizeAStockRecommendationPeriod(period) == "afternoon" {
+		if err := w.generateAStockRecommendationSnapshot(ctx, strategyDate, period); err != nil {
+			return err
+		}
+	}
 	log.Info().
 		Str("strategy_date", strategyDate).
 		Str("period", period).
 		Str("window", label).
 		Msg("a-stock recommendation window generated")
 	return nil
+}
+
+func (w *Worker) generateAStockRecommendationSnapshot(ctx context.Context, strategyDate string, period string) error {
+	baseURL := strings.TrimRight(strings.TrimSpace(w.cfg.GatewayWebURL), "/")
+	if baseURL == "" {
+		return fmt.Errorf("YUQING_GATEWAY_URL not configured")
+	}
+	resp, err := w.client.R().
+		SetContext(ctx).
+		SetQueryParam("date", normalizeAStockRecommendationDate(strategyDate)).
+		SetQueryParam("period", normalizeAStockRecommendationPeriod(period)).
+		Post(baseURL + "/internal/a-stock/recommendations/generate")
+	if err != nil {
+		return err
+	}
+	if !resp.IsSuccess() {
+		return fmt.Errorf("a-stock recommendation generate failed: %s", resp.Status())
+	}
+	return nil
+}
+
+func normalizeAStockRecommendationDate(strategyDate string) string {
+	return strings.TrimSpace(strategyDate)
+}
+
+func normalizeAStockRecommendationPeriod(period string) string {
+	return strings.TrimSpace(period)
 }
 
 func (w *Worker) aStockRecommendationCrawlSources() []string {

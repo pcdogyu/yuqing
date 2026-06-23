@@ -48,6 +48,7 @@ type aStockContext struct {
 	TradingDayBlocked            bool
 	TradingDayMessage            string
 	TradingDayReason             string
+	SnapshotUpdatedAt            time.Time
 	SourceRuns                   []aStockSourceRun
 }
 
@@ -169,6 +170,36 @@ type aStockSourceRun struct {
 	UpdatedCount  int
 	ErrorText     string
 	StartedAt     time.Time
+}
+
+type aStockRecommendationGenerateResult struct {
+	StrategyDate           string `json:"strategy_date"`
+	Period                 string `json:"period"`
+	RecommendationCount    int    `json:"recommendation_count"`
+	GeneratedCount         int    `json:"generated_count"`
+	BacktestStatus         string `json:"backtest_status"`
+	RecentFiltered         int    `json:"recent_filtered"`
+	SameDayMorningFiltered int    `json:"same_day_morning_filtered"`
+	LimitUpFiltered        int    `json:"limit_up_filtered"`
+	LoadMessage            string `json:"load_message"`
+}
+
+type aStockPopupRecommendation struct {
+	Rank    int    `json:"rank"`
+	Code    string `json:"code"`
+	Name    string `json:"name"`
+	Hotspot string `json:"hotspot"`
+	Reason  string `json:"reason"`
+}
+
+type aStockPopupPayload struct {
+	Show            bool                        `json:"show"`
+	Key             string                      `json:"key"`
+	Title           string                      `json:"title"`
+	Meta            string                      `json:"meta"`
+	StrategyDate    string                      `json:"strategy_date"`
+	UpdatedAt       string                      `json:"updated_at"`
+	Recommendations []aStockPopupRecommendation `json:"recommendations"`
 }
 
 const (
@@ -301,43 +332,18 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-up{color:#b3261e;font-weight:700}
 		.astock-down{color:#1b7f3a;font-weight:700}
 		.astock-flat{color:#6a6257}
+		.astock-popup-mask{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(20,27,22,.42)}
+		.astock-popup-mask[hidden]{display:none}
+		.astock-popup{width:min(1080px,100%);max-height:min(86vh,860px);overflow:hidden;border-radius:16px;background:#fff;box-shadow:0 24px 72px rgba(23,35,27,.24);display:flex;flex-direction:column}
+		.astock-popup-header{display:flex;gap:12px;align-items:flex-start;justify-content:space-between;padding:20px 24px 12px;border-bottom:1px solid #ece7dc}
+		.astock-popup-header h3{margin:0}
+		.astock-popup-close{padding:8px 12px;border:1px solid #d6ccbb;border-radius:8px;background:#fff;color:#214e34;font-weight:700;cursor:pointer}
+		.astock-popup-body{padding:0 24px 24px}
+		.astock-popup-scroll{overflow:auto;max-height:60vh}
+		.astock-popup-table{min-width:760px}
 	</style>`)
-	b.WriteString(`<script>
-	(function(){
-		var key="astock-scroll-y";
-		window.addEventListener("DOMContentLoaded",function(){
-			var y=sessionStorage.getItem(key);
-			if(y!==null){sessionStorage.removeItem(key);var n=parseInt(y,10);if(!isNaN(n)){window.scrollTo(0,n);}}
-			document.querySelectorAll("[data-preserve-scroll='1']").forEach(function(el){
-				el.addEventListener("click",function(){sessionStorage.setItem(key,String(window.scrollY||0));});
-			});
-			document.querySelectorAll(".astock-action-form").forEach(function(form){
-				form.addEventListener("submit",function(event){
-					if(form.dataset.submitting==="1"){event.preventDefault();return;}
-					form.dataset.submitting="1";
-					var current=form.querySelector("button[type='submit']");
-					document.querySelectorAll(".astock-action-form button[type='submit']").forEach(function(button){
-						button.disabled=true;
-						button.setAttribute("aria-disabled","true");
-					});
-					if(current){
-						current.classList.add("astock-action-running");
-						current.setAttribute("aria-busy","true");
-					}
-				});
-			});
-		});
-		window.addEventListener("pageshow",function(){
-			document.querySelectorAll(".astock-action-form").forEach(function(form){form.dataset.submitting="";});
-			document.querySelectorAll(".astock-action-form button[type='submit']").forEach(function(button){
-				button.disabled=false;
-				button.removeAttribute("aria-disabled");
-				button.removeAttribute("aria-busy");
-				button.classList.remove("astock-action-running");
-			});
-		});
-	})();
-	</script>`)
+	renderAStockPopupShell(&b)
+	writeAStockPageScript(&b, ctx.Date)
 	if message != "" {
 		b.WriteString(`<section><p style="color:#214e34">`)
 		b.WriteString(html.EscapeString(message))
@@ -457,6 +463,29 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request) 
 		query.Set("msg", "未知操作")
 	}
 	http.Redirect(w, r, "/a-stock?"+query.Encode(), http.StatusSeeOther)
+}
+
+func renderAStockPopupShell(b *strings.Builder) {
+	b.WriteString(`<div id="astock-popup-mask" class="astock-popup-mask" hidden><div class="astock-popup" role="dialog" aria-modal="true" aria-labelledby="astock-popup-title"><div class="astock-popup-header"><div><h3 id="astock-popup-title">13:00 下午推荐股票</h3><p id="astock-popup-meta" class="astock-muted"></p></div><button id="astock-popup-dismiss" class="astock-popup-close" type="button">关闭</button></div><div class="astock-popup-body"><div class="astock-popup-scroll"><table class="astock-table astock-popup-table"><thead><tr><th>排名</th><th>股票代码</th><th>股票名称</th><th>热点</th><th>推荐理由</th></tr></thead><tbody id="astock-popup-body"></tbody></table></div></div></div></div>`)
+}
+
+func writeAStockPageScript(b *strings.Builder, strategyDate string) {
+	popupEligible := normalizeAStockStrategyDate(strategyDate) == aStockTodayDate()
+	b.WriteString(`<script>(function(){`)
+	fmt.Fprintf(b, `var scrollKey=%q;`, "astock-scroll-y")
+	fmt.Fprintf(b, `var popupDate=%q;`, normalizeAStockStrategyDate(strategyDate))
+	fmt.Fprintf(b, `var popupEligible=%t;`, popupEligible)
+	b.WriteString(`var popupKey="";var popupVisible=false;var popupTimer=0;`)
+	b.WriteString(`function popupMask(){return document.getElementById("astock-popup-mask");}`)
+	b.WriteString(`function popupBody(){return document.getElementById("astock-popup-body");}`)
+	b.WriteString(`function hidePopup(){var mask=popupMask();if(mask){mask.hidden=true;}popupVisible=false;}`)
+	b.WriteString(`function renderPopupRows(items){var body=popupBody();if(!body){return;}body.innerHTML="";(items||[]).forEach(function(item){var row=document.createElement("tr");["rank","code","name","hotspot","reason"].forEach(function(field){var cell=document.createElement("td");cell.textContent=item&&item[field]!==undefined&&item[field]!==null?String(item[field]):"";row.appendChild(cell);});body.appendChild(row);});}`)
+	b.WriteString(`function showPopup(data){var mask=popupMask();if(!mask||!data||!data.show){return;}if(popupVisible&&popupKey===data.key){return;}var title=document.getElementById("astock-popup-title");var meta=document.getElementById("astock-popup-meta");if(title){title.textContent=data.title||"13:00 下午推荐股票";}if(meta){meta.textContent=data.meta||"";}renderPopupRows(data.recommendations||[]);popupKey=data.key||"";mask.hidden=false;popupVisible=true;}`)
+	b.WriteString(`function fetchPopup(){if(!popupEligible||!popupDate){return;}fetch("/a-stock/popup?date="+encodeURIComponent(popupDate),{credentials:"same-origin"}).then(function(resp){if(!resp.ok){return null;}return resp.json();}).then(function(data){if(!data){return;}if(data.show){showPopup(data);return;}if(!data.show&&popupVisible&&popupKey&&popupKey===data.key){hidePopup();}}).catch(function(){});}`)
+	b.WriteString(`window.addEventListener("DOMContentLoaded",function(){var y=sessionStorage.getItem(scrollKey);if(y!==null){sessionStorage.removeItem(scrollKey);var n=parseInt(y,10);if(!isNaN(n)){window.scrollTo(0,n);}}document.querySelectorAll("[data-preserve-scroll='1']").forEach(function(el){el.addEventListener("click",function(){sessionStorage.setItem(scrollKey,String(window.scrollY||0));});});document.querySelectorAll(".astock-action-form").forEach(function(form){form.addEventListener("submit",function(event){if(form.dataset.submitting==="1"){event.preventDefault();return;}form.dataset.submitting="1";var current=form.querySelector("button[type='submit']");document.querySelectorAll(".astock-action-form button[type='submit']").forEach(function(button){button.disabled=true;button.setAttribute("aria-disabled","true");});if(current){current.classList.add("astock-action-running");current.setAttribute("aria-busy","true");}});});var dismiss=document.getElementById("astock-popup-dismiss");if(dismiss){dismiss.addEventListener("click",function(){if(!popupKey){hidePopup();return;}fetch("/a-stock/popup/dismiss",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:popupKey})}).catch(function(){}).finally(function(){hidePopup();});});}fetchPopup();if(popupEligible){popupTimer=window.setInterval(fetchPopup,30000);}});`)
+	b.WriteString(`window.addEventListener("pageshow",function(){document.querySelectorAll(".astock-action-form").forEach(function(form){form.dataset.submitting="";});document.querySelectorAll(".astock-action-form button[type='submit']").forEach(function(button){button.disabled=false;button.removeAttribute("aria-disabled");button.removeAttribute("aria-busy");button.classList.remove("astock-action-running");});fetchPopup();});`)
+	b.WriteString(`window.addEventListener("beforeunload",function(){if(popupTimer){window.clearInterval(popupTimer);popupTimer=0;}});`)
+	b.WriteString(`})();</script>`)
 }
 
 func renderAStockOverviewSection(b *strings.Builder, morningCtx aStockContext, afternoonCtx aStockContext) {
@@ -876,6 +905,85 @@ func (s *Server) loadAStockContext(strategyDate string, periodKey string, newsPa
 	return s.loadAStockContextWithCache(strategyDate, periodKey, newsPage, ignoreRecent, false, false, newAStockRequestCache())
 }
 
+func (s *Server) handleAStockRecommendationGenerate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	strategyDate := normalizeAStockStrategyDate(r.URL.Query().Get("date"))
+	period := normalizeAStockPeriod(r.URL.Query().Get("period"))
+	ignoreRecent := normalizeAStockBool(r.URL.Query().Get("ignore_recent"))
+	ignoreLimitUp := normalizeAStockBool(r.URL.Query().Get("ignore_limit_up"))
+	ctx := s.loadAStockContextWithCache(strategyDate, period.Key, 1, ignoreRecent, ignoreLimitUp, true, newAStockRequestCache())
+	writeRawJSON(w, http.StatusOK, map[string]any{
+		"code":    http.StatusOK,
+		"message": "ok",
+		"data": aStockRecommendationGenerateResult{
+			StrategyDate:           ctx.Date,
+			Period:                 ctx.Period,
+			RecommendationCount:    len(ctx.Recommendations),
+			GeneratedCount:         ctx.GeneratedRecommendationCount,
+			BacktestStatus:         ctx.BacktestStatus,
+			RecentFiltered:         ctx.RecentFiltered,
+			SameDayMorningFiltered: ctx.SameDayMorningFiltered,
+			LimitUpFiltered:        ctx.LimitUpFiltered,
+			LoadMessage:            ctx.LoadMessage,
+		},
+	})
+}
+
+func (s *Server) handleAStockPopup(w http.ResponseWriter, r *http.Request, user any) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	writeRawJSON(w, http.StatusOK, s.buildAStockAfternoonPopup(userIDFromMap(user), r.URL.Query().Get("date")))
+}
+
+func (s *Server) handleAStockPopupDismiss(w http.ResponseWriter, r *http.Request, user any) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var payload struct {
+		Key string `json:"key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeRawJSON(w, http.StatusBadRequest, map[string]any{"message": "invalid body"})
+		return
+	}
+	key := strings.TrimSpace(payload.Key)
+	if key == "" {
+		writeRawJSON(w, http.StatusBadRequest, map[string]any{"message": "popup key required"})
+		return
+	}
+	userID := userIDFromMap(user)
+	if userID <= 0 {
+		writeRawJSON(w, http.StatusForbidden, map[string]any{"message": "unauthorized"})
+		return
+	}
+	current, ok, err := s.getPopupState(userID, key)
+	if err != nil {
+		writeRawJSON(w, http.StatusBadGateway, map[string]any{"message": err.Error()})
+		return
+	}
+	count := 1
+	if ok {
+		count = current.Count + 1
+	}
+	updated, err := s.putPopupState(model.PopupState{
+		UserID:    userID,
+		Key:       key,
+		Dismissed: true,
+		Count:     count,
+	})
+	if err != nil {
+		writeRawJSON(w, http.StatusBadGateway, map[string]any{"message": err.Error()})
+		return
+	}
+	writeRawJSON(w, http.StatusOK, map[string]any{"ok": true, "key": key, "dismissed": updated.Dismissed})
+}
+
 func newAStockRequestCache() *aStockRequestCache {
 	return &aStockRequestCache{
 		tradingDay:  make(map[string]aStockTradingDayCacheEntry),
@@ -967,12 +1075,8 @@ func (s *Server) applyAStockRecommendationSnapshot(ctx *aStockContext) bool {
 	if ctx == nil || strings.TrimSpace(s.cfg.ContentURL) == "" {
 		return false
 	}
-	snapshot := model.AStockRecommendationSnapshot{}
-	query := "/api/v1/a-stock/recommendations?date=" + url.QueryEscape(ctx.Date) + "&period=" + url.QueryEscape(ctx.Period)
-	if ctx.IgnoreRecent {
-		query += "&ignore_recent=1"
-	}
-	if err := s.getJSON(s.cfg.ContentURL+query, &snapshot); err != nil || !snapshot.Found {
+	snapshot, ok := s.loadAStockRecommendationSnapshot(ctx.Date, ctx.Period, ctx.IgnoreRecent)
+	if !ok {
 		return false
 	}
 	if ctx.Period == "afternoon" && snapshot.LimitUpFilterEnabled != ctx.LimitUpFilterEnabled {
@@ -1001,10 +1105,26 @@ func (s *Server) applyAStockRecommendationSnapshot(ctx *aStockContext) bool {
 	ctx.MarketCandidateCount = snapshot.MarketCandidateCount
 	ctx.AuctionAmountLabel = snapshot.AuctionAmountLabel
 	ctx.EmptyReason = snapshot.EmptyReason
+	ctx.SnapshotUpdatedAt = snapshot.UpdatedAt
 	if ctx.EmptyReason == "" {
 		ctx.EmptyReason = aStockRecommendationEmptyReason(*ctx)
 	}
 	return true
+}
+
+func (s *Server) loadAStockRecommendationSnapshot(strategyDate string, period string, ignoreRecent bool) (model.AStockRecommendationSnapshot, bool) {
+	if strings.TrimSpace(s.cfg.ContentURL) == "" {
+		return model.AStockRecommendationSnapshot{}, false
+	}
+	query := "/api/v1/a-stock/recommendations?date=" + url.QueryEscape(normalizeAStockStrategyDate(strategyDate)) + "&period=" + url.QueryEscape(normalizeAStockPeriod(period).Key)
+	if ignoreRecent {
+		query += "&ignore_recent=1"
+	}
+	snapshot := model.AStockRecommendationSnapshot{}
+	if err := s.getJSON(s.cfg.ContentURL+query, &snapshot); err != nil || !snapshot.Found {
+		return model.AStockRecommendationSnapshot{}, false
+	}
+	return snapshot, true
 }
 
 func (s *Server) saveAStockRecommendationSnapshot(ctx aStockContext) error {
@@ -1046,6 +1166,60 @@ func (s *Server) saveAStockRecommendationSnapshot(ctx aStockContext) error {
 		return fmt.Errorf(resp.Status())
 	}
 	return nil
+}
+
+func (s *Server) buildAStockAfternoonPopup(userID int64, strategyDate string) aStockPopupPayload {
+	date := normalizeAStockStrategyDate(strategyDate)
+	if date == "" {
+		date = aStockTodayDate()
+	}
+	payload := aStockPopupPayload{
+		Key:          aStockAfternoonPopupKey(date),
+		Title:        "13:00 下午推荐股票",
+		StrategyDate: date,
+	}
+	if userID <= 0 || date != aStockTodayDate() || !aStockShouldShowAfternoonPopupNow() {
+		return payload
+	}
+	state, ok, err := s.getPopupState(userID, payload.Key)
+	if err == nil && ok && state.Dismissed {
+		return payload
+	}
+	snapshot, ok := s.loadAStockRecommendationSnapshot(date, "afternoon", false)
+	if !ok {
+		return payload
+	}
+	var recommendations []aStockRecommendation
+	if err := json.Unmarshal([]byte(nonEmpty(snapshot.RecommendationsJSON, "[]")), &recommendations); err != nil || len(recommendations) == 0 {
+		return payload
+	}
+	items := make([]aStockPopupRecommendation, 0, len(recommendations))
+	for _, rec := range recommendations {
+		items = append(items, aStockPopupRecommendation{
+			Rank:    rec.Rank,
+			Code:    rec.Code,
+			Name:    rec.Name,
+			Hotspot: rec.Hotspot,
+			Reason:  truncateAStockText(rec.Reason, 96),
+		})
+	}
+	payload.Show = true
+	payload.UpdatedAt = formatShanghaiTime(snapshot.UpdatedAt)
+	payload.Meta = fmt.Sprintf("%s 09:30-13:00 窗口已生成 %d 只推荐股票", date, len(items))
+	if payload.UpdatedAt != "--" {
+		payload.Meta += "，快照更新时间 " + payload.UpdatedAt
+	}
+	payload.Recommendations = items
+	return payload
+}
+
+func aStockAfternoonPopupKey(strategyDate string) string {
+	return "a-stock-afternoon-recommendation-" + normalizeAStockStrategyDate(strategyDate)
+}
+
+func aStockShouldShowAfternoonPopupNow() bool {
+	now := aStockNow().In(aStockLocation())
+	return now.Hour() >= 13
 }
 
 func aStockActionRequiresTradingDay(action string) bool {

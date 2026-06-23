@@ -317,6 +317,9 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/monitor/wxGroup", s.requireSession(s.handleMonitorWxGroup))
 	mux.HandleFunc("/volume", s.requireSessionUnlessRemoved(s.handleVolume))
 	mux.HandleFunc("/volume/", s.requireSessionUnlessRemoved(s.handleVolume))
+	mux.HandleFunc("/internal/a-stock/recommendations/generate", s.requireServiceToken(s.handleAStockRecommendationGenerate))
+	mux.HandleFunc("/a-stock/popup", s.requireSessionJSON(s.handleAStockPopup))
+	mux.HandleFunc("/a-stock/popup/dismiss", s.requireSessionJSON(s.handleAStockPopupDismiss))
 	mux.HandleFunc("/a-stock/auction", s.requireSession(s.handleAStockAuctionPage))
 	mux.HandleFunc("/a-stock/holdings", s.requireSession(s.handleAStockHoldingsPage))
 	mux.HandleFunc("/a-stock", s.requireSession(s.handleAStockPage))
@@ -428,6 +431,17 @@ func (s *Server) unlessRemoved(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if status, ok := removedLegacyPortalStatus(r.URL.Path); ok {
 			writeRemovedLegacyPortalResponse(w, r, status)
+			return
+		}
+		next(w, r)
+	}
+}
+
+func (s *Server) requireServiceToken(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		expected := strings.TrimSpace(s.cfg.ServiceToken)
+		if expected == "" || r.Header.Get("X-Service-Token") != expected {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 		next(w, r)

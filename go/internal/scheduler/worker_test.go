@@ -305,6 +305,7 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 
 func TestRunAStockRecommendationCrawlsSourcesAndQueriesWindow(t *testing.T) {
 	var sources []string
+	var generatedPeriods []string
 	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/a-stock/trading-day" || r.URL.Query().Get("date") != "2026-06-16" {
 			t.Fatalf("unexpected trading-day request: %s", r.URL.String())
@@ -342,10 +343,23 @@ func TestRunAStockRecommendationCrawlsSourcesAndQueriesWindow(t *testing.T) {
 	}))
 	defer content.Close()
 
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/internal/a-stock/recommendations/generate" {
+			t.Fatalf("unexpected gateway request: %s %s", r.Method, r.URL.String())
+		}
+		if r.Header.Get("X-Service-Token") != "secret-token" {
+			t.Fatalf("expected gateway service token header, got %q", r.Header.Get("X-Service-Token"))
+		}
+		generatedPeriods = append(generatedPeriods, r.URL.Query().Get("period"))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer gateway.Close()
+
 	worker := NewWorker(config.Config{
 		AStockAuctionURL:      akshare.URL,
 		CrawlerURL:            crawler.URL,
 		ContentURL:            content.URL,
+		GatewayWebURL:         gateway.URL,
 		HTTPTimeout:           time.Second,
 		SchedulerCrawlTimeout: time.Second,
 		ServiceToken:          "secret-token",
@@ -357,6 +371,9 @@ func TestRunAStockRecommendationCrawlsSourcesAndQueriesWindow(t *testing.T) {
 	sort.Strings(sources)
 	if strings.Join(sources, ",") != "cls_telegraph,eastmoney_kuaixun,flash,headline,sina_finance_7x24,wallstreetcn_a_stock" {
 		t.Fatalf("expected all A股 sources to be crawled, got %v", sources)
+	}
+	if len(generatedPeriods) != 1 || generatedPeriods[0] != "afternoon" {
+		t.Fatalf("expected afternoon recommendation snapshot generation, got %v", generatedPeriods)
 	}
 }
 
@@ -373,6 +390,7 @@ func TestRunAStockRecommendationContinuesWhenOneSourceFails(t *testing.T) {
 	defer akshare.Close()
 
 	var sources []string
+	var generatedPeriods []string
 	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sourceType := r.URL.Query().Get("source_type")
 		sources = append(sources, sourceType)
@@ -392,10 +410,20 @@ func TestRunAStockRecommendationContinuesWhenOneSourceFails(t *testing.T) {
 	}))
 	defer content.Close()
 
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/internal/a-stock/recommendations/generate" {
+			t.Fatalf("unexpected gateway request: %s %s", r.Method, r.URL.String())
+		}
+		generatedPeriods = append(generatedPeriods, r.URL.Query().Get("period"))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer gateway.Close()
+
 	worker := NewWorker(config.Config{
 		AStockAuctionURL:      akshare.URL,
 		CrawlerURL:            crawler.URL,
 		ContentURL:            content.URL,
+		GatewayWebURL:         gateway.URL,
 		HTTPTimeout:           time.Second,
 		SchedulerCrawlTimeout: time.Second,
 	})
@@ -408,6 +436,9 @@ func TestRunAStockRecommendationContinuesWhenOneSourceFails(t *testing.T) {
 	}
 	if !slices.Contains(sources, "eastmoney_kuaixun") || !slices.Contains(sources, "sina_finance_7x24") {
 		t.Fatalf("expected later A股 sources to run after headline failure, got %v", sources)
+	}
+	if len(generatedPeriods) != 1 || generatedPeriods[0] != "afternoon" {
+		t.Fatalf("expected afternoon recommendation snapshot generation after partial crawl failure, got %v", generatedPeriods)
 	}
 }
 
