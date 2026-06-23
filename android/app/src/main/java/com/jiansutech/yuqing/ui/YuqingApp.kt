@@ -2,6 +2,7 @@ package com.jiansutech.yuqing.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
@@ -57,6 +58,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.jiansutech.yuqing.astock.AStockTradingCalendar
@@ -363,21 +365,32 @@ private fun AStockModule(
     val isLatestDate = isLatestSelectableAStockDate(window.date)
     LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = { viewModel.shiftAStockRecommendationDate(-1) }) {
-                    Text("前一日")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier.weight(1f),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    TextButton(onClick = { viewModel.shiftAStockRecommendationDate(-1) }) {
+                        Text("前一日")
+                    }
                 }
                 Text(
                     formatAStockDateWithWeekday(window.date),
                     modifier = Modifier.weight(1f),
                     fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Center,
                 )
-                TextButton(onClick = viewModel::resetAStockRecommendationDate) {
-                    Text("今日")
-                }
-                if (!isLatestDate) {
-                    TextButton(onClick = { viewModel.shiftAStockRecommendationDate(1) }) {
-                        Text("后一日")
+                Box(
+                    modifier = Modifier.weight(1f),
+                    contentAlignment = Alignment.CenterEnd,
+                ) {
+                    if (!isLatestDate) {
+                        TextButton(onClick = { viewModel.shiftAStockRecommendationDate(1) }) {
+                            Text("后一日")
+                        }
                     }
                 }
             }

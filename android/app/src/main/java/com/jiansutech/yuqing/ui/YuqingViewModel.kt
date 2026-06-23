@@ -136,7 +136,7 @@ class YuqingViewModel(
             loadArticles(1)
         }
         if (key == "a_stock") {
-            loadAStockRecommendationDay()
+            resetAStockRecommendationDate()
         }
         if (key == "auction") {
             loadAStockAuction()
