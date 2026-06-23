@@ -4065,17 +4065,65 @@ func TestArticlesPagePresentationUsesShanghaiTimeAndNoFavoriteAction(t *testing.
 	}
 	renderedText := strings.ReplaceAll(html.UnescapeString(body), "&#43;", "+")
 	for _, expected := range []string{
-		`<th class="col-title">标题</th><th class="col-source">来源</th><th class="col-time">发布时间</th><th class="col-actions">操作</th>`,
+		`<th class="col-title">标题</th><th class="col-source">来源</th><th class="col-time">采集时间</th><th class="col-actions">操作</th>`,
 		`金十`,
 		`PANews`,
 		`CoinDesk`,
 		`Foresight`,
 		`2026-06-12 14:17`,
+		`隐藏文章`,
 		`Code By Yuhao@jiansutech.com - 2026-06-12 14:17:25 UTC+8 - abcdef1 - golang-jin10-sqlite`,
 	} {
 		if !strings.Contains(renderedText, expected) {
 			t.Fatalf("expected article list UI fragment %q in body: %s", expected, body)
 		}
+	}
+	if strings.Contains(renderedText, `删除文章`) {
+		t.Fatalf("expected article list to stop showing delete label, got %s", body)
+	}
+}
+
+func TestHandleArticlesHideActionUsesSoftDeleteEndpoint(t *testing.T) {
+	hideCalls := 0
+	var deletePath string
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/articles/101":
+			hideCalls++
+			deletePath = r.URL.Path
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusOK, "message": "ok", "data": map[string]bool{"deleted": true}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL, HTTPTimeout: time.Second})
+	form := url.Values{
+		"item_id": {"101"},
+		"action":  {"hide"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/articles", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Referer", "http://portal.local/articles?page=2")
+	rr := httptest.NewRecorder()
+
+	srv.handleArticles(rr, req, map[string]any{"id": int64(1), "username": "admin"})
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect after hide action, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if hideCalls != 1 || deletePath != "/api/v1/articles/101" {
+		t.Fatalf("expected hide action to call soft delete endpoint once, got calls=%d path=%q", hideCalls, deletePath)
+	}
+	location := rr.Header().Get("Location")
+	redirectURL, err := url.Parse(location)
+	if err != nil {
+		t.Fatalf("expected valid redirect URL, got %q err=%v", location, err)
+	}
+	query := redirectURL.Query()
+	if redirectURL.Path != "/articles" || query.Get("page") != "2" || query.Get("msg") != "文章已隐藏" {
+		t.Fatalf("expected redirect back to article list with hidden message, got %q", location)
 	}
 }
 
