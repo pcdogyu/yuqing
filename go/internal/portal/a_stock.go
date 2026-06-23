@@ -332,6 +332,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-up{color:#b3261e;font-weight:700}
 		.astock-down{color:#1b7f3a;font-weight:700}
 		.astock-flat{color:#6a6257}
+		.astock-section-divider{margin:18px 0;border:0;border-top:1px solid #ece7dc}
 		.astock-popup-mask{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(20,27,22,.42)}
 		.astock-popup-mask[hidden]{display:none}
 		.astock-popup{width:min(1080px,100%);max-height:min(86vh,860px);overflow:hidden;border-radius:16px;background:#fff;box-shadow:0 24px 72px rgba(23,35,27,.24);display:flex;flex-direction:column}
@@ -350,7 +351,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		b.WriteString(`</p></section>`)
 	}
 
-	renderAStockDatePeriodTabs(&b, ctx.Date, ctx.Period, ctx.IgnoreRecent, ctx.IgnoreLimitUp, false)
+	renderAStockDateTabs(&b, ctx.Date, ctx.Period, ctx.IgnoreRecent, ctx.IgnoreLimitUp, false)
 	renderAStockOverviewSection(&b, morningCtx, afternoonCtx)
 
 	b.WriteString(`<section><h2>操作区</h2><div class="astock-actions"><div class="astock-action-grid">`)
@@ -390,8 +391,8 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 
 	renderAStockNewsSection(&b, ctx)
 	renderAStockHotspotSection(&b, ctx.Hotspots)
-	renderAStockRecommendationSection(&b, ctx)
-	renderAStockBacktestSection(&b, ctx.Date, ctx.Period, ctx.IgnoreRecent, ctx.IgnoreLimitUp, ctx.Recommendations, ctx.Backtests)
+	renderAStockRecommendationSection(&b, morningCtx, afternoonCtx)
+	renderAStockBacktestSection(&b, ctx.Date, ctx.Period, ctx.IgnoreRecent, ctx.IgnoreLimitUp, morningCtx, afternoonCtx)
 
 	_ = s.writeSimplePage(w, "a-stock", "A股", b.String())
 }
@@ -475,16 +476,17 @@ func writeAStockPageScript(b *strings.Builder, strategyDate string) {
 	fmt.Fprintf(b, `var scrollKey=%q;`, "astock-scroll-y")
 	fmt.Fprintf(b, `var popupDate=%q;`, normalizeAStockStrategyDate(strategyDate))
 	fmt.Fprintf(b, `var popupEligible=%t;`, popupEligible)
-	b.WriteString(`var popupKey="";var popupVisible=false;var popupTimer=0;`)
+	b.WriteString(`var popupKey="";var popupVisible=false;var popupTimer=0;var popupExactTimer=0;`)
 	b.WriteString(`function popupMask(){return document.getElementById("astock-popup-mask");}`)
 	b.WriteString(`function popupBody(){return document.getElementById("astock-popup-body");}`)
 	b.WriteString(`function hidePopup(){var mask=popupMask();if(mask){mask.hidden=true;}popupVisible=false;}`)
 	b.WriteString(`function renderPopupRows(items){var body=popupBody();if(!body){return;}body.innerHTML="";(items||[]).forEach(function(item){var row=document.createElement("tr");["rank","code","name","hotspot","reason"].forEach(function(field){var cell=document.createElement("td");cell.textContent=item&&item[field]!==undefined&&item[field]!==null?String(item[field]):"";row.appendChild(cell);});body.appendChild(row);});}`)
 	b.WriteString(`function showPopup(data){var mask=popupMask();if(!mask||!data||!data.show){return;}if(popupVisible&&popupKey===data.key){return;}var title=document.getElementById("astock-popup-title");var meta=document.getElementById("astock-popup-meta");if(title){title.textContent=data.title||"13:00 下午推荐股票";}if(meta){meta.textContent=data.meta||"";}renderPopupRows(data.recommendations||[]);popupKey=data.key||"";mask.hidden=false;popupVisible=true;}`)
 	b.WriteString(`function fetchPopup(){if(!popupEligible||!popupDate){return;}fetch("/a-stock/popup?date="+encodeURIComponent(popupDate),{credentials:"same-origin"}).then(function(resp){if(!resp.ok){return null;}return resp.json();}).then(function(data){if(!data){return;}if(data.show){showPopup(data);return;}if(!data.show&&popupVisible&&popupKey&&popupKey===data.key){hidePopup();}}).catch(function(){});}`)
-	b.WriteString(`window.addEventListener("DOMContentLoaded",function(){var y=sessionStorage.getItem(scrollKey);if(y!==null){sessionStorage.removeItem(scrollKey);var n=parseInt(y,10);if(!isNaN(n)){window.scrollTo(0,n);}}document.querySelectorAll("[data-preserve-scroll='1']").forEach(function(el){el.addEventListener("click",function(){sessionStorage.setItem(scrollKey,String(window.scrollY||0));});});document.querySelectorAll(".astock-action-form").forEach(function(form){form.addEventListener("submit",function(event){if(form.dataset.submitting==="1"){event.preventDefault();return;}form.dataset.submitting="1";var current=form.querySelector("button[type='submit']");document.querySelectorAll(".astock-action-form button[type='submit']").forEach(function(button){button.disabled=true;button.setAttribute("aria-disabled","true");});if(current){current.classList.add("astock-action-running");current.setAttribute("aria-busy","true");}});});var dismiss=document.getElementById("astock-popup-dismiss");if(dismiss){dismiss.addEventListener("click",function(){if(!popupKey){hidePopup();return;}fetch("/a-stock/popup/dismiss",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:popupKey})}).catch(function(){}).finally(function(){hidePopup();});});}fetchPopup();if(popupEligible){popupTimer=window.setInterval(fetchPopup,30000);}});`)
-	b.WriteString(`window.addEventListener("pageshow",function(){document.querySelectorAll(".astock-action-form").forEach(function(form){form.dataset.submitting="";});document.querySelectorAll(".astock-action-form button[type='submit']").forEach(function(button){button.disabled=false;button.removeAttribute("aria-disabled");button.removeAttribute("aria-busy");button.classList.remove("astock-action-running");});fetchPopup();});`)
-	b.WriteString(`window.addEventListener("beforeunload",function(){if(popupTimer){window.clearInterval(popupTimer);popupTimer=0;}});`)
+	b.WriteString(`function schedulePopupChecks(){fetchPopup();if(!popupEligible){return;}if(popupTimer){window.clearInterval(popupTimer);}popupTimer=window.setInterval(fetchPopup,5000);var now=new Date();var target=new Date();target.setHours(13,0,0,0);if(now<target){if(popupExactTimer){window.clearTimeout(popupExactTimer);}popupExactTimer=window.setTimeout(fetchPopup,Math.max(0,target.getTime()-now.getTime()+100));}}`)
+	b.WriteString(`window.addEventListener("DOMContentLoaded",function(){var y=sessionStorage.getItem(scrollKey);if(y!==null){sessionStorage.removeItem(scrollKey);var n=parseInt(y,10);if(!isNaN(n)){window.scrollTo(0,n);}}document.querySelectorAll("[data-preserve-scroll='1']").forEach(function(el){el.addEventListener("click",function(){sessionStorage.setItem(scrollKey,String(window.scrollY||0));});});document.querySelectorAll(".astock-action-form").forEach(function(form){form.addEventListener("submit",function(event){if(form.dataset.submitting==="1"){event.preventDefault();return;}form.dataset.submitting="1";var current=form.querySelector("button[type='submit']");document.querySelectorAll(".astock-action-form button[type='submit']").forEach(function(button){button.disabled=true;button.setAttribute("aria-disabled","true");});if(current){current.classList.add("astock-action-running");current.setAttribute("aria-busy","true");}});});var dismiss=document.getElementById("astock-popup-dismiss");if(dismiss){dismiss.addEventListener("click",function(){if(!popupKey){hidePopup();return;}fetch("/a-stock/popup/dismiss",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:popupKey})}).catch(function(){}).finally(function(){hidePopup();});});}schedulePopupChecks();});`)
+	b.WriteString(`window.addEventListener("pageshow",function(){document.querySelectorAll(".astock-action-form").forEach(function(form){form.dataset.submitting="";});document.querySelectorAll(".astock-action-form button[type='submit']").forEach(function(button){button.disabled=false;button.removeAttribute("aria-disabled");button.removeAttribute("aria-busy");button.classList.remove("astock-action-running");});schedulePopupChecks();});`)
+	b.WriteString(`window.addEventListener("beforeunload",function(){if(popupTimer){window.clearInterval(popupTimer);popupTimer=0;}if(popupExactTimer){window.clearTimeout(popupExactTimer);popupExactTimer=0;}});`)
 	b.WriteString(`})();</script>`)
 }
 
@@ -712,8 +714,18 @@ func renderAStockHotspotSection(b *strings.Builder, hotspots []aStockHotspot) {
 	b.WriteString(`</table></section>`)
 }
 
-func renderAStockRecommendationSection(b *strings.Builder, ctx aStockContext) {
+func renderAStockRecommendationSection(b *strings.Builder, morningCtx aStockContext, afternoonCtx aStockContext) {
 	b.WriteString(`<section><h2>推荐股票</h2>`)
+	renderAStockRecommendationSubsection(b, morningCtx)
+	b.WriteString(`<hr class="astock-section-divider">`)
+	renderAStockRecommendationSubsection(b, afternoonCtx)
+	b.WriteString(`</section>`)
+}
+
+func renderAStockRecommendationSubsection(b *strings.Builder, ctx aStockContext) {
+	b.WriteString(`<h3>`)
+	b.WriteString(html.EscapeString(ctx.PeriodLabel))
+	b.WriteString(`</h3>`)
 	recommendations := ctx.Recommendations
 	if len(recommendations) == 0 {
 		reason := strings.TrimSpace(ctx.EmptyReason)
@@ -722,7 +734,7 @@ func renderAStockRecommendationSection(b *strings.Builder, ctx aStockContext) {
 		}
 		b.WriteString(`<div class="astock-empty">`)
 		b.WriteString(html.EscapeString(reason))
-		b.WriteString(`</div><div class="astock-scroll"><table class="astock-table astock-recommendation-table"><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>昨日收盘价</th><th>昨日涨跌幅</th><th>30天涨跌幅</th><th>60天涨跌幅</th><th>现价</th><th>今日涨跌幅</th><th>机构共持</th><th>持仓占比</th><th>推荐理由</th></tr><tr><td colspan="13">暂无推荐股票</td></tr></table></div></section>`)
+		b.WriteString(`</div><div class="astock-scroll"><table class="astock-table astock-recommendation-table"><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>昨日收盘价</th><th>昨日涨跌幅</th><th>30天涨跌幅</th><th>60天涨跌幅</th><th>现价</th><th>今日涨跌幅</th><th>机构共持</th><th>持仓占比</th><th>推荐理由</th></tr><tr><td colspan="13">暂无推荐股票</td></tr></table></div>`)
 		return
 	}
 	b.WriteString(`<div class="astock-scroll"><table class="astock-table astock-recommendation-table"><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>昨日收盘价</th><th>昨日涨跌幅</th><th>30天涨跌幅</th><th>60天涨跌幅</th><th>现价</th><th>今日涨跌幅</th><th>机构共持</th><th>持仓占比</th><th>推荐理由</th></tr>`)
@@ -767,21 +779,28 @@ func renderAStockRecommendationSection(b *strings.Builder, ctx aStockContext) {
 		b.WriteString(html.EscapeString(rec.Reason))
 		b.WriteString(`</td></tr>`)
 	}
-	b.WriteString(`</table></div></section>`)
+	b.WriteString(`</table></div>`)
 }
 
-func renderAStockBacktestSection(b *strings.Builder, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, recommendations []aStockRecommendation, rows []aStockBacktestRow) {
+func renderAStockBacktestSection(b *strings.Builder, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, morningCtx aStockContext, afternoonCtx aStockContext) {
+	if strings.TrimSpace(strategyDate) == "" {
+		strategyDate = nonEmpty(morningCtx.Date, afternoonCtx.Date)
+	}
 	b.WriteString(`<section><h2>消息回测</h2><p class="astock-muted">买入价采用当日开盘价；T+0 显示行情源返回的今日实时/收盘涨跌幅，T+1 到 T+5 按后续交易日收盘价计算收益，并展示五日内最高收益。</p>`)
 	renderAStockRecommendationHistoryTabs(b, strategyDate, period, ignoreRecent, ignoreLimitUp)
 	renderAStockRecommendationHistoryActions(b, strategyDate, period, ignoreRecent, ignoreLimitUp)
-	b.WriteString(`<div class="astock-scroll"><table class="astock-table"><tr><th>股票</th><th>当日开盘价</th><th>T+0 收益</th><th>T+1 收益</th><th>T+2 收益</th><th>T+3 收益</th><th>T+4 收益</th><th>T+5 收益</th><th>五日内最高收益</th><th>命中状态</th></tr>`)
-	if len(rows) == 0 {
-		b.WriteString(`<tr><td colspan="10">暂无回测结果，等待行情同步。</td></tr>`)
+	mergedRows := combineAStockBacktestRows(morningCtx, afternoonCtx)
+	b.WriteString(`<div class="astock-scroll"><table class="astock-table"><tr><th>推荐窗口</th><th>股票</th><th>当日开盘价</th><th>T+0 收益</th><th>T+1 收益</th><th>T+2 收益</th><th>T+3 收益</th><th>T+4 收益</th><th>T+5 收益</th><th>五日内最高收益</th><th>命中状态</th></tr>`)
+	if len(mergedRows) == 0 {
+		b.WriteString(`<tr><td colspan="11">暂无回测结果，等待行情同步。</td></tr>`)
 		b.WriteString(`</table></div></section>`)
 		return
 	}
-	for _, row := range rows {
+	for _, display := range mergedRows {
+		row := display.Row
 		b.WriteString(`<tr><td>`)
+		b.WriteString(html.EscapeString(display.PeriodLabel))
+		b.WriteString(`</td><td>`)
 		b.WriteString(html.EscapeString(row.Stock))
 		b.WriteString(`</td><td>`)
 		b.WriteString(html.EscapeString(row.EntryOpen))
@@ -813,58 +832,54 @@ func renderAStockBacktestSection(b *strings.Builder, strategyDate string, period
 }
 
 func renderAStockRecommendationHistoryTabs(b *strings.Builder, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool) {
-	renderAStockDatePeriodTabs(b, strategyDate, period, ignoreRecent, ignoreLimitUp, true)
+	renderAStockDateTabs(b, strategyDate, period, ignoreRecent, ignoreLimitUp, true)
 }
 
 func renderAStockDatePeriodTabs(b *strings.Builder, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, withHeading bool) {
+	renderAStockDateTabs(b, strategyDate, period, ignoreRecent, ignoreLimitUp, withHeading)
+}
+
+func renderAStockDateTabs(b *strings.Builder, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, withHeading bool) {
 	if withHeading {
 		b.WriteString(`<h3>推荐历史</h3>`)
 	}
 	b.WriteString(`<div class="astock-date-tabs">`)
 	normalizedPeriod := normalizeAStockPeriod(period).Key
-	dates := recentAStockWeekdayDates(aStockTodayDate(), 7)
-	if len(dates) == 0 {
+	tabs := aStockDateTabs(strategyDate)
+	if len(tabs) == 0 {
 		b.WriteString(`<span class="astock-muted">暂无推荐历史日期</span></div>`)
 		return
 	}
-	for _, date := range dates {
-		for _, option := range aStockPeriods() {
-			periodLabel := "PM"
-			if option.Key == "morning" {
-				periodLabel = "AM"
-			}
-			active := strategyDate == date && normalizedPeriod == option.Key
-			writeAStockDateTab(b, date+" "+periodLabel, date, option.Key, active, ignoreRecent, ignoreLimitUp)
-		}
+	for _, tab := range tabs {
+		active := strategyDate == tab.Date
+		writeAStockDateTab(b, tab.Label, tab.Date, normalizedPeriod, active, ignoreRecent, ignoreLimitUp)
 	}
 	b.WriteString(`</div>`)
 }
 
 func renderAStockRecommendationHistoryActions(b *strings.Builder, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool) {
-	normalizedPeriod := normalizeAStockPeriod(period).Key
-	recomputeAction := "generate_afternoon_stock"
-	if normalizedPeriod == "morning" {
-		recomputeAction = "generate_morning_stock"
-	}
 	b.WriteString(`<div class="astock-history-actions">`)
 	b.WriteString(`<a class="astock-filter-toggle" data-preserve-scroll="1" href="`)
-	b.WriteString(html.EscapeString(aStockFilterToggleHref(strategyDate, normalizedPeriod, 1, ignoreRecent, ignoreLimitUp)))
+	b.WriteString(html.EscapeString(aStockFilterToggleHref(strategyDate, period, 1, ignoreRecent, ignoreLimitUp)))
 	b.WriteString(`">`)
 	b.WriteString(html.EscapeString(aStockFilterToggleLabel(ignoreRecent)))
 	b.WriteString(`</a>`)
 	for _, action := range []struct {
-		Name  string
-		Label string
+		Period string
+		Name   string
+		Label  string
 	}{
-		{Name: "backfill_window_news", Label: "补抓并重新生成当前窗口"},
-		{Name: recomputeAction, Label: "重新生成当前推荐"},
-		{Name: "backfill_auction", Label: "补录集合竞价"},
-		{Name: "refresh_backtest", Label: "刷新当前回测"},
+		{Period: "morning", Name: "backfill_window_news", Label: "补抓上午新闻"},
+		{Period: "morning", Name: "generate_morning_stock", Label: "重新生成上午推荐"},
+		{Period: "afternoon", Name: "backfill_window_news", Label: "补抓下午新闻"},
+		{Period: "afternoon", Name: "generate_afternoon_stock", Label: "重新生成下午推荐"},
+		{Period: "morning", Name: "backfill_auction", Label: "补录集合竞价"},
+		{Period: "morning", Name: "refresh_backtest", Label: "刷新全部回测"},
 	} {
 		b.WriteString(`<form method="post"><input type="hidden" name="date" value="`)
 		b.WriteString(html.EscapeString(strategyDate))
 		b.WriteString(`"><input type="hidden" name="period" value="`)
-		b.WriteString(html.EscapeString(normalizedPeriod))
+		b.WriteString(html.EscapeString(action.Period))
 		b.WriteString(`">`)
 		if ignoreRecent {
 			b.WriteString(`<input type="hidden" name="ignore_recent" value="1">`)
@@ -899,6 +914,66 @@ func writeAStockDateTab(b *strings.Builder, label string, date string, period st
 	b.WriteString(`">`)
 	b.WriteString(html.EscapeString(label))
 	b.WriteString(`</a>`)
+}
+
+type aStockDateTab struct {
+	Label string
+	Date  string
+}
+
+type aStockBacktestDisplayRow struct {
+	PeriodLabel string
+	Row         aStockBacktestRow
+}
+
+func aStockDateTabs(strategyDate string) []aStockDateTab {
+	centerDate := normalizeAStockStrategyDate(strategyDate)
+	if centerDate == "" {
+		centerDate = aStockTodayDate()
+	}
+	latestDate := localAStockAdjacentTradingDay(aStockTodayDate(), 0)
+	if latestDate == "" {
+		latestDate = aStockTodayDate()
+	}
+	if strings.TrimSpace(centerDate) > strings.TrimSpace(latestDate) {
+		centerDate = latestDate
+	}
+	tabs := make([]aStockDateTab, 0, 5)
+	prevOne := localAStockAdjacentTradingDay(centerDate, -1)
+	prevTwo := localAStockAdjacentTradingDay(prevOne, -1)
+	if prevTwo != "" {
+		tabs = append(tabs, aStockDateTab{Label: "前两日", Date: prevTwo})
+	}
+	if prevOne != "" {
+		tabs = append(tabs, aStockDateTab{Label: "前一日", Date: prevOne})
+	}
+	tabs = append(tabs, aStockDateTab{Label: "今日", Date: centerDate})
+	nextOne := localAStockAdjacentTradingDay(centerDate, 1)
+	if nextOne != "" && nextOne <= latestDate {
+		tabs = append(tabs, aStockDateTab{Label: "后一日", Date: nextOne})
+		nextTwo := localAStockAdjacentTradingDay(nextOne, 1)
+		if nextTwo != "" && nextTwo <= latestDate {
+			tabs = append(tabs, aStockDateTab{Label: "后两日", Date: nextTwo})
+		}
+	}
+	return tabs
+}
+
+func combineAStockBacktestRows(morningCtx aStockContext, afternoonCtx aStockContext) []aStockBacktestDisplayRow {
+	rows := make([]aStockBacktestDisplayRow, 0, len(morningCtx.Backtests)+len(afternoonCtx.Backtests))
+	for _, row := range morningCtx.Backtests {
+		rows = append(rows, aStockBacktestDisplayRow{
+			PeriodLabel: morningCtx.PeriodLabel,
+			Row:         row,
+		})
+	}
+	for _, row := range afternoonCtx.Backtests {
+		rows = append(rows, aStockBacktestDisplayRow{
+			PeriodLabel: afternoonCtx.PeriodLabel,
+			Row:         row,
+		})
+	}
+	return rows
 }
 
 func (s *Server) loadAStockContext(strategyDate string, periodKey string, newsPage int, ignoreRecent bool) aStockContext {
@@ -3145,13 +3220,13 @@ func aStockRecommendationSnapshots(strategyDate string, periodKey string) []aSto
 	if period.Key == "afternoon" {
 		start := time.Date(day.Year(), day.Month(), day.Day(), 9, 30, 0, 0, location)
 		return []aStockRecommendationSnapshot{
-			{Label: "12:55", Start: start, End: time.Date(day.Year(), day.Month(), day.Day(), 12, 55, 59, 0, location)},
+			{Label: "12:54", Start: start, End: time.Date(day.Year(), day.Month(), day.Day(), 12, 54, 59, 0, location)},
 			{Label: "13:00", Start: start, End: time.Date(day.Year(), day.Month(), day.Day(), 13, 0, 59, 0, location)},
 		}
 	}
 	start := time.Date(day.Year(), day.Month(), day.Day(), 8, 0, 0, 0, location)
 	return []aStockRecommendationSnapshot{
-		{Label: "09:25", Start: start, End: time.Date(day.Year(), day.Month(), day.Day(), 9, 25, 59, 0, location)},
+		{Label: "09:24", Start: start, End: time.Date(day.Year(), day.Month(), day.Day(), 9, 24, 59, 0, location)},
 		{Label: "09:30", Start: start, End: time.Date(day.Year(), day.Month(), day.Day(), 9, 30, 59, 0, location)},
 	}
 }
