@@ -699,8 +699,8 @@ private fun AStockBacktestDetailScreen(state: AStockBacktestDetailState) {
 private fun AStockBacktestMetricHeader() {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("阶段", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
-        Text("涨幅", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
         Text("收盘价", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
+        Text("涨幅", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
     }
 }
 
@@ -708,13 +708,13 @@ private fun AStockBacktestMetricHeader() {
 private fun AStockBacktestMetricRow(label: String, returnValue: String, closeValue: String) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(label, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+        Text(closeValue, modifier = Modifier.weight(1f))
         Text(
             returnValue,
             modifier = Modifier.weight(1f),
             color = backtestValueColor(returnValue),
             fontWeight = FontWeight.Medium,
         )
-        Text(closeValue, modifier = Modifier.weight(1f))
     }
 }
 
