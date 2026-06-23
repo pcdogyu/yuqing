@@ -934,6 +934,11 @@ func (s *Store) ListFeedback(ctx context.Context, limit int) ([]model.Feedback, 
 	return items, rows.Err()
 }
 
+func (s *Store) DeleteFeedback(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM feedback WHERE id = ?`, id)
+	return err
+}
+
 func (s *Store) MarkItemRead(ctx context.Context, userID, itemID int64) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO item_reads (user_id, item_id, created_at) VALUES (?, ?, ?)`, userID, itemID, now)

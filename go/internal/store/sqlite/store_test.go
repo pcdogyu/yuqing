@@ -173,6 +173,17 @@ func TestFeedbackCreateAndList(t *testing.T) {
 	if len(items) != 1 || items[0].ID != second.ID || items[0].Title != "第二个建议" || items[0].UserID != 8 || items[0].CreatedAt.IsZero() {
 		t.Fatalf("expected latest feedback first with limit applied, got %+v", items)
 	}
+
+	if err := store.DeleteFeedback(ctx, second.ID); err != nil {
+		t.Fatalf("DeleteFeedback error: %v", err)
+	}
+	items, err = store.ListFeedback(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListFeedback after delete error: %v", err)
+	}
+	if len(items) != 1 || items[0].ID != first.ID || items[0].Title != "第一个建议" {
+		t.Fatalf("expected deleted feedback removed from list, got %+v", items)
+	}
 }
 
 func TestAStockAuctionAmountsUpsertAndList(t *testing.T) {

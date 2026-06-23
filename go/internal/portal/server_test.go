@@ -4189,6 +4189,9 @@ func TestSystemTemplateGroupsRepeatedPanelsBySection(t *testing.T) {
 		`<textarea class="feedback-textarea" name="content" placeholder="问题描述或需求"></textarea>`,
 		`<h3>建议列表</h3>`,
 		`{{range .FeedbackItems}}`,
+		`class="feedback-delete-form"`,
+		`name="form_type" value="delete_feedback"`,
+		`class="feedback-delete-button">删除</button>`,
 	} {
 		if !strings.Contains(systemTemplate, expected) {
 			t.Fatalf("expected system template to include grouped fragment %q", expected)
@@ -4222,10 +4225,46 @@ func TestSystemFeedbackSectionRendersSubmittedFeedbackList(t *testing.T) {
 		t.Fatalf("expected system feedback page 200, got %d body=%s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"反馈建议", "建议列表", "右侧显示建议标题", "右侧显示建议内容", "用户 1"} {
+	for _, want := range []string{"反馈建议", "建议列表", "右侧显示建议标题", "右侧显示建议内容", "用户 1", "删除"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected feedback page to contain %q, got %s", want, body)
 		}
+	}
+}
+
+func TestSystemFeedbackDeleteRemovesSubmittedSuggestion(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+
+	form := url.Values{
+		"form_type":   {"delete_feedback"},
+		"section":     {"feedback"},
+		"feedback_id": {"1"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/system?section=feedback", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	srv.handleSystem(rr, req, map[string]any{"id": int64(1), "username": "admin"})
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected delete redirect 303, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	location := rr.Header().Get("Location")
+	if !strings.Contains(location, "msg=") || !strings.Contains(location, "section=feedback") {
+		t.Fatalf("expected redirect with feedback section and message, got %q", location)
+	}
+
+	viewReq := httptest.NewRequest(http.MethodGet, "/system?section=feedback", nil)
+	viewRR := httptest.NewRecorder()
+	srv.handleSystem(viewRR, viewReq, map[string]any{"id": int64(1), "username": "admin"})
+	if viewRR.Code != http.StatusOK {
+		t.Fatalf("expected feedback page 200 after delete, got %d body=%s", viewRR.Code, viewRR.Body.String())
+	}
+	body := viewRR.Body.String()
+	if strings.Contains(body, "右侧显示建议标题") {
+		t.Fatalf("expected deleted feedback to disappear, got %s", body)
+	}
+	if !strings.Contains(body, "保留的建议标题") {
+		t.Fatalf("expected remaining feedback to stay visible, got %s", body)
 	}
 }
 
@@ -5939,6 +5978,7 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 	auditLogs := []model.AuditLog{}
 	feedbackItems := []model.Feedback{
 		{ID: 1, UserID: 1, Title: "右侧显示建议标题", Content: "右侧显示建议内容", CreatedAt: time.Now().UTC()},
+		{ID: 2, UserID: 2, Title: "保留的建议标题", Content: "保留的建议内容", CreatedAt: time.Now().UTC().Add(-time.Hour)},
 	}
 	apiTokens := map[string]model.APIToken{
 		"legacy-token": {Token: "legacy-token", UserID: 1, Name: "legacy-api", CreatedAt: time.Now().UTC()},
@@ -6838,6 +6878,19 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 			feedbackItems = append([]model.Feedback{item}, feedbackItems...)
 			mu.Unlock()
 			writeEnvelope(http.StatusOK, "ok", item)
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/system/feedback/"):
+			id := parseTestInt64(strings.TrimPrefix(r.URL.Path, "/api/v1/system/feedback/"))
+			mu.Lock()
+			filtered := make([]model.Feedback, 0, len(feedbackItems))
+			for _, item := range feedbackItems {
+				if item.ID == id {
+					continue
+				}
+				filtered = append(filtered, item)
+			}
+			feedbackItems = filtered
+			mu.Unlock()
+			writeEnvelope(http.StatusOK, "ok", map[string]any{"deleted": true, "id": id})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/articles/") && !strings.Contains(strings.TrimPrefix(r.URL.Path, "/api/v1/articles/"), "/"):
 			id := parseTestInt64(strings.TrimPrefix(r.URL.Path, "/api/v1/articles/"))
 			mu.Lock()
