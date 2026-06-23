@@ -2100,6 +2100,19 @@ func TestAStockContextRejectsMismatchedLimitUpSnapshot(t *testing.T) {
 	}
 }
 
+func TestAStockAfternoonBacktestSnapshotRejectsLegacyEntryOpen(t *testing.T) {
+	backtests := []aStockBacktestRow{{Stock: "002008 大族激光", EntryOpen: "135.54", AfternoonOpen: "--", T0Return: "+7.57%"}}
+	if isFreshAStockBacktestSnapshot("afternoon", backtests) {
+		t.Fatalf("expected afternoon snapshot with legacy entry open to be rejected, got %+v", backtests)
+	}
+	if !isFreshAStockBacktestSnapshot("morning", backtests) {
+		t.Fatalf("expected morning snapshot to ignore afternoon freshness rule, got %+v", backtests)
+	}
+	if !isFreshAStockBacktestSnapshot("afternoon", []aStockBacktestRow{{Stock: "002008 大族激光", EntryOpen: "--", AfternoonOpen: "142.00", T0Return: "+2.11%"}}) {
+		t.Fatal("expected afternoon snapshot with dedicated afternoon open to stay valid")
+	}
+}
+
 func TestAStockPopupShowsAndDismissesAfternoonRecommendations(t *testing.T) {
 	setAStockNowForTest(t, time.Date(2026, 6, 23, 13, 0, 0, 0, time.FixedZone("CST", 8*3600)))
 
@@ -3086,6 +3099,64 @@ func TestAStockMarketBarsFallbackToEastmoneyWhenCustomEndpointEmpty(t *testing.T
 	}
 	if bars[1].EntryPrice != 12.3 || bars[1].AfternoonEntryPrice != 12.8 {
 		t.Fatalf("expected fallback bars to include 09:30 and 13:00 entry prices, got %+v", bars[1])
+	}
+}
+
+func TestAStockMarketBarsCustomEndpointSupplementsMissingSessionPricesFromEastmoney(t *testing.T) {
+	custom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{
+				"items": []map[string]any{
+					{"code": "002008", "date": "2026-06-22", "open": 131.93, "close": 131.93, "pct": -2.20},
+					{"code": "002008", "date": "2026-06-23", "open": 135.54, "close": 145.00, "pct": 7.57},
+				},
+			},
+		})
+	}))
+	defer custom.Close()
+
+	eastmoney := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("secid") != "0.002008" {
+			t.Fatalf("unexpected eastmoney secid: %s", r.URL.RawQuery)
+		}
+		if r.URL.Query().Get("klt") != "1" {
+			t.Fatalf("expected minute eastmoney query, got %s", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{
+				"klines": []string{
+					"2026-06-23 09:30,135.54,136.20,0,0,0,0,0,0",
+					"2026-06-23 13:00,142.00,142.20,0,0,0,0,0,0",
+				},
+			},
+		})
+	}))
+	defer eastmoney.Close()
+	setAStockEastmoneyKlineURLForTest(t, eastmoney.URL)
+
+	srv := NewServer(config.Config{})
+	bars, err := srv.loadAStockMarketBars("2026-06-23", []string{"002008"}, custom.URL)
+	if err != nil {
+		t.Fatalf("expected custom market bars with eastmoney session enrichment, got error: %v", err)
+	}
+	if len(bars) != 2 {
+		t.Fatalf("expected two market bars, got %+v", bars)
+	}
+	if bars[1].EntryPrice != 136.2 || bars[1].AfternoonEntryPrice != 142.0 {
+		t.Fatalf("expected custom bars to include supplemented session prices, got %+v", bars[1])
+	}
+
+	rows := buildAStockBacktestRows("2026-06-23", "afternoon", []aStockRecommendation{{Code: "002008", Name: "大族激光"}}, groupAStockMarketBars(bars))
+	if len(rows) != 1 {
+		t.Fatalf("expected one backtest row, got %+v", rows)
+	}
+	if rows[0].AfternoonOpen != "142.00" {
+		t.Fatalf("expected afternoon backtest to use supplemented 13:00 price, got %+v", rows[0])
+	}
+	if rows[0].T0Return != "+2.11%" {
+		t.Fatalf("expected T+0 return to use supplemented 13:00 price, got %+v", rows[0])
 	}
 }
 

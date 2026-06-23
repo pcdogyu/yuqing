@@ -1206,6 +1206,9 @@ func (s *Server) applyAStockRecommendationSnapshot(ctx *aStockContext) bool {
 	if err := json.Unmarshal([]byte(nonEmpty(snapshot.BacktestsJSON, "[]")), &backtests); err != nil {
 		return false
 	}
+	if !isFreshAStockBacktestSnapshot(ctx.Period, backtests) {
+		return false
+	}
 	if ctx.Period == "afternoon" && !isFreshAStockLimitUpReplacementSnapshot(snapshot, recommendations) {
 		return false
 	}
@@ -1935,6 +1938,20 @@ func isFreshAStockLimitUpReplacementSnapshot(snapshot model.AStockRecommendation
 	return len(recommendations) >= snapshot.GeneratedCount
 }
 
+func isFreshAStockBacktestSnapshot(period string, backtests []aStockBacktestRow) bool {
+	if normalizeAStockPeriod(period).Key != "afternoon" {
+		return true
+	}
+	for _, row := range backtests {
+		morningOpen := strings.TrimSpace(row.EntryOpen)
+		afternoonOpen := strings.TrimSpace(row.AfternoonOpen)
+		if morningOpen != "" && morningOpen != "--" && (afternoonOpen == "" || afternoonOpen == "--") {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *Server) loadAStockMarketView(strategyDate string, period string, recommendations []aStockRecommendation, filterLimitUp bool, maxRecommendations int) ([]aStockRecommendation, []aStockBacktestRow, string, int) {
 	recommendations = initializeAStockRecommendationMarket(recommendations)
 	if len(recommendations) == 0 {
@@ -1961,6 +1978,7 @@ func (s *Server) loadAStockMarketBars(strategyDate string, codes []string, endpo
 		if err == nil && resp.IsSuccess() {
 			bars, decodeErr := decodeAStockMarketBars(resp.Body())
 			if decodeErr == nil && len(bars) > 0 {
+				s.enrichAStockSessionPrices(strategyDate, codes, bars)
 				return bars, nil
 			}
 		}
@@ -1976,6 +1994,50 @@ func (s *Server) loadAStockMarketBars(strategyDate string, codes []string, endpo
 		return nil, fmt.Errorf("market endpoint returned no bars")
 	}
 	return s.loadDefaultAStockBars(strategyDate, codes)
+}
+
+func (s *Server) enrichAStockSessionPrices(strategyDate string, codes []string, bars []aStockMarketBar) {
+	if len(bars) == 0 {
+		return
+	}
+	need0930 := false
+	need1300 := false
+	for _, bar := range bars {
+		if bar.Date != strategyDate {
+			continue
+		}
+		if bar.EntryPrice <= 0 {
+			need0930 = true
+		}
+		if bar.AfternoonEntryPrice <= 0 {
+			need1300 = true
+		}
+		if need0930 && need1300 {
+			break
+		}
+	}
+	if need0930 {
+		entryPrices := s.loadEastmoneyAStock0930Prices(strategyDate, codes)
+		for i := range bars {
+			if bars[i].Date != strategyDate || bars[i].EntryPrice > 0 {
+				continue
+			}
+			if price := entryPrices[normalizeAStockCode(bars[i].Code)]; price > 0 {
+				bars[i].EntryPrice = price
+			}
+		}
+	}
+	if need1300 {
+		afternoonEntryPrices := s.loadEastmoneyAStock1300Prices(strategyDate, codes)
+		for i := range bars {
+			if bars[i].Date != strategyDate || bars[i].AfternoonEntryPrice > 0 {
+				continue
+			}
+			if price := afternoonEntryPrices[normalizeAStockCode(bars[i].Code)]; price > 0 {
+				bars[i].AfternoonEntryPrice = price
+			}
+		}
+	}
 }
 
 func (s *Server) loadDefaultAStockBars(strategyDate string, codes []string) ([]aStockMarketBar, error) {
