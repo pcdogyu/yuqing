@@ -16,36 +16,91 @@ import java.time.ZoneId
 
 object AStockRecommendationScheduler {
     const val alarmAction = "com.jiansutech.yuqing.A_STOCK_RECOMMENDATION_ALARM"
-    const val notificationChannelId = "a_stock_recommendations"
+    const val recommendationChannelId = "a_stock_recommendations"
+    const val newsCountChannelId = "a_stock_news_counts"
     const val extraSlotId = "slot_id"
-    const val extraPeriod = "period"
-    const val extraTitle = "title"
-    const val extraHour = "hour"
-    const val extraMinute = "minute"
 
     private val zone: ZoneId = ZoneId.of("Asia/Shanghai")
+    private val obsoleteSlotIds = listOf("morning_0930", "afternoon_1300")
 
     val slots: List<AStockRecommendationSlot> = listOf(
-        AStockRecommendationSlot("morning_0925", "morning", "上午热门股票推荐", "08:00-09:30", 9, 25),
-        AStockRecommendationSlot("morning_0930", "morning", "上午热门股票推荐", "08:00-09:30", 9, 30),
-        AStockRecommendationSlot("afternoon_1255", "afternoon", "下午热门股票推荐", "09:30-13:00", 12, 55),
-        AStockRecommendationSlot("afternoon_1300", "afternoon", "下午热门股票推荐", "09:30-13:00", 13, 0),
+        AStockRecommendationSlot(
+            id = "morning_0920",
+            period = "morning",
+            kind = AStockNotificationKind.NewsCount,
+            title = "上午财经新闻抓取进度",
+            windowLabel = "08:00-09:20",
+            hour = 9,
+            minute = 20,
+            windowStartHour = 8,
+            windowStartMinute = 0,
+            windowEndHour = 9,
+            windowEndMinute = 20,
+        ),
+        AStockRecommendationSlot(
+            id = "morning_0925",
+            period = "morning",
+            kind = AStockNotificationKind.Recommendation,
+            title = "09:25 上午热门股票推荐",
+            windowLabel = "08:00-09:25",
+            hour = 9,
+            minute = 25,
+            windowStartHour = 8,
+            windowStartMinute = 0,
+            windowEndHour = 9,
+            windowEndMinute = 25,
+        ),
+        AStockRecommendationSlot(
+            id = "afternoon_1250",
+            period = "afternoon",
+            kind = AStockNotificationKind.NewsCount,
+            title = "下午财经新闻抓取进度",
+            windowLabel = "09:30-12:50",
+            hour = 12,
+            minute = 50,
+            windowStartHour = 9,
+            windowStartMinute = 30,
+            windowEndHour = 12,
+            windowEndMinute = 50,
+        ),
+        AStockRecommendationSlot(
+            id = "afternoon_1255",
+            period = "afternoon",
+            kind = AStockNotificationKind.Recommendation,
+            title = "12:55 下午热门股票推荐",
+            windowLabel = "09:30-12:55",
+            hour = 12,
+            minute = 55,
+            windowStartHour = 9,
+            windowStartMinute = 30,
+            windowEndHour = 12,
+            windowEndMinute = 55,
+        ),
     )
 
-    fun ensureNotificationChannel(context: Context) {
+    fun ensureNotificationChannels(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java)
-        val channel = NotificationChannel(
-            notificationChannelId,
+        val recommendationChannel = NotificationChannel(
+            recommendationChannelId,
             "A股热门股票推荐",
             NotificationManager.IMPORTANCE_DEFAULT,
         ).apply {
             description = "每日 A股 上午和下午热门股票推荐提醒"
         }
-        manager.createNotificationChannel(channel)
+        val newsCountChannel = NotificationChannel(
+            newsCountChannelId,
+            "A股财经新闻抓取进度",
+            NotificationManager.IMPORTANCE_HIGH,
+        ).apply {
+            description = "每日 09:20 和 12:50 的财经新闻抓取数量提醒"
+        }
+        manager.createNotificationChannel(recommendationChannel)
+        manager.createNotificationChannel(newsCountChannel)
     }
 
     fun scheduleDailyRecommendations(context: Context) {
-        ensureNotificationChannel(context)
+        ensureNotificationChannels(context)
+        cancelObsoleteSlots(context)
         slots.forEach { slot -> scheduleNext(context, slot) }
     }
 
@@ -69,10 +124,6 @@ object AStockRecommendationScheduler {
         val intent = Intent(context, AStockRecommendationReceiver::class.java).apply {
             action = alarmAction
             putExtra(extraSlotId, slot.id)
-            putExtra(extraPeriod, slot.period)
-            putExtra(extraTitle, slot.title)
-            putExtra(extraHour, slot.hour)
-            putExtra(extraMinute, slot.minute)
         }
         return PendingIntent.getBroadcast(
             context,
@@ -92,13 +143,48 @@ object AStockRecommendationScheduler {
         }
         return target.atZone(zone).toInstant().toEpochMilli()
     }
+
+    fun slotById(slotID: String?): AStockRecommendationSlot? {
+        if (slotID.isNullOrBlank()) {
+            return null
+        }
+        return slots.firstOrNull { it.id == slotID }
+    }
+
+    private fun cancelObsoleteSlots(context: Context) {
+        val alarmManager = context.getSystemService(AlarmManager::class.java)
+        obsoleteSlotIds.forEach { slotID ->
+            val intent = Intent(context, AStockRecommendationReceiver::class.java).apply {
+                action = alarmAction
+                putExtra(extraSlotId, slotID)
+            }
+            val pendingIntent = PendingIntent.getBroadcast(
+                context,
+                slotID.hashCode(),
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            alarmManager.cancel(pendingIntent)
+            pendingIntent.cancel()
+        }
+    }
+}
+
+enum class AStockNotificationKind {
+    NewsCount,
+    Recommendation,
 }
 
 data class AStockRecommendationSlot(
     val id: String,
     val period: String,
+    val kind: AStockNotificationKind,
     val title: String,
     val windowLabel: String,
     val hour: Int,
     val minute: Int,
+    val windowStartHour: Int,
+    val windowStartMinute: Int,
+    val windowEndHour: Int,
+    val windowEndMinute: Int,
 )

@@ -246,13 +246,13 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	if aStockMorningJob.Cron != "0 30 9 * * ?" || aStockMorningJob.NextRunAt == nil {
 		t.Fatalf("expected A股 morning recommendation cron metadata, got %+v", aStockMorningJob)
 	}
-	if aStockMorningPreviewJob.Cron != "0 25 9 * * ?" || aStockMorningPreviewJob.NextRunAt == nil {
+	if aStockMorningPreviewJob.Cron != "0 24 9 * * ?" || aStockMorningPreviewJob.NextRunAt == nil {
 		t.Fatalf("expected A股 morning recommendation preview cron metadata, got %+v", aStockMorningPreviewJob)
 	}
 	if aStockAfternoonJob.Cron != "0 0 13 * * ?" || aStockAfternoonJob.NextRunAt == nil {
 		t.Fatalf("expected A股 afternoon recommendation cron metadata, got %+v", aStockAfternoonJob)
 	}
-	if aStockAfternoonPreviewJob.Cron != "0 55 12 * * ?" || aStockAfternoonPreviewJob.NextRunAt == nil {
+	if aStockAfternoonPreviewJob.Cron != "0 54 12 * * ?" || aStockAfternoonPreviewJob.NextRunAt == nil {
 		t.Fatalf("expected A股 afternoon recommendation preview cron metadata, got %+v", aStockAfternoonPreviewJob)
 	}
 	if aStockAuctionJob.Cron != "0 30 9 * * ?" || aStockAuctionJob.Enabled {
@@ -374,6 +374,61 @@ func TestRunAStockRecommendationCrawlsSourcesAndQueriesWindow(t *testing.T) {
 	}
 	if len(generatedPeriods) != 1 || generatedPeriods[0] != "afternoon" {
 		t.Fatalf("expected afternoon recommendation snapshot generation, got %v", generatedPeriods)
+	}
+}
+
+func TestRunAStockRecommendationGeneratesMorningSnapshot(t *testing.T) {
+	var generatedPeriods []string
+	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"date":           "2026-06-16",
+			"is_trading_day": true,
+			"source":         "test",
+			"reason":         "trading_day",
+			"message":        "open",
+		})
+	}))
+	defer akshare.Close()
+
+	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer crawler.Close()
+
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/articles" {
+			t.Fatalf("unexpected content request: %s", r.URL.String())
+		}
+		if r.URL.Query().Get("start") != "2026-06-16T00:00:00Z" || r.URL.Query().Get("end") != "2026-06-16T01:30:59Z" {
+			t.Fatalf("unexpected A股 morning window query: %s", r.URL.RawQuery)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer content.Close()
+
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/internal/a-stock/recommendations/generate" {
+			t.Fatalf("unexpected gateway request: %s %s", r.Method, r.URL.String())
+		}
+		generatedPeriods = append(generatedPeriods, r.URL.Query().Get("period"))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer gateway.Close()
+
+	worker := NewWorker(config.Config{
+		AStockAuctionURL:      akshare.URL,
+		CrawlerURL:            crawler.URL,
+		ContentURL:            content.URL,
+		GatewayWebURL:         gateway.URL,
+		HTTPTimeout:           time.Second,
+		SchedulerCrawlTimeout: time.Second,
+	})
+
+	if err := worker.runAStockRecommendationForDate(context.Background(), "2026-06-16", "morning"); err != nil {
+		t.Fatalf("runAStockRecommendationForDate morning error: %v", err)
+	}
+	if len(generatedPeriods) != 1 || generatedPeriods[0] != "morning" {
+		t.Fatalf("expected morning recommendation snapshot generation, got %v", generatedPeriods)
 	}
 }
 

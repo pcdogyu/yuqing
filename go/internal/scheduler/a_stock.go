@@ -437,10 +437,8 @@ func (w *Worker) runAStockRecommendationForDate(ctx context.Context, strategyDat
 	if !resp.IsSuccess() {
 		return fmt.Errorf("a-stock %s recommendation content warmup failed: %s", label, resp.Status())
 	}
-	if normalizeAStockRecommendationPeriod(period) == "afternoon" {
-		if err := w.generateAStockRecommendationSnapshot(ctx, strategyDate, period); err != nil {
-			return err
-		}
+	if err := w.generateAStockRecommendationSnapshot(ctx, strategyDate, period); err != nil {
+		return err
 	}
 	log.Info().
 		Str("strategy_date", strategyDate).

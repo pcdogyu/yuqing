@@ -280,6 +280,7 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		".astock-recommendation-table th:nth-child(2),.astock-recommendation-table td:nth-child(2){width:7.5%;white-space:nowrap}",
 		".astock-recommendation-table th:last-child,.astock-recommendation-table td:last-child{width:36%}",
 		"当日开盘价",
+		"下午开盘价",
 		"推荐窗口",
 		"T+0 收益",
 		"T+1 收益",
@@ -287,7 +288,7 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		"T+3 收益",
 		"T+4 收益",
 		"T+5 收益",
-		`colspan="11"`,
+		`colspan="13"`,
 		"抓取全部财经信息",
 		"重新生成上午推荐",
 		"重新生成下午推荐",
@@ -1473,7 +1474,7 @@ func TestAStockPageLoadsAfternoonWindow(t *testing.T) {
 				{"code": "300777", "date": "2026-04-17", "open": 20.00, "close": 20.00, "pct": 0},
 				{"code": "300777", "date": "2026-05-16", "open": 20.00, "close": 20.00, "pct": 0},
 				{"code": "300777", "date": "2026-06-15", "open": 20.80, "close": 21.00, "pct": 1.00},
-				{"code": "300777", "date": "2026-06-16", "open": 21.60, "close": 22.00, "pct": 4.76},
+				{"code": "300777", "date": "2026-06-16", "open": 21.60, "afternoon_entry_price": 21.60, "close": 22.00, "pct": 4.76},
 				{"code": "300777", "date": "2026-06-17", "open": 22.20, "close": 23.00, "pct": 4.55},
 			}},
 		})
@@ -2313,7 +2314,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"金十快讯", "金十资讯", "1条", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "5日内过滤", "涨停过滤", "关闭5日过滤", "关闭涨停过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "推荐历史", "上午推荐", "下午推荐", "推荐窗口", "补抓上午新闻", "重新生成上午推荐", "补抓下午新闻", "重新生成下午推荐", "刷新全部回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="refresh_backtest"`, "前两日", "前一日", "今日", "T+0 收益", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
+	for _, want := range []string{"金十快讯", "金十资讯", "1条", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "5日内过滤", "涨停过滤", "关闭5日过滤", "关闭涨停过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "推荐历史", "上午推荐", "下午推荐", "推荐窗口", "当日开盘价", "下午开盘价", "补抓上午新闻", "重新生成上午推荐", "补抓下午新闻", "重新生成下午推荐", "刷新全部回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="refresh_backtest"`, "前两日", "前一日", "今日", "T+0 收益", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}
@@ -2806,7 +2807,7 @@ func TestAStockMarketViewFiltersDeepDrawdownsAndPenalizesSector(t *testing.T) {
 		{Code: "000004", Date: "2026-06-15", Close: 98, Pct: 2},
 	}
 
-	filtered, rows, status, _ := applyAStockMarketBars("2026-06-16", recommendations, bars, false, 0)
+	filtered, rows, status, _ := applyAStockMarketBars("2026-06-16", "morning", recommendations, bars, false, 0)
 
 	if len(filtered) != 2 {
 		t.Fatalf("expected one deep-drawdown recommendation to be filtered, got %+v", filtered)
@@ -2834,8 +2835,8 @@ func TestAStockMarketViewFiltersDeepDrawdownsAndPenalizesSector(t *testing.T) {
 	if len(rows) != 2 {
 		t.Fatalf("expected backtest rows to match filtered recommendations, got %+v", rows)
 	}
-	if rows[0].T0Return != "+1.00%" || rows[0].T0ReturnClass != "astock-up" {
-		t.Fatalf("expected T+0 return to use strategy-day realtime/close pct field, got %+v", rows[0])
+	if rows[0].T0Return != "+1.01%" || rows[0].T0ReturnClass != "astock-up" {
+		t.Fatalf("expected T+0 return to use entry-price based close return, got %+v", rows[0])
 	}
 	if rows[0].T0Close != "100.00" {
 		t.Fatalf("expected T+0 close to carry strategy-day close price, got %+v", rows[0])
@@ -2857,13 +2858,13 @@ func TestAStockMarketViewFiltersLimitUpStocksForAfternoon(t *testing.T) {
 		{Rank: 4, Hotspot: "金融券商", Code: "000001", Name: "平安银行", HotspotScore: 77, MarketScore: 77, Reason: "热度分 77"},
 	})
 	bars := []aStockMarketBar{
-		{Code: "600172", Date: "2026-06-22", Open: 15.41, Close: 15.41, Pct: 9.99},
-		{Code: "300179", Date: "2026-06-22", Open: 46.75, Close: 46.75, Pct: 20.00},
-		{Code: "688662", Date: "2026-06-22", Open: 158.66, Close: 158.66, Pct: 19.99},
-		{Code: "000001", Date: "2026-06-22", Open: 12.3, Close: 12.5, Pct: 1.63},
+		{Code: "600172", Date: "2026-06-22", Open: 15.41, AfternoonEntryPrice: 15.41, Close: 15.41, Pct: 9.99},
+		{Code: "300179", Date: "2026-06-22", Open: 46.75, AfternoonEntryPrice: 46.75, Close: 46.75, Pct: 20.00},
+		{Code: "688662", Date: "2026-06-22", Open: 158.66, AfternoonEntryPrice: 158.66, Close: 158.66, Pct: 19.99},
+		{Code: "000001", Date: "2026-06-22", Open: 12.3, AfternoonEntryPrice: 12.3, Close: 12.5, Pct: 1.63},
 	}
 
-	filtered, rows, status, limitUpFiltered := applyAStockMarketBars("2026-06-22", recommendations, bars, true, 0)
+	filtered, rows, status, limitUpFiltered := applyAStockMarketBars("2026-06-22", "afternoon", recommendations, bars, true, 0)
 
 	if limitUpFiltered != 3 {
 		t.Fatalf("expected three limit-up stocks filtered, got %d status=%q recommendations=%+v", limitUpFiltered, status, filtered)
@@ -2887,13 +2888,13 @@ func TestAStockMarketViewBackfillsLimitUpStocksByHeat(t *testing.T) {
 		{Rank: 4, Hotspot: "黄金有色", Code: "000003", Name: "国华网安", HotspotScore: 83, MarketScore: 83, Reason: "热度分 83"},
 	})
 	bars := []aStockMarketBar{
-		{Code: "600172", Date: "2026-06-22", Open: 15.41, Close: 15.41, Pct: 9.99},
-		{Code: "000001", Date: "2026-06-22", Open: 12.3, Close: 12.5, Pct: 1.63},
-		{Code: "000002", Date: "2026-06-22", Open: 8.2, Close: 8.4, Pct: 2.44},
-		{Code: "000003", Date: "2026-06-22", Open: 9.1, Close: 9.2, Pct: 1.1},
+		{Code: "600172", Date: "2026-06-22", Open: 15.41, AfternoonEntryPrice: 15.41, Close: 15.41, Pct: 9.99},
+		{Code: "000001", Date: "2026-06-22", Open: 12.3, AfternoonEntryPrice: 12.3, Close: 12.5, Pct: 1.63},
+		{Code: "000002", Date: "2026-06-22", Open: 8.2, AfternoonEntryPrice: 8.2, Close: 8.4, Pct: 2.44},
+		{Code: "000003", Date: "2026-06-22", Open: 9.1, AfternoonEntryPrice: 9.1, Close: 9.2, Pct: 1.1},
 	}
 
-	filtered, rows, status, limitUpFiltered := applyAStockMarketBars("2026-06-22", recommendations, bars, true, 3)
+	filtered, rows, status, limitUpFiltered := applyAStockMarketBars("2026-06-22", "afternoon", recommendations, bars, true, 3)
 
 	if limitUpFiltered != 1 {
 		t.Fatalf("expected one limit-up stock filtered, got %d status=%q", limitUpFiltered, status)
@@ -2917,7 +2918,7 @@ func TestAStockBacktestUses0930EntryPrice(t *testing.T) {
 		{Code: "300285", Date: "2026-06-19", Open: 67.5, Close: 69.3, Pct: 3.43},
 	})
 
-	rows := buildAStockBacktestRows("2026-06-18", recommendations, byCode)
+	rows := buildAStockBacktestRows("2026-06-18", "morning", recommendations, byCode)
 
 	if len(rows) != 1 {
 		t.Fatalf("expected one backtest row, got %+v", rows)
@@ -2925,11 +2926,43 @@ func TestAStockBacktestUses0930EntryPrice(t *testing.T) {
 	if rows[0].EntryOpen != "66.00" {
 		t.Fatalf("expected entry price to use 09:30 price, got %+v", rows[0])
 	}
+	if rows[0].AfternoonOpen != "--" {
+		t.Fatalf("expected morning backtest row to leave afternoon open empty, got %+v", rows[0])
+	}
 	if rows[0].T0Close != "67.00" {
 		t.Fatalf("expected T+0 close to use strategy-day close price, got %+v", rows[0])
 	}
+	if rows[0].T0Return != "+1.52%" {
+		t.Fatalf("expected T+0 return to use 09:30 entry price, got %+v", rows[0])
+	}
 	if rows[0].Days[0].Return != "+5.00%" {
 		t.Fatalf("expected T+1 return to use 09:30 entry price, got %+v", rows[0])
+	}
+}
+
+func TestAStockBacktestUsesAfternoonEntryPrice(t *testing.T) {
+	recommendations := []aStockRecommendation{{Code: "300285", Name: "国瓷材料"}}
+	byCode := groupAStockMarketBars([]aStockMarketBar{
+		{Code: "300285", Date: "2026-06-18", Open: 65, EntryPrice: 66, AfternoonEntryPrice: 66.8, Close: 67, Pct: 3.08},
+		{Code: "300285", Date: "2026-06-19", Open: 67.5, Close: 69.3, Pct: 3.43},
+	})
+
+	rows := buildAStockBacktestRows("2026-06-18", "afternoon", recommendations, byCode)
+
+	if len(rows) != 1 {
+		t.Fatalf("expected one backtest row, got %+v", rows)
+	}
+	if rows[0].EntryOpen != "--" {
+		t.Fatalf("expected afternoon backtest row to leave morning open empty, got %+v", rows[0])
+	}
+	if rows[0].AfternoonOpen != "66.80" {
+		t.Fatalf("expected entry price to use afternoon open price, got %+v", rows[0])
+	}
+	if rows[0].T0Return != "+0.30%" {
+		t.Fatalf("expected T+0 return to use afternoon open price, got %+v", rows[0])
+	}
+	if rows[0].Days[0].Return != "+3.74%" {
+		t.Fatalf("expected T+1 return to use afternoon open price, got %+v", rows[0])
 	}
 }
 
@@ -2940,6 +2973,16 @@ func TestDecodeEastmoneyAStock0930Price(t *testing.T) {
 
 	if !ok || price != 66 {
 		t.Fatalf("expected 09:30 close price 66, got price=%v ok=%v", price, ok)
+	}
+}
+
+func TestDecodeEastmoneyAStock1300Price(t *testing.T) {
+	body := []byte(`{"data":{"klines":["2026-06-18 12:59,66.00,66.20,0,0,0,0,0,0","2026-06-18 13:00,66.80,67.20,0,0,0,0,0,0","2026-06-18 13:01,67.10,67.30,0,0,0,0,0,0"]}}`)
+
+	price, ok := decodeEastmoneyAStock1300Price(body, "2026-06-18")
+
+	if !ok || price != 66.8 {
+		t.Fatalf("expected 13:00 open price 66.8, got price=%v ok=%v", price, ok)
 	}
 }
 
@@ -2955,6 +2998,17 @@ func TestAStockMarketBarsFallbackToEastmoneyWhenCustomEndpointEmpty(t *testing.T
 			t.Fatalf("unexpected eastmoney secid: %s", r.URL.RawQuery)
 		}
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("klt") == "1" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{
+					"klines": []string{
+						"2026-06-16 09:30,12.20,12.30,0,0,0,0,0,0",
+						"2026-06-16 13:00,12.80,12.90,0,0,0,0,0,0",
+					},
+				},
+			})
+			return
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"data": map[string]any{
 				"klines": []string{
@@ -2974,6 +3028,9 @@ func TestAStockMarketBarsFallbackToEastmoneyWhenCustomEndpointEmpty(t *testing.T
 	}
 	if len(bars) != 2 || bars[1].Code != "000001" || bars[1].Open != 12 || bars[1].Close != 13 {
 		t.Fatalf("unexpected fallback bars: %+v", bars)
+	}
+	if bars[1].EntryPrice != 12.3 || bars[1].AfternoonEntryPrice != 12.8 {
+		t.Fatalf("expected fallback bars to include 09:30 and 13:00 entry prices, got %+v", bars[1])
 	}
 }
 

@@ -83,12 +83,13 @@ type aStockRecommendation struct {
 }
 
 type aStockMarketBar struct {
-	Code       string
-	Date       string
-	Open       float64
-	Close      float64
-	Pct        float64
-	EntryPrice float64
+	Code                string
+	Date                string
+	Open                float64
+	Close               float64
+	Pct                 float64
+	EntryPrice          float64
+	AfternoonEntryPrice float64
 }
 
 type aStockBacktestCell struct {
@@ -100,6 +101,7 @@ type aStockBacktestCell struct {
 type aStockBacktestRow struct {
 	Stock           string
 	EntryOpen       string
+	AfternoonOpen   string
 	T0Return        string
 	T0Close         string
 	T0ReturnClass   string
@@ -786,13 +788,13 @@ func renderAStockBacktestSection(b *strings.Builder, strategyDate string, period
 	if strings.TrimSpace(strategyDate) == "" {
 		strategyDate = nonEmpty(morningCtx.Date, afternoonCtx.Date)
 	}
-	b.WriteString(`<section><h2>消息回测</h2><p class="astock-muted">买入价采用当日开盘价；T+0 显示行情源返回的今日实时/收盘涨跌幅，T+1 到 T+5 按后续交易日收盘价计算收益，并展示五日内最高收益。</p>`)
+	b.WriteString(`<section><h2>消息回测</h2><p class="astock-muted">上午推荐按当日开盘价计算，下午推荐按下午开盘价计算；T+0 到 T+5 及五日内最高收益均按对应推荐窗口的基准价回测。</p>`)
 	renderAStockRecommendationHistoryTabs(b, strategyDate, period, ignoreRecent, ignoreLimitUp)
 	renderAStockRecommendationHistoryActions(b, strategyDate, period, ignoreRecent, ignoreLimitUp)
 	mergedRows := combineAStockBacktestRows(morningCtx, afternoonCtx)
-	b.WriteString(`<div class="astock-scroll"><table class="astock-table"><tr><th>推荐窗口</th><th>股票</th><th>当日开盘价</th><th>T+0 收益</th><th>T+1 收益</th><th>T+2 收益</th><th>T+3 收益</th><th>T+4 收益</th><th>T+5 收益</th><th>五日内最高收益</th><th>命中状态</th></tr>`)
+	b.WriteString(`<div class="astock-scroll"><table class="astock-table"><tr><th>推荐窗口</th><th>股票</th><th>当日开盘价</th><th>下午开盘价</th><th>T+0 收益</th><th>T+1 收益</th><th>T+2 收益</th><th>T+3 收益</th><th>T+4 收益</th><th>T+5 收益</th><th>五日内最高收益</th><th>命中状态</th></tr>`)
 	if len(mergedRows) == 0 {
-		b.WriteString(`<tr><td colspan="11">暂无回测结果，等待行情同步。</td></tr>`)
+		b.WriteString(`<tr><td colspan="12">暂无回测结果，等待行情同步。</td></tr>`)
 		b.WriteString(`</table></div></section>`)
 		return
 	}
@@ -804,6 +806,8 @@ func renderAStockBacktestSection(b *strings.Builder, strategyDate string, period
 		b.WriteString(html.EscapeString(row.Stock))
 		b.WriteString(`</td><td>`)
 		b.WriteString(html.EscapeString(row.EntryOpen))
+		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(row.AfternoonOpen))
 		b.WriteString(`</td><td><span class="`)
 		b.WriteString(html.EscapeString(row.T0ReturnClass))
 		b.WriteString(`">`)
@@ -1132,7 +1136,7 @@ func (s *Server) loadAStockContextWithCache(strategyDate string, periodKey strin
 		ctx.Recommendations, ctx.RecentFiltered = filterRecentAStockRecommendations(ctx.Recommendations, recentCodes)
 	}
 	ctx.Recommendations = s.applyAStockHoldingSummaries(ctx.Recommendations)
-	ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus, ctx.LimitUpFiltered = s.loadAStockMarketView(strategyDate, ctx.Recommendations, ctx.LimitUpFilterEnabled, recommendationTarget)
+	ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus, ctx.LimitUpFiltered = s.loadAStockMarketView(strategyDate, ctx.Period, ctx.Recommendations, ctx.LimitUpFilterEnabled, recommendationTarget)
 	ctx.EmptyReason = aStockRecommendationEmptyReason(ctx)
 	if err := s.saveAStockRecommendationSnapshot(ctx); err != nil {
 		if ctx.LoadMessage == "" {
@@ -1894,7 +1898,7 @@ func isFreshAStockLimitUpReplacementSnapshot(snapshot model.AStockRecommendation
 	return len(recommendations) >= snapshot.GeneratedCount
 }
 
-func (s *Server) loadAStockMarketView(strategyDate string, recommendations []aStockRecommendation, filterLimitUp bool, maxRecommendations int) ([]aStockRecommendation, []aStockBacktestRow, string, int) {
+func (s *Server) loadAStockMarketView(strategyDate string, period string, recommendations []aStockRecommendation, filterLimitUp bool, maxRecommendations int) ([]aStockRecommendation, []aStockBacktestRow, string, int) {
 	recommendations = initializeAStockRecommendationMarket(recommendations)
 	if len(recommendations) == 0 {
 		return recommendations, nil, "无推荐股票", 0
@@ -1906,9 +1910,9 @@ func (s *Server) loadAStockMarketView(strategyDate string, recommendations []aSt
 	}
 	bars, err := s.loadAStockMarketBars(strategyDate, codes, endpoint)
 	if err != nil {
-		return recommendations, buildAStockBacktestRows(strategyDate, recommendations, nil), "行情读取失败", 0
+		return recommendations, buildAStockBacktestRows(strategyDate, period, recommendations, nil), "行情读取失败", 0
 	}
-	return applyAStockMarketBars(strategyDate, recommendations, bars, filterLimitUp, maxRecommendations)
+	return applyAStockMarketBars(strategyDate, period, recommendations, bars, filterLimitUp, maxRecommendations)
 }
 
 func (s *Server) loadAStockMarketBars(strategyDate string, codes []string, endpoint string) ([]aStockMarketBar, error) {
@@ -2002,10 +2006,28 @@ func (s *Server) loadEastmoneyAStockBars(strategyDate string, codes []string) ([
 			}
 		}
 	}
+	if afternoonEntryPrices := s.loadEastmoneyAStock1300Prices(strategyDate, codes); len(afternoonEntryPrices) > 0 {
+		for i := range bars {
+			if bars[i].Date != strategyDate {
+				continue
+			}
+			if price := afternoonEntryPrices[normalizeAStockCode(bars[i].Code)]; price > 0 {
+				bars[i].AfternoonEntryPrice = price
+			}
+		}
+	}
 	return bars, nil
 }
 
 func (s *Server) loadEastmoneyAStock0930Prices(strategyDate string, codes []string) map[string]float64 {
+	return s.loadEastmoneyAStockSessionPrices(strategyDate, codes, "09:30", decodeEastmoneyAStock0930Price)
+}
+
+func (s *Server) loadEastmoneyAStock1300Prices(strategyDate string, codes []string) map[string]float64 {
+	return s.loadEastmoneyAStockSessionPrices(strategyDate, codes, "13:00", decodeEastmoneyAStock1300Price)
+}
+
+func (s *Server) loadEastmoneyAStockSessionPrices(strategyDate string, codes []string, endTime string, decoder func([]byte, string) (float64, bool)) map[string]float64 {
 	endDate := strings.ReplaceAll(strategyDate, "-", "")
 	var wg sync.WaitGroup
 	type result struct {
@@ -2028,7 +2050,7 @@ func (s *Server) loadEastmoneyAStock0930Prices(strategyDate string, codes []stri
 				SetQueryParam("secid", eastmoneyAStockSecID(code)).
 				SetQueryParam("klt", "1").
 				SetQueryParam("fqt", "1").
-				SetQueryParam("end", endDate).
+				SetQueryParam("end", endDate+" "+endTime).
 				SetQueryParam("lmt", "300").
 				SetQueryParam("fields1", "f1,f2,f3,f4,f5,f6").
 				SetQueryParam("fields2", "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61").
@@ -2036,7 +2058,7 @@ func (s *Server) loadEastmoneyAStock0930Prices(strategyDate string, codes []stri
 			if err != nil || !resp.IsSuccess() {
 				return
 			}
-			price, ok := decodeEastmoneyAStock0930Price(resp.Body(), strategyDate)
+			price, ok := decoder(resp.Body(), strategyDate)
 			if ok {
 				priceCh <- result{code: code, price: price}
 			}
@@ -2126,7 +2148,7 @@ func initializeAStockRecommendationMarket(recommendations []aStockRecommendation
 	return recommendations
 }
 
-func applyAStockMarketBars(strategyDate string, recommendations []aStockRecommendation, bars []aStockMarketBar, filterLimitUp bool, maxRecommendations int) ([]aStockRecommendation, []aStockBacktestRow, string, int) {
+func applyAStockMarketBars(strategyDate string, period string, recommendations []aStockRecommendation, bars []aStockMarketBar, filterLimitUp bool, maxRecommendations int) ([]aStockRecommendation, []aStockBacktestRow, string, int) {
 	byCode := groupAStockMarketBars(bars)
 	withPrev := 0
 	sectorPenalties := make(map[string]int)
@@ -2136,7 +2158,7 @@ func applyAStockMarketBars(strategyDate string, recommendations []aStockRecommen
 	filtered := make([]aStockRecommendation, 0, len(recommendations))
 	for i := range recommendations {
 		blockedByDrawdown := false
-		entry, ok := aStockEntryBar(byCode[recommendations[i].Code], strategyDate)
+		entry, ok := aStockEntryBar(byCode[recommendations[i].Code], strategyDate, period)
 		if !ok {
 			noEntryPriceCount++
 			continue
@@ -2208,7 +2230,7 @@ func applyAStockMarketBars(strategyDate string, recommendations []aStockRecommen
 	for i := range recommendations {
 		recommendations[i].Rank = i + 1
 	}
-	rows := buildAStockBacktestRows(strategyDate, recommendations, byCode)
+	rows := buildAStockBacktestRows(strategyDate, period, recommendations, byCode)
 	completed := 0
 	for _, row := range rows {
 		if row.Status == "已回测" || strings.HasPrefix(row.Status, "已回测") {
@@ -2329,28 +2351,36 @@ func latestAStockBarOnOrBefore(bars []aStockMarketBar, targetDate string) (aStoc
 	return found, ok
 }
 
-func aStockEntryBar(bars []aStockMarketBar, strategyDate string) (aStockMarketBar, bool) {
+func aStockEntryBar(bars []aStockMarketBar, strategyDate string, period string) (aStockMarketBar, bool) {
 	for _, bar := range bars {
-		if bar.Date == strategyDate && aStockEntryPrice(bar) > 0 {
+		if bar.Date == strategyDate && aStockEntryPrice(bar, period) > 0 {
 			return bar, true
 		}
 	}
 	return aStockMarketBar{}, false
 }
 
-func aStockEntryPrice(bar aStockMarketBar) float64 {
+func aStockEntryPrice(bar aStockMarketBar, period string) float64 {
+	if normalizeAStockPeriod(period).Key == "afternoon" {
+		if bar.AfternoonEntryPrice > 0 {
+			return bar.AfternoonEntryPrice
+		}
+		return 0
+	}
 	if bar.EntryPrice > 0 {
 		return bar.EntryPrice
 	}
 	return bar.Open
 }
 
-func buildAStockBacktestRows(strategyDate string, recommendations []aStockRecommendation, byCode map[string][]aStockMarketBar) []aStockBacktestRow {
+func buildAStockBacktestRows(strategyDate string, period string, recommendations []aStockRecommendation, byCode map[string][]aStockMarketBar) []aStockBacktestRow {
+	normalizedPeriod := normalizeAStockPeriod(period).Key
 	rows := make([]aStockBacktestRow, 0, len(recommendations))
 	for _, rec := range recommendations {
 		row := aStockBacktestRow{
 			Stock:           rec.Code + " " + rec.Name,
 			EntryOpen:       "--",
+			AfternoonOpen:   "--",
 			T0Return:        "--",
 			T0Close:         "--",
 			T0ReturnClass:   "astock-flat",
@@ -2370,20 +2400,32 @@ func buildAStockBacktestRows(strategyDate string, recommendations []aStockRecomm
 			rows = append(rows, row)
 			continue
 		}
-		entryIdx := aStockEntryBarIndex(bars, strategyDate)
+		entryIdx := aStockEntryBarIndex(bars, strategyDate, normalizedPeriod)
 		if entryIdx < 0 {
-			row.Status = "等待当日开盘价"
+			if normalizedPeriod == "afternoon" {
+				row.Status = "等待下午开盘价"
+			} else {
+				row.Status = "等待当日开盘价"
+			}
 			rows = append(rows, row)
 			continue
 		}
 		entry := bars[entryIdx]
-		entryPrice := aStockEntryPrice(entry)
-		row.EntryOpen = formatAStockPrice(entryPrice)
-		row.T0Return = formatAStockPct(entry.Pct)
+		entryPrice := aStockEntryPrice(entry, normalizedPeriod)
+		if normalizedPeriod == "afternoon" {
+			row.AfternoonOpen = formatAStockPrice(entryPrice)
+		} else {
+			row.EntryOpen = formatAStockPrice(entryPrice)
+		}
+		t0Return := 0.0
+		if entryPrice > 0 && entry.Close > 0 {
+			t0Return = (entry.Close/entryPrice - 1) * 100
+		}
+		row.T0Return = formatAStockPct(t0Return)
 		if entry.Close > 0 {
 			row.T0Close = formatAStockPrice(entry.Close)
 		}
-		row.T0ReturnClass = aStockPctClass(entry.Pct)
+		row.T0ReturnClass = aStockPctClass(t0Return)
 		bestSet := false
 		bestReturn := 0.0
 		filled := 0
@@ -2422,9 +2464,9 @@ func buildAStockBacktestRows(strategyDate string, recommendations []aStockRecomm
 	return rows
 }
 
-func aStockEntryBarIndex(bars []aStockMarketBar, strategyDate string) int {
+func aStockEntryBarIndex(bars []aStockMarketBar, strategyDate string, period string) int {
 	for i, bar := range bars {
-		if bar.Date == strategyDate && aStockEntryPrice(bar) > 0 {
+		if bar.Date == strategyDate && aStockEntryPrice(bar, period) > 0 {
 			return i
 		}
 	}
@@ -2558,10 +2600,11 @@ func mapToAStockMarketBar(row map[string]any) (aStockMarketBar, bool) {
 	closeValue, ok := firstFloat(row, "close", "close_price", "pre_close")
 	pct, _ := firstFloat(row, "pct", "pct_chg", "change_pct")
 	entryPrice, _ := firstFloat(row, "entry_price", "entry", "open0930", "open_0930", "price0930", "price_0930", "minute0930", "minute_0930")
+	afternoonEntryPrice, _ := firstFloat(row, "afternoon_entry_price", "afternoon_entry", "afternoon_open", "afternoon_open_price", "open1300", "open_1300", "price1300", "price_1300", "minute1300", "minute_1300")
 	if code == "" || date == "" || !ok {
 		return aStockMarketBar{}, false
 	}
-	return aStockMarketBar{Code: code, Date: date, Open: open, Close: closeValue, Pct: pct, EntryPrice: entryPrice}, true
+	return aStockMarketBar{Code: code, Date: date, Open: open, Close: closeValue, Pct: pct, EntryPrice: entryPrice, AfternoonEntryPrice: afternoonEntryPrice}, true
 }
 
 func arrayToAStockMarketBar(row []any, fields []string) (aStockMarketBar, bool) {
@@ -2591,7 +2634,18 @@ func eastmoneyKlineToAStockMarketBar(raw string) (aStockMarketBar, bool) {
 func decodeEastmoneyAStock0930Price(body []byte, strategyDate string) (float64, bool) {
 	klines := collectAStockKlineStringsFromJSON(body)
 	for _, raw := range klines {
-		price, ok := eastmoney0930KlinePrice(raw, strategyDate)
+		price, ok := eastmoneySessionKlinePrice(raw, strategyDate, "09:30")
+		if ok {
+			return price, true
+		}
+	}
+	return 0, false
+}
+
+func decodeEastmoneyAStock1300Price(body []byte, strategyDate string) (float64, bool) {
+	klines := collectAStockKlineStringsFromJSON(body)
+	for _, raw := range klines {
+		price, ok := eastmoneySessionKlinePrice(raw, strategyDate, "13:00")
 		if ok {
 			return price, true
 		}
@@ -2639,20 +2693,23 @@ func collectAStockKlineStrings(value any) []string {
 	}
 }
 
-func eastmoney0930KlinePrice(raw string, strategyDate string) (float64, bool) {
+func eastmoneySessionKlinePrice(raw string, strategyDate string, session string) (float64, bool) {
 	parts := strings.Split(raw, ",")
 	if len(parts) < 3 {
 		return 0, false
 	}
 	timestamp := strings.TrimSpace(parts[0])
-	if !strings.HasPrefix(timestamp, strategyDate+" ") || !strings.Contains(timestamp, "09:30") {
+	if !strings.HasPrefix(timestamp, strategyDate+" ") || !strings.Contains(timestamp, session) {
 		return 0, false
 	}
+	open := parseAStockFloat(parts[1])
 	closeValue := parseAStockFloat(parts[2])
+	if session == "13:00" && open > 0 {
+		return open, true
+	}
 	if closeValue > 0 {
 		return closeValue, true
 	}
-	open := parseAStockFloat(parts[1])
 	if open > 0 {
 		return open, true
 	}

@@ -33,6 +33,9 @@ interface YuqingApi {
         @Query("page") page: Int = 1,
         @Query("page_size") pageSize: Int = 10,
         @Query("sort") sort: String = "publish_time_desc",
+        @Query("start") start: String = "",
+        @Query("end") end: String = "",
+        @Query("source_type") sourceType: String = "",
     ): ApiEnvelope<ItemListResult>
 
     @GET("api/v1/a-stock/auction")

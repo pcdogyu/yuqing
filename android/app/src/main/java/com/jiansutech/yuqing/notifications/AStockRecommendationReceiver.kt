@@ -21,9 +21,22 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.decodeFromString
 import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.LocalTime
 import java.time.ZoneId
 
 class AStockRecommendationReceiver : BroadcastReceiver() {
+    private val zone: ZoneId = ZoneId.of("Asia/Shanghai")
+    private val aStockNewsSourceTypes = listOf(
+        "flash",
+        "headline",
+        "jin10_full",
+        "eastmoney_kuaixun",
+        "wallstreetcn_a_stock",
+        "cls_telegraph",
+        "sina_finance_7x24",
+    )
+
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
             AStockRecommendationScheduler.scheduleDailyRecommendations(context.applicationContext)
@@ -41,7 +54,7 @@ class AStockRecommendationReceiver : BroadcastReceiver() {
             try {
                 val content = loadNotificationContent(appContext, slot)
                 withContext(Dispatchers.Main) {
-                    showRecommendationNotification(appContext, slot, content)
+                    showNotification(appContext, slot, content)
                 }
             } finally {
                 pendingResult.finish()
@@ -50,23 +63,58 @@ class AStockRecommendationReceiver : BroadcastReceiver() {
     }
 
     private fun slotFromIntent(intent: Intent): AStockRecommendationSlot? {
-        val id = intent.getStringExtra(AStockRecommendationScheduler.extraSlotId).orEmpty()
-        val period = intent.getStringExtra(AStockRecommendationScheduler.extraPeriod).orEmpty()
-        val title = intent.getStringExtra(AStockRecommendationScheduler.extraTitle).orEmpty()
-        val hour = intent.getIntExtra(AStockRecommendationScheduler.extraHour, -1)
-        val minute = intent.getIntExtra(AStockRecommendationScheduler.extraMinute, -1)
-        if (id.isBlank() || period.isBlank() || title.isBlank() || hour < 0 || minute < 0) {
-            return null
-        }
-        val windowLabel = if (period == "afternoon") "09:30-13:00" else "08:00-09:30"
-        return AStockRecommendationSlot(id, period, title, windowLabel, hour, minute)
+        return AStockRecommendationScheduler.slotById(intent.getStringExtra(AStockRecommendationScheduler.extraSlotId))
     }
 
     private suspend fun loadNotificationContent(context: Context, slot: AStockRecommendationSlot): String {
+        return when (slot.kind) {
+            AStockNotificationKind.NewsCount -> loadNewsCountContent(context, slot)
+            AStockNotificationKind.Recommendation -> loadRecommendationContent(context, slot)
+        }
+    }
+
+    private suspend fun loadNewsCountContent(context: Context, slot: AStockRecommendationSlot): String {
         val session = SessionStore(context).state.first()
-        val date = AStockTradingCalendar
-            .latestSelectableTradingDay(LocalDate.now(ZoneId.of("Asia/Shanghai")))
-            .toString()
+        val date = latestTradingDate()
+        val api = ApiFactory.yuqing(session.apiBaseUrl, session.token)
+        val (start, end) = slotWindowBounds(date, slot)
+        return runCatching {
+            var total = 0
+            var okCount = 0
+            for (sourceType in aStockNewsSourceTypes) {
+                runCatching {
+                    api.articles(
+                        page = 1,
+                        pageSize = 1,
+                        start = start,
+                        end = end,
+                        sourceType = sourceType,
+                    ).data?.total ?: 0
+                }.onSuccess { count ->
+                    total += count
+                    okCount++
+                }
+            }
+            if (okCount == 0) {
+                return@runCatching "财经新闻抓取数量暂时不可用，请打开 App 刷新后重试。"
+            }
+            buildString {
+                append(date)
+                append(' ')
+                append(slot.windowLabel)
+                append(" 已抓取 ")
+                append(total)
+                append(" 条财经新闻")
+                if (okCount < aStockNewsSourceTypes.size) {
+                    append("，部分来源待同步")
+                }
+            }
+        }.getOrDefault("财经新闻抓取数量暂时不可用，请打开 App 刷新后重试。")
+    }
+
+    private suspend fun loadRecommendationContent(context: Context, slot: AStockRecommendationSlot): String {
+        val session = SessionStore(context).state.first()
+        val date = latestTradingDate()
         return runCatching {
             val snapshot = ApiFactory.yuqing(session.apiBaseUrl, session.token)
                 .aStockRecommendations(date = date, period = slot.period)
@@ -90,25 +138,35 @@ class AStockRecommendationReceiver : BroadcastReceiver() {
         }.getOrDefault(emptyList())
     }
 
-    private fun showRecommendationNotification(context: Context, slot: AStockRecommendationSlot, content: String) {
+    private fun showNotification(context: Context, slot: AStockRecommendationSlot, content: String) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
             return
         }
-        AStockRecommendationScheduler.ensureNotificationChannel(context)
+        AStockRecommendationScheduler.ensureNotificationChannels(context)
         val openAppIntent = PendingIntent.getActivity(
             context,
             0,
             Intent(context, MainActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        val notification = Notification.Builder(context, AStockRecommendationScheduler.notificationChannelId)
+        val channelID = when (slot.kind) {
+            AStockNotificationKind.NewsCount -> AStockRecommendationScheduler.newsCountChannelId
+            AStockNotificationKind.Recommendation -> AStockRecommendationScheduler.recommendationChannelId
+        }
+        val notification = Notification.Builder(context, channelID)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle(slot.title)
             .setContentText(content)
             .setStyle(Notification.BigTextStyle().bigText(content))
             .setContentIntent(openAppIntent)
+            .setCategory(
+                when (slot.kind) {
+                    AStockNotificationKind.NewsCount -> Notification.CATEGORY_STATUS
+                    AStockNotificationKind.Recommendation -> Notification.CATEGORY_REMINDER
+                },
+            )
             .setAutoCancel(true)
             .build()
         context.getSystemService(NotificationManager::class.java)
@@ -116,8 +174,25 @@ class AStockRecommendationReceiver : BroadcastReceiver() {
     }
 
     private fun notificationId(slot: AStockRecommendationSlot): Int {
-        val date = LocalDate.now(ZoneId.of("Asia/Shanghai")).toString()
+        val date = LocalDate.now(zone).toString()
         return "$date-${slot.id}".hashCode()
+    }
+
+    private fun latestTradingDate(): String {
+        return AStockTradingCalendar.latestSelectableTradingDay(LocalDate.now(zone)).toString()
+    }
+
+    private fun slotWindowBounds(date: String, slot: AStockRecommendationSlot): Pair<String, String> {
+        val day = runCatching { LocalDate.parse(date) }.getOrDefault(LocalDate.now(zone))
+        val start = LocalDateTime.of(day, LocalTime.of(slot.windowStartHour, slot.windowStartMinute))
+            .atZone(zone)
+            .toInstant()
+            .toString()
+        val end = LocalDateTime.of(day, LocalTime.of(slot.windowEndHour, slot.windowEndMinute, 59))
+            .atZone(zone)
+            .toInstant()
+            .toString()
+        return start to end
     }
 
     private fun AStockRecommendation.displayName(): String? {
