@@ -641,6 +641,7 @@ private data class AStockBacktestDetailState(
 @Composable
 private fun AStockBacktestDetailScreen(state: AStockBacktestDetailState) {
     val row = state.row
+    val currentClosePrice = state.recommendation.currentPrice.ifBlank { "--" }
     LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
             SimpleRow(
@@ -648,7 +649,7 @@ private fun AStockBacktestDetailScreen(state: AStockBacktestDetailState) {
                 listOf(
                     state.strategyDate,
                     state.sectionLabel,
-                    "现价 ${state.recommendation.currentPrice.ifBlank { "--" }}",
+                    "现价 $currentClosePrice",
                     "今日 ${state.recommendation.todayPct.ifBlank { "--" }}",
                 ).joinToString("  "),
             )
@@ -667,7 +668,7 @@ private fun AStockBacktestDetailScreen(state: AStockBacktestDetailState) {
                 Card {
                     Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         AStockBacktestMetricHeader()
-                        AStockBacktestMetricRow("T+0", row.t0Return.ifBlank { "--" }, row.t0Close.ifBlank { "--" })
+                        AStockBacktestMetricRow("T+0", row.t0Return.ifBlank { "--" }, row.t0Close.ifBlank { currentClosePrice })
                         (0 until 5).forEach { index ->
                             val cell = row.days.getOrNull(index)
                             AStockBacktestMetricRow(
