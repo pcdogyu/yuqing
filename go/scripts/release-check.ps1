@@ -2,7 +2,7 @@ param(
     [string]$DatabasePath = $env:YUQING_DB_PATH,
     [string]$BaselinePath = "",
     [string]$OutputPath = "",
-    [string]$GatewayUrl = "http://127.0.0.1:8080",
+    [string]$GatewayUrl = "http://127.0.0.1:8079",
     [string]$AuthUrl = "http://127.0.0.1:8081",
     [string]$WechatUrl = "http://127.0.0.1:8088",
     [string]$ContentUrl = "http://127.0.0.1:8082",
@@ -91,11 +91,13 @@ function Find-FreePort([int]$startPort) {
 }
 
 $gatewayPort = Get-UrlPort $GatewayUrl
-if ($GatewayUrl -eq "http://127.0.0.1:8080" -and (Test-PortInUse $gatewayPort)) {
+if ($GatewayUrl -eq "http://127.0.0.1:8079" -and (Test-PortInUse $gatewayPort)) {
     $gatewayPort = Find-FreePort 18080
     $GatewayUrl = "http://127.0.0.1:$gatewayPort"
 }
 $env:YUQING_GATEWAY_ADDR = ":$gatewayPort"
+$env:YUQING_GATEWAY_HTTP_ADDRS = ":$gatewayPort"
+$env:YUQING_GATEWAY_URL = $GatewayUrl
 
 $wechatPort = Get-UrlPort $WechatUrl
 if ($WechatUrl -eq "http://127.0.0.1:8088" -and (Test-PortInUse $wechatPort)) {

@@ -91,6 +91,12 @@ type Config struct {
 	NLPAddr        string
 	SchedulerAddr  string
 
+	GatewayWebHTTPAddrs    []string
+	GatewayWebRedirectAddr string
+	GatewayWebTLSAddr      string
+	GatewayWebTLSCertFile  string
+	GatewayWebTLSKeyFile   string
+
 	GatewayWebURL string
 	AuthURL       string
 	WechatURL     string
@@ -117,6 +123,9 @@ func Load() Config {
 	}
 	databaseURL := firstNonEmpty(firstEnv("YUQING_DATABASE_URL", "YUQING_POSTGRES_DSN", "JIN10_DATABASE_URL"), databaseConfig.PostgresDSN)
 	databaseDriver := firstNonEmpty(firstEnv("YUQING_DB_DRIVER", "JIN10_DB_DRIVER"), databaseConfig.Driver, "sqlite")
+
+	gatewayWebAddr := envOrDefaultWithAliases("YUQING_GATEWAY_ADDR", ":8079", "JIN10_PORTAL_WEB_ADDR")
+	gatewayWebHTTPAddrs := envListOrDefault("YUQING_GATEWAY_HTTP_ADDRS", []string{gatewayWebAddr})
 
 	return Config{
 		ListenAddr:                 envOrDefault("YUQING_LISTEN_ADDR", ":8090"),
@@ -189,7 +198,7 @@ func Load() Config {
 		WechatPushEnabled:          envBool(false, "YUQING_WECHAT_PUSH_ENABLED"),
 		WechatPushWebhookURL:       envOrDefault("YUQING_WECHAT_PUSH_WEBHOOK_URL", ""),
 
-		GatewayWebAddr: envOrDefaultWithAliases("YUQING_GATEWAY_ADDR", ":8080", "JIN10_PORTAL_WEB_ADDR"),
+		GatewayWebAddr: gatewayWebAddr,
 		AuthAddr:       envOrDefault("YUQING_AUTH_ADDR", ":8081"),
 		WechatAddr:     envOrDefault("YUQING_WECHAT_ADDR", ":8088"),
 		ContentAddr:    envOrDefaultWithAliases("YUQING_CONTENT_ADDR", ":8082", "JIN10_CONTENT_ADDR"),
@@ -198,7 +207,13 @@ func Load() Config {
 		NLPAddr:        envOrDefaultWithAliases("YUQING_NLP_ADDR", ":8085", "JIN10_NLP_ADDR"),
 		SchedulerAddr:  envOrDefaultWithAliases("YUQING_SCHEDULER_ADDR", ":8086", "JIN10_SCHEDULER_ADDR"),
 
-		GatewayWebURL: envOrDefaultWithAliases("YUQING_GATEWAY_URL", "http://127.0.0.1:8080", "JIN10_PORTAL_WEB_URL"),
+		GatewayWebHTTPAddrs:    gatewayWebHTTPAddrs,
+		GatewayWebRedirectAddr: envOrDefaultAllowEmpty("YUQING_GATEWAY_REDIRECT_ADDR", ":80"),
+		GatewayWebTLSAddr:      envOrDefaultAllowEmpty("YUQING_GATEWAY_TLS_ADDR", ":443"),
+		GatewayWebTLSCertFile:  envOrDefault("YUQING_GATEWAY_TLS_CERT_FILE", ""),
+		GatewayWebTLSKeyFile:   envOrDefault("YUQING_GATEWAY_TLS_KEY_FILE", ""),
+
+		GatewayWebURL: envOrDefaultWithAliases("YUQING_GATEWAY_URL", "http://127.0.0.1:8079", "JIN10_PORTAL_WEB_URL"),
 		AuthURL:       envOrDefault("YUQING_AUTH_URL", "http://127.0.0.1:8081"),
 		WechatURL:     envOrDefault("YUQING_WECHAT_URL", "http://127.0.0.1:8088"),
 		ContentURL:    envOrDefaultWithAliases("YUQING_CONTENT_URL", "http://127.0.0.1:8082", "JIN10_CONTENT_URL"),
@@ -343,6 +358,25 @@ func envOrDefaultWithAliases(key, fallback string, aliases ...string) string {
 		}
 	}
 	return fallback
+}
+
+func envListOrDefault(key string, fallback []string) []string {
+	if value, ok := os.LookupEnv(key); ok {
+		return splitEnvList(value)
+	}
+	return fallback
+}
+
+func splitEnvList(value string) []string {
+	parts := strings.Split(value, ",")
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			values = append(values, part)
+		}
+	}
+	return values
 }
 
 func envDurationSeconds(fallback int, keys ...string) time.Duration {

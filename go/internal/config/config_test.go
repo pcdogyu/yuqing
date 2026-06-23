@@ -55,6 +55,13 @@ func TestLoadUsesDefaults(t *testing.T) {
 	t.Setenv("YUQING_CRYPTO_TELEGRAM_INTERVAL_SEC", "")
 	t.Setenv("YUQING_LOG_LEVEL", "")
 	t.Setenv("JIN10_LOG_LEVEL", "")
+	t.Setenv("YUQING_GATEWAY_ADDR", "")
+	t.Setenv("JIN10_PORTAL_WEB_ADDR", "")
+	t.Setenv("YUQING_GATEWAY_TLS_CERT_FILE", "")
+	t.Setenv("YUQING_GATEWAY_TLS_KEY_FILE", "")
+	unsetEnv(t, "YUQING_GATEWAY_HTTP_ADDRS")
+	unsetEnv(t, "YUQING_GATEWAY_REDIRECT_ADDR")
+	unsetEnv(t, "YUQING_GATEWAY_TLS_ADDR")
 
 	cfg := Load()
 
@@ -70,8 +77,14 @@ func TestLoadUsesDefaults(t *testing.T) {
 	if cfg.ListenAddr != ":8090" {
 		t.Fatalf("expected default listen addr, got %q", cfg.ListenAddr)
 	}
-	if cfg.GatewayWebAddr != ":8080" {
+	if cfg.GatewayWebAddr != ":8079" {
 		t.Fatalf("expected default gateway addr, got %q", cfg.GatewayWebAddr)
+	}
+	if len(cfg.GatewayWebHTTPAddrs) != 1 || cfg.GatewayWebHTTPAddrs[0] != ":8079" {
+		t.Fatalf("expected default gateway http addrs, got %#v", cfg.GatewayWebHTTPAddrs)
+	}
+	if cfg.GatewayWebRedirectAddr != ":80" || cfg.GatewayWebTLSAddr != ":443" || cfg.GatewayWebTLSCertFile != "" || cfg.GatewayWebTLSKeyFile != "" {
+		t.Fatalf("unexpected default gateway tls config: redirect=%q tls=%q cert=%q key=%q", cfg.GatewayWebRedirectAddr, cfg.GatewayWebTLSAddr, cfg.GatewayWebTLSCertFile, cfg.GatewayWebTLSKeyFile)
 	}
 	if cfg.WechatAddr != ":8088" {
 		t.Fatalf("expected default wechat addr, got %q", cfg.WechatAddr)
@@ -148,7 +161,7 @@ func TestLoadUsesDefaults(t *testing.T) {
 	if cfg.LogLevel != "info" {
 		t.Fatalf("expected default log level, got %q", cfg.LogLevel)
 	}
-	if cfg.GatewayWebURL != "http://127.0.0.1:8080" {
+	if cfg.GatewayWebURL != "http://127.0.0.1:8079" {
 		t.Fatalf("expected default gateway url, got %q", cfg.GatewayWebURL)
 	}
 	if cfg.WechatURL != "http://127.0.0.1:8088" {
@@ -214,6 +227,13 @@ func TestLoadPrefersPrimaryAndAliasEnv(t *testing.T) {
 	t.Setenv("YUQING_THEBLOCK_LATEST_INTERVAL_SEC", "303")
 	t.Setenv("YUQING_WECHAT_ADDR", ":18087")
 	t.Setenv("YUQING_WECHAT_URL", "http://127.0.0.1:18087")
+	t.Setenv("YUQING_GATEWAY_ADDR", ":18079")
+	t.Setenv("YUQING_GATEWAY_HTTP_ADDRS", ":8079, :18079")
+	t.Setenv("YUQING_GATEWAY_REDIRECT_ADDR", ":80")
+	t.Setenv("YUQING_GATEWAY_TLS_ADDR", ":443")
+	t.Setenv("YUQING_GATEWAY_TLS_CERT_FILE", "certs/fullchain.pem")
+	t.Setenv("YUQING_GATEWAY_TLS_KEY_FILE", "certs/privkey.pem")
+	t.Setenv("YUQING_GATEWAY_URL", "https://gateway.example.com")
 
 	cfg := Load()
 
@@ -303,6 +323,15 @@ func TestLoadPrefersPrimaryAndAliasEnv(t *testing.T) {
 	}
 	if cfg.WechatAddr != ":18087" || cfg.WechatURL != "http://127.0.0.1:18087" {
 		t.Fatalf("expected wechat service config loaded, got addr=%q url=%q", cfg.WechatAddr, cfg.WechatURL)
+	}
+	if cfg.GatewayWebAddr != ":18079" || cfg.GatewayWebURL != "https://gateway.example.com" {
+		t.Fatalf("expected gateway service config loaded, got addr=%q url=%q", cfg.GatewayWebAddr, cfg.GatewayWebURL)
+	}
+	if len(cfg.GatewayWebHTTPAddrs) != 2 || cfg.GatewayWebHTTPAddrs[0] != ":8079" || cfg.GatewayWebHTTPAddrs[1] != ":18079" {
+		t.Fatalf("expected gateway http addrs loaded, got %#v", cfg.GatewayWebHTTPAddrs)
+	}
+	if cfg.GatewayWebRedirectAddr != ":80" || cfg.GatewayWebTLSAddr != ":443" || cfg.GatewayWebTLSCertFile != "certs/fullchain.pem" || cfg.GatewayWebTLSKeyFile != "certs/privkey.pem" {
+		t.Fatalf("expected gateway tls config loaded, got redirect=%q tls=%q cert=%q key=%q", cfg.GatewayWebRedirectAddr, cfg.GatewayWebTLSAddr, cfg.GatewayWebTLSCertFile, cfg.GatewayWebTLSKeyFile)
 	}
 }
 

@@ -1,5 +1,5 @@
 param(
-    [string]$GatewayUrl = "http://127.0.0.1:8080",
+    [string]$GatewayUrl = "http://127.0.0.1:8079",
     [string]$AuthUrl = "http://127.0.0.1:8081",
     [string]$WechatUrl = "http://127.0.0.1:8088",
     [string]$ContentUrl = "http://127.0.0.1:8082",

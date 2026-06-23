@@ -143,7 +143,7 @@ http://127.0.0.1/crypto?pair=eth
 
 ## 默认端口
 
-- `gateway-web`: `8080`
+- `gateway-web`: `8079`
 - `auth-service`: `8081`
 - `wechat-service`: `8088`
 - `akshare-service`: `8087`（`run.bat` 默认用于集合竞价）
@@ -152,6 +152,8 @@ http://127.0.0.1/crypto?pair=eth
 - `analysis-service`: `8084`
 - `nlp-service`: `8085`
 - `scheduler-service`: `8086`
+
+`gateway-web` 支持同时监听多个入口：默认业务 HTTP 入口是 `:8079`；配置 `YUQING_GATEWAY_TLS_CERT_FILE` 和 `YUQING_GATEWAY_TLS_KEY_FILE` 后，会启用 `YUQING_GATEWAY_TLS_ADDR`（默认 `:443`）的 HTTPS listener，并在 `YUQING_GATEWAY_REDIRECT_ADDR`（默认 `:80`）上把 HTTP 请求跳转到 HTTPS。`YUQING_GATEWAY_HTTP_ADDRS` 可用逗号分隔配置多个业务 HTTP 监听地址。
 
 ## 数据
 

@@ -25,7 +25,7 @@
 
 | 服务 | 默认端口 | 说明 |
 | --- | ---: | --- |
-| `gateway-web` | `8080` | 统一入口 |
+| `gateway-web` | `8079` | 统一入口 |
 | `auth-service` | `8081` | 登录、会话、Token |
 | `content-service` | `8082` | 业务数据与内部 API |
 | `crawler-service` | `8083` | 抓取任务 |
@@ -47,7 +47,7 @@ cd D:\yuqing\go
 启动后访问：
 
 ```text
-http://127.0.0.1:8080
+http://127.0.0.1:8079
 ```
 
 停止服务：
@@ -67,6 +67,12 @@ cd D:\yuqing\go
 | `YUQING_DB_PATH` | SQLite 数据库路径 |
 | `YUQING_POSTGRES_DSN` | PostgreSQL DSN |
 | `YUQING_SERVICE_TOKEN` | 内部服务调用 Token |
+| `YUQING_GATEWAY_ADDR` | `gateway-web` 主 HTTP 监听地址，默认 `:8079` |
+| `YUQING_GATEWAY_HTTP_ADDRS` | `gateway-web` 业务 HTTP 多监听地址，逗号分隔；默认使用 `YUQING_GATEWAY_ADDR` |
+| `YUQING_GATEWAY_REDIRECT_ADDR` | HTTPS 启用时的 HTTP 跳转监听地址，默认 `:80`；设为空可禁用 |
+| `YUQING_GATEWAY_TLS_ADDR` | HTTPS 监听地址，默认 `:443`；需同时配置证书和私钥 |
+| `YUQING_GATEWAY_TLS_CERT_FILE` | HTTPS 证书文件路径，例如 `fullchain.pem` |
+| `YUQING_GATEWAY_TLS_KEY_FILE` | HTTPS 私钥文件路径，例如 `privkey.pem` |
 | `YUQING_ASTOCK_MARKET_URL` | A 股行情数据源覆盖 |
 | `YUQING_ASTOCK_AUCTION_URL` | 集合竞价 AKShare HTTP 服务 |
 | `YUQING_STOCK_RESEARCH_URL` | 研报调研 HTTP 服务；未显式配置且本地 AKShare 适配器启动成功时，`go\run.bat` 会默认指向 `http://127.0.0.1:8087` |
