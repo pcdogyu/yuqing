@@ -15,7 +15,35 @@ class ApiModelsTest {
     fun normalizeBaseUrlUsesFallbackForBlankValue() {
         assertEquals(
             "http://yuqin.jiansutech.com:8081/",
-            ApiFactory.normalizeBaseUrl("", "http://yuqin.jiansutech.com:8081/"),
+            ApiFactory.normalizeAuthBaseUrl("", "http://yuqin.jiansutech.com:8081/"),
+        )
+    }
+
+    @Test
+    fun normalizeBaseUrlAddsFallbackPortForBareHost() {
+        assertEquals(
+            "http://yuqin.jiansutech.com:8081/",
+            ApiFactory.normalizeAuthBaseUrl("yuqin.jiansutech.com", "http://yuqin.jiansutech.com:8081/"),
+        )
+        assertEquals(
+            "http://yuqin.jiansutech.com:8082/",
+            ApiFactory.normalizeApiBaseUrl("yuqin.jiansutech.com", "http://yuqin.jiansutech.com:8082/"),
+        )
+    }
+
+    @Test
+    fun normalizeBaseUrlAddsFallbackPortWhenSchemeIsProvidedWithoutPort() {
+        assertEquals(
+            "http://yuqin.jiansutech.com:8082/",
+            ApiFactory.normalizeApiBaseUrl("http://yuqin.jiansutech.com", "http://yuqin.jiansutech.com:8082/"),
+        )
+    }
+
+    @Test
+    fun normalizeBaseUrlKeepsExplicitPort() {
+        assertEquals(
+            "http://yuqin.jiansutech.com:18082/",
+            ApiFactory.normalizeApiBaseUrl("http://yuqin.jiansutech.com:18082", "http://yuqin.jiansutech.com:8082/"),
         )
     }
 

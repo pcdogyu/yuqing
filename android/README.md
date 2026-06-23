@@ -13,6 +13,11 @@
 - Auth API: `http://yuqin.jiansutech.com:8081/`
 - Content/BFF API: `http://yuqin.jiansutech.com:8082/`
 
+如果移动端只填写 `yuqin.jiansutech.com` 或 `http://yuqin.jiansutech.com`，App 会自动补全协议和服务端口：
+
+- Auth API 自动补到 `:8081`
+- Content/BFF API 自动补到 `:8082`
+
 本地调试时，可在 `app/build.gradle.kts` 中临时改为局域网或模拟器服务地址后重新构建。
 
 ## 功能

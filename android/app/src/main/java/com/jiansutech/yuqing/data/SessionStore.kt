@@ -22,9 +22,10 @@ data class SessionState(
 class SessionStore(private val context: Context) {
     val state: Flow<SessionState> = context.sessionDataStore.data.map { preferences ->
         SessionState(
+            token = preferences[tokenKey].orEmpty(),
             username = preferences[usernameKey].orEmpty().ifBlank { "admin" },
-            authBaseUrl = BuildConfig.DEFAULT_AUTH_BASE_URL,
-            apiBaseUrl = BuildConfig.DEFAULT_API_BASE_URL,
+            authBaseUrl = ApiFactory.normalizeAuthBaseUrl(preferences[authBaseUrlKey].orEmpty(), BuildConfig.DEFAULT_AUTH_BASE_URL),
+            apiBaseUrl = ApiFactory.normalizeApiBaseUrl(preferences[apiBaseUrlKey].orEmpty(), BuildConfig.DEFAULT_API_BASE_URL),
         )
     }
 
@@ -32,15 +33,15 @@ class SessionStore(private val context: Context) {
         context.sessionDataStore.edit { preferences ->
             preferences[tokenKey] = token
             preferences[usernameKey] = username
-            preferences[authBaseUrlKey] = ApiFactory.normalizeBaseUrl(authBaseUrl, BuildConfig.DEFAULT_AUTH_BASE_URL)
-            preferences[apiBaseUrlKey] = ApiFactory.normalizeBaseUrl(apiBaseUrl, BuildConfig.DEFAULT_API_BASE_URL)
+            preferences[authBaseUrlKey] = ApiFactory.normalizeAuthBaseUrl(authBaseUrl, BuildConfig.DEFAULT_AUTH_BASE_URL)
+            preferences[apiBaseUrlKey] = ApiFactory.normalizeApiBaseUrl(apiBaseUrl, BuildConfig.DEFAULT_API_BASE_URL)
         }
     }
 
     suspend fun saveServers(authBaseUrl: String, apiBaseUrl: String) {
         context.sessionDataStore.edit { preferences ->
-            preferences[authBaseUrlKey] = ApiFactory.normalizeBaseUrl(authBaseUrl, BuildConfig.DEFAULT_AUTH_BASE_URL)
-            preferences[apiBaseUrlKey] = ApiFactory.normalizeBaseUrl(apiBaseUrl, BuildConfig.DEFAULT_API_BASE_URL)
+            preferences[authBaseUrlKey] = ApiFactory.normalizeAuthBaseUrl(authBaseUrl, BuildConfig.DEFAULT_AUTH_BASE_URL)
+            preferences[apiBaseUrlKey] = ApiFactory.normalizeApiBaseUrl(apiBaseUrl, BuildConfig.DEFAULT_API_BASE_URL)
         }
     }
 
