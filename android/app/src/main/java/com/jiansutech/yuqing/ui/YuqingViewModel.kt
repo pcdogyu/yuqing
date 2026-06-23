@@ -12,6 +12,7 @@ import com.jiansutech.yuqing.data.AndroidModule
 import com.jiansutech.yuqing.data.AStockAuctionListResult
 import com.jiansutech.yuqing.data.AStockRecommendation
 import com.jiansutech.yuqing.data.AStockRecommendationSnapshot
+import com.jiansutech.yuqing.data.ArticleItem
 import com.jiansutech.yuqing.data.ApiFactory
 import com.jiansutech.yuqing.data.DashboardCacheDao
 import com.jiansutech.yuqing.data.DashboardCacheEntity
@@ -26,9 +27,13 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
+import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.LocalTime
+import java.time.OffsetDateTime
 import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 data class PendingAction(
     val action: String,
@@ -158,29 +163,50 @@ class YuqingViewModel(
             )
             runCatching {
                 val api = ApiFactory.yuqing(session.apiBaseUrl, session.token)
+                val bootstrapStartedAt = SystemClock.elapsedRealtime()
                 val bootstrap = api.bootstrap().data
+                Log.i(
+                    STARTUP_TAG,
+                    "YuqingViewModel.refreshAll bootstrap loaded moduleCount=${bootstrap?.modules.orEmpty().size} elapsedMs=${SystemClock.elapsedRealtime() - bootstrapStartedAt}",
+                )
+                val dashboardStartedAt = SystemClock.elapsedRealtime()
                 val dashboard = api.dashboard().data ?: error("Dashboard 数据为空")
+                Log.i(
+                    STARTUP_TAG,
+                    "YuqingViewModel.refreshAll dashboard loaded articleCount=${dashboard.articles.items.size} elapsedMs=${SystemClock.elapsedRealtime() - dashboardStartedAt}",
+                )
+                val correctedDashboard = runCatching {
+                    val latestArticlesStartedAt = SystemClock.elapsedRealtime()
+                    val latestArticles = api.articles(page = 1, pageSize = 50).data?.items.orEmpty()
+                    Log.i(
+                        STARTUP_TAG,
+                        "YuqingViewModel.refreshAll latestArticles loaded count=${latestArticles.size} firstPublishTime=${latestArticles.firstOrNull()?.publishTime.orEmpty()} firstTitle=${latestArticles.firstOrNull()?.title.orEmpty()} elapsedMs=${SystemClock.elapsedRealtime() - latestArticlesStartedAt}",
+                    )
+                    patchDashboardLatestArticles(dashboard, latestArticles)
+                }.onFailure { throwable ->
+                    Log.w(STARTUP_TAG, "YuqingViewModel.refreshAll latest article patch skipped", throwable)
+                }.getOrDefault(dashboard)
                 dashboardCacheDao.upsert(
                     DashboardCacheEntity(
-                        payload = ApiFactory.json.encodeToString(dashboard),
+                        payload = ApiFactory.json.encodeToString(correctedDashboard),
                         savedAt = System.currentTimeMillis(),
                     ),
                 )
                 _uiState.update {
                     it.copy(
                         modules = bootstrap?.modules.orEmpty(),
-                        dashboard = dashboard,
+                        dashboard = correctedDashboard,
                         articleList = if (it.selectedModuleKey == "articles") it.articleList else null,
-                        aStockAuction = dashboard.aStock.auction,
-                        aStockAuctionDate = dashboard.aStock.auction.date.ifBlank { it.aStockAuctionDate },
-                        aStockRecommendation = dashboard.aStock.recommendation.takeIf { snapshot -> snapshot.found },
-                        aStockRecommendations = parseAStockRecommendations(dashboard.aStock.recommendation.recommendationsJson),
+                        aStockAuction = correctedDashboard.aStock.auction,
+                        aStockAuctionDate = correctedDashboard.aStock.auction.date.ifBlank { it.aStockAuctionDate },
+                        aStockRecommendation = correctedDashboard.aStock.recommendation.takeIf { snapshot -> snapshot.found },
+                        aStockRecommendations = parseAStockRecommendations(correctedDashboard.aStock.recommendation.recommendationsJson),
                         message = "数据已刷新",
                     )
                 }
                 Log.i(
                     STARTUP_TAG,
-                    "YuqingViewModel.refreshAll success modules=${bootstrap?.modules.orEmpty().size} articleCount=${dashboard.overview.articleCount} taskCount=${dashboard.overview.crawlRunCount}",
+                    "YuqingViewModel.refreshAll success modules=${bootstrap?.modules.orEmpty().size} articleCount=${correctedDashboard.overview.articleCount} taskCount=${correctedDashboard.overview.crawlRunCount}",
                 )
             }.onFailure { throwable ->
                 Log.e(STARTUP_TAG, "YuqingViewModel.refreshAll failure", throwable)
@@ -391,6 +417,12 @@ class YuqingViewModel(
 }
 
 private const val STARTUP_TAG = "YuqingStartup"
+private val articleTimeFormats = listOf(
+    DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"),
+    DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"),
+    DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss"),
+    DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm"),
+)
 
 private fun currentAStockRecommendationWindow(): AStockRecommendationWindow {
     val zone = ZoneId.of("Asia/Shanghai")
@@ -417,6 +449,75 @@ private fun parseAStockRecommendations(raw: String): List<AStockRecommendation> 
     return runCatching {
         ApiFactory.json.decodeFromString<List<AStockRecommendation>>(payload)
     }.getOrDefault(emptyList())
+}
+
+private fun patchDashboardLatestArticles(dashboard: AndroidDashboard, latestArticles: List<ArticleItem>): AndroidDashboard {
+    val referenceNow = Instant.now()
+    val patchedItems = latestArticles
+        .distinctBy(::articleIdentity)
+        .map { item ->
+            DashboardLatestArticleSortEntry(
+                item = item,
+                sortTime = articleSortTime(item, referenceNow) ?: Instant.EPOCH,
+            )
+        }
+        .sortedWith(
+            compareByDescending<DashboardLatestArticleSortEntry> { it.sortTime }
+                .thenByDescending { it.item.publishTime }
+                .thenByDescending { it.item.publishTimeText }
+                .thenByDescending { it.item.id },
+        )
+        .map { it.item }
+        .take(10)
+    if (patchedItems.isEmpty()) {
+        return dashboard
+    }
+    val topItem = patchedItems.first()
+    Log.i(
+        STARTUP_TAG,
+        "YuqingViewModel.latestArticles patched size=${patchedItems.size} topTitle=${topItem.title} topPublishTime=${topItem.publishTime} topPublishTimeText=${topItem.publishTimeText}",
+    )
+    return dashboard.copy(
+        articles = dashboard.articles.copy(items = patchedItems),
+    )
+}
+
+private fun articleIdentity(item: ArticleItem): String {
+    return listOf(item.id.toString(), item.sourceUrl, item.publishTime, item.title)
+        .joinToString("|")
+}
+
+private data class DashboardLatestArticleSortEntry(
+    val item: ArticleItem,
+    val sortTime: Instant,
+)
+
+private fun articleSortTime(item: ArticleItem, referenceNow: Instant): Instant? {
+    return parseArticleInstant(item.publishTime, referenceNow)
+        ?: parseArticleInstant(item.publishTimeText, referenceNow)
+}
+
+private fun parseArticleInstant(raw: String, referenceNow: Instant): Instant? {
+    val value = raw.trim()
+    if (value.isBlank()) {
+        return null
+    }
+    if (value == "刚刚") {
+        return referenceNow
+    }
+    Regex("""^(\d+)\s*分钟前$""").matchEntire(value)?.groupValues?.getOrNull(1)?.toLongOrNull()?.let {
+        return referenceNow.minusSeconds(it * 60)
+    }
+    Regex("""^(\d+)\s*小时前$""").matchEntire(value)?.groupValues?.getOrNull(1)?.toLongOrNull()?.let {
+        return referenceNow.minusSeconds(it * 3600)
+    }
+    runCatching { OffsetDateTime.parse(value).toInstant() }.getOrNull()?.let { return it }
+    runCatching { Instant.parse(value) }.getOrNull()?.let { return it }
+    val zone = ZoneId.of("Asia/Shanghai")
+    for (formatter in articleTimeFormats) {
+        runCatching { LocalDateTime.parse(value, formatter).atZone(zone).toInstant() }.getOrNull()?.let { return it }
+    }
+    return null
 }
 
 class YuqingViewModelFactory(
