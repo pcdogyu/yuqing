@@ -1,5 +1,6 @@
 package com.jiansutech.yuqing.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
@@ -17,6 +18,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Article
 import androidx.compose.material.icons.filled.Assessment
 import androidx.compose.material.icons.filled.Business
@@ -95,13 +97,29 @@ private fun PortalScreen(state: YuqingUiState, viewModel: YuqingViewModel) {
     val selected = modules.firstOrNull { it.key == state.selectedModuleKey }
         ?: fallback.firstOrNull { it.key == state.selectedModuleKey }
         ?: modules.first()
+    var backtestDetail by remember { mutableStateOf<AStockBacktestDetailState?>(null) }
+    val detail = backtestDetail
+    BackHandler(enabled = detail != null) {
+        backtestDetail = null
+    }
     val hideHeaderContent = selected.key == "dashboard" ||
         selected.key == "articles" ||
         selected.key == "search" ||
         selected.key == "a_stock" ||
         selected.key == "auction"
     Scaffold(
-        topBar = if (hideHeaderContent) {
+        topBar = if (detail != null) {
+            {
+                TopAppBar(
+                    title = { Text("${detail.recommendation.code} ${detail.recommendation.name}", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    navigationIcon = {
+                        IconButton(onClick = { backtestDetail = null }) {
+                            Icon(Icons.Filled.ArrowBack, contentDescription = "返回")
+                        }
+                    },
+                )
+            }
+        } else if (hideHeaderContent) {
             {}
         } else {
             {
@@ -119,22 +137,26 @@ private fun PortalScreen(state: YuqingUiState, viewModel: YuqingViewModel) {
             }
         },
         bottomBar = {
-            NavigationBar {
-                listOf("dashboard", "articles", "a_stock", "auction", "system").forEach { key ->
-                    val module = modules.firstOrNull { it.key == key }
-                        ?: fallback.firstOrNull { it.key == key }
-                        ?: AndroidModule(key = key, title = key)
-                    NavigationBarItem(
-                        selected = selected.key == key,
-                        onClick = { viewModel.selectModule(key) },
-                        icon = { Icon(moduleIcon(key), contentDescription = module.title) },
-                        label = { Text(module.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    )
+            if (detail == null) {
+                NavigationBar {
+                    listOf("dashboard", "articles", "a_stock", "auction", "system").forEach { key ->
+                        val module = modules.firstOrNull { it.key == key }
+                            ?: fallback.firstOrNull { it.key == key }
+                            ?: AndroidModule(key = key, title = key)
+                        NavigationBarItem(
+                            selected = selected.key == key,
+                            onClick = { viewModel.selectModule(key) },
+                            icon = { Icon(moduleIcon(key), contentDescription = module.title) },
+                            label = { Text(module.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        )
+                    }
                 }
             }
         },
     ) { padding ->
-        val contentModifier = if (hideHeaderContent) {
+        val contentModifier = if (detail != null) {
+            Modifier.padding(padding).fillMaxSize()
+        } else if (hideHeaderContent) {
             Modifier.padding(padding).fillMaxSize().statusBarsPadding()
         } else {
             Modifier.padding(padding).fillMaxSize()
@@ -149,7 +171,17 @@ private fun PortalScreen(state: YuqingUiState, viewModel: YuqingViewModel) {
                     CircularProgressIndicator()
                 }
             }
-            ModuleContent(selected.key, state.dashboard, state, viewModel)
+            if (detail != null) {
+                AStockBacktestDetailScreen(detail)
+            } else {
+                ModuleContent(
+                    key = selected.key,
+                    dashboard = state.dashboard,
+                    state = state,
+                    viewModel = viewModel,
+                    onOpenAStockBacktest = { backtestDetail = it },
+                )
+            }
         }
     }
     state.pendingAction?.let { pending ->
@@ -191,7 +223,13 @@ private fun ModuleStrip(modules: List<AndroidModule>, selectedKey: String, viewM
 }
 
 @Composable
-private fun ModuleContent(key: String, dashboard: AndroidDashboard?, state: YuqingUiState, viewModel: YuqingViewModel) {
+private fun ModuleContent(
+    key: String,
+    dashboard: AndroidDashboard?,
+    state: YuqingUiState,
+    viewModel: YuqingViewModel,
+    onOpenAStockBacktest: (AStockBacktestDetailState) -> Unit = {},
+) {
     if (dashboard == null) {
         EmptyState("暂无缓存数据，请刷新")
         return
@@ -204,7 +242,7 @@ private fun ModuleContent(key: String, dashboard: AndroidDashboard?, state: Yuqi
         "auction" -> AStockAuctionModule(state.aStockAuction, viewModel)
         "analysis" -> AnalysisModule(dashboard)
         "reports" -> ReportsModule(dashboard.reports, viewModel)
-        "a_stock" -> AStockModule(state, viewModel)
+        "a_stock" -> AStockModule(state, viewModel, onOpenAStockBacktest)
         "stock_research" -> StockResearchModule(dashboard.stockResearch.items, viewModel)
         "holdings" -> HoldingsModule(dashboard.holdings.items)
         "system" -> SystemModule(dashboard, state, viewModel)
@@ -321,7 +359,11 @@ private fun ReportsModule(reports: List<Report>, viewModel: YuqingViewModel) {
 }
 
 @Composable
-private fun AStockModule(state: YuqingUiState, viewModel: YuqingViewModel) {
+private fun AStockModule(
+    state: YuqingUiState,
+    viewModel: YuqingViewModel,
+    onOpenAStockBacktest: (AStockBacktestDetailState) -> Unit,
+) {
     val window = state.aStockRecommendationWindow
     val morningSnapshot = state.morningAStockRecommendation
     val morningRecommendations = state.morningAStockRecommendations
@@ -329,17 +371,10 @@ private fun AStockModule(state: YuqingUiState, viewModel: YuqingViewModel) {
     val afternoonRecommendations = state.afternoonAStockRecommendations
     val morningBacktests = remember(morningSnapshot?.backtestsJson) { parseAStockBacktests(morningSnapshot?.backtestsJson) }
     val afternoonBacktests = remember(afternoonSnapshot?.backtestsJson) { parseAStockBacktests(afternoonSnapshot?.backtestsJson) }
-    var selectedBacktest by remember { mutableStateOf<AStockBacktestDialogState?>(null) }
     val isLatestDate = isLatestSelectableAStockDate(window.date)
-    selectedBacktest?.let {
-        AStockBacktestDialog(it, onDismiss = { selectedBacktest = null })
-    }
     LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = { viewModel.shiftAStockRecommendationDate(-2) }) {
-                    Text("前两日")
-                }
                 TextButton(onClick = { viewModel.shiftAStockRecommendationDate(-1) }) {
                     Text("前一日")
                 }
@@ -354,9 +389,6 @@ private fun AStockModule(state: YuqingUiState, viewModel: YuqingViewModel) {
                 if (!isLatestDate) {
                     TextButton(onClick = { viewModel.shiftAStockRecommendationDate(1) }) {
                         Text("后一日")
-                    }
-                    TextButton(onClick = { viewModel.shiftAStockRecommendationDate(2) }) {
-                        Text("后两日")
                     }
                 }
             }
@@ -377,7 +409,14 @@ private fun AStockModule(state: YuqingUiState, viewModel: YuqingViewModel) {
         }
         items(morningRecommendations) { item ->
             AStockRecommendationRow(item) {
-                selectedBacktest = AStockBacktestDialogState(item, findAStockBacktest(morningBacktests, item))
+                onOpenAStockBacktest(
+                    AStockBacktestDetailState(
+                        recommendation = item,
+                        row = findAStockBacktest(morningBacktests, item),
+                        strategyDate = window.date,
+                        sectionLabel = "上午推荐",
+                    ),
+                )
             }
         }
         item { RecommendationSeparator() }
@@ -387,7 +426,14 @@ private fun AStockModule(state: YuqingUiState, viewModel: YuqingViewModel) {
         }
         items(afternoonRecommendations) { item ->
             AStockRecommendationRow(item) {
-                selectedBacktest = AStockBacktestDialogState(item, findAStockBacktest(afternoonBacktests, item))
+                onOpenAStockBacktest(
+                    AStockBacktestDetailState(
+                        recommendation = item,
+                        row = findAStockBacktest(afternoonBacktests, item),
+                        strategyDate = window.date,
+                        sectionLabel = "下午推荐",
+                    ),
+                )
             }
         }
     }
@@ -563,35 +609,92 @@ private fun ArticleRow(item: ArticleItem) {
     SimpleRow(item.title, listOf(item.sourceType, item.publishTimeText, item.summary).filter { it.isNotBlank() }.joinToString("  "))
 }
 
-private data class AStockBacktestDialogState(
+private data class AStockBacktestDetailState(
     val recommendation: AStockRecommendation,
     val row: AStockBacktestRow?,
+    val strategyDate: String,
+    val sectionLabel: String,
 )
 
 @Composable
-private fun AStockBacktestDialog(state: AStockBacktestDialogState, onDismiss: () -> Unit) {
+private fun AStockBacktestDetailScreen(state: AStockBacktestDetailState) {
     val row = state.row
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
-        title = { Text("${state.recommendation.code} ${state.recommendation.name}") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (row == null) {
-                    Text("暂无回测结果，请先在 A股页面刷新当前回测。")
-                } else {
-                    Text("买入价 ${row.entryOpen.ifBlank { "--" }}")
-                    Text("T+0 ${row.t0Return.ifBlank { "--" }}")
-                    (0 until 5).forEach { index ->
-                        val cell = row.days.getOrNull(index)
-                        Text("T+${index + 1} ${cell?.returnPct?.ifBlank { "--" } ?: "--"}")
+    LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item {
+            SimpleRow(
+                "${state.recommendation.code} ${state.recommendation.name}",
+                listOf(
+                    state.strategyDate,
+                    state.sectionLabel,
+                    "现价 ${state.recommendation.currentPrice.ifBlank { "--" }}",
+                    "今日 ${state.recommendation.todayPct.ifBlank { "--" }}",
+                ).joinToString("  "),
+            )
+        }
+        if (row == null) {
+            item { SimpleRow("暂无回测结果", "请先在 A股页面刷新当前回测。") }
+        } else {
+            item {
+                SimpleRow(
+                    "买入价 ${row.entryOpen.ifBlank { "--" }}",
+                    "状态 ${row.status.ifBlank { "--" }}",
+                )
+            }
+            item { SectionTitle("回测数据") }
+            item {
+                Card {
+                    Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        AStockBacktestMetricHeader()
+                        AStockBacktestMetricRow("T+0", row.t0Return.ifBlank { "--" }, row.t0Close.ifBlank { "--" })
+                        (0 until 5).forEach { index ->
+                            val cell = row.days.getOrNull(index)
+                            AStockBacktestMetricRow(
+                                label = "T+${index + 1}",
+                                returnValue = cell?.returnPct?.ifBlank { "--" } ?: "--",
+                                closeValue = cell?.close?.ifBlank { "--" } ?: "--",
+                            )
+                        }
                     }
-                    Text("五日内最高涨幅 ${row.bestReturn.ifBlank { "--" }}")
-                    Text("状态 ${row.status.ifBlank { "--" }}")
                 }
             }
-        },
-    )
+            item {
+                SimpleRow(
+                    "五日内最高涨幅 ${row.bestReturn.ifBlank { "--" }}",
+                    cleanAStockRecommendationReason(state.recommendation.reason).ifBlank { "暂无推荐说明" },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AStockBacktestMetricHeader() {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("阶段", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
+        Text("涨幅", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
+        Text("收盘价", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
+    }
+}
+
+@Composable
+private fun AStockBacktestMetricRow(label: String, returnValue: String, closeValue: String) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+        Text(
+            returnValue,
+            modifier = Modifier.weight(1f),
+            color = backtestValueColor(returnValue),
+            fontWeight = FontWeight.Medium,
+        )
+        Text(closeValue, modifier = Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun backtestValueColor(value: String) = when {
+    value.startsWith("+") -> MaterialTheme.colorScheme.primary
+    value.startsWith("-") -> MaterialTheme.colorScheme.error
+    else -> MaterialTheme.colorScheme.onSurface
 }
 
 @Composable

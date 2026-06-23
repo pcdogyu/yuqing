@@ -2643,6 +2643,9 @@ func TestAStockMarketViewFiltersDeepDrawdownsAndPenalizesSector(t *testing.T) {
 	if rows[0].T0Return != "+1.00%" || rows[0].T0ReturnClass != "astock-up" {
 		t.Fatalf("expected T+0 return to use strategy-day realtime/close pct field, got %+v", rows[0])
 	}
+	if rows[0].T0Close != "100.00" {
+		t.Fatalf("expected T+0 close to carry strategy-day close price, got %+v", rows[0])
+	}
 	rowStocks := strings.Join([]string{rows[0].Stock, rows[1].Stock}, " ")
 	if strings.Contains(rowStocks, "000001") || strings.Contains(rowStocks, "000004") {
 		t.Fatalf("expected backtest rows to exclude market-filtered candidates, got %+v", rows)
@@ -2727,6 +2730,9 @@ func TestAStockBacktestUses0930EntryPrice(t *testing.T) {
 	}
 	if rows[0].EntryOpen != "66.00" {
 		t.Fatalf("expected entry price to use 09:30 price, got %+v", rows[0])
+	}
+	if rows[0].T0Close != "67.00" {
+		t.Fatalf("expected T+0 close to use strategy-day close price, got %+v", rows[0])
 	}
 	if rows[0].Days[0].Return != "+5.00%" {
 		t.Fatalf("expected T+1 return to use 09:30 entry price, got %+v", rows[0])

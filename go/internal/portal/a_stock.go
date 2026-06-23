@@ -100,6 +100,7 @@ type aStockBacktestRow struct {
 	Stock           string
 	EntryOpen       string
 	T0Return        string
+	T0Close         string
 	T0ReturnClass   string
 	Days            []aStockBacktestCell
 	BestReturn      string
@@ -2102,6 +2103,7 @@ func buildAStockBacktestRows(strategyDate string, recommendations []aStockRecomm
 			Stock:           rec.Code + " " + rec.Name,
 			EntryOpen:       "--",
 			T0Return:        "--",
+			T0Close:         "--",
 			T0ReturnClass:   "astock-flat",
 			Days:            make([]aStockBacktestCell, 5),
 			BestReturn:      "--",
@@ -2129,6 +2131,9 @@ func buildAStockBacktestRows(strategyDate string, recommendations []aStockRecomm
 		entryPrice := aStockEntryPrice(entry)
 		row.EntryOpen = formatAStockPrice(entryPrice)
 		row.T0Return = formatAStockPct(entry.Pct)
+		if entry.Close > 0 {
+			row.T0Close = formatAStockPrice(entry.Close)
+		}
 		row.T0ReturnClass = aStockPctClass(entry.Pct)
 		bestSet := false
 		bestReturn := 0.0

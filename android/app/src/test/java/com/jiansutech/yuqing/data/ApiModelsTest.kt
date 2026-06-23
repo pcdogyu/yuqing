@@ -87,4 +87,24 @@ class ApiModelsTest {
         assertEquals("600000", recommendations.first().code)
         assertEquals(238, recommendations.first().marketScore)
     }
+
+    @Test
+    fun aStockBacktestRowParsesT0Close() {
+        val payload = """
+            {
+              "Stock": "603083 剑桥科技",
+              "EntryOpen": "240.00",
+              "T0Return": "+1.70%",
+              "T0Close": "244.08",
+              "Days": [{"Close":"250.00","Return":"+4.17%"}],
+              "BestReturn": "+4.17%",
+              "Status": "已回测T+1"
+            }
+        """.trimIndent()
+
+        val row = ApiFactory.json.decodeFromString(AStockBacktestRow.serializer(), payload)
+
+        assertEquals("244.08", row.t0Close)
+        assertEquals("+4.17%", row.days.first().returnPct)
+    }
 }
