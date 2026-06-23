@@ -3729,10 +3729,12 @@ func TestArticlesPagePresentationUsesShanghaiTimeAndNoFavoriteAction(t *testing.
 		app.BranchName = oldBranch
 	})
 
+	articleRawQuery := ""
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/v1/articles":
+			articleRawQuery = r.URL.RawQuery
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"code":    http.StatusOK,
 				"message": "ok",
@@ -3790,6 +3792,9 @@ func TestArticlesPagePresentationUsesShanghaiTimeAndNoFavoriteAction(t *testing.
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
+	if !strings.Contains(articleRawQuery, "time_field=captured_at") || !strings.Contains(articleRawQuery, "sort=captured_at_desc") {
+		t.Fatalf("expected article list request to sort/filter by captured_at, got query %q", articleRawQuery)
+	}
 	body := rr.Body.String()
 	for _, unexpected := range []string{
 		`class="col-status"`,
@@ -3803,7 +3808,7 @@ func TestArticlesPagePresentationUsesShanghaiTimeAndNoFavoriteAction(t *testing.
 	}
 	renderedText := strings.ReplaceAll(html.UnescapeString(body), "&#43;", "+")
 	for _, expected := range []string{
-		`<th class="col-title">标题</th><th class="col-source">来源</th><th class="col-time">时间</th><th class="col-actions">操作</th>`,
+		`<th class="col-title">标题</th><th class="col-source">来源</th><th class="col-time">发布时间</th><th class="col-actions">操作</th>`,
 		`金十`,
 		`PANews`,
 		`CoinDesk`,
