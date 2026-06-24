@@ -61,9 +61,12 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import com.jiansutech.yuqing.astock.AStockTradingCalendar
 import com.jiansutech.yuqing.data.AndroidDashboard
@@ -688,8 +691,21 @@ private fun ArticleRow(item: ArticleItem) {
             .ifBlank { formatArticleRelativeTime(item.publishTime) }
             .ifBlank { formatArticleRelativeTime(item.capturedAt) }
     }
-    val titleText = remember(item.title, displayTime) {
-        articleTitleWithRelativeTime(item.title, displayTime)
+    val title = remember(item.title) { item.title.trim().ifBlank { "--" } }
+    val relativeTimeStyle = SpanStyle(
+        fontWeight = FontWeight.Normal,
+        fontSize = MaterialTheme.typography.bodySmall.fontSize,
+    )
+    val titleText = remember(title, displayTime, relativeTimeStyle) {
+        buildAnnotatedString {
+            append(title)
+            if (displayTime.isNotBlank()) {
+                append(" ")
+                withStyle(relativeTimeStyle) {
+                    append(displayTime)
+                }
+            }
+        }
     }
     Card {
         Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
