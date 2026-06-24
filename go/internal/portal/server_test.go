@@ -2146,7 +2146,7 @@ func TestAStockContextRefreshKeepsPersistedRecommendationSelections(t *testing.T
 	defer market.Close()
 	t.Setenv("YUQING_ASTOCK_MARKET_URL", market.URL)
 
-	snapshotGets := 0
+	afternoonSnapshotGets := 0
 	selectionGets := 0
 	selectionPosts := 0
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2156,6 +2156,10 @@ func TestAStockContextRefreshKeepsPersistedRecommendationSelections(t *testing.T
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0}})
 		case "/api/v1/a-stock/recommendation-selections":
 			selectionGets++
+			if r.URL.Query().Get("period") != "afternoon" {
+				writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{Found: false})
+				return
+			}
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{
 				Found:        true,
 				StrategyDate: "2026-06-23",
@@ -2167,7 +2171,9 @@ func TestAStockContextRefreshKeepsPersistedRecommendationSelections(t *testing.T
 				UpdatedAt: time.Date(2026, 6, 23, 5, 5, 0, 0, time.UTC),
 			})
 		case "/api/v1/a-stock/recommendations":
-			snapshotGets++
+			if r.URL.Query().Get("period") == "afternoon" {
+				afternoonSnapshotGets++
+			}
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
 		case "/api/v1/internal/a-stock/recommendations":
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Inserted: 1})
@@ -2190,8 +2196,8 @@ func TestAStockContextRefreshKeepsPersistedRecommendationSelections(t *testing.T
 	if selectionGets == 0 {
 		t.Fatal("expected persisted selection lookup")
 	}
-	if snapshotGets != 0 {
-		t.Fatalf("expected locked selection path to bypass snapshot reads, got %d", snapshotGets)
+	if afternoonSnapshotGets != 0 {
+		t.Fatalf("expected locked selection path to bypass afternoon snapshot reads, got %d", afternoonSnapshotGets)
 	}
 	if selectionPosts != 0 {
 		t.Fatalf("expected locked selection path to avoid rewriting selections, got %d", selectionPosts)
@@ -3074,7 +3080,7 @@ func TestAStockOverviewBacktestStatusIncludesFilterReasons(t *testing.T) {
 		SameDayMorningFiltered: 1,
 		LimitUpFiltered:        3,
 	})
-	for _, want := range []string{"已回测 3/3", "5日内重复过滤股票 2", "过滤上午已推荐股票 1", "涨停过滤股票 3"} {
+	for _, want := range []string{"已回测 3/3", "5日内重复过滤股票 2", "过滤上午同股票/热点名额 1", "涨停过滤股票 3"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected overview status to contain %q, got %q", want, got)
 		}
@@ -3961,6 +3967,36 @@ func TestAStockAfternoonRecommendationsFilterMorningCodes(t *testing.T) {
 	}
 	if filtered[0].Rank != 1 || filtered[0].Code != "688981" {
 		t.Fatalf("expected remaining afternoon stock to be reranked, got %+v", filtered)
+	}
+}
+
+func TestAStockAfternoonRecommendationsRespectDailyHotspotQuota(t *testing.T) {
+	morningCounts := map[string]int{
+		"人工智能": 1,
+		"金融券商": 3,
+	}
+	afternoon := []aStockRecommendation{
+		{Rank: 1, Hotspot: "人工智能", Code: "300024", Name: "机器人", MarketScore: 120},
+		{Rank: 2, Hotspot: "人工智能", Code: "300059", Name: "东方财富", MarketScore: 110},
+		{Rank: 3, Hotspot: "人工智能", Code: "300857", Name: "协创数据", MarketScore: 100},
+		{Rank: 4, Hotspot: "金融券商", Code: "601688", Name: "华泰证券", MarketScore: 130},
+		{Rank: 5, Hotspot: "金融券商", Code: "600030", Name: "中信证券", MarketScore: 125},
+		{Rank: 6, Hotspot: "半导体", Code: "688981", Name: "中芯国际", MarketScore: 90},
+	}
+
+	filtered, skipped := filterAStockRecommendationsByMorningHotspotQuota(afternoon, morningCounts, aStockStocksPerHotspot)
+
+	if skipped != 3 {
+		t.Fatalf("expected one AI and two finance recommendations to be skipped, got skipped=%d filtered=%+v", skipped, filtered)
+	}
+	wantCodes := []string{"300024", "300059", "688981"}
+	if len(filtered) != len(wantCodes) {
+		t.Fatalf("expected daily hotspot quota to keep %d recommendations, got %+v", len(wantCodes), filtered)
+	}
+	for i, want := range wantCodes {
+		if filtered[i].Code != want || filtered[i].Rank != i+1 {
+			t.Fatalf("expected filtered recommendation %d to be %s with rerank, got %+v", i+1, want, filtered)
+		}
 	}
 }
 

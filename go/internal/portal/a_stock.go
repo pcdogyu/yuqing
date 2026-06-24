@@ -691,7 +691,7 @@ func aStockOverviewBacktestStatus(ctx aStockContext) string {
 		reasons = append(reasons, fmt.Sprintf("5日内重复过滤股票 %d", ctx.RecentFiltered))
 	}
 	if ctx.SameDayMorningFiltered > 0 {
-		reasons = append(reasons, fmt.Sprintf("过滤上午已推荐股票 %d", ctx.SameDayMorningFiltered))
+		reasons = append(reasons, fmt.Sprintf("过滤上午同股票/热点名额 %d", ctx.SameDayMorningFiltered))
 	}
 	if ctx.LimitUpFiltered > 0 {
 		reasons = append(reasons, fmt.Sprintf("涨停过滤股票 %d", ctx.LimitUpFiltered))
@@ -1290,6 +1290,7 @@ func (s *Server) loadAStockContextWithRecommendationPhase(strategyDate string, p
 	}
 	allowPersistedRecommendations := phase == aStockRecommendationPhaseFinal && isAStockOfficialSelectionContext(ignoreRecent, ignoreLimitUp, filterTodayMarket)
 	if allowPersistedRecommendations && s.applyAStockRecommendationSelections(&ctx) {
+		s.applyAStockAfternoonSameDayCaps(&ctx, nil)
 		ctx.Recommendations = s.applyAStockHoldingSummaries(ctx.Recommendations)
 		ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus, ctx.LimitUpFiltered = s.loadAStockLockedMarketView(strategyDate, ctx.Period, ctx.Recommendations)
 		ctx.EmptyReason = aStockRecommendationEmptyReason(ctx)
@@ -1299,6 +1300,7 @@ func (s *Server) loadAStockContextWithRecommendationPhase(strategyDate string, p
 		return ctx
 	}
 	if allowPersistedRecommendations && s.applyAStockRecommendationSnapshotRecommendations(&ctx) {
+		s.applyAStockAfternoonSameDayCaps(&ctx, nil)
 		if err := s.saveAStockRecommendationSelections(ctx); err != nil && ctx.LoadMessage == "" {
 			ctx.LoadMessage = "A股已选股票保存失败：" + err.Error()
 		}
@@ -1337,8 +1339,7 @@ func (s *Server) loadAStockContextWithRecommendationPhase(strategyDate string, p
 			}
 		}
 		if period.Key == "afternoon" && len(ctx.Recommendations) > 0 {
-			morningCodes := s.loadSameDayMorningAStockRecommendationCodes(strategyDate, candidates)
-			ctx.Recommendations, ctx.SameDayMorningFiltered = filterAStockRecommendationsByCodes(ctx.Recommendations, morningCodes)
+			s.applyAStockAfternoonSameDayCaps(&ctx, candidates)
 		}
 	}
 	if len(ctx.Recommendations) > 0 && !ctx.IgnoreRecent {
@@ -1991,7 +1992,7 @@ func aStockRecommendationEmptyReason(ctx aStockContext) string {
 		return fmt.Sprintf("暂无推荐股票：%s %s 已生成候选，但5日内重复推荐过滤 %d 只。可关闭5日过滤后重新生成。", ctx.PeriodLabel, ctx.WindowLabel, ctx.RecentFiltered)
 	}
 	if ctx.SameDayMorningFiltered > 0 {
-		return fmt.Sprintf("暂无推荐股票：%s %s 已生成候选，但过滤上午已推荐股票 %d 只。", ctx.PeriodLabel, ctx.WindowLabel, ctx.SameDayMorningFiltered)
+		return fmt.Sprintf("暂无推荐股票：%s %s 已生成候选，但过滤上午同股票或已满热点名额 %d 只。", ctx.PeriodLabel, ctx.WindowLabel, ctx.SameDayMorningFiltered)
 	}
 	if ctx.LimitUpFiltered > 0 {
 		return fmt.Sprintf("暂无推荐股票：%s %s 已生成候选，但涨停过滤 %d 只。", ctx.PeriodLabel, ctx.WindowLabel, ctx.LimitUpFiltered)
@@ -2116,8 +2117,22 @@ func (s *Server) loadRecentAStockRecommendationCodesWithCache(strategyDate strin
 	return result
 }
 
-func (s *Server) loadSameDayMorningAStockRecommendationCodes(strategyDate string, candidates []aStockMarketCandidate) map[string]struct{} {
-	if persisted := s.loadPersistedAStockRecommendationCodes(strategyDate, "morning", false); len(persisted) > 0 {
+func (s *Server) applyAStockAfternoonSameDayCaps(ctx *aStockContext, candidates []aStockMarketCandidate) {
+	if ctx == nil || ctx.Period != "afternoon" || len(ctx.Recommendations) == 0 {
+		return
+	}
+	morningRecommendations := s.loadSameDayMorningAStockRecommendations(ctx.Date, candidates)
+	if len(morningRecommendations) == 0 {
+		return
+	}
+	filtered, sameCodeFiltered := filterAStockRecommendationsByCodes(ctx.Recommendations, aStockRecommendationCodeSet(morningRecommendations))
+	filtered, hotspotQuotaFiltered := filterAStockRecommendationsByMorningHotspotQuota(filtered, aStockRecommendationHotspotCounts(morningRecommendations), aStockStocksPerHotspot)
+	ctx.Recommendations = filtered
+	ctx.SameDayMorningFiltered += sameCodeFiltered + hotspotQuotaFiltered
+}
+
+func (s *Server) loadSameDayMorningAStockRecommendations(strategyDate string, candidates []aStockMarketCandidate) []aStockRecommendation {
+	if persisted := s.loadPersistedAStockRecommendations(strategyDate, "morning", false); len(persisted) > 0 {
 		return persisted
 	}
 	start, end := aStockWindow(strategyDate, "morning")
@@ -2125,13 +2140,17 @@ func (s *Server) loadSameDayMorningAStockRecommendationCodes(strategyDate string
 	if err != nil || len(items) == 0 {
 		return nil
 	}
-	return aStockRecommendationCodeSet(buildAStockSnapshotRecommendations(strategyDate, "morning", items, candidates))
+	return buildAStockSnapshotRecommendations(strategyDate, "morning", items, candidates)
 }
 
 func (s *Server) loadPersistedAStockRecommendationCodes(strategyDate string, period string, ignoreRecent bool) map[string]struct{} {
+	return aStockRecommendationCodeSet(s.loadPersistedAStockRecommendations(strategyDate, period, ignoreRecent))
+}
+
+func (s *Server) loadPersistedAStockRecommendations(strategyDate string, period string, ignoreRecent bool) []aStockRecommendation {
 	if !ignoreRecent {
 		if result, ok := s.loadAStockRecommendationSelections(strategyDate, period); ok && len(result.Items) > 0 {
-			return aStockRecommendationSelectionCodeSet(result.Items)
+			return aStockRecommendationSelectionsToRecommendations(result.Items)
 		}
 	}
 	snapshot, ok := s.loadAStockRecommendationSnapshot(strategyDate, period, ignoreRecent)
@@ -2142,7 +2161,7 @@ func (s *Server) loadPersistedAStockRecommendationCodes(strategyDate string, per
 	if err := json.Unmarshal([]byte(nonEmpty(snapshot.RecommendationsJSON, "[]")), &recommendations); err != nil {
 		return nil
 	}
-	return aStockRecommendationCodeSet(recommendations)
+	return rerankAStockRecommendations(recommendations)
 }
 
 func (s *Server) applyAStockHoldingSummaries(recommendations []aStockRecommendation) []aStockRecommendation {
@@ -4036,17 +4055,40 @@ func aStockRecommendationCodeSet(recommendations []aStockRecommendation) map[str
 	return codes
 }
 
-func aStockRecommendationSelectionCodeSet(items []model.AStockRecommendationSelection) map[string]struct{} {
-	if len(items) == 0 {
+func aStockRecommendationHotspotCounts(recommendations []aStockRecommendation) map[string]int {
+	if len(recommendations) == 0 {
 		return nil
 	}
-	codes := make(map[string]struct{}, len(items))
-	for _, item := range items {
-		if code := normalizeAStockCode(item.Code); code != "" {
-			codes[code] = struct{}{}
+	counts := make(map[string]int)
+	for _, rec := range recommendations {
+		hotspot := normalizeAStockRecommendationHotspot(rec.Hotspot)
+		if hotspot != "" {
+			counts[hotspot]++
 		}
 	}
-	return codes
+	return counts
+}
+
+func filterAStockRecommendationsByMorningHotspotQuota(recommendations []aStockRecommendation, morningHotspotCounts map[string]int, dailyLimit int) ([]aStockRecommendation, int) {
+	if len(recommendations) == 0 || len(morningHotspotCounts) == 0 || dailyLimit <= 0 {
+		return rerankAStockRecommendations(recommendations), 0
+	}
+	filtered := make([]aStockRecommendation, 0, len(recommendations))
+	afternoonCounts := make(map[string]int)
+	skipped := 0
+	for _, rec := range recommendations {
+		hotspot := normalizeAStockRecommendationHotspot(rec.Hotspot)
+		if hotspot != "" {
+			remaining := dailyLimit - morningHotspotCounts[hotspot]
+			if remaining <= 0 || afternoonCounts[hotspot] >= remaining {
+				skipped++
+				continue
+			}
+			afternoonCounts[hotspot]++
+		}
+		filtered = append(filtered, rec)
+	}
+	return rerankAStockRecommendations(filtered), skipped
 }
 
 func aStockRecommendationSelectionsToRecommendations(items []model.AStockRecommendationSelection) []aStockRecommendation {
