@@ -2484,6 +2484,146 @@ func TestAStockPageRefreshAllBacktestsSupplementsPartialCustomMarketHistory(t *t
 	}
 }
 
+func TestAStockPageRefreshAllBacktestsSupplementsCurrentDayAfternoonBacktest(t *testing.T) {
+	setAStockNowForTest(t, time.Date(2026, 6, 24, 14, 2, 0, 0, time.FixedZone("CST", 8*3600)))
+
+	market := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch normalizeAStockCode(r.URL.Query().Get("codes")) {
+		case "603936":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{
+					"items": []map[string]any{
+						{"code": "603936", "date": "2026-06-23", "open": 31.05, "close": 31.05, "pct": 0.45},
+						{"code": "603936", "date": "2026-06-24", "open": 29.00, "close": 27.09, "pct": -6.59, "entry_price": 29.00},
+					},
+				},
+			})
+		case "300024":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{
+					"items": []map[string]any{
+						{"code": "300024", "date": "2026-06-23", "open": 16.79, "close": 16.79, "pct": -2.21},
+						{"code": "300024", "date": "2026-06-24", "open": 16.26, "close": 16.42, "pct": 0.98},
+					},
+				},
+			})
+		default:
+			t.Fatalf("unexpected market query: %s", r.URL.RawQuery)
+		}
+	}))
+	defer market.Close()
+	t.Setenv("YUQING_ASTOCK_MARKET_URL", market.URL)
+
+	eastmoney := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		secid := r.URL.Query().Get("secid")
+		end := r.URL.Query().Get("end")
+		switch {
+		case secid == "1.603936" && r.URL.Query().Get("klt") == "1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{
+					"klines": []string{
+						"2026-06-24 09:30,28.95,29.00,0,0,0,0,0,0",
+					},
+				},
+			})
+		case secid == "0.300024" && r.URL.Query().Get("klt") == "1" && strings.Contains(end, "09:30"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{
+					"klines": []string{
+						"2026-06-24 09:30,16.00,16.03,0,0,0,0,0,0",
+					},
+				},
+			})
+		case secid == "0.300024" && r.URL.Query().Get("klt") == "1" && strings.Contains(end, "13:01"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{
+					"klines": []string{
+						"2026-06-24 13:01,16.05,16.08,0,0,0,0,0,0",
+					},
+				},
+			})
+		default:
+			t.Fatalf("unexpected eastmoney query: %s", r.URL.RawQuery)
+		}
+	}))
+	defer eastmoney.Close()
+	setAStockEastmoneyKlineURLForTest(t, eastmoney.URL)
+
+	savedSnapshots := map[string]model.AStockRecommendationSnapshot{}
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/articles":
+			writeEnvelope(w, http.StatusOK, "ok", model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0})
+		case "/api/v1/a-stock/recommendation-selections":
+			switch r.URL.Query().Get("period") {
+			case "morning":
+				writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{
+					Found:        true,
+					StrategyDate: "2026-06-24",
+					Period:       "morning",
+					Items: []model.AStockRecommendationSelection{
+						{Rank: 1, Code: "603936", Name: "博敏电子", Hotspot: "AI硬件", MarketScore: 88, Reason: "morning"},
+					},
+				})
+			case "afternoon":
+				writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{
+					Found:        true,
+					StrategyDate: "2026-06-24",
+					Period:       "afternoon",
+					Items: []model.AStockRecommendationSelection{
+						{Rank: 1, Code: "300024", Name: "机器人", Hotspot: "人工智能", MarketScore: 92, Reason: "afternoon"},
+					},
+				})
+			default:
+				t.Fatalf("unexpected selection period: %s", r.URL.RawQuery)
+			}
+		case "/api/v1/a-stock/recommendations":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
+		case "/api/v1/internal/a-stock/recommendations":
+			var snapshot model.AStockRecommendationSnapshot
+			if err := json.NewDecoder(r.Body).Decode(&snapshot); err != nil {
+				t.Fatalf("decode snapshot: %v", err)
+			}
+			savedSnapshots[snapshot.Period] = snapshot
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Updated: 1})
+		case "/api/v1/a-stock/holdings/summary":
+			writeEnvelope(w, http.StatusOK, "ok", model.StockInstitutionHoldingSummary{})
+		default:
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-24&period=morning&refresh_all_backtests=1", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	afternoonSnapshot, ok := savedSnapshots["afternoon"]
+	if !ok {
+		t.Fatalf("expected afternoon snapshot to be persisted, got %+v", savedSnapshots)
+	}
+	var backtests []aStockBacktestRow
+	if err := json.Unmarshal([]byte(afternoonSnapshot.BacktestsJSON), &backtests); err != nil {
+		t.Fatalf("decode afternoon backtests: %v", err)
+	}
+	if len(backtests) != 1 {
+		t.Fatalf("expected one afternoon backtest row, got %+v", backtests)
+	}
+	if backtests[0].AfternoonOpen != "16.08" || backtests[0].T0Return != "+2.11%" || backtests[0].T0Close != "16.42" {
+		t.Fatalf("expected current-day afternoon backtest values to be supplemented, got %+v", backtests[0])
+	}
+	if backtests[0].Status != "等待T+1行情" {
+		t.Fatalf("expected current-day afternoon backtest to wait for T+1, got %+v", backtests[0])
+	}
+}
+
 func TestAStockPageRefreshAllBacktestsPreservesPersistedAfternoonPrices(t *testing.T) {
 	market := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -4077,6 +4217,86 @@ func TestAStockMarketBarsFallbackToYahooWhenEastmoneyUnavailable(t *testing.T) {
 	}
 	if bars[2].Pct < 13.03 || bars[2].Pct > 13.05 {
 		t.Fatalf("expected yahoo fallback to compute pct change, got %+v", bars[2])
+	}
+}
+
+func TestAStockMarketBarsYahooFallbackStillSupplementsSessionPrices(t *testing.T) {
+	custom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "data": map[string]any{"items": []any{}}})
+	}))
+	defer custom.Close()
+
+	eastmoney := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("secid") != "0.300024" {
+			t.Fatalf("unexpected eastmoney secid: %s", r.URL.RawQuery)
+		}
+		switch r.URL.Query().Get("klt") {
+		case "101":
+			http.Error(w, "eastmoney daily unavailable", http.StatusBadGateway)
+		case "1":
+			w.Header().Set("Content-Type", "application/json")
+			end := r.URL.Query().Get("end")
+			switch {
+			case strings.Contains(end, "09:30"):
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"data": map[string]any{
+						"klines": []string{
+							"2026-06-24 09:30,16.00,16.03,0,0,0,0,0,0",
+						},
+					},
+				})
+			case strings.Contains(end, "13:01"):
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"data": map[string]any{
+						"klines": []string{
+							"2026-06-24 13:01,16.05,16.08,0,0,0,0,0,0",
+						},
+					},
+				})
+			default:
+				t.Fatalf("unexpected minute eastmoney query: %s", r.URL.RawQuery)
+			}
+		default:
+			t.Fatalf("unexpected eastmoney klt: %s", r.URL.RawQuery)
+		}
+	}))
+	defer eastmoney.Close()
+	setAStockEastmoneyKlineURLForTest(t, eastmoney.URL)
+
+	location := aStockLocation()
+	unixDay := func(day string) int64 {
+		parsed, err := time.ParseInLocation("2006-01-02", day, location)
+		if err != nil {
+			t.Fatalf("parse test date: %v", err)
+		}
+		return parsed.Unix()
+	}
+	yahoo := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/300024.SZ" {
+			t.Fatalf("unexpected yahoo path: %s", r.URL.String())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"chart":{"result":[{"timestamp":[%d,%d],"indicators":{"quote":[{"open":[16.79,16.26],"close":[16.79,16.42]}]}}],"error":null}}`,
+			unixDay("2026-06-23"), unixDay("2026-06-24"))
+	}))
+	defer yahoo.Close()
+	setAStockYahooChartURLForTest(t, yahoo.URL)
+
+	srv := NewServer(config.Config{})
+	bars, err := srv.loadAStockMarketBars("2026-06-24", []string{"300024"}, custom.URL)
+	if err != nil {
+		t.Fatalf("expected yahoo fallback bars with session enrichment, got error: %v", err)
+	}
+	if len(bars) != 2 {
+		t.Fatalf("expected two market bars, got %+v", bars)
+	}
+	if bars[1].EntryPrice != 16.03 || bars[1].AfternoonEntryPrice != 16.08 {
+		t.Fatalf("expected yahoo fallback bars to include session prices, got %+v", bars[1])
+	}
+	rows := buildAStockBacktestRows("2026-06-24", "afternoon", []aStockRecommendation{{Code: "300024", Name: "机器人"}}, groupAStockMarketBars(bars))
+	if len(rows) != 1 || rows[0].AfternoonOpen != "16.08" || rows[0].T0Return != "+2.11%" {
+		t.Fatalf("expected afternoon backtest to use session prices after yahoo fallback, got %+v", rows)
 	}
 }
 

@@ -2597,7 +2597,7 @@ func (s *Server) loadAStockMarketBars(strategyDate string, codes []string, endpo
 				return bars, nil
 			}
 		}
-		if bars, fallbackErr := s.loadDefaultAStockBars(strategyDate, codes); fallbackErr == nil && len(bars) > 0 {
+		if bars, fallbackErr := s.loadDefaultAStockBarsWithSessionPrices(strategyDate, codes); fallbackErr == nil && len(bars) > 0 {
 			return bars, nil
 		}
 		if err != nil {
@@ -2608,7 +2608,16 @@ func (s *Server) loadAStockMarketBars(strategyDate string, codes []string, endpo
 		}
 		return nil, fmt.Errorf("market endpoint returned no bars")
 	}
-	return s.loadDefaultAStockBars(strategyDate, codes)
+	return s.loadDefaultAStockBarsWithSessionPrices(strategyDate, codes)
+}
+
+func (s *Server) loadDefaultAStockBarsWithSessionPrices(strategyDate string, codes []string) ([]aStockMarketBar, error) {
+	bars, err := s.loadDefaultAStockBars(strategyDate, codes)
+	if err != nil || len(bars) == 0 {
+		return bars, err
+	}
+	s.enrichAStockSessionPrices(strategyDate, codes, bars)
+	return bars, nil
 }
 
 func shouldSupplementAStockMarketBars(strategyDate string, codes []string, bars []aStockMarketBar) bool {
