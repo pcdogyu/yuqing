@@ -4525,10 +4525,11 @@ func TestArticlesPagePresentationUsesPublishTimeInShanghaiAndNoFavoriteAction(t 
 							CapturedAt: time.Date(2026, 6, 12, 8, 17, 25, 0, time.UTC),
 						},
 						{
-							ID:         4,
-							Title:      "Foresight 测试文章",
-							SourceType: "foresight_newsflash",
-							CapturedAt: time.Date(2026, 6, 12, 9, 17, 25, 0, time.UTC),
+							ID:              4,
+							Title:           "Foresight 测试文章",
+							SourceType:      "foresight_newsflash",
+							PublishTimeText: "7分钟前",
+							CapturedAt:      time.Date(2026, 6, 12, 9, 17, 25, 0, time.UTC),
 						},
 					},
 				},
@@ -4576,6 +4577,7 @@ func TestArticlesPagePresentationUsesPublishTimeInShanghaiAndNoFavoriteAction(t 
 		`<td>2026-06-12 14:17</td>`,
 		`<td>2026-06-12 15:17</td>`,
 		`<td>2026-06-12 16:17</td>`,
+		`<td>2026-06-12 17:10</td>`,
 		`隐藏文章`,
 		`Code By Yuhao@jiansutech.com - 2026-06-12 14:17:25 UTC+8 - abcdef1 - golang-jin10-sqlite`,
 	} {
@@ -4586,7 +4588,7 @@ func TestArticlesPagePresentationUsesPublishTimeInShanghaiAndNoFavoriteAction(t 
 	if strings.Contains(renderedText, `删除文章`) {
 		t.Fatalf("expected article list to stop showing delete label, got %s", body)
 	}
-	for _, unexpected := range []string{`采集时间`, `<td>2026-06-12 01:17</td>`, `<td>2026-06-12 06:17</td>`} {
+	for _, unexpected := range []string{`采集时间`, `7分钟前`, `<td>2026-06-12 01:17</td>`, `<td>2026-06-12 06:17</td>`} {
 		if strings.Contains(renderedText, unexpected) {
 			t.Fatalf("expected article list to show publish time in Shanghai instead of %q, got %s", unexpected, body)
 		}

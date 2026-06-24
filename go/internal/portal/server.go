@@ -3768,14 +3768,14 @@ func formatArticleCaptureTime(item model.Item) string {
 
 func formatArticlePublishTime(item model.Item) string {
 	for _, value := range []string{item.PublishTime, item.PublishTimeText} {
-		if formatted, ok := formatArticleTimeText(value); ok {
+		if formatted, ok := formatArticleTimeText(value, item.CapturedAt); ok {
 			return formatted
 		}
 	}
 	return formatArticleCaptureTime(item)
 }
 
-func formatArticleTimeText(raw string) (string, bool) {
+func formatArticleTimeText(raw string, capturedAt time.Time) (string, bool) {
 	value := strings.TrimSpace(raw)
 	if value == "" {
 		return "", false
@@ -3803,7 +3803,43 @@ func formatArticleTimeText(raw string) (string, bool) {
 			return parsed.In(loc).Format("2006-01-02 15:04"), true
 		}
 	}
+	if formatted, ok := formatRelativeArticleTime(value, capturedAt, loc); ok {
+		return formatted, true
+	}
 	return value, true
+}
+
+func formatRelativeArticleTime(value string, capturedAt time.Time, loc *time.Location) (string, bool) {
+	if capturedAt.IsZero() {
+		return "", false
+	}
+	base := capturedAt.In(loc)
+	switch value {
+	case "刚刚", "刚才", "现在":
+		return base.Format("2006-01-02 15:04"), true
+	}
+	if minutes, ok := parseChineseRelativeNumber(value, "分钟前"); ok {
+		return base.Add(-time.Duration(minutes) * time.Minute).Format("2006-01-02 15:04"), true
+	}
+	if hours, ok := parseChineseRelativeNumber(value, "小时前"); ok {
+		return base.Add(-time.Duration(hours) * time.Hour).Format("2006-01-02 15:04"), true
+	}
+	return "", false
+}
+
+func parseChineseRelativeNumber(value, suffix string) (int, bool) {
+	if !strings.HasSuffix(value, suffix) {
+		return 0, false
+	}
+	raw := strings.TrimSpace(strings.TrimSuffix(value, suffix))
+	if raw == "" {
+		return 0, false
+	}
+	number, err := strconv.Atoi(raw)
+	if err != nil || number < 0 {
+		return 0, false
+	}
+	return number, true
 }
 
 func userIDFromMap(user any) int64 {
