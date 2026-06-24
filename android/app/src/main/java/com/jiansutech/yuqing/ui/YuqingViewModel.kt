@@ -41,6 +41,12 @@ data class PendingAction(
     val params: Map<String, String> = emptyMap(),
 )
 
+data class ConnectionTestResult(
+    val loading: Boolean = false,
+    val ok: Boolean? = null,
+    val message: String = "",
+)
+
 data class AStockRecommendationWindow(
     val date: String,
     val period: String,
@@ -71,6 +77,7 @@ data class YuqingUiState(
     val aStockRecommendationWindow: AStockRecommendationWindow = currentAStockRecommendationWindow(),
     val searchKeyword: String = "",
     val searchResult: SearchResult? = null,
+    val connectionTests: Map<String, ConnectionTestResult> = emptyMap(),
     val pendingAction: PendingAction? = null,
 )
 
@@ -151,6 +158,35 @@ class YuqingViewModel(
 
     fun updateSearchKeyword(value: String) {
         _uiState.update { it.copy(searchKeyword = value) }
+    }
+
+    fun testConnection(title: String, baseUrl: String) {
+        val key = title.trim().ifBlank { baseUrl }
+        if (baseUrl.isBlank()) {
+            _uiState.update {
+                it.copy(
+                    connectionTests = it.connectionTests + (key to ConnectionTestResult(ok = false, message = "地址为空")),
+                )
+            }
+            return
+        }
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    connectionTests = it.connectionTests + (key to ConnectionTestResult(loading = true, message = "测试中")),
+                )
+            }
+            val result = ApiFactory.testUrl(baseUrl)
+            _uiState.update {
+                it.copy(
+                    connectionTests = it.connectionTests + (key to ConnectionTestResult(
+                        loading = false,
+                        ok = result.ok,
+                        message = result.message,
+                    )),
+                )
+            }
+        }
     }
 
     fun refreshAll() {
@@ -257,7 +293,7 @@ class YuqingViewModel(
                     articleLoading = true,
                     articleList = null,
                     error = "",
-                    message = "新闻获取中",
+                    message = "",
                 )
             }
             val session = sessionStore.state.first()
@@ -265,13 +301,13 @@ class YuqingViewModel(
                 val result = ApiFactory.yuqing(session.apiBaseUrl, session.token)
                     .articles(page = page.coerceAtLeast(1), pageSize = 10)
                     .data ?: error("文章数据为空")
-                _uiState.update { it.copy(articleList = result, message = "文章已加载") }
+                _uiState.update { it.copy(articleList = result, message = "") }
             }.onFailure { throwable ->
                 _uiState.update {
                     it.copy(
                         articleList = null,
                         error = throwable.message ?: "文章加载失败",
-                        message = "新闻获取中，请检查网络连接",
+                        message = "",
                     )
                 }
             }

@@ -13,6 +13,7 @@ private val articleTimeFormats = listOf(
     DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss"),
     DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm"),
 )
+private val articleDisplayTimeFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
 
 internal fun formatArticleRelativeTime(
     raw: String,
@@ -35,10 +36,27 @@ internal fun formatArticleRelativeTime(
     return value
 }
 
+internal fun formatArticlePublishTime(raw: String): String {
+    val value = raw.trim()
+    if (value.isBlank()) {
+        return ""
+    }
+    if (relativeMinutes(value) != null || value == "刚刚") {
+        return value
+    }
+    parseArticleTime(value)?.let { publishTime ->
+        return publishTime.format(articleDisplayTimeFormat)
+    }
+    return value
+}
+
 internal fun formatArticleCapturedTime(raw: String): String {
     val value = raw.trim()
     if (value.isBlank()) {
         return ""
+    }
+    parseArticleTime(value)?.let { capturedAt ->
+        return capturedAt.format(articleDisplayTimeFormat)
     }
     val withoutZone = value
         .replace('T', ' ')

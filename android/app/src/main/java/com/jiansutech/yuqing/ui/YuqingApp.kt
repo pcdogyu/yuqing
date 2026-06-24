@@ -112,7 +112,8 @@ private fun PortalScreen(state: YuqingUiState, viewModel: YuqingViewModel) {
         selected.key == "articles" ||
         selected.key == "search" ||
         selected.key == "a_stock" ||
-        selected.key == "auction"
+        selected.key == "auction" ||
+        selected.key == "system"
     val hideModuleStrip = hideTopBar || selected.key == "system"
     Scaffold(
         topBar = if (detail != null) {
@@ -551,11 +552,38 @@ private fun SystemModule(dashboard: AndroidDashboard, state: YuqingUiState, view
     val recentTasks = dashboard.recentTaskRunsForDisplay()
     val database = dashboard.operations.database
     val servicesByName = dashboard.operations.services.associateBy { it.name }
+    val webUrl = "http://yuqin.jiansutech.com:8079/"
+    val contentUrl = state.session.apiBaseUrl
+    val authUrl = state.session.authBaseUrl
     LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item { SectionTitle("连接") }
-        item { ConnectionRow("网页地址", "http://yuqin.jiansutech.com:8079/", servicesByName["gateway-web"]) }
-        item { ConnectionRow("内容服务地址", state.session.apiBaseUrl, servicesByName["content-service"]) }
-        item { ConnectionRow("API 地址", state.session.authBaseUrl, servicesByName["auth-service"]) }
+        item {
+            ConnectionRow(
+                title = "网页地址",
+                value = webUrl,
+                service = servicesByName["gateway-web"],
+                testResult = state.connectionTests["网页地址"],
+                onTest = { viewModel.testConnection("网页地址", webUrl) },
+            )
+        }
+        item {
+            ConnectionRow(
+                title = "内容服务地址",
+                value = contentUrl,
+                service = servicesByName["content-service"],
+                testResult = state.connectionTests["内容服务地址"],
+                onTest = { viewModel.testConnection("内容服务地址", contentUrl) },
+            )
+        }
+        item {
+            ConnectionRow(
+                title = "API 地址",
+                value = authUrl,
+                service = servicesByName["auth-service"],
+                testResult = state.connectionTests["API 地址"],
+                onTest = { viewModel.testConnection("API 地址", authUrl) },
+            )
+        }
         item {
             SimpleRow(
                 "数据库",
@@ -656,8 +684,9 @@ private fun MetricCard(title: String, value: String, modifier: Modifier = Modifi
 @Composable
 private fun ArticleRow(item: ArticleItem) {
     val displayTime = remember(item.capturedAt, item.publishTime, item.publishTimeText) {
-        formatArticleCapturedTime(item.capturedAt)
-            .ifBlank { item.publishTimeText.ifBlank { item.publishTime } }
+        formatArticlePublishTime(item.publishTimeText)
+            .ifBlank { formatArticlePublishTime(item.publishTime) }
+            .ifBlank { formatArticleCapturedTime(item.capturedAt) }
     }
     Card {
         Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -964,12 +993,23 @@ private fun SimpleRow(title: String, subtitle: String, modifier: Modifier = Modi
 }
 
 @Composable
-private fun ConnectionRow(title: String, value: String, service: ServiceStatus?) {
+private fun ConnectionRow(
+    title: String,
+    value: String,
+    service: ServiceStatus?,
+    testResult: ConnectionTestResult?,
+    onTest: () -> Unit,
+) {
     val statusKey = connectionStatusKey(service)
+    val testColor = when (testResult?.ok) {
+        true -> MaterialTheme.colorScheme.primary
+        false -> MaterialTheme.colorScheme.error
+        null -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
     Card {
         Row(
             modifier = Modifier.fillMaxWidth().padding(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f)) {
@@ -978,8 +1018,25 @@ private fun ConnectionRow(title: String, value: String, service: ServiceStatus?)
                     Spacer(Modifier.height(4.dp))
                     Text(value, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
                 }
+                if (testResult != null) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = when {
+                            testResult.loading -> "测试中"
+                            testResult.ok == true -> "测试通过 ${testResult.message}"
+                            else -> "测试失败 ${testResult.message.ifBlank { "--" }}"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = testColor,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
             ConnectionStatusDot(statusKey)
+            TextButton(onClick = onTest, enabled = testResult?.loading != true) {
+                Text(if (testResult?.loading == true) "测试中" else "测试")
+            }
         }
     }
 }

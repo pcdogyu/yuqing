@@ -36,8 +36,15 @@ class ArticleTimeTest {
     }
 
     @Test
-    fun capturedTimestampKeepsInternalClockWithoutTimezoneShift() {
-        assertEquals("2026-06-23 10:20", formatArticleCapturedTime("2026-06-23T10:20:01Z"))
+    fun capturedTimestampConvertsToBeijingClockWhenTimezoneIsPresent() {
+        assertEquals("2026-06-23 18:20", formatArticleCapturedTime("2026-06-23T10:20:01Z"))
         assertEquals("2026-06-23 10:20", formatArticleCapturedTime("2026-06-23 10:20:01"))
+    }
+
+    @Test
+    fun publishTimestampFormatsAbsoluteTimeWithoutRelativeText() {
+        assertEquals("2026-06-24 09:29", formatArticlePublishTime("2026-06-24 09:29:30"))
+        assertEquals("2026-06-24 09:30", formatArticlePublishTime("2026-06-24T01:30:12Z"))
+        assertEquals("5分钟前", formatArticlePublishTime("5分钟前"))
     }
 }

@@ -2,11 +2,14 @@ package com.jiansutech.yuqing.data
 
 import com.jiansutech.yuqing.BuildConfig
 import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.Request
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.http.Body
@@ -66,6 +69,12 @@ interface YuqingApi {
     ): ApiEnvelope<AndroidActionResponse>
 }
 
+data class UrlTestResult(
+    val ok: Boolean,
+    val code: Int? = null,
+    val message: String = "",
+)
+
 object ApiFactory {
     val json: Json = Json {
         ignoreUnknownKeys = true
@@ -79,6 +88,31 @@ object ApiFactory {
 
     fun yuqing(baseUrl: String = BuildConfig.DEFAULT_API_BASE_URL, token: String? = null): YuqingApi {
         return retrofit(normalizeApiBaseUrl(baseUrl), token).create(YuqingApi::class.java)
+    }
+
+    suspend fun testUrl(baseUrl: String, path: String = "healthz"): UrlTestResult = withContext(Dispatchers.IO) {
+        val normalizedBase = normalizeBaseUrl(baseUrl, BuildConfig.DEFAULT_API_BASE_URL)
+        val testPath = path.trim('/').ifBlank { "healthz" }
+        val url = normalizedBase.toHttpUrl()
+            .newBuilder()
+            .encodedPath("/")
+            .addPathSegments(testPath)
+            .build()
+        val client = OkHttpClient.Builder()
+            .connectTimeout(8, TimeUnit.SECONDS)
+            .readTimeout(8, TimeUnit.SECONDS)
+            .build()
+        runCatching {
+            client.newCall(Request.Builder().url(url).get().build()).execute().use { response ->
+                UrlTestResult(
+                    ok = response.isSuccessful,
+                    code = response.code,
+                    message = "HTTP ${response.code}",
+                )
+            }
+        }.getOrElse { throwable ->
+            UrlTestResult(false, null, throwable.message ?: "连接失败")
+        }
     }
 
     private fun retrofit(baseUrl: String, token: String?): Retrofit {
