@@ -217,6 +217,7 @@ const (
 	aStockRecommendationLimit     = 12
 	aStockReplacementPoolLimit    = 36
 	aStockReplacementPerHotspot   = 12
+	aStockHotspotLimit            = 3
 	aStockMarketRankScoreBase     = 200
 	aStockStocksPerHotspot        = 3
 )
@@ -3704,8 +3705,8 @@ func buildAStockRecommendationsWithLimit(hotspots []aStockHotspot, candidates []
 			return nil
 		}
 	}
-	if len(hotspots) > 3 {
-		hotspots = hotspots[:3]
+	if len(hotspots) > aStockHotspotLimit {
+		hotspots = hotspots[:aStockHotspotLimit]
 	}
 	if maxRecommendations <= 0 {
 		maxRecommendations = aStockRecommendationLimit
@@ -3787,8 +3788,15 @@ func buildAStockSnapshotRecommendationsWithLimit(strategyDate string, periodKey 
 	if len(snapshots) == 0 {
 		return buildAStockRecommendationsWithLimit(buildAStockHotspots(articles), candidates, maxRecommendations, maxPerHotspot)
 	}
+	if maxRecommendations <= 0 {
+		maxRecommendations = aStockRecommendationLimit
+	}
+	if maxPerHotspot <= 0 {
+		maxPerHotspot = aStockStocksPerHotspot
+	}
 	combined := make([]aStockRecommendation, 0)
 	seen := make(map[string]struct{})
+	hotspotCounts := make(map[string]int)
 	for _, snapshot := range snapshots {
 		snapshotArticles := filterAStockArticlesByPublishWindow(articles, snapshot.Start, snapshot.End)
 		if len(snapshotArticles) == 0 {
@@ -3802,6 +3810,15 @@ func buildAStockSnapshotRecommendationsWithLimit(strategyDate string, periodKey 
 			if _, exists := seen[code]; exists {
 				continue
 			}
+			hotspotKey := normalizeAStockRecommendationHotspot(rec.Hotspot)
+			if hotspotKey != "" {
+				if _, exists := hotspotCounts[hotspotKey]; !exists && len(hotspotCounts) >= aStockHotspotLimit {
+					continue
+				}
+				if hotspotCounts[hotspotKey] >= maxPerHotspot {
+					continue
+				}
+			}
 			seen[code] = struct{}{}
 			rec.Code = code
 			rec.Rank = len(combined) + 1
@@ -3809,6 +3826,9 @@ func buildAStockSnapshotRecommendationsWithLimit(strategyDate string, periodKey 
 				rec.Reason = rec.Reason + "，生成点 " + snapshot.Label
 			}
 			combined = append(combined, rec)
+			if hotspotKey != "" {
+				hotspotCounts[hotspotKey]++
+			}
 			if maxRecommendations > 0 && len(combined) >= maxRecommendations {
 				return combined
 			}
@@ -3818,6 +3838,10 @@ func buildAStockSnapshotRecommendationsWithLimit(strategyDate string, periodKey 
 		return buildAStockRecommendationsWithLimit(buildAStockHotspots(articles), candidates, maxRecommendations, maxPerHotspot)
 	}
 	return combined
+}
+
+func normalizeAStockRecommendationHotspot(value string) string {
+	return strings.TrimSpace(value)
 }
 
 func aStockRecommendationSnapshots(strategyDate string, periodKey string) []aStockRecommendationSnapshot {

@@ -3765,6 +3765,67 @@ func TestAStockSnapshotRecommendationsMergeAndDeduplicate(t *testing.T) {
 	}
 }
 
+func TestAStockSnapshotRecommendationsRespectPerHotspotLimitAcrossSnapshots(t *testing.T) {
+	items := []model.Item{
+		{ID: 1, SourceType: "flash", Title: "AI 算力继续升温", Summary: "人工智能景气度提升", PublishTime: "2026-06-18 12:40:00", TagFlags: "0.300024"},
+		{ID: 2, SourceType: "flash", Title: "AI 算力继续升温", Summary: "人工智能景气度提升", PublishTime: "2026-06-18 12:41:00", TagFlags: "0.300059"},
+		{ID: 3, SourceType: "flash", Title: "AI 算力继续升温", Summary: "人工智能景气度提升", PublishTime: "2026-06-18 12:42:00", TagFlags: "0.300857"},
+		{ID: 4, SourceType: "flash", Title: "AI 算力继续升温", Summary: "人工智能景气度提升", PublishTime: "2026-06-18 12:58:00", TagFlags: "0.301396"},
+		{ID: 5, SourceType: "flash", Title: "AI 算力继续升温", Summary: "人工智能景气度提升", PublishTime: "2026-06-18 12:59:00", TagFlags: "0.603986"},
+		{ID: 6, SourceType: "flash", Title: "AI 算力继续升温", Summary: "人工智能景气度提升", PublishTime: "2026-06-18 13:00:00", TagFlags: "0.603629"},
+	}
+	candidates := []aStockMarketCandidate{
+		{Code: "300024", Name: "机器人", Rank: 1, AuctionAmount: 20000000, AuctionVolume: 1000000},
+		{Code: "300059", Name: "东方财富", Rank: 2, AuctionAmount: 19000000, AuctionVolume: 900000},
+		{Code: "300857", Name: "协创数据", Rank: 3, AuctionAmount: 18000000, AuctionVolume: 800000},
+		{Code: "301396", Name: "宏景科技", Rank: 4, AuctionAmount: 17000000, AuctionVolume: 700000},
+		{Code: "603986", Name: "兆易创新", Rank: 5, AuctionAmount: 16000000, AuctionVolume: 600000},
+		{Code: "603629", Name: "利通电子", Rank: 6, AuctionAmount: 15000000, AuctionVolume: 500000},
+	}
+
+	recommendations := buildAStockSnapshotRecommendations("2026-06-18", "afternoon", items, candidates)
+
+	if len(recommendations) != 3 {
+		t.Fatalf("expected afternoon snapshot merge to keep max 3 stocks for one hotspot, got %+v", recommendations)
+	}
+	for _, rec := range recommendations {
+		if rec.Hotspot != "人工智能" {
+			t.Fatalf("expected only AI hotspot recommendations, got %+v", recommendations)
+		}
+	}
+}
+
+func TestAStockSnapshotRecommendationsRespectHotspotLimitAcrossSnapshots(t *testing.T) {
+	items := []model.Item{
+		{ID: 1, SourceType: "flash", Title: "AI 算力继续升温", Summary: "人工智能景气度提升", PublishTime: "2026-06-18 12:40:00", TagFlags: "0.300024"},
+		{ID: 2, SourceType: "flash", Title: "券商板块成交活跃", Summary: "证券与资本市场预期修复", PublishTime: "2026-06-18 12:41:00", TagFlags: "0.000728"},
+		{ID: 3, SourceType: "flash", Title: "半导体国产替代提速", Summary: "芯片先进封装景气回升", PublishTime: "2026-06-18 12:42:00", TagFlags: "0.688981"},
+		{ID: 4, SourceType: "flash", Title: "新能源储能需求回升", Summary: "光伏与储能景气改善", PublishTime: "2026-06-18 12:58:00", TagFlags: "0.300750"},
+	}
+	candidates := []aStockMarketCandidate{
+		{Code: "300024", Name: "机器人", Rank: 1, AuctionAmount: 20000000, AuctionVolume: 1000000},
+		{Code: "000728", Name: "国元证券", Rank: 2, AuctionAmount: 19000000, AuctionVolume: 900000},
+		{Code: "688981", Name: "中芯国际", Rank: 3, AuctionAmount: 18000000, AuctionVolume: 800000},
+		{Code: "300750", Name: "宁德时代", Rank: 4, AuctionAmount: 17000000, AuctionVolume: 700000},
+	}
+
+	recommendations := buildAStockSnapshotRecommendations("2026-06-18", "afternoon", items, candidates)
+
+	if len(recommendations) != 3 {
+		t.Fatalf("expected afternoon snapshot merge to keep max 3 hotspots, got %+v", recommendations)
+	}
+	hotspots := make(map[string]struct{})
+	for _, rec := range recommendations {
+		hotspots[rec.Hotspot] = struct{}{}
+	}
+	if len(hotspots) != 3 {
+		t.Fatalf("expected only 3 hotspots after merge, got %+v", recommendations)
+	}
+	if _, exists := hotspots["新能源"]; exists {
+		t.Fatalf("expected later fourth hotspot to be dropped by hotspot limit, got %+v", recommendations)
+	}
+}
+
 func TestAStockAfternoonRecommendationsFilterMorningCodes(t *testing.T) {
 	morning := []aStockRecommendation{{Code: "002230", Name: "科大讯飞"}}
 	afternoon := []aStockRecommendation{
