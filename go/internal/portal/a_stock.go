@@ -309,6 +309,9 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-overview-table th,.astock-overview-table td{vertical-align:top}
 		.astock-overview-table .astock-muted{display:block;margin-bottom:8px;font-size:14px}
 		.astock-overview-table .astock-overview-sub-label{margin-top:16px}
+		.astock-overview-window{width:10.9%}
+		.astock-overview-window strong{white-space:nowrap}
+		.astock-overview-meta{display:block;margin-top:8px;font-size:12px;line-height:1.45;color:#6a6257}
 		.astock-overview-table strong{display:block;font-size:22px;line-height:1.25}
 		.astock-overview-status{width:24%}
 		.astock-overview-status strong{white-space:normal;word-break:break-word}
@@ -519,9 +522,9 @@ func writeAStockPageScript(b *strings.Builder, strategyDate string) {
 func renderAStockOverviewSection(b *strings.Builder, morningCtx aStockContext, afternoonCtx aStockContext) {
 	b.WriteString(`<section><h2>顶部概览</h2><div class="astock-scroll"><table class="astock-overview-table"><tr>`)
 	writeAStockOverviewStrategyCell(b, morningCtx.Date, firstNonEmpty(morningCtx.AuctionAmountLabel, afternoonCtx.AuctionAmountLabel), ` rowspan="2"`)
-	writeAStockOverviewPeriodCells(b, morningCtx)
+	writeAStockOverviewPeriodCells(b, morningCtx, morningCtx, afternoonCtx)
 	b.WriteString(`</tr><tr>`)
-	writeAStockOverviewPeriodCells(b, afternoonCtx)
+	writeAStockOverviewPeriodCells(b, afternoonCtx, morningCtx, afternoonCtx)
 	b.WriteString(`</tr></table></div></section>`)
 }
 
@@ -538,10 +541,10 @@ func writeAStockOverviewStrategyCell(b *strings.Builder, date string, auctionAmo
 	b.WriteString(`</strong></td>`)
 }
 
-func writeAStockOverviewPeriodCells(b *strings.Builder, ctx aStockContext) {
+func writeAStockOverviewPeriodCells(b *strings.Builder, ctx aStockContext, morningCtx aStockContext, afternoonCtx aStockContext) {
 	writeAStockOverviewCell(b, "推荐窗口", ctx.PeriodLabel, "")
-	writeAStockOverviewCell(b, "新闻窗口", ctx.WindowLabel, "")
-	writeAStockOverviewCell(b, "财经新闻数", fmt.Sprintf("%d", len(ctx.Articles)), "")
+	writeAStockOverviewCell(b, "新闻窗口", ctx.WindowLabel, ` class="astock-overview-window"`)
+	writeAStockOverviewNewsCountCell(b, ctx, morningCtx, afternoonCtx)
 	writeAStockOverviewCell(b, "候选热点数", fmt.Sprintf("%d", len(ctx.Hotspots)), "")
 	writeAStockOverviewCell(b, "推荐股票数", fmt.Sprintf("%d", len(ctx.Recommendations)), "")
 	writeAStockOverviewFilterCell(b, ctx)
@@ -549,6 +552,22 @@ func writeAStockOverviewPeriodCells(b *strings.Builder, ctx aStockContext) {
 	writeAStockOverviewTodayMarketFilterCell(b, ctx)
 	writeAStockOverviewRecalculateCell(b, ctx)
 	writeAStockOverviewCell(b, "回测状态", aStockOverviewBacktestStatus(ctx), ` class="astock-overview-status"`)
+}
+
+func writeAStockOverviewNewsCountCell(b *strings.Builder, ctx aStockContext, morningCtx aStockContext, afternoonCtx aStockContext) {
+	writeAStockOverviewCellWithMeta(
+		b,
+		"财经新闻数",
+		fmt.Sprintf("%d", aStockNewsCount(ctx)),
+		fmt.Sprintf(
+			"%s %d / %s %d",
+			morningCtx.WindowLabel,
+			aStockNewsCount(morningCtx),
+			afternoonCtx.WindowLabel,
+			aStockNewsCount(afternoonCtx),
+		),
+		"",
+	)
 }
 
 func writeAStockOverviewFilterCell(b *strings.Builder, ctx aStockContext) {
@@ -686,13 +705,30 @@ func aStockOverviewBacktestStatus(ctx aStockContext) string {
 }
 
 func writeAStockOverviewCell(b *strings.Builder, label string, value string, attrs string) {
+	writeAStockOverviewCellWithMeta(b, label, value, "", attrs)
+}
+
+func writeAStockOverviewCellWithMeta(b *strings.Builder, label string, value string, meta string, attrs string) {
 	b.WriteString(`<td`)
 	b.WriteString(attrs)
 	b.WriteString(`><span class="astock-muted">`)
 	b.WriteString(html.EscapeString(label))
 	b.WriteString(`</span><strong>`)
 	b.WriteString(html.EscapeString(value))
-	b.WriteString(`</strong></td>`)
+	b.WriteString(`</strong>`)
+	if strings.TrimSpace(meta) != "" {
+		b.WriteString(`<span class="astock-overview-meta">`)
+		b.WriteString(html.EscapeString(meta))
+		b.WriteString(`</span>`)
+	}
+	b.WriteString(`</td>`)
+}
+
+func aStockNewsCount(ctx aStockContext) int {
+	if ctx.NewsTotal > 0 {
+		return ctx.NewsTotal
+	}
+	return len(ctx.Articles)
 }
 
 func renderAStockNewsSection(b *strings.Builder, ctx aStockContext) {
