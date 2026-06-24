@@ -37,4 +37,21 @@ class ArticleListFallbackTest {
 
         assertNull(fallback)
     }
+
+    @Test
+    fun filterHiddenArticlesDropsMatchingIds() {
+        val result = ItemListResult(
+            items = listOf(
+                ArticleItem(id = 1, title = "keep"),
+                ArticleItem(id = 2, title = "hide"),
+                ArticleItem(id = 3, title = "also keep"),
+            ),
+            total = 3,
+        )
+
+        val visible = filterHiddenArticles(result, setOf(2))
+
+        assertEquals(listOf("keep", "also keep"), visible?.items?.map { it.title })
+        assertEquals(3, visible?.total)
+    }
 }

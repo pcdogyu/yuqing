@@ -34,7 +34,7 @@ interface YuqingApi {
     @GET("api/v1/articles")
     suspend fun articles(
         @Query("page") page: Int = 1,
-        @Query("page_size") pageSize: Int = 10,
+        @Query("page_size") pageSize: Int = 25,
         @Query("time_field") timeField: String = "captured_at",
         @Query("sort") sort: String = "captured_at_desc",
         @Query("start") start: String = "",

@@ -23,7 +23,11 @@ class MainActivity : ComponentActivity() {
         setContent {
             Log.i(STARTUP_TAG, "MainActivity.setContent compose tree start")
             val viewModel: YuqingViewModel = viewModel(
-                factory = YuqingViewModelFactory(app.sessionStore, app.database.dashboardCacheDao()),
+                factory = YuqingViewModelFactory(
+                    app.sessionStore,
+                    app.database.dashboardCacheDao(),
+                    app.database.articleUserActionDao(),
+                ),
             )
             YuqingApp(viewModel)
         }

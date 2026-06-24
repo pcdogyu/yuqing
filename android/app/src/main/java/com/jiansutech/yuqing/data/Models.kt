@@ -105,7 +105,7 @@ data class MonitorRule(
 data class ItemListResult(
     val items: List<ArticleItem> = emptyList(),
     val page: Int = 1,
-    @SerialName("page_size") val pageSize: Int = 20,
+    @SerialName("page_size") val pageSize: Int = 25,
     val total: Int = 0,
 )
 

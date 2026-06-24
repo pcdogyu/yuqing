@@ -56,17 +56,18 @@ class ApiModelsTest {
         server.enqueue(
             MockResponse()
                 .setHeader("Content-Type", "application/json")
-                .setBody("""{"code":200,"message":"ok","data":{"items":[],"page":1,"page_size":10,"total":0}}"""),
+                .setBody("""{"code":200,"message":"ok","data":{"items":[],"page":1,"page_size":25,"total":0}}"""),
         )
         server.start()
         try {
             val result = ApiFactory.yuqing(server.url("/").toString())
-                .articles(page = 1, pageSize = 10)
+                .articles(page = 1)
                 .data
             val request = server.takeRequest()
 
             assertEquals(0, result?.total)
             assertEquals("/api/v1/articles", request.requestUrl?.encodedPath)
+            assertEquals("25", request.requestUrl?.queryParameter("page_size"))
             assertEquals("captured_at", request.requestUrl?.queryParameter("time_field"))
             assertEquals("captured_at_desc", request.requestUrl?.queryParameter("sort"))
         } finally {

@@ -1,7 +1,9 @@
 package com.jiansutech.yuqing.ui
 
+import android.os.SystemClock
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.Canvas
@@ -13,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -62,6 +65,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -69,6 +74,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.jiansutech.yuqing.astock.AStockTradingCalendar
 import com.jiansutech.yuqing.data.AndroidDashboard
@@ -91,6 +97,8 @@ import kotlinx.serialization.decodeFromString
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.ZoneId
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 @Composable
 fun YuqingApp(viewModel: YuqingViewModel) {
@@ -109,6 +117,7 @@ private fun PortalScreen(state: YuqingUiState, viewModel: YuqingViewModel) {
         ?: fallback.firstOrNull { it.key == state.selectedModuleKey }
         ?: modules.first()
     var backtestDetail by remember { mutableStateOf<AStockBacktestDetailState?>(null) }
+    var lastArticleTabClickAt by remember { mutableStateOf(0L) }
     val detail = backtestDetail
     val articleDetail = state.articleDetail
     BackHandler(enabled = detail != null || articleDetail != null) {
@@ -174,7 +183,17 @@ private fun PortalScreen(state: YuqingUiState, viewModel: YuqingViewModel) {
                             ?: AndroidModule(key = key, title = key)
                         NavigationBarItem(
                             selected = selected.key == key,
-                            onClick = { viewModel.selectModule(key) },
+                            onClick = {
+                                val now = SystemClock.elapsedRealtime()
+                                if (isArticleTabDoubleClick(key, selected.key, lastArticleTabClickAt, now)) {
+                                    viewModel.forceRefreshArticles()
+                                } else {
+                                    viewModel.selectModule(key)
+                                }
+                                if (key == "articles") {
+                                    lastArticleTabClickAt = now
+                                }
+                            },
                             icon = { Icon(moduleIcon(key), contentDescription = module.title) },
                             label = { Text(module.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         )
@@ -230,6 +249,20 @@ private fun PortalScreen(state: YuqingUiState, viewModel: YuqingViewModel) {
             dismissButton = { TextButton(onClick = viewModel::dismissAction) { Text("取消") } },
         )
     }
+}
+
+internal const val ARTICLE_TAB_DOUBLE_CLICK_MS = 400L
+
+internal fun isArticleTabDoubleClick(
+    clickedKey: String,
+    currentKey: String,
+    lastArticleTabClickAt: Long,
+    now: Long,
+): Boolean {
+    return clickedKey == "articles" &&
+        currentKey == "articles" &&
+        lastArticleTabClickAt > 0 &&
+        now - lastArticleTabClickAt in 0..ARTICLE_TAB_DOUBLE_CLICK_MS
 }
 
 @Composable
@@ -350,7 +383,13 @@ private fun ArticlesModule(
                 Text(error, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
             }
         }
-        items(result.items) { ArticleRow(it, onClick = { viewModel.openArticleDetail(it) }) }
+        items(result.items) {
+            SwipeHiddenArticleRow(
+                item = it,
+                onClick = { viewModel.openArticleDetail(it) },
+                onHide = { article -> viewModel.hideArticle(article) },
+            )
+        }
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -714,7 +753,47 @@ private fun MetricCard(title: String, value: String, modifier: Modifier = Modifi
 }
 
 @Composable
-private fun ArticleRow(item: ArticleItem, onClick: (() -> Unit)? = null) {
+private fun SwipeHiddenArticleRow(
+    item: ArticleItem,
+    onClick: () -> Unit,
+    onHide: (ArticleItem) -> Unit,
+) {
+    val thresholdPx = with(LocalDensity.current) { 72.dp.toPx() }
+    var offsetX by remember(item.id, item.title, item.capturedAt) { mutableStateOf(0f) }
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .pointerInput(item.id, item.title, item.capturedAt, thresholdPx) {
+                detectHorizontalDragGestures(
+                    onHorizontalDrag = { _, dragAmount ->
+                        offsetX += dragAmount
+                    },
+                    onDragEnd = {
+                        if (abs(offsetX) >= thresholdPx) {
+                            onHide(item)
+                        }
+                        offsetX = 0f
+                    },
+                    onDragCancel = {
+                        offsetX = 0f
+                    },
+                )
+            },
+    ) {
+        ArticleRow(
+            item = item,
+            modifier = Modifier.offset { IntOffset(offsetX.roundToInt(), 0) },
+            onClick = onClick,
+        )
+    }
+}
+
+@Composable
+private fun ArticleRow(
+    item: ArticleItem,
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
+) {
     val displayTime = remember(item.capturedAt, item.publishTime, item.publishTimeText) {
         formatArticleRelativeTime(item.publishTimeText)
             .ifBlank { formatArticleRelativeTime(item.publishTime) }
@@ -736,7 +815,7 @@ private fun ArticleRow(item: ArticleItem, onClick: (() -> Unit)? = null) {
             }
         }
     }
-    val cardModifier = if (onClick == null) Modifier else Modifier.clickable(onClick = onClick)
+    val cardModifier = if (onClick == null) modifier else modifier.clickable(onClick = onClick)
     Card(cardModifier) {
         Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(

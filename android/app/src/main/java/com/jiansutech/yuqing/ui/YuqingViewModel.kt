@@ -13,6 +13,8 @@ import com.jiansutech.yuqing.data.AStockAuctionListResult
 import com.jiansutech.yuqing.data.AStockRecommendation
 import com.jiansutech.yuqing.data.AStockRecommendationSnapshot
 import com.jiansutech.yuqing.data.ArticleItem
+import com.jiansutech.yuqing.data.ArticleUserActionDao
+import com.jiansutech.yuqing.data.ArticleUserActionEntity
 import com.jiansutech.yuqing.data.ApiFactory
 import com.jiansutech.yuqing.data.DashboardCacheDao
 import com.jiansutech.yuqing.data.DashboardCacheEntity
@@ -87,6 +89,7 @@ data class YuqingUiState(
 class YuqingViewModel(
     private val sessionStore: SessionStore,
     private val dashboardCacheDao: DashboardCacheDao,
+    private val articleUserActionDao: ArticleUserActionDao,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(YuqingUiState())
     val uiState: StateFlow<YuqingUiState> = _uiState
@@ -98,6 +101,7 @@ class YuqingViewModel(
             val cacheQueryStartedAt = SystemClock.elapsedRealtime()
             Log.i(STARTUP_TAG, "YuqingViewModel.cache query start")
             val cached = dashboardCacheDao.get()?.payload
+            val hiddenArticleIds = articleUserActionDao.hiddenArticleIds().toSet()
             Log.i(
                 STARTUP_TAG,
                 "YuqingViewModel.cache query end elapsedMs=${SystemClock.elapsedRealtime() - cacheQueryStartedAt}",
@@ -113,13 +117,14 @@ class YuqingViewModel(
                         STARTUP_TAG,
                         "YuqingViewModel.cache decode success articleCount=${dashboard.overview.articleCount} elapsedMs=${SystemClock.elapsedRealtime() - decodeStartedAt}",
                     )
+                    val visibleDashboard = filterDashboardHiddenArticles(dashboard, hiddenArticleIds)
                     _uiState.update {
                         it.copy(
-                            dashboard = dashboard,
-                            aStockAuction = dashboard.aStock.auction,
-                            aStockAuctionDate = dashboard.aStock.auction.date.ifBlank { it.aStockAuctionDate },
-                            aStockRecommendation = dashboard.aStock.recommendation.takeIf { snapshot -> snapshot.found },
-                            aStockRecommendations = parseAStockRecommendations(dashboard.aStock.recommendation.recommendationsJson),
+                            dashboard = visibleDashboard,
+                            aStockAuction = visibleDashboard.aStock.auction,
+                            aStockAuctionDate = visibleDashboard.aStock.auction.date.ifBlank { it.aStockAuctionDate },
+                            aStockRecommendation = visibleDashboard.aStock.recommendation.takeIf { snapshot -> snapshot.found },
+                            aStockRecommendations = parseAStockRecommendations(visibleDashboard.aStock.recommendation.recommendationsJson),
                         )
                     }
                 }.onFailure { throwable ->
@@ -203,6 +208,7 @@ class YuqingViewModel(
             )
             runCatching {
                 val api = ApiFactory.yuqing(session.apiBaseUrl, session.token)
+                val hiddenArticleIds = articleUserActionDao.hiddenArticleIds().toSet()
                 val bootstrapStartedAt = SystemClock.elapsedRealtime()
                 val bootstrap = api.bootstrap().data
                 Log.i(
@@ -218,6 +224,7 @@ class YuqingViewModel(
                 val correctedDashboard = runCatching {
                     val latestArticlesStartedAt = SystemClock.elapsedRealtime()
                     val latestArticles = api.articles(page = 1, pageSize = 50).data?.items.orEmpty()
+                        .filterNot { article -> article.id in hiddenArticleIds }
                     Log.i(
                         STARTUP_TAG,
                         "YuqingViewModel.refreshAll latestArticles loaded count=${latestArticles.size} firstPublishTime=${latestArticles.firstOrNull()?.publishTime.orEmpty()} firstCapturedAt=${latestArticles.firstOrNull()?.capturedAt.orEmpty()} firstTitle=${latestArticles.firstOrNull()?.title.orEmpty()} elapsedMs=${SystemClock.elapsedRealtime() - latestArticlesStartedAt}",
@@ -226,6 +233,7 @@ class YuqingViewModel(
                 }.onFailure { throwable ->
                     Log.w(STARTUP_TAG, "YuqingViewModel.refreshAll latest article patch skipped", throwable)
                 }.getOrDefault(dashboard)
+                    .let { filterDashboardHiddenArticles(it, hiddenArticleIds) }
                 dashboardCacheDao.upsert(
                     DashboardCacheEntity(
                         payload = ApiFactory.json.encodeToString(correctedDashboard),
@@ -290,8 +298,9 @@ class YuqingViewModel(
 
     fun loadArticles(page: Int) {
         viewModelScope.launch {
+            val hiddenArticleIds = articleUserActionDao.hiddenArticleIds().toSet()
             _uiState.update {
-                val fallback = fallbackArticleList(it)
+                val fallback = filterHiddenArticles(fallbackArticleList(it), hiddenArticleIds)
                 it.copy(
                     loading = true,
                     articleLoading = true,
@@ -303,12 +312,14 @@ class YuqingViewModel(
             val session = sessionStore.state.first()
             runCatching {
                 val result = ApiFactory.yuqing(session.apiBaseUrl, session.token)
-                    .articles(page = page.coerceAtLeast(1), pageSize = 10)
+                    .articles(page = page.coerceAtLeast(1), pageSize = ARTICLE_PAGE_SIZE)
                     .data ?: error("文章数据为空")
+                filterHiddenArticles(result, hiddenArticleIds) ?: result
+            }.onSuccess { result ->
                 _uiState.update { it.copy(articleList = result, error = "", message = "") }
             }.onFailure { throwable ->
                 _uiState.update {
-                    val fallback = fallbackArticleList(it)
+                    val fallback = filterHiddenArticles(fallbackArticleList(it), hiddenArticleIds)
                     it.copy(
                         articleList = fallback,
                         error = if (fallback == null) {
@@ -321,6 +332,32 @@ class YuqingViewModel(
                 }
             }
             _uiState.update { it.copy(loading = false, articleLoading = false) }
+        }
+    }
+
+    fun forceRefreshArticles() {
+        loadArticles(1)
+    }
+
+    fun hideArticle(item: ArticleItem) {
+        viewModelScope.launch {
+            if (item.id > 0) {
+                articleUserActionDao.upsert(
+                    ArticleUserActionEntity(
+                        articleId = item.id,
+                        read = true,
+                        hidden = true,
+                        updatedAt = System.currentTimeMillis(),
+                    ),
+                )
+            }
+            _uiState.update {
+                it.copy(
+                    articleList = removeArticleFromResult(it.articleList, item),
+                    dashboard = it.dashboard?.let { dashboard -> removeArticleFromDashboard(dashboard, item) },
+                    articleDetail = it.articleDetail?.takeUnless { detail -> sameArticle(detail, item) },
+                )
+            }
         }
     }
 
@@ -530,6 +567,7 @@ class YuqingViewModel(
 }
 
 private const val STARTUP_TAG = "YuqingStartup"
+internal const val ARTICLE_PAGE_SIZE = 25
 private val articleTimeFormats = listOf(
     DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"),
     DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"),
@@ -567,6 +605,44 @@ private fun parseAStockRecommendations(raw: String): List<AStockRecommendation> 
 internal fun fallbackArticleList(state: YuqingUiState): ItemListResult? {
     state.articleList?.takeIf { it.items.isNotEmpty() }?.let { return it }
     return state.dashboard?.articles?.takeIf { it.items.isNotEmpty() }
+}
+
+internal fun filterHiddenArticles(result: ItemListResult?, hiddenArticleIds: Set<Long>): ItemListResult? {
+    if (result == null || hiddenArticleIds.isEmpty()) {
+        return result
+    }
+    return result.copy(items = result.items.filterNot { article -> article.id in hiddenArticleIds })
+}
+
+private fun filterDashboardHiddenArticles(dashboard: AndroidDashboard, hiddenArticleIds: Set<Long>): AndroidDashboard {
+    if (hiddenArticleIds.isEmpty()) {
+        return dashboard
+    }
+    return dashboard.copy(
+        articles = filterHiddenArticles(dashboard.articles, hiddenArticleIds) ?: dashboard.articles,
+    )
+}
+
+private fun removeArticleFromDashboard(dashboard: AndroidDashboard, item: ArticleItem): AndroidDashboard {
+    return dashboard.copy(
+        articles = removeArticleFromResult(dashboard.articles, item) ?: dashboard.articles,
+    )
+}
+
+private fun removeArticleFromResult(result: ItemListResult?, item: ArticleItem): ItemListResult? {
+    if (result == null) {
+        return null
+    }
+    return result.copy(items = result.items.filterNot { article -> sameArticle(article, item) })
+}
+
+private fun sameArticle(left: ArticleItem, right: ArticleItem): Boolean {
+    if (left.id > 0 && right.id > 0) {
+        return left.id == right.id
+    }
+    return left.title == right.title &&
+        left.sourceUrl == right.sourceUrl &&
+        left.capturedAt == right.capturedAt
 }
 
 private fun patchDashboardLatestArticles(dashboard: AndroidDashboard, latestArticles: List<ArticleItem>): AndroidDashboard {
@@ -643,9 +719,10 @@ private fun parseArticleInstant(raw: String, referenceNow: Instant): Instant? {
 class YuqingViewModelFactory(
     private val sessionStore: SessionStore,
     private val dashboardCacheDao: DashboardCacheDao,
+    private val articleUserActionDao: ArticleUserActionDao,
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        return YuqingViewModel(sessionStore, dashboardCacheDao) as T
+        return YuqingViewModel(sessionStore, dashboardCacheDao, articleUserActionDao) as T
     }
 }
