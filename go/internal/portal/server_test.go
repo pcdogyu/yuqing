@@ -989,12 +989,13 @@ func TestAStockHoldingsPagePostTriggersFullMarketBackfill(t *testing.T) {
 func TestAStockStockGenerateActionsSelectPeriod(t *testing.T) {
 	srv := NewServer(config.Config{})
 	tests := []struct {
-		name       string
-		fromPeriod string
-		action     string
-		wantPeriod string
-		wantMsg    string
-		wantIgnore bool
+		name           string
+		fromPeriod     string
+		action         string
+		wantPeriod     string
+		wantMsg        string
+		wantIgnore     bool
+		wantRefreshAll bool
 	}{
 		{
 			name:       "switch to afternoon",
@@ -1018,6 +1019,14 @@ func TestAStockStockGenerateActionsSelectPeriod(t *testing.T) {
 			wantMsg:    "上午推荐已忽略5日内重复推荐过滤，按当前新闻窗口重新计算推荐。",
 			wantIgnore: true,
 		},
+		{
+			name:           "refresh all backtests",
+			fromPeriod:     "morning",
+			action:         "refresh_backtest",
+			wantPeriod:     "morning",
+			wantMsg:        "上午和下午消息回测已按当前推荐股票、13:01价格和行情收益重新刷新。",
+			wantRefreshAll: true,
+		},
 	}
 
 	for _, tc := range tests {
@@ -1037,6 +1046,11 @@ func TestAStockStockGenerateActionsSelectPeriod(t *testing.T) {
 			}
 			if tc.wantIgnore && !strings.Contains(loc, "ignore_recent=1") {
 				t.Fatalf("expected ignore_recent redirect, got %q", loc)
+			}
+			if tc.wantRefreshAll {
+				if !strings.Contains(loc, "refresh_all_backtests=1") || !strings.Contains(loc, "refresh_recommendations=1") {
+					t.Fatalf("expected full backtest refresh redirect, got %q", loc)
+				}
 			}
 			decoded, _ := url.QueryUnescape(loc)
 			if !strings.Contains(decoded, tc.wantMsg) {
@@ -3338,8 +3352,8 @@ func TestDecodeEastmoneyAStock1300Price(t *testing.T) {
 
 	price, ok := decodeEastmoneyAStock1300Price(body, "2026-06-18")
 
-	if !ok || price != 67.1 {
-		t.Fatalf("expected 13:01 open price 67.1, got price=%v ok=%v", price, ok)
+	if !ok || price != 67.3 {
+		t.Fatalf("expected 13:01 close price 67.3, got price=%v ok=%v", price, ok)
 	}
 }
 
@@ -3386,7 +3400,7 @@ func TestAStockMarketBarsFallbackToEastmoneyWhenCustomEndpointEmpty(t *testing.T
 	if len(bars) != 2 || bars[1].Code != "000001" || bars[1].Open != 12 || bars[1].Close != 13 {
 		t.Fatalf("unexpected fallback bars: %+v", bars)
 	}
-	if bars[1].EntryPrice != 12.3 || bars[1].AfternoonEntryPrice != 12.8 {
+	if bars[1].EntryPrice != 12.3 || bars[1].AfternoonEntryPrice != 12.9 {
 		t.Fatalf("expected fallback bars to include 09:30 and 13:01 entry prices, got %+v", bars[1])
 	}
 }
@@ -3433,7 +3447,7 @@ func TestAStockMarketBarsCustomEndpointSupplementsMissingSessionPricesFromEastmo
 	if len(bars) != 2 {
 		t.Fatalf("expected two market bars, got %+v", bars)
 	}
-	if bars[1].EntryPrice != 136.2 || bars[1].AfternoonEntryPrice != 141.98 {
+	if bars[1].EntryPrice != 136.2 || bars[1].AfternoonEntryPrice != 142.20 {
 		t.Fatalf("expected custom bars to include supplemented session prices, got %+v", bars[1])
 	}
 
@@ -3441,10 +3455,10 @@ func TestAStockMarketBarsCustomEndpointSupplementsMissingSessionPricesFromEastmo
 	if len(rows) != 1 {
 		t.Fatalf("expected one backtest row, got %+v", rows)
 	}
-	if rows[0].AfternoonOpen != "141.98" {
+	if rows[0].AfternoonOpen != "142.20" {
 		t.Fatalf("expected afternoon backtest to use supplemented 13:01 price, got %+v", rows[0])
 	}
-	if rows[0].T0Return != "+2.20%" {
+	if rows[0].T0Return != "+2.05%" {
 		t.Fatalf("expected T+0 return to use supplemented 13:01 price, got %+v", rows[0])
 	}
 }

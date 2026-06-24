@@ -279,15 +279,19 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 	ignoreLimitUp := normalizeAStockIgnoreLimitUp(r.URL.Query())
 	filterTodayMarket := normalizeAStockFilterTodayMarket(r.URL.Query())
 	forceRecommendationRefresh := normalizeAStockBool(r.URL.Query().Get("refresh_recommendations"))
+	refreshAllBacktests := normalizeAStockBool(r.URL.Query().Get("refresh_all_backtests"))
+	if refreshAllBacktests {
+		forceRecommendationRefresh = true
+	}
 	requestCache := newAStockRequestCache()
 	ctx := s.loadAStockContextWithCache(strategyDate, period.Key, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, requestCache)
 	morningCtx := ctx
 	if ctx.Period != "morning" {
-		morningCtx = s.loadAStockContextWithCache(strategyDate, "morning", 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, false, requestCache)
+		morningCtx = s.loadAStockContextWithCache(strategyDate, "morning", 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, refreshAllBacktests, requestCache)
 	}
 	afternoonCtx := ctx
 	if ctx.Period != "afternoon" {
-		afternoonCtx = s.loadAStockContextWithCache(strategyDate, "afternoon", 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, false, requestCache)
+		afternoonCtx = s.loadAStockContextWithCache(strategyDate, "afternoon", 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, refreshAllBacktests, requestCache)
 	}
 	message := strings.TrimSpace(r.URL.Query().Get("msg"))
 	if message == "" {
@@ -477,7 +481,8 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request) 
 		query.Set("msg", s.triggerAStockAuctionBackfillDate(date))
 	case "refresh_backtest":
 		query.Set("refresh_recommendations", "1")
-		query.Set("msg", "消息回测已按当前推荐股票和行情数据刷新。")
+		query.Set("refresh_all_backtests", "1")
+		query.Set("msg", "上午和下午消息回测已按当前推荐股票、13:01价格和行情收益重新刷新。")
 	case "recalculate":
 		query.Set("refresh_recommendations", "1")
 		query.Set("msg", period.Label+"已按当前过滤开关重新计算推荐和回测。")
@@ -3135,7 +3140,7 @@ func decodeEastmoneyAStock0930Price(body []byte, strategyDate string) (float64, 
 func decodeEastmoneyAStock1300Price(body []byte, strategyDate string) (float64, bool) {
 	klines := collectAStockKlineStringsFromJSON(body)
 	for _, raw := range klines {
-		price, ok := eastmoneySessionKlineOpen(raw, strategyDate, "13:01")
+		price, ok := eastmoneySessionKlinePrice(raw, strategyDate, "13:01")
 		if ok {
 			return price, true
 		}
