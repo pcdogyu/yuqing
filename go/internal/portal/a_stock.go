@@ -143,14 +143,38 @@ type aStockTradingDayStatus struct {
 }
 
 type aStockRequestCache struct {
-	tradingDay  map[string]aStockTradingDayCacheEntry
-	recentCodes map[string]map[string]struct{}
-	sourceRuns  []aStockSourceRun
+	tradingDay       map[string]aStockTradingDayCacheEntry
+	recentCodes      map[string]map[string]struct{}
+	articles         map[string]aStockArticlesCacheEntry
+	snapshots        map[string]aStockRecommendationSnapshotCacheEntry
+	selections       map[string]aStockRecommendationSelectionCacheEntry
+	holdingSummaries map[string]aStockHoldingSummaryCacheEntry
+	sourceRuns       []aStockSourceRun
 }
 
 type aStockTradingDayCacheEntry struct {
 	status aStockTradingDayStatus
 	err    error
+}
+
+type aStockArticlesCacheEntry struct {
+	items []model.Item
+	err   error
+}
+
+type aStockRecommendationSnapshotCacheEntry struct {
+	snapshot model.AStockRecommendationSnapshot
+	found    bool
+}
+
+type aStockRecommendationSelectionCacheEntry struct {
+	result model.AStockRecommendationSelectionListResult
+	found  bool
+}
+
+type aStockHoldingSummaryCacheEntry struct {
+	summary model.StockInstitutionHoldingSummary
+	err     error
 }
 
 type aStockPeriod struct {
@@ -1244,8 +1268,12 @@ func (s *Server) handleAStockPopupDismiss(w http.ResponseWriter, r *http.Request
 
 func newAStockRequestCache() *aStockRequestCache {
 	return &aStockRequestCache{
-		tradingDay:  make(map[string]aStockTradingDayCacheEntry),
-		recentCodes: make(map[string]map[string]struct{}),
+		tradingDay:       make(map[string]aStockTradingDayCacheEntry),
+		recentCodes:      make(map[string]map[string]struct{}),
+		articles:         make(map[string]aStockArticlesCacheEntry),
+		snapshots:        make(map[string]aStockRecommendationSnapshotCacheEntry),
+		selections:       make(map[string]aStockRecommendationSelectionCacheEntry),
+		holdingSummaries: make(map[string]aStockHoldingSummaryCacheEntry),
 	}
 }
 
@@ -1273,7 +1301,7 @@ func (s *Server) loadAStockContextWithRecommendationPhase(strategyDate string, p
 	}
 	ctx.LimitUpFilterEnabled = period.Key == "afternoon" && !ignoreLimitUp
 	ctx.SourceRuns = s.loadAStockSourceRunsWithCache(cache)
-	articles, err := s.loadAStockWindowArticles(start, end)
+	articles, err := s.loadAStockWindowArticlesWithCache(start, end, cache)
 	if err != nil {
 		ctx.LoadMessage = "A股新闻读取失败：" + err.Error()
 		return ctx
@@ -1291,12 +1319,15 @@ func (s *Server) loadAStockContextWithRecommendationPhase(strategyDate string, p
 		return ctx
 	}
 	allowPersistedRecommendations := phase == aStockRecommendationPhaseFinal && isAStockOfficialSelectionContext(ignoreRecent, ignoreLimitUp, filterTodayMarket)
-	if allowPersistedRecommendations && s.applyAStockRecommendationSelections(&ctx) {
-		s.applyAStockAfternoonSameDayCaps(&ctx, nil)
-		ctx.Recommendations = s.applyAStockHoldingSummaries(ctx.Recommendations)
+	if allowPersistedRecommendations && !forceRecommendationRefresh && s.applyAStockRecommendationSnapshotWithCache(&ctx, cache) {
+		return ctx
+	}
+	if allowPersistedRecommendations && s.applyAStockRecommendationSelectionsWithCache(&ctx, cache) {
+		s.applyAStockAfternoonSameDayCapsWithCache(&ctx, nil, cache)
+		ctx.Recommendations = s.applyAStockHoldingSummariesWithCache(ctx.Recommendations, cache)
 		ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus, ctx.LimitUpFiltered = s.loadAStockLockedMarketView(strategyDate, ctx.Period, ctx.Recommendations)
 		if forceRecommendationRefresh {
-			s.restoreAStockBacktestsFromSnapshot(&ctx)
+			s.restoreAStockBacktestsFromSnapshotWithCache(&ctx, cache)
 		}
 		ctx.EmptyReason = aStockRecommendationEmptyReason(ctx)
 		if err := s.saveAStockRecommendationSnapshot(ctx); err != nil && ctx.LoadMessage == "" {
@@ -1304,20 +1335,20 @@ func (s *Server) loadAStockContextWithRecommendationPhase(strategyDate string, p
 		}
 		return ctx
 	}
-	if allowPersistedRecommendations && s.applyAStockRecommendationSnapshotRecommendations(&ctx) {
-		s.applyAStockAfternoonSameDayCaps(&ctx, nil)
+	if allowPersistedRecommendations && s.applyAStockRecommendationSnapshotRecommendationsWithCache(&ctx, cache) {
+		s.applyAStockAfternoonSameDayCapsWithCache(&ctx, nil, cache)
 		if err := s.saveAStockRecommendationSelections(ctx); err != nil && ctx.LoadMessage == "" {
 			ctx.LoadMessage = "A股已选股票保存失败：" + err.Error()
 		}
 		if !forceRecommendationRefresh {
-			if s.applyAStockRecommendationSnapshot(&ctx) {
+			if s.applyAStockRecommendationSnapshotWithCache(&ctx, cache) {
 				return ctx
 			}
 		}
-		ctx.Recommendations = s.applyAStockHoldingSummaries(ctx.Recommendations)
+		ctx.Recommendations = s.applyAStockHoldingSummariesWithCache(ctx.Recommendations, cache)
 		ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus, ctx.LimitUpFiltered = s.loadAStockLockedMarketView(strategyDate, ctx.Period, ctx.Recommendations)
 		if forceRecommendationRefresh {
-			s.restoreAStockBacktestsFromSnapshot(&ctx)
+			s.restoreAStockBacktestsFromSnapshotWithCache(&ctx, cache)
 		}
 		ctx.EmptyReason = aStockRecommendationEmptyReason(ctx)
 		if err := s.saveAStockRecommendationSnapshot(ctx); err != nil && ctx.LoadMessage == "" {
@@ -1326,7 +1357,7 @@ func (s *Server) loadAStockContextWithRecommendationPhase(strategyDate string, p
 		return ctx
 	}
 	if !forceRecommendationRefresh && phase == aStockRecommendationPhaseFinal {
-		if s.applyAStockRecommendationSnapshot(&ctx) {
+		if s.applyAStockRecommendationSnapshotWithCache(&ctx, cache) {
 			return ctx
 		}
 	}
@@ -1347,17 +1378,17 @@ func (s *Server) loadAStockContextWithRecommendationPhase(strategyDate string, p
 			}
 		}
 		if period.Key == "afternoon" && len(ctx.Recommendations) > 0 {
-			s.applyAStockAfternoonSameDayCaps(&ctx, candidates)
+			s.applyAStockAfternoonSameDayCapsWithCache(&ctx, candidates, cache)
 		}
 	}
 	if len(ctx.Recommendations) > 0 && !ctx.IgnoreRecent {
 		recentCodes := s.loadRecentAStockRecommendationCodesWithCache(strategyDate, aStockRecentLookbackDays, cache)
 		ctx.Recommendations, ctx.RecentFiltered = filterRecentAStockRecommendations(ctx.Recommendations, recentCodes)
 	}
-	ctx.Recommendations = s.applyAStockHoldingSummaries(ctx.Recommendations)
+	ctx.Recommendations = s.applyAStockHoldingSummariesWithCache(ctx.Recommendations, cache)
 	ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus, ctx.LimitUpFiltered, ctx.NoTodayMarketCount = s.loadAStockMarketView(strategyDate, ctx.Period, ctx.Recommendations, ctx.LimitUpFilterEnabled, ctx.TodayMarketFilterEnabled, recommendationTarget)
 	if forceRecommendationRefresh {
-		s.restoreAStockBacktestsFromSnapshot(&ctx)
+		s.restoreAStockBacktestsFromSnapshotWithCache(&ctx, cache)
 	}
 	if shouldPersistAStockRecommendationSelections(ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh) && len(ctx.Recommendations) > 0 {
 		if err := s.saveAStockRecommendationSelections(ctx); err != nil && ctx.LoadMessage == "" {
@@ -1386,10 +1417,14 @@ func formatAStockPublishTime(value time.Time) string {
 }
 
 func (s *Server) applyAStockRecommendationSelections(ctx *aStockContext) bool {
+	return s.applyAStockRecommendationSelectionsWithCache(ctx, nil)
+}
+
+func (s *Server) applyAStockRecommendationSelectionsWithCache(ctx *aStockContext, cache *aStockRequestCache) bool {
 	if ctx == nil || !isAStockOfficialSelectionContext(ctx.IgnoreRecent, ctx.IgnoreLimitUp, ctx.TodayMarketFilterEnabled) {
 		return false
 	}
-	result, ok := s.loadAStockRecommendationSelections(ctx.Date, ctx.Period)
+	result, ok := s.loadAStockRecommendationSelectionsWithCache(ctx.Date, ctx.Period, cache)
 	if !ok || len(result.Items) == 0 {
 		return false
 	}
@@ -1399,10 +1434,14 @@ func (s *Server) applyAStockRecommendationSelections(ctx *aStockContext) bool {
 }
 
 func (s *Server) applyAStockRecommendationSnapshotRecommendations(ctx *aStockContext) bool {
+	return s.applyAStockRecommendationSnapshotRecommendationsWithCache(ctx, nil)
+}
+
+func (s *Server) applyAStockRecommendationSnapshotRecommendationsWithCache(ctx *aStockContext, cache *aStockRequestCache) bool {
 	if ctx == nil || strings.TrimSpace(s.cfg.ContentURL) == "" || !isAStockOfficialSelectionContext(ctx.IgnoreRecent, ctx.IgnoreLimitUp, ctx.TodayMarketFilterEnabled) {
 		return false
 	}
-	snapshot, ok := s.loadAStockRecommendationSnapshot(ctx.Date, ctx.Period, false)
+	snapshot, ok := s.loadAStockRecommendationSnapshotWithCache(ctx.Date, ctx.Period, false, cache)
 	if !ok {
 		return false
 	}
@@ -1439,10 +1478,14 @@ func (s *Server) applyAStockRecommendationSnapshotRecommendations(ctx *aStockCon
 }
 
 func (s *Server) applyAStockRecommendationSnapshot(ctx *aStockContext) bool {
+	return s.applyAStockRecommendationSnapshotWithCache(ctx, nil)
+}
+
+func (s *Server) applyAStockRecommendationSnapshotWithCache(ctx *aStockContext, cache *aStockRequestCache) bool {
 	if ctx == nil || strings.TrimSpace(s.cfg.ContentURL) == "" {
 		return false
 	}
-	snapshot, ok := s.loadAStockRecommendationSnapshot(ctx.Date, ctx.Period, ctx.IgnoreRecent)
+	snapshot, ok := s.loadAStockRecommendationSnapshotWithCache(ctx.Date, ctx.Period, ctx.IgnoreRecent, cache)
 	if !ok {
 		return false
 	}
@@ -1491,30 +1534,64 @@ func (s *Server) applyAStockRecommendationSnapshot(ctx *aStockContext) bool {
 }
 
 func (s *Server) loadAStockRecommendationSnapshot(strategyDate string, period string, ignoreRecent bool) (model.AStockRecommendationSnapshot, bool) {
+	return s.loadAStockRecommendationSnapshotWithCache(strategyDate, period, ignoreRecent, nil)
+}
+
+func (s *Server) loadAStockRecommendationSnapshotWithCache(strategyDate string, period string, ignoreRecent bool, cache *aStockRequestCache) (model.AStockRecommendationSnapshot, bool) {
 	if strings.TrimSpace(s.cfg.ContentURL) == "" {
 		return model.AStockRecommendationSnapshot{}, false
 	}
-	query := "/api/v1/a-stock/recommendations?date=" + url.QueryEscape(normalizeAStockStrategyDate(strategyDate)) + "&period=" + url.QueryEscape(normalizeAStockPeriod(period).Key)
+	date := normalizeAStockStrategyDate(strategyDate)
+	normalizedPeriod := normalizeAStockPeriod(period).Key
+	cacheKey := date + "|" + normalizedPeriod + "|" + fmt.Sprint(ignoreRecent)
+	if cache != nil {
+		if entry, ok := cache.snapshots[cacheKey]; ok {
+			return entry.snapshot, entry.found
+		}
+	}
+	query := "/api/v1/a-stock/recommendations?date=" + url.QueryEscape(date) + "&period=" + url.QueryEscape(normalizedPeriod)
 	if ignoreRecent {
 		query += "&ignore_recent=1"
 	}
 	snapshot := model.AStockRecommendationSnapshot{}
+	found := true
 	if err := s.getJSON(s.cfg.ContentURL+query, &snapshot); err != nil || !snapshot.Found {
-		return model.AStockRecommendationSnapshot{}, false
+		snapshot = model.AStockRecommendationSnapshot{}
+		found = false
 	}
-	return snapshot, true
+	if cache != nil {
+		cache.snapshots[cacheKey] = aStockRecommendationSnapshotCacheEntry{snapshot: snapshot, found: found}
+	}
+	return snapshot, found
 }
 
 func (s *Server) loadAStockRecommendationSelections(strategyDate string, period string) (model.AStockRecommendationSelectionListResult, bool) {
+	return s.loadAStockRecommendationSelectionsWithCache(strategyDate, period, nil)
+}
+
+func (s *Server) loadAStockRecommendationSelectionsWithCache(strategyDate string, period string, cache *aStockRequestCache) (model.AStockRecommendationSelectionListResult, bool) {
 	if strings.TrimSpace(s.cfg.ContentURL) == "" {
 		return model.AStockRecommendationSelectionListResult{}, false
 	}
-	query := "/api/v1/a-stock/recommendation-selections?date=" + url.QueryEscape(normalizeAStockStrategyDate(strategyDate)) + "&period=" + url.QueryEscape(normalizeAStockPeriod(period).Key)
-	result := model.AStockRecommendationSelectionListResult{}
-	if err := s.getJSON(s.cfg.ContentURL+query, &result); err != nil || !result.Found || len(result.Items) == 0 {
-		return model.AStockRecommendationSelectionListResult{}, false
+	date := normalizeAStockStrategyDate(strategyDate)
+	normalizedPeriod := normalizeAStockPeriod(period).Key
+	cacheKey := date + "|" + normalizedPeriod
+	if cache != nil {
+		if entry, ok := cache.selections[cacheKey]; ok {
+			return entry.result, entry.found
+		}
 	}
-	return result, true
+	query := "/api/v1/a-stock/recommendation-selections?date=" + url.QueryEscape(date) + "&period=" + url.QueryEscape(normalizedPeriod)
+	result := model.AStockRecommendationSelectionListResult{}
+	found := true
+	if err := s.getJSON(s.cfg.ContentURL+query, &result); err != nil || !result.Found || len(result.Items) == 0 {
+		result = model.AStockRecommendationSelectionListResult{}
+		found = false
+	}
+	if cache != nil {
+		cache.selections[cacheKey] = aStockRecommendationSelectionCacheEntry{result: result, found: found}
+	}
+	return result, found
 }
 
 func (s *Server) saveAStockRecommendationSelections(ctx aStockContext) error {
@@ -1582,10 +1659,14 @@ func (s *Server) saveAStockRecommendationSnapshot(ctx aStockContext) error {
 }
 
 func (s *Server) restoreAStockBacktestsFromSnapshot(ctx *aStockContext) {
+	s.restoreAStockBacktestsFromSnapshotWithCache(ctx, nil)
+}
+
+func (s *Server) restoreAStockBacktestsFromSnapshotWithCache(ctx *aStockContext, cache *aStockRequestCache) {
 	if ctx == nil || strings.TrimSpace(s.cfg.ContentURL) == "" || len(ctx.Backtests) == 0 || !aStockBacktestsNeedRestore(ctx.Backtests, ctx.BacktestStatus) {
 		return
 	}
-	snapshot, ok := s.loadAStockRecommendationSnapshot(ctx.Date, ctx.Period, ctx.IgnoreRecent)
+	snapshot, ok := s.loadAStockRecommendationSnapshotWithCache(ctx.Date, ctx.Period, ctx.IgnoreRecent, cache)
 	if !ok {
 		return
 	}
@@ -2273,14 +2354,14 @@ func (s *Server) loadRecentAStockRecommendationCodesWithCache(strategyDate strin
 	for offset := 1; offset <= lookbackDays; offset++ {
 		date := day.AddDate(0, 0, -offset).Format("2006-01-02")
 		for _, period := range aStockPeriods() {
-			if persisted := s.loadPersistedAStockRecommendationCodes(date, period.Key, false); len(persisted) > 0 {
+			if persisted := s.loadPersistedAStockRecommendationCodesWithCache(date, period.Key, false, cache); len(persisted) > 0 {
 				for code := range persisted {
 					result[code] = struct{}{}
 				}
 				continue
 			}
 			start, end := aStockWindow(date, period.Key)
-			items, err := s.loadAStockWindowArticlesByPublishTime(start, end)
+			items, err := s.loadAStockWindowArticlesByPublishTimeWithCache(start, end, cache)
 			if err != nil || len(items) == 0 {
 				continue
 			}
@@ -2300,10 +2381,14 @@ func (s *Server) loadRecentAStockRecommendationCodesWithCache(strategyDate strin
 }
 
 func (s *Server) applyAStockAfternoonSameDayCaps(ctx *aStockContext, candidates []aStockMarketCandidate) {
+	s.applyAStockAfternoonSameDayCapsWithCache(ctx, candidates, nil)
+}
+
+func (s *Server) applyAStockAfternoonSameDayCapsWithCache(ctx *aStockContext, candidates []aStockMarketCandidate, cache *aStockRequestCache) {
 	if ctx == nil || ctx.Period != "afternoon" || len(ctx.Recommendations) == 0 {
 		return
 	}
-	morningRecommendations := s.loadSameDayMorningAStockRecommendations(ctx.Date, candidates)
+	morningRecommendations := s.loadSameDayMorningAStockRecommendationsWithCache(ctx.Date, candidates, cache)
 	if len(morningRecommendations) == 0 {
 		return
 	}
@@ -2314,11 +2399,15 @@ func (s *Server) applyAStockAfternoonSameDayCaps(ctx *aStockContext, candidates 
 }
 
 func (s *Server) loadSameDayMorningAStockRecommendations(strategyDate string, candidates []aStockMarketCandidate) []aStockRecommendation {
-	if persisted := s.loadPersistedAStockRecommendations(strategyDate, "morning", false); len(persisted) > 0 {
+	return s.loadSameDayMorningAStockRecommendationsWithCache(strategyDate, candidates, nil)
+}
+
+func (s *Server) loadSameDayMorningAStockRecommendationsWithCache(strategyDate string, candidates []aStockMarketCandidate, cache *aStockRequestCache) []aStockRecommendation {
+	if persisted := s.loadPersistedAStockRecommendationsWithCache(strategyDate, "morning", false, cache); len(persisted) > 0 {
 		return persisted
 	}
 	start, end := aStockWindow(strategyDate, "morning")
-	items, err := s.loadAStockWindowArticles(start, end)
+	items, err := s.loadAStockWindowArticlesWithCache(start, end, cache)
 	if err != nil || len(items) == 0 {
 		return nil
 	}
@@ -2326,16 +2415,24 @@ func (s *Server) loadSameDayMorningAStockRecommendations(strategyDate string, ca
 }
 
 func (s *Server) loadPersistedAStockRecommendationCodes(strategyDate string, period string, ignoreRecent bool) map[string]struct{} {
-	return aStockRecommendationCodeSet(s.loadPersistedAStockRecommendations(strategyDate, period, ignoreRecent))
+	return s.loadPersistedAStockRecommendationCodesWithCache(strategyDate, period, ignoreRecent, nil)
+}
+
+func (s *Server) loadPersistedAStockRecommendationCodesWithCache(strategyDate string, period string, ignoreRecent bool, cache *aStockRequestCache) map[string]struct{} {
+	return aStockRecommendationCodeSet(s.loadPersistedAStockRecommendationsWithCache(strategyDate, period, ignoreRecent, cache))
 }
 
 func (s *Server) loadPersistedAStockRecommendations(strategyDate string, period string, ignoreRecent bool) []aStockRecommendation {
+	return s.loadPersistedAStockRecommendationsWithCache(strategyDate, period, ignoreRecent, nil)
+}
+
+func (s *Server) loadPersistedAStockRecommendationsWithCache(strategyDate string, period string, ignoreRecent bool, cache *aStockRequestCache) []aStockRecommendation {
 	if !ignoreRecent {
-		if result, ok := s.loadAStockRecommendationSelections(strategyDate, period); ok && len(result.Items) > 0 {
+		if result, ok := s.loadAStockRecommendationSelectionsWithCache(strategyDate, period, cache); ok && len(result.Items) > 0 {
 			return aStockRecommendationSelectionsToRecommendations(result.Items)
 		}
 	}
-	snapshot, ok := s.loadAStockRecommendationSnapshot(strategyDate, period, ignoreRecent)
+	snapshot, ok := s.loadAStockRecommendationSnapshotWithCache(strategyDate, period, ignoreRecent, cache)
 	if !ok {
 		return nil
 	}
@@ -2347,6 +2444,10 @@ func (s *Server) loadPersistedAStockRecommendations(strategyDate string, period 
 }
 
 func (s *Server) applyAStockHoldingSummaries(recommendations []aStockRecommendation) []aStockRecommendation {
+	return s.applyAStockHoldingSummariesWithCache(recommendations, nil)
+}
+
+func (s *Server) applyAStockHoldingSummariesWithCache(recommendations []aStockRecommendation, cache *aStockRequestCache) []aStockRecommendation {
 	if len(recommendations) == 0 {
 		return recommendations
 	}
@@ -2357,9 +2458,8 @@ func (s *Server) applyAStockHoldingSummaries(recommendations []aStockRecommendat
 		if code == "" {
 			continue
 		}
-		summary := model.StockInstitutionHoldingSummary{}
-		query := "/api/v1/a-stock/holdings/summary?code=" + url.QueryEscape(code)
-		if err := s.getJSON(s.cfg.ContentURL+query, &summary); err != nil {
+		summary, err := s.loadAStockHoldingSummaryWithCache(code, cache)
+		if err != nil {
 			continue
 		}
 		if summary.HolderCount <= 0 {
@@ -2381,6 +2481,25 @@ func (s *Server) applyAStockHoldingSummaries(recommendations []aStockRecommendat
 	return recommendations
 }
 
+func (s *Server) loadAStockHoldingSummaryWithCache(code string, cache *aStockRequestCache) (model.StockInstitutionHoldingSummary, error) {
+	code = normalizeAStockCode(code)
+	if code == "" {
+		return model.StockInstitutionHoldingSummary{}, fmt.Errorf("empty stock code")
+	}
+	if cache != nil {
+		if entry, ok := cache.holdingSummaries[code]; ok {
+			return entry.summary, entry.err
+		}
+	}
+	summary := model.StockInstitutionHoldingSummary{}
+	query := "/api/v1/a-stock/holdings/summary?code=" + url.QueryEscape(code)
+	err := s.getJSON(s.cfg.ContentURL+query, &summary)
+	if cache != nil {
+		cache.holdingSummaries[code] = aStockHoldingSummaryCacheEntry{summary: summary, err: err}
+	}
+	return summary, err
+}
+
 func aStockHoldingScore(summary model.StockInstitutionHoldingSummary) int {
 	score := summary.HolderCount*2 + summary.HolderTypeCount*3 + int(summary.TotalFloatRatio)
 	if score < 0 {
@@ -2393,28 +2512,68 @@ func aStockHoldingScore(summary model.StockInstitutionHoldingSummary) int {
 }
 
 func (s *Server) loadAStockWindowArticles(start time.Time, end time.Time) ([]model.Item, error) {
-	filtered, err := s.loadAStockWindowArticlesByPublishTime(start, end)
+	return s.loadAStockWindowArticlesWithCache(start, end, nil)
+}
+
+func (s *Server) loadAStockWindowArticlesWithCache(start time.Time, end time.Time, cache *aStockRequestCache) ([]model.Item, error) {
+	cacheKey := "window|" + start.UTC().Format(time.RFC3339Nano) + "|" + end.UTC().Format(time.RFC3339Nano)
+	if cache != nil {
+		if entry, ok := cache.articles[cacheKey]; ok {
+			return entry.items, entry.err
+		}
+	}
+	filtered, err := s.loadAStockWindowArticlesByPublishTimeWithCache(start, end, cache)
 	if err != nil {
+		if cache != nil {
+			cache.articles[cacheKey] = aStockArticlesCacheEntry{err: err}
+		}
 		return nil, err
 	}
 	if len(filtered) > 0 {
+		if cache != nil {
+			cache.articles[cacheKey] = aStockArticlesCacheEntry{items: filtered}
+		}
 		return filtered, nil
 	}
 	fallbackResult := model.ItemListResult{}
 	fallbackQuery := "/api/v1/articles?page=1&page_size=200&time_field=captured_at&start=" + url.QueryEscape(start.UTC().Format(time.RFC3339)) + "&end=" + url.QueryEscape(end.UTC().Format(time.RFC3339))
 	if err := s.getJSON(s.cfg.ContentURL+fallbackQuery, &fallbackResult); err != nil {
+		if cache != nil {
+			cache.articles[cacheKey] = aStockArticlesCacheEntry{items: filtered}
+		}
 		return filtered, nil
 	}
-	return filterAStockNews(fallbackResult.Items), nil
+	items := filterAStockNews(fallbackResult.Items)
+	if cache != nil {
+		cache.articles[cacheKey] = aStockArticlesCacheEntry{items: items}
+	}
+	return items, nil
 }
 
 func (s *Server) loadAStockWindowArticlesByPublishTime(start time.Time, end time.Time) ([]model.Item, error) {
+	return s.loadAStockWindowArticlesByPublishTimeWithCache(start, end, nil)
+}
+
+func (s *Server) loadAStockWindowArticlesByPublishTimeWithCache(start time.Time, end time.Time, cache *aStockRequestCache) ([]model.Item, error) {
+	cacheKey := "publish|" + start.UTC().Format(time.RFC3339Nano) + "|" + end.UTC().Format(time.RFC3339Nano)
+	if cache != nil {
+		if entry, ok := cache.articles[cacheKey]; ok {
+			return entry.items, entry.err
+		}
+	}
 	result := model.ItemListResult{}
 	query := "/api/v1/articles?page=1&page_size=200&time_field=publish_time&start=" + url.QueryEscape(formatAStockPublishTime(start)) + "&end=" + url.QueryEscape(formatAStockPublishTime(end))
 	if err := s.getJSON(s.cfg.ContentURL+query, &result); err != nil {
+		if cache != nil {
+			cache.articles[cacheKey] = aStockArticlesCacheEntry{err: err}
+		}
 		return nil, err
 	}
-	return filterAStockNews(result.Items), nil
+	items := filterAStockNews(result.Items)
+	if cache != nil {
+		cache.articles[cacheKey] = aStockArticlesCacheEntry{items: items}
+	}
+	return items, nil
 }
 
 func (s *Server) loadAStockMarketCandidates(strategyDate string) []aStockMarketCandidate {
