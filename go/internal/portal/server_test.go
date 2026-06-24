@@ -4296,8 +4296,8 @@ func TestArticlesPagePresentationUsesInternalCaptureTimeAndNoFavoriteAction(t *t
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
-	if !strings.Contains(articleRawQuery, "time_field=captured_at") || !strings.Contains(articleRawQuery, "sort=captured_at_desc") {
-		t.Fatalf("expected article list request to sort/filter by captured_at, got query %q", articleRawQuery)
+	if !strings.Contains(articleRawQuery, "time_field=publish_time") || !strings.Contains(articleRawQuery, "sort=publish_time_desc") {
+		t.Fatalf("expected article list request to sort by publish_time while displaying capture time, got query %q", articleRawQuery)
 	}
 	body := rr.Body.String()
 	for _, unexpected := range []string{

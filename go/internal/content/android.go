@@ -109,7 +109,7 @@ func (s *Service) handleAndroidDashboard(w http.ResponseWriter, r *http.Request)
 		rules = data
 	}
 	articles := model.ItemListResult{Page: 1, PageSize: 10}
-	if data, err := s.store.ListItems(ctx, model.ArticleFilter{Page: 1, PageSize: 10, Sort: "captured_at_desc", UserID: auditUserID(r)}); err != nil {
+	if data, err := s.store.ListItems(ctx, model.ArticleFilter{Page: 1, PageSize: 10, Sort: "publish_time_desc", UserID: auditUserID(r)}); err != nil {
 		errs["articles"] = err.Error()
 	} else {
 		articles = data

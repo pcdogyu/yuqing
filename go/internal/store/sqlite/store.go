@@ -1106,11 +1106,15 @@ func itemListOrderClause(raw string) string {
 }
 
 func itemPublishTimePresenceExpr() string {
-	return "CASE WHEN TRIM(items.publish_time) <> '' OR items.publish_time_text LIKE '____-__-__%' OR items.publish_time_text LIKE '____/__/__%' THEN 1 ELSE 0 END"
+	return "CASE WHEN TRIM(items.publish_time) <> '' OR " + itemPublishTimeTextUsableExpr() + " THEN 1 ELSE 0 END"
 }
 
 func itemPublishTimeSortExpr() string {
 	return "REPLACE(REPLACE(REPLACE(CASE WHEN TRIM(items.publish_time) <> '' THEN items.publish_time WHEN items.publish_time_text LIKE '____-__-__%' OR items.publish_time_text LIKE '____/__/__%' THEN items.publish_time_text ELSE items.captured_at END, '/', '-'), 'T', ' '), 'Z', '')"
+}
+
+func itemPublishTimeTextUsableExpr() string {
+	return "items.publish_time_text LIKE '____-__-__%' OR items.publish_time_text LIKE '____/__/__%' OR items.publish_time_text = '刚刚' OR items.publish_time_text LIKE '%分钟前' OR items.publish_time_text LIKE '%小时前'"
 }
 
 func (s *Store) attachProjectIDs(ctx context.Context, items []model.Item) error {

@@ -24,7 +24,14 @@ func TestListItemsCanSortByPublishTimeDescInPostgresMode(t *testing.T) {
 	latestPublished.CreatedAt = latestPublished.CapturedAt
 	latestPublished.UpdatedAt = latestPublished.CapturedAt
 
-	if _, _, err := store.UpsertItems(ctx, []model.Item{recrawledOld, latestPublished}); err != nil {
+	relativeLatest := sampleItem("headline", "headline-key-relative-latest-pg", "相对时间最新新闻")
+	relativeLatest.PublishTime = ""
+	relativeLatest.PublishTimeText = "7分钟前"
+	relativeLatest.CapturedAt = time.Date(2026, 6, 23, 4, 8, 0, 0, time.UTC)
+	relativeLatest.CreatedAt = relativeLatest.CapturedAt
+	relativeLatest.UpdatedAt = relativeLatest.CapturedAt
+
+	if _, _, err := store.UpsertItems(ctx, []model.Item{recrawledOld, latestPublished, relativeLatest}); err != nil {
 		t.Fatalf("UpsertItems error: %v", err)
 	}
 
@@ -35,7 +42,7 @@ func TestListItemsCanSortByPublishTimeDescInPostgresMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListItems publish_time_desc postgres mode error: %v", err)
 	}
-	if len(list.Items) != 2 || list.Items[0].SourceKey != latestPublished.SourceKey {
+	if len(list.Items) != 3 || list.Items[0].SourceKey != relativeLatest.SourceKey {
 		t.Fatalf("expected publish_time_desc to prefer latest published item in postgres mode, got %+v", list.Items)
 	}
 }

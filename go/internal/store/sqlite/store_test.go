@@ -109,7 +109,14 @@ func TestListItemsCanSortByPublishTimeDesc(t *testing.T) {
 	latestPublished.CreatedAt = latestPublished.CapturedAt
 	latestPublished.UpdatedAt = latestPublished.CapturedAt
 
-	if _, _, err := store.UpsertItems(ctx, []model.Item{recrawledOld, latestPublished}); err != nil {
+	relativeLatest := sampleItem("headline", "headline-key-relative-latest", "相对时间最新新闻")
+	relativeLatest.PublishTime = ""
+	relativeLatest.PublishTimeText = "7分钟前"
+	relativeLatest.CapturedAt = time.Date(2026, 6, 23, 4, 8, 0, 0, time.UTC)
+	relativeLatest.CreatedAt = relativeLatest.CapturedAt
+	relativeLatest.UpdatedAt = relativeLatest.CapturedAt
+
+	if _, _, err := store.UpsertItems(ctx, []model.Item{recrawledOld, latestPublished, relativeLatest}); err != nil {
 		t.Fatalf("UpsertItems error: %v", err)
 	}
 
@@ -117,7 +124,7 @@ func TestListItemsCanSortByPublishTimeDesc(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListItems default sort error: %v", err)
 	}
-	if len(defaultList.Items) != 2 || defaultList.Items[0].SourceKey != recrawledOld.SourceKey {
+	if len(defaultList.Items) != 3 || defaultList.Items[0].SourceKey != recrawledOld.SourceKey {
 		t.Fatalf("expected default captured_at sort to keep recrawled old item first, got %+v", defaultList.Items)
 	}
 
@@ -125,7 +132,7 @@ func TestListItemsCanSortByPublishTimeDesc(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListItems publish_time_desc error: %v", err)
 	}
-	if len(publishTimeList.Items) != 2 || publishTimeList.Items[0].SourceKey != latestPublished.SourceKey {
+	if len(publishTimeList.Items) != 3 || publishTimeList.Items[0].SourceKey != relativeLatest.SourceKey {
 		t.Fatalf("expected publish_time_desc to prefer latest published item, got %+v", publishTimeList.Items)
 	}
 }

@@ -2495,19 +2495,19 @@ func (s *Server) handleArticles(w http.ResponseWriter, r *http.Request, user any
 	industry := strings.TrimSpace(r.URL.Query().Get("industry"))
 	province := strings.TrimSpace(r.URL.Query().Get("province"))
 	city := strings.TrimSpace(r.URL.Query().Get("city"))
-	query := "/api/v1/articles?page=" + strconv.Itoa(pageNum) + "&page_size=" + strconv.Itoa(pageSize) + "&time_field=captured_at&sort=captured_at_desc"
+	query := "/api/v1/articles?page=" + strconv.Itoa(pageNum) + "&page_size=" + strconv.Itoa(pageSize) + "&time_field=publish_time&sort=publish_time_desc"
 	if mode == "search" {
-		query = "/api/v1/search/articles?page=" + strconv.Itoa(pageNum) + "&page_size=" + strconv.Itoa(pageSize) + "&time_field=captured_at&sort=captured_at_desc"
+		query = "/api/v1/search/articles?page=" + strconv.Itoa(pageNum) + "&page_size=" + strconv.Itoa(pageSize) + "&time_field=publish_time&sort=publish_time_desc"
 		if keyword != "" {
 			query += "&q=" + url.QueryEscape(keyword)
 		}
 	} else if mode == "full" {
-		query = "/api/v1/search/full?page=" + strconv.Itoa(pageNum) + "&page_size=" + strconv.Itoa(pageSize) + "&time_field=captured_at&sort=captured_at_desc"
+		query = "/api/v1/search/full?page=" + strconv.Itoa(pageNum) + "&page_size=" + strconv.Itoa(pageSize) + "&time_field=publish_time&sort=publish_time_desc"
 		if keyword != "" {
 			query += "&q=" + url.QueryEscape(keyword)
 		}
 	} else if mode == "timely" {
-		query = "/api/v1/search/timely?page=" + strconv.Itoa(pageNum) + "&page_size=" + strconv.Itoa(pageSize) + "&time_field=captured_at&sort=captured_at_desc"
+		query = "/api/v1/search/timely?page=" + strconv.Itoa(pageNum) + "&page_size=" + strconv.Itoa(pageSize) + "&time_field=publish_time&sort=publish_time_desc"
 		if keyword != "" {
 			query += "&q=" + url.QueryEscape(keyword)
 		}
