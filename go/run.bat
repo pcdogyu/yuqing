@@ -20,6 +20,11 @@ if not defined YUQING_GO_TEST_FLAGS (
 ) else (
     set "GO_TEST_FLAGS=%YUQING_GO_TEST_FLAGS%"
 )
+if defined YUQING_GO_BUILD_FLAGS (
+    set "GO_BUILD_FLAGS=%YUQING_GO_BUILD_FLAGS%"
+) else (
+    set "GO_BUILD_FLAGS="
+)
 set "AKSHARE_AUCTION_PORT=8087"
 set "AKSHARE_AUCTION_HOST=127.0.0.1"
 set "GATEWAY_WEB_PORT=8079"
@@ -138,23 +143,11 @@ for %%S in (%SERVICE_NAMES%) do (
     if errorlevel 1 goto :fail
 )
 
-echo [5/6] Build service binaries...
+echo [5/6] Build service binaries concurrently...
 if not exist "%BIN_DIR%" mkdir "%BIN_DIR%"
-for %%S in (
-    auth-service
-    wechat-service
-    content-service
-    crawler-service
-    analysis-service
-    nlp-service
-    gateway-web
-    akshare-service
-    scheduler-service
-) do (
-    echo Building %%S...
-    go build -ldflags "%LDFLAGS%" -o "%BIN_DIR%\%%S.exe" "./cmd/%%S"
-    if errorlevel 1 goto :fail
-)
+if defined GO_BUILD_FLAGS echo Go build flags: %GO_BUILD_FLAGS%
+go build %GO_BUILD_FLAGS% -ldflags "%LDFLAGS%" -o "%BIN_DIR%\\" "./cmd/auth-service" "./cmd/wechat-service" "./cmd/content-service" "./cmd/crawler-service" "./cmd/analysis-service" "./cmd/nlp-service" "./cmd/gateway-web" "./cmd/akshare-service" "./cmd/scheduler-service"
+if errorlevel 1 goto :fail
 
 echo [6/6] Start services with debug logging...
 for %%S in (
