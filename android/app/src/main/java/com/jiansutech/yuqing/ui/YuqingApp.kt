@@ -741,9 +741,9 @@ private fun ArticleRow(item: ArticleItem, onClick: (() -> Unit)? = null) {
                 maxLines = 3,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (item.summary.isNotBlank()) {
+            if (shouldShowMobileArticleSummary(item)) {
                 Text(
-                    item.summary,
+                    item.summary.trim(),
                     style = MaterialTheme.typography.bodySmall,
                     maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
@@ -799,7 +799,7 @@ private fun ArticleDetailScreen(
                 Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
             }
         }
-        if (item.summary.isNotBlank() && item.summary.trim() != body) {
+        if (shouldShowMobileArticleSummary(item) && item.summary.trim() != body) {
             item {
                 Card {
                     Text(
@@ -830,6 +830,17 @@ private fun ArticleDetailScreen(
             }
         }
     }
+}
+
+internal fun shouldShowMobileArticleSummary(item: ArticleItem): Boolean {
+    if (item.summary.isBlank()) {
+        return false
+    }
+    return !isPanewsNewsflashSource(item.sourceType)
+}
+
+private fun isPanewsNewsflashSource(sourceType: String): Boolean {
+    return sourceType.trim().equals("panews_newsflash", ignoreCase = true)
 }
 
 private data class AStockBacktestDetailState(

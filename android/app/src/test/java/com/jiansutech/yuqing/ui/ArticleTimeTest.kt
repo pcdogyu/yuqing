@@ -1,6 +1,9 @@
 package com.jiansutech.yuqing.ui
 
+import com.jiansutech.yuqing.data.ArticleItem
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDateTime
 
@@ -54,5 +57,33 @@ class ArticleTimeTest {
     fun articleTitleAppendsRelativeTime() {
         assertEquals("新闻标题 5分钟之前", articleTitleWithRelativeTime(" 新闻标题 ", "5分钟之前"))
         assertEquals("新闻标题", articleTitleWithRelativeTime("新闻标题", ""))
+    }
+
+    @Test
+    fun panewsNewsflashDoesNotShowMobileSummary() {
+        assertFalse(
+            shouldShowMobileArticleSummary(
+                ArticleItem(sourceType = "panews_newsflash", summary = "summary"),
+            ),
+        )
+        assertFalse(
+            shouldShowMobileArticleSummary(
+                ArticleItem(sourceType = " PANEWS_NEWSFLASH ", summary = "summary"),
+            ),
+        )
+    }
+
+    @Test
+    fun nonPanewsNewsflashKeepsMobileSummary() {
+        assertTrue(
+            shouldShowMobileArticleSummary(
+                ArticleItem(sourceType = "flash", summary = "summary"),
+            ),
+        )
+        assertFalse(
+            shouldShowMobileArticleSummary(
+                ArticleItem(sourceType = "flash", summary = ""),
+            ),
+        )
     }
 }
