@@ -1293,6 +1293,9 @@ func (s *Server) loadAStockContextWithRecommendationPhase(strategyDate string, p
 		s.applyAStockAfternoonSameDayCaps(&ctx, nil)
 		ctx.Recommendations = s.applyAStockHoldingSummaries(ctx.Recommendations)
 		ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus, ctx.LimitUpFiltered = s.loadAStockLockedMarketView(strategyDate, ctx.Period, ctx.Recommendations)
+		if forceRecommendationRefresh {
+			s.restoreAStockBacktestsFromSnapshot(&ctx)
+		}
 		ctx.EmptyReason = aStockRecommendationEmptyReason(ctx)
 		if err := s.saveAStockRecommendationSnapshot(ctx); err != nil && ctx.LoadMessage == "" {
 			ctx.LoadMessage = "A股推荐保存失败：" + err.Error()
@@ -1311,6 +1314,9 @@ func (s *Server) loadAStockContextWithRecommendationPhase(strategyDate string, p
 		}
 		ctx.Recommendations = s.applyAStockHoldingSummaries(ctx.Recommendations)
 		ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus, ctx.LimitUpFiltered = s.loadAStockLockedMarketView(strategyDate, ctx.Period, ctx.Recommendations)
+		if forceRecommendationRefresh {
+			s.restoreAStockBacktestsFromSnapshot(&ctx)
+		}
 		ctx.EmptyReason = aStockRecommendationEmptyReason(ctx)
 		if err := s.saveAStockRecommendationSnapshot(ctx); err != nil && ctx.LoadMessage == "" {
 			ctx.LoadMessage = "A股推荐保存失败：" + err.Error()
@@ -1348,6 +1354,9 @@ func (s *Server) loadAStockContextWithRecommendationPhase(strategyDate string, p
 	}
 	ctx.Recommendations = s.applyAStockHoldingSummaries(ctx.Recommendations)
 	ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus, ctx.LimitUpFiltered, ctx.NoTodayMarketCount = s.loadAStockMarketView(strategyDate, ctx.Period, ctx.Recommendations, ctx.LimitUpFilterEnabled, ctx.TodayMarketFilterEnabled, recommendationTarget)
+	if forceRecommendationRefresh {
+		s.restoreAStockBacktestsFromSnapshot(&ctx)
+	}
 	if shouldPersistAStockRecommendationSelections(ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh) && len(ctx.Recommendations) > 0 {
 		if err := s.saveAStockRecommendationSelections(ctx); err != nil && ctx.LoadMessage == "" {
 			ctx.LoadMessage = "A股已选股票保存失败：" + err.Error()
@@ -1568,6 +1577,177 @@ func (s *Server) saveAStockRecommendationSnapshot(ctx aStockContext) error {
 		return fmt.Errorf(resp.Status())
 	}
 	return nil
+}
+
+func (s *Server) restoreAStockBacktestsFromSnapshot(ctx *aStockContext) {
+	if ctx == nil || strings.TrimSpace(s.cfg.ContentURL) == "" || len(ctx.Backtests) == 0 || !aStockBacktestsNeedRestore(ctx.Backtests, ctx.BacktestStatus) {
+		return
+	}
+	snapshot, ok := s.loadAStockRecommendationSnapshot(ctx.Date, ctx.Period, ctx.IgnoreRecent)
+	if !ok {
+		return
+	}
+	var previous []aStockBacktestRow
+	if err := json.Unmarshal([]byte(nonEmpty(snapshot.BacktestsJSON, "[]")), &previous); err != nil || len(previous) == 0 {
+		return
+	}
+	currentFilled := aStockBacktestFilledDataCount(ctx.Backtests)
+	previousFilled := aStockBacktestFilledDataCount(previous)
+	merged, changed := mergeAStockBacktestRowsFromSnapshot(ctx.Backtests, previous)
+	if !changed {
+		return
+	}
+	ctx.Backtests = merged
+	mergedFilled := aStockBacktestFilledDataCount(ctx.Backtests)
+	if mergedFilled > currentFilled && (aStockBacktestStatusNeedsRestore(ctx.BacktestStatus) || currentFilled < previousFilled) {
+		ctx.BacktestStatus = nonEmpty(snapshot.BacktestStatus, ctx.BacktestStatus)
+	}
+}
+
+func mergeAStockBacktestRowsFromSnapshot(current []aStockBacktestRow, previous []aStockBacktestRow) ([]aStockBacktestRow, bool) {
+	if len(current) == 0 || len(previous) == 0 {
+		return current, false
+	}
+	previousByCode := make(map[string]aStockBacktestRow, len(previous))
+	for _, row := range previous {
+		code := aStockBacktestRowCode(row)
+		if code == "" {
+			continue
+		}
+		previousByCode[code] = row
+	}
+	merged := make([]aStockBacktestRow, len(current))
+	changed := false
+	for i, row := range current {
+		code := aStockBacktestRowCode(row)
+		previousRow, ok := previousByCode[code]
+		if !ok {
+			merged[i] = row
+			continue
+		}
+		mergedRow, rowChanged := mergeAStockBacktestRowFromSnapshot(row, previousRow)
+		merged[i] = mergedRow
+		changed = changed || rowChanged
+	}
+	return merged, changed
+}
+
+func mergeAStockBacktestRowFromSnapshot(current aStockBacktestRow, previous aStockBacktestRow) (aStockBacktestRow, bool) {
+	originalFilled := aStockBacktestRowFilledDataCount(current)
+	previousFilled := aStockBacktestRowFilledDataCount(previous)
+	changed := false
+	if aStockBacktestValueMissing(current.EntryOpen) && !aStockBacktestValueMissing(previous.EntryOpen) {
+		current.EntryOpen = previous.EntryOpen
+		changed = true
+	}
+	if aStockBacktestValueMissing(current.AfternoonOpen) && !aStockBacktestValueMissing(previous.AfternoonOpen) {
+		current.AfternoonOpen = previous.AfternoonOpen
+		changed = true
+	}
+	if aStockBacktestValueMissing(current.T0Return) && !aStockBacktestValueMissing(previous.T0Return) {
+		current.T0Return = previous.T0Return
+		current.T0ReturnClass = previous.T0ReturnClass
+		changed = true
+	}
+	if aStockBacktestValueMissing(current.T0Close) && !aStockBacktestValueMissing(previous.T0Close) {
+		current.T0Close = previous.T0Close
+		changed = true
+	}
+	if aStockBacktestValueMissing(current.BestReturn) && !aStockBacktestValueMissing(previous.BestReturn) {
+		current.BestReturn = previous.BestReturn
+		current.BestReturnClass = previous.BestReturnClass
+		changed = true
+	}
+	if len(previous.Days) > len(current.Days) {
+		extra := make([]aStockBacktestCell, len(previous.Days)-len(current.Days))
+		current.Days = append(current.Days, extra...)
+		changed = true
+	}
+	for i := range current.Days {
+		if i >= len(previous.Days) {
+			break
+		}
+		if aStockBacktestValueMissing(current.Days[i].Close) && !aStockBacktestValueMissing(previous.Days[i].Close) {
+			current.Days[i].Close = previous.Days[i].Close
+			changed = true
+		}
+		if aStockBacktestValueMissing(current.Days[i].Return) && !aStockBacktestValueMissing(previous.Days[i].Return) {
+			current.Days[i].Return = previous.Days[i].Return
+			current.Days[i].ReturnClass = previous.Days[i].ReturnClass
+			changed = true
+		} else if strings.TrimSpace(current.Days[i].ReturnClass) == "" && strings.TrimSpace(previous.Days[i].ReturnClass) != "" {
+			current.Days[i].ReturnClass = previous.Days[i].ReturnClass
+			changed = true
+		}
+	}
+	if previousFilled > originalFilled && aStockBacktestStatusNeedsRestore(current.Status) && strings.TrimSpace(previous.Status) != "" {
+		current.Status = previous.Status
+		changed = true
+	}
+	return current, changed
+}
+
+func aStockBacktestFilledDataCount(rows []aStockBacktestRow) int {
+	total := 0
+	for _, row := range rows {
+		total += aStockBacktestRowFilledDataCount(row)
+	}
+	return total
+}
+
+func aStockBacktestRowFilledDataCount(row aStockBacktestRow) int {
+	total := 0
+	for _, value := range []string{row.EntryOpen, row.AfternoonOpen, row.T0Return, row.T0Close, row.BestReturn} {
+		if !aStockBacktestValueMissing(value) {
+			total++
+		}
+	}
+	for _, day := range row.Days {
+		if !aStockBacktestValueMissing(day.Close) {
+			total++
+		}
+		if !aStockBacktestValueMissing(day.Return) {
+			total++
+		}
+	}
+	return total
+}
+
+func aStockBacktestStatusNeedsRestore(status string) bool {
+	status = strings.TrimSpace(status)
+	if status == "" {
+		return true
+	}
+	return strings.Contains(status, "等待下午开盘价") ||
+		strings.Contains(status, "等待当日开盘价") ||
+		strings.Contains(status, "无行情") ||
+		strings.Contains(status, "行情读取失败") ||
+		strings.Contains(status, "缺少当日行情")
+}
+
+func aStockBacktestsNeedRestore(rows []aStockBacktestRow, status string) bool {
+	if aStockBacktestStatusNeedsRestore(status) {
+		return true
+	}
+	for _, row := range rows {
+		if aStockBacktestStatusNeedsRestore(row.Status) {
+			return true
+		}
+	}
+	return false
+}
+
+func aStockBacktestValueMissing(value string) bool {
+	value = strings.TrimSpace(value)
+	return value == "" || value == "--"
+}
+
+func aStockBacktestRowCode(row aStockBacktestRow) string {
+	fields := strings.Fields(strings.TrimSpace(row.Stock))
+	if len(fields) == 0 {
+		return ""
+	}
+	return normalizeAStockCode(fields[0])
 }
 
 type aStockPreopenPopupWindow struct {

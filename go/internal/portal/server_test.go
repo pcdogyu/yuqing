@@ -2484,6 +2484,181 @@ func TestAStockPageRefreshAllBacktestsSupplementsPartialCustomMarketHistory(t *t
 	}
 }
 
+func TestAStockPageRefreshAllBacktestsPreservesPersistedAfternoonPrices(t *testing.T) {
+	market := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch normalizeAStockCode(r.URL.Query().Get("codes")) {
+		case "603083":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{
+					"items": []map[string]any{
+						{"code": "603083", "date": "2026-06-22", "open": 238.00, "close": 238.00, "pct": 0.50},
+						{"code": "603083", "date": "2026-06-23", "open": 240.00, "close": 244.08, "pct": 1.70, "entry_price": 240.00},
+					},
+				},
+			})
+		case "002008":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{
+					"items": []map[string]any{
+						{"code": "002008", "date": "2026-06-22", "open": 131.93, "close": 131.93, "pct": -2.20},
+						{"code": "002008", "date": "2026-06-23", "open": 135.54, "close": 145.11, "pct": 9.99},
+					},
+				},
+			})
+		default:
+			t.Fatalf("unexpected market query: %s", r.URL.RawQuery)
+		}
+	}))
+	defer market.Close()
+	t.Setenv("YUQING_ASTOCK_MARKET_URL", market.URL)
+
+	afternoonMinuteHits := 0
+	eastmoney := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		secid := r.URL.Query().Get("secid")
+		end := r.URL.Query().Get("end")
+		switch {
+		case secid == "0.002008" && r.URL.Query().Get("klt") == "1" && strings.Contains(end, "09:30"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{
+					"klines": []string{
+						"2026-06-23 09:30,135.54,136.20,0,0,0,0,0,0",
+						"2026-06-23 13:01,141.98,142.20,0,0,0,0,0,0",
+					},
+				},
+			})
+		case secid == "0.002008" && r.URL.Query().Get("klt") == "1" && strings.Contains(end, "13:01"):
+			afternoonMinuteHits++
+			lines := []string{}
+			if afternoonMinuteHits == 1 {
+				lines = []string{
+					"2026-06-23 09:30,135.54,136.20,0,0,0,0,0,0",
+					"2026-06-23 13:01,141.98,142.20,0,0,0,0,0,0",
+				}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{
+					"klines": lines,
+				},
+			})
+		case secid == "1.603083" && r.URL.Query().Get("klt") == "1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{
+					"klines": []string{
+						"2026-06-23 09:30,239.80,240.00,0,0,0,0,0,0",
+					},
+				},
+			})
+		default:
+			t.Fatalf("unexpected eastmoney query: %s", r.URL.RawQuery)
+		}
+	}))
+	defer eastmoney.Close()
+	setAStockEastmoneyKlineURLForTest(t, eastmoney.URL)
+
+	savedSnapshots := map[string]model.AStockRecommendationSnapshot{}
+	afternoonSnapshotGets := 0
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/articles":
+			writeEnvelope(w, http.StatusOK, "ok", model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0})
+		case "/api/v1/a-stock/recommendation-selections":
+			switch r.URL.Query().Get("period") {
+			case "morning":
+				writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{
+					Found:        true,
+					StrategyDate: "2026-06-23",
+					Period:       "morning",
+					Items: []model.AStockRecommendationSelection{
+						{Rank: 1, Code: "603083", Name: "剑桥科技", Hotspot: "人工智能", MarketScore: 91, Reason: "morning"},
+					},
+				})
+			case "afternoon":
+				writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{
+					Found:        true,
+					StrategyDate: "2026-06-23",
+					Period:       "afternoon",
+					Items: []model.AStockRecommendationSelection{
+						{Rank: 1, Code: "002008", Name: "大族激光", Hotspot: "机器人", MarketScore: 87, Reason: "afternoon"},
+					},
+				})
+			default:
+				t.Fatalf("unexpected selection period: %s", r.URL.RawQuery)
+			}
+		case "/api/v1/a-stock/recommendations":
+			period := r.URL.Query().Get("period")
+			if period == "afternoon" {
+				afternoonSnapshotGets++
+			}
+			snapshot, ok := savedSnapshots[period]
+			if !ok {
+				writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
+				return
+			}
+			snapshot.Found = true
+			writeEnvelope(w, http.StatusOK, "ok", snapshot)
+		case "/api/v1/internal/a-stock/recommendations":
+			var snapshot model.AStockRecommendationSnapshot
+			if err := json.NewDecoder(r.Body).Decode(&snapshot); err != nil {
+				t.Fatalf("decode snapshot: %v", err)
+			}
+			savedSnapshots[snapshot.Period] = snapshot
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Updated: 1})
+		case "/api/v1/a-stock/holdings/summary":
+			writeEnvelope(w, http.StatusOK, "ok", model.StockInstitutionHoldingSummary{})
+		default:
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-23&period=morning&refresh_all_backtests=1", nil)
+		rr := httptest.NewRecorder()
+		srv.handleAStockPage(rr, req, map[string]any{"id": 1})
+		if rr.Code != http.StatusOK {
+			t.Fatalf("refresh %d expected 200, got %d body=%s", i+1, rr.Code, rr.Body.String())
+		}
+		if i == 0 {
+			afternoonSnapshot := savedSnapshots["afternoon"]
+			var firstRows []aStockBacktestRow
+			if err := json.Unmarshal([]byte(afternoonSnapshot.BacktestsJSON), &firstRows); err != nil {
+				t.Fatalf("decode first afternoon backtests: %v", err)
+			}
+			if len(firstRows) != 1 || firstRows[0].AfternoonOpen != "142.20" || firstRows[0].T0Return != "+2.05%" {
+				t.Fatalf("expected first refresh to persist afternoon prices, got %+v", firstRows)
+			}
+		}
+	}
+
+	afternoonSnapshot, ok := savedSnapshots["afternoon"]
+	if !ok {
+		t.Fatalf("expected afternoon snapshot to be persisted, got %+v", savedSnapshots)
+	}
+	var backtests []aStockBacktestRow
+	if err := json.Unmarshal([]byte(afternoonSnapshot.BacktestsJSON), &backtests); err != nil {
+		t.Fatalf("decode afternoon backtests: %v", err)
+	}
+	if len(backtests) != 1 {
+		t.Fatalf("expected one afternoon backtest row, got %+v", backtests)
+	}
+	if backtests[0].AfternoonOpen != "142.20" || backtests[0].T0Return != "+2.05%" || backtests[0].T0Close != "145.11" {
+		t.Fatalf("expected persisted afternoon backtest values after second refresh, got %+v", backtests[0])
+	}
+	if !strings.Contains(afternoonSnapshot.BacktestStatus, "已回测") {
+		t.Fatalf("expected afternoon status to keep persisted backtest progress, got %q", afternoonSnapshot.BacktestStatus)
+	}
+	if afternoonMinuteHits != 2 {
+		t.Fatalf("expected two afternoon minute lookups, got %d", afternoonMinuteHits)
+	}
+	if afternoonSnapshotGets == 0 {
+		t.Fatal("expected second refresh to read persisted afternoon snapshot")
+	}
+}
+
 func TestAStockContextRefreshSeedsSelectionsFromExistingSnapshot(t *testing.T) {
 	market := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
