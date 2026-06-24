@@ -2071,6 +2071,10 @@ func TestAStockContextLoadsPersistedRecommendationSnapshot(t *testing.T) {
 					LimitUpFilterEnabled: true,
 				},
 			})
+		case "/api/v1/internal/a-stock/recommendation-selections":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": model.AStockRecommendationSelectionUpsertResult{Inserted: 1, Total: 1},
+			})
 		default:
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
@@ -2155,6 +2159,60 @@ func TestAStockContextRefreshKeepsPersistedRecommendationSelections(t *testing.T
 	}
 	if selectionPosts != 0 {
 		t.Fatalf("expected locked selection path to avoid rewriting selections, got %d", selectionPosts)
+	}
+}
+
+func TestAStockContextRefreshSeedsSelectionsFromExistingSnapshot(t *testing.T) {
+	market := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		writeEnvelope(w, http.StatusOK, "ok", []map[string]any{
+			{"code": "603083", "date": "2026-06-23", "open": 240.00, "close": 244.08, "pct": 1.70, "entry_price": 240.00},
+		})
+	}))
+	defer market.Close()
+	t.Setenv("YUQING_ASTOCK_MARKET_URL", market.URL)
+
+	var savedSelections model.AStockRecommendationSelectionSet
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/articles":
+			writeEnvelope(w, http.StatusOK, "ok", model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0})
+		case "/api/v1/a-stock/recommendation-selections":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{Found: false})
+		case "/api/v1/a-stock/recommendations":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{
+				Found:               true,
+				StrategyDate:        "2026-06-23",
+				Period:              "morning",
+				RecommendationsJSON: `[{"Rank":1,"Hotspot":"人工智能","Code":"603083","Name":"剑桥科技","Reason":"snapshot"}]`,
+				BacktestsJSON:       `[]`,
+				BacktestStatus:      "旧快照",
+				GeneratedCount:      1,
+			})
+		case "/api/v1/internal/a-stock/recommendation-selections":
+			if err := json.NewDecoder(r.Body).Decode(&savedSelections); err != nil {
+				t.Fatalf("decode saved selections: %v", err)
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionUpsertResult{Inserted: 1, Total: 1})
+		case "/api/v1/internal/a-stock/recommendations":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Updated: 1})
+		case "/api/v1/a-stock/holdings/summary":
+			writeEnvelope(w, http.StatusOK, "ok", model.StockInstitutionHoldingSummary{})
+		default:
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	ctx := srv.loadAStockContextWithCache("2026-06-23", "morning", 1, false, false, true, newAStockRequestCache())
+
+	if len(ctx.Recommendations) != 1 || ctx.Recommendations[0].Code != "603083" {
+		t.Fatalf("expected refresh to keep snapshot recommendation code, got %+v", ctx.Recommendations)
+	}
+	if len(savedSelections.Items) != 1 || savedSelections.Items[0].Code != "603083" {
+		t.Fatalf("expected snapshot code to be saved into selections, got %+v", savedSelections)
 	}
 }
 

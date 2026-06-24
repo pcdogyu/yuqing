@@ -1151,6 +1151,23 @@ func (s *Server) loadAStockContextWithCache(strategyDate string, periodKey strin
 		}
 		return ctx
 	}
+	if isAStockOfficialSelectionContext(ignoreRecent, ignoreLimitUp) && s.applyAStockRecommendationSnapshotRecommendations(&ctx) {
+		if err := s.saveAStockRecommendationSelections(ctx); err != nil && ctx.LoadMessage == "" {
+			ctx.LoadMessage = "A股已选股票保存失败：" + err.Error()
+		}
+		if !forceRecommendationRefresh {
+			if s.applyAStockRecommendationSnapshot(&ctx) {
+				return ctx
+			}
+		}
+		ctx.Recommendations = s.applyAStockHoldingSummaries(ctx.Recommendations)
+		ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus, ctx.LimitUpFiltered = s.loadAStockLockedMarketView(strategyDate, ctx.Period, ctx.Recommendations)
+		ctx.EmptyReason = aStockRecommendationEmptyReason(ctx)
+		if err := s.saveAStockRecommendationSnapshot(ctx); err != nil && ctx.LoadMessage == "" {
+			ctx.LoadMessage = "A股推荐保存失败：" + err.Error()
+		}
+		return ctx
+	}
 	if !forceRecommendationRefresh {
 		if s.applyAStockRecommendationSnapshot(&ctx) {
 			return ctx
@@ -1219,6 +1236,38 @@ func (s *Server) applyAStockRecommendationSelections(ctx *aStockContext) bool {
 	}
 	ctx.Recommendations = aStockRecommendationSelectionsToRecommendations(result.Items)
 	ctx.GeneratedRecommendationCount = len(ctx.Recommendations)
+	return true
+}
+
+func (s *Server) applyAStockRecommendationSnapshotRecommendations(ctx *aStockContext) bool {
+	if ctx == nil || strings.TrimSpace(s.cfg.ContentURL) == "" || !isAStockOfficialSelectionContext(ctx.IgnoreRecent, ctx.IgnoreLimitUp) {
+		return false
+	}
+	snapshot, ok := s.loadAStockRecommendationSnapshot(ctx.Date, ctx.Period, false)
+	if !ok {
+		return false
+	}
+	if ctx.Period == "afternoon" && snapshot.LimitUpFilterEnabled != ctx.LimitUpFilterEnabled {
+		return false
+	}
+	var recommendations []aStockRecommendation
+	if err := json.Unmarshal([]byte(nonEmpty(snapshot.RecommendationsJSON, "[]")), &recommendations); err != nil || len(recommendations) == 0 {
+		return false
+	}
+	ctx.Recommendations = rerankAStockRecommendations(recommendations)
+	ctx.GeneratedRecommendationCount = snapshot.GeneratedCount
+	if ctx.GeneratedRecommendationCount <= 0 {
+		ctx.GeneratedRecommendationCount = len(ctx.Recommendations)
+	}
+	ctx.RecentFiltered = snapshot.RecentFiltered
+	ctx.SameDayMorningFiltered = snapshot.SameDayMorningFiltered
+	ctx.LimitUpFilterEnabled = snapshot.LimitUpFilterEnabled
+	ctx.LimitUpFiltered = snapshot.LimitUpFiltered
+	ctx.MarketCandidateStatus = snapshot.MarketCandidateStatus
+	ctx.MarketCandidateCount = snapshot.MarketCandidateCount
+	ctx.AuctionAmountLabel = snapshot.AuctionAmountLabel
+	ctx.EmptyReason = snapshot.EmptyReason
+	ctx.SnapshotUpdatedAt = snapshot.UpdatedAt
 	return true
 }
 
