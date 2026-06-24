@@ -229,6 +229,7 @@ const (
 var (
 	aStockNow               = time.Now
 	aStockEastmoneyKlineURL = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+	aStockTencentMinuteURL  = "https://web.ifzq.gtimg.cn/appstock/app/minute/query"
 	aStockYahooChartURL     = "https://query1.finance.yahoo.com/v8/finance/chart/"
 	aStockMarketHolidays    = map[string]struct{}{
 		"2026-01-01": {},
@@ -2824,11 +2825,34 @@ func (s *Server) loadEastmoneyAStockBars(strategyDate string, codes []string) ([
 }
 
 func (s *Server) loadEastmoneyAStock0930Prices(strategyDate string, codes []string) map[string]float64 {
-	return s.loadEastmoneyAStockSessionPrices(strategyDate, codes, "09:30", decodeEastmoneyAStock0930Price)
+	return s.loadAStockSessionPrices(strategyDate, codes, "09:30", decodeEastmoneyAStock0930Price)
 }
 
 func (s *Server) loadEastmoneyAStock1300Prices(strategyDate string, codes []string) map[string]float64 {
-	return s.loadEastmoneyAStockSessionPrices(strategyDate, codes, "13:01", decodeEastmoneyAStock1300Price)
+	return s.loadAStockSessionPrices(strategyDate, codes, "13:01", decodeEastmoneyAStock1300Price)
+}
+
+func (s *Server) loadAStockSessionPrices(strategyDate string, codes []string, endTime string, decoder func([]byte, string) (float64, bool)) map[string]float64 {
+	prices := s.loadEastmoneyAStockSessionPrices(strategyDate, codes, endTime, decoder)
+	missingCodes := make([]string, 0, len(codes))
+	for _, code := range codes {
+		code = normalizeAStockCode(code)
+		if code == "" {
+			continue
+		}
+		if prices[code] <= 0 {
+			missingCodes = append(missingCodes, code)
+		}
+	}
+	if len(missingCodes) == 0 {
+		return prices
+	}
+	for code, price := range s.loadTencentAStockSessionPrices(strategyDate, missingCodes, endTime) {
+		if price > 0 && prices[code] <= 0 {
+			prices[code] = price
+		}
+	}
+	return prices
 }
 
 func (s *Server) loadEastmoneyAStockSessionPrices(strategyDate string, codes []string, endTime string, decoder func([]byte, string) (float64, bool)) map[string]float64 {
@@ -2863,6 +2887,52 @@ func (s *Server) loadEastmoneyAStockSessionPrices(strategyDate string, codes []s
 				return
 			}
 			price, ok := decoder(resp.Body(), strategyDate)
+			if ok {
+				priceCh <- result{code: code, price: price}
+			}
+		}()
+	}
+	wg.Wait()
+	close(priceCh)
+	prices := make(map[string]float64)
+	for item := range priceCh {
+		if item.code != "" && item.price > 0 {
+			prices[item.code] = item.price
+		}
+	}
+	return prices
+}
+
+func (s *Server) loadTencentAStockSessionPrices(strategyDate string, codes []string, session string) map[string]float64 {
+	baseURL := strings.TrimSpace(aStockTencentMinuteURL)
+	if baseURL == "" {
+		return nil
+	}
+	var wg sync.WaitGroup
+	type result struct {
+		code  string
+		price float64
+	}
+	priceCh := make(chan result, len(codes))
+	for _, code := range codes {
+		code := normalizeAStockCode(code)
+		if code == "" {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
+			defer cancel()
+			resp, err := s.client.R().
+				SetContext(ctx).
+				SetHeader("User-Agent", nonEmpty(strings.TrimSpace(s.cfg.UserAgent), "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36")).
+				SetQueryParam("code", tencentAStockSymbol(code)).
+				Get(baseURL)
+			if err != nil || !resp.IsSuccess() {
+				return
+			}
+			price, ok := decodeTencentAStockSessionPrice(resp.Body(), strategyDate, session)
 			if ok {
 				priceCh <- result{code: code, price: price}
 			}
@@ -3556,6 +3626,28 @@ func decodeEastmoneyAStock1300Price(body []byte, strategyDate string) (float64, 
 	return 0, false
 }
 
+func decodeTencentAStockSessionPrice(body []byte, strategyDate string, session string) (float64, bool) {
+	var payload any
+	decoder := json.NewDecoder(strings.NewReader(string(body)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&payload); err != nil {
+		return 0, false
+	}
+	dateKey := strings.ReplaceAll(normalizeAStockStrategyDate(strategyDate), "-", "")
+	dateSeen, dateMatched := tencentAStockPayloadDateMatch(payload, dateKey)
+	if dateSeen && !dateMatched {
+		return 0, false
+	}
+	targetMinute := strings.ReplaceAll(strings.TrimSpace(session), ":", "")
+	for _, raw := range collectTencentAStockMinuteRows(payload) {
+		price, ok := tencentAStockMinuteRowPrice(raw, targetMinute)
+		if ok {
+			return price, true
+		}
+	}
+	return 0, false
+}
+
 func collectAStockKlineStringsFromJSON(body []byte) []string {
 	var payload any
 	decoder := json.NewDecoder(strings.NewReader(string(body)))
@@ -3633,6 +3725,80 @@ func eastmoneySessionKlineOpen(raw string, strategyDate string, session string) 
 		return open, true
 	}
 	return 0, false
+}
+
+func tencentAStockPayloadDateMatch(value any, dateKey string) (bool, bool) {
+	switch typed := value.(type) {
+	case map[string]any:
+		seen := false
+		matched := false
+		for key, item := range typed {
+			if strings.EqualFold(strings.TrimSpace(key), "date") {
+				text := strings.TrimSpace(fmt.Sprint(item))
+				if text != "" {
+					seen = true
+					if normalizeAStockMarketDate(text) == normalizeAStockMarketDate(dateKey) {
+						matched = true
+					}
+				}
+				continue
+			}
+			childSeen, childMatched := tencentAStockPayloadDateMatch(item, dateKey)
+			seen = seen || childSeen
+			matched = matched || childMatched
+		}
+		return seen, matched
+	case []any:
+		seen := false
+		matched := false
+		for _, item := range typed {
+			childSeen, childMatched := tencentAStockPayloadDateMatch(item, dateKey)
+			seen = seen || childSeen
+			matched = matched || childMatched
+		}
+		return seen, matched
+	default:
+		return false, false
+	}
+}
+
+func collectTencentAStockMinuteRows(value any) []string {
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make([]string, 0)
+		for _, item := range typed {
+			out = append(out, collectTencentAStockMinuteRows(item)...)
+		}
+		return out
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			switch row := item.(type) {
+			case string:
+				fields := strings.Fields(strings.TrimSpace(row))
+				if len(fields) >= 2 && len(fields[0]) == 4 {
+					out = append(out, row)
+				}
+			default:
+				out = append(out, collectTencentAStockMinuteRows(row)...)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func tencentAStockMinuteRowPrice(raw string, targetMinute string) (float64, bool) {
+	fields := strings.Fields(strings.TrimSpace(raw))
+	if len(fields) < 2 || strings.TrimSpace(fields[0]) != targetMinute {
+		return 0, false
+	}
+	price := parseAStockFloat(fields[1])
+	if price <= 0 {
+		return 0, false
+	}
+	return price, true
 }
 
 func firstString(row map[string]any, keys ...string) string {
@@ -3792,6 +3958,18 @@ func eastmoneyAStockSecID(code string) string {
 		market = "1"
 	}
 	return market + "." + code
+}
+
+func tencentAStockSymbol(code string) string {
+	code = normalizeAStockCode(code)
+	switch {
+	case strings.HasPrefix(code, "6"), strings.HasPrefix(code, "9"), strings.HasPrefix(code, "5"):
+		return "sh" + code
+	case strings.HasPrefix(code, "4"), strings.HasPrefix(code, "8"):
+		return "bj" + code
+	default:
+		return "sz" + code
+	}
 }
 
 func yahooAStockSymbol(code string) string {

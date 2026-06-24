@@ -1829,6 +1829,15 @@ func setAStockEastmoneyKlineURLForTest(t *testing.T, rawURL string) {
 	})
 }
 
+func setAStockTencentMinuteURLForTest(t *testing.T, rawURL string) {
+	t.Helper()
+	previous := aStockTencentMinuteURL
+	aStockTencentMinuteURL = rawURL
+	t.Cleanup(func() {
+		aStockTencentMinuteURL = previous
+	})
+}
+
 func setAStockYahooChartURLForTest(t *testing.T, rawURL string) {
 	t.Helper()
 	previous := aStockYahooChartURL
@@ -4166,6 +4175,70 @@ func TestAStockMarketBarsCustomEndpointSupplementsMissingSessionPricesFromEastmo
 	}
 	if rows[0].T0Return != "+2.05%" {
 		t.Fatalf("expected T+0 return to use supplemented 13:01 price, got %+v", rows[0])
+	}
+}
+
+func TestAStockMarketBarsSupplementsSessionPricesFromTencentWhenEastmoneyUnavailable(t *testing.T) {
+	custom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{
+				"items": []map[string]any{
+					{"code": "300024", "date": "2026-06-23", "open": 16.79, "close": 16.79, "pct": -2.21},
+					{"code": "300024", "date": "2026-06-24", "open": 16.66, "close": 16.23, "pct": -3.34},
+				},
+			},
+		})
+	}))
+	defer custom.Close()
+
+	eastmoney := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "eastmoney unavailable", http.StatusBadGateway)
+	}))
+	defer eastmoney.Close()
+	setAStockEastmoneyKlineURLForTest(t, eastmoney.URL)
+
+	tencent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("code") != "sz300024" {
+			t.Fatalf("unexpected tencent query: %s", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code": 0,
+			"data": map[string]any{
+				"sz300024": map[string]any{
+					"data": map[string]any{
+						"date": "20260624",
+						"data": []string{
+							"0930 16.66 2686 4474876.00",
+							"1301 16.25 390989 639792780.00",
+						},
+					},
+				},
+			},
+		})
+	}))
+	defer tencent.Close()
+	setAStockTencentMinuteURLForTest(t, tencent.URL)
+
+	srv := NewServer(config.Config{})
+	bars, err := srv.loadAStockMarketBars("2026-06-24", []string{"300024"}, custom.URL)
+	if err != nil {
+		t.Fatalf("expected custom market bars with tencent session enrichment, got error: %v", err)
+	}
+	if len(bars) != 2 {
+		t.Fatalf("expected two market bars, got %+v", bars)
+	}
+	if bars[1].EntryPrice != 16.66 || bars[1].AfternoonEntryPrice != 16.25 {
+		t.Fatalf("expected custom bars to include tencent session prices, got %+v", bars[1])
+	}
+
+	rows := buildAStockBacktestRows("2026-06-24", "afternoon", []aStockRecommendation{{Code: "300024", Name: "机器人"}}, groupAStockMarketBars(bars))
+	if len(rows) != 1 {
+		t.Fatalf("expected one backtest row, got %+v", rows)
+	}
+	if rows[0].AfternoonOpen != "16.25" || rows[0].T0Close != "16.23" || rows[0].T0Return != "-0.12%" {
+		t.Fatalf("expected afternoon backtest to use tencent 13:01 price, got %+v", rows[0])
 	}
 }
 
