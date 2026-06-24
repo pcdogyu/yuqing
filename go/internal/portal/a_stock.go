@@ -230,6 +230,7 @@ var (
 	aStockNow               = time.Now
 	aStockEastmoneyKlineURL = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
 	aStockTencentMinuteURL  = "https://web.ifzq.gtimg.cn/appstock/app/minute/query"
+	aStockSinaMinuteURL     = "https://quotes.sina.cn/cn/api/jsonp_v2.php/=/CN_MarketDataService.getKLineData"
 	aStockYahooChartURL     = "https://query1.finance.yahoo.com/v8/finance/chart/"
 	aStockMarketHolidays    = map[string]struct{}{
 		"2026-01-01": {},
@@ -2852,6 +2853,24 @@ func (s *Server) loadAStockSessionPrices(strategyDate string, codes []string, en
 			prices[code] = price
 		}
 	}
+	missingCodes = missingCodes[:0]
+	for _, code := range codes {
+		code = normalizeAStockCode(code)
+		if code == "" {
+			continue
+		}
+		if prices[code] <= 0 {
+			missingCodes = append(missingCodes, code)
+		}
+	}
+	if len(missingCodes) == 0 {
+		return prices
+	}
+	for code, price := range s.loadSinaAStockSessionPrices(strategyDate, missingCodes, endTime) {
+		if price > 0 && prices[code] <= 0 {
+			prices[code] = price
+		}
+	}
 	return prices
 }
 
@@ -2933,6 +2952,55 @@ func (s *Server) loadTencentAStockSessionPrices(strategyDate string, codes []str
 				return
 			}
 			price, ok := decodeTencentAStockSessionPrice(resp.Body(), strategyDate, session)
+			if ok {
+				priceCh <- result{code: code, price: price}
+			}
+		}()
+	}
+	wg.Wait()
+	close(priceCh)
+	prices := make(map[string]float64)
+	for item := range priceCh {
+		if item.code != "" && item.price > 0 {
+			prices[item.code] = item.price
+		}
+	}
+	return prices
+}
+
+func (s *Server) loadSinaAStockSessionPrices(strategyDate string, codes []string, session string) map[string]float64 {
+	baseURL := strings.TrimSpace(aStockSinaMinuteURL)
+	if baseURL == "" {
+		return nil
+	}
+	var wg sync.WaitGroup
+	type result struct {
+		code  string
+		price float64
+	}
+	priceCh := make(chan result, len(codes))
+	for _, code := range codes {
+		code := normalizeAStockCode(code)
+		if code == "" {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), 3500*time.Millisecond)
+			defer cancel()
+			resp, err := s.client.R().
+				SetContext(ctx).
+				SetHeader("User-Agent", nonEmpty(strings.TrimSpace(s.cfg.UserAgent), "Mozilla/5.0")).
+				SetQueryParam("symbol", sinaAStockSymbol(code)).
+				SetQueryParam("scale", "1").
+				SetQueryParam("ma", "no").
+				SetQueryParam("datalen", "1970").
+				Get(baseURL)
+			if err != nil || !resp.IsSuccess() {
+				return
+			}
+			price, ok := decodeSinaAStockSessionPrice(resp.Body(), strategyDate, session)
 			if ok {
 				priceCh <- result{code: code, price: price}
 			}
@@ -3648,6 +3716,57 @@ func decodeTencentAStockSessionPrice(body []byte, strategyDate string, session s
 	return 0, false
 }
 
+func decodeSinaAStockSessionPrice(body []byte, strategyDate string, session string) (float64, bool) {
+	payload := extractSinaAStockJSONPBody(string(body))
+	if payload == "" {
+		return 0, false
+	}
+	var rows []map[string]any
+	decoder := json.NewDecoder(strings.NewReader(payload))
+	decoder.UseNumber()
+	if err := decoder.Decode(&rows); err != nil {
+		return 0, false
+	}
+	targetPrefix := normalizeAStockStrategyDate(strategyDate) + " " + normalizeAStockSessionSecond(session)
+	for _, row := range rows {
+		if !strings.HasPrefix(strings.TrimSpace(fmt.Sprint(row["day"])), targetPrefix) {
+			continue
+		}
+		if price, ok := aStockFloat(row["close"]); ok && price > 0 {
+			return price, true
+		}
+		if price, ok := aStockFloat(row["open"]); ok && price > 0 {
+			return price, true
+		}
+	}
+	return 0, false
+}
+
+func extractSinaAStockJSONPBody(raw string) string {
+	raw = strings.TrimSpace(raw)
+	start := strings.Index(raw, "=(")
+	if start < 0 {
+		return ""
+	}
+	start += len("=(")
+	end := strings.LastIndex(raw, ");")
+	if end < start {
+		end = len(raw)
+	}
+	return strings.TrimSpace(raw[start:end])
+}
+
+func normalizeAStockSessionSecond(session string) string {
+	session = strings.TrimSpace(session)
+	if session == "" {
+		return ""
+	}
+	if strings.Count(session, ":") == 1 {
+		return session + ":00"
+	}
+	return session
+}
+
 func collectAStockKlineStringsFromJSON(body []byte) []string {
 	var payload any
 	decoder := json.NewDecoder(strings.NewReader(string(body)))
@@ -3970,6 +4089,10 @@ func tencentAStockSymbol(code string) string {
 	default:
 		return "sz" + code
 	}
+}
+
+func sinaAStockSymbol(code string) string {
+	return tencentAStockSymbol(code)
 }
 
 func yahooAStockSymbol(code string) string {

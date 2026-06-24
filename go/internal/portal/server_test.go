@@ -1838,6 +1838,15 @@ func setAStockTencentMinuteURLForTest(t *testing.T, rawURL string) {
 	})
 }
 
+func setAStockSinaMinuteURLForTest(t *testing.T, rawURL string) {
+	t.Helper()
+	previous := aStockSinaMinuteURL
+	aStockSinaMinuteURL = rawURL
+	t.Cleanup(func() {
+		aStockSinaMinuteURL = previous
+	})
+}
+
 func setAStockYahooChartURLForTest(t *testing.T, rawURL string) {
 	t.Helper()
 	previous := aStockYahooChartURL
@@ -2634,6 +2643,8 @@ func TestAStockPageRefreshAllBacktestsSupplementsCurrentDayAfternoonBacktest(t *
 }
 
 func TestAStockPageRefreshAllBacktestsPreservesPersistedAfternoonPrices(t *testing.T) {
+	setAStockSinaMinuteURLForTest(t, "")
+
 	market := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch normalizeAStockCode(r.URL.Query().Get("codes")) {
@@ -4239,6 +4250,81 @@ func TestAStockMarketBarsSupplementsSessionPricesFromTencentWhenEastmoneyUnavail
 	}
 	if rows[0].AfternoonOpen != "16.25" || rows[0].T0Close != "16.23" || rows[0].T0Return != "-0.12%" {
 		t.Fatalf("expected afternoon backtest to use tencent 13:01 price, got %+v", rows[0])
+	}
+}
+
+func TestAStockMarketBarsSupplementsHistoricalSessionPricesFromSinaWhenRealtimeMinuteUnavailable(t *testing.T) {
+	custom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{
+				"items": []map[string]any{
+					{"code": "002008", "date": "2026-06-22", "open": 131.93, "close": 131.93, "pct": -2.20},
+					{"code": "002008", "date": "2026-06-23", "open": 135.54, "close": 145.11, "pct": 9.99},
+					{"code": "002008", "date": "2026-06-24", "open": 136.73, "close": 152.23, "pct": 4.91},
+				},
+			},
+		})
+	}))
+	defer custom.Close()
+
+	eastmoney := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "eastmoney unavailable", http.StatusBadGateway)
+	}))
+	defer eastmoney.Close()
+	setAStockEastmoneyKlineURLForTest(t, eastmoney.URL)
+
+	tencent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code": 0,
+			"data": map[string]any{
+				"sz002008": map[string]any{
+					"data": map[string]any{
+						"date": "20260624",
+						"data": []string{
+							"1301 148.58 819691 11879785821.74",
+						},
+					},
+				},
+			},
+		})
+	}))
+	defer tencent.Close()
+	setAStockTencentMinuteURLForTest(t, tencent.URL)
+
+	sina := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("symbol") != "sz002008" || r.URL.Query().Get("scale") != "1" {
+			t.Fatalf("unexpected sina query: %s", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/javascript")
+		_, _ = w.Write([]byte(`/*<script>location.href='//sina.com';</script>*/
+=([{"day":"2026-06-23 09:30:00","open":"135.540","high":"136.200","low":"135.540","close":"136.200","volume":"100","amount":"13620.0000"},{"day":"2026-06-23 13:01:00","open":"141.980","high":"142.600","low":"141.510","close":"142.200","volume":"863300","amount":"122678462.3682"}]);`))
+	}))
+	defer sina.Close()
+	setAStockSinaMinuteURLForTest(t, sina.URL)
+
+	srv := NewServer(config.Config{})
+	bars, err := srv.loadAStockMarketBars("2026-06-23", []string{"002008"}, custom.URL)
+	if err != nil {
+		t.Fatalf("expected custom market bars with sina historical session enrichment, got error: %v", err)
+	}
+	if len(bars) != 3 {
+		t.Fatalf("expected three market bars, got %+v", bars)
+	}
+	if bars[1].EntryPrice != 136.20 || bars[1].AfternoonEntryPrice != 142.20 {
+		t.Fatalf("expected custom bars to include sina historical session prices, got %+v", bars[1])
+	}
+
+	rows := buildAStockBacktestRows("2026-06-23", "afternoon", []aStockRecommendation{{Code: "002008", Name: "大族激光"}}, groupAStockMarketBars(bars))
+	if len(rows) != 1 {
+		t.Fatalf("expected one backtest row, got %+v", rows)
+	}
+	if rows[0].AfternoonOpen != "142.20" || rows[0].T0Close != "145.11" || rows[0].T0Return != "+2.05%" {
+		t.Fatalf("expected historical afternoon backtest to use sina 13:01 price, got %+v", rows[0])
+	}
+	if rows[0].Days[0].Close != "152.23" || rows[0].Days[0].Return != "+7.05%" {
+		t.Fatalf("expected historical afternoon backtest to include T+1 return, got %+v", rows[0])
 	}
 }
 
