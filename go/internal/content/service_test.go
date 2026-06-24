@@ -215,7 +215,7 @@ func TestAStockRecommendationSnapshotAPIUpsertsAndGets(t *testing.T) {
 	svc := NewService(config.Config{}, store)
 	router := svc.Router()
 
-	payload := `{"strategy_date":"2026-06-22","period":"afternoon","ignore_recent":false,"recommendations_json":"[{\"Code\":\"600000\"}]","backtests_json":"[]","backtest_status":"已回测 1/1","generated_count":1,"limit_up_filter_enabled":true,"limit_up_filtered":2,"market_candidate_count":9}`
+	payload := `{"strategy_date":"2026-06-22","period":"afternoon","ignore_recent":false,"recommendations_json":"[{\"Code\":\"600000\"}]","backtests_json":"[]","backtest_status":"已回测 1/1","generated_count":1,"limit_up_filter_enabled":true,"limit_up_filtered":2,"today_market_filter_enabled":true,"no_today_market_count":4,"market_candidate_count":9}`
 	postReq := httptest.NewRequest(http.MethodPost, "/api/v1/internal/a-stock/recommendations", strings.NewReader(payload))
 	postRR := httptest.NewRecorder()
 	router.ServeHTTP(postRR, postReq)
@@ -235,7 +235,7 @@ func TestAStockRecommendationSnapshotAPIUpsertsAndGets(t *testing.T) {
 	if err := json.Unmarshal(getRR.Body.Bytes(), &envelope); err != nil {
 		t.Fatalf("decode snapshot response error: %v", err)
 	}
-	if !envelope.Data.Found || envelope.Data.StrategyDate != "2026-06-22" || envelope.Data.Period != "afternoon" || envelope.Data.GeneratedCount != 1 || !envelope.Data.LimitUpFilterEnabled || envelope.Data.LimitUpFiltered != 2 {
+	if !envelope.Data.Found || envelope.Data.StrategyDate != "2026-06-22" || envelope.Data.Period != "afternoon" || envelope.Data.GeneratedCount != 1 || !envelope.Data.LimitUpFilterEnabled || envelope.Data.LimitUpFiltered != 2 || !envelope.Data.TodayMarketFilterEnabled || envelope.Data.NoTodayMarketCount != 4 {
 		t.Fatalf("unexpected snapshot response: %+v", envelope.Data)
 	}
 }
