@@ -47,6 +47,7 @@ func (s *Server) handleAStockAuctionPage(w http.ResponseWriter, r *http.Request,
 		.auction-chart-line{fill:none;stroke:#214e34;stroke-width:3}
 		.auction-chart-area{fill:rgba(33,78,52,.08)}
 		.auction-chart-axis{stroke:#d6ccbb;stroke-width:1}
+		.auction-chart-grid-x{stroke:#d6ccbb;stroke-width:1}
 		.auction-chart-label{font-size:12px;fill:#6a6257}
 		.auction-chart-dot{fill:#214e34}
 		.auction-trend-table{margin-top:12px}
@@ -339,10 +340,7 @@ func aStockAuctionTrendSVG(points []model.AStockAuctionTrend) string {
 	coords := make([]string, 0, len(points))
 	area := make([]string, 0, len(points)+2)
 	for i, point := range points {
-		x := left
-		if len(points) > 1 {
-			x += float64(i) * plotWidth / float64(len(points)-1)
-		}
+		x := aStockAuctionTrendX(i, len(points), left, plotWidth)
 		y := top + (1-point.TotalAmount/maxAmount)*plotHeight
 		coords = append(coords, fmt.Sprintf("%.1f,%.1f", x, y))
 		area = append(area, fmt.Sprintf("%.1f,%.1f", x, y))
@@ -367,6 +365,20 @@ func aStockAuctionTrendSVG(points []model.AStockAuctionTrend) string {
 		b.WriteString(fmt.Sprintf("%.1f", y))
 		b.WriteString(`"></line>`)
 	}
+	for i, point := range points {
+		x := aStockAuctionTrendX(i, len(points), left, plotWidth)
+		b.WriteString(`<line class="auction-chart-grid-x" x1="`)
+		b.WriteString(fmt.Sprintf("%.1f", x))
+		b.WriteString(`" y1="`)
+		b.WriteString(fmt.Sprintf("%.1f", top))
+		b.WriteString(`" x2="`)
+		b.WriteString(fmt.Sprintf("%.1f", x))
+		b.WriteString(`" y2="`)
+		b.WriteString(fmt.Sprintf("%.1f", top+plotHeight))
+		b.WriteString(`"><title>`)
+		b.WriteString(html.EscapeString(point.Date))
+		b.WriteString(`</title></line>`)
+	}
 	b.WriteString(`<polygon class="auction-chart-area" points="`)
 	b.WriteString(strings.Join(area, " "))
 	b.WriteString(`"></polygon><polyline class="auction-chart-line" points="`)
@@ -376,10 +388,7 @@ func aStockAuctionTrendSVG(points []model.AStockAuctionTrend) string {
 		if i != 0 && i != len(points)-1 && i%5 != 0 {
 			continue
 		}
-		x := left
-		if len(points) > 1 {
-			x += float64(i) * plotWidth / float64(len(points)-1)
-		}
+		x := aStockAuctionTrendX(i, len(points), left, plotWidth)
 		y := top + (1-point.TotalAmount/maxAmount)*plotHeight
 		b.WriteString(`<circle class="auction-chart-dot" cx="`)
 		b.WriteString(fmt.Sprintf("%.1f", x))
@@ -406,6 +415,13 @@ func aStockAuctionTrendSVG(points []model.AStockAuctionTrend) string {
 	}
 	b.WriteString(`</svg>`)
 	return b.String()
+}
+
+func aStockAuctionTrendX(index int, count int, left float64, plotWidth float64) float64 {
+	if count <= 1 {
+		return left
+	}
+	return left + float64(index)*plotWidth/float64(count-1)
 }
 
 func nonEmptyText(values ...string) string {

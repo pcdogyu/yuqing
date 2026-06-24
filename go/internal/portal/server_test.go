@@ -450,6 +450,14 @@ func TestAStockAuctionPageLoadsSummaryAndRows(t *testing.T) {
 			t.Fatalf("expected auction page to contain %q, got %s", want, body)
 		}
 	}
+	for _, want := range []string{`.auction-chart-grid-x{stroke:#d6ccbb;stroke-width:1}`, `class="auction-chart-grid-x" x1="56.0"`, `class="auction-chart-grid-x" x1="1096.0"`, `<title>2026-06-15</title>`, `<title>2026-06-16</title>`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected auction chart daily grid to contain %q, got %s", want, body)
+		}
+	}
+	if got := strings.Count(body, `class="auction-chart-grid-x"`); got != 2 {
+		t.Fatalf("expected one x-axis grid line per trend day, got %d in %s", got, body)
+	}
 	for _, notWant := range []string{"近30日资金趋势", "北交所金额前三", "每个市场集合竞价金额最高的3只股票"} {
 		if strings.Contains(body, notWant) {
 			t.Fatalf("expected auction page not to contain %q, got %s", notWant, body)
