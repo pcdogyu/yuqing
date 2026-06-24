@@ -185,10 +185,10 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	if err := json.Unmarshal(listRR.Body.Bytes(), &listEnvelope); err != nil {
 		t.Fatalf("unmarshal jobs list: %v", err)
 	}
-	if len(listEnvelope.Data) != 30 {
-		t.Fatalf("expected 30 scheduler jobs, got %d", len(listEnvelope.Data))
+	if len(listEnvelope.Data) != 31 {
+		t.Fatalf("expected 31 scheduler jobs, got %d", len(listEnvelope.Data))
 	}
-	var heartbeatJob, hotJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningPreviewJob, aStockMorningJob, aStockAfternoonJob, aStockAuctionJob, aStockHoldingsJob, stockResearchJob, investorRelationsJob Job
+	var heartbeatJob, hotJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningPreviewJob, aStockMorningJob, aStockAfternoonPreviewJob, aStockAfternoonJob, aStockAuctionJob, aStockHoldingsJob, stockResearchJob, investorRelationsJob Job
 	for _, job := range listEnvelope.Data {
 		switch job.Name {
 		case "crawl-link-heartbeat":
@@ -211,6 +211,8 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 			aStockMorningJob = job
 		case "a-stock-morning-recommendation-preview":
 			aStockMorningPreviewJob = job
+		case "a-stock-afternoon-recommendation-preview":
+			aStockAfternoonPreviewJob = job
 		case "a-stock-afternoon-recommendation":
 			aStockAfternoonJob = job
 		case "a-stock-auction-crawl":
@@ -244,10 +246,13 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	if aStockMorningJob.Cron != "0 32 9 * * ?" || aStockMorningJob.NextRunAt == nil {
 		t.Fatalf("expected A股 morning recommendation cron metadata, got %+v", aStockMorningJob)
 	}
-	if aStockMorningPreviewJob.Cron != "0 26 9 * * ?" || aStockMorningPreviewJob.NextRunAt == nil {
+	if aStockMorningPreviewJob.Cron != "0 27 9 * * ?" || aStockMorningPreviewJob.NextRunAt == nil {
 		t.Fatalf("expected A股 morning recommendation preview cron metadata, got %+v", aStockMorningPreviewJob)
 	}
-	if aStockAfternoonJob.Cron != "0 0 13 * * ?" || aStockAfternoonJob.NextRunAt == nil {
+	if aStockAfternoonPreviewJob.Cron != "0 57 12 * * ?" || aStockAfternoonPreviewJob.NextRunAt == nil {
+		t.Fatalf("expected A股 afternoon recommendation preview cron metadata, got %+v", aStockAfternoonPreviewJob)
+	}
+	if aStockAfternoonJob.Cron != "0 2 13 * * ?" || aStockAfternoonJob.NextRunAt == nil {
 		t.Fatalf("expected A股 afternoon recommendation cron metadata, got %+v", aStockAfternoonJob)
 	}
 	if aStockAuctionJob.Cron != "0 26 9 * * ?" || aStockAuctionJob.Enabled {
@@ -301,6 +306,7 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 func TestRunAStockRecommendationCrawlsSourcesAndQueriesWindow(t *testing.T) {
 	var sources []string
 	var generatedPeriods []string
+	var generatedPhases []string
 	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/a-stock/trading-day" || r.URL.Query().Get("date") != "2026-06-16" {
 			t.Fatalf("unexpected trading-day request: %s", r.URL.String())
@@ -346,6 +352,7 @@ func TestRunAStockRecommendationCrawlsSourcesAndQueriesWindow(t *testing.T) {
 			t.Fatalf("expected gateway service token header, got %q", r.Header.Get("X-Service-Token"))
 		}
 		generatedPeriods = append(generatedPeriods, r.URL.Query().Get("period"))
+		generatedPhases = append(generatedPhases, r.URL.Query().Get("phase"))
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer gateway.Close()
@@ -360,20 +367,21 @@ func TestRunAStockRecommendationCrawlsSourcesAndQueriesWindow(t *testing.T) {
 		ServiceToken:          "secret-token",
 	})
 
-	if err := worker.runAStockRecommendationForDate(context.Background(), "2026-06-16", "afternoon"); err != nil {
+	if err := worker.runAStockRecommendationForDate(context.Background(), "2026-06-16", "afternoon", "final"); err != nil {
 		t.Fatalf("runAStockRecommendationForDate error: %v", err)
 	}
 	sort.Strings(sources)
 	if strings.Join(sources, ",") != "cls_telegraph,eastmoney_kuaixun,flash,headline,sina_finance_7x24,wallstreetcn_a_stock" {
 		t.Fatalf("expected all A股 sources to be crawled, got %v", sources)
 	}
-	if len(generatedPeriods) != 1 || generatedPeriods[0] != "afternoon" {
-		t.Fatalf("expected afternoon recommendation snapshot generation, got %v", generatedPeriods)
+	if len(generatedPeriods) != 1 || generatedPeriods[0] != "afternoon" || len(generatedPhases) != 1 || generatedPhases[0] != "final" {
+		t.Fatalf("expected afternoon final recommendation snapshot generation, got periods=%v phases=%v", generatedPeriods, generatedPhases)
 	}
 }
 
 func TestRunAStockRecommendationGeneratesMorningSnapshot(t *testing.T) {
 	var generatedPeriods []string
+	var generatedPhases []string
 	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"date":           "2026-06-16",
@@ -406,6 +414,7 @@ func TestRunAStockRecommendationGeneratesMorningSnapshot(t *testing.T) {
 			t.Fatalf("unexpected gateway request: %s %s", r.Method, r.URL.String())
 		}
 		generatedPeriods = append(generatedPeriods, r.URL.Query().Get("period"))
+		generatedPhases = append(generatedPhases, r.URL.Query().Get("phase"))
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer gateway.Close()
@@ -419,11 +428,38 @@ func TestRunAStockRecommendationGeneratesMorningSnapshot(t *testing.T) {
 		SchedulerCrawlTimeout: time.Second,
 	})
 
-	if err := worker.runAStockRecommendationForDate(context.Background(), "2026-06-16", "morning"); err != nil {
+	if err := worker.runAStockRecommendationForDate(context.Background(), "2026-06-16", "morning", "final"); err != nil {
 		t.Fatalf("runAStockRecommendationForDate morning error: %v", err)
 	}
-	if len(generatedPeriods) != 1 || generatedPeriods[0] != "morning" {
-		t.Fatalf("expected morning recommendation snapshot generation, got %v", generatedPeriods)
+	if len(generatedPeriods) != 1 || generatedPeriods[0] != "morning" || len(generatedPhases) != 1 || generatedPhases[0] != "final" {
+		t.Fatalf("expected morning final recommendation snapshot generation, got periods=%v phases=%v", generatedPeriods, generatedPhases)
+	}
+}
+
+func TestAStockRecommendationWindowUsesPhase(t *testing.T) {
+	cases := []struct {
+		name      string
+		period    string
+		phase     string
+		wantStart string
+		wantEnd   string
+		wantLabel string
+	}{
+		{name: "morning preopen", period: "morning", phase: "preopen", wantStart: "08:00:00", wantEnd: "09:26:59", wantLabel: "08:00-09:26:59"},
+		{name: "morning final", period: "morning", phase: "final", wantStart: "08:00:00", wantEnd: "09:30:59", wantLabel: "08:00-09:30"},
+		{name: "afternoon preopen", period: "afternoon", phase: "preopen", wantStart: "09:30:00", wantEnd: "12:56:59", wantLabel: "09:30-12:56:59"},
+		{name: "afternoon final", period: "afternoon", phase: "final", wantStart: "09:30:00", wantEnd: "13:00:59", wantLabel: "09:30-13:00"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			start, end, label, err := aStockRecommendationWindow("2026-06-16", tc.period, tc.phase)
+			if err != nil {
+				t.Fatalf("aStockRecommendationWindow error: %v", err)
+			}
+			if start.Format("15:04:05") != tc.wantStart || end.Format("15:04:05") != tc.wantEnd || label != tc.wantLabel {
+				t.Fatalf("unexpected window start=%s end=%s label=%s", start.Format("15:04:05"), end.Format("15:04:05"), label)
+			}
+		})
 	}
 }
 
@@ -478,7 +514,7 @@ func TestRunAStockRecommendationContinuesWhenOneSourceFails(t *testing.T) {
 		SchedulerCrawlTimeout: time.Second,
 	})
 
-	if err := worker.runAStockRecommendationForDate(context.Background(), "2026-06-16", "afternoon"); err != nil {
+	if err := worker.runAStockRecommendationForDate(context.Background(), "2026-06-16", "afternoon", "final"); err != nil {
 		t.Fatalf("runAStockRecommendationForDate should continue after one source failure, got %v", err)
 	}
 	if !contentQueried {
@@ -542,7 +578,7 @@ func TestRunAStockRecommendationSkipsNonTradingDay(t *testing.T) {
 		Name:    "a-stock-morning-recommendation",
 		Enabled: true,
 		Run: func(ctx context.Context) error {
-			return worker.runAStockRecommendationForDate(ctx, "2026-06-19", "morning")
+			return worker.runAStockRecommendationForDate(ctx, "2026-06-19", "morning", "final")
 		},
 	}
 	if err := worker.runJob(context.Background(), job); err != nil {
@@ -585,7 +621,7 @@ func TestRunAStockRecommendationFailsClosedWhenTradingCalendarUnavailable(t *tes
 		SchedulerCrawlTimeout: time.Second,
 		ServiceToken:          "secret-token",
 	})
-	err := worker.runAStockRecommendationForDate(context.Background(), "2026-06-19", "morning")
+	err := worker.runAStockRecommendationForDate(context.Background(), "2026-06-19", "morning", "final")
 	if err == nil || !strings.Contains(err.Error(), "trading calendar unavailable") {
 		t.Fatalf("expected fail-closed calendar error, got %v", err)
 	}

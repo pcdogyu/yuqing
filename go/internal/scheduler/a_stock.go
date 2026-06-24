@@ -15,12 +15,12 @@ import (
 
 var aStockRecommendationSources = []string{"flash", "headline", "jin10_full", "eastmoney_kuaixun", "wallstreetcn_a_stock", "cls_telegraph", "sina_finance_7x24"}
 
-func (w *Worker) runAStockRecommendation(ctx context.Context, period string) error {
+func (w *Worker) runAStockRecommendation(ctx context.Context, period string, phase string) error {
 	location, err := time.LoadLocation("Asia/Shanghai")
 	if err != nil {
 		location = time.FixedZone("UTC+8", 8*60*60)
 	}
-	return w.runAStockRecommendationForDate(ctx, time.Now().In(location).Format("2006-01-02"), period)
+	return w.runAStockRecommendationForDate(ctx, time.Now().In(location).Format("2006-01-02"), period, phase)
 }
 
 func (w *Worker) runAStockAuctionCrawl(ctx context.Context) error {
@@ -395,7 +395,8 @@ func (w *Worker) fetchExternalAStockHoldings(ctx context.Context, period string,
 	return envelope.Items, nil
 }
 
-func (w *Worker) runAStockRecommendationForDate(ctx context.Context, strategyDate string, period string) error {
+func (w *Worker) runAStockRecommendationForDate(ctx context.Context, strategyDate string, period string, phase string) error {
+	normalizedPhase := normalizeAStockRecommendationPhase(phase)
 	tradingDay, err := w.loadAStockTradingDayStatus(ctx, strategyDate)
 	if err != nil {
 		return fmt.Errorf("a-stock trading calendar unavailable for %s: %w", strategyDate, err)
@@ -417,6 +418,7 @@ func (w *Worker) runAStockRecommendationForDate(ctx context.Context, strategyDat
 				Str("source_type", sourceType).
 				Str("strategy_date", strategyDate).
 				Str("period", period).
+				Str("phase", normalizedPhase).
 				Msg("a-stock recommendation crawl source failed")
 			continue
 		}
@@ -425,7 +427,7 @@ func (w *Worker) runAStockRecommendationForDate(ctx context.Context, strategyDat
 	if successCount == 0 && len(failedSources) > 0 {
 		return fmt.Errorf("a-stock recommendation crawl failed for all sources: %s", strings.Join(failedSources, "; "))
 	}
-	start, end, label, err := aStockRecommendationWindow(strategyDate, period)
+	start, end, label, err := aStockRecommendationWindow(strategyDate, period, normalizedPhase)
 	if err != nil {
 		return err
 	}
@@ -442,18 +444,19 @@ func (w *Worker) runAStockRecommendationForDate(ctx context.Context, strategyDat
 	if !resp.IsSuccess() {
 		return fmt.Errorf("a-stock %s recommendation content warmup failed: %s", label, resp.Status())
 	}
-	if err := w.generateAStockRecommendationSnapshot(ctx, strategyDate, period); err != nil {
+	if err := w.generateAStockRecommendationSnapshot(ctx, strategyDate, period, normalizedPhase); err != nil {
 		return err
 	}
 	log.Info().
 		Str("strategy_date", strategyDate).
 		Str("period", period).
+		Str("phase", normalizedPhase).
 		Str("window", label).
 		Msg("a-stock recommendation window generated")
 	return nil
 }
 
-func (w *Worker) generateAStockRecommendationSnapshot(ctx context.Context, strategyDate string, period string) error {
+func (w *Worker) generateAStockRecommendationSnapshot(ctx context.Context, strategyDate string, period string, phase string) error {
 	baseURL := strings.TrimRight(strings.TrimSpace(w.cfg.GatewayWebURL), "/")
 	if baseURL == "" {
 		return fmt.Errorf("YUQING_GATEWAY_URL not configured")
@@ -462,6 +465,7 @@ func (w *Worker) generateAStockRecommendationSnapshot(ctx context.Context, strat
 		SetContext(ctx).
 		SetQueryParam("date", normalizeAStockRecommendationDate(strategyDate)).
 		SetQueryParam("period", normalizeAStockRecommendationPeriod(period)).
+		SetQueryParam("phase", normalizeAStockRecommendationPhase(phase)).
 		Post(baseURL + "/internal/a-stock/recommendations/generate")
 	if err != nil {
 		return err
@@ -478,6 +482,15 @@ func normalizeAStockRecommendationDate(strategyDate string) string {
 
 func normalizeAStockRecommendationPeriod(period string) string {
 	return strings.TrimSpace(period)
+}
+
+func normalizeAStockRecommendationPhase(phase string) string {
+	switch strings.ToLower(strings.TrimSpace(phase)) {
+	case "preopen":
+		return "preopen"
+	default:
+		return "final"
+	}
 }
 
 func (w *Worker) aStockRecommendationCrawlSources() []string {
@@ -629,7 +642,7 @@ func aStockLocation() *time.Location {
 	return location
 }
 
-func aStockRecommendationWindow(strategyDate string, period string) (time.Time, time.Time, string, error) {
+func aStockRecommendationWindow(strategyDate string, period string, phase string) (time.Time, time.Time, string, error) {
 	location, err := time.LoadLocation("Asia/Shanghai")
 	if err != nil {
 		location = time.FixedZone("UTC+8", 8*60*60)
@@ -638,12 +651,23 @@ func aStockRecommendationWindow(strategyDate string, period string) (time.Time, 
 	if err != nil {
 		return time.Time{}, time.Time{}, "", err
 	}
+	normalizedPhase := normalizeAStockRecommendationPhase(phase)
 	switch period {
 	case "afternoon":
+		if normalizedPhase == "preopen" {
+			return time.Date(day.Year(), day.Month(), day.Day(), 9, 30, 0, 0, location),
+				time.Date(day.Year(), day.Month(), day.Day(), 12, 56, 59, 0, location),
+				"09:30-12:56:59", nil
+		}
 		return time.Date(day.Year(), day.Month(), day.Day(), 9, 30, 0, 0, location),
 			time.Date(day.Year(), day.Month(), day.Day(), 13, 0, 59, 0, location),
 			"09:30-13:00", nil
 	default:
+		if normalizedPhase == "preopen" {
+			return time.Date(day.Year(), day.Month(), day.Day(), 8, 0, 0, 0, location),
+				time.Date(day.Year(), day.Month(), day.Day(), 9, 26, 59, 0, location),
+				"08:00-09:26:59", nil
+		}
 		return time.Date(day.Year(), day.Month(), day.Day(), 8, 0, 0, 0, location),
 			time.Date(day.Year(), day.Month(), day.Day(), 9, 30, 59, 0, location),
 			"08:00-09:30", nil

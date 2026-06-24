@@ -179,6 +179,7 @@ type aStockSourceRun struct {
 type aStockRecommendationGenerateResult struct {
 	StrategyDate             string `json:"strategy_date"`
 	Period                   string `json:"period"`
+	Phase                    string `json:"phase"`
 	RecommendationCount      int    `json:"recommendation_count"`
 	GeneratedCount           int    `json:"generated_count"`
 	BacktestStatus           string `json:"backtest_status"`
@@ -204,22 +205,25 @@ type aStockPopupPayload struct {
 	Title           string                      `json:"title"`
 	Meta            string                      `json:"meta"`
 	StrategyDate    string                      `json:"strategy_date"`
+	Period          string                      `json:"period"`
 	UpdatedAt       string                      `json:"updated_at"`
 	Recommendations []aStockPopupRecommendation `json:"recommendations"`
 }
 
 const (
-	aStockDrawdownFilterThreshold = -15.0
-	aStockSectorDrawdownPenalty   = 15
-	aStockNewsPageSize            = 10
-	aStockRecentLookbackDays      = 5
-	aStockMarketCandidateLimit    = 5000
-	aStockRecommendationLimit     = 12
-	aStockReplacementPoolLimit    = 36
-	aStockReplacementPerHotspot   = 12
-	aStockHotspotLimit            = 3
-	aStockMarketRankScoreBase     = 200
-	aStockStocksPerHotspot        = 3
+	aStockDrawdownFilterThreshold    = -15.0
+	aStockSectorDrawdownPenalty      = 15
+	aStockNewsPageSize               = 10
+	aStockRecentLookbackDays         = 5
+	aStockMarketCandidateLimit       = 5000
+	aStockRecommendationLimit        = 12
+	aStockReplacementPoolLimit       = 36
+	aStockReplacementPerHotspot      = 12
+	aStockHotspotLimit               = 3
+	aStockMarketRankScoreBase        = 200
+	aStockStocksPerHotspot           = 3
+	aStockRecommendationPhasePreopen = "preopen"
+	aStockRecommendationPhaseFinal   = "final"
 )
 
 var (
@@ -497,7 +501,7 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request) 
 }
 
 func renderAStockPopupShell(b *strings.Builder) {
-	b.WriteString(`<div id="astock-popup-mask" class="astock-popup-mask" hidden><div class="astock-popup" role="dialog" aria-modal="true" aria-labelledby="astock-popup-title"><div class="astock-popup-header"><div><h3 id="astock-popup-title">13:00 下午推荐股票</h3><p id="astock-popup-meta" class="astock-muted"></p></div><button id="astock-popup-dismiss" class="astock-popup-close" type="button">关闭</button></div><div class="astock-popup-body"><div class="astock-popup-scroll"><table class="astock-table astock-popup-table"><thead><tr><th>排名</th><th>股票代码</th><th>股票名称</th><th>热点</th><th>推荐理由</th></tr></thead><tbody id="astock-popup-body"></tbody></table></div></div></div></div>`)
+	b.WriteString(`<div id="astock-popup-mask" class="astock-popup-mask" hidden><div class="astock-popup" role="dialog" aria-modal="true" aria-labelledby="astock-popup-title"><div class="astock-popup-header"><div><h3 id="astock-popup-title">盘前推荐股票</h3><p id="astock-popup-meta" class="astock-muted"></p></div><button id="astock-popup-dismiss" class="astock-popup-close" type="button">关闭</button></div><div class="astock-popup-body"><div class="astock-popup-scroll"><table class="astock-table astock-popup-table"><thead><tr><th>排名</th><th>股票代码</th><th>股票名称</th><th>热点</th><th>推荐理由</th></tr></thead><tbody id="astock-popup-body"></tbody></table></div></div></div></div>`)
 }
 
 func writeAStockPageScript(b *strings.Builder, strategyDate string) {
@@ -506,17 +510,17 @@ func writeAStockPageScript(b *strings.Builder, strategyDate string) {
 	fmt.Fprintf(b, `var scrollKey=%q;`, "astock-scroll-y")
 	fmt.Fprintf(b, `var popupDate=%q;`, normalizeAStockStrategyDate(strategyDate))
 	fmt.Fprintf(b, `var popupEligible=%t;`, popupEligible)
-	b.WriteString(`var popupKey="";var popupVisible=false;var popupTimer=0;var popupExactTimer=0;`)
+	b.WriteString(`var popupKey="";var popupVisible=false;var popupTimer=0;var popupExactTimers=[];`)
 	b.WriteString(`function popupMask(){return document.getElementById("astock-popup-mask");}`)
 	b.WriteString(`function popupBody(){return document.getElementById("astock-popup-body");}`)
 	b.WriteString(`function hidePopup(){var mask=popupMask();if(mask){mask.hidden=true;}popupVisible=false;}`)
 	b.WriteString(`function renderPopupRows(items){var body=popupBody();if(!body){return;}body.innerHTML="";(items||[]).forEach(function(item){var row=document.createElement("tr");["rank","code","name","hotspot","reason"].forEach(function(field){var cell=document.createElement("td");cell.textContent=item&&item[field]!==undefined&&item[field]!==null?String(item[field]):"";row.appendChild(cell);});body.appendChild(row);});}`)
-	b.WriteString(`function showPopup(data){var mask=popupMask();if(!mask||!data||!data.show){return;}if(popupVisible&&popupKey===data.key){return;}var title=document.getElementById("astock-popup-title");var meta=document.getElementById("astock-popup-meta");if(title){title.textContent=data.title||"13:00 下午推荐股票";}if(meta){meta.textContent=data.meta||"";}renderPopupRows(data.recommendations||[]);popupKey=data.key||"";mask.hidden=false;popupVisible=true;}`)
-	b.WriteString(`function fetchPopup(){if(!popupEligible||!popupDate){return;}fetch("/a-stock/popup?date="+encodeURIComponent(popupDate),{credentials:"same-origin"}).then(function(resp){if(!resp.ok){return null;}return resp.json();}).then(function(data){if(!data){return;}if(data.show){showPopup(data);return;}if(!data.show&&popupVisible&&popupKey&&popupKey===data.key){hidePopup();}}).catch(function(){});}`)
-	b.WriteString(`function schedulePopupChecks(){fetchPopup();if(!popupEligible){return;}if(popupTimer){window.clearInterval(popupTimer);}popupTimer=window.setInterval(fetchPopup,5000);var now=new Date();var target=new Date();target.setHours(13,0,0,0);if(now<target){if(popupExactTimer){window.clearTimeout(popupExactTimer);}popupExactTimer=window.setTimeout(fetchPopup,Math.max(0,target.getTime()-now.getTime()+100));}}`)
+	b.WriteString(`function showPopup(data){var mask=popupMask();if(!mask||!data||!data.show){return;}if(popupVisible&&popupKey===data.key){return;}var title=document.getElementById("astock-popup-title");var meta=document.getElementById("astock-popup-meta");if(title){title.textContent=data.title||"盘前推荐股票";}if(meta){meta.textContent=data.meta||"";}renderPopupRows(data.recommendations||[]);popupKey=data.key||"";mask.hidden=false;popupVisible=true;}`)
+	b.WriteString(`function fetchPopup(){if(!popupEligible||!popupDate){return;}fetch("/a-stock/popup?date="+encodeURIComponent(popupDate),{credentials:"same-origin"}).then(function(resp){if(!resp.ok){return null;}return resp.json();}).then(function(data){if(!data){return;}if(data.show){showPopup(data);return;}if(!data.show&&popupVisible){hidePopup();}}).catch(function(){});}`)
+	b.WriteString(`function schedulePopupChecks(){fetchPopup();if(!popupEligible){return;}if(popupTimer){window.clearInterval(popupTimer);}popupTimer=window.setInterval(fetchPopup,5000);popupExactTimers.forEach(function(timer){window.clearTimeout(timer);});popupExactTimers=[];var now=new Date();[[9,27],[12,57]].forEach(function(parts){var target=new Date();target.setHours(parts[0],parts[1],0,0);if(now<target){popupExactTimers.push(window.setTimeout(fetchPopup,Math.max(0,target.getTime()-now.getTime()+100)));}});}`)
 	b.WriteString(`window.addEventListener("DOMContentLoaded",function(){var y=sessionStorage.getItem(scrollKey);if(y!==null){sessionStorage.removeItem(scrollKey);var n=parseInt(y,10);if(!isNaN(n)){window.scrollTo(0,n);}}document.querySelectorAll("[data-preserve-scroll='1']").forEach(function(el){el.addEventListener("click",function(){sessionStorage.setItem(scrollKey,String(window.scrollY||0));});});document.querySelectorAll(".astock-action-form").forEach(function(form){form.addEventListener("submit",function(event){if(form.dataset.submitting==="1"){event.preventDefault();return;}form.dataset.submitting="1";var current=form.querySelector("button[type='submit']");document.querySelectorAll(".astock-action-form button[type='submit']").forEach(function(button){button.disabled=true;button.setAttribute("aria-disabled","true");});if(current){current.classList.add("astock-action-running");current.setAttribute("aria-busy","true");}});});var dismiss=document.getElementById("astock-popup-dismiss");if(dismiss){dismiss.addEventListener("click",function(){if(!popupKey){hidePopup();return;}fetch("/a-stock/popup/dismiss",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:popupKey})}).catch(function(){}).finally(function(){hidePopup();});});}schedulePopupChecks();});`)
 	b.WriteString(`window.addEventListener("pageshow",function(){document.querySelectorAll(".astock-action-form").forEach(function(form){form.dataset.submitting="";});document.querySelectorAll(".astock-action-form button[type='submit']").forEach(function(button){button.disabled=false;button.removeAttribute("aria-disabled");button.removeAttribute("aria-busy");button.classList.remove("astock-action-running");});schedulePopupChecks();});`)
-	b.WriteString(`window.addEventListener("beforeunload",function(){if(popupTimer){window.clearInterval(popupTimer);popupTimer=0;}if(popupExactTimer){window.clearTimeout(popupExactTimer);popupExactTimer=0;}});`)
+	b.WriteString(`window.addEventListener("beforeunload",function(){if(popupTimer){window.clearInterval(popupTimer);popupTimer=0;}popupExactTimers.forEach(function(timer){window.clearTimeout(timer);});popupExactTimers=[];});`)
 	b.WriteString(`})();</script>`)
 }
 
@@ -1159,16 +1163,18 @@ func (s *Server) handleAStockRecommendationGenerate(w http.ResponseWriter, r *ht
 	}
 	strategyDate := normalizeAStockStrategyDate(r.URL.Query().Get("date"))
 	period := normalizeAStockPeriod(r.URL.Query().Get("period"))
+	phase := normalizeAStockRecommendationPhase(r.URL.Query().Get("phase"))
 	ignoreRecent := normalizeAStockBool(r.URL.Query().Get("ignore_recent"))
 	ignoreLimitUp := normalizeAStockBool(r.URL.Query().Get("ignore_limit_up"))
 	filterTodayMarket := normalizeAStockBool(r.URL.Query().Get("filter_today_market"))
-	ctx := s.loadAStockContextWithCache(strategyDate, period.Key, 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, true, newAStockRequestCache())
+	ctx := s.loadAStockContextWithRecommendationPhase(strategyDate, period.Key, 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, true, phase, newAStockRequestCache())
 	writeRawJSON(w, http.StatusOK, map[string]any{
 		"code":    http.StatusOK,
 		"message": "ok",
 		"data": aStockRecommendationGenerateResult{
 			StrategyDate:             ctx.Date,
 			Period:                   ctx.Period,
+			Phase:                    phase,
 			RecommendationCount:      len(ctx.Recommendations),
 			GeneratedCount:           ctx.GeneratedRecommendationCount,
 			BacktestStatus:           ctx.BacktestStatus,
@@ -1187,7 +1193,7 @@ func (s *Server) handleAStockPopup(w http.ResponseWriter, r *http.Request, user 
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	writeRawJSON(w, http.StatusOK, s.buildAStockAfternoonPopup(userIDFromMap(user), r.URL.Query().Get("date")))
+	writeRawJSON(w, http.StatusOK, s.buildAStockPreopenPopup(userIDFromMap(user), r.URL.Query().Get("date")))
 }
 
 func (s *Server) handleAStockPopupDismiss(w http.ResponseWriter, r *http.Request, user any) {
@@ -1242,13 +1248,18 @@ func newAStockRequestCache() *aStockRequestCache {
 }
 
 func (s *Server) loadAStockContextWithCache(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, cache *aStockRequestCache) aStockContext {
+	return s.loadAStockContextWithRecommendationPhase(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, aStockRecommendationPhaseFinal, cache)
+}
+
+func (s *Server) loadAStockContextWithRecommendationPhase(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, recommendationPhase string, cache *aStockRequestCache) aStockContext {
 	period := normalizeAStockPeriod(periodKey)
-	start, end := aStockWindow(strategyDate, period.Key)
+	phase := normalizeAStockRecommendationPhase(recommendationPhase)
+	start, end, windowLabel := aStockRecommendationPhaseWindow(strategyDate, period.Key, phase)
 	ctx := aStockContext{
 		Date:                     strategyDate,
 		Period:                   period.Key,
 		PeriodLabel:              period.Label,
-		WindowLabel:              period.WindowLabel,
+		WindowLabel:              windowLabel,
 		NewsPage:                 newsPage,
 		NewsPageSize:             aStockNewsPageSize,
 		WindowStart:              start,
@@ -1277,7 +1288,8 @@ func (s *Server) loadAStockContextWithCache(strategyDate string, periodKey strin
 		ctx.EmptyReason = aStockRecommendationEmptyReason(ctx)
 		return ctx
 	}
-	if isAStockOfficialSelectionContext(ignoreRecent, ignoreLimitUp, filterTodayMarket) && s.applyAStockRecommendationSelections(&ctx) {
+	allowPersistedRecommendations := phase == aStockRecommendationPhaseFinal && isAStockOfficialSelectionContext(ignoreRecent, ignoreLimitUp, filterTodayMarket)
+	if allowPersistedRecommendations && s.applyAStockRecommendationSelections(&ctx) {
 		ctx.Recommendations = s.applyAStockHoldingSummaries(ctx.Recommendations)
 		ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus, ctx.LimitUpFiltered = s.loadAStockLockedMarketView(strategyDate, ctx.Period, ctx.Recommendations)
 		ctx.EmptyReason = aStockRecommendationEmptyReason(ctx)
@@ -1286,7 +1298,7 @@ func (s *Server) loadAStockContextWithCache(strategyDate string, periodKey strin
 		}
 		return ctx
 	}
-	if isAStockOfficialSelectionContext(ignoreRecent, ignoreLimitUp, filterTodayMarket) && s.applyAStockRecommendationSnapshotRecommendations(&ctx) {
+	if allowPersistedRecommendations && s.applyAStockRecommendationSnapshotRecommendations(&ctx) {
 		if err := s.saveAStockRecommendationSelections(ctx); err != nil && ctx.LoadMessage == "" {
 			ctx.LoadMessage = "A股已选股票保存失败：" + err.Error()
 		}
@@ -1303,7 +1315,7 @@ func (s *Server) loadAStockContextWithCache(strategyDate string, periodKey strin
 		}
 		return ctx
 	}
-	if !forceRecommendationRefresh {
+	if !forceRecommendationRefresh && phase == aStockRecommendationPhaseFinal {
 		if s.applyAStockRecommendationSnapshot(&ctx) {
 			return ctx
 		}
@@ -1314,12 +1326,12 @@ func (s *Server) loadAStockContextWithCache(strategyDate string, periodKey strin
 		ctx.MarketCandidateStatus = candidateStatus
 		ctx.MarketCandidateCount = len(candidates)
 		ctx.AuctionAmountLabel = formatAStockAuctionSummaryAmount(auctionResult)
-		baseRecommendations := buildAStockSnapshotRecommendations(strategyDate, period.Key, ctx.Articles, candidates)
+		baseRecommendations := buildAStockSnapshotRecommendationsWithPhase(strategyDate, period.Key, phase, ctx.Articles, candidates)
 		recommendationTarget = len(baseRecommendations)
 		ctx.GeneratedRecommendationCount = recommendationTarget
 		ctx.Recommendations = baseRecommendations
 		if ctx.LimitUpFilterEnabled && recommendationTarget > 0 {
-			replacementPool := buildAStockSnapshotRecommendationsWithLimit(strategyDate, period.Key, ctx.Articles, candidates, aStockReplacementPoolLimit, aStockReplacementPerHotspot)
+			replacementPool := buildAStockSnapshotRecommendationsWithPhaseAndLimit(strategyDate, period.Key, phase, ctx.Articles, candidates, aStockReplacementPoolLimit, aStockReplacementPerHotspot)
 			if len(replacementPool) > len(ctx.Recommendations) {
 				ctx.Recommendations = replacementPool
 			}
@@ -1557,24 +1569,37 @@ func (s *Server) saveAStockRecommendationSnapshot(ctx aStockContext) error {
 	return nil
 }
 
-func (s *Server) buildAStockAfternoonPopup(userID int64, strategyDate string) aStockPopupPayload {
+type aStockPreopenPopupWindow struct {
+	Period      string
+	KeyPrefix   string
+	Title       string
+	WindowLabel string
+	StartHour   int
+	StartMinute int
+	EndHour     int
+	EndMinute   int
+}
+
+func (s *Server) buildAStockPreopenPopup(userID int64, strategyDate string) aStockPopupPayload {
 	date := normalizeAStockStrategyDate(strategyDate)
 	if date == "" {
 		date = aStockTodayDate()
 	}
+	window, active := aStockPreopenPopupWindowForNow(aStockNow().In(aStockLocation()))
 	payload := aStockPopupPayload{
-		Key:          aStockAfternoonPopupKey(date),
-		Title:        "13:00 下午推荐股票",
+		Key:          aStockPreopenPopupKey(window, date),
+		Title:        window.Title,
 		StrategyDate: date,
+		Period:       window.Period,
 	}
-	if userID <= 0 || date != aStockTodayDate() || !aStockShouldShowAfternoonPopupNow() {
+	if userID <= 0 || date != aStockTodayDate() || !active {
 		return payload
 	}
 	state, ok, err := s.getPopupState(userID, payload.Key)
 	if err == nil && ok && state.Dismissed {
 		return payload
 	}
-	recommendations, updatedAt, ok := s.loadAStockAfternoonPopupRecommendations(date)
+	recommendations, updatedAt, ok := s.loadAStockPopupRecommendations(date, window.Period)
 	if !ok || len(recommendations) == 0 {
 		return payload
 	}
@@ -1590,7 +1615,7 @@ func (s *Server) buildAStockAfternoonPopup(userID int64, strategyDate string) aS
 	}
 	payload.Show = true
 	payload.UpdatedAt = formatShanghaiTime(updatedAt)
-	payload.Meta = fmt.Sprintf("%s 09:30-13:00 窗口已生成 %d 只推荐股票", date, len(items))
+	payload.Meta = fmt.Sprintf("%s %s 盘前窗口已生成 %d 只推荐股票", date, window.WindowLabel, len(items))
 	if payload.UpdatedAt != "--" {
 		payload.Meta += "，更新时间 " + payload.UpdatedAt
 	}
@@ -1598,11 +1623,12 @@ func (s *Server) buildAStockAfternoonPopup(userID int64, strategyDate string) aS
 	return payload
 }
 
-func (s *Server) loadAStockAfternoonPopupRecommendations(strategyDate string) ([]aStockRecommendation, time.Time, bool) {
-	if result, ok := s.loadAStockRecommendationSelections(strategyDate, "afternoon"); ok && len(result.Items) > 0 {
+func (s *Server) loadAStockPopupRecommendations(strategyDate string, period string) ([]aStockRecommendation, time.Time, bool) {
+	normalizedPeriod := normalizeAStockPeriod(period).Key
+	if result, ok := s.loadAStockRecommendationSelections(strategyDate, normalizedPeriod); ok && len(result.Items) > 0 {
 		return aStockRecommendationSelectionsToRecommendations(result.Items), result.UpdatedAt, true
 	}
-	snapshot, ok := s.loadAStockRecommendationSnapshot(strategyDate, "afternoon", false)
+	snapshot, ok := s.loadAStockRecommendationSnapshot(strategyDate, normalizedPeriod, false)
 	if !ok {
 		return nil, time.Time{}, false
 	}
@@ -1613,13 +1639,58 @@ func (s *Server) loadAStockAfternoonPopupRecommendations(strategyDate string) ([
 	return recommendations, snapshot.UpdatedAt, true
 }
 
-func aStockAfternoonPopupKey(strategyDate string) string {
-	return "a-stock-afternoon-recommendation-" + normalizeAStockStrategyDate(strategyDate)
+func aStockPreopenPopupWindows() []aStockPreopenPopupWindow {
+	return []aStockPreopenPopupWindow{
+		{
+			Period:      "morning",
+			KeyPrefix:   "a-stock-morning-preopen-recommendation-",
+			Title:       "09:27 上午盘前推荐股票",
+			WindowLabel: "08:00-09:26:59",
+			StartHour:   9,
+			StartMinute: 27,
+			EndHour:     9,
+			EndMinute:   32,
+		},
+		{
+			Period:      "afternoon",
+			KeyPrefix:   "a-stock-afternoon-preopen-recommendation-",
+			Title:       "12:57 下午盘前推荐股票",
+			WindowLabel: "09:30-12:56:59",
+			StartHour:   12,
+			StartMinute: 57,
+			EndHour:     13,
+			EndMinute:   2,
+		},
+	}
 }
 
-func aStockShouldShowAfternoonPopupNow() bool {
-	now := aStockNow().In(aStockLocation())
-	return now.Hour() >= 13
+func aStockPreopenPopupWindowForNow(now time.Time) (aStockPreopenPopupWindow, bool) {
+	windows := aStockPreopenPopupWindows()
+	for _, window := range windows {
+		end := aStockPopupWindowTime(now, window.EndHour, window.EndMinute)
+		if now.Before(end) {
+			return window, aStockPreopenPopupWindowActive(now, window)
+		}
+	}
+	window := windows[len(windows)-1]
+	return window, false
+}
+
+func aStockPreopenPopupWindowActive(now time.Time, window aStockPreopenPopupWindow) bool {
+	start := aStockPopupWindowTime(now, window.StartHour, window.StartMinute)
+	end := aStockPopupWindowTime(now, window.EndHour, window.EndMinute)
+	return !now.Before(start) && now.Before(end)
+}
+
+func aStockPopupWindowTime(now time.Time, hour int, minute int) time.Time {
+	return time.Date(now.Year(), now.Month(), now.Day(), hour, minute, 0, 0, now.Location())
+}
+
+func aStockPreopenPopupKey(window aStockPreopenPopupWindow, strategyDate string) string {
+	if strings.TrimSpace(window.KeyPrefix) == "" {
+		return ""
+	}
+	return window.KeyPrefix + normalizeAStockStrategyDate(strategyDate)
 }
 
 func aStockActionRequiresTradingDay(action string) bool {
@@ -3632,6 +3703,41 @@ func aStockWindow(strategyDate string, periodKey string) (time.Time, time.Time) 
 	return start, end
 }
 
+func aStockRecommendationPhaseWindow(strategyDate string, periodKey string, phase string) (time.Time, time.Time, string) {
+	location := aStockLocation()
+	day, err := time.ParseInLocation("2006-01-02", normalizeAStockStrategyDate(strategyDate), location)
+	if err != nil {
+		day = time.Now().In(location)
+	}
+	period := normalizeAStockPeriod(periodKey)
+	normalizedPhase := normalizeAStockRecommendationPhase(phase)
+	if period.Key == "afternoon" {
+		if normalizedPhase == aStockRecommendationPhasePreopen {
+			return time.Date(day.Year(), day.Month(), day.Day(), 9, 30, 0, 0, location),
+				time.Date(day.Year(), day.Month(), day.Day(), 12, 56, 59, 0, location),
+				"09:30-12:56:59"
+		}
+		start, end := aStockWindow(day.Format("2006-01-02"), period.Key)
+		return start, end, period.WindowLabel
+	}
+	if normalizedPhase == aStockRecommendationPhasePreopen {
+		return time.Date(day.Year(), day.Month(), day.Day(), 8, 0, 0, 0, location),
+			time.Date(day.Year(), day.Month(), day.Day(), 9, 26, 59, 0, location),
+			"08:00-09:26:59"
+	}
+	start, end := aStockWindow(day.Format("2006-01-02"), period.Key)
+	return start, end, period.WindowLabel
+}
+
+func normalizeAStockRecommendationPhase(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case aStockRecommendationPhasePreopen:
+		return aStockRecommendationPhasePreopen
+	default:
+		return aStockRecommendationPhaseFinal
+	}
+}
+
 func filterAStockNews(items []model.Item) []model.Item {
 	filtered := make([]model.Item, 0, len(items))
 	for _, item := range items {
@@ -3780,11 +3886,19 @@ type aStockRecommendationSnapshot struct {
 }
 
 func buildAStockSnapshotRecommendations(strategyDate string, periodKey string, articles []model.Item, candidates []aStockMarketCandidate) []aStockRecommendation {
-	return buildAStockSnapshotRecommendationsWithLimit(strategyDate, periodKey, articles, candidates, aStockRecommendationLimit, aStockStocksPerHotspot)
+	return buildAStockSnapshotRecommendationsWithPhaseAndLimit(strategyDate, periodKey, aStockRecommendationPhaseFinal, articles, candidates, aStockRecommendationLimit, aStockStocksPerHotspot)
 }
 
 func buildAStockSnapshotRecommendationsWithLimit(strategyDate string, periodKey string, articles []model.Item, candidates []aStockMarketCandidate, maxRecommendations int, maxPerHotspot int) []aStockRecommendation {
-	snapshots := aStockRecommendationSnapshots(strategyDate, periodKey)
+	return buildAStockSnapshotRecommendationsWithPhaseAndLimit(strategyDate, periodKey, aStockRecommendationPhaseFinal, articles, candidates, maxRecommendations, maxPerHotspot)
+}
+
+func buildAStockSnapshotRecommendationsWithPhase(strategyDate string, periodKey string, phase string, articles []model.Item, candidates []aStockMarketCandidate) []aStockRecommendation {
+	return buildAStockSnapshotRecommendationsWithPhaseAndLimit(strategyDate, periodKey, phase, articles, candidates, aStockRecommendationLimit, aStockStocksPerHotspot)
+}
+
+func buildAStockSnapshotRecommendationsWithPhaseAndLimit(strategyDate string, periodKey string, phase string, articles []model.Item, candidates []aStockMarketCandidate, maxRecommendations int, maxPerHotspot int) []aStockRecommendation {
+	snapshots := aStockRecommendationSnapshots(strategyDate, periodKey, phase)
 	if len(snapshots) == 0 {
 		return buildAStockRecommendationsWithLimit(buildAStockHotspots(articles), candidates, maxRecommendations, maxPerHotspot)
 	}
@@ -3844,20 +3958,31 @@ func normalizeAStockRecommendationHotspot(value string) string {
 	return strings.TrimSpace(value)
 }
 
-func aStockRecommendationSnapshots(strategyDate string, periodKey string) []aStockRecommendationSnapshot {
+func aStockRecommendationSnapshots(strategyDate string, periodKey string, phase string) []aStockRecommendationSnapshot {
 	location := aStockLocation()
 	day, err := time.ParseInLocation("2006-01-02", normalizeAStockStrategyDate(strategyDate), location)
 	if err != nil {
 		return nil
 	}
 	period := normalizeAStockPeriod(periodKey)
+	normalizedPhase := normalizeAStockRecommendationPhase(phase)
 	if period.Key == "afternoon" {
 		start := time.Date(day.Year(), day.Month(), day.Day(), 9, 30, 0, 0, location)
+		if normalizedPhase == aStockRecommendationPhasePreopen {
+			return []aStockRecommendationSnapshot{
+				{Label: "12:57", Start: start, End: time.Date(day.Year(), day.Month(), day.Day(), 12, 56, 59, 0, location)},
+			}
+		}
 		return []aStockRecommendationSnapshot{
 			{Label: "13:00", Start: start, End: time.Date(day.Year(), day.Month(), day.Day(), 13, 0, 59, 0, location)},
 		}
 	}
 	start := time.Date(day.Year(), day.Month(), day.Day(), 8, 0, 0, 0, location)
+	if normalizedPhase == aStockRecommendationPhasePreopen {
+		return []aStockRecommendationSnapshot{
+			{Label: "09:27", Start: start, End: time.Date(day.Year(), day.Month(), day.Day(), 9, 26, 59, 0, location)},
+		}
+	}
 	return []aStockRecommendationSnapshot{
 		{Label: "09:24", Start: start, End: time.Date(day.Year(), day.Month(), day.Day(), 9, 24, 59, 0, location)},
 		{Label: "09:30", Start: start, End: time.Date(day.Year(), day.Month(), day.Day(), 9, 30, 59, 0, location)},

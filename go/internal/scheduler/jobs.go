@@ -288,33 +288,43 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 		withJobMeta(jobDefinition{
 			Name:        "a-stock-morning-recommendation-preview",
 			Group:       "a-stock",
-			Description: "A股上午推荐预生成：09:26 延迟 2 分钟准备上午推荐快照",
+			Description: "A股上午盘前推荐：09:27 生成上午盘前推荐快照并触发弹窗",
 			Interval:    24 * time.Hour,
 			Enabled:     true,
 			Run: func(ctx context.Context) error {
-				return w.runAStockRecommendation(ctx, "morning")
+				return w.runAStockRecommendation(ctx, "morning", "preopen")
 			},
-		}, "AStockMorningRecommendationPreview", "0 26 9 * * ?"),
+		}, "AStockMorningRecommendationPreview", "0 27 9 * * ?"),
 		withJobMeta(jobDefinition{
 			Name:        "a-stock-morning-recommendation",
 			Group:       "a-stock",
-			Description: "A股上午推荐：09:32 延迟 2 分钟抓取 08:00-09:30 财经新闻并生成相关股票推荐",
+			Description: "A股上午推荐补全：09:32 抓取 08:00-09:30 财经新闻并补全推荐快照",
 			Interval:    24 * time.Hour,
 			Enabled:     true,
 			Run: func(ctx context.Context) error {
-				return w.runAStockRecommendation(ctx, "morning")
+				return w.runAStockRecommendation(ctx, "morning", "final")
 			},
 		}, "AStockMorningRecommendation", "0 32 9 * * ?"),
 		withJobMeta(jobDefinition{
-			Name:        "a-stock-afternoon-recommendation",
+			Name:        "a-stock-afternoon-recommendation-preview",
 			Group:       "a-stock",
-			Description: "A股下午推荐：13:00 抓取 09:30-13:00 财经新闻并生成相关股票推荐",
+			Description: "A股下午盘前推荐：12:57 生成下午盘前推荐快照并触发弹窗",
 			Interval:    24 * time.Hour,
 			Enabled:     true,
 			Run: func(ctx context.Context) error {
-				return w.runAStockRecommendation(ctx, "afternoon")
+				return w.runAStockRecommendation(ctx, "afternoon", "preopen")
 			},
-		}, "AStockAfternoonRecommendation", "0 0 13 * * ?"),
+		}, "AStockAfternoonRecommendationPreview", "0 57 12 * * ?"),
+		withJobMeta(jobDefinition{
+			Name:        "a-stock-afternoon-recommendation",
+			Group:       "a-stock",
+			Description: "A股下午推荐补全：13:02 抓取 09:30-13:00 财经新闻并补全推荐快照",
+			Interval:    24 * time.Hour,
+			Enabled:     true,
+			Run: func(ctx context.Context) error {
+				return w.runAStockRecommendation(ctx, "afternoon", "final")
+			},
+		}, "AStockAfternoonRecommendation", "0 2 13 * * ?"),
 		withJobMeta(jobDefinition{
 			Name:        "a-stock-auction-crawl",
 			Group:       "a-stock",
