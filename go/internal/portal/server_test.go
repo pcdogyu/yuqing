@@ -2341,6 +2341,149 @@ func TestAStockPageRefreshAllBacktestsPersistsAfternoonBacktestUpdate(t *testing
 	}
 }
 
+func TestAStockPageRefreshAllBacktestsSupplementsPartialCustomMarketHistory(t *testing.T) {
+	setAStockNowForTest(t, time.Date(2026, 6, 24, 14, 0, 0, 0, time.FixedZone("CST", 8*3600)))
+
+	market := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch normalizeAStockCode(r.URL.Query().Get("codes")) {
+		case "603083":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{
+					"items": []map[string]any{
+						{"code": "603083", "date": "2026-06-22", "open": 238.00, "close": 238.00, "pct": 0.50},
+						{"code": "603083", "date": "2026-06-23", "open": 240.00, "close": 244.08, "pct": 1.70, "entry_price": 240.00},
+						{"code": "603083", "date": "2026-06-24", "open": 245.00, "close": 262.20, "pct": 7.42},
+					},
+				},
+			})
+		case "002008":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{
+					"items": []map[string]any{
+						{"code": "002008", "date": "2026-06-22", "open": 131.93, "close": 131.93, "pct": -2.20},
+						{"code": "002008", "date": "2026-06-24", "open": 146.00, "close": 148.02, "pct": 2.00},
+					},
+				},
+			})
+		default:
+			t.Fatalf("unexpected market query: %s", r.URL.RawQuery)
+		}
+	}))
+	defer market.Close()
+	t.Setenv("YUQING_ASTOCK_MARKET_URL", market.URL)
+
+	eastmoney := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		secid := r.URL.Query().Get("secid")
+		switch {
+		case secid == "0.002008" && r.URL.Query().Get("klt") == "101":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{
+					"klines": []string{
+						"2026-06-22,131.93,131.93,0,0,0,0,0,-2.20",
+						"2026-06-23,135.54,145.11,0,0,0,0,0,9.99",
+						"2026-06-24,146.00,148.02,0,0,0,0,0,2.00",
+					},
+				},
+			})
+		case secid == "0.002008" && r.URL.Query().Get("klt") == "1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{
+					"klines": []string{
+						"2026-06-23 09:30,135.54,136.20,0,0,0,0,0,0",
+						"2026-06-23 13:01,141.98,142.20,0,0,0,0,0,0",
+					},
+				},
+			})
+		case secid == "1.603083" && r.URL.Query().Get("klt") == "1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{
+					"klines": []string{
+						"2026-06-23 09:30,239.80,240.00,0,0,0,0,0,0",
+					},
+				},
+			})
+		default:
+			t.Fatalf("unexpected eastmoney query: %s", r.URL.RawQuery)
+		}
+	}))
+	defer eastmoney.Close()
+	setAStockEastmoneyKlineURLForTest(t, eastmoney.URL)
+
+	savedSnapshots := map[string]model.AStockRecommendationSnapshot{}
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/articles":
+			writeEnvelope(w, http.StatusOK, "ok", model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0})
+		case "/api/v1/a-stock/recommendation-selections":
+			switch r.URL.Query().Get("period") {
+			case "morning":
+				writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{
+					Found:        true,
+					StrategyDate: "2026-06-23",
+					Period:       "morning",
+					Items: []model.AStockRecommendationSelection{
+						{Rank: 1, Code: "603083", Name: "剑桥科技", Hotspot: "人工智能", MarketScore: 91, Reason: "morning"},
+					},
+				})
+			case "afternoon":
+				writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{
+					Found:        true,
+					StrategyDate: "2026-06-23",
+					Period:       "afternoon",
+					Items: []model.AStockRecommendationSelection{
+						{Rank: 1, Code: "002008", Name: "大族激光", Hotspot: "机器人", MarketScore: 87, Reason: "afternoon"},
+					},
+				})
+			default:
+				t.Fatalf("unexpected selection period: %s", r.URL.RawQuery)
+			}
+		case "/api/v1/a-stock/recommendations":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
+		case "/api/v1/internal/a-stock/recommendations":
+			var snapshot model.AStockRecommendationSnapshot
+			if err := json.NewDecoder(r.Body).Decode(&snapshot); err != nil {
+				t.Fatalf("decode snapshot: %v", err)
+			}
+			savedSnapshots[snapshot.Period] = snapshot
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Updated: 1})
+		case "/api/v1/a-stock/holdings/summary":
+			writeEnvelope(w, http.StatusOK, "ok", model.StockInstitutionHoldingSummary{})
+		default:
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-23&period=morning&refresh_all_backtests=1", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	afternoonSnapshot, ok := savedSnapshots["afternoon"]
+	if !ok {
+		t.Fatalf("expected afternoon snapshot to be persisted, got %+v", savedSnapshots)
+	}
+	var backtests []aStockBacktestRow
+	if err := json.Unmarshal([]byte(afternoonSnapshot.BacktestsJSON), &backtests); err != nil {
+		t.Fatalf("decode afternoon backtests: %v", err)
+	}
+	if len(backtests) != 1 {
+		t.Fatalf("expected one afternoon backtest row, got %+v", backtests)
+	}
+	if backtests[0].AfternoonOpen != "142.20" || backtests[0].T0Return != "+2.05%" || backtests[0].T0Close != "145.11" {
+		t.Fatalf("expected supplemented afternoon backtest values, got %+v", backtests[0])
+	}
+	if backtests[0].Days[0].Close != "148.02" || backtests[0].Days[0].Return != "+4.09%" {
+		t.Fatalf("expected supplemented T+1 values, got %+v", backtests[0])
+	}
+}
+
 func TestAStockContextRefreshSeedsSelectionsFromExistingSnapshot(t *testing.T) {
 	market := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

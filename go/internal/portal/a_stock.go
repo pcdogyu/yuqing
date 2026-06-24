@@ -2408,6 +2408,11 @@ func (s *Server) loadAStockMarketBars(strategyDate string, codes []string, endpo
 		if err == nil && resp.IsSuccess() {
 			bars, decodeErr := decodeAStockMarketBars(resp.Body())
 			if decodeErr == nil && len(bars) > 0 {
+				if shouldSupplementAStockMarketBars(strategyDate, codes, bars) {
+					if fallbackBars, fallbackErr := s.loadDefaultAStockBars(strategyDate, codes); fallbackErr == nil && len(fallbackBars) > 0 {
+						bars = mergeAStockMarketBars(bars, fallbackBars)
+					}
+				}
 				s.enrichAStockSessionPrices(strategyDate, codes, bars)
 				return bars, nil
 			}
@@ -2424,6 +2429,87 @@ func (s *Server) loadAStockMarketBars(strategyDate string, codes []string, endpo
 		return nil, fmt.Errorf("market endpoint returned no bars")
 	}
 	return s.loadDefaultAStockBars(strategyDate, codes)
+}
+
+func shouldSupplementAStockMarketBars(strategyDate string, codes []string, bars []aStockMarketBar) bool {
+	if len(codes) == 0 || len(bars) == 0 {
+		return false
+	}
+	strategyDate = normalizeAStockStrategyDate(strategyDate)
+	grouped := groupAStockMarketBars(bars)
+	for _, code := range codes {
+		code = normalizeAStockCode(code)
+		codeBars := grouped[code]
+		if len(codeBars) == 0 {
+			return true
+		}
+		hasStrategyDate := false
+		for _, bar := range codeBars {
+			if bar.Date == strategyDate {
+				hasStrategyDate = true
+				break
+			}
+		}
+		if !hasStrategyDate {
+			return true
+		}
+	}
+	return false
+}
+
+func mergeAStockMarketBars(primary []aStockMarketBar, fallback []aStockMarketBar) []aStockMarketBar {
+	if len(primary) == 0 {
+		return append([]aStockMarketBar(nil), fallback...)
+	}
+	if len(fallback) == 0 {
+		return primary
+	}
+	merged := append([]aStockMarketBar(nil), primary...)
+	indexByKey := make(map[string]int, len(merged))
+	for i, bar := range merged {
+		key := normalizeAStockCode(bar.Code) + "|" + normalizeAStockMarketDate(bar.Date)
+		if key != "|" {
+			indexByKey[key] = i
+		}
+	}
+	for _, bar := range fallback {
+		key := normalizeAStockCode(bar.Code) + "|" + normalizeAStockMarketDate(bar.Date)
+		if key == "|" {
+			continue
+		}
+		if idx, ok := indexByKey[key]; ok {
+			merged[idx] = mergeAStockMarketBar(merged[idx], bar)
+			continue
+		}
+		indexByKey[key] = len(merged)
+		merged = append(merged, bar)
+	}
+	return merged
+}
+
+func mergeAStockMarketBar(primary aStockMarketBar, fallback aStockMarketBar) aStockMarketBar {
+	if primary.Code == "" {
+		primary.Code = fallback.Code
+	}
+	if primary.Date == "" {
+		primary.Date = fallback.Date
+	}
+	if primary.Open <= 0 && fallback.Open > 0 {
+		primary.Open = fallback.Open
+	}
+	if primary.Close <= 0 && fallback.Close > 0 {
+		primary.Close = fallback.Close
+	}
+	if primary.Pct == 0 && fallback.Pct != 0 {
+		primary.Pct = fallback.Pct
+	}
+	if primary.EntryPrice <= 0 && fallback.EntryPrice > 0 {
+		primary.EntryPrice = fallback.EntryPrice
+	}
+	if primary.AfternoonEntryPrice <= 0 && fallback.AfternoonEntryPrice > 0 {
+		primary.AfternoonEntryPrice = fallback.AfternoonEntryPrice
+	}
+	return primary
 }
 
 func (s *Server) enrichAStockSessionPrices(strategyDate string, codes []string, bars []aStockMarketBar) {
