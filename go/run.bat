@@ -1,5 +1,5 @@
 @echo off
-setlocal EnableExtensions
+setlocal EnableExtensions EnableDelayedExpansion
 
 set "SKIP_PULL=0"
 if /I "%~1"=="--skip-pull" set "SKIP_PULL=1"
@@ -107,20 +107,20 @@ if "%SKIP_PULL%"=="1" (
         set "GIT_TERMINAL_PROMPT=0"
         set "GIT_ASK_YESNO=%GIT_ASK_YESNO_HELPER%"
         git pull --ff-only origin golang
-        set "YUQING_PULL_EXIT=%ERRORLEVEL%"
+        set "YUQING_PULL_EXIT=!ERRORLEVEL!"
         set "GIT_ASK_YESNO="
         set "GIT_TERMINAL_PROMPT="
         del /Q "%GIT_ASK_YESNO_HELPER%" >nul 2>nul
-        if not "%YUQING_PULL_EXIT%"=="0" (
-            echo git pull failed with exit code %YUQING_PULL_EXIT%.
-            goto :fail
+        if not "!YUQING_PULL_EXIT!"=="0" (
+            echo git pull failed with exit code !YUQING_PULL_EXIT!.
+            exit /b !YUQING_PULL_EXIT!
         )
         for /f %%I in ('git rev-parse HEAD') do set "YUQING_HEAD_AFTER=%%I"
         if not defined YUQING_HEAD_AFTER (
             echo Failed to resolve git HEAD after pull.
             goto :fail
         )
-        if not "%YUQING_HEAD_BEFORE%"=="%YUQING_HEAD_AFTER%" (
+        if not "!YUQING_HEAD_BEFORE!"=="!YUQING_HEAD_AFTER!" (
             echo Repository updated. Restarting run.bat with the refreshed worktree...
         )
     )
@@ -322,6 +322,8 @@ if errorlevel 1 (
 exit /b 0
 
 :fail
+set "YUQING_FAIL_EXIT=%ERRORLEVEL%"
+if "!YUQING_FAIL_EXIT!"=="0" set "YUQING_FAIL_EXIT=1"
 echo.
-echo run.bat failed with exit code %ERRORLEVEL%.
-exit /b %ERRORLEVEL%
+echo run.bat failed with exit code !YUQING_FAIL_EXIT!.
+exit /b !YUQING_FAIL_EXIT!
