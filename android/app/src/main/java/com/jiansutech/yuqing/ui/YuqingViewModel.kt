@@ -64,6 +64,9 @@ data class YuqingUiState(
     val selectedModuleKey: String = "dashboard",
     val dashboard: AndroidDashboard? = null,
     val articleList: ItemListResult? = null,
+    val articleDetail: ArticleItem? = null,
+    val articleDetailLoading: Boolean = false,
+    val articleDetailError: String = "",
     val aStockAuction: AStockAuctionListResult = AStockAuctionListResult(),
     val aStockAuctionDate: String = AStockTradingCalendar.latestSelectableTradingDay(
         LocalDate.now(ZoneId.of("Asia/Shanghai")),
@@ -312,6 +315,59 @@ class YuqingViewModel(
                 }
             }
             _uiState.update { it.copy(loading = false, articleLoading = false) }
+        }
+    }
+
+    fun openArticleDetail(item: ArticleItem) {
+        if (item.id <= 0) {
+            _uiState.update {
+                it.copy(
+                    articleDetail = item,
+                    articleDetailLoading = false,
+                    articleDetailError = "文章ID无效，无法获取详情",
+                )
+            }
+            return
+        }
+        _uiState.update {
+            it.copy(
+                articleDetail = item,
+                articleDetailLoading = true,
+                articleDetailError = "",
+            )
+        }
+        viewModelScope.launch {
+            val session = sessionStore.state.first()
+            runCatching {
+                ApiFactory.yuqing(session.apiBaseUrl, session.token)
+                    .article(item.id)
+                    .data ?: error("文章详情为空")
+            }.onSuccess { detail ->
+                _uiState.update {
+                    it.copy(
+                        articleDetail = detail,
+                        articleDetailLoading = false,
+                        articleDetailError = "",
+                    )
+                }
+            }.onFailure { throwable ->
+                _uiState.update {
+                    it.copy(
+                        articleDetailLoading = false,
+                        articleDetailError = throwable.message ?: "文章详情加载失败",
+                    )
+                }
+            }
+        }
+    }
+
+    fun closeArticleDetail() {
+        _uiState.update {
+            it.copy(
+                articleDetail = null,
+                articleDetailLoading = false,
+                articleDetailError = "",
+            )
         }
     }
 

@@ -75,6 +75,43 @@ class ApiModelsTest {
     }
 
     @Test
+    fun articleDetailRequestUsesArticleIdPath() = runTest {
+        val server = MockWebServer()
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody(
+                    """
+                    {
+                      "code": 200,
+                      "message": "ok",
+                      "data": {
+                        "id": 42,
+                        "title": "detail title",
+                        "content": "full body",
+                        "source_type": "flash",
+                        "captured_at": "2026-06-24T08:30:01Z"
+                      }
+                    }
+                    """.trimIndent(),
+                ),
+        )
+        server.start()
+        try {
+            val result = ApiFactory.yuqing(server.url("/").toString())
+                .article(42)
+                .data
+            val request = server.takeRequest()
+
+            assertEquals("/api/v1/articles/42", request.requestUrl?.encodedPath)
+            assertEquals("detail title", result?.title)
+            assertEquals("full body", result?.content)
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
     fun dashboardSerializationKeepsPortalCounts() {
         val dashboard = AndroidDashboard(
             overview = Overview(articleCount = 3, projectCount = 2, reportCount = 1),

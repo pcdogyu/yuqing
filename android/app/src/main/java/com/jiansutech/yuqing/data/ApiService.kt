@@ -42,6 +42,9 @@ interface YuqingApi {
         @Query("source_type") sourceType: String = "",
     ): ApiEnvelope<ItemListResult>
 
+    @GET("api/v1/articles/{id}")
+    suspend fun article(@Path("id") id: Long): ApiEnvelope<ArticleItem>
+
     @GET("api/v1/a-stock/auction")
     suspend fun aStockAuction(
         @Query("date") date: String = "",

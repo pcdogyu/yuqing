@@ -22,7 +22,8 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Article
 import androidx.compose.material.icons.filled.Assessment
 import androidx.compose.material.icons.filled.Business
@@ -61,6 +62,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -108,8 +110,13 @@ private fun PortalScreen(state: YuqingUiState, viewModel: YuqingViewModel) {
         ?: modules.first()
     var backtestDetail by remember { mutableStateOf<AStockBacktestDetailState?>(null) }
     val detail = backtestDetail
-    BackHandler(enabled = detail != null) {
-        backtestDetail = null
+    val articleDetail = state.articleDetail
+    BackHandler(enabled = detail != null || articleDetail != null) {
+        if (detail != null) {
+            backtestDetail = null
+        } else {
+            viewModel.closeArticleDetail()
+        }
     }
     val hideTopBar = selected.key == "dashboard" ||
         selected.key == "articles" ||
@@ -125,7 +132,18 @@ private fun PortalScreen(state: YuqingUiState, viewModel: YuqingViewModel) {
                     title = { Text("${detail.recommendation.code} ${detail.recommendation.name}", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     navigationIcon = {
                         IconButton(onClick = { backtestDetail = null }) {
-                            Icon(Icons.Filled.ArrowBack, contentDescription = "返回")
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        }
+                    },
+                )
+            }
+        } else if (articleDetail != null) {
+            {
+                TopAppBar(
+                    title = { Text("新闻详情", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    navigationIcon = {
+                        IconButton(onClick = viewModel::closeArticleDetail) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                         }
                     },
                 )
@@ -148,7 +166,7 @@ private fun PortalScreen(state: YuqingUiState, viewModel: YuqingViewModel) {
             }
         },
         bottomBar = {
-            if (detail == null) {
+            if (detail == null && articleDetail == null) {
                 NavigationBar {
                     listOf("dashboard", "articles", "a_stock", "auction", "system").forEach { key ->
                         val module = modules.firstOrNull { it.key == key }
@@ -165,7 +183,7 @@ private fun PortalScreen(state: YuqingUiState, viewModel: YuqingViewModel) {
             }
         },
     ) { padding ->
-        val contentModifier = if (detail != null) {
+        val contentModifier = if (detail != null || articleDetail != null) {
             Modifier.padding(padding).fillMaxSize()
         } else if (hideTopBar) {
             Modifier.padding(padding).fillMaxSize().statusBarsPadding()
@@ -186,6 +204,12 @@ private fun PortalScreen(state: YuqingUiState, viewModel: YuqingViewModel) {
             }
             if (detail != null) {
                 AStockBacktestDetailScreen(detail)
+            } else if (articleDetail != null) {
+                ArticleDetailScreen(
+                    item = articleDetail,
+                    loading = state.articleDetailLoading,
+                    error = state.articleDetailError,
+                )
             } else {
                 ModuleContent(
                     key = selected.key,
@@ -248,7 +272,7 @@ private fun ModuleContent(
         return
     }
     when (key) {
-        "dashboard" -> DashboardModule(dashboard)
+        "dashboard" -> DashboardModule(dashboard, viewModel)
         "projects" -> ProjectsModule(dashboard.projects, dashboard.rules)
         "articles" -> ArticlesModule(state.articleList, state.articleLoading, state.error, viewModel)
         "search" -> SearchModule(state, viewModel)
@@ -264,7 +288,7 @@ private fun ModuleContent(
 }
 
 @Composable
-private fun DashboardModule(dashboard: AndroidDashboard) {
+private fun DashboardModule(dashboard: AndroidDashboard, viewModel: YuqingViewModel) {
     val latestArticles = dashboard.articles.items.take(5)
     LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
@@ -274,7 +298,7 @@ private fun DashboardModule(dashboard: AndroidDashboard) {
             }
         }
         item { SectionTitle("最新文章") }
-        items(latestArticles) { ArticleRow(it) }
+        items(latestArticles) { ArticleRow(it, onClick = { viewModel.openArticleDetail(it) }) }
     }
 }
 
@@ -321,7 +345,7 @@ private fun ArticlesModule(
     val canGoNext = result.page * pageSize < result.total
     val totalPages = if (result.total <= 0) 1 else ((result.total + pageSize - 1) / pageSize).coerceAtLeast(1)
     LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        items(result.items) { ArticleRow(it) }
+        items(result.items) { ArticleRow(it, onClick = { viewModel.openArticleDetail(it) }) }
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -358,7 +382,7 @@ private fun SearchModule(state: YuqingUiState, viewModel: YuqingViewModel) {
         }
         state.searchResult?.let { result ->
             item { SectionTitle("搜索结果 ${result.total}") }
-            items(result.items) { ArticleRow(it) }
+            items(result.items) { ArticleRow(it, onClick = { viewModel.openArticleDetail(it) }) }
         }
     }
 }
@@ -685,7 +709,7 @@ private fun MetricCard(title: String, value: String, modifier: Modifier = Modifi
 }
 
 @Composable
-private fun ArticleRow(item: ArticleItem) {
+private fun ArticleRow(item: ArticleItem, onClick: (() -> Unit)? = null) {
     val displayTime = remember(item.capturedAt, item.publishTime, item.publishTimeText) {
         formatArticleRelativeTime(item.publishTimeText)
             .ifBlank { formatArticleRelativeTime(item.publishTime) }
@@ -707,7 +731,8 @@ private fun ArticleRow(item: ArticleItem) {
             }
         }
     }
-    Card {
+    val cardModifier = if (onClick == null) Modifier else Modifier.clickable(onClick = onClick)
+    Card(cardModifier) {
         Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(
                 titleText,
@@ -723,6 +748,85 @@ private fun ArticleRow(item: ArticleItem) {
                     maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ArticleDetailScreen(
+    item: ArticleItem,
+    loading: Boolean,
+    error: String,
+) {
+    val uriHandler = LocalUriHandler.current
+    val displayTime = remember(item.capturedAt, item.publishTime, item.publishTimeText) {
+        formatArticleRelativeTime(item.publishTimeText)
+            .ifBlank { formatArticleRelativeTime(item.publishTime) }
+            .ifBlank { formatArticleRelativeTime(item.capturedAt) }
+    }
+    val body = remember(item.content, item.summary) {
+        item.content.trim().ifBlank { item.summary.trim() }
+    }
+    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    item.title.trim().ifBlank { "--" },
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (item.sourceType.isNotBlank()) {
+                        Text(item.sourceType, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                    }
+                    if (displayTime.isNotBlank()) {
+                        Text(displayTime, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
+        if (loading) {
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Text("正在加载详情", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+        if (error.isNotBlank()) {
+            item {
+                Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        if (item.summary.isNotBlank() && item.summary.trim() != body) {
+            item {
+                Card {
+                    Text(
+                        item.summary.trim(),
+                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
+        }
+        item {
+            if (body.isBlank()) {
+                EmptyState("暂无正文内容")
+            } else {
+                Text(
+                    body,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+        }
+        if (item.sourceUrl.isNotBlank()) {
+            item {
+                TextButton(onClick = { runCatching { uriHandler.openUri(item.sourceUrl) } }) {
+                    Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("打开原文")
+                }
             }
         }
     }
