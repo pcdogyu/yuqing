@@ -291,10 +291,11 @@ class YuqingViewModel(
     fun loadArticles(page: Int) {
         viewModelScope.launch {
             _uiState.update {
+                val fallback = fallbackArticleList(it)
                 it.copy(
                     loading = true,
                     articleLoading = true,
-                    articleList = null,
+                    articleList = it.articleList ?: fallback,
                     error = "",
                     message = "",
                 )
@@ -304,12 +305,17 @@ class YuqingViewModel(
                 val result = ApiFactory.yuqing(session.apiBaseUrl, session.token)
                     .articles(page = page.coerceAtLeast(1), pageSize = 10)
                     .data ?: error("文章数据为空")
-                _uiState.update { it.copy(articleList = result, message = "") }
+                _uiState.update { it.copy(articleList = result, error = "", message = "") }
             }.onFailure { throwable ->
                 _uiState.update {
+                    val fallback = fallbackArticleList(it)
                     it.copy(
-                        articleList = null,
-                        error = throwable.message ?: "文章加载失败",
+                        articleList = fallback,
+                        error = if (fallback == null) {
+                            throwable.message ?: "文章加载失败"
+                        } else {
+                            "文章刷新失败，已显示缓存"
+                        },
                         message = "",
                     )
                 }
@@ -556,6 +562,11 @@ private fun parseAStockRecommendations(raw: String): List<AStockRecommendation> 
     return runCatching {
         ApiFactory.json.decodeFromString<List<AStockRecommendation>>(payload)
     }.getOrDefault(emptyList())
+}
+
+internal fun fallbackArticleList(state: YuqingUiState): ItemListResult? {
+    state.articleList?.takeIf { it.items.isNotEmpty() }?.let { return it }
+    return state.dashboard?.articles?.takeIf { it.items.isNotEmpty() }
 }
 
 private fun patchDashboardLatestArticles(dashboard: AndroidDashboard, latestArticles: List<ArticleItem>): AndroidDashboard {

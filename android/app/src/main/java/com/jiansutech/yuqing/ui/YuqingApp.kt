@@ -345,6 +345,11 @@ private fun ArticlesModule(
     val canGoNext = result.page * pageSize < result.total
     val totalPages = if (result.total <= 0) 1 else ((result.total + pageSize - 1) / pageSize).coerceAtLeast(1)
     LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (error.isNotBlank()) {
+            item {
+                Text(error, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
+            }
+        }
         items(result.items) { ArticleRow(it, onClick = { viewModel.openArticleDetail(it) }) }
         item {
             Row(
