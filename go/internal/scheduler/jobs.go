@@ -288,53 +288,53 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 		withJobMeta(jobDefinition{
 			Name:        "a-stock-morning-recommendation-preview",
 			Group:       "a-stock",
-			Description: "A股上午推荐预生成：09:24 提前准备上午推荐快照",
+			Description: "A股上午推荐预生成：09:26 延迟 2 分钟准备上午推荐快照",
 			Interval:    24 * time.Hour,
 			Enabled:     true,
 			Run: func(ctx context.Context) error {
 				return w.runAStockRecommendation(ctx, "morning")
 			},
-		}, "AStockMorningRecommendationPreview", "0 24 9 * * ?"),
+		}, "AStockMorningRecommendationPreview", "0 26 9 * * ?"),
 		withJobMeta(jobDefinition{
 			Name:        "a-stock-morning-recommendation",
 			Group:       "a-stock",
-			Description: "A股上午推荐：09:30 抓取 08:00-09:30 财经新闻并生成相关股票推荐",
+			Description: "A股上午推荐：09:32 延迟 2 分钟抓取 08:00-09:30 财经新闻并生成相关股票推荐",
 			Interval:    24 * time.Hour,
 			Enabled:     true,
 			Run: func(ctx context.Context) error {
 				return w.runAStockRecommendation(ctx, "morning")
 			},
-		}, "AStockMorningRecommendation", "0 30 9 * * ?"),
+		}, "AStockMorningRecommendation", "0 32 9 * * ?"),
 		withJobMeta(jobDefinition{
 			Name:        "a-stock-afternoon-recommendation-preview",
 			Group:       "a-stock",
-			Description: "A股下午推荐预生成：12:54 提前准备下午推荐快照",
+			Description: "A股下午推荐预生成：12:56 延迟 2 分钟准备下午推荐快照",
 			Interval:    24 * time.Hour,
 			Enabled:     true,
 			Run: func(ctx context.Context) error {
 				return w.runAStockRecommendation(ctx, "afternoon")
 			},
-		}, "AStockAfternoonRecommendationPreview", "0 54 12 * * ?"),
+		}, "AStockAfternoonRecommendationPreview", "0 56 12 * * ?"),
 		withJobMeta(jobDefinition{
 			Name:        "a-stock-afternoon-recommendation",
 			Group:       "a-stock",
-			Description: "A股下午推荐：13:00 抓取 09:30-13:00 财经新闻并生成相关股票推荐",
+			Description: "A股下午推荐：13:02 延迟 2 分钟抓取 09:30-13:00 财经新闻并生成相关股票推荐",
 			Interval:    24 * time.Hour,
 			Enabled:     true,
 			Run: func(ctx context.Context) error {
 				return w.runAStockRecommendation(ctx, "afternoon")
 			},
-		}, "AStockAfternoonRecommendation", "0 0 13 * * ?"),
+		}, "AStockAfternoonRecommendation", "0 2 13 * * ?"),
 		withJobMeta(jobDefinition{
 			Name:        "a-stock-auction-crawl",
 			Group:       "a-stock",
-			Description: "A股集合竞价金额：09:30 通过 AKShare 抓取全市场 09:25 集合竞价成交金额",
+			Description: "A股集合竞价金额：09:26 通过 AKShare 抓取全市场 09:25 集合竞价成交金额",
 			Interval:    24 * time.Hour,
 			Enabled:     strings.TrimSpace(w.cfg.AStockAuctionURL) != "",
 			Run: func(ctx context.Context) error {
 				return w.runAStockAuctionCrawl(ctx)
 			},
-		}, "AStockAuctionCrawl", "0 30 9 * * ?"),
+		}, "AStockAuctionCrawl", "0 26 9 * * ?"),
 		withJobMeta(jobDefinition{
 			Name:        "stock-research-crawl",
 			Group:       "a-stock",

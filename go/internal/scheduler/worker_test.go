@@ -243,20 +243,20 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	if theBlockJob.Name == "" {
 		t.Fatalf("expected theblock scheduler job, got %+v", listEnvelope.Data)
 	}
-	if aStockMorningJob.Cron != "0 30 9 * * ?" || aStockMorningJob.NextRunAt == nil {
+	if aStockMorningJob.Cron != "0 32 9 * * ?" || aStockMorningJob.NextRunAt == nil {
 		t.Fatalf("expected A股 morning recommendation cron metadata, got %+v", aStockMorningJob)
 	}
-	if aStockMorningPreviewJob.Cron != "0 24 9 * * ?" || aStockMorningPreviewJob.NextRunAt == nil {
+	if aStockMorningPreviewJob.Cron != "0 26 9 * * ?" || aStockMorningPreviewJob.NextRunAt == nil {
 		t.Fatalf("expected A股 morning recommendation preview cron metadata, got %+v", aStockMorningPreviewJob)
 	}
-	if aStockAfternoonJob.Cron != "0 0 13 * * ?" || aStockAfternoonJob.NextRunAt == nil {
+	if aStockAfternoonJob.Cron != "0 2 13 * * ?" || aStockAfternoonJob.NextRunAt == nil {
 		t.Fatalf("expected A股 afternoon recommendation cron metadata, got %+v", aStockAfternoonJob)
 	}
-	if aStockAfternoonPreviewJob.Cron != "0 54 12 * * ?" || aStockAfternoonPreviewJob.NextRunAt == nil {
+	if aStockAfternoonPreviewJob.Cron != "0 56 12 * * ?" || aStockAfternoonPreviewJob.NextRunAt == nil {
 		t.Fatalf("expected A股 afternoon recommendation preview cron metadata, got %+v", aStockAfternoonPreviewJob)
 	}
-	if aStockAuctionJob.Cron != "0 30 9 * * ?" || aStockAuctionJob.Enabled {
-		t.Fatalf("expected A股 auction crawl disabled by default with 09:30 cron, got %+v", aStockAuctionJob)
+	if aStockAuctionJob.Cron != "0 26 9 * * ?" || aStockAuctionJob.Enabled {
+		t.Fatalf("expected A股 auction crawl disabled by default with 09:26 cron, got %+v", aStockAuctionJob)
 	}
 	if aStockHoldingsJob.Cron != "0 35 2 * * ?" || aStockHoldingsJob.Enabled {
 		t.Fatalf("expected A股 holdings crawl disabled by default with 02:35 cron, got %+v", aStockHoldingsJob)
@@ -1504,8 +1504,8 @@ func TestSchedulerAStockAuctionJobEnabledWhenEndpointConfigured(t *testing.T) {
 			break
 		}
 	}
-	if !auctionJob.Enabled || auctionJob.Cron != "0 30 9 * * ?" || auctionJob.NextRunAt == nil {
-		t.Fatalf("expected enabled A股 auction crawl with 09:30 cron, got %+v", auctionJob)
+	if !auctionJob.Enabled || auctionJob.Cron != "0 26 9 * * ?" || auctionJob.NextRunAt == nil {
+		t.Fatalf("expected enabled A股 auction crawl with 09:26 cron, got %+v", auctionJob)
 	}
 }
 
