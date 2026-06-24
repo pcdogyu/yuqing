@@ -4476,7 +4476,7 @@ func TestHotPageCompat(t *testing.T) {
 	}
 }
 
-func TestArticlesPagePresentationUsesInternalCaptureTimeAndNoFavoriteAction(t *testing.T) {
+func TestArticlesPagePresentationUsesPublishTimeInShanghaiAndNoFavoriteAction(t *testing.T) {
 	oldCommit, oldBuildTime, oldBranch := app.GitCommit, app.BuildTime, app.BranchName
 	app.GitCommit = "abcdef1"
 	app.BuildTime = "2026-06-12T06:17:25Z"
@@ -4502,19 +4502,21 @@ func TestArticlesPagePresentationUsesInternalCaptureTimeAndNoFavoriteAction(t *t
 					Page:     1,
 					Items: []model.Item{
 						{
-							ID:         1,
-							Title:      "上海时间测试文章",
-							SourceType: "flash",
-							CapturedAt: time.Date(2026, 6, 12, 6, 17, 25, 0, time.UTC),
-							Read:       false,
-							Favorited:  true,
+							ID:          1,
+							Title:       "上海时间测试文章",
+							SourceType:  "flash",
+							PublishTime: "2026-06-12T06:17:25Z",
+							CapturedAt:  time.Date(2026, 6, 12, 1, 17, 25, 0, time.UTC),
+							Read:        false,
+							Favorited:   true,
 						},
 						{
-							ID:         2,
-							Title:      "PANews 测试文章",
-							SourceType: "panews_newsflash",
-							CapturedAt: time.Date(2026, 6, 12, 7, 17, 25, 0, time.UTC),
-							Read:       true,
+							ID:              2,
+							Title:           "PANews 测试文章",
+							SourceType:      "panews_newsflash",
+							PublishTimeText: "2026/6/12 15:17:25",
+							CapturedAt:      time.Date(2026, 6, 12, 2, 17, 25, 0, time.UTC),
+							Read:            true,
 						},
 						{
 							ID:         3,
@@ -4551,7 +4553,7 @@ func TestArticlesPagePresentationUsesInternalCaptureTimeAndNoFavoriteAction(t *t
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	if !strings.Contains(articleRawQuery, "time_field=publish_time") || !strings.Contains(articleRawQuery, "sort=publish_time_desc") {
-		t.Fatalf("expected article list request to sort by publish_time while displaying capture time, got query %q", articleRawQuery)
+		t.Fatalf("expected article list request to sort by publish_time while displaying publish time, got query %q", articleRawQuery)
 	}
 	body := rr.Body.String()
 	for _, unexpected := range []string{
@@ -4566,12 +4568,14 @@ func TestArticlesPagePresentationUsesInternalCaptureTimeAndNoFavoriteAction(t *t
 	}
 	renderedText := strings.ReplaceAll(html.UnescapeString(body), "&#43;", "+")
 	for _, expected := range []string{
-		`<th class="col-title">标题</th><th class="col-source">来源</th><th class="col-time">采集时间</th><th class="col-actions">操作</th>`,
+		`<th class="col-title">标题</th><th class="col-source">来源</th><th class="col-time">发布时间</th><th class="col-actions">操作</th>`,
 		`金十`,
 		`PANews`,
 		`CoinDesk`,
 		`Foresight`,
-		`2026-06-12 06:17`,
+		`<td>2026-06-12 14:17</td>`,
+		`<td>2026-06-12 15:17</td>`,
+		`<td>2026-06-12 16:17</td>`,
 		`隐藏文章`,
 		`Code By Yuhao@jiansutech.com - 2026-06-12 14:17:25 UTC+8 - abcdef1 - golang-jin10-sqlite`,
 	} {
@@ -4582,8 +4586,10 @@ func TestArticlesPagePresentationUsesInternalCaptureTimeAndNoFavoriteAction(t *t
 	if strings.Contains(renderedText, `删除文章`) {
 		t.Fatalf("expected article list to stop showing delete label, got %s", body)
 	}
-	if strings.Contains(renderedText, `2026-06-12 14:17</td>`) {
-		t.Fatalf("expected article list to show internal capture time instead of shifted Shanghai time, got %s", body)
+	for _, unexpected := range []string{`采集时间`, `<td>2026-06-12 01:17</td>`, `<td>2026-06-12 06:17</td>`} {
+		if strings.Contains(renderedText, unexpected) {
+			t.Fatalf("expected article list to show publish time in Shanghai instead of %q, got %s", unexpected, body)
+		}
 	}
 }
 
