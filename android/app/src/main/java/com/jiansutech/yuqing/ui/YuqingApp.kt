@@ -3,7 +3,6 @@ package com.jiansutech.yuqing.ui
 import android.os.SystemClock
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.Canvas
@@ -15,7 +14,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -50,9 +48,12 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -65,8 +66,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -74,7 +73,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.jiansutech.yuqing.astock.AStockTradingCalendar
 import com.jiansutech.yuqing.data.AndroidDashboard
@@ -97,8 +95,6 @@ import kotlinx.serialization.decodeFromString
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.ZoneId
-import kotlin.math.abs
-import kotlin.math.roundToInt
 
 @Composable
 fun YuqingApp(viewModel: YuqingViewModel) {
@@ -758,33 +754,21 @@ private fun SwipeHiddenArticleRow(
     onClick: () -> Unit,
     onHide: (ArticleItem) -> Unit,
 ) {
-    val thresholdPx = with(LocalDensity.current) { 72.dp.toPx() }
-    var offsetX by remember(item.id, item.title, item.capturedAt) { mutableStateOf(0f) }
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .pointerInput(item.id, item.title, item.capturedAt, thresholdPx) {
-                detectHorizontalDragGestures(
-                    onHorizontalDrag = { _, dragAmount ->
-                        offsetX += dragAmount
-                    },
-                    onDragEnd = {
-                        if (abs(offsetX) >= thresholdPx) {
-                            onHide(item)
-                        }
-                        offsetX = 0f
-                    },
-                    onDragCancel = {
-                        offsetX = 0f
-                    },
-                )
-            },
+    val dismissState = rememberSwipeToDismissBoxState(
+        confirmValueChange = { value ->
+            if (value != SwipeToDismissBoxValue.Settled) {
+                onHide(item)
+            }
+            value != SwipeToDismissBoxValue.Settled
+        },
+    )
+    SwipeToDismissBox(
+        state = dismissState,
+        backgroundContent = {},
+        enableDismissFromStartToEnd = true,
+        enableDismissFromEndToStart = true,
     ) {
-        ArticleRow(
-            item = item,
-            modifier = Modifier.offset { IntOffset(offsetX.roundToInt(), 0) },
-            onClick = onClick,
-        )
+        ArticleRow(item = item, onClick = onClick)
     }
 }
 
