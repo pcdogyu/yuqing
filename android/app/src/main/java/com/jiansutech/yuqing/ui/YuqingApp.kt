@@ -1131,4 +1131,3 @@ private fun moduleIcon(key: String): ImageVector = when (key) {
     "holdings" -> Icons.Default.Groups
     else -> Icons.Default.Settings
 }
-
