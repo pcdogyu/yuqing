@@ -711,8 +711,8 @@ func TestAndroidBootstrapModulesAndDashboard(t *testing.T) {
 	if len(dashboardEnvelope.Data.Articles.Items) != 3 || len(dashboardEnvelope.Data.Projects) != 1 {
 		t.Fatalf("expected dashboard lists, got %+v", dashboardEnvelope.Data)
 	}
-	if dashboardEnvelope.Data.Articles.Items[0].SourceKey != "android-latest-news" {
-		t.Fatalf("expected android dashboard to show latest published news first, got %+v", dashboardEnvelope.Data.Articles.Items)
+	if dashboardEnvelope.Data.Articles.Items[0].SourceKey != "android-recrawled-old" {
+		t.Fatalf("expected android dashboard to show latest synced news first, got %+v", dashboardEnvelope.Data.Articles.Items)
 	}
 }
 
