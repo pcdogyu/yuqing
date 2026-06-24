@@ -340,24 +340,70 @@ class YuqingViewModel(
     }
 
     fun hideArticle(item: ArticleItem) {
+        var shouldRefillDashboard = false
+        _uiState.update {
+            val nextDashboard = it.dashboard?.let { dashboard -> removeArticleFromDashboard(dashboard, item) }
+            shouldRefillDashboard = nextDashboard != null &&
+                nextDashboard.articles.items.size < DASHBOARD_VISIBLE_ARTICLE_LIMIT
+            it.copy(
+                articleList = removeArticleFromResult(it.articleList, item),
+                dashboard = nextDashboard,
+                articleDetail = it.articleDetail?.takeUnless { detail -> sameArticle(detail, item) },
+            )
+        }
         viewModelScope.launch {
-            if (item.id > 0) {
-                articleUserActionDao.upsert(
-                    ArticleUserActionEntity(
-                        articleId = item.id,
-                        read = true,
-                        hidden = true,
-                        updatedAt = System.currentTimeMillis(),
-                    ),
-                )
+            runCatching {
+                if (item.id > 0) {
+                    articleUserActionDao.upsert(
+                        ArticleUserActionEntity(
+                            articleId = item.id,
+                            read = true,
+                            hidden = true,
+                            updatedAt = System.currentTimeMillis(),
+                        ),
+                    )
+                }
+            }.onFailure { throwable ->
+                Log.w(STARTUP_TAG, "YuqingViewModel.hideArticle persist skipped", throwable)
             }
-            _uiState.update {
-                it.copy(
-                    articleList = removeArticleFromResult(it.articleList, item),
-                    dashboard = it.dashboard?.let { dashboard -> removeArticleFromDashboard(dashboard, item) },
-                    articleDetail = it.articleDetail?.takeUnless { detail -> sameArticle(detail, item) },
-                )
+            if (shouldRefillDashboard) {
+                refillDashboardArticlesIfNeeded(item.id.takeIf { id -> id > 0 })
             }
+        }
+    }
+
+    private suspend fun refillDashboardArticlesIfNeeded(extraHiddenArticleId: Long?) {
+        val dashboard = _uiState.value.dashboard ?: return
+        if (dashboard.articles.items.size >= DASHBOARD_VISIBLE_ARTICLE_LIMIT) {
+            return
+        }
+        val session = sessionStore.state.first()
+        runCatching {
+            val hiddenArticleIds = articleUserActionDao.hiddenArticleIds().toSet() +
+                listOfNotNull(extraHiddenArticleId)
+            val latestArticles = ApiFactory.yuqing(session.apiBaseUrl, session.token)
+                .articles(page = 1, pageSize = DASHBOARD_REFILL_PAGE_SIZE)
+                .data
+                ?.items
+                .orEmpty()
+            mergeDashboardArticles(
+                currentArticles = _uiState.value.dashboard?.articles?.items.orEmpty(),
+                incomingArticles = latestArticles,
+                hiddenArticleIds = hiddenArticleIds,
+            )
+        }.onSuccess { mergedArticles ->
+            if (mergedArticles.isNotEmpty()) {
+                _uiState.update {
+                    val currentDashboard = it.dashboard ?: return@update it
+                    it.copy(
+                        dashboard = currentDashboard.copy(
+                            articles = currentDashboard.articles.copy(items = mergedArticles),
+                        ),
+                    )
+                }
+            }
+        }.onFailure { throwable ->
+            Log.w(STARTUP_TAG, "YuqingViewModel.dashboard article refill skipped", throwable)
         }
     }
 
@@ -568,6 +614,9 @@ class YuqingViewModel(
 
 private const val STARTUP_TAG = "YuqingStartup"
 internal const val ARTICLE_PAGE_SIZE = 25
+internal const val DASHBOARD_VISIBLE_ARTICLE_LIMIT = 5
+internal const val DASHBOARD_ARTICLE_CACHE_LIMIT = 10
+private const val DASHBOARD_REFILL_PAGE_SIZE = 50
 private val articleTimeFormats = listOf(
     DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"),
     DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"),
@@ -646,8 +695,33 @@ private fun sameArticle(left: ArticleItem, right: ArticleItem): Boolean {
 }
 
 private fun patchDashboardLatestArticles(dashboard: AndroidDashboard, latestArticles: List<ArticleItem>): AndroidDashboard {
-    val referenceNow = Instant.now()
-    val patchedItems = latestArticles
+    val patchedItems = mergeDashboardArticles(
+        currentArticles = emptyList(),
+        incomingArticles = latestArticles,
+        hiddenArticleIds = emptySet(),
+    )
+    if (patchedItems.isEmpty()) {
+        return dashboard
+    }
+    val topItem = patchedItems.first()
+    Log.i(
+        STARTUP_TAG,
+        "YuqingViewModel.latestArticles patched size=${patchedItems.size} topTitle=${topItem.title} topCapturedAt=${topItem.capturedAt} topPublishTime=${topItem.publishTime} topPublishTimeText=${topItem.publishTimeText}",
+    )
+    return dashboard.copy(
+        articles = dashboard.articles.copy(items = patchedItems),
+    )
+}
+
+internal fun mergeDashboardArticles(
+    currentArticles: List<ArticleItem>,
+    incomingArticles: List<ArticleItem>,
+    hiddenArticleIds: Set<Long>,
+    referenceNow: Instant = Instant.now(),
+    limit: Int = DASHBOARD_ARTICLE_CACHE_LIMIT,
+): List<ArticleItem> {
+    return (currentArticles + incomingArticles)
+        .filterNot { article -> article.id in hiddenArticleIds }
         .distinctBy(::articleIdentity)
         .map { item ->
             DashboardLatestArticleSortEntry(
@@ -663,21 +737,13 @@ private fun patchDashboardLatestArticles(dashboard: AndroidDashboard, latestArti
                 .thenByDescending { it.item.id },
         )
         .map { it.item }
-        .take(10)
-    if (patchedItems.isEmpty()) {
-        return dashboard
-    }
-    val topItem = patchedItems.first()
-    Log.i(
-        STARTUP_TAG,
-        "YuqingViewModel.latestArticles patched size=${patchedItems.size} topTitle=${topItem.title} topCapturedAt=${topItem.capturedAt} topPublishTime=${topItem.publishTime} topPublishTimeText=${topItem.publishTimeText}",
-    )
-    return dashboard.copy(
-        articles = dashboard.articles.copy(items = patchedItems),
-    )
+        .take(limit.coerceAtLeast(1))
 }
 
 private fun articleIdentity(item: ArticleItem): String {
+    if (item.id > 0) {
+        return "id:${item.id}"
+    }
     return listOf(item.id.toString(), item.sourceUrl, item.capturedAt, item.title)
         .joinToString("|")
 }

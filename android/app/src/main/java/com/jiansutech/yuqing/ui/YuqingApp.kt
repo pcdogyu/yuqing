@@ -327,7 +327,13 @@ private fun DashboardModule(dashboard: AndroidDashboard, viewModel: YuqingViewMo
             }
         }
         item { SectionTitle("最新文章") }
-        items(latestArticles) { ArticleRow(it, onClick = { viewModel.openArticleDetail(it) }) }
+        items(latestArticles, key = { articleStableKey(it) }) {
+            SwipeHiddenArticleRow(
+                item = it,
+                onClick = { viewModel.openArticleDetail(it) },
+                onHide = { article -> viewModel.hideArticle(article) },
+            )
+        }
     }
 }
 
@@ -379,7 +385,7 @@ private fun ArticlesModule(
                 Text(error, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
             }
         }
-        items(result.items) {
+        items(result.items, key = { articleStableKey(it) }) {
             SwipeHiddenArticleRow(
                 item = it,
                 onClick = { viewModel.openArticleDetail(it) },
@@ -754,12 +760,15 @@ private fun SwipeHiddenArticleRow(
     onClick: () -> Unit,
     onHide: (ArticleItem) -> Unit,
 ) {
+    val key = articleStableKey(item)
+    var hideRequested by remember(key) { mutableStateOf(false) }
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
-            if (value != SwipeToDismissBoxValue.Settled) {
+            if (value != SwipeToDismissBoxValue.Settled && !hideRequested) {
+                hideRequested = true
                 onHide(item)
             }
-            value != SwipeToDismissBoxValue.Settled
+            false
         },
     )
     SwipeToDismissBox(
@@ -770,6 +779,15 @@ private fun SwipeHiddenArticleRow(
     ) {
         ArticleRow(item = item, onClick = onClick)
     }
+}
+
+internal fun articleStableKey(item: ArticleItem): String {
+    if (item.id > 0) {
+        return "id:${item.id}"
+    }
+    return listOf(item.sourceUrl, item.capturedAt, item.title)
+        .joinToString("|")
+        .ifBlank { "title:${item.title}" }
 }
 
 @Composable
