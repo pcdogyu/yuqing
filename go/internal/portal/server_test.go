@@ -450,7 +450,17 @@ func TestAStockAuctionPageLoadsSummaryAndRows(t *testing.T) {
 			t.Fatalf("expected auction page to contain %q, got %s", want, body)
 		}
 	}
-	for _, want := range []string{`.auction-chart-grid-x{stroke:#d6ccbb;stroke-width:1}`, `class="auction-chart-grid-x" x1="56.0"`, `class="auction-chart-grid-x" x1="1096.0"`, `<title>2026-06-15</title>`, `<title>2026-06-16</title>`} {
+	for _, want := range []string{
+		`.auction-chart-grid-x{stroke:#d6ccbb;stroke-width:1}`,
+		`class="auction-chart-grid-x" x1="56.0"`,
+		`class="auction-chart-grid-x" x1="1096.0"`,
+		`<title>2026-06-15</title>`,
+		`<title>2026-06-16</title>`,
+		`class="auction-chart-label" x="56.0" text-anchor="start" y="268">2026-06-15</text>`,
+		`class="auction-chart-label" x="1096.0" text-anchor="end" y="268">2026-06-16</text>`,
+		`class="auction-chart-label" text-anchor="end" x="48.0" y="28.0">587.61万</text>`,
+		`class="auction-chart-label" text-anchor="end" x="48.0" y="232.0">0</text>`,
+	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected auction chart daily grid to contain %q, got %s", want, body)
 		}

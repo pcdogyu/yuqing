@@ -324,7 +324,7 @@ func aStockAuctionTrendSVG(points []model.AStockAuctionTrend) string {
 		left   = 56.0
 		right  = 24.0
 		top    = 24.0
-		bottom = 44.0
+		bottom = 52.0
 	)
 	maxAmount := 0.0
 	for _, point := range points {
@@ -355,6 +355,7 @@ func aStockAuctionTrendSVG(points []model.AStockAuctionTrend) string {
 	b.WriteString(`<svg class="auction-chart" viewBox="0 0 1120 280" role="img" aria-label="近7日集合竞价资金趋势">`)
 	for i := 0; i <= 4; i++ {
 		y := top + float64(i)*plotHeight/4
+		amount := maxAmount * float64(4-i) / 4
 		b.WriteString(`<line class="auction-chart-axis" x1="`)
 		b.WriteString(fmt.Sprintf("%.1f", left))
 		b.WriteString(`" y1="`)
@@ -363,7 +364,13 @@ func aStockAuctionTrendSVG(points []model.AStockAuctionTrend) string {
 		b.WriteString(fmt.Sprintf("%.1f", left+plotWidth))
 		b.WriteString(`" y2="`)
 		b.WriteString(fmt.Sprintf("%.1f", y))
-		b.WriteString(`"></line>`)
+		b.WriteString(`"></line><text class="auction-chart-label" text-anchor="end" x="`)
+		b.WriteString(fmt.Sprintf("%.1f", left-8))
+		b.WriteString(`" y="`)
+		b.WriteString(fmt.Sprintf("%.1f", y+4))
+		b.WriteString(`">`)
+		b.WriteString(html.EscapeString(formatAStockAuctionAxisMoney(amount)))
+		b.WriteString(`</text>`)
 	}
 	for i, point := range points {
 		x := aStockAuctionTrendX(i, len(points), left, plotWidth)
@@ -398,23 +405,32 @@ func aStockAuctionTrendSVG(points []model.AStockAuctionTrend) string {
 		b.WriteString(html.EscapeString(point.Date + " " + formatAStockAuctionMoney(point.TotalAmount)))
 		b.WriteString(`</title></circle>`)
 	}
-	if len(points) > 0 {
+	for i, point := range points {
+		x := aStockAuctionTrendX(i, len(points), left, plotWidth)
+		anchor := "middle"
+		switch {
+		case i == 0:
+			anchor = "start"
+		case i == len(points)-1:
+			anchor = "end"
+		}
 		b.WriteString(`<text class="auction-chart-label" x="`)
-		b.WriteString(fmt.Sprintf("%.1f", left))
+		b.WriteString(fmt.Sprintf("%.1f", x))
+		b.WriteString(`" text-anchor="`)
+		b.WriteString(anchor)
 		b.WriteString(`" y="268">`)
-		b.WriteString(html.EscapeString(points[0].Date))
-		b.WriteString(`</text><text class="auction-chart-label" text-anchor="end" x="`)
-		b.WriteString(fmt.Sprintf("%.1f", left+plotWidth))
-		b.WriteString(`" y="268">`)
-		b.WriteString(html.EscapeString(points[len(points)-1].Date))
-		b.WriteString(`</text><text class="auction-chart-label" x="`)
-		b.WriteString(fmt.Sprintf("%.1f", left))
-		b.WriteString(`" y="18">最高 `)
-		b.WriteString(html.EscapeString(formatAStockAuctionMoney(maxAmount)))
+		b.WriteString(html.EscapeString(point.Date))
 		b.WriteString(`</text>`)
 	}
 	b.WriteString(`</svg>`)
 	return b.String()
+}
+
+func formatAStockAuctionAxisMoney(value float64) string {
+	if value <= 0 {
+		return "0"
+	}
+	return formatAStockAuctionMoney(value)
 }
 
 func aStockAuctionTrendX(index int, count int, left float64, plotWidth float64) float64 {
