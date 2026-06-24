@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -185,10 +186,10 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	if err := json.Unmarshal(listRR.Body.Bytes(), &listEnvelope); err != nil {
 		t.Fatalf("unmarshal jobs list: %v", err)
 	}
-	if len(listEnvelope.Data) != 31 {
-		t.Fatalf("expected 31 scheduler jobs, got %d", len(listEnvelope.Data))
+	if len(listEnvelope.Data) != 33 {
+		t.Fatalf("expected 33 scheduler jobs, got %d", len(listEnvelope.Data))
 	}
-	var heartbeatJob, hotJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningPreviewJob, aStockMorningJob, aStockAfternoonPreviewJob, aStockAfternoonJob, aStockAuctionJob, aStockHoldingsJob, stockResearchJob, investorRelationsJob Job
+	var heartbeatJob, hotJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningPreviewJob, aStockMorningJob, aStockAfternoonPreviewJob, aStockAfternoonJob, aStockAfternoonOpenRefreshJob, aStockDailyBacktestRefreshJob, aStockAuctionJob, aStockHoldingsJob, stockResearchJob, investorRelationsJob Job
 	for _, job := range listEnvelope.Data {
 		switch job.Name {
 		case "crawl-link-heartbeat":
@@ -215,6 +216,10 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 			aStockAfternoonPreviewJob = job
 		case "a-stock-afternoon-recommendation":
 			aStockAfternoonJob = job
+		case "a-stock-afternoon-open-refresh":
+			aStockAfternoonOpenRefreshJob = job
+		case "a-stock-daily-backtest-refresh":
+			aStockDailyBacktestRefreshJob = job
 		case "a-stock-auction-crawl":
 			aStockAuctionJob = job
 		case "a-stock-holdings-crawl":
@@ -254,6 +259,12 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	}
 	if aStockAfternoonJob.Cron != "0 2 13 * * ?" || aStockAfternoonJob.NextRunAt == nil {
 		t.Fatalf("expected A股 afternoon recommendation cron metadata, got %+v", aStockAfternoonJob)
+	}
+	if aStockAfternoonOpenRefreshJob.Cron != "0 5 13 * * ?" || aStockAfternoonOpenRefreshJob.NextRunAt == nil {
+		t.Fatalf("expected A股 afternoon open refresh cron metadata, got %+v", aStockAfternoonOpenRefreshJob)
+	}
+	if aStockDailyBacktestRefreshJob.Cron != "0 5 15 * * ?" || aStockDailyBacktestRefreshJob.NextRunAt == nil {
+		t.Fatalf("expected A股 daily backtest refresh cron metadata, got %+v", aStockDailyBacktestRefreshJob)
 	}
 	if aStockAuctionJob.Cron != "0 26 9 * * ?" || aStockAuctionJob.Enabled {
 		t.Fatalf("expected A股 auction crawl disabled by default with 09:26 cron, got %+v", aStockAuctionJob)
@@ -525,6 +536,462 @@ func TestRunAStockRecommendationContinuesWhenOneSourceFails(t *testing.T) {
 	}
 	if len(generatedPeriods) != 1 || generatedPeriods[0] != "afternoon" {
 		t.Fatalf("expected afternoon recommendation snapshot generation after partial crawl failure, got %v", generatedPeriods)
+	}
+}
+
+func TestRunAStockAfternoonOpenRefreshForDateRefreshesExistingAfternoonSelection(t *testing.T) {
+	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/a-stock/trading-day" || r.URL.Query().Get("date") != "2026-06-24" {
+			t.Fatalf("unexpected trading-day request: %s", r.URL.String())
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"date":                 "2026-06-24",
+			"is_trading_day":       true,
+			"previous_trading_day": "2026-06-23",
+			"source":               "test",
+			"reason":               "trading_day",
+			"message":              "open",
+		})
+	}))
+	defer akshare.Close()
+
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/a-stock/recommendation-selections":
+			if r.URL.Query().Get("date") != "2026-06-24" || r.URL.Query().Get("period") != "afternoon" {
+				t.Fatalf("unexpected selection request: %s", r.URL.String())
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    http.StatusOK,
+				"message": "ok",
+				"data": model.AStockRecommendationSelectionListResult{
+					Found:        true,
+					StrategyDate: "2026-06-24",
+					Period:       "afternoon",
+					Items: []model.AStockRecommendationSelection{
+						{Rank: 1, Code: "300024", Name: "机器人"},
+					},
+				},
+			})
+		case "/api/v1/a-stock/recommendations":
+			t.Fatalf("snapshot probe should not run when selection exists: %s", r.URL.String())
+		default:
+			t.Fatalf("unexpected content request: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	var gatewayCalls []string
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/internal/a-stock/recommendations/generate" {
+			t.Fatalf("unexpected gateway request: %s %s", r.Method, r.URL.String())
+		}
+		if r.URL.Query().Get("date") != "2026-06-24" || r.URL.Query().Get("period") != "afternoon" || r.URL.Query().Get("phase") != "final" {
+			t.Fatalf("unexpected gateway query: %s", r.URL.RawQuery)
+		}
+		gatewayCalls = append(gatewayCalls, r.URL.Query().Get("date")+"/"+r.URL.Query().Get("period"))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer gateway.Close()
+
+	worker := NewWorker(config.Config{
+		AStockAuctionURL:      akshare.URL,
+		ContentURL:            content.URL,
+		GatewayWebURL:         gateway.URL,
+		HTTPTimeout:           time.Second,
+		SchedulerCrawlTimeout: time.Second,
+		ServiceToken:          "secret-token",
+	})
+
+	if err := worker.runAStockAfternoonOpenRefreshForDate(context.Background(), "2026-06-24"); err != nil {
+		t.Fatalf("runAStockAfternoonOpenRefreshForDate error: %v", err)
+	}
+	if len(gatewayCalls) != 1 || gatewayCalls[0] != "2026-06-24/afternoon" {
+		t.Fatalf("expected one afternoon refresh, got %v", gatewayCalls)
+	}
+}
+
+func TestRunAStockAfternoonOpenRefreshForDateSkipsWhenNoExistingRecommendation(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "scheduler-astock-afternoon-open-skip.db")
+	store, err := sqlitestore.New(dbPath)
+	if err != nil {
+		t.Fatalf("New store error: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"date":                 "2026-06-24",
+			"is_trading_day":       true,
+			"previous_trading_day": "2026-06-23",
+			"source":               "test",
+			"reason":               "trading_day",
+			"message":              "open",
+		})
+	}))
+	defer akshare.Close()
+
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/a-stock/recommendation-selections":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    http.StatusOK,
+				"message": "ok",
+				"data": model.AStockRecommendationSelectionListResult{
+					Found:        false,
+					StrategyDate: r.URL.Query().Get("date"),
+					Period:       r.URL.Query().Get("period"),
+				},
+			})
+		case "/api/v1/a-stock/recommendations":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    http.StatusOK,
+				"message": "ok",
+				"data": model.AStockRecommendationSnapshot{
+					Found:        false,
+					StrategyDate: r.URL.Query().Get("date"),
+					Period:       r.URL.Query().Get("period"),
+				},
+			})
+		default:
+			t.Fatalf("unexpected content request: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	var gatewayCalls int
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gatewayCalls++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer gateway.Close()
+
+	worker := NewWorker(config.Config{
+		DatabasePath:          dbPath,
+		AStockAuctionURL:      akshare.URL,
+		ContentURL:            content.URL,
+		GatewayWebURL:         gateway.URL,
+		HTTPTimeout:           time.Second,
+		SchedulerCrawlTimeout: time.Second,
+		ServiceToken:          "secret-token",
+	})
+	defer func() { _ = worker.Close() }()
+
+	job := jobDefinition{
+		Name:    "a-stock-afternoon-open-refresh",
+		Enabled: true,
+		Run: func(ctx context.Context) error {
+			return worker.runAStockAfternoonOpenRefreshForDate(ctx, "2026-06-24")
+		},
+	}
+	if err := worker.runJob(ctx, job); err != nil {
+		t.Fatalf("expected skipped afternoon open refresh not to return error, got %v", err)
+	}
+	if gatewayCalls != 0 {
+		t.Fatalf("expected no gateway refresh when recommendation is missing, got %d", gatewayCalls)
+	}
+	runs, err := store.ListTaskRuns(ctx, 1)
+	if err != nil {
+		t.Fatalf("ListTaskRuns error: %v", err)
+	}
+	if len(runs) != 1 || runs[0].Status != "skipped" || !strings.Contains(runs[0].Message, "no existing recommendation") {
+		t.Fatalf("expected skipped task run for missing recommendation, got %+v", runs)
+	}
+}
+
+func TestRunAStockDailyBacktestRefreshForDateRefreshesCurrentAndPreviousTradingDays(t *testing.T) {
+	tradingDays := map[string]aStockTradingDayStatus{
+		"2026-06-22": {Date: "2026-06-22", IsTradingDay: true, PreviousTradingDay: "2026-06-19", Message: "open"},
+		"2026-06-19": {Date: "2026-06-19", IsTradingDay: true, PreviousTradingDay: "2026-06-18", Message: "open"},
+		"2026-06-18": {Date: "2026-06-18", IsTradingDay: true, PreviousTradingDay: "2026-06-17", Message: "open"},
+		"2026-06-17": {Date: "2026-06-17", IsTradingDay: true, PreviousTradingDay: "2026-06-16", Message: "open"},
+		"2026-06-16": {Date: "2026-06-16", IsTradingDay: true, PreviousTradingDay: "2026-06-15", Message: "open"},
+	}
+	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		status, ok := tradingDays[r.URL.Query().Get("date")]
+		if !ok {
+			t.Fatalf("unexpected trading-day request: %s", r.URL.String())
+		}
+		_ = json.NewEncoder(w).Encode(status)
+	}))
+	defer akshare.Close()
+
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/a-stock/recommendation-selections":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    http.StatusOK,
+				"message": "ok",
+				"data": model.AStockRecommendationSelectionListResult{
+					Found:        true,
+					StrategyDate: r.URL.Query().Get("date"),
+					Period:       r.URL.Query().Get("period"),
+					Items: []model.AStockRecommendationSelection{
+						{Rank: 1, Code: "603936", Name: "博敏电子"},
+					},
+				},
+			})
+		case "/api/v1/a-stock/recommendations":
+			t.Fatalf("snapshot probe should not run when selection exists: %s", r.URL.String())
+		default:
+			t.Fatalf("unexpected content request: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	gatewayCalls := make([]string, 0)
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gatewayCalls = append(gatewayCalls, r.URL.Query().Get("date")+"/"+r.URL.Query().Get("period"))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer gateway.Close()
+
+	worker := NewWorker(config.Config{
+		AStockAuctionURL:      akshare.URL,
+		ContentURL:            content.URL,
+		GatewayWebURL:         gateway.URL,
+		HTTPTimeout:           time.Second,
+		SchedulerCrawlTimeout: time.Second,
+		ServiceToken:          "secret-token",
+	})
+
+	if err := worker.runAStockDailyBacktestRefreshForDate(context.Background(), "2026-06-22", 5); err != nil {
+		t.Fatalf("runAStockDailyBacktestRefreshForDate error: %v", err)
+	}
+	expected := []string{
+		"2026-06-22/morning", "2026-06-22/afternoon",
+		"2026-06-19/morning", "2026-06-19/afternoon",
+		"2026-06-18/morning", "2026-06-18/afternoon",
+		"2026-06-17/morning", "2026-06-17/afternoon",
+		"2026-06-16/morning", "2026-06-16/afternoon",
+		"2026-06-15/morning", "2026-06-15/afternoon",
+	}
+	slices.Sort(gatewayCalls)
+	slices.Sort(expected)
+	if !slices.Equal(gatewayCalls, expected) {
+		t.Fatalf("expected refreshed target set %v, got %v", expected, gatewayCalls)
+	}
+}
+
+func TestRunAStockDailyBacktestRefreshForDateSkipsMissingTargetsButContinues(t *testing.T) {
+	tradingDays := map[string]aStockTradingDayStatus{
+		"2026-06-22": {Date: "2026-06-22", IsTradingDay: true, PreviousTradingDay: "2026-06-19", Message: "open"},
+		"2026-06-19": {Date: "2026-06-19", IsTradingDay: true, PreviousTradingDay: "2026-06-18", Message: "open"},
+	}
+	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		status, ok := tradingDays[r.URL.Query().Get("date")]
+		if !ok {
+			t.Fatalf("unexpected trading-day request: %s", r.URL.String())
+		}
+		_ = json.NewEncoder(w).Encode(status)
+	}))
+	defer akshare.Close()
+
+	existing := map[string]bool{
+		"2026-06-22/morning":   true,
+		"2026-06-19/afternoon": true,
+	}
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		target := r.URL.Query().Get("date") + "/" + r.URL.Query().Get("period")
+		switch r.URL.Path {
+		case "/api/v1/a-stock/recommendation-selections":
+			found := existing[target]
+			items := []model.AStockRecommendationSelection{}
+			if found {
+				items = append(items, model.AStockRecommendationSelection{Rank: 1, Code: "603936", Name: "博敏电子"})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    http.StatusOK,
+				"message": "ok",
+				"data": model.AStockRecommendationSelectionListResult{
+					Found:        found,
+					StrategyDate: r.URL.Query().Get("date"),
+					Period:       r.URL.Query().Get("period"),
+					Items:        items,
+				},
+			})
+		case "/api/v1/a-stock/recommendations":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    http.StatusOK,
+				"message": "ok",
+				"data": model.AStockRecommendationSnapshot{
+					Found:        false,
+					StrategyDate: r.URL.Query().Get("date"),
+					Period:       r.URL.Query().Get("period"),
+				},
+			})
+		default:
+			t.Fatalf("unexpected content request: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	gatewayCalls := make([]string, 0)
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gatewayCalls = append(gatewayCalls, r.URL.Query().Get("date")+"/"+r.URL.Query().Get("period"))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer gateway.Close()
+
+	worker := NewWorker(config.Config{
+		AStockAuctionURL:      akshare.URL,
+		ContentURL:            content.URL,
+		GatewayWebURL:         gateway.URL,
+		HTTPTimeout:           time.Second,
+		SchedulerCrawlTimeout: time.Second,
+		ServiceToken:          "secret-token",
+	})
+
+	if err := worker.runAStockDailyBacktestRefreshForDate(context.Background(), "2026-06-22", 1); err != nil {
+		t.Fatalf("runAStockDailyBacktestRefreshForDate error: %v", err)
+	}
+	expected := []string{"2026-06-19/afternoon", "2026-06-22/morning"}
+	slices.Sort(gatewayCalls)
+	slices.Sort(expected)
+	if !slices.Equal(gatewayCalls, expected) {
+		t.Fatalf("expected only existing targets to refresh, got %v", gatewayCalls)
+	}
+}
+
+func TestRunAStockDailyBacktestRefreshForDateContinuesAfterGatewayFailure(t *testing.T) {
+	tradingDays := map[string]aStockTradingDayStatus{
+		"2026-06-22": {Date: "2026-06-22", IsTradingDay: true, PreviousTradingDay: "2026-06-19", Message: "open"},
+		"2026-06-19": {Date: "2026-06-19", IsTradingDay: true, PreviousTradingDay: "2026-06-18", Message: "open"},
+	}
+	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		status, ok := tradingDays[r.URL.Query().Get("date")]
+		if !ok {
+			t.Fatalf("unexpected trading-day request: %s", r.URL.String())
+		}
+		_ = json.NewEncoder(w).Encode(status)
+	}))
+	defer akshare.Close()
+
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/a-stock/recommendation-selections":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    http.StatusOK,
+				"message": "ok",
+				"data": model.AStockRecommendationSelectionListResult{
+					Found:        true,
+					StrategyDate: r.URL.Query().Get("date"),
+					Period:       r.URL.Query().Get("period"),
+					Items: []model.AStockRecommendationSelection{
+						{Rank: 1, Code: "603936", Name: "博敏电子"},
+					},
+				},
+			})
+		case "/api/v1/a-stock/recommendations":
+			t.Fatalf("snapshot probe should not run when selection exists: %s", r.URL.String())
+		default:
+			t.Fatalf("unexpected content request: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	gatewayCalls := make([]string, 0)
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		target := r.URL.Query().Get("date") + "/" + r.URL.Query().Get("period")
+		gatewayCalls = append(gatewayCalls, target)
+		if target == "2026-06-19/afternoon" {
+			http.Error(w, "boom", http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer gateway.Close()
+
+	worker := NewWorker(config.Config{
+		AStockAuctionURL:      akshare.URL,
+		ContentURL:            content.URL,
+		GatewayWebURL:         gateway.URL,
+		HTTPTimeout:           time.Second,
+		SchedulerCrawlTimeout: time.Second,
+		ServiceToken:          "secret-token",
+	})
+
+	err := worker.runAStockDailyBacktestRefreshForDate(context.Background(), "2026-06-22", 1)
+	if err == nil || !strings.Contains(err.Error(), "2026-06-19/afternoon") {
+		t.Fatalf("expected aggregated failure mentioning 2026-06-19/afternoon, got %v", err)
+	}
+	expected := []string{"2026-06-22/morning", "2026-06-22/afternoon", "2026-06-19/morning", "2026-06-19/afternoon"}
+	slices.Sort(gatewayCalls)
+	slices.Sort(expected)
+	if !slices.Equal(gatewayCalls, expected) {
+		t.Fatalf("expected refresh to continue after one target failure, got %v", gatewayCalls)
+	}
+}
+
+func TestRunAStockBacktestRefreshJobsSkipNonTradingDay(t *testing.T) {
+	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"date":               "2026-06-19",
+			"is_trading_day":     false,
+			"latest_trading_day": "2026-06-18",
+			"next_trading_day":   "2026-06-22",
+			"source":             "test",
+			"reason":             "market_closed",
+			"message":            "closed",
+		})
+	}))
+	defer akshare.Close()
+
+	contentCalls := 0
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		contentCalls++
+		t.Fatalf("content should not be called on non-trading day: %s", r.URL.String())
+	}))
+	defer content.Close()
+
+	gatewayCalls := 0
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gatewayCalls++
+		t.Fatalf("gateway should not be called on non-trading day: %s", r.URL.String())
+	}))
+	defer gateway.Close()
+
+	worker := NewWorker(config.Config{
+		AStockAuctionURL:      akshare.URL,
+		ContentURL:            content.URL,
+		GatewayWebURL:         gateway.URL,
+		HTTPTimeout:           time.Second,
+		SchedulerCrawlTimeout: time.Second,
+		ServiceToken:          "secret-token",
+	})
+
+	cases := []struct {
+		name string
+		run  func() error
+	}{
+		{
+			name: "afternoon open refresh",
+			run: func() error {
+				return worker.runAStockAfternoonOpenRefreshForDate(context.Background(), "2026-06-19")
+			},
+		},
+		{
+			name: "daily backtest refresh",
+			run: func() error {
+				return worker.runAStockDailyBacktestRefreshForDate(context.Background(), "2026-06-19", 5)
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.run()
+			var skipped jobSkippedError
+			if !errors.As(err, &skipped) {
+				t.Fatalf("expected skipped error, got %v", err)
+			}
+			if !strings.Contains(skipped.Error(), "2026-06-19") {
+				t.Fatalf("expected skipped message to mention date, got %q", skipped.Error())
+			}
+		})
+	}
+	if contentCalls != 0 || gatewayCalls != 0 {
+		t.Fatalf("expected no content/gateway calls on non-trading day, got content=%d gateway=%d", contentCalls, gatewayCalls)
 	}
 }
 

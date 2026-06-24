@@ -326,6 +326,26 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 			},
 		}, "AStockAfternoonRecommendation", "0 2 13 * * ?"),
 		withJobMeta(jobDefinition{
+			Name:        "a-stock-afternoon-open-refresh",
+			Group:       "a-stock",
+			Description: "A股下午开盘价补全：13:05 自动补当日下午推荐 13:01 开盘价并刷新回测快照",
+			Interval:    24 * time.Hour,
+			Enabled:     true,
+			Run: func(ctx context.Context) error {
+				return w.runAStockAfternoonOpenRefresh(ctx)
+			},
+		}, "AStockAfternoonOpenRefresh", "0 5 13 * * ?"),
+		withJobMeta(jobDefinition{
+			Name:        "a-stock-daily-backtest-refresh",
+			Group:       "a-stock",
+			Description: "A股收盘回测补全：15:05 自动补当日 T+0，并刷新前 5 个交易日 T+1 到 T+5 收益",
+			Interval:    24 * time.Hour,
+			Enabled:     true,
+			Run: func(ctx context.Context) error {
+				return w.runAStockDailyBacktestRefresh(ctx)
+			},
+		}, "AStockDailyBacktestRefresh", "0 5 15 * * ?"),
+		withJobMeta(jobDefinition{
 			Name:        "a-stock-auction-crawl",
 			Group:       "a-stock",
 			Description: "A股集合竞价金额：09:26 通过 AKShare 抓取全市场 09:25 集合竞价成交金额",

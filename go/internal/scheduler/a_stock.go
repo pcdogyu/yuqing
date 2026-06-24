@@ -23,6 +23,223 @@ func (w *Worker) runAStockRecommendation(ctx context.Context, period string, pha
 	return w.runAStockRecommendationForDate(ctx, time.Now().In(location).Format("2006-01-02"), period, phase)
 }
 
+type aStockBacktestRefreshTarget struct {
+	StrategyDate string
+	Period       string
+}
+
+type aStockBacktestRefreshSummary struct {
+	Refreshed int
+	Missing   int
+	Failed    int
+	Failures  []string
+}
+
+func (w *Worker) runAStockAfternoonOpenRefresh(ctx context.Context) error {
+	return w.runAStockAfternoonOpenRefreshForDate(ctx, time.Now().In(aStockLocation()).Format("2006-01-02"))
+}
+
+func (w *Worker) runAStockAfternoonOpenRefreshForDate(ctx context.Context, strategyDate string) error {
+	return w.runAStockBacktestRefreshForDate(ctx, strategyDate, 0, []string{"afternoon"}, "a-stock afternoon open refresh")
+}
+
+func (w *Worker) runAStockDailyBacktestRefresh(ctx context.Context) error {
+	return w.runAStockDailyBacktestRefreshForDate(ctx, time.Now().In(aStockLocation()).Format("2006-01-02"), 5)
+}
+
+func (w *Worker) runAStockDailyBacktestRefreshForDate(ctx context.Context, strategyDate string, previousTradingDays int) error {
+	return w.runAStockBacktestRefreshForDate(ctx, strategyDate, previousTradingDays, []string{"morning", "afternoon"}, "a-stock daily backtest refresh")
+}
+
+func (w *Worker) runAStockBacktestRefreshForDate(ctx context.Context, strategyDate string, previousTradingDays int, periods []string, label string) error {
+	strategyDate = normalizeAStockRecommendationDate(strategyDate)
+	if strategyDate == "" {
+		strategyDate = time.Now().In(aStockLocation()).Format("2006-01-02")
+	}
+	tradingDay, err := w.loadAStockTradingDayStatus(ctx, strategyDate)
+	if err != nil {
+		return fmt.Errorf("%s trading calendar unavailable for %s: %w", label, strategyDate, err)
+	}
+	if !tradingDay.IsTradingDay {
+		message := strings.TrimSpace(tradingDay.Message)
+		if message == "" {
+			message = "A-share market is closed; stock recommendations are disabled."
+		}
+		return jobSkippedError{message: fmt.Sprintf("%s skipped for %s: %s", label, nonEmpty(tradingDay.Date, strategyDate), message)}
+	}
+	dates, err := w.aStockBacktestRefreshDates(ctx, tradingDay, previousTradingDays)
+	if err != nil {
+		return fmt.Errorf("%s target date build failed for %s: %w", label, nonEmpty(tradingDay.Date, strategyDate), err)
+	}
+	summary := aStockBacktestRefreshSummary{Failures: make([]string, 0)}
+	for _, target := range aStockBacktestRefreshTargets(dates, periods) {
+		exists, err := w.hasExistingAStockRecommendation(ctx, target.StrategyDate, target.Period)
+		if err != nil {
+			summary.Failed++
+			summary.Failures = append(summary.Failures, fmt.Sprintf("%s: %v", aStockBacktestRefreshTargetLabel(target), err))
+			continue
+		}
+		if !exists {
+			summary.Missing++
+			continue
+		}
+		if err := w.generateAStockRecommendationSnapshot(ctx, target.StrategyDate, target.Period, "final"); err != nil {
+			summary.Failed++
+			summary.Failures = append(summary.Failures, fmt.Sprintf("%s: %v", aStockBacktestRefreshTargetLabel(target), err))
+			continue
+		}
+		summary.Refreshed++
+	}
+	if summary.Refreshed == 0 && summary.Failed == 0 {
+		return jobSkippedError{message: fmt.Sprintf("%s skipped for %s: no existing recommendation selections or snapshots", label, nonEmpty(tradingDay.Date, strategyDate))}
+	}
+	log.Info().
+		Str("strategy_date", nonEmpty(tradingDay.Date, strategyDate)).
+		Str("label", label).
+		Int("refreshed", summary.Refreshed).
+		Int("missing", summary.Missing).
+		Int("failed", summary.Failed).
+		Msg("a-stock backtest refresh finished")
+	if summary.Failed > 0 {
+		return fmt.Errorf("%s failed for %s: refreshed=%d missing=%d failed=%d: %s", label, nonEmpty(tradingDay.Date, strategyDate), summary.Refreshed, summary.Missing, summary.Failed, strings.Join(summary.Failures, "; "))
+	}
+	return nil
+}
+
+func (w *Worker) aStockBacktestRefreshDates(ctx context.Context, tradingDay aStockTradingDayStatus, previousTradingDays int) ([]string, error) {
+	current := strings.TrimSpace(tradingDay.Date)
+	if current == "" {
+		return nil, fmt.Errorf("trading day date is empty")
+	}
+	dates := []string{current}
+	if previousTradingDays <= 0 {
+		return dates, nil
+	}
+	visited := map[string]struct{}{current: {}}
+	previous := strings.TrimSpace(tradingDay.PreviousTradingDay)
+	for len(dates) < previousTradingDays+1 && previous != "" {
+		if _, ok := visited[previous]; ok {
+			break
+		}
+		dates = append(dates, previous)
+		visited[previous] = struct{}{}
+		if len(dates) >= previousTradingDays+1 {
+			break
+		}
+		status, err := w.loadAStockTradingDayStatus(ctx, previous)
+		if err != nil {
+			return nil, fmt.Errorf("load previous trading day %s failed: %w", previous, err)
+		}
+		previous = strings.TrimSpace(status.PreviousTradingDay)
+	}
+	return dates, nil
+}
+
+func aStockBacktestRefreshTargets(dates []string, periods []string) []aStockBacktestRefreshTarget {
+	targets := make([]aStockBacktestRefreshTarget, 0, len(dates)*len(periods))
+	for _, strategyDate := range dates {
+		for _, period := range periods {
+			if strings.TrimSpace(strategyDate) == "" || strings.TrimSpace(period) == "" {
+				continue
+			}
+			targets = append(targets, aStockBacktestRefreshTarget{
+				StrategyDate: strategyDate,
+				Period:       normalizeAStockRecommendationPeriod(period),
+			})
+		}
+	}
+	return targets
+}
+
+func aStockBacktestRefreshTargetLabel(target aStockBacktestRefreshTarget) string {
+	return target.StrategyDate + "/" + target.Period
+}
+
+func (w *Worker) hasExistingAStockRecommendation(ctx context.Context, strategyDate string, period string) (bool, error) {
+	selections, err := w.loadAStockRecommendationSelections(ctx, strategyDate, period)
+	if err != nil {
+		return false, err
+	}
+	if selections.Found && len(selections.Items) > 0 {
+		return true, nil
+	}
+	snapshot, err := w.loadAStockRecommendationSnapshot(ctx, strategyDate, period)
+	if err != nil {
+		return false, err
+	}
+	return snapshot.Found && aStockSnapshotHasRecommendations(snapshot), nil
+}
+
+func (w *Worker) loadAStockRecommendationSelections(ctx context.Context, strategyDate string, period string) (model.AStockRecommendationSelectionListResult, error) {
+	baseURL := strings.TrimRight(strings.TrimSpace(w.cfg.ContentURL), "/")
+	if baseURL == "" {
+		return model.AStockRecommendationSelectionListResult{}, fmt.Errorf("YUQING_CONTENT_URL not configured")
+	}
+	resp, err := w.client.R().
+		SetContext(ctx).
+		SetQueryParam("date", normalizeAStockRecommendationDate(strategyDate)).
+		SetQueryParam("period", normalizeAStockRecommendationPeriod(period)).
+		Get(baseURL + "/api/v1/a-stock/recommendation-selections")
+	if err != nil {
+		return model.AStockRecommendationSelectionListResult{}, err
+	}
+	if !resp.IsSuccess() {
+		message := decodeAStockAuctionEndpointMessage(resp.Body(), resp.String())
+		if message == "" {
+			message = resp.Status()
+		}
+		return model.AStockRecommendationSelectionListResult{}, fmt.Errorf("content recommendation selection request failed: %s", message)
+	}
+	var envelope struct {
+		Data model.AStockRecommendationSelectionListResult `json:"data"`
+	}
+	if err := json.Unmarshal(resp.Body(), &envelope); err != nil {
+		return model.AStockRecommendationSelectionListResult{}, err
+	}
+	return envelope.Data, nil
+}
+
+func (w *Worker) loadAStockRecommendationSnapshot(ctx context.Context, strategyDate string, period string) (model.AStockRecommendationSnapshot, error) {
+	baseURL := strings.TrimRight(strings.TrimSpace(w.cfg.ContentURL), "/")
+	if baseURL == "" {
+		return model.AStockRecommendationSnapshot{}, fmt.Errorf("YUQING_CONTENT_URL not configured")
+	}
+	resp, err := w.client.R().
+		SetContext(ctx).
+		SetQueryParam("date", normalizeAStockRecommendationDate(strategyDate)).
+		SetQueryParam("period", normalizeAStockRecommendationPeriod(period)).
+		Get(baseURL + "/api/v1/a-stock/recommendations")
+	if err != nil {
+		return model.AStockRecommendationSnapshot{}, err
+	}
+	if !resp.IsSuccess() {
+		message := decodeAStockAuctionEndpointMessage(resp.Body(), resp.String())
+		if message == "" {
+			message = resp.Status()
+		}
+		return model.AStockRecommendationSnapshot{}, fmt.Errorf("content recommendation snapshot request failed: %s", message)
+	}
+	var envelope struct {
+		Data model.AStockRecommendationSnapshot `json:"data"`
+	}
+	if err := json.Unmarshal(resp.Body(), &envelope); err != nil {
+		return model.AStockRecommendationSnapshot{}, err
+	}
+	return envelope.Data, nil
+}
+
+func aStockSnapshotHasRecommendations(snapshot model.AStockRecommendationSnapshot) bool {
+	raw := strings.TrimSpace(snapshot.RecommendationsJSON)
+	if raw == "" {
+		return false
+	}
+	var payload []json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return false
+	}
+	return len(payload) > 0
+}
+
 func (w *Worker) runAStockAuctionCrawl(ctx context.Context) error {
 	result, err := w.runAStockAuctionLatest(ctx)
 	if err != nil {
