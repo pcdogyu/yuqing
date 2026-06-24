@@ -46,6 +46,88 @@ func TestUpsertAndListItems(t *testing.T) {
 	}
 }
 
+func TestUpsertItemsSkipsRecentDuplicateTitles(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	recent := sampleItem("flash", "recent-title-1", "重复标题")
+	recent.CapturedAt = now.Add(-time.Hour)
+	recent.CreatedAt = recent.CapturedAt
+	recent.UpdatedAt = recent.CapturedAt
+	inserted, updated, err := store.UpsertItems(ctx, []model.Item{recent})
+	if err != nil {
+		t.Fatalf("UpsertItems recent error: %v", err)
+	}
+	if inserted != 1 || updated != 0 {
+		t.Fatalf("unexpected recent insert/update counts: %d/%d", inserted, updated)
+	}
+
+	recent.Summary = "同 source_key 仍允许更新"
+	recent.UpdatedAt = now
+	inserted, updated, err = store.UpsertItems(ctx, []model.Item{recent})
+	if err != nil {
+		t.Fatalf("UpsertItems same source_key update error: %v", err)
+	}
+	if inserted != 0 || updated != 1 {
+		t.Fatalf("expected same source_key to update, got %d/%d", inserted, updated)
+	}
+
+	dbDuplicate := sampleItem("headline", "recent-title-2", "重复标题")
+	dbDuplicate.CapturedAt = now
+	dbDuplicate.CreatedAt = now
+	dbDuplicate.UpdatedAt = now
+	batchFirst := sampleItem("flash", "batch-title-1", "批内重复标题")
+	batchFirst.CapturedAt = now
+	batchFirst.CreatedAt = now
+	batchFirst.UpdatedAt = now
+	batchDuplicate := sampleItem("headline", "batch-title-2", "批内重复标题")
+	batchDuplicate.CapturedAt = now
+	batchDuplicate.CreatedAt = now
+	batchDuplicate.UpdatedAt = now
+	inserted, updated, err = store.UpsertItems(ctx, []model.Item{dbDuplicate, batchFirst, batchDuplicate})
+	if err != nil {
+		t.Fatalf("UpsertItems duplicates error: %v", err)
+	}
+	if inserted != 1 || updated != 0 {
+		t.Fatalf("expected only first batch title to insert, got %d/%d", inserted, updated)
+	}
+
+	assertItemTitleCount(t, store, ctx, "重复标题", 1)
+	assertItemTitleCount(t, store, ctx, "批内重复标题", 1)
+}
+
+func TestUpsertItemsAllowsDuplicateTitleAfterTwelveHours(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	old := sampleItem("flash", "old-title-1", "跨日标题")
+	old.CapturedAt = now.Add(-13 * time.Hour)
+	old.CreatedAt = old.CapturedAt
+	old.UpdatedAt = old.CapturedAt
+	fresh := sampleItem("headline", "old-title-2", "跨日标题")
+	fresh.CapturedAt = now
+	fresh.CreatedAt = now
+	fresh.UpdatedAt = now
+
+	inserted, updated, err := store.UpsertItems(ctx, []model.Item{old})
+	if err != nil {
+		t.Fatalf("UpsertItems old title error: %v", err)
+	}
+	if inserted != 1 || updated != 0 {
+		t.Fatalf("expected old title to insert, got %d/%d", inserted, updated)
+	}
+	inserted, updated, err = store.UpsertItems(ctx, []model.Item{fresh})
+	if err != nil {
+		t.Fatalf("UpsertItems fresh duplicate title error: %v", err)
+	}
+	if inserted != 1 || updated != 0 {
+		t.Fatalf("expected fresh title to insert after 12 hours, got %d/%d", inserted, updated)
+	}
+	assertItemTitleCount(t, store, ctx, "跨日标题", 2)
+}
+
 func TestListItemsCanFilterByPublishTime(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
@@ -893,6 +975,17 @@ func newTestStore(t *testing.T) *Store {
 		_ = store.Close()
 	})
 	return store
+}
+
+func assertItemTitleCount(t *testing.T, store *Store, ctx context.Context, title string, expected int) {
+	t.Helper()
+	var count int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM items WHERE title = ?`, title).Scan(&count); err != nil {
+		t.Fatalf("count title %q error: %v", title, err)
+	}
+	if count != expected {
+		t.Fatalf("expected title %q count %d, got %d", title, expected, count)
+	}
 }
 
 func sampleItem(sourceType, key, title string) model.Item {

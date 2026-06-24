@@ -684,33 +684,22 @@ private fun MetricCard(title: String, value: String, modifier: Modifier = Modifi
 @Composable
 private fun ArticleRow(item: ArticleItem) {
     val displayTime = remember(item.capturedAt, item.publishTime, item.publishTimeText) {
-        formatArticlePublishTime(item.publishTimeText)
-            .ifBlank { formatArticlePublishTime(item.publishTime) }
-            .ifBlank { formatArticleCapturedTime(item.capturedAt) }
+        formatArticleRelativeTime(item.publishTimeText)
+            .ifBlank { formatArticleRelativeTime(item.publishTime) }
+            .ifBlank { formatArticleRelativeTime(item.capturedAt) }
+    }
+    val titleText = remember(item.title, displayTime) {
+        articleTitleWithRelativeTime(item.title, displayTime)
     }
     Card {
         Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(
+            Text(
+                titleText,
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.Top,
-            ) {
-                Text(
-                    item.title.ifBlank { "--" },
-                    modifier = Modifier.weight(1f),
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                if (displayTime.isNotBlank()) {
-                    Text(
-                        displayTime,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                    )
-                }
-            }
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+            )
             if (item.summary.isNotBlank()) {
                 Text(
                     item.summary,

@@ -16,7 +16,10 @@ import (
 	"github.com/pcdogyu/yuqing/go/internal/model"
 )
 
-const busyTimeoutMillis = 30000
+const (
+	busyTimeoutMillis          = 30000
+	recentDuplicateTitleWindow = 12 * time.Hour
+)
 
 type Store struct {
 	db     *DB
@@ -818,6 +821,8 @@ ON CONFLICT(source_key) DO UPDATE SET
 	}
 	defer stmt.Close()
 
+	seenTitles := make(map[string]struct{}, len(items))
+	recentDuplicateCutoff := time.Now().UTC().Add(-recentDuplicateTitleWindow)
 	for _, item := range items {
 		now := item.UpdatedAt.Format(time.RFC3339)
 		if item.CreatedAt.IsZero() {
@@ -828,6 +833,22 @@ ON CONFLICT(source_key) DO UPDATE SET
 		if errCheck != nil {
 			err = errCheck
 			return 0, 0, err
+		}
+
+		duplicateTitle := strings.TrimSpace(item.Title)
+		if duplicateTitle != "" {
+			if _, ok := seenTitles[duplicateTitle]; ok {
+				continue
+			}
+			recentDuplicate, errCheck := s.recentDuplicateTitleExistsTx(ctx, tx, duplicateTitle, item.SourceKey, recentDuplicateCutoff)
+			if errCheck != nil {
+				err = errCheck
+				return 0, 0, err
+			}
+			if recentDuplicate {
+				continue
+			}
+			seenTitles[duplicateTitle] = struct{}{}
 		}
 
 		_, execErr := stmt.ExecContext(ctx,
@@ -1041,6 +1062,24 @@ func (s *Store) sourceKeyExistsTx(ctx context.Context, tx *Tx, sourceKey string)
 		return false, err
 	}
 	return count > 0, nil
+}
+
+func (s *Store) recentDuplicateTitleExistsTx(ctx context.Context, tx *Tx, title, sourceKey string, cutoff time.Time) (bool, error) {
+	var one int
+	err := tx.QueryRowContext(ctx, `
+SELECT 1
+FROM items
+WHERE TRIM(title) = ?
+  AND captured_at >= ?
+  AND source_key <> ?
+LIMIT 1`, title, cutoff.Format(time.RFC3339), sourceKey).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *Store) itemIDBySourceKeyTx(ctx context.Context, tx *Tx, sourceKey string) (int64, error) {

@@ -33,7 +33,7 @@ internal fun formatArticleRelativeTime(
         val minutes = Duration.between(publishTime, now).toMinutes()
         return minutesToRelativeLabel(minutes)
     }
-    return value
+    return ""
 }
 
 internal fun formatArticlePublishTime(raw: String): String {
@@ -68,6 +68,12 @@ internal fun formatArticleCapturedTime(raw: String): String {
     }
 }
 
+internal fun articleTitleWithRelativeTime(title: String, relativeTime: String): String {
+    val cleanTitle = title.trim().ifBlank { "--" }
+    val cleanRelativeTime = relativeTime.trim()
+    return if (cleanRelativeTime.isBlank()) cleanTitle else "$cleanTitle $cleanRelativeTime"
+}
+
 private fun relativeMinutes(value: String): Long? {
     val minuteMatch = Regex("""^(\d+)\s*分钟前$""").matchEntire(value)
     if (minuteMatch != null) {
@@ -100,7 +106,7 @@ private fun minutesToRelativeLabel(minutes: Long): String {
     if (minutes <= 0) {
         return "刚刚"
     }
-    if (minutes < 60) {
+    if (minutes <= 60) {
         return "${minutes}分钟之前"
     }
     return "${minutes / 60}小时之前"
