@@ -65,6 +65,7 @@ set "SERVICE_NAMES=auth-service wechat-service content-service crawler-service a
 set "YUQING_LOG_LEVEL=debug"
 set "YUQING_RUN_VERSION=local"
 set "TEMP_BOOTSTRAP=%TEMP%\yuqing-run-bootstrap-%RANDOM%-%RANDOM%.cmd"
+set "GIT_ASK_YESNO_HELPER=%TEMP%\yuqing-git-ask-yesno-%RANDOM%-%RANDOM%.cmd"
 
 if "%SKIP_PULL%"=="0" if "%AFTER_PULL%"=="0" (
     copy /Y "%~f0" "%TEMP_BOOTSTRAP%" >nul
@@ -94,8 +95,26 @@ if "%SKIP_PULL%"=="1" (
     if errorlevel 1 (
         echo Detected local database changes under go/data. Skipping git pull to preserve local data.
     ) else (
-        git pull --ff-only
-        if errorlevel 1 goto :fail
+        >"%GIT_ASK_YESNO_HELPER%" (
+            echo @echo off
+            echo rem Auto-answer "No" to git retry prompts such as unlink/rmdir failures during pull.
+            echo exit /b 1
+        )
+        if errorlevel 1 (
+            echo Failed to create git yes/no helper: %GIT_ASK_YESNO_HELPER%
+            goto :fail
+        )
+        set "GIT_TERMINAL_PROMPT=0"
+        set "GIT_ASK_YESNO=%GIT_ASK_YESNO_HELPER%"
+        git pull --ff-only origin golang
+        set "YUQING_PULL_EXIT=%ERRORLEVEL%"
+        set "GIT_ASK_YESNO="
+        set "GIT_TERMINAL_PROMPT="
+        del /Q "%GIT_ASK_YESNO_HELPER%" >nul 2>nul
+        if not "%YUQING_PULL_EXIT%"=="0" (
+            echo git pull failed with exit code %YUQING_PULL_EXIT%.
+            goto :fail
+        )
         for /f %%I in ('git rev-parse HEAD') do set "YUQING_HEAD_AFTER=%%I"
         if not defined YUQING_HEAD_AFTER (
             echo Failed to resolve git HEAD after pull.
