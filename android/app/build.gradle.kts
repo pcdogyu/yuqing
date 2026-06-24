@@ -28,6 +28,7 @@ fun gitOutput(vararg args: String): String? {
 val commitTimestamp = gitOutput("log", "-1", "--format=%cd", "--date=format:%Y%m%d-%H%M%S")
 val commitHash = gitOutput("rev-parse", "--short=8", "HEAD")
 val commitVersion = listOfNotNull(commitTimestamp, commitHash).joinToString("-").ifBlank { "unknown" }
+val commitCount = gitOutput("rev-list", "--count", "HEAD")?.toIntOrNull()?.coerceAtLeast(1) ?: 1
 
 android {
     namespace = "com.jiansutech.yuqing"
@@ -37,7 +38,7 @@ android {
         applicationId = "com.jiansutech.yuqing"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
+        versionCode = commitCount
         versionName = commitVersion
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
