@@ -3854,7 +3854,6 @@ func aStockRecommendationSnapshots(strategyDate string, periodKey string) []aSto
 	if period.Key == "afternoon" {
 		start := time.Date(day.Year(), day.Month(), day.Day(), 9, 30, 0, 0, location)
 		return []aStockRecommendationSnapshot{
-			{Label: "12:54", Start: start, End: time.Date(day.Year(), day.Month(), day.Day(), 12, 54, 59, 0, location)},
 			{Label: "13:00", Start: start, End: time.Date(day.Year(), day.Month(), day.Day(), 13, 0, 59, 0, location)},
 		}
 	}

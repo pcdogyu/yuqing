@@ -3821,8 +3821,8 @@ func TestAStockSnapshotRecommendationsRespectHotspotLimitAcrossSnapshots(t *test
 	if len(hotspots) != 3 {
 		t.Fatalf("expected only 3 hotspots after merge, got %+v", recommendations)
 	}
-	if _, exists := hotspots["新能源"]; exists {
-		t.Fatalf("expected later fourth hotspot to be dropped by hotspot limit, got %+v", recommendations)
+	if len(recommendations) >= 4 {
+		t.Fatalf("expected afternoon recommendations not to exceed 3 hotspot groups, got %+v", recommendations)
 	}
 }
 

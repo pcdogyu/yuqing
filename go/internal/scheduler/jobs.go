@@ -306,25 +306,15 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 			},
 		}, "AStockMorningRecommendation", "0 32 9 * * ?"),
 		withJobMeta(jobDefinition{
-			Name:        "a-stock-afternoon-recommendation-preview",
-			Group:       "a-stock",
-			Description: "A股下午推荐预生成：12:56 延迟 2 分钟准备下午推荐快照",
-			Interval:    24 * time.Hour,
-			Enabled:     true,
-			Run: func(ctx context.Context) error {
-				return w.runAStockRecommendation(ctx, "afternoon")
-			},
-		}, "AStockAfternoonRecommendationPreview", "0 56 12 * * ?"),
-		withJobMeta(jobDefinition{
 			Name:        "a-stock-afternoon-recommendation",
 			Group:       "a-stock",
-			Description: "A股下午推荐：13:02 延迟 2 分钟抓取 09:30-13:00 财经新闻并生成相关股票推荐",
+			Description: "A股下午推荐：13:00 抓取 09:30-13:00 财经新闻并生成相关股票推荐",
 			Interval:    24 * time.Hour,
 			Enabled:     true,
 			Run: func(ctx context.Context) error {
 				return w.runAStockRecommendation(ctx, "afternoon")
 			},
-		}, "AStockAfternoonRecommendation", "0 2 13 * * ?"),
+		}, "AStockAfternoonRecommendation", "0 0 13 * * ?"),
 		withJobMeta(jobDefinition{
 			Name:        "a-stock-auction-crawl",
 			Group:       "a-stock",
