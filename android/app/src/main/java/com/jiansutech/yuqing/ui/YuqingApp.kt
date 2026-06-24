@@ -730,6 +730,18 @@ private data class AStockBacktestDetailState(
     val sectionLabel: String,
 )
 
+private fun AStockBacktestRow.displayEntryOpen(): String {
+    val afternoon = afternoonOpen.trim()
+    if (afternoon.isNotBlank() && afternoon != "--") {
+        return afternoon
+    }
+    val morning = entryOpen.trim()
+    if (morning.isNotBlank()) {
+        return morning
+    }
+    return "--"
+}
+
 @Composable
 private fun AStockBacktestDetailScreen(state: AStockBacktestDetailState) {
     val row = state.row
@@ -751,7 +763,7 @@ private fun AStockBacktestDetailScreen(state: AStockBacktestDetailState) {
         } else {
             item {
                 SimpleRow(
-                    "买入价 ${row.entryOpen.ifBlank { "--" }}",
+                    "买入价 ${row.displayEntryOpen()}",
                     "状态 ${row.status.ifBlank { "--" }}",
                 )
             }
@@ -1130,3 +1142,4 @@ private fun moduleIcon(key: String): ImageVector = when (key) {
     "holdings" -> Icons.Default.Groups
     else -> Icons.Default.Settings
 }
+

@@ -260,6 +260,7 @@ data class AStockRecommendation(
 data class AStockBacktestRow(
     @SerialName("Stock") val stock: String = "",
     @SerialName("EntryOpen") val entryOpen: String = "",
+    @SerialName("AfternoonOpen") val afternoonOpen: String = "",
     @SerialName("T0Return") val t0Return: String = "",
     @SerialName("T0Close") val t0Close: String = "",
     @SerialName("Days") val days: List<AStockBacktestCell> = emptyList(),
