@@ -35,7 +35,8 @@ interface YuqingApi {
     suspend fun articles(
         @Query("page") page: Int = 1,
         @Query("page_size") pageSize: Int = 10,
-        @Query("sort") sort: String = "publish_time_desc",
+        @Query("time_field") timeField: String = "captured_at",
+        @Query("sort") sort: String = "captured_at_desc",
         @Query("start") start: String = "",
         @Query("end") end: String = "",
         @Query("source_type") sourceType: String = "",

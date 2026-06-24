@@ -1,6 +1,9 @@
 package com.jiansutech.yuqing.data
 
 import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.coroutines.test.runTest
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -45,6 +48,30 @@ class ApiModelsTest {
             "http://yuqin.jiansutech.com:18082/",
             ApiFactory.normalizeApiBaseUrl("http://yuqin.jiansutech.com:18082", "http://yuqin.jiansutech.com:8082/"),
         )
+    }
+
+    @Test
+    fun articlesRequestDefaultsToRealtimeSync() = runTest {
+        val server = MockWebServer()
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"code":200,"message":"ok","data":{"items":[],"page":1,"page_size":10,"total":0}}"""),
+        )
+        server.start()
+        try {
+            val result = ApiFactory.yuqing(server.url("/").toString())
+                .articles(page = 1, pageSize = 10)
+                .data
+            val request = server.takeRequest()
+
+            assertEquals(0, result?.total)
+            assertEquals("/api/v1/articles", request.requestUrl?.encodedPath)
+            assertEquals("captured_at", request.requestUrl?.queryParameter("time_field"))
+            assertEquals("captured_at_desc", request.requestUrl?.queryParameter("sort"))
+        } finally {
+            server.shutdown()
+        }
     }
 
     @Test
