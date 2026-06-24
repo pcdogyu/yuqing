@@ -205,6 +205,8 @@ type pageData struct {
 	ArticleTotalPages          int
 	ArticlePrevURL             string
 	ArticleNextURL             string
+	ArticleSort                string
+	ArticleTimeLabel           string
 	WarningArticles            []legacyWarningArticleCompat
 	WarningArticlePage         int
 	WarningArticlePrev         int
@@ -304,6 +306,7 @@ func NewServer(cfg config.Config) *Server {
 		"formatShanghaiTime":       formatShanghaiTime,
 		"formatArticleCaptureTime": formatArticleCaptureTime,
 		"formatArticlePublishTime": formatArticlePublishTime,
+		"formatArticleListTime":    formatArticleListTime,
 		"articleBodyText":          articleBodyText,
 	}
 	tpl := template.Must(template.New("layout").Funcs(funcMap).Parse(layoutTemplate))
@@ -314,7 +317,7 @@ func NewServer(cfg config.Config) *Server {
 	template.Must(tpl.New("rules").Parse(rulesTemplate))
 	template.Must(tpl.New("rule").Parse(ruleTemplate))
 	template.Must(tpl.New("crawl_templates").Parse(crawlTemplatesTemplate))
-	template.Must(tpl.New("articles").Parse(articlesTemplate))
+	template.Must(tpl.New("articles").Parse(articlesRealtimeTemplate))
 	template.Must(tpl.New("article").Parse(articleTemplate))
 	template.Must(tpl.New("reports").Parse(reportsTemplate))
 	template.Must(tpl.New("report").Parse(reportTemplate))
@@ -2497,19 +2500,21 @@ func (s *Server) handleArticles(w http.ResponseWriter, r *http.Request, user any
 	industry := strings.TrimSpace(r.URL.Query().Get("industry"))
 	province := strings.TrimSpace(r.URL.Query().Get("province"))
 	city := strings.TrimSpace(r.URL.Query().Get("city"))
-	query := "/api/v1/articles?page=" + strconv.Itoa(pageNum) + "&page_size=" + strconv.Itoa(pageSize) + "&time_field=publish_time&sort=publish_time_desc"
+	articleSort := normalizeArticleListSort(r.URL.Query().Get("sort"))
+	articleTimeField := articleListTimeField(articleSort)
+	query := "/api/v1/articles?page=" + strconv.Itoa(pageNum) + "&page_size=" + strconv.Itoa(pageSize) + "&time_field=" + url.QueryEscape(articleTimeField) + "&sort=" + url.QueryEscape(articleSort)
 	if mode == "search" {
-		query = "/api/v1/search/articles?page=" + strconv.Itoa(pageNum) + "&page_size=" + strconv.Itoa(pageSize) + "&time_field=publish_time&sort=publish_time_desc"
+		query = "/api/v1/search/articles?page=" + strconv.Itoa(pageNum) + "&page_size=" + strconv.Itoa(pageSize) + "&time_field=" + url.QueryEscape(articleTimeField) + "&sort=" + url.QueryEscape(articleSort)
 		if keyword != "" {
 			query += "&q=" + url.QueryEscape(keyword)
 		}
 	} else if mode == "full" {
-		query = "/api/v1/search/full?page=" + strconv.Itoa(pageNum) + "&page_size=" + strconv.Itoa(pageSize) + "&time_field=publish_time&sort=publish_time_desc"
+		query = "/api/v1/search/full?page=" + strconv.Itoa(pageNum) + "&page_size=" + strconv.Itoa(pageSize) + "&time_field=" + url.QueryEscape(articleTimeField) + "&sort=" + url.QueryEscape(articleSort)
 		if keyword != "" {
 			query += "&q=" + url.QueryEscape(keyword)
 		}
 	} else if mode == "timely" {
-		query = "/api/v1/search/timely?page=" + strconv.Itoa(pageNum) + "&page_size=" + strconv.Itoa(pageSize) + "&time_field=publish_time&sort=publish_time_desc"
+		query = "/api/v1/search/timely?page=" + strconv.Itoa(pageNum) + "&page_size=" + strconv.Itoa(pageSize) + "&time_field=" + url.QueryEscape(articleTimeField) + "&sort=" + url.QueryEscape(articleSort)
 		if keyword != "" {
 			query += "&q=" + url.QueryEscape(keyword)
 		}
@@ -2597,6 +2602,8 @@ func (s *Server) handleArticles(w http.ResponseWriter, r *http.Request, user any
 		ArticleTotalPages: totalPages,
 		ArticlePrevURL:    prevURL,
 		ArticleNextURL:    nextURL,
+		ArticleSort:       articleSort,
+		ArticleTimeLabel:  articleListTimeLabel(articleSort),
 		Message:           r.URL.Query().Get("msg"),
 	})
 }
@@ -3821,6 +3828,36 @@ func formatArticleCaptureTime(item model.Item) string {
 	return formatShanghaiTime(item.CapturedAt)
 }
 
+func normalizeArticleListSort(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "publish_time_desc", "published_at_desc":
+		return "publish_time_desc"
+	default:
+		return "captured_at_desc"
+	}
+}
+
+func articleListTimeField(sort string) string {
+	if normalizeArticleListSort(sort) == "publish_time_desc" {
+		return "publish_time"
+	}
+	return "captured_at"
+}
+
+func articleListTimeLabel(sort string) string {
+	if normalizeArticleListSort(sort) == "publish_time_desc" {
+		return "发布时间"
+	}
+	return "同步时间"
+}
+
+func formatArticleListTime(item model.Item, sort string) string {
+	if normalizeArticleListSort(sort) == "publish_time_desc" {
+		return formatArticlePublishTime(item)
+	}
+	return formatArticleCaptureTime(item)
+}
+
 func formatArticlePublishTime(item model.Item) string {
 	for _, value := range []string{item.PublishTime, item.PublishTimeText} {
 		if formatted, ok := formatArticleTimeText(value, item.CapturedAt); ok {
@@ -4851,6 +4888,56 @@ const ruleTemplate = `
 
 const articlesTemplate = `
 {{define "articles"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `main{max-width:1700px;font-size:14px}.pill{display:inline-block;padding:4px 10px;border-radius:999px;background:#ece7dc}.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}.subtle{color:#6a6257}.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.summary-card{padding:14px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.summary-card strong{display:block;font-size:24px;margin-top:6px}.articles-table th,.articles-table td{font-size:14px;padding:8px}.articles-table .col-title{width:62%}.articles-table .col-source{width:8%}.articles-table .col-time{width:12%}.articles-table .col-actions{width:18%}.articles-table .ops{white-space:nowrap}.articles-table .ops form{display:inline-block;width:auto;margin:0 6px 6px 0;vertical-align:middle}.articles-table .ops form:last-child{margin-right:0}.articles-table .ops button{width:auto;margin:0;padding:9px 12px;font-size:13px;white-space:nowrap}.articles-table .ops select{width:auto;min-width:88px;margin:0 6px 0 0;padding:8px}.page-title{display:flex;justify-content:space-between;gap:16px;align-items:flex-end;flex-wrap:wrap}.page-title p{margin:0;color:#6a6257}.filter-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;align-items:end}.filter-grid .field{margin:0}.filter-grid .field input,.filter-grid .field select{margin:0}.filter-grid .filter-submit button{width:100%;margin:0}.filter-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:12px;flex-wrap:wrap}.filter-actions a{width:auto;min-width:140px}.page-nav{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-top:16px}.page-nav .pager-links{display:flex;gap:10px;flex-wrap:wrap}.page-nav a{padding:8px 12px;border:1px solid #d0c8b8;border-radius:10px;text-decoration:none;color:#214e34;background:#fff}@media (max-width: 1400px){.filter-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}@media (max-width: 900px){.filter-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.page-nav{align-items:flex-start}}` + `</style></head><body><header><div class="page-title"><div><h1>文章中心</h1></div></div>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><form method="get"><div class="filter-grid"><div class="field"><select name="mode"><option value="" {{if eq .SearchMode ""}}selected{{end}}>普通筛选</option><option value="search" {{if eq .SearchMode "search"}}selected{{end}}>基础全文</option><option value="full" {{if eq .SearchMode "full"}}selected{{end}}>高级检索</option><option value="timely" {{if eq .SearchMode "timely"}}selected{{end}}>实时搜索</option></select></div><div class="field"><input name="keyword" placeholder="关键词" value="{{.FilterKeyword}}"></div><div class="field"><select name="project_id"><option value="">全部项目</option>{{range .Projects}}<option value="{{.ID}}" {{if eq (printf "%d" .ID) $.FilterProject}}selected{{end}}>{{.Name}}</option>{{end}}</select></div><div class="field"><select name="source_type">` + portalSourceFilterOptions + `</select></div><div class="field"><select name="industry"><option value="">全部行业</option>{{range .SearchOptions.Industries}}<option value="{{.}}" {{if eq . $.FilterIndustry}}selected{{end}}>{{.}}</option>{{end}}</select></div><div class="field"><select name="province"><option value="">全部省份</option>{{range .SearchOptions.Provinces}}<option value="{{.}}" {{if eq . $.FilterProvince}}selected{{end}}>{{.}}</option>{{end}}</select></div><div class="field"><select name="city"><option value="">全部城市</option>{{range .SearchOptions.Cities}}<option value="{{.}}" {{if eq . $.FilterCity}}selected{{end}}>{{.}}</option>{{end}}</select></div><div class="field"><select name="read"><option value="">全部阅读状态</option><option value="read" {{if eq .FilterRead "read"}}selected{{end}}>已读</option><option value="unread" {{if eq .FilterRead "unread"}}selected{{end}}>未读</option></select></div><div class="field"><select name="favorite"><option value="">全部收藏状态</option><option value="favorited" {{if eq .FilterFlag "favorited"}}selected{{end}}>已收藏</option><option value="unfavorited" {{if eq .FilterFlag "unfavorited"}}selected{{end}}>未收藏</option></select></div><div class="field"><input type="date" name="start" value="{{.FilterStart}}"></div><div class="field"><input type="date" name="end" value="{{.FilterEnd}}"></div><div class="field filter-submit"><button type="submit">筛选</button></div></div>{{if or .FilterKeyword .FilterProject .FilterSource .FilterRead .FilterFlag .FilterStart .FilterEnd .SearchMode .FilterIndustry .FilterProvince .FilterCity}}<div class="filter-actions"><a class="inline" href="/articles">清空筛选</a></div>{{end}}</form></section><section><h2>{{if eq .SearchMode "search"}}全文搜索结果{{else if eq .SearchMode "full"}}高级检索结果{{else if eq .SearchMode "timely"}}实时搜索结果{{else}}列表{{end}}</h2><table class="articles-table"><tr><th class="col-title">标题</th><th class="col-source">来源</th><th class="col-time">发布时间</th><th class="col-actions">操作</th></tr>{{range .Articles.Items}}<tr><td><a class="inline" href="/articles/{{.ID}}?return_to={{$.ReturnTo}}">{{.Title}}</a></td><td>{{.SourceType}}</td><td>{{formatArticlePublishTime .}}</td><td class="ops"><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="read"><button type="submit">标记已读</button></form><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="share"><button type="submit">登记分享</button></form><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="emotion"><select name="emotion"><option value="1">正面</option><option value="2" selected>中性</option><option value="3">负面</option></select><button type="submit">更新情感</button></form><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="hide"><button type="submit">隐藏文章</button></form></td></tr>{{else}}<tr><td colspan="4">没有符合条件的文章</td></tr>{{end}}</table><div class="page-nav"><div>共 {{.Articles.Total}} 条，每页 20 条</div><div class="pager-links"><a class="{{if le .ArticlePage 1}}disabled{{end}}" href="{{.ArticlePrevURL}}">上一页</a><span>第 {{.ArticlePage}} / {{.ArticleTotalPages}} 页</span><a class="{{if ge .ArticlePage .ArticleTotalPages}}disabled{{end}}" href="{{.ArticleNextURL}}">下一页</a></div></div></section><section><h2>当前结果</h2><div class="summary-grid"><div class="summary-card">文章<strong>{{.Articles.Total}}</strong></div><div class="summary-card">当前页已读<strong>{{.CountRead}}</strong></div><div class="summary-card">当前页未读<strong>{{.CountUnread}}</strong></div><div class="summary-card">当前页已收藏<strong>{{.CountFlagged}}</strong></div><div class="summary-card">模式<strong>{{if eq .SearchMode "search"}}基础全文{{else if eq .SearchMode "full"}}高级检索{{else if eq .SearchMode "timely"}}实时搜索{{else}}筛选{{end}}</strong></div><div class="summary-card">分页<strong>{{.ArticlePage}} / {{.ArticleTotalPages}}</strong></div></div></section></main>{{template "footer" .}}</body></html>{{end}}
+`
+
+const articlesRealtimeTemplate = `
+{{define "articles"}}<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>{{.Title}}</title>
+<style>` + baseStyles + `main{max-width:1700px;font-size:14px}.pill{display:inline-block;padding:4px 10px;border-radius:999px;background:#ece7dc}.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}.subtle{color:#6a6257}.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.summary-card{padding:14px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.summary-card strong{display:block;font-size:24px;margin-top:6px}.articles-table th,.articles-table td{font-size:14px;padding:8px}.articles-table .col-title{width:62%}.articles-table .col-source{width:8%}.articles-table .col-time{width:12%}.articles-table .col-actions{width:18%}.articles-table .ops{white-space:nowrap}.articles-table .ops form{display:inline-block;width:auto;margin:0 6px 6px 0;vertical-align:middle}.articles-table .ops form:last-child{margin-right:0}.articles-table .ops button{width:auto;margin:0;padding:9px 12px;font-size:13px;white-space:nowrap}.articles-table .ops select{width:auto;min-width:88px;margin:0 6px 0 0;padding:8px}.page-title{display:flex;justify-content:space-between;gap:16px;align-items:flex-end;flex-wrap:wrap}.page-title p{margin:0;color:#6a6257}.filter-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;align-items:end}.filter-grid .field{margin:0}.filter-grid .field input,.filter-grid .field select{margin:0}.filter-grid .filter-submit button{width:100%;margin:0}.filter-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:12px;flex-wrap:wrap}.filter-actions a{width:auto;min-width:140px}.page-nav{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-top:16px}.page-nav .pager-links{display:flex;gap:10px;flex-wrap:wrap}.page-nav a{padding:8px 12px;border:1px solid #d0c8b8;border-radius:10px;text-decoration:none;color:#214e34;background:#fff}@media (max-width: 1400px){.filter-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}@media (max-width: 900px){.filter-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.page-nav{align-items:flex-start}}` + `</style>
+</head>
+<body>
+<header><div class="page-title"><div><h1>文章中心</h1></div></div>{{template "nav" .}}</header>
+<main>
+{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}
+<section>
+<form method="get">
+<div class="filter-grid">
+<div class="field"><select name="mode"><option value="" {{if eq .SearchMode ""}}selected{{end}}>普通筛选</option><option value="search" {{if eq .SearchMode "search"}}selected{{end}}>基础全文</option><option value="full" {{if eq .SearchMode "full"}}selected{{end}}>高级检索</option><option value="timely" {{if eq .SearchMode "timely"}}selected{{end}}>实时搜索</option></select></div>
+<div class="field"><select name="sort"><option value="captured_at_desc" {{if eq .ArticleSort "captured_at_desc"}}selected{{end}}>实时同步</option><option value="publish_time_desc" {{if eq .ArticleSort "publish_time_desc"}}selected{{end}}>发布时间</option></select></div>
+<div class="field"><input name="keyword" placeholder="关键词" value="{{.FilterKeyword}}"></div>
+<div class="field"><select name="project_id"><option value="">全部项目</option>{{range .Projects}}<option value="{{.ID}}" {{if eq (printf "%d" .ID) $.FilterProject}}selected{{end}}>{{.Name}}</option>{{end}}</select></div>
+<div class="field"><select name="source_type">` + portalSourceFilterOptions + `</select></div>
+<div class="field"><select name="industry"><option value="">全部行业</option>{{range .SearchOptions.Industries}}<option value="{{.}}" {{if eq . $.FilterIndustry}}selected{{end}}>{{.}}</option>{{end}}</select></div>
+<div class="field"><select name="province"><option value="">全部省份</option>{{range .SearchOptions.Provinces}}<option value="{{.}}" {{if eq . $.FilterProvince}}selected{{end}}>{{.}}</option>{{end}}</select></div>
+<div class="field"><select name="city"><option value="">全部城市</option>{{range .SearchOptions.Cities}}<option value="{{.}}" {{if eq . $.FilterCity}}selected{{end}}>{{.}}</option>{{end}}</select></div>
+<div class="field"><select name="read"><option value="">全部阅读状态</option><option value="read" {{if eq .FilterRead "read"}}selected{{end}}>已读</option><option value="unread" {{if eq .FilterRead "unread"}}selected{{end}}>未读</option></select></div>
+<div class="field"><select name="favorite"><option value="">全部收藏状态</option><option value="favorited" {{if eq .FilterFlag "favorited"}}selected{{end}}>已收藏</option><option value="unfavorited" {{if eq .FilterFlag "unfavorited"}}selected{{end}}>未收藏</option></select></div>
+<div class="field"><input type="date" name="start" value="{{.FilterStart}}"></div>
+<div class="field"><input type="date" name="end" value="{{.FilterEnd}}"></div>
+<div class="field filter-submit"><button type="submit">筛选</button></div>
+</div>
+{{if or .FilterKeyword .FilterProject .FilterSource .FilterRead .FilterFlag .FilterStart .FilterEnd .SearchMode .FilterIndustry .FilterProvince .FilterCity (ne .ArticleSort "captured_at_desc")}}<div class="filter-actions"><a class="inline" href="/articles">清空筛选</a></div>{{end}}
+</form>
+</section>
+<section>
+<h2>{{if eq .SearchMode "search"}}全文搜索结果{{else if eq .SearchMode "full"}}高级检索结果{{else if eq .SearchMode "timely"}}实时搜索结果{{else}}列表{{end}}</h2>
+<table class="articles-table">
+<tr><th class="col-title">标题</th><th class="col-source">来源</th><th class="col-time">{{.ArticleTimeLabel}}</th><th class="col-actions">操作</th></tr>
+{{range .Articles.Items}}<tr><td><a class="inline" href="/articles/{{.ID}}?return_to={{$.ReturnTo}}">{{.Title}}</a></td><td>{{.SourceType}}</td><td>{{formatArticleListTime . $.ArticleSort}}</td><td class="ops"><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="read"><button type="submit">标记已读</button></form><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="share"><button type="submit">登记分享</button></form><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="emotion"><select name="emotion"><option value="1">正面</option><option value="2" selected>中性</option><option value="3">负面</option></select><button type="submit">更新情感</button></form><form method="post"><input type="hidden" name="item_id" value="{{.ID}}"><input type="hidden" name="action" value="hide"><button type="submit">隐藏文章</button></form></td></tr>{{else}}<tr><td colspan="4">没有符合条件的文章</td></tr>{{end}}
+</table>
+<div class="page-nav"><div>共 {{.Articles.Total}} 条，每页 20 条</div><div class="pager-links"><a class="{{if le .ArticlePage 1}}disabled{{end}}" href="{{.ArticlePrevURL}}">上一页</a><span>第 {{.ArticlePage}} / {{.ArticleTotalPages}} 页</span><a class="{{if ge .ArticlePage .ArticleTotalPages}}disabled{{end}}" href="{{.ArticleNextURL}}">下一页</a></div></div>
+</section>
+<section>
+<h2>当前结果</h2>
+<div class="summary-grid"><div class="summary-card">文章<strong>{{.Articles.Total}}</strong></div><div class="summary-card">当前页已读<strong>{{.CountRead}}</strong></div><div class="summary-card">当前页未读<strong>{{.CountUnread}}</strong></div><div class="summary-card">当前页已收藏<strong>{{.CountFlagged}}</strong></div><div class="summary-card">模式<strong>{{if eq .SearchMode "search"}}基础全文{{else if eq .SearchMode "full"}}高级检索{{else if eq .SearchMode "timely"}}实时搜索{{else}}筛选{{end}}</strong></div><div class="summary-card">时间轴<strong>{{if eq .ArticleSort "publish_time_desc"}}发布时间{{else}}实时同步{{end}}</strong></div><div class="summary-card">分页<strong>{{.ArticlePage}} / {{.ArticleTotalPages}}</strong></div></div>
+</section>
+</main>
+{{template "footer" .}}
+</body>
+</html>{{end}}
 `
 
 const articleTemplate = `

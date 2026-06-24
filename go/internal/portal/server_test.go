@@ -5032,7 +5032,7 @@ func TestHotPageCompat(t *testing.T) {
 	}
 }
 
-func TestArticlesPagePresentationUsesPublishTimeInShanghaiAndNoFavoriteAction(t *testing.T) {
+func TestArticlesPageDefaultsToRealtimeSyncAndNoFavoriteAction(t *testing.T) {
 	oldCommit, oldBuildTime, oldBranch := app.GitCommit, app.BuildTime, app.BranchName
 	app.GitCommit = "abcdef1"
 	app.BuildTime = "2026-06-12T06:17:25Z"
@@ -5109,8 +5109,8 @@ func TestArticlesPagePresentationUsesPublishTimeInShanghaiAndNoFavoriteAction(t 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
-	if !strings.Contains(articleRawQuery, "time_field=publish_time") || !strings.Contains(articleRawQuery, "sort=publish_time_desc") {
-		t.Fatalf("expected article list request to sort by publish_time while displaying publish time, got query %q", articleRawQuery)
+	if !strings.Contains(articleRawQuery, "time_field=captured_at") || !strings.Contains(articleRawQuery, "sort=captured_at_desc") {
+		t.Fatalf("expected article list request to default to captured_at realtime sync, got query %q", articleRawQuery)
 	}
 	body := rr.Body.String()
 	for _, unexpected := range []string{
@@ -5125,15 +5125,18 @@ func TestArticlesPagePresentationUsesPublishTimeInShanghaiAndNoFavoriteAction(t 
 	}
 	renderedText := strings.ReplaceAll(html.UnescapeString(body), "&#43;", "+")
 	for _, expected := range []string{
-		`<th class="col-title">标题</th><th class="col-source">来源</th><th class="col-time">发布时间</th><th class="col-actions">操作</th>`,
+		`<th class="col-title">标题</th><th class="col-source">来源</th><th class="col-time">同步时间</th><th class="col-actions">操作</th>`,
+		`name="sort"`,
+		`实时同步`,
+		`发布时间`,
 		`金十`,
 		`PANews`,
 		`CoinDesk`,
 		`Foresight`,
-		`<td>2026-06-12 14:17</td>`,
-		`<td>2026-06-12 15:17</td>`,
+		`<td>2026-06-12 09:17</td>`,
+		`<td>2026-06-12 10:17</td>`,
 		`<td>2026-06-12 16:17</td>`,
-		`<td>2026-06-12 17:10</td>`,
+		`<td>2026-06-12 17:17</td>`,
 		`隐藏文章`,
 		`Code By Yuhao@jiansutech.com - 2026-06-12 14:17:25 UTC+8 - abcdef1 - golang-jin10-sqlite`,
 	} {
@@ -5144,9 +5147,84 @@ func TestArticlesPagePresentationUsesPublishTimeInShanghaiAndNoFavoriteAction(t 
 	if strings.Contains(renderedText, `删除文章`) {
 		t.Fatalf("expected article list to stop showing delete label, got %s", body)
 	}
-	for _, unexpected := range []string{`采集时间`, `7分钟前`, `<td>2026-06-12 01:17</td>`, `<td>2026-06-12 06:17</td>`} {
+	for _, unexpected := range []string{`7分钟前`, `<td>2026-06-12 01:17</td>`, `<td>2026-06-12 06:17</td>`} {
 		if strings.Contains(renderedText, unexpected) {
-			t.Fatalf("expected article list to show publish time in Shanghai instead of %q, got %s", unexpected, body)
+			t.Fatalf("expected article list to show realtime sync time in Shanghai instead of %q, got %s", unexpected, body)
+		}
+	}
+}
+
+func TestArticlesPagePublishTimeSortPreservesFilters(t *testing.T) {
+	articleRawQuery := ""
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/articles":
+			articleRawQuery = r.URL.RawQuery
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    http.StatusOK,
+				"message": "ok",
+				"data": model.ItemListResult{
+					Total:    1,
+					PageSize: 20,
+					Page:     2,
+					Items: []model.Item{
+						{
+							ID:          11,
+							Title:       "发布时间模式文章",
+							SourceType:  "flash",
+							PublishTime: "2026-06-12T06:17:25Z",
+							CapturedAt:  time.Date(2026, 6, 12, 1, 17, 25, 0, time.UTC),
+						},
+					},
+				},
+			})
+		case "/api/v1/projects":
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusOK, "message": "ok", "data": []model.Project{}})
+		case "/api/v1/search/options":
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusOK, "message": "ok", "data": model.SearchOptions{}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL, HTTPTimeout: time.Second})
+	req := httptest.NewRequest(http.MethodGet, "/articles?page=2&sort=publish_time_desc&project_id=12&source_type=flash&read=unread&favorite=favorited&start=2026-06-12&end=2026-06-13", nil)
+	rr := httptest.NewRecorder()
+
+	srv.handleArticles(rr, req, map[string]any{"id": int64(1), "username": "admin"})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	values, err := url.ParseQuery(articleRawQuery)
+	if err != nil {
+		t.Fatalf("parse article query %q: %v", articleRawQuery, err)
+	}
+	for key, want := range map[string]string{
+		"time_field":  "publish_time",
+		"sort":        "publish_time_desc",
+		"page":        "2",
+		"project_id":  "12",
+		"source_type": "flash",
+		"read":        "unread",
+		"favorite":    "favorited",
+		"start":       "2026-06-12",
+		"end":         "2026-06-13",
+	} {
+		if got := values.Get(key); got != want {
+			t.Fatalf("expected query %s=%q, got %q in %q", key, want, got, articleRawQuery)
+		}
+	}
+	renderedText := strings.ReplaceAll(html.UnescapeString(rr.Body.String()), "&#43;", "+")
+	for _, expected := range []string{
+		`<th class="col-title">标题</th><th class="col-source">来源</th><th class="col-time">发布时间</th><th class="col-actions">操作</th>`,
+		`<td>2026-06-12 14:17</td>`,
+		`时间轴<strong>发布时间</strong>`,
+	} {
+		if !strings.Contains(renderedText, expected) {
+			t.Fatalf("expected publish-time article UI fragment %q in body: %s", expected, rr.Body.String())
 		}
 	}
 }
