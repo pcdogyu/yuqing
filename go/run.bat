@@ -277,6 +277,10 @@ exit /b 0
 
 :kill_service
 set "TARGET_SERVICE=%~1"
+if /I "%TARGET_SERVICE%"=="akshare-service" (
+    call :kill_akshare_python
+    if errorlevel 1 exit /b 1
+)
 tasklist /FI "IMAGENAME eq %TARGET_SERVICE%.exe" | find /I "%TARGET_SERVICE%.exe" >nul
 if errorlevel 1 (
     echo Service %TARGET_SERVICE% is not running.
@@ -286,6 +290,14 @@ echo Service %TARGET_SERVICE% is running. Stopping...
 taskkill /F /IM "%TARGET_SERVICE%.exe" >nul 2>nul
 if errorlevel 1 (
     echo Failed to stop %TARGET_SERVICE%.exe.
+    exit /b 1
+)
+exit /b 0
+
+:kill_akshare_python
+powershell -NoProfile -Command "$targets = Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^(python|py)\.exe$' -and $_.CommandLine -match 'akshare_auction_service\.py' }; foreach ($proc in $targets) { try { Stop-Process -Id $proc.ProcessId -Force -ErrorAction Stop; Write-Host ('Stopped AKShare python process ' + $proc.ProcessId) } catch { Write-Host ('Failed to stop AKShare python process ' + $proc.ProcessId); exit 1 } }"
+if errorlevel 1 (
+    echo Failed to stop AKShare python process.
     exit /b 1
 )
 exit /b 0

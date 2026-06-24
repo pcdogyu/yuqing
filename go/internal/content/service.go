@@ -94,7 +94,7 @@ type Store interface {
 	CreatePublicOption(rctx context.Context, option model.PublicOption) (model.PublicOption, error)
 	UpdatePublicOption(rctx context.Context, option model.PublicOption) (model.PublicOption, error)
 	DeletePublicOption(rctx context.Context, id int64) error
-	UpsertAStockAuctionAmounts(rctx context.Context, tradeDate string, items []model.AStockAuctionAmount) (model.AStockAuctionUpsertResult, error)
+	UpsertAStockAuctionAmounts(rctx context.Context, tradeDate string, items []model.AStockAuctionAmount, replace bool) (model.AStockAuctionUpsertResult, error)
 	ListAStockAuctionAmounts(rctx context.Context, filter model.AStockAuctionFilter) (model.AStockAuctionListResult, error)
 	UpsertAStockRecommendationSnapshot(rctx context.Context, snapshot model.AStockRecommendationSnapshot) (model.AStockRecommendationSnapshotUpsertResult, error)
 	GetAStockRecommendationSnapshot(rctx context.Context, strategyDate string, period string, ignoreRecent bool) (model.AStockRecommendationSnapshot, bool, error)
@@ -596,8 +596,9 @@ func (s *Service) handleListAStockAuctionAmounts(w http.ResponseWriter, r *http.
 
 func (s *Service) handleUpsertAStockAuctionAmounts(w http.ResponseWriter, r *http.Request) {
 	var payload struct {
-		Date  string                      `json:"date"`
-		Items []model.AStockAuctionAmount `json:"items"`
+		Date    string                      `json:"date"`
+		Items   []model.AStockAuctionAmount `json:"items"`
+		Replace bool                        `json:"replace"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid json", nil)
@@ -613,7 +614,7 @@ func (s *Service) handleUpsertAStockAuctionAmounts(w http.ResponseWriter, r *htt
 			payload.Items[i].TradeDate = payload.Date
 		}
 	}
-	result, err := s.store.UpsertAStockAuctionAmounts(r.Context(), payload.Date, payload.Items)
+	result, err := s.store.UpsertAStockAuctionAmounts(r.Context(), payload.Date, payload.Items, payload.Replace)
 	if err != nil {
 		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
 		return

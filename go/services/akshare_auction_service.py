@@ -49,6 +49,7 @@ EASTMONEY_CLIST_URLS = [
 ]
 EASTMONEY_A_STOCK_FS = "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23"
 EASTMONEY_FIELDS = "f12,f14,f2,f5,f6"
+EASTMONEY_SORT_FIELD = "f12"
 EASTMONEY_HEADERS = {
     "Accept": "application/json,text/plain,*/*",
     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
@@ -437,6 +438,10 @@ def normalize_symbol_limit(limit: int) -> int:
     return max(0, limit)
 
 
+def should_retry_full_market_snapshot_with_eastmoney(limit: int, items: list[dict[str, Any]]) -> bool:
+    return limit <= 0 and 0 < len(items) < 1000
+
+
 def fetch_market_snapshot(ak: Any, trade_date: str, limit: int) -> list[dict[str, Any]]:
     frame = ak.stock_zh_a_spot_em()
     items: list[dict[str, Any]] = []
@@ -470,18 +475,23 @@ def fetch_market_snapshot(ak: Any, trade_date: str, limit: int) -> list[dict[str
 def eastmoney_rows_to_items(rows: list[dict[str, Any]], trade_date: str, limit: int) -> list[dict[str, Any]]:
     fetched_at = utc_now_iso()
     items: list[dict[str, Any]] = []
+    seen_codes: set[str] = set()
     for row in rows:
         code = text_value(row.get("f12"))
         name = text_value(row.get("f14"))
         if not code or not is_sh_sz_code(code):
             continue
+        code = code.zfill(6)
+        if code in seen_codes:
+            continue
+        seen_codes.add(code)
         price = finite_float(row.get("f2"))
         volume = finite_float(row.get("f5"))
         amount = finite_float(row.get("f6"))
         items.append(
             {
                 "trade_date": trade_date,
-                "code": code.zfill(6),
+                "code": code,
                 "name": name,
                 "auction_price": price,
                 "auction_volume": volume,
@@ -496,37 +506,79 @@ def eastmoney_rows_to_items(rows: list[dict[str, Any]], trade_date: str, limit: 
     return items
 
 
+def eastmoney_page_size(limit: int) -> int:
+    if limit > 0:
+        return max(1, min(limit, 100))
+    return 100
+
+
+def eastmoney_target_row_count(total: int, limit: int) -> int:
+    if total <= 0:
+        return max(0, limit)
+    if limit > 0:
+        return min(total, limit)
+    return total
+
+
 def fetch_eastmoney_snapshot(trade_date: str, limit: int) -> list[dict[str, Any]]:
-    params = {
-        "pn": "1",
-        "pz": str(limit if limit > 0 else 6000),
-        "po": "1",
-        "np": "1",
-        "fltt": "2",
-        "invt": "2",
-        "fid": "f3",
-        "fs": EASTMONEY_A_STOCK_FS,
-        "fields": EASTMONEY_FIELDS,
-        "_": str(int(time.time() * 1000)),
-    }
-    query = urllib.parse.urlencode(params)
+    page_size = eastmoney_page_size(limit)
     errors: list[str] = []
     for base_url in EASTMONEY_CLIST_URLS:
-        url = base_url + "?" + query
-        for attempt in range(3):
-            try:
-                request = urllib.request.Request(url, headers=EASTMONEY_HEADERS)
-                with urllib.request.urlopen(request, timeout=20) as response:
-                    payload = json.loads(response.read().decode("utf-8"))
+        rows: list[dict[str, Any]] = []
+        total = 0
+        try:
+            page = 1
+            while True:
+                params = {
+                    "pn": str(page),
+                    "pz": str(page_size),
+                    "po": "1",
+                    "np": "1",
+                    "fltt": "2",
+                    "invt": "2",
+                    "fid": EASTMONEY_SORT_FIELD,
+                    "fs": EASTMONEY_A_STOCK_FS,
+                    "fields": EASTMONEY_FIELDS,
+                    "_": str(int(time.time() * 1000)),
+                }
+                query = urllib.parse.urlencode(params)
+                url = base_url + "?" + query
+                payload: dict[str, Any] | None = None
+                page_errors: list[str] = []
+                for attempt in range(3):
+                    try:
+                        request = urllib.request.Request(url, headers=EASTMONEY_HEADERS)
+                        with urllib.request.urlopen(request, timeout=20) as response:
+                            payload = json.loads(response.read().decode("utf-8"))
+                        break
+                    except Exception as exc:  # pragma: no cover - external service variability
+                        page_errors.append(f"{base_url} page {page} attempt {attempt + 1}: {exc}")
+                        time.sleep(0.3 * (attempt + 1))
+                if payload is None:
+                    raise RuntimeError("; ".join(page_errors) or f"{base_url}: request failed")
                 data = payload.get("data") if isinstance(payload, dict) else None
-                rows = data.get("diff") if isinstance(data, dict) else None
-                if isinstance(rows, list) and rows:
-                    return eastmoney_rows_to_items(rows, trade_date, limit)
-                errors.append(f"{base_url}: empty diff")
-                break
-            except Exception as exc:  # pragma: no cover - external service variability
-                errors.append(f"{base_url} attempt {attempt + 1}: {exc}")
-                time.sleep(0.3 * (attempt + 1))
+                page_rows = data.get("diff") if isinstance(data, dict) else None
+                if total <= 0:
+                    total = int(data.get("total") or 0) if isinstance(data, dict) else 0
+                if not isinstance(page_rows, list) or not page_rows:
+                    if rows:
+                        break
+                    raise RuntimeError(f"{base_url}: empty diff on page {page}")
+                rows.extend(page_rows)
+                target_rows = eastmoney_target_row_count(total, limit)
+                if limit > 0 and len(rows) >= limit:
+                    break
+                if target_rows > 0 and len(rows) >= target_rows:
+                    break
+                if len(page_rows) < page_size:
+                    break
+                page += 1
+            if rows:
+                return eastmoney_rows_to_items(rows, trade_date, limit)
+            errors.append(f"{base_url}: empty diff")
+        except Exception as exc:  # pragma: no cover - external service variability
+            errors.append(str(exc))
+            continue
     raise RuntimeError("; ".join(errors) or "Eastmoney clist returned no data")
 
 
@@ -962,6 +1014,21 @@ class AuctionService:
         else:
             try:
                 items = fetch_market_snapshot(ak, trade_date, limit)
+                if should_retry_full_market_snapshot_with_eastmoney(limit, items):
+                    snapshot_count = len(items)
+                    try:
+                        eastmoney_items = fetch_eastmoney_snapshot(trade_date, limit)
+                        if len(eastmoney_items) > len(items):
+                            items = eastmoney_items
+                            warning = (
+                                f"stock_zh_a_spot_em returned only {snapshot_count} rows for full-market snapshot, "
+                                "used direct Eastmoney snapshot."
+                            )
+                    except Exception as eastmoney_exc:
+                        warning = (
+                            f"stock_zh_a_spot_em returned only {snapshot_count} rows for full-market snapshot, "
+                            f"and direct Eastmoney snapshot fallback failed: {eastmoney_exc}"
+                        )
             except Exception as exc:
                 try:
                     items = fetch_eastmoney_snapshot(trade_date, limit)
@@ -1196,13 +1263,26 @@ def run_self_test() -> None:
     assert normalize_symbol_limit(0) == 0
     assert normalize_symbol_limit(6000) == 6000
     assert normalize_symbol_limit(-1) == 0
+    assert should_retry_full_market_snapshot_with_eastmoney(0, [{"code": "000001"}] * 100)
+    assert not should_retry_full_market_snapshot_with_eastmoney(100, [{"code": "000001"}] * 100)
+    assert not should_retry_full_market_snapshot_with_eastmoney(0, [{"code": "000001"}] * 1200)
+    assert eastmoney_page_size(0) == 100
+    assert eastmoney_page_size(50) == 50
+    assert eastmoney_page_size(200) == 100
+    assert eastmoney_target_row_count(5534, 0) == 5534
+    assert eastmoney_target_row_count(5534, 300) == 300
+    assert eastmoney_target_row_count(0, 300) == 300
     assert is_sh_sz_code("000001")
     assert not is_sh_sz_code("920118")
     eastmoney_items = eastmoney_rows_to_items(
-        [{"f12": "1", "f14": "平安银行", "f2": "12.3", "f5": "1000", "f6": "12300"}],
+        [
+            {"f12": "1", "f14": "平安银行", "f2": "12.3", "f5": "1000", "f6": "12300"},
+            {"f12": "000001", "f14": "平安银行", "f2": "12.3", "f5": "1000", "f6": "12300"},
+        ],
         "2026-06-18",
         0,
     )
+    assert len(eastmoney_items) == 1
     assert eastmoney_items[0]["code"] == "000001"
     assert eastmoney_items[0]["name"] == "平安银行"
     assert eastmoney_items[0]["source"] == "eastmoney_clist"

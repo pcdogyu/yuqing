@@ -11,7 +11,7 @@ import (
 
 const aStockAuctionSHSZFilterSQL = `(code LIKE '6%' OR code LIKE '0%' OR code LIKE '3%')`
 
-func (s *Store) UpsertAStockAuctionAmounts(ctx context.Context, tradeDate string, items []model.AStockAuctionAmount) (model.AStockAuctionUpsertResult, error) {
+func (s *Store) UpsertAStockAuctionAmounts(ctx context.Context, tradeDate string, items []model.AStockAuctionAmount, replace bool) (model.AStockAuctionUpsertResult, error) {
 	tradeDate = strings.TrimSpace(tradeDate)
 	result := model.AStockAuctionUpsertResult{Date: tradeDate, Total: len(items)}
 	if tradeDate == "" {
@@ -32,6 +32,23 @@ func (s *Store) UpsertAStockAuctionAmounts(ctx context.Context, tradeDate string
 			_ = tx.Rollback()
 		}
 	}()
+
+	if replace {
+		replaceDates := map[string]struct{}{}
+		if tradeDate != "" {
+			replaceDates[tradeDate] = struct{}{}
+		}
+		for _, item := range items {
+			if date := strings.TrimSpace(item.TradeDate); date != "" {
+				replaceDates[date] = struct{}{}
+			}
+		}
+		for date := range replaceDates {
+			if _, err = tx.ExecContext(ctx, `DELETE FROM a_stock_auction_amounts WHERE trade_date = ?`, date); err != nil {
+				return result, err
+			}
+		}
+	}
 
 	stmt, err := tx.PrepareContext(ctx, `
 INSERT INTO a_stock_auction_amounts (trade_date, code, name, auction_price, auction_volume, auction_amount, source, status, fetched_at, created_at, updated_at)
@@ -58,11 +75,13 @@ ON CONFLICT(trade_date, code) DO UPDATE SET
 			continue
 		}
 		existed := false
-		if scanErr := tx.QueryRowContext(ctx, `SELECT 1 FROM a_stock_auction_amounts WHERE trade_date = ? AND code = ?`, date, code).Scan(new(int)); scanErr == nil {
-			existed = true
-		} else if scanErr != sql.ErrNoRows {
-			err = scanErr
-			return result, err
+		if !replace {
+			if scanErr := tx.QueryRowContext(ctx, `SELECT 1 FROM a_stock_auction_amounts WHERE trade_date = ? AND code = ?`, date, code).Scan(new(int)); scanErr == nil {
+				existed = true
+			} else if scanErr != sql.ErrNoRows {
+				err = scanErr
+				return result, err
+			}
 		}
 		fetchedAt := item.FetchedAt
 		if fetchedAt.IsZero() {

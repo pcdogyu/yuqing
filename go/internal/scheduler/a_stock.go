@@ -155,9 +155,14 @@ func (w *Worker) runAStockAuctionCrawlForDateResult(ctx context.Context, tradeDa
 		}
 		return aStockAuctionCrawlResult{Date: payload.Date, Total: len(payload.Items), OK: okCount, Skipped: true, Message: message}, nil
 	}
+	writePayload := map[string]any{
+		"date":    payload.Date,
+		"items":   payload.Items,
+		"replace": true,
+	}
 	writeResp, err := w.client.R().
 		SetContext(ctx).
-		SetBody(payload).
+		SetBody(writePayload).
 		Post(w.cfg.ContentURL + "/api/v1/admin/a-stock/auction")
 	if err != nil {
 		return aStockAuctionCrawlResult{}, err

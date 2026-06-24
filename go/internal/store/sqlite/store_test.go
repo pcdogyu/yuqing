@@ -206,7 +206,7 @@ func TestAStockAuctionAmountsUpsertAndList(t *testing.T) {
 		{Code: "300750", Name: "宁德时代", AuctionPrice: 210, AuctionVolume: 20000, AuctionAmount: 800000, Source: "akshare_pre_min", Status: "ok", FetchedAt: fetchedAt},
 		{Code: "920118", Name: "太湖远大", AuctionPrice: 18, AuctionVolume: 10000, AuctionAmount: 700000, Source: "akshare_pre_min", Status: "ok", FetchedAt: fetchedAt},
 		{Code: "831526", Name: "凯华材料", AuctionPrice: 15, AuctionVolume: 12000, AuctionAmount: 600000, Source: "akshare_pre_min", Status: "ok", FetchedAt: fetchedAt},
-	})
+	}, false)
 	if err != nil {
 		t.Fatalf("UpsertAStockAuctionAmounts insert error: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestAStockAuctionAmountsUpsertAndList(t *testing.T) {
 
 	second, err := store.UpsertAStockAuctionAmounts(ctx, "2026-06-16", []model.AStockAuctionAmount{
 		{Code: "002230", Name: "科大讯飞", AuctionPrice: 42, AuctionVolume: 100000, AuctionAmount: 4200000, Source: "akshare_pre_min", Status: "ok", FetchedAt: fetchedAt},
-	})
+	}, false)
 	if err != nil {
 		t.Fatalf("UpsertAStockAuctionAmounts update error: %v", err)
 	}
@@ -226,7 +226,7 @@ func TestAStockAuctionAmountsUpsertAndList(t *testing.T) {
 
 	if _, err := store.UpsertAStockAuctionAmounts(ctx, "2026-06-15", []model.AStockAuctionAmount{
 		{Code: "000001", Name: "平安银行", AuctionPrice: 12, AuctionVolume: 10000, AuctionAmount: 120000, Source: "akshare_pre_min", Status: "ok", FetchedAt: fetchedAt.AddDate(0, 0, -1)},
-	}); err != nil {
+	}, false); err != nil {
 		t.Fatalf("UpsertAStockAuctionAmounts previous day error: %v", err)
 	}
 
@@ -270,6 +270,24 @@ func TestAStockAuctionAmountsUpsertAndList(t *testing.T) {
 	}
 	if filtered.Total != 1 || len(filtered.Items) != 1 || filtered.Items[0].Code != "600000" {
 		t.Fatalf("expected keyword filtered row, got %+v", filtered)
+	}
+
+	replaced, err := store.UpsertAStockAuctionAmounts(ctx, "2026-06-16", []model.AStockAuctionAmount{
+		{Code: "300750", Name: "宁德时代", AuctionPrice: 215, AuctionVolume: 30000, AuctionAmount: 6450000, Source: "eastmoney_clist", Status: "ok", FetchedAt: fetchedAt.Add(5 * time.Minute)},
+		{Code: "000001", Name: "平安银行", AuctionPrice: 11.8, AuctionVolume: 110000, AuctionAmount: 1298000, Source: "eastmoney_clist", Status: "ok", FetchedAt: fetchedAt.Add(5 * time.Minute)},
+	}, true)
+	if err != nil {
+		t.Fatalf("UpsertAStockAuctionAmounts replace error: %v", err)
+	}
+	if replaced.Inserted != 2 || replaced.Updated != 0 {
+		t.Fatalf("unexpected replace result: %+v", replaced)
+	}
+	replacedList, err := store.ListAStockAuctionAmounts(ctx, model.AStockAuctionFilter{Date: "2026-06-16", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListAStockAuctionAmounts replaced error: %v", err)
+	}
+	if replacedList.Total != 2 || len(replacedList.Items) != 2 || replacedList.Items[0].Code != "300750" {
+		t.Fatalf("expected replace snapshot to discard stale rows, got %+v", replacedList)
 	}
 }
 
