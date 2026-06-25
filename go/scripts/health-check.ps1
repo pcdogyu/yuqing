@@ -6,7 +6,8 @@ param(
     [string]$CrawlerUrl = "http://127.0.0.1:8083",
     [string]$AnalysisUrl = "http://127.0.0.1:8084",
     [string]$NlpUrl = "http://127.0.0.1:8085",
-    [string]$SchedulerUrl = "http://127.0.0.1:8086"
+    [string]$SchedulerUrl = "http://127.0.0.1:8086",
+    [string]$ReleaseUrl = "http://127.0.0.1:8099"
 )
 
 $ErrorActionPreference = "Stop"
@@ -18,7 +19,8 @@ $targets = @(
     @{ Name = "crawler-service"; Url = "$CrawlerUrl/healthz" },
     @{ Name = "analysis-service"; Url = "$AnalysisUrl/healthz" },
     @{ Name = "nlp-service"; Url = "$NlpUrl/healthz" },
-    @{ Name = "scheduler-service"; Url = "$SchedulerUrl/healthz" }
+    @{ Name = "scheduler-service"; Url = "$SchedulerUrl/healthz" },
+    @{ Name = "release-service"; Url = "$ReleaseUrl/healthz" }
 )
 
 $failed = 0

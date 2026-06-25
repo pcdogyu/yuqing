@@ -73,6 +73,11 @@ interface YuqingApi {
     ): ApiEnvelope<AndroidActionResponse>
 }
 
+interface ReleaseApi {
+    @GET("api/v1/release/latest")
+    suspend fun latest(): ApiEnvelope<ReleasePackage>
+}
+
 data class UrlTestResult(
     val ok: Boolean,
     val code: Int? = null,
@@ -92,6 +97,10 @@ object ApiFactory {
 
     fun yuqing(baseUrl: String = BuildConfig.DEFAULT_API_BASE_URL, token: String? = null): YuqingApi {
         return retrofit(normalizeApiBaseUrl(baseUrl), token).create(YuqingApi::class.java)
+    }
+
+    fun release(baseUrl: String = BuildConfig.DEFAULT_RELEASE_BASE_URL): ReleaseApi {
+        return retrofit(normalizeReleaseBaseUrl(baseUrl), null).create(ReleaseApi::class.java)
     }
 
     suspend fun testUrl(baseUrl: String, path: String = "healthz"): UrlTestResult = withContext(Dispatchers.IO) {
@@ -147,6 +156,10 @@ object ApiFactory {
     }
 
     fun normalizeApiBaseUrl(value: String, fallback: String = BuildConfig.DEFAULT_API_BASE_URL): String {
+        return normalizeBaseUrl(value, fallback)
+    }
+
+    fun normalizeReleaseBaseUrl(value: String, fallback: String = BuildConfig.DEFAULT_RELEASE_BASE_URL): String {
         return normalizeBaseUrl(value, fallback)
     }
 

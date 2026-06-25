@@ -2796,6 +2796,7 @@ func (s *Service) operationServiceStatuses(ctx context.Context) []model.Operatio
 		{name: "analysis-service", url: s.cfg.AnalysisURL},
 		{name: "nlp-service", url: s.cfg.NLPURL},
 		{name: "scheduler-service", url: s.cfg.SchedulerURL},
+		{name: "release-service", url: s.cfg.ReleaseURL},
 	}
 	result := make([]model.OperationServiceStatus, 0, len(targets))
 	for _, target := range targets {

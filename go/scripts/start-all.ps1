@@ -27,6 +27,10 @@ if ($dbRuntimeConfig) {
     if (-not $env:YUQING_POSTGRES_SSLMODE -and $dbRuntimeConfig.postgres_sslmode) { $env:YUQING_POSTGRES_SSLMODE = $dbRuntimeConfig.postgres_sslmode }
 }
 $env:YUQING_DB_PATH = if ($env:YUQING_DB_PATH) { $env:YUQING_DB_PATH } else { Join-Path $Root "data\yuqing.db" }
+$repoRoot = (Resolve-Path (Join-Path $Root "..")).Path
+$env:YUQING_RELEASE_ADDR = if ($env:YUQING_RELEASE_ADDR) { $env:YUQING_RELEASE_ADDR } else { ":8099" }
+$env:YUQING_RELEASE_URL = if ($env:YUQING_RELEASE_URL) { $env:YUQING_RELEASE_URL } else { "http://127.0.0.1:8099" }
+$env:YUQING_RELEASE_DIR = if ($env:YUQING_RELEASE_DIR) { $env:YUQING_RELEASE_DIR } else { Join-Path $repoRoot "release" }
 
 $services = @(
     @{ Name = "auth-service"; Path = ".\cmd\auth-service" },
@@ -36,6 +40,7 @@ $services = @(
     @{ Name = "analysis-service"; Path = ".\cmd\analysis-service" },
     @{ Name = "nlp-service"; Path = ".\cmd\nlp-service" },
     @{ Name = "scheduler-service"; Path = ".\cmd\scheduler-service" },
+    @{ Name = "release-service"; Path = ".\cmd\release-service" },
     @{ Name = "gateway-web"; Path = ".\cmd\gateway-web" }
 )
 

@@ -32,9 +32,19 @@ set "AKSHARE_AUCTION_PORT=8087"
 set "AKSHARE_AUCTION_HOST=127.0.0.1"
 set "GATEWAY_WEB_PORT=8079"
 set "WECHAT_SERVICE_PORT=8088"
+set "RELEASE_SERVICE_PORT=8099"
 set "YUQING_ASTOCK_AUCTION_URL_DEFAULTED=0"
 set "YUQING_ASTOCK_HOLDING_URL_DEFAULTED=0"
 set "YUQING_AKSHARE_AUCTION_STARTED=0"
+if not defined YUQING_RELEASE_ADDR (
+    set "YUQING_RELEASE_ADDR=:%RELEASE_SERVICE_PORT%"
+)
+if not defined YUQING_RELEASE_URL (
+    set "YUQING_RELEASE_URL=http://127.0.0.1:%RELEASE_SERVICE_PORT%"
+)
+if not defined YUQING_RELEASE_DIR (
+    set "YUQING_RELEASE_DIR=%REPO_ROOT%\release"
+)
 if not defined YUQING_SCHEDULER_ADDR (
     set "YUQING_SCHEDULER_ADDR=:8086"
 )
@@ -64,7 +74,7 @@ if not defined YUQING_ASTOCK_HOLDING_URL (
     set "YUQING_ASTOCK_HOLDING_URL=http://127.0.0.1:%AKSHARE_AUCTION_PORT%"
     set "YUQING_ASTOCK_HOLDING_URL_DEFAULTED=1"
 )
-set "SERVICE_NAMES=auth-service wechat-service content-service crawler-service analysis-service nlp-service gateway-web scheduler-service akshare-service"
+set "SERVICE_NAMES=auth-service wechat-service content-service crawler-service analysis-service nlp-service gateway-web scheduler-service release-service akshare-service"
 set "YUQING_LOG_LEVEL=debug"
 set "YUQING_RUN_VERSION=local"
 set "TEMP_BOOTSTRAP=%TEMP%\yuqing-run-bootstrap-%RANDOM%-%RANDOM%.cmd"
@@ -173,7 +183,7 @@ for %%S in (%SERVICE_NAMES%) do (
 echo [5/6] Build service binaries concurrently...
 if not exist "%BIN_DIR%" mkdir "%BIN_DIR%"
 if defined GO_BUILD_FLAGS echo Go build flags: %GO_BUILD_FLAGS%
-go build %GO_BUILD_FLAGS% -ldflags "%LDFLAGS%" -o "%BIN_DIR%\\" "./cmd/auth-service" "./cmd/wechat-service" "./cmd/content-service" "./cmd/crawler-service" "./cmd/analysis-service" "./cmd/nlp-service" "./cmd/gateway-web" "./cmd/akshare-service" "./cmd/scheduler-service"
+go build %GO_BUILD_FLAGS% -ldflags "%LDFLAGS%" -o "%BIN_DIR%\\" "./cmd/auth-service" "./cmd/wechat-service" "./cmd/content-service" "./cmd/crawler-service" "./cmd/analysis-service" "./cmd/nlp-service" "./cmd/gateway-web" "./cmd/akshare-service" "./cmd/scheduler-service" "./cmd/release-service"
 if errorlevel 1 goto :fail
 
 echo [6/6] Start services with debug logging...
@@ -186,6 +196,7 @@ for %%S in (
     nlp-service
     gateway-web
     scheduler-service
+    release-service
 ) do (
     call :start_process_core %%S
     if errorlevel 1 goto :fail
@@ -198,6 +209,7 @@ echo Services started.
 echo Gateway: http://127.0.0.1:%GATEWAY_WEB_PORT%
 echo Wechat: %YUQING_WECHAT_URL%
 echo Scheduler: %YUQING_SCHEDULER_URL%
+echo Release: %YUQING_RELEASE_URL%
 if defined YUQING_ASTOCK_AUCTION_URL (
     echo AKShareAuction: %YUQING_ASTOCK_AUCTION_URL%
 ) else (

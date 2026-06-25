@@ -10,6 +10,7 @@ param(
     [string]$AnalysisUrl = "http://127.0.0.1:8084",
     [string]$NlpUrl = "http://127.0.0.1:8085",
     [string]$SchedulerUrl = "http://127.0.0.1:8086",
+    [string]$ReleaseUrl = "http://127.0.0.1:8099",
     [string]$CryptoMockUrl = $env:YUQING_CRYPTO_MOCK_URL,
     [string]$ServiceToken = $(if ($env:YUQING_SERVICE_TOKEN) { $env:YUQING_SERVICE_TOKEN } else { "stonedt-internal-token" })
 )
@@ -115,11 +116,21 @@ if ($SchedulerUrl -eq "http://127.0.0.1:8086" -and (Test-PortInUse $schedulerPor
 $env:YUQING_SCHEDULER_ADDR = ":$schedulerPort"
 $env:YUQING_SCHEDULER_URL = $SchedulerUrl
 
+$releasePort = Get-UrlPort $ReleaseUrl
+if ($ReleaseUrl -eq "http://127.0.0.1:8099" -and (Test-PortInUse $releasePort)) {
+    $releasePort = Find-FreePort 18099
+    $ReleaseUrl = "http://127.0.0.1:$releasePort"
+}
+$env:YUQING_RELEASE_ADDR = ":$releasePort"
+$env:YUQING_RELEASE_URL = $ReleaseUrl
+$env:YUQING_RELEASE_DIR = (Resolve-Path (Join-Path $repoRoot "..\release")).Path
+
 Push-Location $repoRoot
 try {
     Add-Step "gateway_endpoint" "ok" "gateway $GatewayUrl"
     Add-Step "wechat_endpoint" "ok" "wechat api $WechatUrl"
     Add-Step "scheduler_endpoint" "ok" "scheduler api $SchedulerUrl"
+    Add-Step "release_endpoint" "ok" "release api $ReleaseUrl"
 
     Invoke-ReleaseStep "go_test" {
         & go test ./...
@@ -144,7 +155,8 @@ try {
                     "-CrawlerUrl", $CrawlerUrl,
                     "-AnalysisUrl", $AnalysisUrl,
                     "-NlpUrl", $NlpUrl,
-                    "-SchedulerUrl", $SchedulerUrl
+                    "-SchedulerUrl", $SchedulerUrl,
+                    "-ReleaseUrl", $ReleaseUrl
                 )
                 return
             } catch {
@@ -165,6 +177,7 @@ try {
             "-AnalysisUrl", $AnalysisUrl,
             "-NlpUrl", $NlpUrl,
             "-SchedulerUrl", $SchedulerUrl,
+            "-ReleaseUrl", $ReleaseUrl,
             "-ServiceToken", $ServiceToken,
             "-DatabasePath", $DatabasePath
         )

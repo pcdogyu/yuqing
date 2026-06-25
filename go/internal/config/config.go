@@ -90,6 +90,7 @@ type Config struct {
 	AnalysisAddr   string
 	NLPAddr        string
 	SchedulerAddr  string
+	ReleaseAddr    string
 
 	GatewayWebHTTPAddrs    []string
 	GatewayWebRedirectAddr string
@@ -105,6 +106,8 @@ type Config struct {
 	AnalysisURL   string
 	NLPURL        string
 	SchedulerURL  string
+	ReleaseURL    string
+	ReleaseDir    string
 
 	LLMBaseURL string
 	LLMAPIKey  string
@@ -206,6 +209,7 @@ func Load() Config {
 		AnalysisAddr:   envOrDefault("YUQING_ANALYSIS_ADDR", ":8084"),
 		NLPAddr:        envOrDefaultWithAliases("YUQING_NLP_ADDR", ":8085", "JIN10_NLP_ADDR"),
 		SchedulerAddr:  envOrDefaultWithAliases("YUQING_SCHEDULER_ADDR", ":8086", "JIN10_SCHEDULER_ADDR"),
+		ReleaseAddr:    envOrDefault("YUQING_RELEASE_ADDR", ":8099"),
 
 		GatewayWebHTTPAddrs:    gatewayWebHTTPAddrs,
 		GatewayWebRedirectAddr: envOrDefaultAllowEmpty("YUQING_GATEWAY_REDIRECT_ADDR", ":80"),
@@ -221,6 +225,8 @@ func Load() Config {
 		AnalysisURL:   envOrDefault("YUQING_ANALYSIS_URL", "http://127.0.0.1:8084"),
 		NLPURL:        envOrDefaultWithAliases("YUQING_NLP_URL", "http://127.0.0.1:8085", "JIN10_NLP_URL"),
 		SchedulerURL:  envOrDefaultWithAliases("YUQING_SCHEDULER_URL", "http://127.0.0.1:8086", "JIN10_SCHEDULER_URL"),
+		ReleaseURL:    envOrDefault("YUQING_RELEASE_URL", "http://127.0.0.1:8099"),
+		ReleaseDir:    envOrDefault("YUQING_RELEASE_DIR", "release"),
 		LLMBaseURL:    envOrDefault("YUQING_LLM_BASE_URL", ""),
 		LLMAPIKey:     envOrDefault("YUQING_LLM_API_KEY", ""),
 		LLMModel:      envOrDefault("YUQING_LLM_MODEL", ""),

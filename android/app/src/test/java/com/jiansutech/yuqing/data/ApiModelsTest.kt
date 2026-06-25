@@ -172,4 +172,26 @@ class ApiModelsTest {
         assertEquals("244.08", row.t0Close)
         assertEquals("+4.17%", row.days.first().returnPct)
     }
+
+    @Test
+    fun releasePackageMetadataParsesLatestResponse() {
+        val payload = """
+            {
+              "version_name": "20260625-120000-abcdef12",
+              "version_code": 123,
+              "file_name": "yuqing-20260625-120000-abcdef12-release.apk",
+              "download_url": "http://yuqin.jiansutech.com:8099/release/yuqing-20260625-120000-abcdef12-release.apk",
+              "size_bytes": 12345678,
+              "sha256": "abc123",
+              "modified_at": "2026-06-25T04:00:00Z"
+            }
+        """.trimIndent()
+
+        val release = ApiFactory.json.decodeFromString(ReleasePackage.serializer(), payload)
+
+        assertEquals("20260625-120000-abcdef12", release.versionName)
+        assertEquals(123, release.versionCode)
+        assertEquals("yuqing-20260625-120000-abcdef12-release.apk", release.fileName)
+        assertEquals("abc123", release.sha256)
+    }
 }

@@ -7,6 +7,7 @@
 1. 安装 Android Studio、JDK 17 和 Android SDK 35。
 2. 用 Android Studio 打开 `android/`。
 3. 在 Android Studio 的 Gradle 面板执行 `:app:assembleRelease`；或安装 Gradle 后在 `android/` 下执行 `gradle :app:assembleRelease`。输出位于 `app/build/outputs/apk/release/`。
+4. Release 构建完成后，APK 会自动复制到仓库根目录 `release/`，供 8099 发布服务下载。
 
 APK 的 `versionName` 和产物文件名会自动使用最近一次 Git 提交信息，格式为 `YYYYMMDD-HHMMSS-<8位hash>`，例如 `20260622-171314-be52d75c`。
 
@@ -14,6 +15,7 @@ APK 的 `versionName` 和产物文件名会自动使用最近一次 Git 提交�
 
 - Auth API: `http://yuqin.jiansutech.com:8081/`
 - Content/BFF API: `http://yuqin.jiansutech.com:8082/`
+- Release API: `http://yuqin.jiansutech.com:8099/`
 
 如果移动端只填写 `yuqin.jiansutech.com` 或 `http://yuqin.jiansutech.com`，App 会自动补全协议和服务端口：
 
@@ -29,3 +31,4 @@ APK 的 `versionName` 和产物文件名会自动使用最近一次 Git 提交�
 - A 股推荐通知：每天 09:25、09:30 推送“上午热门股票推荐”，12:55、13:00 推送“下午热门股票推荐”。
 - 系统操作通过 `/api/v1/android/actions/{action}` 统一触发，并在 App 内二次确认。
 - 低网速下展示最近一次缓存的 Dashboard 数据。
+- 当前安装版本使用超过 6 个月后强制升级；点击升级会从 Release API 获取最新 APK，点击取消会退出 App。

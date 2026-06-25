@@ -28,6 +28,9 @@ android/local.properties
 android/app/build/
 android/build/
 
+# Mobile release artifacts
+release/*.apk
+
 # Local Git pack/index artifacts are handled by the run script; keep them out of the tree if they surface during maintenance.
 .git/objects/pack/*.idx
 .git/objects/pack/*.pack

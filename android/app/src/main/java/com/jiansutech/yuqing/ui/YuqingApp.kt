@@ -74,6 +74,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import com.jiansutech.yuqing.BuildConfig
 import com.jiansutech.yuqing.astock.AStockTradingCalendar
 import com.jiansutech.yuqing.data.AndroidDashboard
 import com.jiansutech.yuqing.data.AndroidModule
@@ -628,6 +629,7 @@ private fun SystemModule(dashboard: AndroidDashboard, state: YuqingUiState, view
     val webUrl = "http://yuqin.jiansutech.com:8079/"
     val contentUrl = state.session.apiBaseUrl
     val authUrl = state.session.authBaseUrl
+    val releaseUrl = BuildConfig.DEFAULT_RELEASE_BASE_URL
     LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item { SectionTitle("连接") }
         item {
@@ -655,6 +657,15 @@ private fun SystemModule(dashboard: AndroidDashboard, state: YuqingUiState, view
                 service = servicesByName["auth-service"],
                 testResult = state.connectionTests["API 地址"],
                 onTest = { viewModel.testConnection("API 地址", authUrl) },
+            )
+        }
+        item {
+            ConnectionRow(
+                title = "发布服务地址",
+                value = releaseUrl,
+                service = servicesByName["release-service"],
+                testResult = state.connectionTests["发布服务地址"],
+                onTest = { viewModel.testConnection("发布服务地址", releaseUrl) },
             )
         }
         item {

@@ -30,6 +30,7 @@ foreach ($name in @(
     "analysis-service",
     "nlp-service",
     "scheduler-service",
+    "release-service",
     "gateway-web"
 )) {
     Get-Process -Name $name -ErrorAction SilentlyContinue | ForEach-Object {

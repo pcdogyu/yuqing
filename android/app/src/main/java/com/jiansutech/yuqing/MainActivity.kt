@@ -7,21 +7,49 @@ import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.jiansutech.yuqing.data.AppInstallStore
+import com.jiansutech.yuqing.data.ReleaseUpdater
+import com.jiansutech.yuqing.data.isInstallRecordExpired
 import com.jiansutech.yuqing.ui.YuqingApp
 import com.jiansutech.yuqing.ui.YuqingViewModel
 import com.jiansutech.yuqing.ui.YuqingViewModelFactory
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+
+private data class AppUpgradeUiState(
+    val required: Boolean = false,
+    val loading: Boolean = false,
+    val message: String = "",
+)
 
 class MainActivity : ComponentActivity() {
+    private lateinit var installStore: AppInstallStore
+    private lateinit var releaseUpdater: ReleaseUpdater
+    private val upgradeState = MutableStateFlow(AppUpgradeUiState())
+
     override fun onCreate(savedInstanceState: Bundle?) {
         val startedAt = SystemClock.elapsedRealtime()
         Log.i(STARTUP_TAG, "MainActivity.onCreate start savedInstanceState=${savedInstanceState != null}")
         super.onCreate(savedInstanceState)
+        installStore = AppInstallStore(this)
+        releaseUpdater = ReleaseUpdater(this)
         requestNotificationPermissionIfNeeded()
         val app = application as YuqingApplication
         setContent {
             Log.i(STARTUP_TAG, "MainActivity.setContent compose tree start")
+            val upgrade by upgradeState.collectAsState()
             val viewModel: YuqingViewModel = viewModel(
                 factory = YuqingViewModelFactory(
                     app.sessionStore,
@@ -30,7 +58,15 @@ class MainActivity : ComponentActivity() {
                 ),
             )
             YuqingApp(viewModel)
+            if (upgrade.required) {
+                ForceUpgradeDialog(
+                    state = upgrade,
+                    onUpgrade = ::startUpgradeDownload,
+                    onCancel = ::exitAppForUpgradeCancel,
+                )
+            }
         }
+        checkAppUsageExpiry()
         Log.i(STARTUP_TAG, "MainActivity.onCreate end elapsedMs=${SystemClock.elapsedRealtime() - startedAt}")
     }
 
@@ -42,6 +78,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         Log.i(STARTUP_TAG, "MainActivity.onResume")
+        checkAppUsageExpiry()
     }
 
     override fun onPause() {
@@ -70,6 +107,83 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun checkAppUsageExpiry() {
+        lifecycleScope.launch {
+            runCatching {
+                val record = installStore.ensureCurrentVersionInstallRecord(
+                    currentVersionCode = BuildConfig.VERSION_CODE,
+                    currentVersionName = BuildConfig.VERSION_NAME,
+                )
+                val expired = isInstallRecordExpired(record.installedAtMillis, System.currentTimeMillis())
+                upgradeState.update {
+                    if (expired) {
+                        it.copy(required = true, message = "当前安装版本已使用超过6个月，请升级到最新版本。")
+                    } else {
+                        it.copy(required = false, message = "")
+                    }
+                }
+            }.onFailure { throwable ->
+                Log.w(STARTUP_TAG, "MainActivity.install expiry check skipped", throwable)
+            }
+        }
+    }
+
+    private fun startUpgradeDownload() {
+        if (upgradeState.value.loading) {
+            return
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) {
+            upgradeState.update {
+                it.copy(message = "请先允许安装未知来源应用，授权后返回并重新点击升级。")
+            }
+            startActivity(releaseUpdater.unknownSourcesSettingsIntent())
+            return
+        }
+        lifecycleScope.launch {
+            upgradeState.update { it.copy(loading = true, message = "正在获取最新安装包...") }
+            runCatching {
+                val file = releaseUpdater.downloadLatestApk()
+                startActivity(releaseUpdater.installApk(file))
+                upgradeState.update { it.copy(loading = false, message = "安装器已打开，请完成升级。") }
+            }.onFailure { throwable ->
+                Log.e(STARTUP_TAG, "MainActivity.release download failed", throwable)
+                upgradeState.update {
+                    it.copy(
+                        loading = false,
+                        message = throwable.message ?: "升级失败，请检查网络后重试。",
+                    )
+                }
+            }
+        }
+    }
+
+    private fun exitAppForUpgradeCancel() {
+        finishAffinity()
+    }
+}
+
+@Composable
+private fun ForceUpgradeDialog(
+    state: AppUpgradeUiState,
+    onUpgrade: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    BackHandler(onBack = onCancel)
+    AlertDialog(
+        onDismissRequest = {},
+        title = { Text("需要升级") },
+        text = { Text(state.message.ifBlank { "当前安装版本已超过最大使用周期，请升级到最新版本。" }) },
+        confirmButton = {
+            Button(onClick = onUpgrade, enabled = !state.loading) {
+                Text(if (state.loading) "升级中..." else "立即升级")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onCancel, enabled = !state.loading) {
+                Text("取消")
+            }
+        },
+    )
 }
 
 private const val STARTUP_TAG = "YuqingStartup"

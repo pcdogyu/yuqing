@@ -557,6 +557,7 @@ func TestOperationsAndAlertsAPI(t *testing.T) {
 		AnalysisURL:    healthy.URL,
 		NLPURL:         healthy.URL,
 		SchedulerURL:   healthy.URL,
+		ReleaseURL:     healthy.URL,
 		CryptoXURL:     healthy.URL + "/crypto-x",
 		BinanceBaseURL: "https://binance.example.com",
 		CoinLoreURL:    "https://coinlore.example.com",
@@ -577,7 +578,7 @@ func TestOperationsAndAlertsAPI(t *testing.T) {
 	if err := json.Unmarshal(opsRR.Body.Bytes(), &opsEnvelope); err != nil {
 		t.Fatalf("unmarshal operations: %v", err)
 	}
-	if len(opsEnvelope.Data.Services) != 8 || len(opsEnvelope.Data.FailedTaskRuns) != 2 {
+	if len(opsEnvelope.Data.Services) != 9 || len(opsEnvelope.Data.FailedTaskRuns) != 2 {
 		t.Fatalf("unexpected operations summary: %+v", opsEnvelope.Data)
 	}
 	serviceStatuses := map[string]model.OperationServiceStatus{}
@@ -586,6 +587,9 @@ func TestOperationsAndAlertsAPI(t *testing.T) {
 	}
 	if !serviceStatuses["gateway-web"].Healthy || serviceStatuses["gateway-web"].Status != "ok" {
 		t.Fatalf("expected gateway-web healthy ok status, got %+v", serviceStatuses["gateway-web"])
+	}
+	if !serviceStatuses["release-service"].Healthy || serviceStatuses["release-service"].Status != "ok" {
+		t.Fatalf("expected release-service healthy ok status, got %+v", serviceStatuses["release-service"])
 	}
 	if len(opsEnvelope.Data.SchedulerJobs) != 1 || opsEnvelope.Data.SchedulerJobs[0].Name != "analysis-refresh" {
 		t.Fatalf("expected scheduler job summary, got %+v", opsEnvelope.Data.SchedulerJobs)

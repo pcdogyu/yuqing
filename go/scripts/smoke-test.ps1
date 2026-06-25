@@ -7,6 +7,7 @@ param(
     [string]$AnalysisUrl = "http://127.0.0.1:8084",
     [string]$NlpUrl = "http://127.0.0.1:8085",
     [string]$GatewayUrl = "http://127.0.0.1:8079",
+    [string]$ReleaseUrl = "http://127.0.0.1:8099",
     [string]$DatabasePath = $env:YUQING_DB_PATH,
     [string]$CryptoMockUrl = $env:YUQING_CRYPTO_MOCK_URL,
     [string]$ServiceToken = $(if ($env:YUQING_SERVICE_TOKEN) { $env:YUQING_SERVICE_TOKEN } else { "stonedt-internal-token" })
@@ -37,7 +38,8 @@ function Invoke-WebRequestAllowError([string]$Method, [string]$Uri, [int]$Timeou
     -CrawlerUrl $CrawlerUrl `
     -AnalysisUrl $AnalysisUrl `
     -NlpUrl $NlpUrl `
-    -SchedulerUrl $SchedulerUrl
+    -SchedulerUrl $SchedulerUrl `
+    -ReleaseUrl $ReleaseUrl
 
 $jobs = $null
 for ($attempt = 1; $attempt -le 12; $attempt++) {
