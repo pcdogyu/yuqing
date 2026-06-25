@@ -73,6 +73,10 @@ func TestReleaseListOrdersNewestFilesFirst(t *testing.T) {
 	if !(zipIndex < apkIndex && apkIndex < oldIndex) {
 		t.Fatalf("expected newest files first with filename descending tie-break, got %s", body)
 	}
+	expectedTime := formatReleaseTime(time.Date(2026, 6, 25, 5, 0, 0, 0, time.UTC))
+	if !strings.Contains(body, "<th>发布时间</th>") || !strings.Contains(body, expectedTime) {
+		t.Fatalf("expected release publish time in listing, got %s", body)
+	}
 }
 
 func TestLatestAPKUsesNewestAPKAndBaseURL(t *testing.T) {

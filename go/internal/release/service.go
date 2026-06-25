@@ -97,13 +97,19 @@ func (s *Service) handleReleaseList(w http.ResponseWriter, r *http.Request) {
 		return listing[i].modTime.After(listing[j].modTime)
 	})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = io.WriteString(w, "<!doctype html><html><head><meta charset=\"utf-8\"><title>Yuqing Releases</title></head><body><h1>Yuqing Releases</h1><ul>")
+	_, _ = io.WriteString(w, "<!doctype html><html><head><meta charset=\"utf-8\"><title>Yuqing Releases</title><style>body{font-family:Arial,sans-serif}table{border-collapse:collapse}td,th{padding:6px 16px 6px 0;text-align:left}.time{color:#555;white-space:nowrap}</style></head><body><h1>Yuqing Releases</h1><table><thead><tr><th>文件</th><th>发布时间</th></tr></thead><tbody>")
 	for _, file := range listing {
 		name := file.name
 		escaped := url.PathEscape(name)
-		_, _ = fmt.Fprintf(w, "<li><a href=\"/release/%s\">%s</a></li>", escaped, htmlEscape(name))
+		_, _ = fmt.Fprintf(
+			w,
+			"<tr><td><a href=\"/release/%s\">%s</a></td><td class=\"time\">%s</td></tr>",
+			escaped,
+			htmlEscape(name),
+			htmlEscape(formatReleaseTime(file.modTime)),
+		)
 	}
-	_, _ = io.WriteString(w, "</ul></body></html>")
+	_, _ = io.WriteString(w, "</tbody></table></body></html>")
 }
 
 func (s *Service) handleReleaseFile(w http.ResponseWriter, r *http.Request) {
@@ -231,4 +237,11 @@ func htmlEscape(value string) string {
 	value = strings.ReplaceAll(value, ">", "&gt;")
 	value = strings.ReplaceAll(value, "\"", "&quot;")
 	return value
+}
+
+func formatReleaseTime(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.Local().Format("2006-01-02 15:04:05")
 }
