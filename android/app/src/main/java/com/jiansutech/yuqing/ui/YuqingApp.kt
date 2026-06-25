@@ -3,6 +3,7 @@ package com.jiansutech.yuqing.ui
 import android.os.SystemClock
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.Canvas
@@ -66,6 +67,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -74,6 +77,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import kotlin.math.abs
 import com.jiansutech.yuqing.BuildConfig
 import com.jiansutech.yuqing.astock.AStockTradingCalendar
 import com.jiansutech.yuqing.data.AndroidDashboard
@@ -234,6 +238,8 @@ private fun PortalScreen(
                     item = articleDetail,
                     loading = state.articleDetailLoading,
                     error = state.articleDetailError,
+                    onSwipeLeft = viewModel::closeArticleDetail,
+                    onSwipeDown = viewModel::openNextArticleDetail,
                 )
             } else {
                 ModuleContent(
@@ -1004,8 +1010,12 @@ private fun ArticleDetailScreen(
     item: ArticleItem,
     loading: Boolean,
     error: String,
+    onSwipeLeft: () -> Unit,
+    onSwipeDown: () -> Unit,
 ) {
     val uriHandler = LocalUriHandler.current
+    val swipeThreshold = with(LocalDensity.current) { 96.dp.toPx() }
+    var dragOffset by remember(articleStableKey(item)) { mutableStateOf(Offset.Zero) }
     val displayTime = remember(item.capturedAt, item.publishTime, item.publishTimeText) {
         formatArticleRelativeTime(item.publishTimeText)
             .ifBlank { formatArticleRelativeTime(item.publishTime) }
@@ -1014,7 +1024,29 @@ private fun ArticleDetailScreen(
     val body = remember(item.content, item.summary) {
         item.content.trim().ifBlank { item.summary.trim() }
     }
-    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    LazyColumn(
+        modifier = Modifier.pointerInput(articleStableKey(item)) {
+            detectDragGestures(
+                onDragStart = { dragOffset = Offset.Zero },
+                onDrag = { change, dragAmount ->
+                    change.consume()
+                    dragOffset += dragAmount
+                },
+                onDragEnd = {
+                    val horizontal = dragOffset.x
+                    val vertical = dragOffset.y
+                    when {
+                        horizontal < -swipeThreshold && abs(horizontal) > abs(vertical) -> onSwipeLeft()
+                        vertical > swipeThreshold && vertical > abs(horizontal) -> onSwipeDown()
+                    }
+                    dragOffset = Offset.Zero
+                },
+                onDragCancel = { dragOffset = Offset.Zero },
+            )
+        },
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(

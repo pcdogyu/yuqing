@@ -490,6 +490,17 @@ class YuqingViewModel(
         }
     }
 
+    fun openNextArticleDetail() {
+        val state = _uiState.value
+        val current = state.articleDetail ?: return
+        val next = nextArticleAfter(current, articleDetailNavigationArticles(state))
+        if (next == null) {
+            _uiState.update { it.copy(message = "已经是最后一条新闻") }
+            return
+        }
+        openArticleDetail(next)
+    }
+
     fun loadAStockRecommendations(window: AStockRecommendationWindow = currentAStockRecommendationWindow()) {
         viewModelScope.launch {
             _uiState.update { it.copy(loading = true, error = "", message = "") }
@@ -722,6 +733,26 @@ private fun sameArticle(left: ArticleItem, right: ArticleItem): Boolean {
     return left.title == right.title &&
         left.sourceUrl == right.sourceUrl &&
         left.capturedAt == right.capturedAt
+}
+
+internal fun articleDetailNavigationArticles(state: YuqingUiState): List<ArticleItem> {
+    val current = state.articleDetail
+    val sources = listOf(
+        state.articleList?.items.orEmpty(),
+        state.dashboard?.articles?.items.orEmpty(),
+    )
+    if (current != null) {
+        sources.firstOrNull { articles -> articles.any { sameArticle(it, current) } }?.let { return it }
+    }
+    return sources.flatten().distinctBy(::articleIdentity)
+}
+
+internal fun nextArticleAfter(current: ArticleItem, candidates: List<ArticleItem>): ArticleItem? {
+    val currentIndex = candidates.indexOfFirst { sameArticle(it, current) }
+    if (currentIndex < 0) {
+        return candidates.firstOrNull { !sameArticle(it, current) }
+    }
+    return candidates.drop(currentIndex + 1).firstOrNull { !sameArticle(it, current) }
 }
 
 private fun patchDashboardLatestArticles(dashboard: AndroidDashboard, latestArticles: List<ArticleItem>): AndroidDashboard {

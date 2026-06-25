@@ -105,4 +105,33 @@ class ArticleListFallbackTest {
 
         assertEquals(listOf(3L, 4L, 1L), merged.map { it.id })
     }
+
+    @Test
+    fun nextArticleAfterReturnsFollowingArticle() {
+        val first = ArticleItem(id = 1, title = "first")
+        val second = ArticleItem(id = 2, title = "second")
+        val third = ArticleItem(id = 3, title = "third")
+
+        val next = nextArticleAfter(first, listOf(first, second, third))
+
+        assertEquals(second, next)
+    }
+
+    @Test
+    fun articleDetailNavigationUsesListContainingCurrentDetail() {
+        val dashboardArticle = ArticleItem(id = 1, title = "dashboard")
+        val listArticle = ArticleItem(id = 2, title = "list")
+        val listNext = ArticleItem(id = 3, title = "list next")
+        val state = YuqingUiState(
+            articleDetail = listArticle,
+            dashboard = AndroidDashboard(
+                articles = ItemListResult(items = listOf(dashboardArticle)),
+            ),
+            articleList = ItemListResult(items = listOf(listArticle, listNext)),
+        )
+
+        val articles = articleDetailNavigationArticles(state)
+
+        assertEquals(listOf(listArticle, listNext), articles)
+    }
 }
