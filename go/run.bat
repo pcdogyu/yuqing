@@ -305,8 +305,7 @@ if errorlevel 1 (
     echo Service %TARGET_SERVICE% is not running.
     exit /b 0
 )
-echo Service %TARGET_SERVICE% is running. Stopping...
-taskkill /F /IM "%TARGET_SERVICE%.exe" >nul 2>nul
+powershell -NoProfile -ExecutionPolicy Bypass -File "%GO_DIR%\scripts\stop-service.ps1" -Name "%TARGET_SERVICE%"
 if errorlevel 1 (
     echo Failed to stop %TARGET_SERVICE%.exe.
     exit /b 1
