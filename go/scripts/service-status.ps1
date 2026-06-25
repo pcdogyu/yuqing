@@ -41,6 +41,7 @@ $services = @(
     [pscustomobject]@{ Name = "analysis-service"; Port = 8084; Url = "http://127.0.0.1:8084" },
     [pscustomobject]@{ Name = "nlp-service"; Port = 8085; Url = "http://127.0.0.1:8085" },
     [pscustomobject]@{ Name = "gateway-web"; Port = 8079; Url = "http://127.0.0.1:8079" },
+    [pscustomobject]@{ Name = "gateway-web"; Port = 80; Url = "http://127.0.0.1/" },
     [pscustomobject]@{ Name = "scheduler-service"; Port = 8086; Url = "http://127.0.0.1:8086" },
     [pscustomobject]@{ Name = "release-service"; Port = $releasePort; Url = $releaseUrl },
     [pscustomobject]@{ Name = "akshare-service"; Port = 8087; Url = "http://127.0.0.1:8087" }

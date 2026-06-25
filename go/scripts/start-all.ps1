@@ -31,6 +31,9 @@ $repoRoot = (Resolve-Path (Join-Path $Root "..")).Path
 $env:YUQING_RELEASE_ADDR = if ($env:YUQING_RELEASE_ADDR) { $env:YUQING_RELEASE_ADDR } else { ":8099" }
 $env:YUQING_RELEASE_URL = if ($env:YUQING_RELEASE_URL) { $env:YUQING_RELEASE_URL } else { "http://127.0.0.1:8099" }
 $env:YUQING_RELEASE_DIR = if ($env:YUQING_RELEASE_DIR) { $env:YUQING_RELEASE_DIR } else { Join-Path $repoRoot "release" }
+if (-not $env:YUQING_GATEWAY_HTTP_ADDRS) {
+    $env:YUQING_GATEWAY_HTTP_ADDRS = if ($env:YUQING_GATEWAY_TLS_CERT_FILE -or $env:YUQING_GATEWAY_TLS_KEY_FILE) { ":8079" } else { ":8079,:80" }
+}
 
 $services = @(
     @{ Name = "auth-service"; Path = ".\cmd\auth-service" },

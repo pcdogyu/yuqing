@@ -80,7 +80,7 @@ func TestLoadUsesDefaults(t *testing.T) {
 	if cfg.GatewayWebAddr != ":8079" {
 		t.Fatalf("expected default gateway addr, got %q", cfg.GatewayWebAddr)
 	}
-	if len(cfg.GatewayWebHTTPAddrs) != 1 || cfg.GatewayWebHTTPAddrs[0] != ":8079" {
+	if len(cfg.GatewayWebHTTPAddrs) != 2 || cfg.GatewayWebHTTPAddrs[0] != ":8079" || cfg.GatewayWebHTTPAddrs[1] != ":80" {
 		t.Fatalf("expected default gateway http addrs, got %#v", cfg.GatewayWebHTTPAddrs)
 	}
 	if cfg.GatewayWebRedirectAddr != ":80" || cfg.GatewayWebTLSAddr != ":443" || cfg.GatewayWebTLSCertFile != "" || cfg.GatewayWebTLSKeyFile != "" {
@@ -166,6 +166,21 @@ func TestLoadUsesDefaults(t *testing.T) {
 	}
 	if cfg.WechatURL != "http://127.0.0.1:8088" {
 		t.Fatalf("expected default wechat url, got %q", cfg.WechatURL)
+	}
+}
+
+func TestLoadKeepsPort80ForTLSRedirectWhenCertificatesConfigured(t *testing.T) {
+	t.Setenv("YUQING_DB_CONFIG_PATH", filepath.Join(t.TempDir(), "missing-database-config.json"))
+	t.Setenv("YUQING_GATEWAY_ADDR", "")
+	t.Setenv("JIN10_PORTAL_WEB_ADDR", "")
+	unsetEnv(t, "YUQING_GATEWAY_HTTP_ADDRS")
+	t.Setenv("YUQING_GATEWAY_TLS_CERT_FILE", "certs/fullchain.pem")
+	t.Setenv("YUQING_GATEWAY_TLS_KEY_FILE", "certs/privkey.pem")
+
+	cfg := Load()
+
+	if len(cfg.GatewayWebHTTPAddrs) != 1 || cfg.GatewayWebHTTPAddrs[0] != ":8079" {
+		t.Fatalf("expected TLS default to reserve :80 for redirect, got %#v", cfg.GatewayWebHTTPAddrs)
 	}
 }
 

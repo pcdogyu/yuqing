@@ -128,7 +128,7 @@ func Load() Config {
 	databaseDriver := firstNonEmpty(firstEnv("YUQING_DB_DRIVER", "JIN10_DB_DRIVER"), databaseConfig.Driver, "sqlite")
 
 	gatewayWebAddr := envOrDefaultWithAliases("YUQING_GATEWAY_ADDR", ":8079", "JIN10_PORTAL_WEB_ADDR")
-	gatewayWebHTTPAddrs := envListOrDefault("YUQING_GATEWAY_HTTP_ADDRS", []string{gatewayWebAddr})
+	gatewayWebHTTPAddrs := envListOrDefault("YUQING_GATEWAY_HTTP_ADDRS", defaultGatewayWebHTTPAddrs(gatewayWebAddr))
 
 	return Config{
 		ListenAddr:                 envOrDefault("YUQING_LISTEN_ADDR", ":8090"),
@@ -371,6 +371,13 @@ func envListOrDefault(key string, fallback []string) []string {
 		return splitEnvList(value)
 	}
 	return fallback
+}
+
+func defaultGatewayWebHTTPAddrs(gatewayWebAddr string) []string {
+	if os.Getenv("YUQING_GATEWAY_TLS_CERT_FILE") != "" || os.Getenv("YUQING_GATEWAY_TLS_KEY_FILE") != "" {
+		return []string{gatewayWebAddr}
+	}
+	return []string{gatewayWebAddr, ":80"}
 }
 
 func splitEnvList(value string) []string {

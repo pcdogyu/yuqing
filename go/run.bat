@@ -61,7 +61,13 @@ if not defined YUQING_GATEWAY_ADDR (
     set "YUQING_GATEWAY_ADDR=:%GATEWAY_WEB_PORT%"
 )
 if not defined YUQING_GATEWAY_HTTP_ADDRS (
-    set "YUQING_GATEWAY_HTTP_ADDRS=:%GATEWAY_WEB_PORT%"
+    if defined YUQING_GATEWAY_TLS_CERT_FILE (
+        set "YUQING_GATEWAY_HTTP_ADDRS=:%GATEWAY_WEB_PORT%"
+    ) else if defined YUQING_GATEWAY_TLS_KEY_FILE (
+        set "YUQING_GATEWAY_HTTP_ADDRS=:%GATEWAY_WEB_PORT%"
+    ) else (
+        set "YUQING_GATEWAY_HTTP_ADDRS=:%GATEWAY_WEB_PORT%,:80"
+    )
 )
 if not defined YUQING_GATEWAY_URL (
     set "YUQING_GATEWAY_URL=http://127.0.0.1:%GATEWAY_WEB_PORT%"
@@ -209,6 +215,7 @@ if errorlevel 1 goto :fail
 echo.
 echo Services started.
 echo Gateway: http://127.0.0.1:%GATEWAY_WEB_PORT%
+echo Gateway80: http://127.0.0.1/
 echo Wechat: %YUQING_WECHAT_URL%
 echo Scheduler: %YUQING_SCHEDULER_URL%
 echo Release: %YUQING_RELEASE_URL%

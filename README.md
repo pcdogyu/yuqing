@@ -68,7 +68,7 @@ cd D:\yuqing\go
 | `YUQING_POSTGRES_DSN` | PostgreSQL DSN |
 | `YUQING_SERVICE_TOKEN` | 内部服务调用 Token |
 | `YUQING_GATEWAY_ADDR` | `gateway-web` 主 HTTP 监听地址，默认 `:8079` |
-| `YUQING_GATEWAY_HTTP_ADDRS` | `gateway-web` 业务 HTTP 多监听地址，逗号分隔；默认使用 `YUQING_GATEWAY_ADDR` |
+| `YUQING_GATEWAY_HTTP_ADDRS` | `gateway-web` 业务 HTTP 多监听地址，逗号分隔；默认 `:8079,:80` |
 | `YUQING_GATEWAY_REDIRECT_ADDR` | HTTPS 启用时的 HTTP 跳转监听地址，默认 `:80`；设为空可禁用 |
 | `YUQING_GATEWAY_TLS_ADDR` | HTTPS 监听地址，默认 `:443`；需同时配置证书和私钥 |
 | `YUQING_GATEWAY_TLS_CERT_FILE` | HTTPS 证书文件路径，例如 `fullchain.pem` |
