@@ -2,6 +2,7 @@ param(
     [string]$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path,
     [string]$ReleaseDir = "",
     [string]$ServerShare = "\\10.15.0.7\yuqing-release",
+    [string]$ServerReleaseDir = "C:\yuqing\release",
     [string]$ServerUser = "10.15.0.7\hyuser",
     [string]$ReleaseBaseUrl = "http://10.15.0.7:8099",
     [switch]$SkipBuild,
@@ -57,13 +58,19 @@ if ($zip) {
 Write-Host ""
 Write-Host "Server release-service environment example:"
 Write-Host "`$env:YUQING_RELEASE_ADDR=':8099'"
-Write-Host "`$env:YUQING_RELEASE_DIR='C:\yuqing\release'"
+Write-Host "`$env:YUQING_RELEASE_DIR='$ServerReleaseDir'"
 Write-Host "`$env:YUQING_RELEASE_URL='$ReleaseBaseUrl'"
+Write-Host "Set-Location C:\yuqing\go"
+Write-Host ".\run.bat --skip-pull"
 Write-Host ""
 Write-Host "Copy command:"
 Write-Host "net use $ServerShare /user:$ServerUser * /persistent:no"
 Write-Host "robocopy $ReleaseDir $ServerShare *.apk *.zip /XO /R:2 /W:2"
 Write-Host "net use $ServerShare /delete"
+Write-Host ""
+Write-Host "Verify command:"
+Write-Host "Invoke-WebRequest -UseBasicParsing $($ReleaseBaseUrl.TrimEnd('/'))/release/ | Select-Object -ExpandProperty Content"
+Write-Host "Invoke-RestMethod $($ReleaseBaseUrl.TrimEnd('/'))/api/v1/release/latest | ConvertTo-Json -Depth 6"
 Write-Host ""
 
 if ($SkipCopy) {

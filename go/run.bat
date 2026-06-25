@@ -40,11 +40,13 @@ if not defined YUQING_RELEASE_ADDR (
     set "YUQING_RELEASE_ADDR=:%RELEASE_SERVICE_PORT%"
 )
 if not defined YUQING_RELEASE_URL (
-    set "YUQING_RELEASE_URL=http://127.0.0.1:%RELEASE_SERVICE_PORT%"
+    set "YUQING_RELEASE_URL=http://10.15.0.7:%RELEASE_SERVICE_PORT%"
 )
 if not defined YUQING_RELEASE_DIR (
     set "YUQING_RELEASE_DIR=%REPO_ROOT%\release"
 )
+for %%I in ("%YUQING_RELEASE_DIR%") do set "YUQING_RELEASE_DIR=%%~fI"
+if not exist "%YUQING_RELEASE_DIR%" mkdir "%YUQING_RELEASE_DIR%"
 if not defined YUQING_SCHEDULER_ADDR (
     set "YUQING_SCHEDULER_ADDR=:8086"
 )
@@ -221,6 +223,7 @@ echo GatewayHTTPAddrs: %YUQING_GATEWAY_HTTP_ADDRS%
 echo Wechat: %YUQING_WECHAT_URL%
 echo Scheduler: %YUQING_SCHEDULER_URL%
 echo Release: %YUQING_RELEASE_URL%
+echo ReleaseDir: %YUQING_RELEASE_DIR%
 echo ReleasePort: %RELEASE_SERVICE_PORT%
 if defined YUQING_ASTOCK_AUCTION_URL (
     echo AKShareAuction: %YUQING_ASTOCK_AUCTION_URL%
@@ -282,6 +285,7 @@ if "%RELEASE_PORT_WAS_BUSY%"=="1" (
 ) else (
     echo Release-service port: %RELEASE_SERVICE_PORT%
 )
+echo Release-service directory: %YUQING_RELEASE_DIR%
 exit /b 0
 
 :find_python
