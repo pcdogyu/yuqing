@@ -60,7 +60,7 @@ $rows = foreach ($service in $services) {
             $processes += $proc
         }
     }
-    if ($processes.Count -eq 0) {
+    if ($processes.Count -eq 0 -and $service.Name -ne "gateway-web") {
         $processes = @(Get-Process -Name $service.Name -ErrorAction SilentlyContinue)
         $pids = @($processes | ForEach-Object { $_.Id } | Select-Object -Unique)
     }

@@ -72,6 +72,7 @@ if not defined YUQING_GATEWAY_HTTP_ADDRS (
 if not defined YUQING_GATEWAY_URL (
     set "YUQING_GATEWAY_URL=http://127.0.0.1:%GATEWAY_WEB_PORT%"
 )
+call :ensure_gateway_http_port80
 if not defined YUQING_ASTOCK_AUCTION_URL (
     set "YUQING_ASTOCK_AUCTION_URL=http://127.0.0.1:%AKSHARE_AUCTION_PORT%"
     set "YUQING_ASTOCK_AUCTION_URL_DEFAULTED=1"
@@ -216,6 +217,7 @@ echo.
 echo Services started.
 echo Gateway: http://127.0.0.1:%GATEWAY_WEB_PORT%
 echo Gateway80: http://127.0.0.1/
+echo GatewayHTTPAddrs: %YUQING_GATEWAY_HTTP_ADDRS%
 echo Wechat: %YUQING_WECHAT_URL%
 echo Scheduler: %YUQING_SCHEDULER_URL%
 echo Release: %YUQING_RELEASE_URL%
@@ -249,6 +251,16 @@ exit /b 0
 :print_service_status
 powershell -NoProfile -ExecutionPolicy Bypass -File "%GO_DIR%\scripts\service-status.ps1" -LogDir "%LOG_DIR%"
 exit /b %ERRORLEVEL%
+
+:ensure_gateway_http_port80
+if defined YUQING_GATEWAY_TLS_CERT_FILE exit /b 0
+if defined YUQING_GATEWAY_TLS_KEY_FILE exit /b 0
+set "GATEWAY_HTTP_ADDRS_CHECK=!YUQING_GATEWAY_HTTP_ADDRS: =!,"
+echo !GATEWAY_HTTP_ADDRS_CHECK! | findstr /C:":80," >nul
+if errorlevel 1 (
+    set "YUQING_GATEWAY_HTTP_ADDRS=!YUQING_GATEWAY_HTTP_ADDRS!,:80"
+)
+exit /b 0
 
 :ensure_release_port
 echo Checking release-service port...
