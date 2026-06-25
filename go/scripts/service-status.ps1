@@ -59,4 +59,4 @@ $rows = foreach ($service in $services) {
     }
 }
 
-$rows | Format-Table -AutoSize
+$rows | Sort-Object Port | Format-Table -AutoSize
