@@ -78,19 +78,28 @@ func (s *Service) handleReleaseList(w http.ResponseWriter, r *http.Request) {
 		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
 		return
 	}
-	sort.Slice(files, func(i, j int) bool {
-		return files[i].Name() < files[j].Name()
+	listing := make([]apkFile, 0, len(files))
+	for _, file := range files {
+		if file.IsDir() || strings.HasPrefix(file.Name(), ".") {
+			continue
+		}
+		info, err := file.Info()
+		if err != nil {
+			apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+			return
+		}
+		listing = append(listing, apkFile{name: file.Name(), size: info.Size(), modTime: info.ModTime()})
+	}
+	sort.Slice(listing, func(i, j int) bool {
+		if listing[i].modTime.Equal(listing[j].modTime) {
+			return listing[i].name > listing[j].name
+		}
+		return listing[i].modTime.After(listing[j].modTime)
 	})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = io.WriteString(w, "<!doctype html><html><head><meta charset=\"utf-8\"><title>Yuqing Releases</title></head><body><h1>Yuqing Releases</h1><ul>")
-	for _, file := range files {
-		if file.IsDir() {
-			continue
-		}
-		name := file.Name()
-		if strings.HasPrefix(name, ".") {
-			continue
-		}
+	for _, file := range listing {
+		name := file.name
 		escaped := url.PathEscape(name)
 		_, _ = fmt.Fprintf(w, "<li><a href=\"/release/%s\">%s</a></li>", escaped, htmlEscape(name))
 	}

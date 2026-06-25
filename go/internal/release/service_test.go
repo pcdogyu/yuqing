@@ -46,6 +46,35 @@ func TestReleaseListShowsFiles(t *testing.T) {
 	}
 }
 
+func TestReleaseListOrdersNewestFilesFirst(t *testing.T) {
+	dir := t.TempDir()
+	oldPath := writeTestFile(t, dir, "yuqing-20260625-120000-aaaaaaaa-release.apk", "old")
+	newAPKPath := writeTestFile(t, dir, "yuqing-20260625-130000-bbbbbbbb-release.apk", "new")
+	newZIPPath := writeTestFile(t, dir, "yuqing-20260625-130000-bbbbbbbb-release.zip", "zip")
+	setModTime(t, oldPath, time.Date(2026, 6, 25, 4, 0, 0, 0, time.UTC))
+	setModTime(t, newAPKPath, time.Date(2026, 6, 25, 5, 0, 0, 0, time.UTC))
+	setModTime(t, newZIPPath, time.Date(2026, 6, 25, 5, 0, 0, 0, time.UTC))
+	svc := NewService(config.Config{ReleaseDir: dir, ReleaseURL: "http://release.example.com"})
+	req := httptest.NewRequest(http.MethodGet, "/release/", nil)
+	rr := httptest.NewRecorder()
+
+	svc.Router().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	zipIndex := strings.Index(body, "yuqing-20260625-130000-bbbbbbbb-release.zip")
+	apkIndex := strings.Index(body, "yuqing-20260625-130000-bbbbbbbb-release.apk")
+	oldIndex := strings.Index(body, "yuqing-20260625-120000-aaaaaaaa-release.apk")
+	if zipIndex < 0 || apkIndex < 0 || oldIndex < 0 {
+		t.Fatalf("expected all release files in listing, got %s", body)
+	}
+	if !(zipIndex < apkIndex && apkIndex < oldIndex) {
+		t.Fatalf("expected newest files first with filename descending tie-break, got %s", body)
+	}
+}
+
 func TestLatestAPKUsesNewestAPKAndBaseURL(t *testing.T) {
 	dir := t.TempDir()
 	oldPath := writeTestFile(t, dir, "yuqing-20260624-120000-aaaaaaaa-release.apk", "old")
