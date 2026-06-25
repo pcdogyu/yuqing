@@ -1015,6 +1015,7 @@ func TestAStockStockGenerateActionsSelectPeriod(t *testing.T) {
 		wantPeriod     string
 		wantMsg        string
 		wantIgnore     bool
+		wantRefresh    bool
 		wantRefreshAll bool
 	}{
 		{
@@ -1047,6 +1048,14 @@ func TestAStockStockGenerateActionsSelectPeriod(t *testing.T) {
 			wantMsg:        "上午和下午消息回测已按当前推荐股票、13:01价格和行情收益重新刷新。",
 			wantRefreshAll: true,
 		},
+		{
+			name:        "refresh current backtest",
+			fromPeriod:  "afternoon",
+			action:      "refresh_current_backtest",
+			wantPeriod:  "afternoon",
+			wantMsg:     "下午推荐行情收益已按当前推荐股票重新补齐。",
+			wantRefresh: true,
+		},
 	}
 
 	for _, tc := range tests {
@@ -1070,6 +1079,11 @@ func TestAStockStockGenerateActionsSelectPeriod(t *testing.T) {
 			if tc.wantRefreshAll {
 				if !strings.Contains(loc, "refresh_all_backtests=1") || !strings.Contains(loc, "refresh_recommendations=1") {
 					t.Fatalf("expected full backtest refresh redirect, got %q", loc)
+				}
+			}
+			if tc.wantRefresh {
+				if !strings.Contains(loc, "refresh_recommendations=1") || strings.Contains(loc, "refresh_all_backtests=1") {
+					t.Fatalf("expected current-period refresh redirect, got %q", loc)
 				}
 			}
 			decoded, _ := url.QueryUnescape(loc)
@@ -3541,7 +3555,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"金十快讯", "金十资讯", "1条", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "5日内过滤", "涨停过滤", "当日行情", "不过滤", "重新计算", "关闭5日过滤", "关闭涨停过滤", "启用当日行情过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "推荐历史", "上午推荐", "下午推荐", "推荐窗口", "上午开盘价", "下午开盘价", "补抓上午新闻", "重新生成上午推荐", "补抓下午新闻", "重新生成下午推荐", "刷新全部回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="refresh_backtest"`, `name="action" value="recalculate"`, "2026-06-12 周五", "2026-06-15 周一", "今日", "T+0 收益", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1", "08:00-09:30 2 / 09:30-13:00 0"} {
+	for _, want := range []string{"金十快讯", "金十资讯", "1条", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "5日内过滤", "涨停过滤", "当日行情", "不过滤", "重新计算", "关闭5日过滤", "关闭涨停过滤", "启用当日行情过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "推荐历史", "上午推荐", "下午推荐", "推荐窗口", "上午开盘价", "下午开盘价", "补抓上午新闻", "重新生成上午推荐", "补抓下午新闻", "重新生成下午推荐", "补行情收益", "刷新全部回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="refresh_current_backtest"`, `name="action" value="refresh_backtest"`, `name="action" value="recalculate"`, "2026-06-12 周五", "2026-06-15 周一", "今日", "T+0 收益", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1", "08:00-09:30 2 / 09:30-13:00 0"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}
@@ -3754,6 +3768,7 @@ func TestAStockRecommendationHistoryActionsUseSelectedPeriod(t *testing.T) {
 		`name="action" value="generate_morning_stock"`,
 		`name="action" value="generate_afternoon_stock"`,
 		`name="action" value="backfill_auction"`,
+		`name="action" value="refresh_current_backtest"`,
 		`name="action" value="refresh_backtest"`,
 		`data-preserve-scroll="1"`,
 		`href="/a-stock?date=2026-06-16&amp;period=afternoon&amp;ignore_recent=1"`,
@@ -3763,11 +3778,15 @@ func TestAStockRecommendationHistoryActionsUseSelectedPeriod(t *testing.T) {
 		"重新生成下午推荐",
 		"关闭5日过滤",
 		"补录集合竞价",
+		"补行情收益",
 		"刷新全部回测",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected history actions to contain %q, got %s", want, body)
 		}
+	}
+	if strings.Index(body, "补行情收益") < 0 || strings.Index(body, "刷新全部回测") < 0 || strings.Index(body, "补行情收益") > strings.Index(body, "刷新全部回测") {
+		t.Fatalf("expected 补行情收益 button before 刷新全部回测, got %s", body)
 	}
 }
 

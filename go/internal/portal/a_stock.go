@@ -509,6 +509,9 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request) 
 	case "sync_market":
 		query.Set("refresh_recommendations", "1")
 		query.Set("msg", "行情已按当前策略日期刷新，页面已重新计算昨日收盘价、现价、涨跌幅和回测。")
+	case "refresh_current_backtest":
+		query.Set("refresh_recommendations", "1")
+		query.Set("msg", period.Label+"行情收益已按当前推荐股票重新补齐。")
 	case "backfill_auction":
 		date := normalizeAStockStrategyDate(r.FormValue("date"))
 		query.Set("refresh_recommendations", "1")
@@ -1036,6 +1039,7 @@ func renderAStockRecommendationHistoryActions(b *strings.Builder, strategyDate s
 		{Period: "afternoon", Name: "backfill_window_news", Label: "补抓下午新闻"},
 		{Period: "afternoon", Name: "generate_afternoon_stock", Label: "重新生成下午推荐"},
 		{Period: "morning", Name: "backfill_auction", Label: "补录集合竞价"},
+		{Period: normalizeAStockPeriod(period).Key, Name: "refresh_current_backtest", Label: "补行情收益"},
 		{Period: "morning", Name: "refresh_backtest", Label: "刷新全部回测"},
 	} {
 		b.WriteString(`<form method="post"><input type="hidden" name="date" value="`)
@@ -1959,7 +1963,7 @@ func aStockPreopenPopupKey(window aStockPreopenPopupWindow, strategyDate string)
 
 func aStockActionRequiresTradingDay(action string) bool {
 	switch strings.TrimSpace(action) {
-	case "crawl", "backfill_window_news", "backfill_morning_stock", "generate_morning_stock", "generate_afternoon_stock", "generate_ignore_recent_stock", "generate", "recalculate":
+	case "crawl", "backfill_window_news", "backfill_morning_stock", "generate_morning_stock", "generate_afternoon_stock", "generate_ignore_recent_stock", "generate", "refresh_current_backtest", "recalculate":
 		return true
 	default:
 		return false
