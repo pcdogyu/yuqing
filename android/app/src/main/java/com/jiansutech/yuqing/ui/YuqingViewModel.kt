@@ -339,6 +339,36 @@ class YuqingViewModel(
         loadArticles(1)
     }
 
+    fun clearCache() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(loading = true, error = "", message = "正在清除缓存") }
+            runCatching {
+                dashboardCacheDao.clear()
+                articleUserActionDao.clearAll()
+            }.onSuccess {
+                _uiState.update {
+                    it.copy(
+                        dashboard = it.dashboard?.let { dashboard ->
+                            filterDashboardHiddenArticles(dashboard, emptySet())
+                        },
+                        articleList = null,
+                        message = "缓存已清除",
+                    )
+                }
+                refreshAll()
+            }.onFailure { throwable ->
+                Log.w(STARTUP_TAG, "YuqingViewModel.clearCache failed", throwable)
+                _uiState.update {
+                    it.copy(
+                        loading = false,
+                        error = throwable.message ?: "清除缓存失败",
+                        message = "",
+                    )
+                }
+            }
+        }
+    }
+
     fun hideArticle(item: ArticleItem) {
         var shouldRefillDashboard = false
         _uiState.update {

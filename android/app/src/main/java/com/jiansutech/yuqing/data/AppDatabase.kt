@@ -25,6 +25,9 @@ interface DashboardCacheDao {
 
     @Upsert
     suspend fun upsert(entity: DashboardCacheEntity)
+
+    @Query("DELETE FROM dashboard_cache")
+    suspend fun clear()
 }
 
 @Entity(tableName = "article_user_actions")
@@ -42,6 +45,9 @@ interface ArticleUserActionDao {
 
     @Upsert
     suspend fun upsert(entity: ArticleUserActionEntity)
+
+    @Query("DELETE FROM article_user_actions")
+    suspend fun clearAll()
 }
 
 @Database(entities = [DashboardCacheEntity::class, ArticleUserActionEntity::class], version = 2, exportSchema = false)

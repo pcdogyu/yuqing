@@ -335,9 +335,21 @@ private fun DashboardModule(dashboard: AndroidDashboard, viewModel: YuqingViewMo
     val latestArticles = dashboard.articles.items.take(5)
     LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
                 MetricCard("文章", dashboard.overview.articleCount.toString(), Modifier.weight(1f))
                 MetricCard("任务", dashboard.overview.crawlRunCount.toString(), Modifier.weight(1f))
+                Button(
+                    onClick = { viewModel.clearCache() },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Icon(Icons.Default.Refresh, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("清除缓存", maxLines = 1)
+                }
             }
         }
         item { SectionTitle("最新文章") }
