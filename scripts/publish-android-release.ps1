@@ -5,6 +5,7 @@ param(
     [string]$ServerReleaseDir = "C:\yuqing\release",
     [string]$ServerUser = "10.15.0.7\hyuser",
     [string]$ReleaseBaseUrl = "http://10.15.0.7:8099",
+    [string]$ApkSigner = "",
     [switch]$SkipBuild,
     [switch]$SkipCopy,
     [switch]$SkipNetUse,
@@ -48,6 +49,30 @@ if (-not $apk) {
 }
 if (-not $zip) {
     Write-Warning "No ZIP found in $ReleaseDir. Check Android Gradle release copy task."
+}
+
+if ([string]::IsNullOrWhiteSpace($ApkSigner)) {
+    $sdkRoots = @($env:ANDROID_HOME, $env:ANDROID_SDK_ROOT, (Join-Path $env:LOCALAPPDATA "Android\Sdk")) |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+        Select-Object -Unique
+    foreach ($sdkRoot in $sdkRoots) {
+        $candidate = Get-ChildItem -LiteralPath (Join-Path $sdkRoot "build-tools") -Recurse -Filter "apksigner.bat" -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+        if ($candidate) {
+            $ApkSigner = $candidate.FullName
+            break
+        }
+    }
+}
+if ([string]::IsNullOrWhiteSpace($ApkSigner) -or -not (Test-Path -LiteralPath $ApkSigner)) {
+    throw "apksigner.bat not found. Set ANDROID_HOME or pass -ApkSigner."
+}
+
+Write-Host "Verifying APK signature..."
+& $ApkSigner verify --verbose $apk.FullName
+if ($LASTEXITCODE -ne 0) {
+    throw "APK signature verification failed: $($apk.FullName)"
 }
 
 Write-Host "Latest APK: $($apk.FullName)"
