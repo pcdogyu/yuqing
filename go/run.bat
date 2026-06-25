@@ -179,6 +179,8 @@ for %%S in (%SERVICE_NAMES%) do (
     call :kill_service %%S
     if errorlevel 1 goto :fail
 )
+call :ensure_release_port
+if errorlevel 1 goto :fail
 
 echo [5/6] Build service binaries concurrently...
 if not exist "%BIN_DIR%" mkdir "%BIN_DIR%"
@@ -210,6 +212,7 @@ echo Gateway: http://127.0.0.1:%GATEWAY_WEB_PORT%
 echo Wechat: %YUQING_WECHAT_URL%
 echo Scheduler: %YUQING_SCHEDULER_URL%
 echo Release: %YUQING_RELEASE_URL%
+echo ReleasePort: %RELEASE_SERVICE_PORT%
 if defined YUQING_ASTOCK_AUCTION_URL (
     echo AKShareAuction: %YUQING_ASTOCK_AUCTION_URL%
 ) else (
@@ -239,6 +242,28 @@ exit /b 0
 :print_service_status
 powershell -NoProfile -ExecutionPolicy Bypass -File "%GO_DIR%\scripts\service-status.ps1" -LogDir "%LOG_DIR%"
 exit /b %ERRORLEVEL%
+
+:ensure_release_port
+echo Checking release-service port...
+set "DETECTED_RELEASE_PORT="
+set "RELEASE_PORT_WAS_BUSY=0"
+for /f "usebackq tokens=1,2" %%A in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; function Get-UrlPort([string]$url, [int]$fallback) { if ([string]::IsNullOrWhiteSpace($url)) { return $fallback }; try { $uri = [uri]$url; if (-not $uri.IsDefaultPort) { return $uri.Port }; if ($uri.Scheme -eq 'https') { return 443 }; return 80 } catch { return $fallback } }; function Test-PortInUse([int]$port) { return @((Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue)).Count -gt 0 }; function Find-FreePort([int]$startPort) { for ($port = $startPort; $port -le ($startPort + 100); $port++) { if (-not (Test-PortInUse $port)) { return $port } }; throw \"no free port found from $startPort\" }; $defaultPort = [int]$env:RELEASE_SERVICE_PORT; $url = $env:YUQING_RELEASE_URL; $port = Get-UrlPort $url $defaultPort; $busy = 0; if ($url -eq ('http://127.0.0.1:' + $defaultPort) -and (Test-PortInUse $port)) { $port = Find-FreePort 18099; $busy = 1 }; Write-Output (\"$port $busy\")"`) do (
+    set "DETECTED_RELEASE_PORT=%%A"
+    set "RELEASE_PORT_WAS_BUSY=%%B"
+)
+if not defined DETECTED_RELEASE_PORT (
+    echo Failed to resolve release-service port.
+    exit /b 1
+)
+set "RELEASE_SERVICE_PORT=%DETECTED_RELEASE_PORT%"
+set "YUQING_RELEASE_ADDR=:%RELEASE_SERVICE_PORT%"
+if "%RELEASE_PORT_WAS_BUSY%"=="1" (
+    set "YUQING_RELEASE_URL=http://127.0.0.1:%RELEASE_SERVICE_PORT%"
+    echo Release-service default port 8099 is busy. Using !YUQING_RELEASE_URL!.
+) else (
+    echo Release-service port: %RELEASE_SERVICE_PORT%
+)
+exit /b 0
 
 :find_python
 set "PYTHON_EXE="
