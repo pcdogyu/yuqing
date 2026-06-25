@@ -187,6 +187,88 @@ ON CONFLICT(id) DO UPDATE SET
 	return s.GetMailConfig(ctx)
 }
 
+func (s *Store) GetReleaseSettings(ctx context.Context) (model.ReleaseSettings, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT release_addr, release_url, release_dir, dev_release_dir, server_share_path, server_user, updated_at FROM release_settings WHERE id = 1`)
+	var settings model.ReleaseSettings
+	var updatedAt string
+	if err := row.Scan(&settings.ReleaseAddr, &settings.ReleaseURL, &settings.ReleaseDir, &settings.DevReleaseDir, &settings.ServerSharePath, &settings.ServerUser, &updatedAt); err != nil {
+		if err == sql.ErrNoRows {
+			return defaultReleaseSettings(), nil
+		}
+		return model.ReleaseSettings{}, err
+	}
+	settings.UpdatedAt = mustParseRFC3339(updatedAt)
+	return normalizeReleaseSettings(settings), nil
+}
+
+func (s *Store) UpsertReleaseSettings(ctx context.Context, settings model.ReleaseSettings) (model.ReleaseSettings, error) {
+	settings = normalizeReleaseSettings(settings)
+	settings.UpdatedAt = time.Now().UTC()
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO release_settings (id, release_addr, release_url, release_dir, dev_release_dir, server_share_path, server_user, updated_at)
+VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+	release_addr = excluded.release_addr,
+	release_url = excluded.release_url,
+	release_dir = excluded.release_dir,
+	dev_release_dir = excluded.dev_release_dir,
+	server_share_path = excluded.server_share_path,
+	server_user = excluded.server_user,
+	updated_at = excluded.updated_at`,
+		settings.ReleaseAddr,
+		settings.ReleaseURL,
+		settings.ReleaseDir,
+		settings.DevReleaseDir,
+		settings.ServerSharePath,
+		settings.ServerUser,
+		settings.UpdatedAt.Format(time.RFC3339),
+	)
+	if err != nil {
+		return model.ReleaseSettings{}, err
+	}
+	return s.GetReleaseSettings(ctx)
+}
+
+func defaultReleaseSettings() model.ReleaseSettings {
+	return model.ReleaseSettings{
+		ReleaseAddr:     ":8099",
+		ReleaseURL:      "http://10.15.0.7:8099",
+		ReleaseDir:      `C:\yuqing\release`,
+		DevReleaseDir:   `D:\yuqing\release`,
+		ServerSharePath: `\\10.15.0.7\yuqing-release`,
+		ServerUser:      `10.15.0.7\hyuser`,
+	}
+}
+
+func normalizeReleaseSettings(settings model.ReleaseSettings) model.ReleaseSettings {
+	defaults := defaultReleaseSettings()
+	settings.ReleaseAddr = strings.TrimSpace(settings.ReleaseAddr)
+	if settings.ReleaseAddr == "" {
+		settings.ReleaseAddr = defaults.ReleaseAddr
+	}
+	settings.ReleaseURL = strings.TrimRight(strings.TrimSpace(settings.ReleaseURL), "/")
+	if settings.ReleaseURL == "" {
+		settings.ReleaseURL = defaults.ReleaseURL
+	}
+	settings.ReleaseDir = strings.TrimSpace(settings.ReleaseDir)
+	if settings.ReleaseDir == "" {
+		settings.ReleaseDir = defaults.ReleaseDir
+	}
+	settings.DevReleaseDir = strings.TrimSpace(settings.DevReleaseDir)
+	if settings.DevReleaseDir == "" {
+		settings.DevReleaseDir = defaults.DevReleaseDir
+	}
+	settings.ServerSharePath = strings.TrimRight(strings.TrimSpace(settings.ServerSharePath), `\`)
+	if settings.ServerSharePath == "" {
+		settings.ServerSharePath = defaults.ServerSharePath
+	}
+	settings.ServerUser = strings.TrimSpace(settings.ServerUser)
+	if settings.ServerUser == "" {
+		settings.ServerUser = defaults.ServerUser
+	}
+	return settings
+}
+
 func (s *Store) GetWarningSetting(ctx context.Context, projectID int64) (model.WarningSetting, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT project_id, warning_setting_id, enabled, warning_status, warning_name, warning_word, warning_classify, warning_content, warning_similar, warning_match, warning_deduplication, warning_source, warning_receive_time, weekend_warning, warning_interval, channels, threshold, recipients, description, updated_at FROM warning_settings WHERE project_id = ?`, projectID)
 	var setting model.WarningSetting

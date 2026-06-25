@@ -791,6 +791,34 @@ func TestDatabaseConfigAPI(t *testing.T) {
 	}
 }
 
+func TestReleaseSettingsAPISavesServerPublishConfig(t *testing.T) {
+	store := newContentSearchTestStore(t)
+	svc := NewService(config.Config{HTTPTimeout: time.Second}, store)
+	router := svc.Router()
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/system/release-settings", nil)
+	getRR := httptest.NewRecorder()
+	router.ServeHTTP(getRR, getReq)
+	if getRR.Code != http.StatusOK {
+		t.Fatalf("expected release settings 200, got status=%d body=%s", getRR.Code, getRR.Body.String())
+	}
+	if !strings.Contains(getRR.Body.String(), `C:\\yuqing\\release`) || !strings.Contains(getRR.Body.String(), `D:\\yuqing\\release`) {
+		t.Fatalf("expected default release directories, got %s", getRR.Body.String())
+	}
+
+	saveReq := httptest.NewRequest(http.MethodPut, "/api/v1/system/release-settings", strings.NewReader(`{"release_addr":":8100","release_url":"http://10.15.0.7:8100/","release_dir":"C:\\yuqing\\release2","dev_release_dir":"D:\\yuqing\\release2","server_share_path":"\\\\10.15.0.7\\yuqing-release2\\","server_user":"10.15.0.7\\hyuser"}`))
+	saveReq.Header.Set("Content-Type", "application/json")
+	saveRR := httptest.NewRecorder()
+	router.ServeHTTP(saveRR, saveReq)
+	if saveRR.Code != http.StatusOK {
+		t.Fatalf("expected release settings save 200, got status=%d body=%s", saveRR.Code, saveRR.Body.String())
+	}
+	body := saveRR.Body.String()
+	if !strings.Contains(body, `"release_addr":":8100"`) || !strings.Contains(body, `"release_url":"http://10.15.0.7:8100"`) || !strings.Contains(body, `\\\\10.15.0.7\\yuqing-release2`) {
+		t.Fatalf("unexpected release settings response: %s", body)
+	}
+}
+
 func TestDatabaseSwitchAPISavesRuntimeConfig(t *testing.T) {
 	store := newContentSearchTestStore(t)
 	restartSubmitted := false

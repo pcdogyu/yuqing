@@ -758,6 +758,28 @@ func TestPreferencesPopupAndMailConfig(t *testing.T) {
 	if mailCfg.SMTPHost != "smtp.example.com" || mailCfg.SMTPPort != 465 {
 		t.Fatalf("unexpected mail config: %+v", mailCfg)
 	}
+
+	defaultRelease, err := store.GetReleaseSettings(ctx)
+	if err != nil {
+		t.Fatalf("GetReleaseSettings error: %v", err)
+	}
+	if defaultRelease.ReleaseDir != `C:\yuqing\release` || defaultRelease.DevReleaseDir != `D:\yuqing\release` || defaultRelease.ServerSharePath != `\\10.15.0.7\yuqing-release` {
+		t.Fatalf("unexpected default release settings: %+v", defaultRelease)
+	}
+	releaseSettings, err := store.UpsertReleaseSettings(ctx, model.ReleaseSettings{
+		ReleaseAddr:     ":8100",
+		ReleaseURL:      "http://10.15.0.7:8100/",
+		ReleaseDir:      `C:\yuqing\release2`,
+		DevReleaseDir:   `D:\yuqing\release2`,
+		ServerSharePath: `\\10.15.0.7\yuqing-release2\`,
+		ServerUser:      `10.15.0.7\hyuser`,
+	})
+	if err != nil {
+		t.Fatalf("UpsertReleaseSettings error: %v", err)
+	}
+	if releaseSettings.ReleaseURL != "http://10.15.0.7:8100" || releaseSettings.ServerSharePath != `\\10.15.0.7\yuqing-release2` {
+		t.Fatalf("unexpected release settings: %+v", releaseSettings)
+	}
 }
 
 func TestWarningAndOpinionConditions(t *testing.T) {

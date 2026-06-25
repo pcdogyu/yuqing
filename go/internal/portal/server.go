@@ -160,6 +160,7 @@ type pageData struct {
 	LegacyLiveRoutes           []legacyRouteSpec
 	Operations                 model.OperationsSummary
 	DatabaseConfig             model.DatabaseConfigStatus
+	ReleaseSettings            model.ReleaseSettings
 	PublicOptions              []model.PublicOption
 	PublicOption               model.PublicOption
 	Preferences                model.UserPreference
@@ -3074,6 +3075,20 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) 
 			} else {
 				message = "邮件配置已保存"
 			}
+		case "release":
+			resp, err := s.client.R().SetBody(map[string]any{
+				"release_addr":      r.FormValue("release_addr"),
+				"release_url":       r.FormValue("release_url"),
+				"release_dir":       r.FormValue("release_dir"),
+				"dev_release_dir":   r.FormValue("dev_release_dir"),
+				"server_share_path": r.FormValue("server_share_path"),
+				"server_user":       r.FormValue("server_user"),
+			}).Put(s.cfg.ContentURL + "/api/v1/system/release-settings")
+			if err != nil || !resp.IsSuccess() {
+				message = "软件发布配置保存失败"
+			} else {
+				message = "软件发布配置已保存，重启 release-service 后生效"
+			}
 		case "database_check":
 			resp, err := s.client.R().SetBody(map[string]any{
 				"driver":            r.FormValue("driver"),
@@ -3291,6 +3306,7 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) 
 	popupState := model.PopupState{}
 	mailConfig := model.MailConfig{}
 	databaseConfig := model.DatabaseConfigStatus{}
+	releaseSettings := model.ReleaseSettings{}
 	warningSetting := model.WarningSetting{}
 	projects := []model.Project{}
 	groups := []model.ProjectGroup{}
@@ -3357,6 +3373,7 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) 
 		}
 	}
 	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/system/mail-config", &mailConfig)
+	_ = s.getJSON(s.cfg.ContentURL+"/api/v1/system/release-settings", &releaseSettings)
 	if databaseConfig.Driver == "" {
 		_ = s.getJSON(s.cfg.ContentURL+"/api/v1/system/database-config", &databaseConfig)
 	}
@@ -3418,6 +3435,7 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) 
 		"contracts":     "外部契约与审计",
 		"announcements": "公告与任务",
 		"database":      "数据库配置",
+		"release":       "软件发布",
 	}[sectionKey]
 	aStockRepair := aStockRepairView{}
 	if sectionKey == "stockrepair" {
@@ -3446,6 +3464,7 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) 
 		Services:                 chooseServiceStatuses(operations.Services, s.collectServiceStatuses()),
 		Operations:               operations,
 		DatabaseConfig:           databaseConfig,
+		ReleaseSettings:          releaseSettings,
 		Preferences:              preferences,
 		PopupState:               popupState,
 		MailConfig:               mailConfig,
@@ -4092,6 +4111,8 @@ func normalizeSystemSection(section string) string {
 		return "announcements"
 	case "database", "postgres", "postgresql":
 		return "database"
+	case "release", "software-release", "software_release", "publish":
+		return "release"
 	default:
 		return "account"
 	}
@@ -4971,17 +4992,19 @@ const systemFullWidthStyles = `body>main,body>.site-footer{max-width:none;width:
 func buildSystemTemplate() string {
 	template := strings.NewReplacer(
 		`.feedback-textarea{min-height:168px;resize:vertical}`,
-		`.feedback-textarea{min-height:168px;resize:vertical}.feedback-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(360px,.55fr);gap:16px;align-items:start}.feedback-list{display:grid;gap:10px}.feedback-item{border:1px solid #ece7dc;border-radius:8px;padding:12px;background:#faf8f2}.feedback-item-head{display:flex;gap:12px;align-items:flex-start;justify-content:space-between;margin-bottom:6px}.feedback-item h3{margin:0;font-size:16px}.feedback-delete-form{margin:0}.feedback-delete-button{margin:0;padding:6px 12px;background:#fff;border:1px solid #d7cdbb;color:#8f2d2d}.feedback-delete-button:hover{background:#f8efe9}.feedback-meta{font-size:12px;color:#6a6257;margin-bottom:8px}.feedback-content{white-space:pre-wrap;word-break:break-word}.repair-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:16px;align-items:start}.repair-card{border:1px solid #ece7dc;border-radius:14px;background:#faf8f2;padding:16px}.repair-meta{font-size:12px;color:#6a6257;margin:8px 0 12px}.repair-field-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.repair-textarea{min-height:220px;font-family:Consolas,Monaco,monospace;font-size:13px;white-space:pre}.repair-textarea.compact{min-height:140px}.repair-tip{font-size:12px;color:#6a6257;margin-top:8px;white-space:pre-wrap}.repair-status{display:flex;gap:12px;flex-wrap:wrap;margin:8px 0 16px}.repair-status strong{display:block;font-size:24px;margin-top:4px}.repair-status-item{min-width:140px;padding:12px;border:1px solid #ece7dc;border-radius:10px;background:#fff}@media (max-width:920px){.feedback-layout{grid-template-columns:1fr}.repair-grid{grid-template-columns:1fr}}`,
+		`.feedback-textarea{min-height:168px;resize:vertical}.release-grid{display:grid;grid-template-columns:minmax(360px,1fr) minmax(360px,1fr);gap:16px;align-items:start}.release-grid .config-line{white-space:normal}.feedback-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(360px,.55fr);gap:16px;align-items:start}.feedback-list{display:grid;gap:10px}.feedback-item{border:1px solid #ece7dc;border-radius:8px;padding:12px;background:#faf8f2}.feedback-item-head{display:flex;gap:12px;align-items:flex-start;justify-content:space-between;margin-bottom:6px}.feedback-item h3{margin:0;font-size:16px}.feedback-delete-form{margin:0}.feedback-delete-button{margin:0;padding:6px 12px;background:#fff;border:1px solid #d7cdbb;color:#8f2d2d}.feedback-delete-button:hover{background:#f8efe9}.feedback-meta{font-size:12px;color:#6a6257;margin-bottom:8px}.feedback-content{white-space:pre-wrap;word-break:break-word}.repair-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:16px;align-items:start}.repair-card{border:1px solid #ece7dc;border-radius:14px;background:#faf8f2;padding:16px}.repair-meta{font-size:12px;color:#6a6257;margin:8px 0 12px}.repair-field-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.repair-textarea{min-height:220px;font-family:Consolas,Monaco,monospace;font-size:13px;white-space:pre}.repair-textarea.compact{min-height:140px}.repair-tip{font-size:12px;color:#6a6257;margin-top:8px;white-space:pre-wrap}.repair-status{display:flex;gap:12px;flex-wrap:wrap;margin:8px 0 16px}.repair-status strong{display:block;font-size:24px;margin-top:4px}.repair-status-item{min-width:140px;padding:12px;border:1px solid #ece7dc;border-radius:10px;background:#fff}@media (max-width:920px){.feedback-layout,.release-grid{grid-template-columns:1fr}.repair-grid{grid-template-columns:1fr}}`,
 		`{{if eq .SectionKey "feedback"}}<section class="section-block"><h2>反馈建议</h2><form method="post"><input type="hidden" name="form_type" value="feedback"><input type="hidden" name="section" value="feedback"><input name="title" placeholder="标题"><textarea class="feedback-textarea" name="content" placeholder="问题描述或需求"></textarea><button type="submit">提交</button></form></section>{{end}}`,
 		`{{if eq .SectionKey "feedback"}}<section class="section-block"><h2>反馈建议</h2><form method="post"><input type="hidden" name="form_type" value="feedback"><input type="hidden" name="section" value="feedback"><input name="title" placeholder="标题"><textarea class="feedback-textarea" name="content" placeholder="问题描述或需求"></textarea><button type="submit">提交</button></form></section>{{end}}{{if eq .SectionKey "feedbacklist"}}<section class="section-block"><h2>建议列表</h2><div class="feedback-list">{{range .FeedbackItems}}<article class="feedback-item"><div class="feedback-item-head"><h3>{{.Title}}</h3><form method="post" class="feedback-delete-form" onsubmit="return confirm('确认删除这条建议？')"><input type="hidden" name="form_type" value="delete_feedback"><input type="hidden" name="section" value="feedbacklist"><input type="hidden" name="feedback_id" value="{{.ID}}"><button type="submit" class="feedback-delete-button">删除</button></form></div><div class="feedback-meta">用户 {{.UserID}} · {{.CreatedAt.Format "2006-01-02 15:04"}}</div><div class="feedback-content">{{.Content}}</div></article>{{else}}<p class="muted">暂无反馈建议</p>{{end}}</div></section>{{end}}`,
 		`<div class="tabs"><a class="{{if eq .SectionKey "account"}}active{{end}}" href="/system?section=account">账号安全</a><a class="{{if eq .SectionKey "preferences"}}active{{end}}" href="/system?section=preferences">偏好设置</a><a class="{{if eq .SectionKey "database"}}active{{end}}" href="/system?section=database">数据库配置</a><a class="{{if eq .SectionKey "favorites"}}active{{end}}" href="/system?section=favorites{{if .FavoriteProjectID}}&project_id={{.FavoriteProjectID}}{{end}}">收藏夹</a><a class="{{if eq .SectionKey "warningmsg"}}active{{end}}" href="/system?section=warningmsg{{if .WarningArticleProjectID}}&project_id={{.WarningArticleProjectID}}{{end}}{{if .WarningArticleKeyword}}&keyword={{.WarningArticleKeyword}}{{end}}">预警消息</a><a class="{{if eq .SectionKey "warning"}}active{{end}}" href="/system?section=warning{{if .WarningSetting.ProjectID}}&project_id={{.WarningSetting.ProjectID}}{{end}}">预警设置</a><a class="{{if eq .SectionKey "feedback"}}active{{end}}" href="/system?section=feedback">反馈建议</a><a class="{{if eq .SectionKey "operations"}}active{{end}}" href="/system?section=operations">生产运行</a></div>`,
-		`<div class="tabs"><a class="{{if eq .SectionKey "services"}}active{{end}}" href="/system?section=services">服务状态</a><a class="{{if eq .SectionKey "legacy"}}active{{end}}" href="/system?section=legacy">Legacy注册表</a><a class="{{if eq .SectionKey "account"}}active{{end}}" href="/system?section=account">账号安全</a><a class="{{if eq .SectionKey "preferences"}}active{{end}}" href="/system?section=preferences">偏好设置</a><a class="{{if eq .SectionKey "database"}}active{{end}}" href="/system?section=database">数据库配置</a><a class="{{if eq .SectionKey "stockrepair"}}active{{end}}" href="/system?section=stockrepair">推荐股票修复</a><a class="{{if eq .SectionKey "favorites"}}active{{end}}" href="/system?section=favorites{{if .FavoriteProjectID}}&project_id={{.FavoriteProjectID}}{{end}}">收藏夹</a><a class="{{if eq .SectionKey "warningmsg"}}active{{end}}" href="/system?section=warningmsg{{if .WarningArticleProjectID}}&project_id={{.WarningArticleProjectID}}{{end}}{{if .WarningArticleKeyword}}&keyword={{.WarningArticleKeyword}}{{end}}">预警消息</a><a class="{{if eq .SectionKey "warning"}}active{{end}}" href="/system?section=warning{{if .WarningSetting.ProjectID}}&project_id={{.WarningSetting.ProjectID}}{{end}}">预警设置</a><a class="{{if eq .SectionKey "feedback"}}active{{end}}" href="/system?section=feedback">反馈建议</a><a class="{{if eq .SectionKey "feedbacklist"}}active{{end}}" href="/system?section=feedbacklist">建议列表</a><a class="{{if eq .SectionKey "operations"}}active{{end}}" href="/system?section=operations">生产运行</a><a class="{{if eq .SectionKey "opactions"}}active{{end}}" href="/system?section=opactions">运营操作</a><a class="{{if eq .SectionKey "contracts"}}active{{end}}" href="/system?section=contracts">外部契约与审计</a><a class="{{if eq .SectionKey "announcements"}}active{{end}}" href="/system?section=announcements">公告与任务</a></div>`,
+		`<div class="tabs"><a class="{{if eq .SectionKey "services"}}active{{end}}" href="/system?section=services">服务状态</a><a class="{{if eq .SectionKey "legacy"}}active{{end}}" href="/system?section=legacy">Legacy注册表</a><a class="{{if eq .SectionKey "account"}}active{{end}}" href="/system?section=account">账号安全</a><a class="{{if eq .SectionKey "preferences"}}active{{end}}" href="/system?section=preferences">偏好设置</a><a class="{{if eq .SectionKey "database"}}active{{end}}" href="/system?section=database">数据库配置</a><a class="{{if eq .SectionKey "release"}}active{{end}}" href="/system?section=release">软件发布</a><a class="{{if eq .SectionKey "stockrepair"}}active{{end}}" href="/system?section=stockrepair">推荐股票修复</a><a class="{{if eq .SectionKey "favorites"}}active{{end}}" href="/system?section=favorites{{if .FavoriteProjectID}}&project_id={{.FavoriteProjectID}}{{end}}">收藏夹</a><a class="{{if eq .SectionKey "warningmsg"}}active{{end}}" href="/system?section=warningmsg{{if .WarningArticleProjectID}}&project_id={{.WarningArticleProjectID}}{{end}}{{if .WarningArticleKeyword}}&keyword={{.WarningArticleKeyword}}{{end}}">预警消息</a><a class="{{if eq .SectionKey "warning"}}active{{end}}" href="/system?section=warning{{if .WarningSetting.ProjectID}}&project_id={{.WarningSetting.ProjectID}}{{end}}">预警设置</a><a class="{{if eq .SectionKey "feedback"}}active{{end}}" href="/system?section=feedback">反馈建议</a><a class="{{if eq .SectionKey "feedbacklist"}}active{{end}}" href="/system?section=feedbacklist">建议列表</a><a class="{{if eq .SectionKey "operations"}}active{{end}}" href="/system?section=operations">生产运行</a><a class="{{if eq .SectionKey "opactions"}}active{{end}}" href="/system?section=opactions">运营操作</a><a class="{{if eq .SectionKey "contracts"}}active{{end}}" href="/system?section=contracts">外部契约与审计</a><a class="{{if eq .SectionKey "announcements"}}active{{end}}" href="/system?section=announcements">公告与任务</a></div>`,
 		`</section><section><h2>服务状态</h2>`,
 		`</section>{{if eq .SectionKey "services"}}<section><h2>服务状态</h2>`,
 		`name="section" value="{{$.SectionKey}}"`,
 		`name="section" value="services"`,
 		`</table></section>{{if eq .SectionKey "database"}}`,
-		`</table></section>{{end}}{{if eq .SectionKey "legacy"}}<section class="section-block"><h2>Legacy 注册表</h2><table><tr><th>策略</th><th>数量</th></tr>{{range .LegacyRouteSummary}}<tr><td>{{.Strategy}}</td><td>{{.Count}}</td></tr>{{else}}<tr><td colspan="2">暂无注册表数据</td></tr>{{end}}</table></section>{{end}}{{if eq .SectionKey "database"}}`,
+		`</table></section>{{end}}{{if eq .SectionKey "legacy"}}<section class="section-block"><h2>Legacy 注册表</h2><table><tr><th>策略</th><th>数量</th></tr>{{range .LegacyRouteSummary}}<tr><td>{{.Strategy}}</td><td>{{.Count}}</td></tr>{{else}}<tr><td colspan="2">暂无注册表数据</td></tr>{{end}}</table></section>{{end}}{{if eq .SectionKey "release"}}<section class="section-block"><h2>软件发布</h2><div class="release-grid"><div><h3>release-service 环境值</h3><form method="post"><input type="hidden" name="form_type" value="release"><input type="hidden" name="section" value="release"><input name="release_addr" placeholder="YUQING_RELEASE_ADDR" value="{{.ReleaseSettings.ReleaseAddr}}"><input name="release_dir" placeholder="YUQING_RELEASE_DIR" value="{{.ReleaseSettings.ReleaseDir}}"><input name="release_url" placeholder="YUQING_RELEASE_URL" value="{{.ReleaseSettings.ReleaseURL}}"><input name="dev_release_dir" placeholder="开发机发布目录" value="{{.ReleaseSettings.DevReleaseDir}}"><input name="server_share_path" placeholder="服务器共享路径" value="{{.ReleaseSettings.ServerSharePath}}"><input name="server_user" placeholder="服务器登录用户" value="{{.ReleaseSettings.ServerUser}}"><button type="submit">保存软件发布配置</button></form><p class="muted">环境值保存到数据库，release-service 需要按右侧命令重启后读取新的 YUQING_RELEASE_* 值。</p></div><div><h3>服务器 PowerShell</h3><div class="config-line">$env:YUQING_RELEASE_ADDR='{{.ReleaseSettings.ReleaseAddr}}'<br>$env:YUQING_RELEASE_DIR='{{.ReleaseSettings.ReleaseDir}}'<br>$env:YUQING_RELEASE_URL='{{.ReleaseSettings.ReleaseURL}}'<br>Get-NetTCPConnection -LocalPort 8099 -State Listen | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }<br>Set-Location C:\yuqing\go<br>go run .\cmd\release-service</div><h3>开发机复制命令</h3><div class="config-line">net use {{.ReleaseSettings.ServerSharePath}} /user:{{.ReleaseSettings.ServerUser}} * /persistent:no<br>robocopy {{.ReleaseSettings.DevReleaseDir}} {{.ReleaseSettings.ServerSharePath}} *.apk *.zip /XO /R:2 /W:2<br>net use {{.ReleaseSettings.ServerSharePath}} /delete</div></div></div></section>{{end}}{{if eq .SectionKey "database"}}`,
+		`{{if eq .SectionKey "database"}}<section class="section-block"><h2>数据库配置</h2>`,
+		`{{if eq .SectionKey "release"}}<section class="section-block"><h2>软件发布</h2><div class="release-grid"><div><h3>release-service 环境值</h3><form method="post"><input type="hidden" name="form_type" value="release"><input type="hidden" name="section" value="release"><input name="release_addr" placeholder="YUQING_RELEASE_ADDR" value="{{.ReleaseSettings.ReleaseAddr}}"><input name="release_dir" placeholder="YUQING_RELEASE_DIR" value="{{.ReleaseSettings.ReleaseDir}}"><input name="release_url" placeholder="YUQING_RELEASE_URL" value="{{.ReleaseSettings.ReleaseURL}}"><input name="dev_release_dir" placeholder="开发机发布目录" value="{{.ReleaseSettings.DevReleaseDir}}"><input name="server_share_path" placeholder="服务器共享路径" value="{{.ReleaseSettings.ServerSharePath}}"><input name="server_user" placeholder="服务器登录用户" value="{{.ReleaseSettings.ServerUser}}"><button type="submit">保存软件发布配置</button></form><p class="muted">环境值保存到数据库，release-service 需要按右侧命令重启后读取新的 YUQING_RELEASE_* 值。</p></div><div><h3>服务器 PowerShell</h3><div class="config-line">$env:YUQING_RELEASE_ADDR='{{.ReleaseSettings.ReleaseAddr}}'<br>$env:YUQING_RELEASE_DIR='{{.ReleaseSettings.ReleaseDir}}'<br>$env:YUQING_RELEASE_URL='{{.ReleaseSettings.ReleaseURL}}'<br>Get-NetTCPConnection -LocalPort 8099 -State Listen | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }<br>Set-Location C:\yuqing\go<br>go run .\cmd\release-service</div><h3>开发机复制命令</h3><div class="config-line">net use {{.ReleaseSettings.ServerSharePath}} /user:{{.ReleaseSettings.ServerUser}} * /persistent:no<br>robocopy {{.ReleaseSettings.DevReleaseDir}} {{.ReleaseSettings.ServerSharePath}} *.apk *.zip /XO /R:2 /W:2<br>net use {{.ReleaseSettings.ServerSharePath}} /delete</div></div></div></section>{{end}}{{if eq .SectionKey "database"}}<section class="section-block"><h2>数据库配置</h2>`,
 		`<div><h3>Legacy 注册表</h3><table><tr><th>策略</th><th>数量</th></tr>{{range .LegacyRouteSummary}}<tr><td>{{.Strategy}}</td><td>{{.Count}}</td></tr>{{else}}<tr><td colspan="2">暂无注册表数据</td></tr>{{end}}</table></div>`,
 		``,
 		`</div></section><section class="section-block"><h2>外部契约与审计</h2>`,

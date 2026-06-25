@@ -367,6 +367,17 @@ CREATE TABLE IF NOT EXISTS mail_configs (
 	updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS release_settings (
+	id INTEGER PRIMARY KEY CHECK (id = 1),
+	release_addr TEXT NOT NULL DEFAULT ':8099',
+	release_url TEXT NOT NULL DEFAULT 'http://10.15.0.7:8099',
+	release_dir TEXT NOT NULL DEFAULT 'C:\yuqing\release',
+	dev_release_dir TEXT NOT NULL DEFAULT 'D:\yuqing\release',
+	server_share_path TEXT NOT NULL DEFAULT '\\10.15.0.7\yuqing-release',
+	server_user TEXT NOT NULL DEFAULT '10.15.0.7\hyuser',
+	updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS warning_settings (
 	project_id BIGINT PRIMARY KEY,
 	warning_setting_id BIGINT NOT NULL DEFAULT 0,

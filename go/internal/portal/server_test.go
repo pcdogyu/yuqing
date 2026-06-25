@@ -6115,6 +6115,9 @@ func TestSystemTemplateGroupsRepeatedPanelsBySection(t *testing.T) {
 		`name="section" value="opactions"`,
 		`{{if eq .SectionKey "contracts"}}<section class="section-block"><h2>外部契约与审计</h2>`,
 		`{{if eq .SectionKey "announcements"}}<section class="section-block"><h2>公告与任务</h2>`,
+		`href="/system?section=release">软件发布</a>`,
+		`{{if eq .SectionKey "release"}}<section class="section-block"><h2>软件发布</h2>`,
+		`name="form_type" value="release"`,
 		`.feedback-textarea{min-height:168px;resize:vertical}`,
 		`<textarea class="feedback-textarea" name="content" placeholder="问题描述或需求"></textarea>`,
 		`href="/system?section=feedbacklist">建议列表</a>`,
@@ -7836,6 +7839,50 @@ func TestSystemDatabaseSectionRendersPostgresConfig(t *testing.T) {
 	}
 }
 
+func TestSystemReleaseSectionRendersPublishSettings(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/system?section=release", nil)
+	rr := httptest.NewRecorder()
+	srv.handleSystem(rr, req, map[string]any{"id": int64(1), "username": "admin"})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected system release page 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, snippet := range []string{"软件发布", "YUQING_RELEASE_ADDR", "YUQING_RELEASE_DIR", "YUQING_RELEASE_URL", `C:\yuqing\release`, `D:\yuqing\release`, `\\10.15.0.7\yuqing-release`, "robocopy"} {
+		if !strings.Contains(body, snippet) {
+			t.Fatalf("expected release section to contain %q, got %s", snippet, body)
+		}
+	}
+}
+
+func TestSystemReleaseSaveRedirectsWithSuccess(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+
+	form := url.Values{}
+	form.Set("section", "release")
+	form.Set("form_type", "release")
+	form.Set("release_addr", ":8100")
+	form.Set("release_url", "http://10.15.0.7:8100")
+	form.Set("release_dir", `C:\yuqing\release2`)
+	form.Set("dev_release_dir", `D:\yuqing\release2`)
+	form.Set("server_share_path", `\\10.15.0.7\yuqing-release2`)
+	form.Set("server_user", `10.15.0.7\hyuser`)
+	req := httptest.NewRequest(http.MethodPost, "/system?section=release", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	srv.handleSystem(rr, req, map[string]any{"id": int64(1), "username": "admin"})
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect after release config save, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	location := rr.Header().Get("Location")
+	if !strings.Contains(location, "section=release") || !strings.Contains(location, url.QueryEscape("软件发布配置已保存")) {
+		t.Fatalf("expected release save success redirect, got %q", location)
+	}
+}
+
 func TestSystemDatabaseSaveConfigRedirectsWithSuccess(t *testing.T) {
 	srv, cleanup := newPortalCompatServer(t)
 	defer cleanup()
@@ -7925,6 +7972,15 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 	var authMu sync.Mutex
 	var bindingMu sync.Mutex
 	mailCfg := model.MailConfig{}
+	releaseSettings := model.ReleaseSettings{
+		ReleaseAddr:     ":8099",
+		ReleaseURL:      "http://10.15.0.7:8099",
+		ReleaseDir:      `C:\yuqing\release`,
+		DevReleaseDir:   `D:\yuqing\release`,
+		ServerSharePath: `\\10.15.0.7\yuqing-release`,
+		ServerUser:      `10.15.0.7\hyuser`,
+		UpdatedAt:       time.Now().UTC(),
+	}
 	popupStates := map[string]model.PopupState{}
 	deletedArticles := map[int64]bool{}
 	emotions := map[int64]string{}
@@ -8734,6 +8790,22 @@ func newPortalCompatServer(t *testing.T) (*Server, func()) {
 			mailCfg = cfg
 			mu.Unlock()
 			writeEnvelope(http.StatusOK, "ok", cfg)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/system/release-settings":
+			mu.Lock()
+			settings := releaseSettings
+			mu.Unlock()
+			writeEnvelope(http.StatusOK, "ok", settings)
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/system/release-settings":
+			var settings model.ReleaseSettings
+			if err := json.NewDecoder(r.Body).Decode(&settings); err != nil {
+				writeEnvelope(http.StatusBadRequest, err.Error(), nil)
+				return
+			}
+			settings.UpdatedAt = time.Now().UTC()
+			mu.Lock()
+			releaseSettings = settings
+			mu.Unlock()
+			writeEnvelope(http.StatusOK, "ok", settings)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/system/database-config":
 			writeEnvelope(http.StatusOK, "ok", model.DatabaseConfigStatus{
 				Driver:           "sqlite",

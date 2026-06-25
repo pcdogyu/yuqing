@@ -195,6 +195,16 @@ type MailConfig struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+type ReleaseSettings struct {
+	ReleaseAddr     string    `json:"release_addr"`
+	ReleaseURL      string    `json:"release_url"`
+	ReleaseDir      string    `json:"release_dir"`
+	DevReleaseDir   string    `json:"dev_release_dir"`
+	ServerSharePath string    `json:"server_share_path"`
+	ServerUser      string    `json:"server_user"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
 type WarningSetting struct {
 	WarningSettingID     int64     `json:"warning_setting_id,omitempty"`
 	ProjectID            int64     `json:"project_id"`

@@ -75,6 +75,8 @@ type Store interface {
 	UpsertPopupState(rctx context.Context, state model.PopupState) (model.PopupState, error)
 	GetMailConfig(rctx context.Context) (model.MailConfig, error)
 	UpsertMailConfig(rctx context.Context, cfg model.MailConfig) (model.MailConfig, error)
+	GetReleaseSettings(rctx context.Context) (model.ReleaseSettings, error)
+	UpsertReleaseSettings(rctx context.Context, settings model.ReleaseSettings) (model.ReleaseSettings, error)
 	GetWarningSetting(rctx context.Context, projectID int64) (model.WarningSetting, error)
 	UpsertWarningSetting(rctx context.Context, setting model.WarningSetting) (model.WarningSetting, error)
 	GetOpinionCondition(rctx context.Context, projectID int64) (model.OpinionCondition, error)
@@ -244,6 +246,8 @@ func (s *Service) Routes(r chi.Router) {
 	r.Put("/api/v1/system/preferences", s.handleUpdatePreferences)
 	r.Get("/api/v1/system/mail-config", s.handleGetMailConfig)
 	r.Put("/api/v1/system/mail-config", s.handleUpdateMailConfig)
+	r.Get("/api/v1/system/release-settings", s.handleGetReleaseSettings)
+	r.Put("/api/v1/system/release-settings", s.handleUpdateReleaseSettings)
 	r.Get("/api/v1/system/warning-settings/{project_id}", s.handleGetWarningSetting)
 	r.Put("/api/v1/system/warning-settings/{project_id}", s.handleUpdateWarningSetting)
 	r.Get("/api/v1/system/opinion-conditions/{project_id}", s.handleGetOpinionCondition)
@@ -3211,6 +3215,28 @@ func (s *Service) handleUpdateMailConfig(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	updated, err := s.store.UpsertMailConfig(r.Context(), cfg)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", updated)
+}
+
+func (s *Service) handleGetReleaseSettings(w http.ResponseWriter, r *http.Request) {
+	settings, err := s.store.GetReleaseSettings(r.Context())
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", settings)
+}
+
+func (s *Service) handleUpdateReleaseSettings(w http.ResponseWriter, r *http.Request) {
+	var settings model.ReleaseSettings
+	if !decodeJSON(w, r, &settings) {
+		return
+	}
+	updated, err := s.store.UpsertReleaseSettings(r.Context(), settings)
 	if err != nil {
 		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
 		return
