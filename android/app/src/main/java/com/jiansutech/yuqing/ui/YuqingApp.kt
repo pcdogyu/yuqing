@@ -342,14 +342,13 @@ private fun DashboardModule(dashboard: AndroidDashboard, viewModel: YuqingViewMo
             ) {
                 MetricCard("文章", dashboard.overview.articleCount.toString(), Modifier.weight(1f))
                 MetricCard("任务", dashboard.overview.crawlRunCount.toString(), Modifier.weight(1f))
-                Button(
+                MetricCard(
+                    title = "清除",
+                    value = "缓存",
                     onClick = { viewModel.clearCache() },
+                    icon = Icons.Default.Refresh,
                     modifier = Modifier.weight(1f),
-                ) {
-                    Icon(Icons.Default.Refresh, contentDescription = null)
-                    Spacer(Modifier.width(6.dp))
-                    Text("清除缓存", maxLines = 1)
-                }
+                )
             }
         }
         item { SectionTitle("最新文章") }
@@ -881,11 +880,36 @@ private fun SchedulerJobRow(job: SchedulerJob, viewModel: YuqingViewModel) {
 }
 
 @Composable
-private fun MetricCard(title: String, value: String, modifier: Modifier = Modifier) {
-    Card(modifier = modifier) {
-        Column(Modifier.padding(14.dp)) {
-            Text(title, style = MaterialTheme.typography.labelMedium)
-            Text(value, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+private fun MetricCard(
+    title: String,
+    value: String,
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
+    icon: ImageVector? = null,
+) {
+    val cardModifier = if (onClick == null) {
+        modifier
+    } else {
+        modifier.clickable(onClick = onClick)
+    }
+    Card(modifier = cardModifier.height(86.dp)) {
+        Column(
+            Modifier.fillMaxSize().padding(14.dp),
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (icon != null) {
+                    Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                }
+                Text(title, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+            }
+            Text(
+                value,
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+            )
         }
     }
 }
