@@ -1,6 +1,9 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
 
+set "STATUS_ONLY=0"
+if /I "%~1"=="status" set "STATUS_ONLY=1"
+if /I "%~1"=="--status" set "STATUS_ONLY=1"
 set "SKIP_PULL=0"
 if /I "%~1"=="--skip-pull" set "SKIP_PULL=1"
 set "AFTER_PULL=0"
@@ -66,6 +69,11 @@ set "YUQING_LOG_LEVEL=debug"
 set "YUQING_RUN_VERSION=local"
 set "TEMP_BOOTSTRAP=%TEMP%\yuqing-run-bootstrap-%RANDOM%-%RANDOM%.cmd"
 set "GIT_ASK_YESNO_HELPER=%TEMP%\yuqing-git-ask-yesno-%RANDOM%-%RANDOM%.cmd"
+
+if "%STATUS_ONLY%"=="1" (
+    call :print_service_status
+    exit /b !ERRORLEVEL!
+)
 
 if "%SKIP_PULL%"=="0" if "%AFTER_PULL%"=="0" (
     copy /Y "%~f0" "%TEMP_BOOTSTRAP%" >nul
@@ -210,7 +218,15 @@ echo Version: %YUQING_RUN_VERSION%
 echo Commit: %YUQING_GIT_COMMIT%
 echo BuildTime: %YUQING_BUILD_TIME%
 echo Branch: %YUQING_GIT_BRANCH%
+echo.
+echo Service status:
+call :print_service_status
+if errorlevel 1 echo WARNING: Failed to print service status.
 exit /b 0
+
+:print_service_status
+powershell -NoProfile -ExecutionPolicy Bypass -File "%GO_DIR%\scripts\service-status.ps1" -LogDir "%LOG_DIR%"
+exit /b %ERRORLEVEL%
 
 :find_python
 set "PYTHON_EXE="
