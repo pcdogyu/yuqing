@@ -118,6 +118,17 @@ class ArticleListFallbackTest {
     }
 
     @Test
+    fun previousArticleBeforeReturnsPreviousArticle() {
+        val first = ArticleItem(id = 1, title = "first")
+        val second = ArticleItem(id = 2, title = "second")
+        val third = ArticleItem(id = 3, title = "third")
+
+        val previous = previousArticleBefore(third, listOf(first, second, third))
+
+        assertEquals(second, previous)
+    }
+
+    @Test
     fun articleDetailNavigationUsesListContainingCurrentDetail() {
         val dashboardArticle = ArticleItem(id = 1, title = "dashboard")
         val listArticle = ArticleItem(id = 2, title = "list")

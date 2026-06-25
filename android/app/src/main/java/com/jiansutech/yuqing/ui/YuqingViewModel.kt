@@ -501,6 +501,17 @@ class YuqingViewModel(
         openArticleDetail(next)
     }
 
+    fun openPreviousArticleDetail() {
+        val state = _uiState.value
+        val current = state.articleDetail ?: return
+        val previous = previousArticleBefore(current, articleDetailNavigationArticles(state))
+        if (previous == null) {
+            _uiState.update { it.copy(message = "已经是第一条新闻") }
+            return
+        }
+        openArticleDetail(previous)
+    }
+
     fun loadAStockRecommendations(window: AStockRecommendationWindow = currentAStockRecommendationWindow()) {
         viewModelScope.launch {
             _uiState.update { it.copy(loading = true, error = "", message = "") }
@@ -753,6 +764,14 @@ internal fun nextArticleAfter(current: ArticleItem, candidates: List<ArticleItem
         return candidates.firstOrNull { !sameArticle(it, current) }
     }
     return candidates.drop(currentIndex + 1).firstOrNull { !sameArticle(it, current) }
+}
+
+internal fun previousArticleBefore(current: ArticleItem, candidates: List<ArticleItem>): ArticleItem? {
+    val currentIndex = candidates.indexOfFirst { sameArticle(it, current) }
+    if (currentIndex <= 0) {
+        return null
+    }
+    return candidates.take(currentIndex).lastOrNull { !sameArticle(it, current) }
 }
 
 private fun patchDashboardLatestArticles(dashboard: AndroidDashboard, latestArticles: List<ArticleItem>): AndroidDashboard {

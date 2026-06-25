@@ -232,7 +232,15 @@ private fun PortalScreen(
                 }
             }
             if (detail != null) {
-                AStockBacktestDetailScreen(detail)
+                AStockBacktestDetailScreen(
+                    state = detail,
+                    onSwipeDown = {
+                        backtestDetail = adjacentAStockBacktestDetail(detail, 1) ?: detail
+                    },
+                    onSwipeUp = {
+                        backtestDetail = adjacentAStockBacktestDetail(detail, -1) ?: detail
+                    },
+                )
             } else if (articleDetail != null) {
                 ArticleDetailScreen(
                     item = articleDetail,
@@ -240,6 +248,7 @@ private fun PortalScreen(
                     error = state.articleDetailError,
                     onSwipeLeft = viewModel::closeArticleDetail,
                     onSwipeDown = viewModel::openNextArticleDetail,
+                    onSwipeUp = viewModel::openPreviousArticleDetail,
                 )
             } else {
                 ModuleContent(
@@ -555,6 +564,8 @@ private fun AStockModule(
                         row = findAStockBacktest(morningBacktests, item),
                         strategyDate = window.date,
                         sectionLabel = "上午推荐",
+                        recommendations = morningRecommendations,
+                        backtests = morningBacktests,
                     ),
                 )
             }
@@ -572,6 +583,8 @@ private fun AStockModule(
                         row = findAStockBacktest(afternoonBacktests, item),
                         strategyDate = window.date,
                         sectionLabel = "下午推荐",
+                        recommendations = afternoonRecommendations,
+                        backtests = afternoonBacktests,
                     ),
                 )
             }
@@ -1012,6 +1025,7 @@ private fun ArticleDetailScreen(
     error: String,
     onSwipeLeft: () -> Unit,
     onSwipeDown: () -> Unit,
+    onSwipeUp: () -> Unit,
 ) {
     val uriHandler = LocalUriHandler.current
     val swipeThreshold = with(LocalDensity.current) { 96.dp.toPx() }
@@ -1028,8 +1042,7 @@ private fun ArticleDetailScreen(
         modifier = Modifier.pointerInput(articleStableKey(item)) {
             detectDragGestures(
                 onDragStart = { dragOffset = Offset.Zero },
-                onDrag = { change, dragAmount ->
-                    change.consume()
+                onDrag = { _, dragAmount ->
                     dragOffset += dragAmount
                 },
                 onDragEnd = {
@@ -1038,6 +1051,7 @@ private fun ArticleDetailScreen(
                     when {
                         horizontal < -swipeThreshold && abs(horizontal) > abs(vertical) -> onSwipeLeft()
                         vertical > swipeThreshold && vertical > abs(horizontal) -> onSwipeDown()
+                        vertical < -swipeThreshold && abs(vertical) > abs(horizontal) -> onSwipeUp()
                     }
                     dragOffset = Offset.Zero
                 },
@@ -1126,6 +1140,8 @@ private data class AStockBacktestDetailState(
     val row: AStockBacktestRow?,
     val strategyDate: String,
     val sectionLabel: String,
+    val recommendations: List<AStockRecommendation> = emptyList(),
+    val backtests: List<AStockBacktestRow> = emptyList(),
 )
 
 private fun AStockBacktestRow.displayEntryOpen(): String {
@@ -1141,10 +1157,37 @@ private fun AStockBacktestRow.displayEntryOpen(): String {
 }
 
 @Composable
-private fun AStockBacktestDetailScreen(state: AStockBacktestDetailState) {
+private fun AStockBacktestDetailScreen(
+    state: AStockBacktestDetailState,
+    onSwipeDown: () -> Unit,
+    onSwipeUp: () -> Unit,
+) {
     val row = state.row
     val currentClosePrice = state.recommendation.currentPrice.ifBlank { "--" }
-    LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    val swipeThreshold = with(LocalDensity.current) { 96.dp.toPx() }
+    var dragOffset by remember(state.recommendation.code, state.sectionLabel) { mutableStateOf(Offset.Zero) }
+    LazyColumn(
+        modifier = Modifier.pointerInput(state.recommendation.code, state.sectionLabel) {
+            detectDragGestures(
+                onDragStart = { dragOffset = Offset.Zero },
+                onDrag = { _, dragAmount ->
+                    dragOffset += dragAmount
+                },
+                onDragEnd = {
+                    val horizontal = dragOffset.x
+                    val vertical = dragOffset.y
+                    when {
+                        vertical > swipeThreshold && vertical > abs(horizontal) -> onSwipeDown()
+                        vertical < -swipeThreshold && abs(vertical) > abs(horizontal) -> onSwipeUp()
+                    }
+                    dragOffset = Offset.Zero
+                },
+                onDragCancel = { dragOffset = Offset.Zero },
+            )
+        },
+        contentPadding = PaddingValues(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
         item {
             SimpleRow(
                 "${state.recommendation.code} ${state.recommendation.name}",
@@ -1378,6 +1421,27 @@ private fun findAStockBacktest(rows: List<AStockBacktestRow>, item: AStockRecomm
         val stock = row.stock.trim()
         stock == code || stock.startsWith("$code ")
     }
+}
+
+private fun adjacentAStockBacktestDetail(state: AStockBacktestDetailState, offset: Int): AStockBacktestDetailState? {
+    val currentIndex = state.recommendations.indexOfFirst { sameAStockRecommendation(it, state.recommendation) }
+    if (currentIndex < 0) {
+        return null
+    }
+    val nextRecommendation = state.recommendations.getOrNull(currentIndex + offset) ?: return null
+    return state.copy(
+        recommendation = nextRecommendation,
+        row = findAStockBacktest(state.backtests, nextRecommendation),
+    )
+}
+
+private fun sameAStockRecommendation(left: AStockRecommendation, right: AStockRecommendation): Boolean {
+    val leftCode = left.code.trim()
+    val rightCode = right.code.trim()
+    if (leftCode.isNotBlank() && rightCode.isNotBlank()) {
+        return leftCode == rightCode
+    }
+    return left.name == right.name && left.rank == right.rank
 }
 
 private fun formatAuctionAmount(value: Double): String {
