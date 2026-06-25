@@ -98,16 +98,25 @@ import java.time.LocalDate
 import java.time.ZoneId
 
 @Composable
-fun YuqingApp(viewModel: YuqingViewModel) {
+fun YuqingApp(
+    viewModel: YuqingViewModel,
+    versionUpgradeState: VersionUpgradeUiState = VersionUpgradeUiState(),
+    onCheckUpgrade: () -> Unit = {},
+) {
     val state by viewModel.uiState.collectAsState()
     YuqingTheme {
-        PortalScreen(state, viewModel)
+        PortalScreen(state, viewModel, versionUpgradeState, onCheckUpgrade)
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PortalScreen(state: YuqingUiState, viewModel: YuqingViewModel) {
+private fun PortalScreen(
+    state: YuqingUiState,
+    viewModel: YuqingViewModel,
+    versionUpgradeState: VersionUpgradeUiState,
+    onCheckUpgrade: () -> Unit,
+) {
     val modules = state.modules.ifEmpty { fallbackModules() }
     val fallback = fallbackModules()
     val selected = modules.firstOrNull { it.key == state.selectedModuleKey }
@@ -232,6 +241,8 @@ private fun PortalScreen(state: YuqingUiState, viewModel: YuqingViewModel) {
                     dashboard = state.dashboard,
                     state = state,
                     viewModel = viewModel,
+                    versionUpgradeState = versionUpgradeState,
+                    onCheckUpgrade = onCheckUpgrade,
                     onOpenAStockBacktest = { backtestDetail = it },
                 )
             }
@@ -295,6 +306,8 @@ private fun ModuleContent(
     dashboard: AndroidDashboard?,
     state: YuqingUiState,
     viewModel: YuqingViewModel,
+    versionUpgradeState: VersionUpgradeUiState = VersionUpgradeUiState(),
+    onCheckUpgrade: () -> Unit = {},
     onOpenAStockBacktest: (AStockBacktestDetailState) -> Unit = {},
 ) {
     if (dashboard == null) {
@@ -312,7 +325,7 @@ private fun ModuleContent(
         "a_stock" -> AStockModule(state, viewModel, onOpenAStockBacktest)
         "stock_research" -> StockResearchModule(dashboard.stockResearch.items, viewModel)
         "holdings" -> HoldingsModule(dashboard.holdings.items)
-        "system" -> SystemModule(dashboard, state, viewModel)
+        "system" -> SystemModule(dashboard, state, viewModel, versionUpgradeState, onCheckUpgrade)
         else -> GenericModule(key, dashboard)
     }
 }
@@ -622,7 +635,13 @@ private fun HoldingsModule(items: List<StockHolding>) {
 }
 
 @Composable
-private fun SystemModule(dashboard: AndroidDashboard, state: YuqingUiState, viewModel: YuqingViewModel) {
+private fun SystemModule(
+    dashboard: AndroidDashboard,
+    state: YuqingUiState,
+    viewModel: YuqingViewModel,
+    versionUpgradeState: VersionUpgradeUiState,
+    onCheckUpgrade: () -> Unit,
+) {
     val recentTasks = dashboard.recentTaskRunsForDisplay()
     val database = dashboard.operations.database
     val servicesByName = dashboard.operations.services.associateBy { it.name }
@@ -631,6 +650,13 @@ private fun SystemModule(dashboard: AndroidDashboard, state: YuqingUiState, view
     val authUrl = state.session.authBaseUrl
     val releaseUrl = BuildConfig.DEFAULT_RELEASE_BASE_URL
     LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item { SectionTitle("版本") }
+        item {
+            VersionInfoRow(
+                state = versionUpgradeState,
+                onCheckUpgrade = onCheckUpgrade,
+            )
+        }
         item { SectionTitle("连接") }
         item {
             ConnectionRow(
@@ -702,6 +728,93 @@ private fun SystemModule(dashboard: AndroidDashboard, state: YuqingUiState, view
             item { SimpleRow("暂无任务记录", "") }
         }
         items(recentTasks) { SimpleRow(it.taskName, "${it.status} ${it.message}") }
+    }
+}
+
+enum class VersionUpgradeStatus {
+    Idle,
+    Checking,
+    Latest,
+    UpdateFound,
+    Downloading,
+    InstallerOpened,
+    Failed,
+}
+
+data class VersionUpgradeUiState(
+    val status: VersionUpgradeStatus = VersionUpgradeStatus.Idle,
+    val sourceLabel: String = "",
+    val latestVersionName: String = "",
+    val latestFileName: String = "",
+    val message: String = "",
+)
+
+@Composable
+private fun VersionInfoRow(
+    state: VersionUpgradeUiState,
+    onCheckUpgrade: () -> Unit,
+) {
+    val loading = state.status == VersionUpgradeStatus.Checking || state.status == VersionUpgradeStatus.Downloading
+    val messageColor = when (state.status) {
+        VersionUpgradeStatus.Failed -> MaterialTheme.colorScheme.error
+        VersionUpgradeStatus.Latest,
+        VersionUpgradeStatus.UpdateFound,
+        VersionUpgradeStatus.InstallerOpened -> MaterialTheme.colorScheme.primary
+        VersionUpgradeStatus.Idle,
+        VersionUpgradeStatus.Checking,
+        VersionUpgradeStatus.Downloading -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Card {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("当前版本", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (state.sourceLabel.isNotBlank() || state.latestVersionName.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        listOfNotNull(
+                            state.sourceLabel.takeIf { it.isNotBlank() }?.let { "来源 $it" },
+                            state.latestVersionName.takeIf { it.isNotBlank() }?.let { "最新 $it" },
+                        ).joinToString("  "),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (state.message.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        state.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = messageColor,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            TextButton(onClick = onCheckUpgrade, enabled = !loading) {
+                Text(versionUpgradeButtonText(state.status))
+            }
+        }
+    }
+}
+
+internal fun versionUpgradeButtonText(status: VersionUpgradeStatus): String {
+    return when (status) {
+        VersionUpgradeStatus.Checking -> "检测中"
+        VersionUpgradeStatus.Downloading -> "下载中"
+        else -> "检测升级"
     }
 }
 

@@ -20,7 +20,10 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.jiansutech.yuqing.data.AppInstallStore
 import com.jiansutech.yuqing.data.ReleaseUpdater
+import com.jiansutech.yuqing.data.ReleaseUpgradePolicy
 import com.jiansutech.yuqing.data.isInstallRecordExpired
+import com.jiansutech.yuqing.ui.VersionUpgradeStatus
+import com.jiansutech.yuqing.ui.VersionUpgradeUiState
 import com.jiansutech.yuqing.ui.YuqingApp
 import com.jiansutech.yuqing.ui.YuqingViewModel
 import com.jiansutech.yuqing.ui.YuqingViewModelFactory
@@ -38,6 +41,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var installStore: AppInstallStore
     private lateinit var releaseUpdater: ReleaseUpdater
     private val upgradeState = MutableStateFlow(AppUpgradeUiState())
+    private val versionUpgradeState = MutableStateFlow(VersionUpgradeUiState())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val startedAt = SystemClock.elapsedRealtime()
@@ -57,7 +61,12 @@ class MainActivity : ComponentActivity() {
                     app.database.articleUserActionDao(),
                 ),
             )
-            YuqingApp(viewModel)
+            val versionUpgrade by versionUpgradeState.collectAsState()
+            YuqingApp(
+                viewModel = viewModel,
+                versionUpgradeState = versionUpgrade,
+                onCheckUpgrade = ::checkVersionUpgrade,
+            )
             if (upgrade.required) {
                 ForceUpgradeDialog(
                     state = upgrade,
@@ -151,6 +160,85 @@ class MainActivity : ComponentActivity() {
                     it.copy(
                         loading = false,
                         message = throwable.message ?: "升级失败，请检查网络后重试。",
+                    )
+                }
+            }
+        }
+    }
+
+    private fun checkVersionUpgrade() {
+        if (versionUpgradeState.value.status == VersionUpgradeStatus.Checking ||
+            versionUpgradeState.value.status == VersionUpgradeStatus.Downloading
+        ) {
+            return
+        }
+        lifecycleScope.launch {
+            versionUpgradeState.update {
+                VersionUpgradeUiState(
+                    status = VersionUpgradeStatus.Checking,
+                    message = "正在检测内网发布服务...",
+                )
+            }
+            runCatching {
+                val source = releaseUpdater.selectReleaseSource()
+                versionUpgradeState.update {
+                    it.copy(
+                        sourceLabel = source.label,
+                        status = VersionUpgradeStatus.Checking,
+                        message = "使用${source.label}发布服务，正在获取版本...",
+                    )
+                }
+                val latest = releaseUpdater.fetchLatest(source.baseUrl)
+                val latestName = latest.versionName.ifBlank { latest.fileName.ifBlank { "--" } }
+                if (ReleaseUpgradePolicy.isCurrentVersion(latest, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE)) {
+                    versionUpgradeState.update {
+                        it.copy(
+                            status = VersionUpgradeStatus.Latest,
+                            latestVersionName = latestName,
+                            latestFileName = latest.fileName,
+                            message = "当前已是最新版本。",
+                        )
+                    }
+                    return@launch
+                }
+                versionUpgradeState.update {
+                    it.copy(
+                        status = VersionUpgradeStatus.UpdateFound,
+                        latestVersionName = latestName,
+                        latestFileName = latest.fileName,
+                        message = "发现新版本 $latestName，准备下载。",
+                    )
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) {
+                    versionUpgradeState.update {
+                        it.copy(
+                            status = VersionUpgradeStatus.UpdateFound,
+                            message = "发现新版本 $latestName，请先允许安装未知来源应用，授权后重新点击检测升级。",
+                        )
+                    }
+                    startActivity(releaseUpdater.unknownSourcesSettingsIntent())
+                    return@launch
+                }
+                versionUpgradeState.update {
+                    it.copy(
+                        status = VersionUpgradeStatus.Downloading,
+                        message = "发现新版本 $latestName，正在下载...",
+                    )
+                }
+                val file = releaseUpdater.downloadApk(latest, source.baseUrl, preferBaseDownloadUrl = true)
+                startActivity(releaseUpdater.installApk(file))
+                versionUpgradeState.update {
+                    it.copy(
+                        status = VersionUpgradeStatus.InstallerOpened,
+                        message = "安装器已打开，请完成升级。",
+                    )
+                }
+            }.onFailure { throwable ->
+                Log.e(STARTUP_TAG, "MainActivity.manual release check failed", throwable)
+                versionUpgradeState.update {
+                    it.copy(
+                        status = VersionUpgradeStatus.Failed,
+                        message = throwable.message ?: "检测升级失败，请检查网络后重试。",
                     )
                 }
             }

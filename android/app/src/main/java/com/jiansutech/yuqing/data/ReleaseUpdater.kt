@@ -17,6 +17,16 @@ class ReleaseUpdater(private val context: Context) {
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .build()
+    private val sourceSelector = ReleaseSourceSelector { baseUrl ->
+        ApiFactory.testUrl(baseUrl, "release/").ok
+    }
+
+    suspend fun selectReleaseSource(
+        intranetBaseUrl: String = INTRANET_RELEASE_BASE_URL,
+        externalBaseUrl: String = BuildConfig.DEFAULT_RELEASE_BASE_URL,
+    ): ReleaseSource {
+        return sourceSelector.select(intranetBaseUrl, externalBaseUrl)
+    }
 
     suspend fun fetchLatest(baseUrl: String = BuildConfig.DEFAULT_RELEASE_BASE_URL): ReleasePackage {
         return ApiFactory.release(baseUrl).latest().data ?: error("未找到可用安装包")
@@ -24,8 +34,25 @@ class ReleaseUpdater(private val context: Context) {
 
     suspend fun downloadLatestApk(baseUrl: String = BuildConfig.DEFAULT_RELEASE_BASE_URL): File = withContext(Dispatchers.IO) {
         val latest = fetchLatest(baseUrl)
-        val downloadUrl = latest.downloadUrl.ifBlank { error("安装包下载地址为空") }
+        downloadApk(latest, baseUrl, preferBaseDownloadUrl = false)
+    }
+
+    suspend fun downloadApk(
+        latest: ReleasePackage,
+        baseUrl: String,
+        preferBaseDownloadUrl: Boolean,
+    ): File = withContext(Dispatchers.IO) {
         val fileName = latest.fileName.ifBlank { "yuqing-latest-release.apk" }
+        val downloadUrl = if (preferBaseDownloadUrl && latest.fileName.isNotBlank()) {
+            ReleaseUpgradePolicy.downloadUrlFor(baseUrl, latest.fileName)
+        } else {
+            latest.downloadUrl.ifBlank {
+                if (latest.fileName.isBlank()) {
+                    error("安装包下载地址为空")
+                }
+                ReleaseUpgradePolicy.downloadUrlFor(baseUrl, latest.fileName)
+            }
+        }
         val target = File(context.cacheDir, "updates/$fileName")
         target.parentFile?.mkdirs()
         client.newCall(Request.Builder().url(downloadUrl).get().build()).execute().use { response ->
