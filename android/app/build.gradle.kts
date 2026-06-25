@@ -1,4 +1,6 @@
 import com.android.build.gradle.internal.api.ApkVariantOutputImpl
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 plugins {
     id("com.android.application")
@@ -77,15 +79,35 @@ android {
 }
 
 val repoReleaseDir = rootProject.layout.projectDirectory.dir("../release")
+val releaseApkFileName = "yuqing-${commitVersion}-release.apk"
 tasks.register<Copy>("copyReleaseApkToRepoRelease") {
+    dependsOn("packageRelease")
     from(layout.buildDirectory.dir("outputs/apk/release")) {
         include("*.apk")
     }
     into(repoReleaseDir)
 }
+tasks.register("zipReleaseApkToRepoRelease") {
+    dependsOn("copyReleaseApkToRepoRelease")
+    doLast {
+        val apkFile = repoReleaseDir.file(releaseApkFileName).asFile
+        require(apkFile.isFile) {
+            "Release APK not found: ${apkFile.absolutePath}"
+        }
+
+        val zipFile = repoReleaseDir.file(releaseApkFileName.removeSuffix(".apk") + ".zip").asFile
+        ZipOutputStream(zipFile.outputStream().buffered()).use { zip ->
+            zip.putNextEntry(ZipEntry(apkFile.name))
+            apkFile.inputStream().buffered().use { input ->
+                input.copyTo(zip)
+            }
+            zip.closeEntry()
+        }
+    }
+}
 afterEvaluate {
     tasks.named("assembleRelease") {
-        finalizedBy("copyReleaseApkToRepoRelease")
+        finalizedBy("zipReleaseApkToRepoRelease")
     }
 }
 
