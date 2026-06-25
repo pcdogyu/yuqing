@@ -27,6 +27,7 @@ func TestHealthz(t *testing.T) {
 
 func TestReleaseListShowsFiles(t *testing.T) {
 	dir := t.TempDir()
+	writeTestFile(t, dir, ".gitkeep", "")
 	writeTestFile(t, dir, "yuqing-20260625-120000-abcdef12-release.apk", "apk")
 	writeTestFile(t, dir, "notes.txt", "notes")
 	svc := NewService(config.Config{ReleaseDir: dir, ReleaseURL: "http://release.example.com"})
@@ -40,6 +41,8 @@ func TestReleaseListShowsFiles(t *testing.T) {
 	}
 	if body := rr.Body.String(); !strings.Contains(body, "yuqing-20260625-120000-abcdef12-release.apk") || !strings.Contains(body, "notes.txt") {
 		t.Fatalf("expected release files in listing, got %s", body)
+	} else if strings.Contains(body, ".gitkeep") {
+		t.Fatalf("expected hidden files to be omitted, got %s", body)
 	}
 }
 

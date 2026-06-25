@@ -88,6 +88,9 @@ func (s *Service) handleReleaseList(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		name := file.Name()
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
 		escaped := url.PathEscape(name)
 		_, _ = fmt.Fprintf(w, "<li><a href=\"/release/%s\">%s</a></li>", escaped, htmlEscape(name))
 	}
