@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -61,6 +63,7 @@ func ParseHTML(html, pageURL string, capturedAt time.Time) ([]model.Item, error)
 		item.Title = cleanText(s.Find(".jin10-news-list-item-title").First().Text())
 		item.Summary = cleanText(s.Find(".jin10-news-list-item-introduction").First().Text())
 		item.PublishTimeText = cleanText(s.Find(".jin10-news-list-item-display_datetime").First().Text())
+		item.PublishTime = resolvePublishTimeFromText(item.PublishTimeText, capturedAt)
 		item.TagFlags = collectTags(s)
 		item.FromText = inferFromText(s)
 		item.HasImage = s.Find(".jin10-news-list-item-thumb").Length() > 0
@@ -75,6 +78,54 @@ func ParseHTML(html, pageURL string, capturedAt time.Time) ([]model.Item, error)
 	})
 
 	return dedupe(items), nil
+}
+
+var (
+	jin10RelativeMinutePattern = regexp.MustCompile(`^(\d+)分钟前$`)
+	jin10RelativeHourPattern   = regexp.MustCompile(`^(\d+)小时前$`)
+	jin10SameDayClockPattern   = regexp.MustCompile(`^\d{1,2}:\d{2}$`)
+)
+
+func resolvePublishTimeFromText(text string, capturedAt time.Time) string {
+	text = cleanText(text)
+	if text == "" || capturedAt.IsZero() {
+		return ""
+	}
+	location := jin10PublishLocation()
+	base := capturedAt.In(location)
+	switch {
+	case text == "刚刚":
+		return base.Format("2006-01-02 15:04:05")
+	case jin10RelativeMinutePattern.MatchString(text):
+		matches := jin10RelativeMinutePattern.FindStringSubmatch(text)
+		minutes, _ := strconv.Atoi(matches[1])
+		return base.Add(-time.Duration(minutes) * time.Minute).Format("2006-01-02 15:04:05")
+	case jin10RelativeHourPattern.MatchString(text):
+		matches := jin10RelativeHourPattern.FindStringSubmatch(text)
+		hours, _ := strconv.Atoi(matches[1])
+		return base.Add(-time.Duration(hours) * time.Hour).Format("2006-01-02 15:04:05")
+	case jin10SameDayClockPattern.MatchString(text):
+		parsed, err := time.ParseInLocation("15:04", text, location)
+		if err != nil {
+			return ""
+		}
+		return time.Date(base.Year(), base.Month(), base.Day(), parsed.Hour(), parsed.Minute(), 0, 0, location).Format("2006-01-02 15:04:05")
+	}
+	for _, layout := range []string{"2006-01-02 15:04:05", "2006-01-02 15:04"} {
+		parsed, err := time.ParseInLocation(layout, text, location)
+		if err == nil {
+			return parsed.Format("2006-01-02 15:04:05")
+		}
+	}
+	return ""
+}
+
+func jin10PublishLocation() *time.Location {
+	location, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		return time.FixedZone("CST", 8*60*60)
+	}
+	return location
 }
 
 func collectTags(s *goquery.Selection) string {

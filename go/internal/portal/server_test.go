@@ -2017,6 +2017,73 @@ func TestAStockWindowArticlesFallbackToCapturedAt(t *testing.T) {
 	}
 }
 
+func TestAStockWindowArticlesSupplementsMissingPublishSourceFromCapturedAt(t *testing.T) {
+	var seenCapturedQuery bool
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/articles" {
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+		switch r.URL.Query().Get("time_field") {
+		case "publish_time":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": model.ItemListResult{
+					Items: []model.Item{{
+						ID:          801,
+						SourceType:  "eastmoney_kuaixun",
+						Title:       "东方财富窗口新闻",
+						PublishTime: "2026-06-26 09:20:00",
+						CapturedAt:  time.Date(2026, 6, 26, 1, 20, 0, 0, time.UTC),
+					}},
+					Page: 1, PageSize: 200, Total: 1,
+				},
+			})
+		case "captured_at":
+			seenCapturedQuery = true
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": model.ItemListResult{
+					Items: []model.Item{
+						{
+							ID:         802,
+							SourceType: "headline",
+							Title:      "金十资讯相对时间新闻",
+							CapturedAt: time.Date(2026, 6, 26, 4, 8, 0, 0, time.UTC),
+						},
+						{
+							ID:          803,
+							SourceType:  "flash",
+							Title:       "旧发布日期金十快讯",
+							PublishTime: "2026-06-19 15:51:43",
+							CapturedAt:  time.Date(2026, 6, 26, 4, 9, 0, 0, time.UTC),
+						},
+					},
+					Page: 1, PageSize: 200, Total: 2,
+				},
+			})
+		default:
+			t.Fatalf("unexpected article time_field: %s", r.URL.RawQuery)
+		}
+	}))
+	defer content.Close()
+
+	start, end, _ := aStockRecommendationPhaseWindow("2026-06-26", "morning", aStockRecommendationPhaseFinal)
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	items, err := srv.loadAStockWindowArticles(start, end)
+	if err != nil {
+		t.Fatalf("loadAStockWindowArticles error: %v", err)
+	}
+	if !seenCapturedQuery {
+		t.Fatal("expected captured_at source supplement query")
+	}
+	gotIDs := make([]int64, 0, len(items))
+	for _, item := range items {
+		gotIDs = append(gotIDs, item.ID)
+	}
+	if len(items) != 2 || items[0].ID != 801 || items[1].ID != 802 {
+		t.Fatalf("expected publish item plus headline captured_at supplement, got ids=%v items=%+v", gotIDs, items)
+	}
+}
+
 func TestAStockNewsSectionSummarizesSources(t *testing.T) {
 	items := make([]model.Item, 0, 12)
 	for i := 1; i <= 12; i++ {

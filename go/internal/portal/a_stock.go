@@ -2571,6 +2571,9 @@ func (s *Server) loadAStockWindowArticlesWithCache(start time.Time, end time.Tim
 		return nil, err
 	}
 	if len(filtered) > 0 {
+		if fallbackItems, fallbackErr := s.loadAStockWindowArticlesByCapturedAt(start, end); fallbackErr == nil && len(fallbackItems) > 0 {
+			filtered = mergeAStockPublishWindowArticles(filtered, fallbackItems)
+		}
 		if cache != nil {
 			cache.articles[cacheKey] = aStockArticlesCacheEntry{items: filtered}
 		}
@@ -2589,6 +2592,67 @@ func (s *Server) loadAStockWindowArticlesWithCache(start time.Time, end time.Tim
 		cache.articles[cacheKey] = aStockArticlesCacheEntry{items: items}
 	}
 	return items, nil
+}
+
+func (s *Server) loadAStockWindowArticlesByCapturedAt(start time.Time, end time.Time) ([]model.Item, error) {
+	fallbackResult := model.ItemListResult{}
+	fallbackQuery := "/api/v1/articles?page=1&page_size=200&time_field=captured_at&start=" + url.QueryEscape(start.UTC().Format(time.RFC3339)) + "&end=" + url.QueryEscape(end.UTC().Format(time.RFC3339))
+	if err := s.getJSON(s.cfg.ContentURL+fallbackQuery, &fallbackResult); err != nil {
+		return nil, err
+	}
+	return filterAStockNews(fallbackResult.Items), nil
+}
+
+func mergeAStockPublishWindowArticles(primary []model.Item, capturedFallback []model.Item) []model.Item {
+	if len(primary) == 0 {
+		return append([]model.Item(nil), capturedFallback...)
+	}
+	if len(capturedFallback) == 0 {
+		return append([]model.Item(nil), primary...)
+	}
+	sourceHasPublish := make(map[string]struct{})
+	seen := make(map[string]struct{}, len(primary)+len(capturedFallback))
+	result := make([]model.Item, 0, len(primary)+len(capturedFallback))
+	for _, item := range primary {
+		sourceType := strings.TrimSpace(item.SourceType)
+		if sourceType != "" {
+			sourceHasPublish[sourceType] = struct{}{}
+		}
+		seen[aStockArticleDedupeKey(item)] = struct{}{}
+		result = append(result, item)
+	}
+	for _, item := range capturedFallback {
+		if strings.TrimSpace(item.PublishTime) != "" {
+			continue
+		}
+		sourceType := strings.TrimSpace(item.SourceType)
+		if _, ok := sourceHasPublish[sourceType]; ok {
+			continue
+		}
+		key := aStockArticleDedupeKey(item)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, item)
+	}
+	sort.SliceStable(result, func(i, j int) bool {
+		return result[i].CapturedAt.Before(result[j].CapturedAt)
+	})
+	return result
+}
+
+func aStockArticleDedupeKey(item model.Item) string {
+	if item.ID > 0 {
+		return fmt.Sprintf("id:%d", item.ID)
+	}
+	for _, value := range []string{item.SourceKey, item.DetailURL} {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return strings.TrimSpace(item.SourceType) + "|" + value
+		}
+	}
+	return strings.TrimSpace(item.SourceType) + "|" + strings.TrimSpace(item.Title) + "|" + strings.TrimSpace(item.PublishTimeText)
 }
 
 func (s *Server) loadAStockWindowArticlesByPublishTime(start time.Time, end time.Time) ([]model.Item, error) {
