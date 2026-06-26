@@ -188,6 +188,12 @@ func postgresDSN(cfg config.Config) string {
 }
 
 func NewCrawler(cfg config.Config, store *sqlitestore.Store) *service.Crawler {
+	if affected, err := store.FailRunningCrawlRuns(context.Background(), "interrupted by service restart", time.Now().UTC()); err != nil {
+		log.Warn().Err(err).Msg("cleanup interrupted crawl runs failed")
+	} else if affected > 0 {
+		log.Info().Int("affected", affected).Msg("marked interrupted crawl runs")
+	}
+
 	httpClient := resty.New().
 		SetTimeout(cfg.HTTPTimeout).
 		SetRetryCount(cfg.ExternalRetryCount).

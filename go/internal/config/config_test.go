@@ -89,7 +89,7 @@ func TestLoadUsesDefaults(t *testing.T) {
 	if cfg.WechatAddr != ":8088" {
 		t.Fatalf("expected default wechat addr, got %q", cfg.WechatAddr)
 	}
-	if cfg.FlashURL != "https://www.jin10.com/" {
+	if cfg.FlashURL != "https://flash-api.jin10.com/get_flash_list" {
 		t.Fatalf("expected default flash url, got %q", cfg.FlashURL)
 	}
 	if cfg.HeadlineURL != "https://xnews.jin10.com/" {

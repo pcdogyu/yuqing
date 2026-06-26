@@ -32,6 +32,10 @@ type Store interface {
 	RecordTaskRun(context.Context, string, string, string, time.Time, *time.Time) error
 }
 
+type restartInterruptedRunStore interface {
+	FailRunningCrawlRuns(context.Context, string, time.Time) (int, error)
+}
+
 type Crawler struct {
 	store     Store
 	providers provider.Registry
@@ -41,6 +45,9 @@ type Crawler struct {
 func NewCrawler(store Store, providers provider.Registry, client *resty.Client) *Crawler {
 	if client == nil {
 		client = resty.New()
+	}
+	if cleanupStore, ok := store.(restartInterruptedRunStore); ok {
+		_, _ = cleanupStore.FailRunningCrawlRuns(context.Background(), "interrupted by service restart", time.Now().UTC())
 	}
 	return &Crawler{store: store, providers: providers, client: client}
 }
@@ -264,6 +271,9 @@ func IsNotFound(err error) bool {
 
 func buildSourceKey(item model.Item) string {
 	if strings.TrimSpace(item.DetailURL) != "" {
+		if item.SourceType == provider.SourceTypeJin10Full {
+			return item.SourceType + "|" + item.DetailURL
+		}
 		return item.DetailURL
 	}
 	payload := item.SourceType + "|" + item.Title + "|" + item.PublishTimeText + "|" + item.PublishTime + "|" + item.Content

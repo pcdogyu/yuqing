@@ -103,6 +103,53 @@ func TestCrawlerRunWithOptionsFiltersPublishTimeWindow(t *testing.T) {
 	}
 }
 
+func TestCrawlerStartupMarksRunningCrawlRunsInterrupted(t *testing.T) {
+	store, err := sqlitestore.New(filepath.Join(t.TempDir(), "crawler-restart.db"))
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	defer store.Close()
+
+	runID, err := store.StartCrawlRun(context.Background(), provider.SourceTypeJin10Full, time.Date(2026, 6, 26, 1, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("StartCrawlRun error: %v", err)
+	}
+
+	_ = NewCrawler(store, provider.Registry{}, nil)
+
+	runs, err := store.ListCrawlRuns(context.Background(), 10, provider.SourceTypeJin10Full)
+	if err != nil {
+		t.Fatalf("ListCrawlRuns error: %v", err)
+	}
+	if len(runs) != 1 || runs[0].ID != runID {
+		t.Fatalf("expected one crawl run %d, got %+v", runID, runs)
+	}
+	if runs[0].Status != "failed" || runs[0].ErrorText != "interrupted by service restart" || runs[0].FinishedAt == nil {
+		t.Fatalf("expected interrupted failed run, got %+v", runs[0])
+	}
+}
+
+func TestBuildSourceKeyKeepsJin10FullSeparateFromFlash(t *testing.T) {
+	detailURL := "https://flash.jin10.com/detail/20260626093000123"
+	flashKey := buildSourceKey(model.Item{
+		SourceType: provider.SourceTypeFlash,
+		DetailURL:  detailURL,
+	})
+	fullKey := buildSourceKey(model.Item{
+		SourceType: provider.SourceTypeJin10Full,
+		DetailURL:  detailURL,
+	})
+	if flashKey != detailURL {
+		t.Fatalf("expected flash key to remain detail url, got %q", flashKey)
+	}
+	if fullKey != provider.SourceTypeJin10Full+"|"+detailURL {
+		t.Fatalf("unexpected jin10_full key: %q", fullKey)
+	}
+	if flashKey == fullKey {
+		t.Fatalf("expected flash and jin10_full keys to be distinct")
+	}
+}
+
 func TestCrawlerRunTemplateByID(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`<html><body><article><h1>BTC ETF update</h1><p>Positive template item</p></article></body></html>`))

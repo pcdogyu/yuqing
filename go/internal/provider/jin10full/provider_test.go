@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 
+	"github.com/pcdogyu/yuqing/go/internal/model"
 	"github.com/pcdogyu/yuqing/go/internal/provider"
 )
 
@@ -61,10 +62,10 @@ func TestFetchCollectsFlashHeadlineAndSitemap(t *testing.T) {
 	baseURL = server.URL
 
 	state := &memoryStateStore{}
-	prov := NewProvider(resty.New(), state, Options{
+	prov := NewProvider(resty.New().SetTimeout(2*time.Second), state, Options{
 		FlashURL:       server.URL + "/",
 		HeadlineURL:    server.URL + "/xnews",
-		BackfillDays:   30,
+		BackfillDays:   3650,
 		MaxPagesPerRun: 5,
 		RateLimit:      time.Millisecond,
 		IncludeSitemap: true,
@@ -87,6 +88,69 @@ func TestFetchCollectsFlashHeadlineAndSitemap(t *testing.T) {
 	}
 	if state.values[provider.SourceTypeJin10Full+"|"+stateLastRunAt] == "" {
 		t.Fatalf("expected last run state to be recorded")
+	}
+}
+
+func TestFetchWithOptionsUsesWindowedFlashAndSkipsSitemap(t *testing.T) {
+	var baseURL string
+	var sitemapHits int
+	var requestedMaxTime string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/robots.txt":
+			_, _ = w.Write([]byte("User-agent: *\nAllow: /\n"))
+		case "/get_flash_list":
+			requestedMaxTime = r.URL.Query().Get("max_time")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":200,"data":[{"id":"full-flash-1","time":"2026-06-26 09:20:00","data":{"content":"窗口内金十快讯","source":"金十数据"}}]}`))
+		case "/xnews":
+			if r.URL.Query().Get("page") == "2" {
+				_, _ = w.Write([]byte(`<html><body></body></html>`))
+				return
+			}
+			_, _ = w.Write([]byte(`<div class="jin10-news-list-item news"><a href="` + baseURL + `/details/2"></a><p class="jin10-news-list-item-title">窗口内金十资讯</p><div class="jin10-news-list-item-introduction">相对时间已解析</div><span class="jin10-news-list-item-display_datetime">2026-06-26 09:28:00</span></div>`))
+		case "/details/2":
+			_, _ = w.Write([]byte(`<html><h1>窗口内金十资讯</h1><div class="jin10-news-cdetails-content"><p>资讯正文。</p></div></html>`))
+		case "/sitemap.xml":
+			sitemapHits++
+			http.Error(w, "sitemap should be skipped for window fetch", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	baseURL = server.URL
+
+	prov := NewProvider(resty.New().SetTimeout(2*time.Second), &memoryStateStore{}, Options{
+		FlashURL:       server.URL + "/get_flash_list",
+		HeadlineURL:    server.URL + "/xnews",
+		BackfillDays:   3650,
+		MaxPagesPerRun: 3,
+		RateLimit:      time.Millisecond,
+		IncludeSitemap: true,
+	})
+
+	items, err := prov.FetchWithOptions(context.Background(), model.CrawlOptions{
+		Start:     "2026-06-26 09:20:00",
+		End:       "2026-06-26 09:30:00",
+		TimeField: "publish_time",
+	})
+	if err != nil {
+		t.Fatalf("FetchWithOptions returned error: %v", err)
+	}
+	if requestedMaxTime != "2026-06-26 09:30:00" {
+		t.Fatalf("expected flash API window max_time, got %q", requestedMaxTime)
+	}
+	if sitemapHits != 0 {
+		t.Fatalf("expected sitemap to be skipped for window fetch, hits=%d", sitemapHits)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected flash and headline items, got %d: %+v", len(items), items)
+	}
+	for _, item := range items {
+		if item.SourceType != provider.SourceTypeJin10Full {
+			t.Fatalf("expected jin10_full source type, got %q", item.SourceType)
+		}
 	}
 }
 

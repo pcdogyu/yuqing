@@ -791,6 +791,21 @@ func (s *Store) FinishCrawlRun(ctx context.Context, runID int64, status string, 
 	return err
 }
 
+func (s *Store) FailRunningCrawlRuns(ctx context.Context, errText string, finishedAt time.Time) (int, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE crawl_runs SET finished_at = ?, status = 'failed', error_text = ? WHERE status = 'running'`,
+		finishedAt.Format(time.RFC3339), errText,
+	)
+	if err != nil {
+		return 0, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(affected), nil
+}
+
 func (s *Store) UpsertItems(ctx context.Context, items []model.Item) (inserted, updated int, err error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -846,20 +861,22 @@ ON CONFLICT(source_key) DO UPDATE SET
 			return 0, 0, err
 		}
 
-		duplicateTitle := strings.TrimSpace(item.Title)
-		if duplicateTitle != "" {
-			if _, ok := seenTitles[duplicateTitle]; ok {
-				continue
+		if shouldApplyRecentTitleDedupe(item.SourceType) {
+			duplicateTitle := strings.TrimSpace(item.Title)
+			if duplicateTitle != "" {
+				if _, ok := seenTitles[duplicateTitle]; ok {
+					continue
+				}
+				recentDuplicate, errCheck := s.recentDuplicateTitleExistsTx(ctx, tx, duplicateTitle, item.SourceKey, recentDuplicateCutoff)
+				if errCheck != nil {
+					err = errCheck
+					return 0, 0, err
+				}
+				if recentDuplicate {
+					continue
+				}
+				seenTitles[duplicateTitle] = struct{}{}
 			}
-			recentDuplicate, errCheck := s.recentDuplicateTitleExistsTx(ctx, tx, duplicateTitle, item.SourceKey, recentDuplicateCutoff)
-			if errCheck != nil {
-				err = errCheck
-				return 0, 0, err
-			}
-			if recentDuplicate {
-				continue
-			}
-			seenTitles[duplicateTitle] = struct{}{}
 		}
 
 		_, execErr := stmt.ExecContext(ctx,
@@ -1328,6 +1345,10 @@ func nonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func shouldApplyRecentTitleDedupe(sourceType string) bool {
+	return strings.TrimSpace(sourceType) != "jin10_full"
 }
 
 func firstKeyword(values ...string) string {

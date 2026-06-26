@@ -83,6 +83,9 @@ if not defined YUQING_ASTOCK_HOLDING_URL (
     set "YUQING_ASTOCK_HOLDING_URL=http://127.0.0.1:%AKSHARE_AUCTION_PORT%"
     set "YUQING_ASTOCK_HOLDING_URL_DEFAULTED=1"
 )
+if not defined YUQING_JIN10_FULL_ENABLED (
+    set "YUQING_JIN10_FULL_ENABLED=true"
+)
 set "SERVICE_NAMES=auth-service wechat-service content-service crawler-service analysis-service nlp-service gateway-web scheduler-service release-service akshare-service"
 set "YUQING_LOG_LEVEL=debug"
 set "YUQING_RUN_VERSION=local"

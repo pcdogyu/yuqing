@@ -142,7 +142,7 @@ func Load() Config {
 		PostgresUser:               firstNonEmpty(os.Getenv("YUQING_POSTGRES_USER"), databaseConfig.PostgresUser, "postgres"),
 		PostgresPassword:           firstNonEmpty(os.Getenv("YUQING_POSTGRES_PASSWORD"), databaseConfig.PostgresPassword),
 		PostgresSSLMode:            firstNonEmpty(os.Getenv("YUQING_POSTGRES_SSLMODE"), databaseConfig.PostgresSSLMode, "disable"),
-		FlashURL:                   envOrDefaultWithAliases("YUQING_FLASH_URL", "https://www.jin10.com/", "JIN10_FLASH_URL"),
+		FlashURL:                   envOrDefaultWithAliases("YUQING_FLASH_URL", "https://flash-api.jin10.com/get_flash_list", "JIN10_FLASH_URL"),
 		HeadlineURL:                envOrDefaultWithAliases("YUQING_HEADLINE_URL", "https://xnews.jin10.com/", "JIN10_HEADLINE_URL"),
 		BinanceBaseURL:             envOrDefault("YUQING_BINANCE_BASE_URL", "https://api.binance.com"),
 		CoinLoreURL:                envOrDefault("YUQING_COINLORE_URL", "https://api.coinlore.net"),

@@ -20,8 +20,9 @@ import (
 )
 
 const (
-	stateLastRunAt = "last_run_at"
-	stateLastSeen  = "last_seen_publish_time"
+	defaultFlashAPIURL = "https://flash-api.jin10.com/get_flash_list"
+	stateLastRunAt     = "last_run_at"
+	stateLastSeen      = "last_seen_publish_time"
 )
 
 var (
@@ -51,7 +52,7 @@ type Provider struct {
 
 func NewProvider(client *resty.Client, store StateStore, opts Options) *Provider {
 	if opts.FlashURL == "" {
-		opts.FlashURL = "https://www.jin10.com/"
+		opts.FlashURL = defaultFlashAPIURL
 	}
 	if opts.HeadlineURL == "" {
 		opts.HeadlineURL = "https://xnews.jin10.com/"
@@ -108,22 +109,114 @@ func (p *Provider) Fetch(ctx context.Context) ([]model.Item, error) {
 	return collected, nil
 }
 
+func (p *Provider) FetchWithOptions(ctx context.Context, options model.CrawlOptions) ([]model.Item, error) {
+	now := time.Now().UTC()
+	robots := robotsRules{}
+	collected := make([]model.Item, 0)
+	var errs []string
+
+	if items, err := p.fetchFlashWithOptions(ctx, options, now, robots); err != nil {
+		errs = append(errs, err.Error())
+	} else {
+		collected = append(collected, items...)
+	}
+	p.pause(ctx)
+
+	if items, err := p.fetchHeadlineWindowPages(ctx, now, options); err != nil {
+		errs = append(errs, err.Error())
+	} else {
+		collected = append(collected, items...)
+	}
+
+	collected = p.filterBackfill(dedupe(collected), now)
+	p.updateState(ctx, collected, now)
+	if len(collected) == 0 && len(errs) > 0 {
+		return nil, fmt.Errorf("jin10_full window fetch failed: %s", strings.Join(errs, "; "))
+	}
+	return collected, nil
+}
+
 func (p *Provider) fetchFlash(ctx context.Context, capturedAt time.Time, robots robotsRules) ([]model.Item, error) {
+	return p.fetchFlashWithOptions(ctx, model.CrawlOptions{}, capturedAt, robots)
+}
+
+func (p *Provider) fetchFlashWithOptions(ctx context.Context, options model.CrawlOptions, capturedAt time.Time, robots robotsRules) ([]model.Item, error) {
 	if !robots.Allowed(p.opts.FlashURL) {
 		return nil, nil
 	}
-	resp, err := p.client.R().SetContext(ctx).Get(p.opts.FlashURL)
+	flashProvider := jin10flash.NewProvider(p.client, p.opts.FlashURL)
+	var (
+		items []model.Item
+		err   error
+	)
+	if strings.TrimSpace(options.Start) != "" || strings.TrimSpace(options.End) != "" {
+		items, err = flashProvider.FetchWithOptions(ctx, options)
+	} else {
+		items, err = flashProvider.Fetch(ctx)
+	}
 	if err != nil {
 		return nil, err
 	}
-	if resp.IsError() {
-		return nil, fmt.Errorf("jin10_full flash fetch failed: %s", resp.Status())
+	for idx := range items {
+		items[idx].SourceType = provider.SourceTypeJin10Full
+		if items[idx].CapturedAt.IsZero() {
+			items[idx].CapturedAt = capturedAt
+		}
 	}
-	items, err := jin10flash.ParseHTML(resp.String(), p.opts.FlashURL, capturedAt)
-	if err != nil {
-		return nil, err
+	return items, nil
+}
+
+func (p *Provider) fetchHeadlineWindowPages(ctx context.Context, capturedAt time.Time, options model.CrawlOptions) ([]model.Item, error) {
+	items := make([]model.Item, 0)
+	maxPages := p.opts.MaxPagesPerRun
+	if maxPages <= 0 || maxPages > 3 {
+		maxPages = 3
 	}
-	return p.enrichItems(ctx, items, robots), nil
+	start, hasStart := parseWindowOptionTime(options.Start)
+	for page := 1; page <= maxPages; page++ {
+		pageURL := withPage(p.opts.HeadlineURL, page)
+		resp, err := p.client.R().SetContext(ctx).Get(pageURL)
+		if err != nil {
+			if page == 1 {
+				return items, err
+			}
+			break
+		}
+		if resp.IsError() {
+			if page == 1 {
+				return items, fmt.Errorf("jin10_full headline fetch failed: %s", resp.Status())
+			}
+			break
+		}
+		pageItems, err := jin10xnews.ParseHTML(resp.String(), pageURL, capturedAt)
+		if err != nil {
+			return items, err
+		}
+		if len(pageItems) == 0 {
+			break
+		}
+		pageHasWindowCandidate := false
+		pageOldest := time.Time{}
+		for idx := range pageItems {
+			pageItems[idx].SourceType = provider.SourceTypeJin10Full
+			if parsed, ok := parseItemTime(pageItems[idx]); ok {
+				if pageOldest.IsZero() || parsed.Before(pageOldest) {
+					pageOldest = parsed
+				}
+				if !hasStart || !parsed.Before(start) {
+					pageHasWindowCandidate = true
+				}
+			} else {
+				pageHasWindowCandidate = true
+			}
+		}
+		items = append(items, pageItems...)
+		if hasStart && !pageOldest.IsZero() && pageOldest.Before(start) && !pageHasWindowCandidate {
+			break
+		}
+		p.pause(ctx)
+	}
+	return items, nil
 }
 
 func (p *Provider) fetchHeadlinePages(ctx context.Context, capturedAt time.Time, robots robotsRules) ([]model.Item, error) {
@@ -157,6 +250,23 @@ func (p *Provider) fetchHeadlinePages(ctx context.Context, capturedAt time.Time,
 		p.pause(ctx)
 	}
 	return items, nil
+}
+
+func parseWindowOptionTime(raw string) (time.Time, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}, false
+	}
+	location, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		location = time.FixedZone("CST", 8*60*60)
+	}
+	for _, layout := range []string{time.RFC3339, "2006-01-02 15:04:05", "2006-01-02 15:04", "2006-01-02"} {
+		if parsed, err := time.ParseInLocation(layout, raw, location); err == nil {
+			return parsed.UTC(), true
+		}
+	}
+	return time.Time{}, false
 }
 
 func (p *Provider) fetchSitemapItems(ctx context.Context, capturedAt time.Time, robots robotsRules) ([]model.Item, error) {
@@ -376,10 +486,21 @@ func sitemapURLFor(raw string) string {
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return "https://www.jin10.com/sitemap.xml"
 	}
+	if isFlashAPIURL(raw) {
+		return "https://www.jin10.com/sitemap.xml"
+	}
 	parsed.Path = "/sitemap.xml"
 	parsed.RawQuery = ""
 	parsed.Fragment = ""
 	return parsed.String()
+}
+
+func isFlashAPIURL(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(parsed.Host), "flash-api.jin10.com") || strings.Contains(strings.ToLower(parsed.Path), "get_flash_list")
 }
 
 func isArticleURL(raw string) bool {

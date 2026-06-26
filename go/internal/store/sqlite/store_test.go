@@ -97,6 +97,30 @@ func TestUpsertItemsSkipsRecentDuplicateTitles(t *testing.T) {
 	assertItemTitleCount(t, store, ctx, "批内重复标题", 1)
 }
 
+func TestUpsertItemsAllowsJin10FullDuplicateTitle(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	flash := sampleItem("flash", "flash-same-title", "同标题金十快讯")
+	flash.CapturedAt = now
+	flash.CreatedAt = now
+	flash.UpdatedAt = now
+	full := sampleItem("jin10_full", "jin10-full-same-title", "同标题金十快讯")
+	full.CapturedAt = now
+	full.CreatedAt = now
+	full.UpdatedAt = now
+
+	inserted, updated, err := store.UpsertItems(ctx, []model.Item{flash, full})
+	if err != nil {
+		t.Fatalf("UpsertItems duplicate jin10_full error: %v", err)
+	}
+	if inserted != 2 || updated != 0 {
+		t.Fatalf("expected flash and jin10_full duplicate titles to both insert, got %d/%d", inserted, updated)
+	}
+	assertItemTitleCount(t, store, ctx, "同标题金十快讯", 2)
+}
+
 func TestUpsertItemsAllowsDuplicateTitleAfterTwelveHours(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
@@ -236,6 +260,50 @@ VALUES (?, 0, '', '', ?, 'failed', 0, 0, 0, NULL)`, "jin10_full", startedAt); er
 	}
 	if len(runs) != 1 || runs[0].SourceType != "jin10_full" || runs[0].ErrorText != "" {
 		t.Fatalf("unexpected crawl runs: %+v", runs)
+	}
+}
+
+func TestFailRunningCrawlRunsMarksInterrupted(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	startedAt := time.Date(2026, 6, 26, 1, 0, 0, 0, time.UTC)
+	finishedAt := time.Date(2026, 6, 26, 1, 5, 0, 0, time.UTC)
+
+	runningID, err := store.StartCrawlRun(ctx, "jin10_full", startedAt)
+	if err != nil {
+		t.Fatalf("StartCrawlRun running error: %v", err)
+	}
+	successID, err := store.StartCrawlRun(ctx, "flash", startedAt)
+	if err != nil {
+		t.Fatalf("StartCrawlRun success error: %v", err)
+	}
+	if err := store.FinishCrawlRun(ctx, successID, "success", 1, 1, 0, "", startedAt.Add(time.Minute)); err != nil {
+		t.Fatalf("FinishCrawlRun success error: %v", err)
+	}
+
+	affected, err := store.FailRunningCrawlRuns(ctx, "interrupted by service restart", finishedAt)
+	if err != nil {
+		t.Fatalf("FailRunningCrawlRuns error: %v", err)
+	}
+	if affected != 1 {
+		t.Fatalf("expected one affected running row, got %d", affected)
+	}
+
+	runs, err := store.ListCrawlRuns(ctx, 10, "")
+	if err != nil {
+		t.Fatalf("ListCrawlRuns error: %v", err)
+	}
+	byID := map[int64]model.CrawlRun{}
+	for _, run := range runs {
+		byID[run.ID] = run
+	}
+	running := byID[runningID]
+	if running.Status != "failed" || running.ErrorText != "interrupted by service restart" || running.FinishedAt == nil {
+		t.Fatalf("expected running row to be marked failed, got %+v", running)
+	}
+	success := byID[successID]
+	if success.Status != "success" || success.ErrorText != "" {
+		t.Fatalf("expected success row to remain unchanged, got %+v", success)
 	}
 }
 
