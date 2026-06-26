@@ -366,6 +366,14 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-empty{padding:18px;border:1px dashed #d0c8b8;border-radius:12px;background:#fff;color:#6a6257}
 		.astock-badge{display:inline-flex;align-items:center;padding:5px 9px;border-radius:999px;background:#eef4ec;color:#214e34;font-size:13px;margin-right:6px}
 		.astock-source-list{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+		.astock-news-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}
+		.astock-news-window{min-width:0}
+		.astock-news-table{table-layout:fixed}
+		.astock-news-table th,.astock-news-table td{vertical-align:top}
+		.astock-news-counts{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+		.astock-help{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:#eef4ec;color:#214e34;font-size:12px;font-weight:700;line-height:1;cursor:help;position:relative}
+		.astock-help-text{position:absolute;right:0;top:calc(100% + 8px);z-index:10;display:none;width:max-content;max-width:260px;padding:8px 10px;border:1px solid #d6ccbb;border-radius:8px;background:#fff;color:#2b261f;box-shadow:0 12px 28px rgba(31,40,34,.14);font-size:12px;font-weight:400;line-height:1.4;white-space:normal}
+		.astock-help:hover .astock-help-text,.astock-help:focus .astock-help-text{display:block}
 		.astock-table{min-width:960px}
 		.astock-table th{white-space:nowrap}
 		.astock-scroll{width:100%;overflow:auto}
@@ -396,6 +404,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-popup-body{padding:0 24px 24px}
 		.astock-popup-scroll{overflow:auto;max-height:60vh}
 		.astock-popup-table{min-width:760px}
+		@media (max-width:1100px){.astock-news-grid{grid-template-columns:1fr}.astock-news-table{min-width:720px}}
 	</style>`)
 	renderAStockPopupShell(&b)
 	writeAStockPageScript(&b, ctx.Date)
@@ -450,7 +459,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 	b.WriteString(aStockMarketConfigHint())
 	b.WriteString(`，用于展示昨日收盘价、现价、涨跌幅和消息回测。</p><div class="astock-source-list"><span class="astock-badge">flash: https://www.jin10.com/</span><span class="astock-badge">headline: https://xnews.jin10.com/</span><span class="astock-badge">jin10_full: 金十全站</span><span class="astock-badge">eastmoney_kuaixun: 东方财富网</span><span class="astock-badge">wallstreetcn_a_stock: 华尔街见闻</span><span class="astock-badge">cls_telegraph: 财联社</span><span class="astock-badge">sina_finance_7x24: 新浪财经</span></div></section>`)
 
-	renderAStockNewsSection(&b, ctx)
+	renderAStockNewsSections(&b, morningCtx, afternoonCtx)
 	renderAStockHotspotSection(&b, ctx.Hotspots)
 	renderAStockBacktestSection(&b, ctx.Date, ctx.Period, ctx.IgnoreRecent, ctx.IgnoreLimitUp, ctx.TodayMarketFilterEnabled, morningCtx, afternoonCtx)
 
@@ -500,7 +509,7 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request) 
 		period = normalizeAStockPeriod("morning")
 		query.Set("period", period.Key)
 		query.Set("refresh_recommendations", "1")
-		query.Set("msg", "已切换到上午窗口，按 08:00-09:26:59 历史新闻重新计算推荐。")
+		query.Set("msg", "已切换到上午窗口，按 08:00-09:30 历史新闻重新计算推荐。")
 	case "generate_afternoon_stock":
 		period = normalizeAStockPeriod("afternoon")
 		query.Set("period", period.Key)
@@ -772,10 +781,17 @@ func aStockNewsCount(ctx aStockContext) int {
 	return len(ctx.Articles)
 }
 
-func renderAStockNewsSection(b *strings.Builder, ctx aStockContext) {
-	b.WriteString(`<section><h2>`)
+func renderAStockNewsSections(b *strings.Builder, morningCtx aStockContext, afternoonCtx aStockContext) {
+	b.WriteString(`<section><h2>财经新闻来源统计</h2><div class="astock-news-grid">`)
+	renderAStockNewsWindow(b, morningCtx)
+	renderAStockNewsWindow(b, afternoonCtx)
+	b.WriteString(`</div></section>`)
+}
+
+func renderAStockNewsWindow(b *strings.Builder, ctx aStockContext) {
+	b.WriteString(`<div class="astock-news-window"><h3>`)
 	b.WriteString(html.EscapeString(ctx.WindowLabel))
-	b.WriteString(` 财经新闻</h2>`)
+	b.WriteString(` 财经新闻</h3>`)
 	if len(ctx.Articles) == 0 {
 		b.WriteString(`<div class="astock-empty">暂无数据：请点击“抓取 A 股新闻”，或确认 `)
 		b.WriteString(html.EscapeString(ctx.Date))
@@ -783,8 +799,11 @@ func renderAStockNewsSection(b *strings.Builder, ctx aStockContext) {
 		b.WriteString(html.EscapeString(ctx.WindowLabel))
 		b.WriteString(` 窗口内已有财经新闻源入库。</div>`)
 	}
-	b.WriteString(`<table><tr><th>来源</th><th>新闻条数</th><th>最近抓取</th><th>抓取/入库/更新</th><th>说明</th></tr>`)
+	b.WriteString(`<div class="astock-scroll"><table class="astock-news-table"><tr><th>来源</th><th>新闻条数</th><th>最近抓取</th><th>抓取/入库/更新 `)
+	renderAStockTooltip(b, "源站抓取数 / 入库新增数 / 更新数")
+	b.WriteString(`</th></tr>`)
 	for _, source := range summarizeAStockNewsSources(ctx.Articles, ctx.SourceRuns) {
+		note := strings.TrimSpace(formatAStockCrawlRunNote(source.Run))
 		b.WriteString(`<tr><td>`)
 		b.WriteString(html.EscapeString(source.Label))
 		b.WriteString(`</td><td>`)
@@ -792,12 +811,29 @@ func renderAStockNewsSection(b *strings.Builder, ctx aStockContext) {
 		b.WriteString(`</td><td>`)
 		b.WriteString(html.EscapeString(formatAStockCrawlRunStatus(source.Run)))
 		b.WriteString(`</td><td>`)
+		b.WriteString(`<span class="astock-news-counts">`)
 		b.WriteString(html.EscapeString(formatAStockCrawlRunCounts(source.Run)))
-		b.WriteString(`</td><td>`)
-		b.WriteString(html.EscapeString(formatAStockCrawlRunNote(source.Run)))
-		b.WriteString(`</td></tr>`)
+		if note != "" {
+			renderAStockTooltip(b, note)
+		}
+		b.WriteString(`</span></td></tr>`)
 	}
-	b.WriteString(`</table></section>`)
+	b.WriteString(`</table></div></div>`)
+}
+
+func renderAStockTooltip(b *strings.Builder, text string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	escaped := html.EscapeString(text)
+	b.WriteString(`<span class="astock-help" tabindex="0" title="`)
+	b.WriteString(escaped)
+	b.WriteString(`" aria-label="`)
+	b.WriteString(escaped)
+	b.WriteString(`">?<span class="astock-help-text" role="tooltip">`)
+	b.WriteString(escaped)
+	b.WriteString(`</span></span>`)
 }
 
 func summarizeAStockNewsSources(items []model.Item, runs []aStockSourceRun) []aStockNewsSourceCount {
@@ -4492,7 +4528,7 @@ func aStockRecommendationPhaseWindow(strategyDate string, periodKey string, phas
 	}
 	return time.Date(day.Year(), day.Month(), day.Day(), 8, 0, 0, 0, location),
 		time.Date(day.Year(), day.Month(), day.Day(), 9, 26, 59, 0, location),
-		"08:00-09:26:59"
+		"08:00-09:30"
 }
 
 func normalizeAStockRecommendationPhase(value string) string {

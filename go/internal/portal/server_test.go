@@ -291,9 +291,14 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		`body[data-page='a-stock'] main{max-width:none;width:100%;box-sizing:border-box}`,
 		`body[data-page='a-stock'] table{width:100%;min-width:100%}`,
 		`.astock-scroll{width:100%;overflow:auto}`,
+		`.astock-news-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}`,
+		`.astock-help:hover .astock-help-text,.astock-help:focus .astock-help-text{display:block}`,
 		`rowspan="2"`,
-		"08:00-09:26:59",
+		"08:00-09:30",
 		"09:30-13:00",
+		"08:00-09:30 财经新闻",
+		"09:30-13:00 财经新闻",
+		"源站抓取数 / 入库新增数 / 更新数",
 		"上午推荐",
 		"下午推荐",
 		"热点归纳",
@@ -355,6 +360,14 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 	}
 	if strings.Contains(body, `body[data-page='a-stock'] header`) {
 		t.Fatalf("expected A股 page to keep shared header width, got %s", body)
+	}
+	morningNewsIndex := strings.Index(body, "08:00-09:30 财经新闻")
+	afternoonNewsIndex := strings.Index(body, "09:30-13:00 财经新闻")
+	if morningNewsIndex < 0 || afternoonNewsIndex < 0 || morningNewsIndex > afternoonNewsIndex {
+		t.Fatalf("expected morning news table before afternoon news table, got %s", body)
+	}
+	if strings.Contains(body, `<th>说明</th>`) {
+		t.Fatalf("expected explanation column to move into tooltip, got %s", body)
 	}
 }
 
@@ -1085,7 +1098,7 @@ func TestAStockStockGenerateActionsSelectPeriod(t *testing.T) {
 			fromPeriod: "afternoon",
 			action:     "generate_morning_stock",
 			wantPeriod: "morning",
-			wantMsg:    "已切换到上午窗口，按 08:00-09:26:59 历史新闻重新计算推荐。",
+			wantMsg:    "已切换到上午窗口，按 08:00-09:30 历史新闻重新计算推荐。",
 		},
 		{
 			name:       "ignore recent filter",
@@ -1475,7 +1488,7 @@ func TestAStockPageExplainsMorningNoNews(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"上午推荐", "08:00-09:26:59", "没有新闻", "请先抓取或补抓财经信息"} {
+	for _, want := range []string{"上午推荐", "08:00-09:30", "没有新闻", "请先抓取或补抓财经信息"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected no-news explanation %q, got %s", want, body)
 		}
@@ -2046,10 +2059,23 @@ func TestAStockNewsSectionSummarizesSources(t *testing.T) {
 		t.Fatalf("expected first page 200, got %d", firstRR.Code)
 	}
 	firstBody := firstRR.Body.String()
-	for _, want := range []string{"来源", "新闻条数", "最近抓取", "金十快讯", "7条", "东方财富网", "5条", "财联社", "0条", `财经新闻数</span><strong>12</strong>`, "08:00-09:26:59 0 / 09:30-13:00 12"} {
+	for _, want := range []string{"08:00-09:30 财经新闻", "09:30-13:00 财经新闻", "来源", "新闻条数", "最近抓取", "金十快讯", "7条", "东方财富网", "5条", "财联社", "0条", "暂无数据", `财经新闻数</span><strong>12</strong>`, "08:00-09:30 0 / 09:30-13:00 12"} {
 		if !strings.Contains(firstBody, want) {
 			t.Fatalf("expected news summary to contain %q, got %s", want, firstBody)
 		}
+	}
+	for _, notWant := range []string{"08:00-09:26:59 0 / 09:30-13:00 12"} {
+		if strings.Contains(firstBody, notWant) {
+			t.Fatalf("expected overview news summary to use display window labels, got %q in %s", notWant, firstBody)
+		}
+	}
+	morningNewsIndex := strings.Index(firstBody, "08:00-09:30 财经新闻")
+	afternoonNewsIndex := strings.Index(firstBody, "09:30-13:00 财经新闻")
+	if morningNewsIndex < 0 || afternoonNewsIndex < 0 || morningNewsIndex > afternoonNewsIndex {
+		t.Fatalf("expected morning source table before afternoon source table, got %s", firstBody)
+	}
+	if strings.Contains(firstBody, `<th>说明</th>`) {
+		t.Fatalf("expected news summary to remove explanation column, got %s", firstBody)
 	}
 	for _, notWant := range []string{"分页新闻01", "分页新闻10", "分页新闻11", "分页新闻12", "新闻分页：", `news_page=2`} {
 		if strings.Contains(firstBody, notWant) {
@@ -2071,12 +2097,15 @@ func TestAStockNewsSectionShowsSourceRunDiagnostics(t *testing.T) {
 		},
 	}
 	var b strings.Builder
-	renderAStockNewsSection(&b, ctx)
+	renderAStockNewsWindow(&b, ctx)
 	body := b.String()
-	for _, want := range []string{"金十快讯", "1条", "success", "18/18/0", "新浪财经", "failed", "upstream timeout", "东方财富网", "0条"} {
+	for _, want := range []string{"金十快讯", "1条", "success", "18/18/0", "新浪财经", "failed", `title="upstream timeout"`, `role="tooltip">upstream timeout`, "东方财富网", "0条", "源站抓取数 / 入库新增数 / 更新数"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 news diagnostics to contain %q, got %s", want, body)
 		}
+	}
+	if strings.Contains(body, `<th>说明</th>`) {
+		t.Fatalf("expected A股 news diagnostics to move explanation into tooltip, got %s", body)
 	}
 }
 
@@ -3620,10 +3649,16 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"金十快讯", "金十资讯", "1条", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "5日内过滤", "涨停过滤", "当日行情", "不过滤", "重新计算", "关闭5日过滤", "关闭涨停过滤", "启用当日行情过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "推荐历史", "上午推荐", "下午推荐", "推荐窗口", "上午开盘价", "下午开盘价", "补抓上午新闻", "重新生成上午推荐", "补抓下午新闻", "重新生成下午推荐", "补行情收益", "刷新全部回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="refresh_current_backtest"`, `name="action" value="refresh_backtest"`, `name="action" value="recalculate"`, "2026-06-12 周五", "2026-06-15 周一", "今日", "T+0 收益", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1", "08:00-09:26:59 2 / 09:30-13:00 0"} {
+	for _, want := range []string{"金十快讯", "金十资讯", "1条", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "5日内过滤", "涨停过滤", "当日行情", "不过滤", "重新计算", "关闭5日过滤", "关闭涨停过滤", "启用当日行情过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "推荐历史", "上午推荐", "下午推荐", "推荐窗口", "08:00-09:30", "上午开盘价", "下午开盘价", "补抓上午新闻", "重新生成上午推荐", "补抓下午新闻", "重新生成下午推荐", "补行情收益", "刷新全部回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="refresh_current_backtest"`, `name="action" value="refresh_backtest"`, `name="action" value="recalculate"`, "2026-06-12 周五", "2026-06-15 周一", "今日", "T+0 收益", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}
+	}
+	if !strings.Contains(body, "08:00-09:30 2 / 09:30-13:00 0") {
+		t.Fatalf("expected overview news count details to use display window labels, got %s", body)
+	}
+	if strings.Contains(body, "08:00-09:26:59 2 / 09:30-13:00 0") {
+		t.Fatalf("expected overview news count details to drop old morning label, got %s", body)
 	}
 	for _, notWant := range []string{"AI 算力政策加码", "半导体先进封装景气度提升"} {
 		if strings.Contains(body, notWant) {
