@@ -156,6 +156,7 @@ type aStockRequestCache struct {
 	snapshots        map[string]aStockRecommendationSnapshotCacheEntry
 	selections       map[string]aStockRecommendationSelectionCacheEntry
 	holdingSummaries map[string]aStockHoldingSummaryCacheEntry
+	auctionResults   map[string]aStockAuctionResultCacheEntry
 	sourceRuns       []aStockSourceRun
 }
 
@@ -182,6 +183,11 @@ type aStockRecommendationSelectionCacheEntry struct {
 type aStockHoldingSummaryCacheEntry struct {
 	summary model.StockInstitutionHoldingSummary
 	err     error
+}
+
+type aStockAuctionResultCacheEntry struct {
+	result model.AStockAuctionListResult
+	found  bool
 }
 
 type aStockPeriod struct {
@@ -347,9 +353,10 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-overview-table th,.astock-overview-table td{vertical-align:top}
 		.astock-overview-table .astock-muted{display:block;margin-bottom:8px;font-size:14px}
 		.astock-overview-table .astock-overview-sub-label{margin-top:16px}
+		.astock-overview-strategy{width:10.9%;min-width:170px}
+		.astock-overview-strategy strong{white-space:nowrap}
 		.astock-overview-window{width:10.9%}
 		.astock-overview-window strong{white-space:nowrap}
-		.astock-overview-meta{display:block;margin-top:8px;font-size:12px;line-height:1.45;color:#6a6257}
 		.astock-overview-table strong{display:block;font-size:22px;line-height:1.25}
 		.astock-overview-status{width:24%}
 		.astock-overview-status strong{white-space:normal;word-break:break-word}
@@ -572,9 +579,9 @@ func writeAStockPageScript(b *strings.Builder, strategyDate string) {
 func renderAStockOverviewSection(b *strings.Builder, morningCtx aStockContext, afternoonCtx aStockContext) {
 	b.WriteString(`<section><h2>顶部概览</h2><div class="astock-scroll"><table class="astock-overview-table"><tr>`)
 	writeAStockOverviewStrategyCell(b, morningCtx.Date, firstNonEmpty(morningCtx.AuctionAmountLabel, afternoonCtx.AuctionAmountLabel), ` rowspan="2"`)
-	writeAStockOverviewPeriodCells(b, morningCtx, morningCtx, afternoonCtx)
+	writeAStockOverviewPeriodCells(b, morningCtx)
 	b.WriteString(`</tr><tr>`)
-	writeAStockOverviewPeriodCells(b, afternoonCtx, morningCtx, afternoonCtx)
+	writeAStockOverviewPeriodCells(b, afternoonCtx)
 	b.WriteString(`</tr></table></div></section>`)
 }
 
@@ -582,7 +589,7 @@ func writeAStockOverviewStrategyCell(b *strings.Builder, date string, auctionAmo
 	if strings.TrimSpace(auctionAmount) == "" {
 		auctionAmount = "--"
 	}
-	b.WriteString(`<td`)
+	b.WriteString(`<td class="astock-overview-strategy"`)
 	b.WriteString(attrs)
 	b.WriteString(`><span class="astock-muted">策略日期</span><strong>`)
 	b.WriteString(html.EscapeString(date))
@@ -591,10 +598,10 @@ func writeAStockOverviewStrategyCell(b *strings.Builder, date string, auctionAmo
 	b.WriteString(`</strong></td>`)
 }
 
-func writeAStockOverviewPeriodCells(b *strings.Builder, ctx aStockContext, morningCtx aStockContext, afternoonCtx aStockContext) {
+func writeAStockOverviewPeriodCells(b *strings.Builder, ctx aStockContext) {
 	writeAStockOverviewCell(b, "推荐窗口", ctx.PeriodLabel, "")
 	writeAStockOverviewCell(b, "新闻窗口", ctx.WindowLabel, ` class="astock-overview-window"`)
-	writeAStockOverviewNewsCountCell(b, ctx, morningCtx, afternoonCtx)
+	writeAStockOverviewNewsCountCell(b, ctx)
 	writeAStockOverviewCell(b, "候选热点数", fmt.Sprintf("%d", len(ctx.Hotspots)), "")
 	writeAStockOverviewCell(b, "推荐股票数", fmt.Sprintf("%d", len(ctx.Recommendations)), "")
 	writeAStockOverviewFilterCell(b, ctx)
@@ -604,20 +611,8 @@ func writeAStockOverviewPeriodCells(b *strings.Builder, ctx aStockContext, morni
 	writeAStockOverviewCell(b, "回测状态", aStockOverviewBacktestStatus(ctx), ` class="astock-overview-status"`)
 }
 
-func writeAStockOverviewNewsCountCell(b *strings.Builder, ctx aStockContext, morningCtx aStockContext, afternoonCtx aStockContext) {
-	writeAStockOverviewCellWithMeta(
-		b,
-		"财经新闻数",
-		fmt.Sprintf("%d", aStockNewsCount(ctx)),
-		fmt.Sprintf(
-			"%s %d / %s %d",
-			morningCtx.WindowLabel,
-			aStockNewsCount(morningCtx),
-			afternoonCtx.WindowLabel,
-			aStockNewsCount(afternoonCtx),
-		),
-		"",
-	)
+func writeAStockOverviewNewsCountCell(b *strings.Builder, ctx aStockContext) {
+	writeAStockOverviewCell(b, "财经新闻数", fmt.Sprintf("%d", aStockNewsCount(ctx)), "")
 }
 
 func writeAStockOverviewFilterCell(b *strings.Builder, ctx aStockContext) {
@@ -755,10 +750,6 @@ func aStockOverviewBacktestStatus(ctx aStockContext) string {
 }
 
 func writeAStockOverviewCell(b *strings.Builder, label string, value string, attrs string) {
-	writeAStockOverviewCellWithMeta(b, label, value, "", attrs)
-}
-
-func writeAStockOverviewCellWithMeta(b *strings.Builder, label string, value string, meta string, attrs string) {
 	b.WriteString(`<td`)
 	b.WriteString(attrs)
 	b.WriteString(`><span class="astock-muted">`)
@@ -766,11 +757,6 @@ func writeAStockOverviewCellWithMeta(b *strings.Builder, label string, value str
 	b.WriteString(`</span><strong>`)
 	b.WriteString(html.EscapeString(value))
 	b.WriteString(`</strong>`)
-	if strings.TrimSpace(meta) != "" {
-		b.WriteString(`<span class="astock-overview-meta">`)
-		b.WriteString(html.EscapeString(meta))
-		b.WriteString(`</span>`)
-	}
 	b.WriteString(`</td>`)
 }
 
@@ -1321,6 +1307,7 @@ func newAStockRequestCache() *aStockRequestCache {
 		snapshots:        make(map[string]aStockRecommendationSnapshotCacheEntry),
 		selections:       make(map[string]aStockRecommendationSelectionCacheEntry),
 		holdingSummaries: make(map[string]aStockHoldingSummaryCacheEntry),
+		auctionResults:   make(map[string]aStockAuctionResultCacheEntry),
 	}
 }
 
@@ -1357,6 +1344,7 @@ func (s *Server) loadAStockContextWithRecommendationPhase(strategyDate string, p
 	ctx.NewsTotal = len(ctx.Articles)
 	ctx.PagedArticles, ctx.NewsPage, ctx.NewsTotalPages = paginateAStockNews(ctx.Articles, newsPage, aStockNewsPageSize)
 	ctx.Hotspots = buildAStockHotspots(ctx.Articles)
+	ctx.AuctionAmountLabel = s.loadAStockAuctionAmountLabelWithCache(strategyDate, cache)
 	if blocked, message, reason := s.aStockRecommendationBlockedStatusWithCache(strategyDate, cache); blocked {
 		ctx.TradingDayBlocked = true
 		ctx.TradingDayMessage = message
@@ -1410,10 +1398,12 @@ func (s *Server) loadAStockContextWithRecommendationPhase(strategyDate string, p
 	}
 	recommendationTarget := 0
 	if len(ctx.Hotspots) > 0 {
-		candidates, candidateStatus, auctionResult := s.loadAStockMarketCandidatesWithStatus(strategyDate)
+		candidates, candidateStatus, auctionResult := s.loadAStockMarketCandidatesWithStatusWithCache(strategyDate, cache)
 		ctx.MarketCandidateStatus = candidateStatus
 		ctx.MarketCandidateCount = len(fixedPoolAStockMarketCandidates(aStockRecommendationHotspotSlice(ctx.Hotspots), candidates))
-		ctx.AuctionAmountLabel = formatAStockAuctionSummaryAmount(auctionResult)
+		if auctionLabel := normalizeAStockAuctionSummaryLabel(formatAStockAuctionSummaryAmount(auctionResult)); auctionLabel != "" {
+			ctx.AuctionAmountLabel = auctionLabel
+		}
 		baseRecommendations := buildAStockSnapshotRecommendationsWithPhase(strategyDate, period.Key, phase, ctx.Articles, candidates)
 		recommendationTarget = len(baseRecommendations)
 		ctx.GeneratedRecommendationCount = recommendationTarget
@@ -1518,7 +1508,9 @@ func (s *Server) applyAStockRecommendationSnapshotRecommendationsWithCache(ctx *
 	ctx.NoTodayMarketCount = snapshot.NoTodayMarketCount
 	ctx.MarketCandidateStatus = snapshot.MarketCandidateStatus
 	ctx.MarketCandidateCount = snapshot.MarketCandidateCount
-	ctx.AuctionAmountLabel = snapshot.AuctionAmountLabel
+	if auctionLabel := normalizeAStockAuctionSummaryLabel(snapshot.AuctionAmountLabel); auctionLabel != "" {
+		ctx.AuctionAmountLabel = auctionLabel
+	}
 	ctx.EmptyReason = snapshot.EmptyReason
 	ctx.SnapshotUpdatedAt = snapshot.UpdatedAt
 	return true
@@ -1571,7 +1563,9 @@ func (s *Server) applyAStockRecommendationSnapshotWithCache(ctx *aStockContext, 
 	ctx.NoTodayMarketCount = snapshot.NoTodayMarketCount
 	ctx.MarketCandidateStatus = snapshot.MarketCandidateStatus
 	ctx.MarketCandidateCount = snapshot.MarketCandidateCount
-	ctx.AuctionAmountLabel = snapshot.AuctionAmountLabel
+	if auctionLabel := normalizeAStockAuctionSummaryLabel(snapshot.AuctionAmountLabel); auctionLabel != "" {
+		ctx.AuctionAmountLabel = auctionLabel
+	}
 	ctx.EmptyReason = snapshot.EmptyReason
 	ctx.SnapshotUpdatedAt = snapshot.UpdatedAt
 	if ctx.EmptyReason == "" {
@@ -2629,22 +2623,30 @@ func (s *Server) loadAStockMarketCandidates(strategyDate string) []aStockMarketC
 }
 
 func (s *Server) loadAStockMarketCandidatesWithStatus(strategyDate string) ([]aStockMarketCandidate, string, model.AStockAuctionListResult) {
+	return s.loadAStockMarketCandidatesWithStatusWithCache(strategyDate, nil)
+}
+
+func (s *Server) loadAStockMarketCandidatesWithStatusWithCache(strategyDate string, cache *aStockRequestCache) ([]aStockMarketCandidate, string, model.AStockAuctionListResult) {
 	if strings.TrimSpace(s.cfg.ContentURL) == "" {
 		return nil, "content_unconfigured", model.AStockAuctionListResult{}
 	}
 	date := normalizeAStockStrategyDate(strategyDate)
-	result, ok := s.loadAStockMarketCandidateResult(date)
+	result, ok := s.loadAStockMarketCandidateResultWithCache(date, cache)
 	dateResult := result
-	if !ok && date != "" {
-		result, ok = s.loadAStockMarketCandidateResult("")
+	if ok {
+		candidates := aStockMarketCandidatesFromAuctionResult(result)
+		if len(candidates) > 0 {
+			return candidates, "date_auction", result
+		}
+		return nil, "no_auction_candidates", result
+	}
+	if date != "" {
+		result, ok = s.loadAStockMarketCandidateResultWithCache("", cache)
 		if ok {
 			return aStockMarketCandidatesFromAuctionResult(result), "latest_auction_fallback", dateResult
 		}
 	}
-	if !ok {
-		return nil, "no_auction_candidates", dateResult
-	}
-	return aStockMarketCandidatesFromAuctionResult(result), "date_auction", result
+	return nil, "no_auction_candidates", dateResult
 }
 
 func formatAStockAuctionSummaryAmount(result model.AStockAuctionListResult) string {
@@ -2659,6 +2661,26 @@ func formatAStockAuctionSummaryAmount(result model.AStockAuctionListResult) stri
 }
 
 func (s *Server) loadAStockMarketCandidateResult(strategyDate string) (model.AStockAuctionListResult, bool) {
+	return s.loadAStockMarketCandidateResultWithCache(strategyDate, nil)
+}
+
+func (s *Server) loadAStockMarketCandidateResultWithCache(strategyDate string, cache *aStockRequestCache) (model.AStockAuctionListResult, bool) {
+	if cache != nil && cache.auctionResults != nil {
+		cacheKey := normalizeAStockStrategyDate(strategyDate)
+		if strings.TrimSpace(strategyDate) == "" {
+			cacheKey = "__latest__"
+		}
+		if cached, ok := cache.auctionResults[cacheKey]; ok {
+			return cached.result, cached.found
+		}
+		result, found := s.fetchAStockMarketCandidateResult(strategyDate)
+		cache.auctionResults[cacheKey] = aStockAuctionResultCacheEntry{result: result, found: found}
+		return result, found
+	}
+	return s.fetchAStockMarketCandidateResult(strategyDate)
+}
+
+func (s *Server) fetchAStockMarketCandidateResult(strategyDate string) (model.AStockAuctionListResult, bool) {
 	var result model.AStockAuctionListResult
 	query := "/api/v1/a-stock/auction?page=1&page_size=" + fmt.Sprint(aStockMarketCandidateLimit)
 	if strings.TrimSpace(strategyDate) != "" {
@@ -2667,10 +2689,29 @@ func (s *Server) loadAStockMarketCandidateResult(strategyDate string) (model.ASt
 	if err := s.getJSON(s.cfg.ContentURL+query, &result); err != nil {
 		return model.AStockAuctionListResult{}, false
 	}
-	if len(result.Items) == 0 {
+	if result.TotalAmount <= 0 && len(result.Items) == 0 {
 		return result, false
 	}
 	return result, true
+}
+
+func (s *Server) loadAStockAuctionAmountLabelWithCache(strategyDate string, cache *aStockRequestCache) string {
+	if strings.TrimSpace(s.cfg.ContentURL) == "" {
+		return ""
+	}
+	result, ok := s.loadAStockMarketCandidateResultWithCache(strategyDate, cache)
+	if !ok {
+		return ""
+	}
+	return normalizeAStockAuctionSummaryLabel(formatAStockAuctionSummaryAmount(result))
+}
+
+func normalizeAStockAuctionSummaryLabel(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "--" {
+		return ""
+	}
+	return value
 }
 
 func aStockMarketCandidatesFromAuctionResult(result model.AStockAuctionListResult) []aStockMarketCandidate {

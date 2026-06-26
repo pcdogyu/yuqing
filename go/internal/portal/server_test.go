@@ -284,8 +284,9 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 	for _, want := range []string{
 		`class="astock-overview-table"`,
 		`.astock-overview-table .astock-muted{display:block;margin-bottom:8px;font-size:14px}`,
+		`.astock-overview-strategy{width:10.9%;min-width:170px}`,
+		`.astock-overview-strategy strong{white-space:nowrap}`,
 		`.astock-overview-window{width:10.9%}`,
-		`.astock-overview-meta{display:block;margin-top:8px;font-size:12px;line-height:1.45;color:#6a6257}`,
 		`.astock-overview-table strong{display:block;font-size:22px;line-height:1.25}`,
 		`.astock-overview-status{width:24%}`,
 		`body[data-page='a-stock'] main{max-width:none;width:100%;box-sizing:border-box}`,
@@ -293,7 +294,7 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		`.astock-scroll{width:100%;overflow:auto}`,
 		`.astock-news-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}`,
 		`.astock-help:hover .astock-help-text,.astock-help:focus .astock-help-text{display:block}`,
-		`rowspan="2"`,
+		`class="astock-overview-strategy" rowspan="2"`,
 		"08:00-09:30",
 		"09:30-13:00",
 		"08:00-09:30 财经新闻",
@@ -348,7 +349,7 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}
 	}
-	for _, notWant := range []string{"T+2 收盘价", "T+3 收盘价", "T+4 收盘价", "T+5 收盘价"} {
+	for _, notWant := range []string{"T+2 收盘价", "T+3 收盘价", "T+4 收盘价", "T+5 收盘价", "astock-overview-meta"} {
 		if strings.Contains(body, notWant) {
 			t.Fatalf("expected A股 page not to contain removed backtest column %q, got %s", notWant, body)
 		}
@@ -1457,6 +1458,9 @@ func TestAStockPageExplainsMorningNoNews(t *testing.T) {
 			return
 		}
 		if r.URL.Path != "/api/v1/articles" {
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
 		if r.URL.Query().Get("time_field") == "captured_at" {
@@ -1515,6 +1519,9 @@ func TestAStockPageExplainsNewsAndHotspotsWithoutAuction(t *testing.T) {
 				Page:  1, PageSize: 200, Total: 1,
 			}})
 		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
 	}))
@@ -1547,6 +1554,9 @@ func TestAStockPageExplainsNewsWithoutHotspots(t *testing.T) {
 			return
 		}
 		if r.URL.Path != "/api/v1/articles" {
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -1670,6 +1680,9 @@ func TestAStockPageLoadsAfternoonWindow(t *testing.T) {
 			return
 		}
 		if r.URL.Path != "/api/v1/articles" {
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
 		if r.URL.Query().Get("time_field") == "captured_at" {
@@ -1732,6 +1745,9 @@ func TestAStockPageOffersTodayNavigationAndAfterAlias(t *testing.T) {
 			return
 		}
 		if r.URL.Path != "/api/v1/articles" {
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
 		if r.URL.Query().Get("time_field") == "captured_at" {
@@ -1878,6 +1894,9 @@ func TestAStockPageReusesTradingDayStatusWithinRequest(t *testing.T) {
 			return
 		}
 		if r.URL.Path != "/api/v1/articles" {
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -1947,6 +1966,9 @@ func TestAStockWindowArticlesFallbackToCapturedAt(t *testing.T) {
 			return
 		}
 		if r.URL.Path != "/api/v1/articles" {
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
 		switch r.URL.Query().Get("time_field") {
@@ -2016,6 +2038,9 @@ func TestAStockNewsSectionSummarizesSources(t *testing.T) {
 			return
 		}
 		if r.URL.Path != "/api/v1/articles" {
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
 		if r.URL.Query().Get("time_field") == "captured_at" {
@@ -2059,14 +2084,14 @@ func TestAStockNewsSectionSummarizesSources(t *testing.T) {
 		t.Fatalf("expected first page 200, got %d", firstRR.Code)
 	}
 	firstBody := firstRR.Body.String()
-	for _, want := range []string{"08:00-09:30 财经新闻", "09:30-13:00 财经新闻", "来源", "新闻条数", "最近抓取", "金十快讯", "7条", "东方财富网", "5条", "财联社", "0条", "暂无数据", `财经新闻数</span><strong>12</strong>`, "08:00-09:30 0 / 09:30-13:00 12"} {
+	for _, want := range []string{"08:00-09:30 财经新闻", "09:30-13:00 财经新闻", "来源", "新闻条数", "最近抓取", "金十快讯", "7条", "东方财富网", "5条", "财联社", "0条", "暂无数据", `财经新闻数</span><strong>12</strong>`} {
 		if !strings.Contains(firstBody, want) {
 			t.Fatalf("expected news summary to contain %q, got %s", want, firstBody)
 		}
 	}
-	for _, notWant := range []string{"08:00-09:26:59 0 / 09:30-13:00 12"} {
+	for _, notWant := range []string{"08:00-09:30 0 / 09:30-13:00 12", "08:00-09:26:59 0 / 09:30-13:00 12", "astock-overview-meta"} {
 		if strings.Contains(firstBody, notWant) {
-			t.Fatalf("expected overview news summary to use display window labels, got %q in %s", notWant, firstBody)
+			t.Fatalf("expected overview news summary detail to be absent, got %q in %s", notWant, firstBody)
 		}
 	}
 	morningNewsIndex := strings.Index(firstBody, "08:00-09:30 财经新闻")
@@ -2212,6 +2237,20 @@ func handleAStockRecommendationSnapshotTestEndpoint(w http.ResponseWriter, r *ht
 	}
 }
 
+func handleEmptyAStockAuctionTestEndpoint(w http.ResponseWriter, r *http.Request) bool {
+	if r.URL.Path != "/api/v1/a-stock/auction" {
+		return false
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"code":    http.StatusOK,
+		"message": "ok",
+		"data": model.AStockAuctionListResult{
+			Date:  r.URL.Query().Get("date"),
+			Items: []model.AStockAuctionAmount{},
+		},
+	})
+	return true
+}
 func mustAStockTestJSON(t *testing.T, value any) string {
 	t.Helper()
 	raw, err := json.Marshal(value)
@@ -2291,6 +2330,9 @@ func TestAStockPageUsesValidSnapshotsBeforeSelections(t *testing.T) {
 			saveHits++
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Updated: 1})
 		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
 	}))
@@ -2363,6 +2405,9 @@ func TestAStockContextRefreshAllBacktestsBypassesValidSnapshot(t *testing.T) {
 			saveHits++
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Updated: 1})
 		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
 	}))
@@ -2414,6 +2459,9 @@ func TestAStockContextFallsBackWhenSnapshotMissing(t *testing.T) {
 			saveHits++
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Inserted: 1})
 		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
 	}))
@@ -2482,6 +2530,9 @@ func TestAStockContextFallsBackWhenSnapshotStale(t *testing.T) {
 			saveHits++
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Updated: 1})
 		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
 	}))
@@ -2523,6 +2574,9 @@ func TestAStockContextLoadsPersistedRecommendationSnapshot(t *testing.T) {
 				"data": model.AStockRecommendationSelectionUpsertResult{Inserted: 1, Total: 1},
 			})
 		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
 	}))
@@ -2594,6 +2648,9 @@ func TestAStockContextRefreshKeepsPersistedRecommendationSelections(t *testing.T
 		case "/api/v1/a-stock/holdings/summary":
 			writeEnvelope(w, http.StatusOK, "ok", model.StockInstitutionHoldingSummary{})
 		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
 	}))
@@ -2713,6 +2770,9 @@ func TestAStockPageRefreshAllBacktestsPersistsAfternoonBacktestUpdate(t *testing
 		case "/api/v1/a-stock/holdings/summary":
 			writeEnvelope(w, http.StatusOK, "ok", model.StockInstitutionHoldingSummary{})
 		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
 	}))
@@ -2853,6 +2913,9 @@ func TestAStockPageRefreshAllBacktestsSupplementsPartialCustomMarketHistory(t *t
 		case "/api/v1/a-stock/holdings/summary":
 			writeEnvelope(w, http.StatusOK, "ok", model.StockInstitutionHoldingSummary{})
 		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
 	}))
@@ -2993,6 +3056,9 @@ func TestAStockPageRefreshAllBacktestsSupplementsCurrentDayAfternoonBacktest(t *
 		case "/api/v1/a-stock/holdings/summary":
 			writeEnvelope(w, http.StatusOK, "ok", model.StockInstitutionHoldingSummary{})
 		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
 	}))
@@ -3152,6 +3218,9 @@ func TestAStockPageRefreshAllBacktestsPreservesPersistedAfternoonPrices(t *testi
 		case "/api/v1/a-stock/holdings/summary":
 			writeEnvelope(w, http.StatusOK, "ok", model.StockInstitutionHoldingSummary{})
 		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
 	}))
@@ -3240,6 +3309,9 @@ func TestAStockContextRefreshSeedsSelectionsFromExistingSnapshot(t *testing.T) {
 		case "/api/v1/a-stock/holdings/summary":
 			writeEnvelope(w, http.StatusOK, "ok", model.StockInstitutionHoldingSummary{})
 		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
 	}))
@@ -3260,6 +3332,9 @@ func TestAStockContextRejectsMismatchedLimitUpSnapshot(t *testing.T) {
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path != "/api/v1/a-stock/recommendations" {
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -3604,6 +3679,9 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 			return
 		}
 		if r.URL.Path != "/api/v1/articles" {
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
 		if r.URL.Query().Get("time_field") == "captured_at" {
@@ -3654,11 +3732,10 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}
 	}
-	if !strings.Contains(body, "08:00-09:30 2 / 09:30-13:00 0") {
-		t.Fatalf("expected overview news count details to use display window labels, got %s", body)
-	}
-	if strings.Contains(body, "08:00-09:26:59 2 / 09:30-13:00 0") {
-		t.Fatalf("expected overview news count details to drop old morning label, got %s", body)
+	for _, notWant := range []string{"08:00-09:30 2 / 09:30-13:00 0", "08:00-09:26:59 2 / 09:30-13:00 0", "astock-overview-meta"} {
+		if strings.Contains(body, notWant) {
+			t.Fatalf("expected overview news count details to be absent, got %q in %s", notWant, body)
+		}
 	}
 	for _, notWant := range []string{"AI 算力政策加码", "半导体先进封装景气度提升"} {
 		if strings.Contains(body, notWant) {
@@ -3696,10 +3773,13 @@ func TestAStockPageBlocksRecommendationsOnNonTradingDay(t *testing.T) {
 		if handleAStockRecommendationSnapshotTestEndpoint(w, r) {
 			return
 		}
-		if r.URL.Path == "/api/v1/a-stock/auction" {
-			t.Fatalf("auction candidates should not be loaded on non-trading day")
+		if handleEmptyAStockAuctionTestEndpoint(w, r) {
+			return
 		}
 		if r.URL.Path != "/api/v1/articles" {
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -4132,6 +4212,9 @@ func TestAStockRecentRecommendationCodesUseRequestCache(t *testing.T) {
 		case "/api/v1/a-stock/recommendations":
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.AStockRecommendationSnapshot{Found: false}})
 		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
 	}))
@@ -4196,6 +4279,9 @@ func TestAStockContextCanIgnoreRecentRecommendationFilter(t *testing.T) {
 			return
 		}
 		if r.URL.Path != "/api/v1/articles" {
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -5229,6 +5315,9 @@ func TestAStockContextFallsBackToLatestAuctionDictionary(t *testing.T) {
 				Page:  1, PageSize: 200, Total: 1,
 			}})
 		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
 	}))
