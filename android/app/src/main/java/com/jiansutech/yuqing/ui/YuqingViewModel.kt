@@ -27,6 +27,7 @@ import com.jiansutech.yuqing.data.NetworkEnvironmentSelector
 import com.jiansutech.yuqing.data.SearchResult
 import com.jiansutech.yuqing.data.SessionState
 import com.jiansutech.yuqing.data.SessionStore
+import com.jiansutech.yuqing.data.YuqingApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -62,6 +63,11 @@ data class AStockRecommendationWindow(
     val windowLabel: String,
 )
 
+private data class ArticleActionState(
+    val readArticleIds: Set<Long>,
+    val inactiveArticleIds: Set<Long>,
+)
+
 data class YuqingUiState(
     val session: SessionState = SessionState(),
     val loading: Boolean = false,
@@ -72,6 +78,7 @@ data class YuqingUiState(
     val selectedModuleKey: String = "dashboard",
     val dashboard: AndroidDashboard? = null,
     val articleList: ItemListResult? = null,
+    val readArticleIds: Set<Long> = emptySet(),
     val articleDetail: ArticleItem? = null,
     val articleDetailLoading: Boolean = false,
     val articleDetailError: String = "",
@@ -114,7 +121,7 @@ class YuqingViewModel(
             val cacheQueryStartedAt = SystemClock.elapsedRealtime()
             Log.i(STARTUP_TAG, "YuqingViewModel.cache query start")
             val cached = dashboardCacheDao.get()?.payload
-            val hiddenArticleIds = articleUserActionDao.hiddenArticleIds().toSet()
+            val articleActions = loadArticleActionState()
             Log.i(
                 STARTUP_TAG,
                 "YuqingViewModel.cache query end elapsedMs=${SystemClock.elapsedRealtime() - cacheQueryStartedAt}",
@@ -130,10 +137,11 @@ class YuqingViewModel(
                         STARTUP_TAG,
                         "YuqingViewModel.cache decode success articleCount=${dashboard.overview.articleCount} elapsedMs=${SystemClock.elapsedRealtime() - decodeStartedAt}",
                     )
-                    val visibleDashboard = filterDashboardHiddenArticles(dashboard, hiddenArticleIds)
+                    val visibleDashboard = filterDashboardInactiveArticles(dashboard, articleActions.inactiveArticleIds)
                     _uiState.update {
                         it.copy(
                             dashboard = visibleDashboard,
+                            readArticleIds = articleActions.readArticleIds,
                             aStockAuction = visibleDashboard.aStock.auction,
                             aStockAuctionDate = visibleDashboard.aStock.auction.date.ifBlank { it.aStockAuctionDate },
                             aStockRecommendation = visibleDashboard.aStock.recommendation.takeIf { snapshot -> snapshot.found },
@@ -209,8 +217,22 @@ class YuqingViewModel(
 
     private fun currentYuqingApi(session: SessionState) = ApiFactory.yuqing(currentContentBaseUrl(), session.token)
 
+    private suspend fun loadArticleActionState(): ArticleActionState {
+        val currentReadArticleIds = _uiState.value.readArticleIds
+        val readArticleIds = articleUserActionDao.readArticleIds().toSet() + currentReadArticleIds
+        val inactiveArticleIds = articleUserActionDao.inactiveArticleIds().toSet() + currentReadArticleIds
+        return ArticleActionState(
+            readArticleIds = readArticleIds,
+            inactiveArticleIds = inactiveArticleIds,
+        )
+    }
+
     fun selectModule(key: String) {
+        val wasSelected = _uiState.value.selectedModuleKey == key
         _uiState.update { it.copy(selectedModuleKey = key) }
+        if (key == "dashboard" && wasSelected) {
+            refreshAll()
+        }
         if (key == "articles") {
             loadArticles(1)
         }
@@ -267,7 +289,7 @@ class YuqingViewModel(
             )
             runCatching {
                 val api = currentYuqingApi(session)
-                val hiddenArticleIds = articleUserActionDao.hiddenArticleIds().toSet()
+                val articleActions = loadArticleActionState()
                 val bootstrapStartedAt = SystemClock.elapsedRealtime()
                 val bootstrap = api.bootstrap().data
                 Log.i(
@@ -283,7 +305,7 @@ class YuqingViewModel(
                 val correctedDashboard = runCatching {
                     val latestArticlesStartedAt = SystemClock.elapsedRealtime()
                     val latestArticles = api.articles(page = 1, pageSize = 50).data?.items.orEmpty()
-                        .filterNot { article -> article.id in hiddenArticleIds }
+                        .filterNot { article -> article.id in articleActions.inactiveArticleIds }
                     Log.i(
                         STARTUP_TAG,
                         "YuqingViewModel.refreshAll latestArticles loaded count=${latestArticles.size} firstPublishTime=${latestArticles.firstOrNull()?.publishTime.orEmpty()} firstCapturedAt=${latestArticles.firstOrNull()?.capturedAt.orEmpty()} firstTitle=${latestArticles.firstOrNull()?.title.orEmpty()} elapsedMs=${SystemClock.elapsedRealtime() - latestArticlesStartedAt}",
@@ -292,7 +314,7 @@ class YuqingViewModel(
                 }.onFailure { throwable ->
                     Log.w(STARTUP_TAG, "YuqingViewModel.refreshAll latest article patch skipped", throwable)
                 }.getOrDefault(dashboard)
-                    .let { filterDashboardHiddenArticles(it, hiddenArticleIds) }
+                    .let { filterDashboardInactiveArticles(it, articleActions.inactiveArticleIds) }
                 dashboardCacheDao.upsert(
                     DashboardCacheEntity(
                         payload = ApiFactory.json.encodeToString(correctedDashboard),
@@ -303,6 +325,7 @@ class YuqingViewModel(
                     it.copy(
                         modules = bootstrap?.modules.orEmpty(),
                         dashboard = correctedDashboard,
+                        readArticleIds = articleActions.readArticleIds,
                         articleList = if (it.selectedModuleKey == "articles") it.articleList else null,
                         aStockAuction = correctedDashboard.aStock.auction,
                         aStockAuctionDate = correctedDashboard.aStock.auction.date.ifBlank { it.aStockAuctionDate },
@@ -357,28 +380,30 @@ class YuqingViewModel(
 
     fun loadArticles(page: Int) {
         viewModelScope.launch {
-            val hiddenArticleIds = articleUserActionDao.hiddenArticleIds().toSet()
+            val articleActions = loadArticleActionState()
             _uiState.update {
-                val fallback = filterHiddenArticles(fallbackArticleList(it), hiddenArticleIds)
+                val fallback = filterInactiveArticles(fallbackArticleList(it), articleActions.inactiveArticleIds)
                 it.copy(
                     loading = true,
                     articleLoading = true,
                     articleList = it.articleList ?: fallback,
+                    readArticleIds = articleActions.readArticleIds,
                     error = "",
                     message = "",
                 )
             }
             val session = sessionStore.state.first()
             runCatching {
-                val result = currentYuqingApi(session)
-                    .articles(page = page.coerceAtLeast(1), pageSize = ARTICLE_PAGE_SIZE)
-                    .data ?: error("文章数据为空")
-                filterHiddenArticles(result, hiddenArticleIds) ?: result
+                loadVisibleArticles(
+                    api = currentYuqingApi(session),
+                    page = page.coerceAtLeast(1),
+                    inactiveArticleIds = articleActions.inactiveArticleIds,
+                )
             }.onSuccess { result ->
                 _uiState.update { it.copy(articleList = result, error = "", message = "") }
             }.onFailure { throwable ->
                 _uiState.update {
-                    val fallback = filterHiddenArticles(fallbackArticleList(it), hiddenArticleIds)
+                    val fallback = filterInactiveArticles(fallbackArticleList(it), articleActions.inactiveArticleIds)
                     it.copy(
                         articleList = fallback,
                         error = if (fallback == null) {
@@ -408,9 +433,10 @@ class YuqingViewModel(
                 _uiState.update {
                     it.copy(
                         dashboard = it.dashboard?.let { dashboard ->
-                            filterDashboardHiddenArticles(dashboard, emptySet())
+                            filterDashboardInactiveArticles(dashboard, emptySet())
                         },
                         articleList = null,
+                        readArticleIds = emptySet(),
                         message = "缓存已清除",
                     )
                 }
@@ -437,6 +463,7 @@ class YuqingViewModel(
             it.copy(
                 articleList = removeArticleFromResult(it.articleList, item),
                 dashboard = nextDashboard,
+                readArticleIds = if (item.id > 0) it.readArticleIds + item.id else it.readArticleIds,
                 articleDetail = it.articleDetail?.takeUnless { detail -> sameArticle(detail, item) },
             )
         }
@@ -461,6 +488,53 @@ class YuqingViewModel(
         }
     }
 
+    fun clearArticleAction(item: ArticleItem) {
+        if (item.id <= 0) {
+            return
+        }
+        _uiState.update {
+            it.copy(readArticleIds = it.readArticleIds - item.id)
+        }
+        viewModelScope.launch {
+            runCatching {
+                articleUserActionDao.upsert(
+                    ArticleUserActionEntity(
+                        articleId = item.id,
+                        read = false,
+                        hidden = false,
+                        updatedAt = System.currentTimeMillis(),
+                    ),
+                )
+            }.onFailure { throwable ->
+                Log.w(STARTUP_TAG, "YuqingViewModel.clearArticleAction persist skipped", throwable)
+            }
+        }
+    }
+
+    private fun markArticleRead(item: ArticleItem) {
+        if (item.id <= 0) {
+            return
+        }
+        _uiState.update {
+            it.copy(readArticleIds = it.readArticleIds + item.id)
+        }
+        viewModelScope.launch {
+            runCatching {
+                val existing = articleUserActionDao.get(item.id)
+                articleUserActionDao.upsert(
+                    ArticleUserActionEntity(
+                        articleId = item.id,
+                        read = true,
+                        hidden = existing?.hidden ?: false,
+                        updatedAt = System.currentTimeMillis(),
+                    ),
+                )
+            }.onFailure { throwable ->
+                Log.w(STARTUP_TAG, "YuqingViewModel.markArticleRead persist skipped", throwable)
+            }
+        }
+    }
+
     private suspend fun refillDashboardArticlesIfNeeded(extraHiddenArticleId: Long?) {
         val dashboard = _uiState.value.dashboard ?: return
         if (dashboard.articles.items.size >= DASHBOARD_VISIBLE_ARTICLE_LIMIT) {
@@ -468,7 +542,7 @@ class YuqingViewModel(
         }
         val session = sessionStore.state.first()
         runCatching {
-            val hiddenArticleIds = articleUserActionDao.hiddenArticleIds().toSet() +
+            val inactiveArticleIds = articleUserActionDao.inactiveArticleIds().toSet() +
                 listOfNotNull(extraHiddenArticleId)
             val latestArticles = currentYuqingApi(session)
                 .articles(page = 1, pageSize = DASHBOARD_REFILL_PAGE_SIZE)
@@ -478,7 +552,7 @@ class YuqingViewModel(
             mergeDashboardArticles(
                 currentArticles = _uiState.value.dashboard?.articles?.items.orEmpty(),
                 incomingArticles = latestArticles,
-                hiddenArticleIds = hiddenArticleIds,
+                inactiveArticleIds = inactiveArticleIds,
             )
         }.onSuccess { mergedArticles ->
             if (mergedArticles.isNotEmpty()) {
@@ -507,6 +581,7 @@ class YuqingViewModel(
             }
             return
         }
+        markArticleRead(item)
         _uiState.update {
             it.copy(
                 articleDetail = item,
@@ -728,6 +803,7 @@ internal const val ARTICLE_PAGE_SIZE = 25
 internal const val DASHBOARD_VISIBLE_ARTICLE_LIMIT = 5
 internal const val DASHBOARD_ARTICLE_CACHE_LIMIT = 10
 private const val DASHBOARD_REFILL_PAGE_SIZE = 50
+private const val ARTICLE_REFILL_MAX_PAGES = 5
 private val articleTimeFormats = listOf(
     DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"),
     DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"),
@@ -767,19 +843,70 @@ internal fun fallbackArticleList(state: YuqingUiState): ItemListResult? {
     return state.dashboard?.articles?.takeIf { it.items.isNotEmpty() }
 }
 
-internal fun filterHiddenArticles(result: ItemListResult?, hiddenArticleIds: Set<Long>): ItemListResult? {
-    if (result == null || hiddenArticleIds.isEmpty()) {
-        return result
+private suspend fun loadVisibleArticles(
+    api: YuqingApi,
+    page: Int,
+    inactiveArticleIds: Set<Long>,
+): ItemListResult {
+    val requestedPage = page.coerceAtLeast(1)
+    var nextPage = requestedPage
+    var firstResult: ItemListResult? = null
+    var visibleArticles = emptyList<ArticleItem>()
+    var loadedPages = 0
+    while (visibleArticles.size < ARTICLE_PAGE_SIZE && loadedPages < ARTICLE_REFILL_MAX_PAGES) {
+        val result = api.articles(page = nextPage, pageSize = ARTICLE_PAGE_SIZE)
+            .data ?: error("文章数据为空")
+        if (firstResult == null) {
+            firstResult = result
+        }
+        visibleArticles = appendVisibleArticles(
+            currentArticles = visibleArticles,
+            incomingArticles = result.items,
+            inactiveArticleIds = inactiveArticleIds,
+            limit = ARTICLE_PAGE_SIZE,
+        )
+        loadedPages += 1
+        if (result.items.isEmpty() || result.page * result.pageSize >= result.total) {
+            break
+        }
+        nextPage += 1
     }
-    return result.copy(items = result.items.filterNot { article -> article.id in hiddenArticleIds })
+    return (firstResult ?: error("文章数据为空")).copy(
+        items = visibleArticles,
+        page = requestedPage,
+        pageSize = ARTICLE_PAGE_SIZE,
+    )
 }
 
-private fun filterDashboardHiddenArticles(dashboard: AndroidDashboard, hiddenArticleIds: Set<Long>): AndroidDashboard {
-    if (hiddenArticleIds.isEmpty()) {
+internal fun appendVisibleArticles(
+    currentArticles: List<ArticleItem>,
+    incomingArticles: List<ArticleItem>,
+    inactiveArticleIds: Set<Long>,
+    limit: Int,
+): List<ArticleItem> {
+    return (currentArticles + incomingArticles)
+        .filterNot { article -> article.id in inactiveArticleIds }
+        .distinctBy(::articleIdentity)
+        .take(limit.coerceAtLeast(1))
+}
+
+internal fun filterHiddenArticles(result: ItemListResult?, hiddenArticleIds: Set<Long>): ItemListResult? {
+    return filterInactiveArticles(result, hiddenArticleIds)
+}
+
+internal fun filterInactiveArticles(result: ItemListResult?, inactiveArticleIds: Set<Long>): ItemListResult? {
+    if (result == null || inactiveArticleIds.isEmpty()) {
+        return result
+    }
+    return result.copy(items = result.items.filterNot { article -> article.id in inactiveArticleIds })
+}
+
+private fun filterDashboardInactiveArticles(dashboard: AndroidDashboard, inactiveArticleIds: Set<Long>): AndroidDashboard {
+    if (inactiveArticleIds.isEmpty()) {
         return dashboard
     }
     return dashboard.copy(
-        articles = filterHiddenArticles(dashboard.articles, hiddenArticleIds) ?: dashboard.articles,
+        articles = filterInactiveArticles(dashboard.articles, inactiveArticleIds) ?: dashboard.articles,
     )
 }
 
@@ -837,7 +964,7 @@ private fun patchDashboardLatestArticles(dashboard: AndroidDashboard, latestArti
     val patchedItems = mergeDashboardArticles(
         currentArticles = emptyList(),
         incomingArticles = latestArticles,
-        hiddenArticleIds = emptySet(),
+        inactiveArticleIds = emptySet(),
     )
     if (patchedItems.isEmpty()) {
         return dashboard
@@ -855,12 +982,12 @@ private fun patchDashboardLatestArticles(dashboard: AndroidDashboard, latestArti
 internal fun mergeDashboardArticles(
     currentArticles: List<ArticleItem>,
     incomingArticles: List<ArticleItem>,
-    hiddenArticleIds: Set<Long>,
+    inactiveArticleIds: Set<Long>,
     referenceNow: Instant = Instant.now(),
     limit: Int = DASHBOARD_ARTICLE_CACHE_LIMIT,
 ): List<ArticleItem> {
     return (currentArticles + incomingArticles)
-        .filterNot { article -> article.id in hiddenArticleIds }
+        .filterNot { article -> article.id in inactiveArticleIds }
         .distinctBy(::articleIdentity)
         .map { item ->
             DashboardLatestArticleSortEntry(

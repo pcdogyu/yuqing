@@ -3,6 +3,7 @@ package com.jiansutech.yuqing.ui
 import com.jiansutech.yuqing.data.AndroidDashboard
 import com.jiansutech.yuqing.data.ArticleItem
 import com.jiansutech.yuqing.data.ItemListResult
+import androidx.compose.material3.SwipeToDismissBoxValue
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -57,6 +58,22 @@ class ArticleListFallbackTest {
     }
 
     @Test
+    fun filterInactiveArticlesDropsReadOrHiddenIds() {
+        val result = ItemListResult(
+            items = listOf(
+                ArticleItem(id = 1, title = "read"),
+                ArticleItem(id = 2, title = "visible"),
+                ArticleItem(id = 3, title = "hidden"),
+            ),
+            total = 3,
+        )
+
+        val visible = filterInactiveArticles(result, setOf(1, 3))
+
+        assertEquals(listOf("visible"), visible?.items?.map { it.title })
+    }
+
+    @Test
     fun articleStableKeyPrefersArticleId() {
         val key = articleStableKey(
             ArticleItem(
@@ -98,12 +115,44 @@ class ArticleListFallbackTest {
         val merged = mergeDashboardArticles(
             currentArticles = current,
             incomingArticles = incoming,
-            hiddenArticleIds = setOf(2),
+            inactiveArticleIds = setOf(2),
             referenceNow = Instant.parse("2026-06-24T10:00:00Z"),
             limit = 5,
         )
 
         assertEquals(listOf(3L, 4L, 1L), merged.map { it.id })
+    }
+
+    @Test
+    fun appendVisibleArticlesCanFillFromLaterPages() {
+        val firstPage = appendVisibleArticles(
+            currentArticles = emptyList(),
+            incomingArticles = listOf(
+                ArticleItem(id = 1, title = "read"),
+                ArticleItem(id = 2, title = "also read"),
+                ArticleItem(id = 3, title = "visible first"),
+            ),
+            inactiveArticleIds = setOf(1, 2),
+            limit = 3,
+        )
+        val filled = appendVisibleArticles(
+            currentArticles = firstPage,
+            incomingArticles = listOf(
+                ArticleItem(id = 4, title = "visible second"),
+                ArticleItem(id = 5, title = "visible third"),
+            ),
+            inactiveArticleIds = setOf(1, 2),
+            limit = 3,
+        )
+
+        assertEquals(listOf(3L, 4L, 5L), filled.map { it.id })
+    }
+
+    @Test
+    fun articleListSwipeDirectionMapsRightToHideAndLeftToClear() {
+        assertEquals(ArticleListSwipeAction.Hide, articleListSwipeAction(SwipeToDismissBoxValue.StartToEnd))
+        assertEquals(ArticleListSwipeAction.Clear, articleListSwipeAction(SwipeToDismissBoxValue.EndToStart))
+        assertEquals(ArticleListSwipeAction.None, articleListSwipeAction(SwipeToDismissBoxValue.Settled))
     }
 
     @Test

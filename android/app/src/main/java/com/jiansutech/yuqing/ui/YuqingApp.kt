@@ -330,9 +330,9 @@ private fun ModuleContent(
         return
     }
     when (key) {
-        "dashboard" -> DashboardModule(dashboard, viewModel)
+        "dashboard" -> DashboardModule(dashboard, state.readArticleIds, viewModel)
         "projects" -> ProjectsModule(dashboard.projects, dashboard.rules)
-        "articles" -> ArticlesModule(state.articleList, state.articleLoading, state.error, viewModel)
+        "articles" -> ArticlesModule(state.articleList, state.articleLoading, state.error, state.readArticleIds, viewModel)
         "search" -> SearchModule(state, viewModel)
         "auction" -> AStockAuctionModule(state.aStockAuction, viewModel)
         "analysis" -> AnalysisModule(dashboard)
@@ -346,7 +346,11 @@ private fun ModuleContent(
 }
 
 @Composable
-private fun DashboardModule(dashboard: AndroidDashboard, viewModel: YuqingViewModel) {
+private fun DashboardModule(
+    dashboard: AndroidDashboard,
+    readArticleIds: Set<Long>,
+    viewModel: YuqingViewModel,
+) {
     val latestArticles = dashboard.articles.items.take(5)
     LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
@@ -370,8 +374,10 @@ private fun DashboardModule(dashboard: AndroidDashboard, viewModel: YuqingViewMo
         items(latestArticles, key = { articleStableKey(it) }) {
             SwipeHiddenArticleRow(
                 item = it,
+                read = it.id in readArticleIds,
                 onClick = { viewModel.openArticleDetail(it) },
-                onHide = { article -> viewModel.hideArticle(article) },
+                onSwipeRight = { article -> viewModel.hideArticle(article) },
+                onSwipeLeft = { article -> viewModel.hideArticle(article) },
             )
         }
     }
@@ -392,6 +398,7 @@ private fun ArticlesModule(
     result: ItemListResult?,
     loading: Boolean,
     error: String,
+    readArticleIds: Set<Long>,
     viewModel: YuqingViewModel,
 ) {
     if (result == null || result.items.isEmpty()) {
@@ -428,8 +435,10 @@ private fun ArticlesModule(
         items(result.items, key = { articleStableKey(it) }) {
             SwipeHiddenArticleRow(
                 item = it,
+                read = it.id in readArticleIds,
                 onClick = { viewModel.openArticleDetail(it) },
-                onHide = { article -> viewModel.hideArticle(article) },
+                onSwipeRight = { article -> viewModel.hideArticle(article) },
+                onSwipeLeft = { article -> viewModel.clearArticleAction(article) },
             )
         }
         item {
@@ -772,93 +781,6 @@ private fun SystemModule(
     }
 }
 
-enum class VersionUpgradeStatus {
-    Idle,
-    Checking,
-    Latest,
-    UpdateFound,
-    Downloading,
-    InstallerOpened,
-    Failed,
-}
-
-data class VersionUpgradeUiState(
-    val status: VersionUpgradeStatus = VersionUpgradeStatus.Idle,
-    val sourceLabel: String = "",
-    val latestVersionName: String = "",
-    val latestFileName: String = "",
-    val message: String = "",
-)
-
-@Composable
-private fun VersionInfoRow(
-    state: VersionUpgradeUiState,
-    onCheckUpgrade: () -> Unit,
-) {
-    val loading = state.status == VersionUpgradeStatus.Checking || state.status == VersionUpgradeStatus.Downloading
-    val messageColor = when (state.status) {
-        VersionUpgradeStatus.Failed -> MaterialTheme.colorScheme.error
-        VersionUpgradeStatus.Latest,
-        VersionUpgradeStatus.UpdateFound,
-        VersionUpgradeStatus.InstallerOpened -> MaterialTheme.colorScheme.primary
-        VersionUpgradeStatus.Idle,
-        VersionUpgradeStatus.Checking,
-        VersionUpgradeStatus.Downloading -> MaterialTheme.colorScheme.onSurfaceVariant
-    }
-    Card {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text("当前版本", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                if (state.sourceLabel.isNotBlank() || state.latestVersionName.isNotBlank()) {
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        listOfNotNull(
-                            state.sourceLabel.takeIf { it.isNotBlank() }?.let { "来源 $it" },
-                            state.latestVersionName.takeIf { it.isNotBlank() }?.let { "最新 $it" },
-                        ).joinToString("  "),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                if (state.message.isNotBlank()) {
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        state.message,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = messageColor,
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-            TextButton(onClick = onCheckUpgrade, enabled = !loading) {
-                Text(versionUpgradeButtonText(state.status))
-            }
-        }
-    }
-}
-
-internal fun versionUpgradeButtonText(status: VersionUpgradeStatus): String {
-    return when (status) {
-        VersionUpgradeStatus.Checking -> "检测中"
-        VersionUpgradeStatus.Downloading -> "下载中"
-        else -> "检测升级"
-    }
-}
-
 @Composable
 private fun GenericModule(key: String, dashboard: AndroidDashboard) {
     LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -947,16 +869,24 @@ private fun MetricCard(
 @Composable
 private fun SwipeHiddenArticleRow(
     item: ArticleItem,
+    read: Boolean,
     onClick: () -> Unit,
-    onHide: (ArticleItem) -> Unit,
+    onSwipeRight: (ArticleItem) -> Unit,
+    onSwipeLeft: (ArticleItem) -> Unit,
 ) {
     val key = articleStableKey(item)
-    var hideRequested by remember(key) { mutableStateOf(false) }
+    var actionRequested by remember(key) { mutableStateOf(false) }
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
-            if (value != SwipeToDismissBoxValue.Settled && !hideRequested) {
-                hideRequested = true
-                onHide(item)
+            when (value) {
+                SwipeToDismissBoxValue.StartToEnd -> {
+                    if (!actionRequested) {
+                        actionRequested = true
+                        onSwipeRight(item)
+                    }
+                }
+                SwipeToDismissBoxValue.EndToStart -> onSwipeLeft(item)
+                SwipeToDismissBoxValue.Settled -> Unit
             }
             false
         },
@@ -967,7 +897,94 @@ private fun SwipeHiddenArticleRow(
         enableDismissFromStartToEnd = true,
         enableDismissFromEndToStart = true,
     ) {
-        ArticleRow(item = item, onClick = onClick)
+        ArticleRow(item = item, read = read, onClick = onClick)
+    }
+}
+
+enum class VersionUpgradeStatus {
+    Idle,
+    Checking,
+    Latest,
+    UpdateFound,
+    Downloading,
+    InstallerOpened,
+    Failed,
+}
+
+data class VersionUpgradeUiState(
+    val status: VersionUpgradeStatus = VersionUpgradeStatus.Idle,
+    val sourceLabel: String = "",
+    val latestVersionName: String = "",
+    val latestFileName: String = "",
+    val message: String = "",
+)
+
+@Composable
+private fun VersionInfoRow(
+    state: VersionUpgradeUiState,
+    onCheckUpgrade: () -> Unit,
+) {
+    val loading = state.status == VersionUpgradeStatus.Checking || state.status == VersionUpgradeStatus.Downloading
+    val messageColor = when (state.status) {
+        VersionUpgradeStatus.Failed -> MaterialTheme.colorScheme.error
+        VersionUpgradeStatus.Latest,
+        VersionUpgradeStatus.UpdateFound,
+        VersionUpgradeStatus.InstallerOpened -> MaterialTheme.colorScheme.primary
+        VersionUpgradeStatus.Idle,
+        VersionUpgradeStatus.Checking,
+        VersionUpgradeStatus.Downloading -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Card {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("当前版本", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (state.sourceLabel.isNotBlank() || state.latestVersionName.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        listOfNotNull(
+                            state.sourceLabel.takeIf { it.isNotBlank() }?.let { "来源 $it" },
+                            state.latestVersionName.takeIf { it.isNotBlank() }?.let { "最新 $it" },
+                        ).joinToString("  "),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (state.message.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        state.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = messageColor,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            TextButton(onClick = onCheckUpgrade, enabled = !loading) {
+                Text(versionUpgradeButtonText(state.status))
+            }
+        }
+    }
+}
+
+internal fun versionUpgradeButtonText(status: VersionUpgradeStatus): String {
+    return when (status) {
+        VersionUpgradeStatus.Checking -> "检测中"
+        VersionUpgradeStatus.Downloading -> "下载中"
+        else -> "检测升级"
     }
 }
 
@@ -980,10 +997,25 @@ internal fun articleStableKey(item: ArticleItem): String {
         .ifBlank { "title:${item.title}" }
 }
 
+internal enum class ArticleListSwipeAction {
+    Hide,
+    Clear,
+    None,
+}
+
+internal fun articleListSwipeAction(value: SwipeToDismissBoxValue): ArticleListSwipeAction {
+    return when (value) {
+        SwipeToDismissBoxValue.StartToEnd -> ArticleListSwipeAction.Hide
+        SwipeToDismissBoxValue.EndToStart -> ArticleListSwipeAction.Clear
+        SwipeToDismissBoxValue.Settled -> ArticleListSwipeAction.None
+    }
+}
+
 @Composable
 private fun ArticleRow(
     item: ArticleItem,
     modifier: Modifier = Modifier,
+    read: Boolean = false,
     onClick: (() -> Unit)? = null,
 ) {
     val displayTime = remember(item.capturedAt, item.publishTime, item.publishTimeText) {
@@ -996,9 +1028,20 @@ private fun ArticleRow(
         fontWeight = FontWeight.Normal,
         fontSize = MaterialTheme.typography.bodySmall.fontSize,
     )
-    val titleText = remember(title, displayTime, relativeTimeStyle) {
+    val readStyle = SpanStyle(
+        fontWeight = FontWeight.Normal,
+        fontSize = MaterialTheme.typography.bodySmall.fontSize,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    val titleText = remember(title, displayTime, read, relativeTimeStyle, readStyle) {
         buildAnnotatedString {
             append(title)
+            if (read) {
+                append(" ")
+                withStyle(readStyle) {
+                    append("已读")
+                }
+            }
             if (displayTime.isNotBlank()) {
                 append(" ")
                 withStyle(relativeTimeStyle) {
@@ -1013,7 +1056,7 @@ private fun ArticleRow(
             Text(
                 titleText,
                 modifier = Modifier.fillMaxWidth(),
-                fontWeight = FontWeight.SemiBold,
+                fontWeight = if (read) FontWeight.Normal else FontWeight.SemiBold,
                 maxLines = 3,
                 overflow = TextOverflow.Ellipsis,
             )

@@ -43,6 +43,15 @@ interface ArticleUserActionDao {
     @Query("SELECT article_id FROM article_user_actions WHERE hidden = 1")
     suspend fun hiddenArticleIds(): List<Long>
 
+    @Query("SELECT article_id FROM article_user_actions WHERE read = 1")
+    suspend fun readArticleIds(): List<Long>
+
+    @Query("SELECT article_id FROM article_user_actions WHERE read = 1 OR hidden = 1")
+    suspend fun inactiveArticleIds(): List<Long>
+
+    @Query("SELECT * FROM article_user_actions WHERE article_id = :articleId")
+    suspend fun get(articleId: Long): ArticleUserActionEntity?
+
     @Upsert
     suspend fun upsert(entity: ArticleUserActionEntity)
 
