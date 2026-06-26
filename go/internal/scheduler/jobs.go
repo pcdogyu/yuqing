@@ -298,7 +298,7 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 		withJobMeta(jobDefinition{
 			Name:        "a-stock-morning-recommendation",
 			Group:       "a-stock",
-			Description: "A股上午推荐补全：09:32 抓取 08:00-09:30 财经新闻并补全推荐快照",
+			Description: "A股上午推荐补全：09:32 抓取 08:00-09:26:59 财经新闻并补全推荐快照",
 			Interval:    24 * time.Hour,
 			Enabled:     true,
 			Run: func(ctx context.Context) error {

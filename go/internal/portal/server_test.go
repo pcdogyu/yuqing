@@ -292,7 +292,7 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		`body[data-page='a-stock'] table{width:100%;min-width:100%}`,
 		`.astock-scroll{width:100%;overflow:auto}`,
 		`rowspan="2"`,
-		"08:00-09:30",
+		"08:00-09:26:59",
 		"09:30-13:00",
 		"上午推荐",
 		"下午推荐",
@@ -1085,7 +1085,7 @@ func TestAStockStockGenerateActionsSelectPeriod(t *testing.T) {
 			fromPeriod: "afternoon",
 			action:     "generate_morning_stock",
 			wantPeriod: "morning",
-			wantMsg:    "已切换到上午窗口，按 08:00-09:30 历史新闻重新计算推荐。",
+			wantMsg:    "已切换到上午窗口，按 08:00-09:26:59 历史新闻重新计算推荐。",
 		},
 		{
 			name:       "ignore recent filter",
@@ -1475,7 +1475,7 @@ func TestAStockPageExplainsMorningNoNews(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"上午推荐", "08:00-09:30", "没有新闻", "请先抓取或补抓财经信息"} {
+	for _, want := range []string{"上午推荐", "08:00-09:26:59", "没有新闻", "请先抓取或补抓财经信息"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected no-news explanation %q, got %s", want, body)
 		}
@@ -2046,7 +2046,7 @@ func TestAStockNewsSectionSummarizesSources(t *testing.T) {
 		t.Fatalf("expected first page 200, got %d", firstRR.Code)
 	}
 	firstBody := firstRR.Body.String()
-	for _, want := range []string{"来源", "新闻条数", "最近抓取", "金十快讯", "7条", "东方财富网", "5条", "财联社", "0条", `财经新闻数</span><strong>12</strong>`, "08:00-09:30 0 / 09:30-13:00 12"} {
+	for _, want := range []string{"来源", "新闻条数", "最近抓取", "金十快讯", "7条", "东方财富网", "5条", "财联社", "0条", `财经新闻数</span><strong>12</strong>`, "08:00-09:26:59 0 / 09:30-13:00 12"} {
 		if !strings.Contains(firstBody, want) {
 			t.Fatalf("expected news summary to contain %q, got %s", want, firstBody)
 		}
@@ -3584,7 +3584,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		if r.URL.Query().Get("time_field") != "publish_time" {
 			t.Fatalf("unexpected A股 window query: %s", r.URL.RawQuery)
 		}
-		if r.URL.Query().Get("start") != "2026-06-16 08:00:00" || r.URL.Query().Get("end") != "2026-06-16 09:30:59" {
+		if r.URL.Query().Get("start") != "2026-06-16 08:00:00" || r.URL.Query().Get("end") != "2026-06-16 09:26:59" {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"code":    200,
 				"message": "ok",
@@ -3620,7 +3620,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"金十快讯", "金十资讯", "1条", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "5日内过滤", "涨停过滤", "当日行情", "不过滤", "重新计算", "关闭5日过滤", "关闭涨停过滤", "启用当日行情过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "推荐历史", "上午推荐", "下午推荐", "推荐窗口", "上午开盘价", "下午开盘价", "补抓上午新闻", "重新生成上午推荐", "补抓下午新闻", "重新生成下午推荐", "补行情收益", "刷新全部回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="refresh_current_backtest"`, `name="action" value="refresh_backtest"`, `name="action" value="recalculate"`, "2026-06-12 周五", "2026-06-15 周一", "今日", "T+0 收益", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1", "08:00-09:30 2 / 09:30-13:00 0"} {
+	for _, want := range []string{"金十快讯", "金十资讯", "1条", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "5日内过滤", "涨停过滤", "当日行情", "不过滤", "重新计算", "关闭5日过滤", "关闭涨停过滤", "启用当日行情过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "推荐历史", "上午推荐", "下午推荐", "推荐窗口", "上午开盘价", "下午开盘价", "补抓上午新闻", "重新生成上午推荐", "补抓下午新闻", "重新生成下午推荐", "补行情收益", "刷新全部回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="refresh_current_backtest"`, `name="action" value="refresh_backtest"`, `name="action" value="recalculate"`, "2026-06-12 周五", "2026-06-15 周一", "今日", "T+0 收益", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1", "08:00-09:26:59 2 / 09:30-13:00 0"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}
@@ -4938,7 +4938,7 @@ func TestAStockRecommendationsUseFixedPoolWhenAuctionCandidatesEmpty(t *testing.
 	}
 }
 
-func TestAStockSnapshotRecommendationsMergeAndDeduplicate(t *testing.T) {
+func TestAStockSnapshotRecommendationsUseMorningFinalWindow(t *testing.T) {
 	items := []model.Item{
 		{ID: 1, SourceType: "flash", Title: "科大讯飞盘中活跃", Summary: "AI 人工智能算力需求增长", PublishTime: "2026-06-18 09:20:00", TagFlags: "0.002230"},
 		{ID: 2, SourceType: "flash", Title: "科大讯飞继续活跃", Summary: "AI 人工智能应用落地", PublishTime: "2026-06-18 09:28:00", TagFlags: "0.002230"},
@@ -4951,8 +4951,8 @@ func TestAStockSnapshotRecommendationsMergeAndDeduplicate(t *testing.T) {
 
 	recommendations := buildAStockSnapshotRecommendations("2026-06-18", "morning", items, candidates)
 
-	if len(recommendations) != 6 {
-		t.Fatalf("expected 09:24 and 09:30 snapshots to merge fixed-pool stocks, got %+v", recommendations)
+	if len(recommendations) != 3 {
+		t.Fatalf("expected morning final to use one 09:27 snapshot, got %+v", recommendations)
 	}
 	codes := map[string]struct{}{}
 	for _, rec := range recommendations {
@@ -4961,11 +4961,19 @@ func TestAStockSnapshotRecommendationsMergeAndDeduplicate(t *testing.T) {
 		}
 		codes[rec.Code] = struct{}{}
 	}
-	if recommendations[0].Code != "002230" || recommendations[3].Code != "688981" {
-		t.Fatalf("expected AI pool before later semiconductor pool, got %+v", recommendations)
+	if recommendations[0].Code != "002230" {
+		t.Fatalf("expected morning final to keep 09:26:59 news and exclude later semiconductor pool, got %+v", recommendations)
 	}
-	if !strings.Contains(recommendations[0].Reason, "生成点 09:24") || !strings.Contains(recommendations[3].Reason, "生成点 09:30") {
-		t.Fatalf("expected recommendations to retain snapshot generation labels, got %+v", recommendations)
+	for _, rec := range recommendations {
+		if rec.Code == "688981" {
+			t.Fatalf("expected morning final to exclude news after 09:26:59, got %+v", recommendations)
+		}
+		if strings.Contains(rec.Reason, "生成点 09:24") || strings.Contains(rec.Reason, "生成点 09:30") {
+			t.Fatalf("expected morning final to remove old snapshot generation labels, got %+v", recommendations)
+		}
+		if !strings.Contains(rec.Reason, "生成点 09:27") {
+			t.Fatalf("expected recommendations to retain 09:27 generation label, got %+v", recommendations)
+		}
 	}
 }
 

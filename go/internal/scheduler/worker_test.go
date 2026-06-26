@@ -413,7 +413,7 @@ func TestRunAStockRecommendationGeneratesMorningSnapshot(t *testing.T) {
 		if r.URL.Path != "/api/v1/articles" {
 			t.Fatalf("unexpected content request: %s", r.URL.String())
 		}
-		if r.URL.Query().Get("start") != "2026-06-16T00:00:00Z" || r.URL.Query().Get("end") != "2026-06-16T01:30:59Z" {
+		if r.URL.Query().Get("start") != "2026-06-16T00:00:00Z" || r.URL.Query().Get("end") != "2026-06-16T01:26:59Z" {
 			t.Fatalf("unexpected A股 morning window query: %s", r.URL.RawQuery)
 		}
 		w.WriteHeader(http.StatusOK)
@@ -457,7 +457,7 @@ func TestAStockRecommendationWindowUsesPhase(t *testing.T) {
 		wantLabel string
 	}{
 		{name: "morning preopen", period: "morning", phase: "preopen", wantStart: "08:00:00", wantEnd: "09:26:59", wantLabel: "08:00-09:26:59"},
-		{name: "morning final", period: "morning", phase: "final", wantStart: "08:00:00", wantEnd: "09:30:59", wantLabel: "08:00-09:30"},
+		{name: "morning final", period: "morning", phase: "final", wantStart: "08:00:00", wantEnd: "09:26:59", wantLabel: "08:00-09:26:59"},
 		{name: "afternoon preopen", period: "afternoon", phase: "preopen", wantStart: "09:30:00", wantEnd: "12:56:59", wantLabel: "09:30-12:56:59"},
 		{name: "afternoon final", period: "afternoon", phase: "final", wantStart: "09:30:00", wantEnd: "13:00:59", wantLabel: "09:30-13:00"},
 	}

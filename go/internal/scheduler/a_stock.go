@@ -886,7 +886,7 @@ func aStockRecommendationWindow(strategyDate string, period string, phase string
 				"08:00-09:26:59", nil
 		}
 		return time.Date(day.Year(), day.Month(), day.Day(), 8, 0, 0, 0, location),
-			time.Date(day.Year(), day.Month(), day.Day(), 9, 30, 59, 0, location),
-			"08:00-09:30", nil
+			time.Date(day.Year(), day.Month(), day.Day(), 9, 26, 59, 0, location),
+			"08:00-09:26:59", nil
 	}
 }

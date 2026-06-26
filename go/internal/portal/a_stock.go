@@ -500,7 +500,7 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request) 
 		period = normalizeAStockPeriod("morning")
 		query.Set("period", period.Key)
 		query.Set("refresh_recommendations", "1")
-		query.Set("msg", "已切换到上午窗口，按 08:00-09:30 历史新闻重新计算推荐。")
+		query.Set("msg", "已切换到上午窗口，按 08:00-09:26:59 历史新闻重新计算推荐。")
 	case "generate_afternoon_stock":
 		period = normalizeAStockPeriod("afternoon")
 		query.Set("period", period.Key)
@@ -4490,8 +4490,9 @@ func aStockRecommendationPhaseWindow(strategyDate string, periodKey string, phas
 			time.Date(day.Year(), day.Month(), day.Day(), 9, 26, 59, 0, location),
 			"08:00-09:26:59"
 	}
-	start, end := aStockWindow(day.Format("2006-01-02"), period.Key)
-	return start, end, period.WindowLabel
+	return time.Date(day.Year(), day.Month(), day.Day(), 8, 0, 0, 0, location),
+		time.Date(day.Year(), day.Month(), day.Day(), 9, 26, 59, 0, location),
+		"08:00-09:26:59"
 }
 
 func normalizeAStockRecommendationPhase(value string) string {
@@ -4828,8 +4829,7 @@ func aStockRecommendationSnapshots(strategyDate string, periodKey string, phase 
 		}
 	}
 	return []aStockRecommendationSnapshot{
-		{Label: "09:24", Start: start, End: time.Date(day.Year(), day.Month(), day.Day(), 9, 24, 59, 0, location)},
-		{Label: "09:30", Start: start, End: time.Date(day.Year(), day.Month(), day.Day(), 9, 30, 59, 0, location)},
+		{Label: "09:27", Start: start, End: time.Date(day.Year(), day.Month(), day.Day(), 9, 26, 59, 0, location)},
 	}
 }
 
