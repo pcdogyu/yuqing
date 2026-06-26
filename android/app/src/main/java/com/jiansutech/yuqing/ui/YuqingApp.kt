@@ -675,10 +675,11 @@ private fun SystemModule(
     val recentTasks = dashboard.recentTaskRunsForDisplay()
     val database = dashboard.operations.database
     val servicesByName = dashboard.operations.services.associateBy { it.name }
-    val webUrl = "http://yuqin.jiansutech.com:8079/"
-    val contentUrl = state.session.apiBaseUrl
-    val authUrl = state.session.authBaseUrl
-    val releaseUrl = BuildConfig.DEFAULT_RELEASE_BASE_URL
+    val endpoints = state.networkEndpoints
+    val webUrl = endpoints.webBaseUrl
+    val contentUrl = endpoints.contentBaseUrl
+    val authUrl = endpoints.authBaseUrl
+    val releaseUrl = endpoints.releaseBaseUrl
     LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item { SectionTitle("版本") }
         item {
@@ -688,6 +689,16 @@ private fun SystemModule(
             )
         }
         item { SectionTitle("连接") }
+        item {
+            SimpleRow(
+                "网络环境",
+                listOfNotNull(
+                    endpoints.label,
+                    "heartbeat 120秒",
+                    if (state.networkHeartbeatLoading) "检测中" else state.networkHeartbeatMessage.ifBlank { null },
+                ).joinToString("  "),
+            )
+        }
         item {
             ConnectionRow(
                 title = "网页地址",

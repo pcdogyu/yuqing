@@ -17,15 +17,13 @@ class ReleaseUpdater(private val context: Context) {
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .build()
-    private val sourceSelector = ReleaseSourceSelector { baseUrl ->
-        ApiFactory.testUrl(baseUrl, "release/").ok
+    private val networkEnvironmentSelector = NetworkEnvironmentSelector { baseUrl ->
+        ApiFactory.testUrl(baseUrl, "healthz").ok
     }
+    private val sourceSelector = ReleaseSourceSelector(networkEnvironmentSelector)
 
-    suspend fun selectReleaseSource(
-        intranetBaseUrl: String = INTRANET_RELEASE_BASE_URL,
-        externalBaseUrl: String = BuildConfig.DEFAULT_RELEASE_BASE_URL,
-    ): ReleaseSource {
-        return sourceSelector.select(intranetBaseUrl, externalBaseUrl)
+    suspend fun selectReleaseSource(): ReleaseSource {
+        return sourceSelector.select()
     }
 
     suspend fun fetchLatest(baseUrl: String = BuildConfig.DEFAULT_RELEASE_BASE_URL): ReleasePackage {

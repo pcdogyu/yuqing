@@ -9,12 +9,11 @@ import org.junit.Test
 class ReleaseUpgradePolicyTest {
     @Test
     fun selectorUsesIntranetWhenReachable() = runTest {
-        val selector = ReleaseSourceSelector { baseUrl -> baseUrl.contains("10.15.0.7") }
-
-        val source = selector.select(
-            intranetBaseUrl = "http://10.15.0.7:8099/",
-            externalBaseUrl = "http://yuqin.jiansutech.com:8099/",
+        val selector = ReleaseSourceSelector(
+            NetworkEnvironmentSelector { baseUrl -> baseUrl.contains("10.15.0.7") },
         )
+
+        val source = selector.select()
 
         assertEquals("内网", source.label)
         assertEquals("http://10.15.0.7:8099/", source.baseUrl)
@@ -22,15 +21,44 @@ class ReleaseUpgradePolicyTest {
 
     @Test
     fun selectorFallsBackToExternalWhenIntranetUnavailable() = runTest {
-        val selector = ReleaseSourceSelector { false }
-
-        val source = selector.select(
-            intranetBaseUrl = "http://10.15.0.7:8099/",
-            externalBaseUrl = "http://yuqin.jiansutech.com:8099/",
+        val selector = ReleaseSourceSelector(
+            NetworkEnvironmentSelector { false },
         )
+
+        val source = selector.select()
 
         assertEquals("外网", source.label)
         assertEquals("http://yuqin.jiansutech.com:8099/", source.baseUrl)
+    }
+
+    @Test
+    fun networkEndpointsUseIntranetHostWhenHeartbeatSucceeds() = runTest {
+        val endpoints = NetworkEnvironmentSelector { true }.detect(checkedAtMillis = 123)
+
+        assertEquals(NetworkEnvironment.Intranet, endpoints.environment)
+        assertEquals("http://10.15.0.7:8079/", endpoints.webBaseUrl)
+        assertEquals("http://10.15.0.7:8082/", endpoints.contentBaseUrl)
+        assertEquals("http://10.15.0.7:8081/", endpoints.authBaseUrl)
+        assertEquals("http://10.15.0.7:8099/", endpoints.releaseBaseUrl)
+        assertEquals(123, endpoints.checkedAtMillis)
+        assertTrue(endpoints.heartbeatOk)
+    }
+
+    @Test
+    fun networkEndpointsUseExternalDomainWhenHeartbeatFails() = runTest {
+        val endpoints = NetworkEnvironmentSelector { false }.detect()
+
+        assertEquals(NetworkEnvironment.External, endpoints.environment)
+        assertEquals("http://yuqin.jiansutech.com:8079/", endpoints.webBaseUrl)
+        assertEquals("http://yuqin.jiansutech.com:8082/", endpoints.contentBaseUrl)
+        assertEquals("http://yuqin.jiansutech.com:8081/", endpoints.authBaseUrl)
+        assertEquals("http://yuqin.jiansutech.com:8099/", endpoints.releaseBaseUrl)
+        assertFalse(endpoints.heartbeatOk)
+    }
+
+    @Test
+    fun heartbeatIntervalIsTwoMinutes() {
+        assertEquals(120_000L, NETWORK_HEARTBEAT_INTERVAL_MILLIS)
     }
 
     @Test

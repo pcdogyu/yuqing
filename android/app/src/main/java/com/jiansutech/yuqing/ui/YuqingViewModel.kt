@@ -19,9 +19,15 @@ import com.jiansutech.yuqing.data.ApiFactory
 import com.jiansutech.yuqing.data.DashboardCacheDao
 import com.jiansutech.yuqing.data.DashboardCacheEntity
 import com.jiansutech.yuqing.data.ItemListResult
+import com.jiansutech.yuqing.data.NETWORK_HEARTBEAT_INTERVAL_MILLIS
+import com.jiansutech.yuqing.data.NetworkEndpointPolicy
+import com.jiansutech.yuqing.data.NetworkEndpoints
+import com.jiansutech.yuqing.data.NetworkEnvironment
+import com.jiansutech.yuqing.data.NetworkEnvironmentSelector
 import com.jiansutech.yuqing.data.SearchResult
 import com.jiansutech.yuqing.data.SessionState
 import com.jiansutech.yuqing.data.SessionStore
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
@@ -84,6 +90,9 @@ data class YuqingUiState(
     val searchResult: SearchResult? = null,
     val connectionTests: Map<String, ConnectionTestResult> = emptyMap(),
     val pendingAction: PendingAction? = null,
+    val networkEndpoints: NetworkEndpoints = NetworkEndpointPolicy.endpointsFor(NetworkEnvironment.External),
+    val networkHeartbeatLoading: Boolean = false,
+    val networkHeartbeatMessage: String = "",
 )
 
 class YuqingViewModel(
@@ -93,8 +102,12 @@ class YuqingViewModel(
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(YuqingUiState())
     val uiState: StateFlow<YuqingUiState> = _uiState
+    private val networkEnvironmentSelector = NetworkEnvironmentSelector { baseUrl ->
+        ApiFactory.testUrl(baseUrl, "healthz").ok
+    }
 
     init {
+        startNetworkHeartbeat()
         viewModelScope.launch {
             val initStartedAt = SystemClock.elapsedRealtime()
             Log.i(STARTUP_TAG, "YuqingViewModel.init start")
@@ -144,12 +157,57 @@ class YuqingViewModel(
                 _uiState.update { it.copy(session = session) }
                 if (!refreshed) {
                     refreshed = true
+                    detectNetworkEnvironment()
                     Log.i(STARTUP_TAG, "YuqingViewModel.init trigger refreshAll elapsedMs=${SystemClock.elapsedRealtime() - initStartedAt}")
                     refreshAll()
                 }
             }
         }
     }
+
+    private fun startNetworkHeartbeat() {
+        viewModelScope.launch {
+            while (true) {
+                detectNetworkEnvironment()
+                delay(NETWORK_HEARTBEAT_INTERVAL_MILLIS)
+            }
+        }
+    }
+
+    private suspend fun detectNetworkEnvironment() {
+        _uiState.update {
+            it.copy(
+                networkHeartbeatLoading = true,
+                networkHeartbeatMessage = "正在检测网络环境",
+            )
+        }
+        runCatching {
+            networkEnvironmentSelector.detect()
+        }.onSuccess { endpoints ->
+            _uiState.update {
+                it.copy(
+                    networkEndpoints = endpoints,
+                    networkHeartbeatLoading = false,
+                    networkHeartbeatMessage = "当前${endpoints.label}环境",
+                )
+            }
+        }.onFailure { throwable ->
+            val endpoints = NetworkEndpointPolicy.endpointsFor(NetworkEnvironment.External)
+            _uiState.update {
+                it.copy(
+                    networkEndpoints = endpoints,
+                    networkHeartbeatLoading = false,
+                    networkHeartbeatMessage = throwable.message ?: "内网不可达，使用外网环境",
+                )
+            }
+        }
+    }
+
+    private fun currentContentBaseUrl(): String {
+        return _uiState.value.networkEndpoints.contentBaseUrl
+    }
+
+    private fun currentYuqingApi(session: SessionState) = ApiFactory.yuqing(currentContentBaseUrl(), session.token)
 
     fun selectModule(key: String) {
         _uiState.update { it.copy(selectedModuleKey = key) }
@@ -202,12 +260,13 @@ class YuqingViewModel(
             val startedAt = SystemClock.elapsedRealtime()
             _uiState.update { it.copy(loading = true, error = "", message = "") }
             val session = sessionStore.state.first()
+            val contentBaseUrl = currentContentBaseUrl()
             Log.i(
                 STARTUP_TAG,
-                "YuqingViewModel.refreshAll start selectedModule=${_uiState.value.selectedModuleKey} apiBaseUrl=${session.apiBaseUrl} tokenPresent=${session.token.isNotBlank()}",
+                "YuqingViewModel.refreshAll start selectedModule=${_uiState.value.selectedModuleKey} apiBaseUrl=$contentBaseUrl tokenPresent=${session.token.isNotBlank()}",
             )
             runCatching {
-                val api = ApiFactory.yuqing(session.apiBaseUrl, session.token)
+                val api = currentYuqingApi(session)
                 val hiddenArticleIds = articleUserActionDao.hiddenArticleIds().toSet()
                 val bootstrapStartedAt = SystemClock.elapsedRealtime()
                 val bootstrap = api.bootstrap().data
@@ -287,7 +346,7 @@ class YuqingViewModel(
             _uiState.update { it.copy(loading = true, error = "", message = "") }
             val session = sessionStore.state.first()
             runCatching {
-                val result = ApiFactory.yuqing(session.apiBaseUrl, session.token).searchFull(keyword).data
+                val result = currentYuqingApi(session).searchFull(keyword).data
                 _uiState.update { it.copy(searchResult = result, message = "搜索完成") }
             }.onFailure { throwable ->
                 _uiState.update { it.copy(error = throwable.message ?: "搜索失败") }
@@ -311,7 +370,7 @@ class YuqingViewModel(
             }
             val session = sessionStore.state.first()
             runCatching {
-                val result = ApiFactory.yuqing(session.apiBaseUrl, session.token)
+                val result = currentYuqingApi(session)
                     .articles(page = page.coerceAtLeast(1), pageSize = ARTICLE_PAGE_SIZE)
                     .data ?: error("文章数据为空")
                 filterHiddenArticles(result, hiddenArticleIds) ?: result
@@ -411,7 +470,7 @@ class YuqingViewModel(
         runCatching {
             val hiddenArticleIds = articleUserActionDao.hiddenArticleIds().toSet() +
                 listOfNotNull(extraHiddenArticleId)
-            val latestArticles = ApiFactory.yuqing(session.apiBaseUrl, session.token)
+            val latestArticles = currentYuqingApi(session)
                 .articles(page = 1, pageSize = DASHBOARD_REFILL_PAGE_SIZE)
                 .data
                 ?.items
@@ -458,7 +517,7 @@ class YuqingViewModel(
         viewModelScope.launch {
             val session = sessionStore.state.first()
             runCatching {
-                ApiFactory.yuqing(session.apiBaseUrl, session.token)
+                currentYuqingApi(session)
                     .article(item.id)
                     .data ?: error("文章详情为空")
             }.onSuccess { detail ->
@@ -517,7 +576,7 @@ class YuqingViewModel(
             _uiState.update { it.copy(loading = true, error = "", message = "") }
             val session = sessionStore.state.first()
             runCatching {
-                val result = ApiFactory.yuqing(session.apiBaseUrl, session.token)
+                val result = currentYuqingApi(session)
                     .aStockRecommendations(date = window.date, period = window.period)
                     .data ?: error("推荐股票数据为空")
                 val recommendations = parseAStockRecommendations(result.recommendationsJson)
@@ -581,7 +640,7 @@ class YuqingViewModel(
                 .let { if (it.isAfter(latestTradingDay)) latestTradingDay else it }
             val requestedDate = requestedTradingDate.toString()
             runCatching {
-                val api = ApiFactory.yuqing(session.apiBaseUrl, session.token)
+                val api = currentYuqingApi(session)
                 val morning = api.aStockRecommendations(date = requestedDate, period = "morning")
                     .data ?: error("上午推荐股票数据为空")
                 val afternoon = api.aStockRecommendations(date = requestedDate, period = "afternoon")
@@ -620,7 +679,7 @@ class YuqingViewModel(
             val session = sessionStore.state.first()
             val requestedDate = date.ifBlank { LocalDate.now(ZoneId.of("Asia/Shanghai")).toString() }
             runCatching {
-                ApiFactory.yuqing(session.apiBaseUrl, session.token)
+                currentYuqingApi(session)
                     .aStockAuction(date = requestedDate, page = 1, pageSize = 6000)
                     .data ?: error("集合竞价数据为空")
             }.onSuccess { result ->
@@ -652,7 +711,7 @@ class YuqingViewModel(
             _uiState.update { it.copy(loading = true, pendingAction = null, error = "", message = "") }
             val session = sessionStore.state.first()
             runCatching {
-                val response = ApiFactory.yuqing(session.apiBaseUrl, session.token)
+                val response = currentYuqingApi(session)
                     .runAction(pending.action, AndroidActionRequest(pending.params))
                 val status = response.data?.status ?: response.message
                 _uiState.update { it.copy(message = "${pending.title}: $status") }

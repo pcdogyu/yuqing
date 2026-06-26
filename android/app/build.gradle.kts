@@ -44,6 +44,7 @@ android {
         versionName = commitVersion
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField("String", "DEFAULT_WEB_BASE_URL", "\"http://yuqin.jiansutech.com:8079/\"")
         buildConfigField("String", "DEFAULT_AUTH_BASE_URL", "\"http://yuqin.jiansutech.com:8081/\"")
         buildConfigField("String", "DEFAULT_API_BASE_URL", "\"http://yuqin.jiansutech.com:8082/\"")
         buildConfigField("String", "DEFAULT_RELEASE_BASE_URL", "\"http://yuqin.jiansutech.com:8099/\"")

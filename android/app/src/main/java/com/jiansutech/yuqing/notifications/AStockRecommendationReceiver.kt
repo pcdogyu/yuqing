@@ -13,7 +13,9 @@ import com.jiansutech.yuqing.MainActivity
 import com.jiansutech.yuqing.astock.AStockTradingCalendar
 import com.jiansutech.yuqing.data.AStockRecommendation
 import com.jiansutech.yuqing.data.ApiFactory
+import com.jiansutech.yuqing.data.NetworkEnvironmentSelector
 import com.jiansutech.yuqing.data.SessionStore
+import com.jiansutech.yuqing.data.YuqingApi
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -76,7 +78,7 @@ class AStockRecommendationReceiver : BroadcastReceiver() {
     private suspend fun loadNewsCountContent(context: Context, slot: AStockRecommendationSlot): String {
         val session = SessionStore(context).state.first()
         val date = latestTradingDate()
-        val api = ApiFactory.yuqing(session.apiBaseUrl, session.token)
+        val api = currentApi(session.token)
         val (start, end) = slotWindowBounds(date, slot)
         return runCatching {
             var total = 0
@@ -116,7 +118,7 @@ class AStockRecommendationReceiver : BroadcastReceiver() {
         val session = SessionStore(context).state.first()
         val date = latestTradingDate()
         return runCatching {
-            val snapshot = ApiFactory.yuqing(session.apiBaseUrl, session.token)
+            val snapshot = currentApi(session.token)
                 .aStockRecommendations(date = date, period = slot.period)
                 .data ?: return@runCatching "$date ${slot.windowLabel} 暂无推荐股票"
             val recommendations = parseRecommendations(snapshot.recommendationsJson)
@@ -136,6 +138,13 @@ class AStockRecommendationReceiver : BroadcastReceiver() {
         return runCatching {
             ApiFactory.json.decodeFromString<List<AStockRecommendation>>(payload)
         }.getOrDefault(emptyList())
+    }
+
+    private suspend fun currentApi(token: String): YuqingApi {
+        val selector = NetworkEnvironmentSelector { baseUrl ->
+            ApiFactory.testUrl(baseUrl, "healthz").ok
+        }
+        return ApiFactory.yuqing(selector.detect().contentBaseUrl, token)
     }
 
     private fun showNotification(context: Context, slot: AStockRecommendationSlot, content: String) {

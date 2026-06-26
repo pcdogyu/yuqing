@@ -151,7 +151,10 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             upgradeState.update { it.copy(loading = true, message = "正在获取最新安装包...") }
             runCatching {
-                val file = releaseUpdater.downloadLatestApk()
+                val source = releaseUpdater.selectReleaseSource()
+                upgradeState.update { it.copy(message = "使用${source.label}发布服务，正在下载最新安装包...") }
+                val latest = releaseUpdater.fetchLatest(source.baseUrl)
+                val file = releaseUpdater.downloadApk(latest, source.baseUrl, preferBaseDownloadUrl = true)
                 startActivity(releaseUpdater.installApk(file))
                 upgradeState.update { it.copy(loading = false, message = "安装器已打开，请完成升级。") }
             }.onFailure { throwable ->
