@@ -17,10 +17,11 @@ type AStockAuctionAmount struct {
 }
 
 type AStockAuctionFilter struct {
-	Date     string `json:"date"`
-	Keyword  string `json:"keyword"`
-	Page     int    `json:"page"`
-	PageSize int    `json:"page_size"`
+	Date      string `json:"date"`
+	Keyword   string `json:"keyword"`
+	Page      int    `json:"page"`
+	PageSize  int    `json:"page_size"`
+	TrendDays int    `json:"trend_days"`
 }
 
 type AStockAuctionListResult struct {

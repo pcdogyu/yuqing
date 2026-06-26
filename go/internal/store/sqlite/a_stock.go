@@ -127,13 +127,14 @@ func (s *Store) ListAStockAuctionAmounts(ctx context.Context, filter model.AStoc
 	if filter.PageSize > 6000 {
 		filter.PageSize = 6000
 	}
+	filter.TrendDays = normalizeAStockAuctionTrendDays(filter.TrendDays)
 	result := model.AStockAuctionListResult{Page: filter.Page, PageSize: filter.PageSize, Keyword: strings.TrimSpace(filter.Keyword)}
 	dates, err := s.latestAStockAuctionDates(ctx, 7)
 	if err != nil {
 		return result, err
 	}
 	result.Dates = dates
-	trend, err := s.listAStockAuctionTrend(ctx, 7)
+	trend, err := s.listAStockAuctionTrend(ctx, filter.TrendDays)
 	if err != nil {
 		return result, err
 	}
@@ -191,6 +192,17 @@ LIMIT ? OFFSET ?`, queryArgs...)
 	}
 	result.Items = items
 	return result, nil
+}
+
+func normalizeAStockAuctionTrendDays(days int) int {
+	switch days {
+	case 14:
+		return 14
+	case 30:
+		return 30
+	default:
+		return 7
+	}
 }
 
 func (s *Store) latestAStockAuctionDates(ctx context.Context, limit int) ([]string, error) {

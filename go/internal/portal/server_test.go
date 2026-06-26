@@ -370,6 +370,9 @@ func TestAStockAuctionPageLoadsSummaryAndRows(t *testing.T) {
 		if r.URL.Query().Get("page_size") != "6000" {
 			t.Fatalf("expected auction page to request full-market page_size=6000, got %s", r.URL.RawQuery)
 		}
+		if r.URL.Query().Get("trend_days") != "7" {
+			t.Fatalf("expected auction page to request default 7-day trend, got %s", r.URL.RawQuery)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"code":    200,
@@ -445,7 +448,7 @@ func TestAStockAuctionPageLoadsSummaryAndRows(t *testing.T) {
 		t.Fatalf("expected auction page 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"集合竞价", "操作区", "获取最新交易日集合竞价金额", "回溯近7天集合竞价", "当日汇总", "近7日资金趋势", "沪市金额前三", "深市金额前三", "2026-06-16", "科大讯飞", "浦发银行", "股票数", "2", "1.51亿", "508.41万", "79.20万", "12.34万", "akshare_pre_min", `value="科"`, `<svg class="auction-chart"`} {
+	for _, want := range []string{"集合竞价", "操作区", "获取最新交易日集合竞价金额", "回溯近7天集合竞价", "当日汇总", "近7日资金趋势", "最近7天", "最近2周", "最近30天", "沪市金额前三", "深市金额前三", "2026-06-16", "科大讯飞", "浦发银行", "股票数", "2", "1.51亿", "508.41万", "79.20万", "12.34万", "akshare_pre_min", `value="科"`, `<svg class="auction-chart"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected auction page to contain %q, got %s", want, body)
 		}
@@ -472,6 +475,58 @@ func TestAStockAuctionPageLoadsSummaryAndRows(t *testing.T) {
 		if strings.Contains(body, notWant) {
 			t.Fatalf("expected auction page not to contain %q, got %s", notWant, body)
 		}
+	}
+}
+
+func TestAStockAuctionPageSwitchesTrendPeriod(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/a-stock/auction" {
+			t.Fatalf("unexpected auction content path: %s", r.URL.String())
+		}
+		if r.URL.Query().Get("trend_days") != "14" {
+			t.Fatalf("expected auction page to pass selected 14-day trend, got %s", r.URL.RawQuery)
+		}
+		trend := make([]model.AStockAuctionTrend, 0, 15)
+		for day := 1; day <= 15; day++ {
+			trend = append(trend, model.AStockAuctionTrend{
+				Date:         fmt.Sprintf("2026-06-%02d", day),
+				StockCount:   day,
+				TotalVolume:  float64(day * 10000),
+				TotalAmount:  float64(day * 1000000),
+				MaxStockCode: "600000",
+				MaxStockName: "浦发银行",
+			})
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    200,
+			"message": "ok",
+			"data": model.AStockAuctionListResult{
+				Date:       "2026-06-15",
+				LatestDate: "2026-06-15",
+				Page:       1,
+				PageSize:   6000,
+				Trend:      trend,
+			},
+		})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	req := httptest.NewRequest(http.MethodGet, "/a-stock/auction?trend_days=14", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAStockAuctionPage(rr, req, map[string]any{"id": 1})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected auction page 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"近2周资金趋势", `href="/a-stock/auction?date=2026-06-15&amp;trend_days=14">最近2周`, "2026-06-02", "2026-06-15"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected 14-day auction trend page to contain %q, got %s", want, body)
+		}
+	}
+	if strings.Contains(body, "2026-06-01") {
+		t.Fatalf("expected 14-day trend window to exclude oldest 15th point, got %s", body)
 	}
 }
 

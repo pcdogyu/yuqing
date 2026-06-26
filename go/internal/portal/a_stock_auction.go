@@ -24,17 +24,22 @@ func (s *Server) handleAStockAuctionPage(w http.ResponseWriter, r *http.Request,
 	date := strings.TrimSpace(r.URL.Query().Get("date"))
 	keyword := strings.TrimSpace(r.URL.Query().Get("keyword"))
 	page := normalizeAStockNewsPage(r.URL.Query().Get("page"))
-	ctx, err := s.loadAStockAuctionContext(date, keyword, page)
+	trendDays := normalizeAStockAuctionTrendDaysText(r.URL.Query().Get("trend_days"))
+	ctx, err := s.loadAStockAuctionContext(date, keyword, page, trendDays)
 
 	var b strings.Builder
 	b.WriteString(`<style>
-		body[data-page='a-stock-auction'] main,body[data-page='a-stock-auction'] .site-footer{max-width:1534px}
+		body[data-page='a-stock-auction'] main,body[data-page='a-stock-auction'] .site-footer{max-width:none;width:100%;box-sizing:border-box}
+		body[data-page='a-stock-auction'] main{padding-left:18px;padding-right:18px}
 		.auction-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}
 		.auction-card{padding:18px;border:1px solid #ece7dc;border-radius:14px;background:#fff}
 		.auction-muted{color:#6a6257}
 		.auction-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0}
 		.auction-tab{display:inline-flex;align-items:center;padding:8px 12px;border:1px solid #d6ccbb;border-radius:8px;color:#214e34;text-decoration:none;background:#fff}
 		.auction-tab.active{background:#214e34;color:#fff;border-color:#214e34}
+		.auction-section-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+		.auction-section-head h2{margin:0}
+		.auction-periods{display:flex;gap:8px;flex-wrap:wrap}
 		.auction-toolbar{display:grid;grid-template-columns:minmax(180px,.4fr) minmax(220px,.6fr) 120px;gap:10px;align-items:end}
 		.auction-scroll{overflow:auto}
 		.auction-table{min-width:980px}
@@ -69,7 +74,7 @@ func (s *Server) handleAStockAuctionPage(w http.ResponseWriter, r *http.Request,
 	}
 	renderAStockAuctionActions(&b)
 	renderAStockAuctionSummary(&b, ctx)
-	renderAStockAuctionTrend(&b, ctx)
+	renderAStockAuctionTrend(&b, ctx, trendDays)
 	renderAStockAuctionFilters(&b, ctx)
 	renderAStockAuctionTable(&b, ctx)
 	_ = s.writeSimplePage(w, "a-stock-auction", "A股集合竞价", b.String())
@@ -94,10 +99,11 @@ func (s *Server) handleAStockAuctionAction(w http.ResponseWriter, r *http.Reques
 	http.Redirect(w, r, "/a-stock/auction?"+query.Encode(), http.StatusSeeOther)
 }
 
-func (s *Server) loadAStockAuctionContext(date string, keyword string, page int) (model.AStockAuctionListResult, error) {
+func (s *Server) loadAStockAuctionContext(date string, keyword string, page int, trendDays int) (model.AStockAuctionListResult, error) {
 	query := url.Values{}
 	query.Set("page", fmt.Sprintf("%d", page))
 	query.Set("page_size", "6000")
+	query.Set("trend_days", fmt.Sprintf("%d", trendDays))
 	if date != "" {
 		query.Set("date", date)
 	}
@@ -107,6 +113,28 @@ func (s *Server) loadAStockAuctionContext(date string, keyword string, page int)
 	var result model.AStockAuctionListResult
 	err := s.getJSON(s.cfg.ContentURL+"/api/v1/a-stock/auction?"+query.Encode(), &result)
 	return result, err
+}
+
+func normalizeAStockAuctionTrendDaysText(value string) int {
+	switch strings.TrimSpace(value) {
+	case "14":
+		return 14
+	case "30":
+		return 30
+	default:
+		return 7
+	}
+}
+
+func normalizeAStockAuctionTrendDays(days int) int {
+	switch days {
+	case 14:
+		return 14
+	case 30:
+		return 30
+	default:
+		return 7
+	}
 }
 
 func renderAStockAuctionSummary(b *strings.Builder, ctx model.AStockAuctionListResult) {
@@ -134,17 +162,23 @@ func renderAStockAuctionActions(b *strings.Builder) {
 	b.WriteString(`<section><h2>操作区</h2><div class="auction-actions"><form method="post"><input type="hidden" name="action" value="fetch_today_auction"><button type="submit">获取最新交易日集合竞价金额</button></form><form method="post"><input type="hidden" name="action" value="backfill_7d_auction"><button type="submit">回溯近7天集合竞价</button></form></div><p class="auction-muted">立即触发 scheduler 的 A股集合竞价抓取任务，从 AKShare 业务服务读取最新交易日并写入当前业务库。若 09:30 定时任务漏抓，仍可点击“获取最新交易日集合竞价金额”补抓；近 7 个交易日会按缓存/业务库记录回补；更早历史交易日仍需依赖已有缓存或业务库记录。</p></section>`)
 }
 
-func renderAStockAuctionTrend(b *strings.Builder, ctx model.AStockAuctionListResult) {
-	b.WriteString(`<section><h2>近7日资金趋势</h2>`)
-	if len(ctx.Trend) == 0 {
+func renderAStockAuctionTrend(b *strings.Builder, ctx model.AStockAuctionListResult, trendDays int) {
+	trendDays = normalizeAStockAuctionTrendDays(trendDays)
+	points := aStockAuctionTrendWindow(ctx.Trend, trendDays)
+	title := aStockAuctionTrendTitle(trendDays)
+	b.WriteString(`<section><div class="auction-section-head"><h2>`)
+	b.WriteString(html.EscapeString(title))
+	b.WriteString(`</h2>`)
+	renderAStockAuctionTrendPeriods(b, ctx, trendDays)
+	b.WriteString(`</div>`)
+	if len(points) == 0 {
 		b.WriteString(`<div class="auction-empty">暂无趋势数据。请先点击“回溯近7天集合竞价”，或检查 YUQING_ASTOCK_AUCTION_URL 指向的 AKShare 业务服务。</div></section>`)
 		return
 	}
 	b.WriteString(`<p class="auction-muted">折线按每日集合竞价总成交额绘制，明细表同步展示总成交量，以及沪市、深市集合竞价金额最高的3只股票。</p>`)
-	b.WriteString(aStockAuctionTrendSVG(ctx.Trend))
+	b.WriteString(aStockAuctionTrendSVG(points, title))
 	b.WriteString(`<div class="auction-scroll"><table class="auction-table auction-trend-table"><tr><th>日期</th><th>股票数</th><th>集合竞价总金额</th><th>成交量</th><th>最大金额股票</th><th class="auction-market-top">沪市金额前三</th><th class="auction-market-top">深市金额前三</th></tr>`)
-	start := max(len(ctx.Trend)-7, 0)
-	for _, point := range ctx.Trend[start:] {
+	for _, point := range points {
 		b.WriteString(`<tr><td>`)
 		b.WriteString(html.EscapeString(point.Date))
 		b.WriteString(`</td><td>`)
@@ -162,6 +196,60 @@ func renderAStockAuctionTrend(b *strings.Builder, ctx model.AStockAuctionListRes
 		b.WriteString(`</td></tr>`)
 	}
 	b.WriteString(`</table></div></section>`)
+}
+
+func renderAStockAuctionTrendPeriods(b *strings.Builder, ctx model.AStockAuctionListResult, current int) {
+	b.WriteString(`<div class="auction-periods">`)
+	for _, option := range []struct {
+		Days  int
+		Label string
+	}{
+		{Days: 7, Label: "最近7天"},
+		{Days: 14, Label: "最近2周"},
+		{Days: 30, Label: "最近30天"},
+	} {
+		className := "auction-tab"
+		if option.Days == current {
+			className += " active"
+		}
+		b.WriteString(`<a class="`)
+		b.WriteString(className)
+		b.WriteString(`" href="`)
+		b.WriteString(html.EscapeString(aStockAuctionTrendPeriodURL(ctx, option.Days)))
+		b.WriteString(`">`)
+		b.WriteString(html.EscapeString(option.Label))
+		b.WriteString(`</a>`)
+	}
+	b.WriteString(`</div>`)
+}
+
+func aStockAuctionTrendPeriodURL(ctx model.AStockAuctionListResult, days int) string {
+	query := url.Values{}
+	if ctx.Date != "" {
+		query.Set("date", ctx.Date)
+	}
+	if ctx.Keyword != "" {
+		query.Set("keyword", ctx.Keyword)
+	}
+	query.Set("trend_days", fmt.Sprintf("%d", days))
+	return "/a-stock/auction?" + query.Encode()
+}
+
+func aStockAuctionTrendTitle(days int) string {
+	switch normalizeAStockAuctionTrendDays(days) {
+	case 14:
+		return "近2周资金趋势"
+	case 30:
+		return "近30日资金趋势"
+	default:
+		return "近7日资金趋势"
+	}
+}
+
+func aStockAuctionTrendWindow(points []model.AStockAuctionTrend, days int) []model.AStockAuctionTrend {
+	days = normalizeAStockAuctionTrendDays(days)
+	start := max(len(points)-days, 0)
+	return points[start:]
 }
 
 func aStockAuctionMarketTopText(point model.AStockAuctionTrend, market string) string {
@@ -317,7 +405,7 @@ func formatAStockAuctionMoney(value float64) string {
 	return fmt.Sprintf("%.2f万", value/10000)
 }
 
-func aStockAuctionTrendSVG(points []model.AStockAuctionTrend) string {
+func aStockAuctionTrendSVG(points []model.AStockAuctionTrend, title string) string {
 	const (
 		width  = 1120.0
 		height = 280.0
@@ -333,7 +421,7 @@ func aStockAuctionTrendSVG(points []model.AStockAuctionTrend) string {
 		}
 	}
 	if maxAmount <= 0 {
-		return `<div class="auction-empty">近7日趋势金额均为空，请确认 AKShare 返回了成交额字段。</div>`
+		return `<div class="auction-empty">趋势金额均为空，请确认 AKShare 返回了成交额字段。</div>`
 	}
 	plotWidth := width - left - right
 	plotHeight := height - top - bottom
@@ -352,7 +440,9 @@ func aStockAuctionTrendSVG(points []model.AStockAuctionTrend) string {
 	}
 	area = append(area, fmt.Sprintf("%.1f,%.1f", lastX, top+plotHeight))
 	var b strings.Builder
-	b.WriteString(`<svg class="auction-chart" viewBox="0 0 1120 280" role="img" aria-label="近7日集合竞价资金趋势">`)
+	b.WriteString(`<svg class="auction-chart" viewBox="0 0 1120 280" role="img" aria-label="`)
+	b.WriteString(html.EscapeString(title))
+	b.WriteString(`">`)
 	for i := 0; i <= 4; i++ {
 		y := top + float64(i)*plotHeight/4
 		amount := maxAmount * float64(4-i) / 4

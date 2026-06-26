@@ -585,10 +585,11 @@ func (s *Service) handleListArticles(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) handleListAStockAuctionAmounts(w http.ResponseWriter, r *http.Request) {
 	filter := model.AStockAuctionFilter{
-		Date:     strings.TrimSpace(r.URL.Query().Get("date")),
-		Keyword:  strings.TrimSpace(nonEmpty(r.URL.Query().Get("keyword"), r.URL.Query().Get("code"))),
-		Page:     apiutil.IntQuery(r, "page", 1),
-		PageSize: apiutil.IntQuery(r, "page_size", 50),
+		Date:      strings.TrimSpace(r.URL.Query().Get("date")),
+		Keyword:   strings.TrimSpace(nonEmpty(r.URL.Query().Get("keyword"), r.URL.Query().Get("code"))),
+		Page:      apiutil.IntQuery(r, "page", 1),
+		PageSize:  apiutil.IntQuery(r, "page_size", 50),
+		TrendDays: normalizeAStockAuctionTrendDays(apiutil.IntQuery(r, "trend_days", 7)),
 	}
 	result, err := s.store.ListAStockAuctionAmounts(r.Context(), filter)
 	if err != nil {
@@ -596,6 +597,17 @@ func (s *Service) handleListAStockAuctionAmounts(w http.ResponseWriter, r *http.
 		return
 	}
 	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func normalizeAStockAuctionTrendDays(days int) int {
+	switch days {
+	case 14:
+		return 14
+	case 30:
+		return 30
+	default:
+		return 7
+	}
 }
 
 func (s *Service) handleUpsertAStockAuctionAmounts(w http.ResponseWriter, r *http.Request) {
