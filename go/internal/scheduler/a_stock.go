@@ -625,10 +625,19 @@ func (w *Worker) runAStockRecommendationForDate(ctx context.Context, strategyDat
 		}
 		return jobSkippedError{message: fmt.Sprintf("a-stock recommendation skipped for %s: %s", tradingDay.Date, message)}
 	}
+	start, end, label, err := aStockRecommendationWindow(strategyDate, period, normalizedPhase)
+	if err != nil {
+		return err
+	}
+	crawlOptions := model.CrawlOptions{
+		Start:     formatAStockRecommendationCrawlTime(start),
+		End:       formatAStockRecommendationCrawlTime(end),
+		TimeField: "publish_time",
+	}
 	failedSources := make([]string, 0)
 	successCount := 0
 	for _, sourceType := range w.aStockRecommendationCrawlSources() {
-		if err := w.runCrawl(ctx, sourceType); err != nil {
+		if err := w.runCrawlWithOptions(ctx, sourceType, crawlOptions); err != nil {
 			failedSources = append(failedSources, sourceType+": "+err.Error())
 			log.Warn().
 				Err(err).
@@ -643,10 +652,6 @@ func (w *Worker) runAStockRecommendationForDate(ctx context.Context, strategyDat
 	}
 	if successCount == 0 && len(failedSources) > 0 {
 		return fmt.Errorf("a-stock recommendation crawl failed for all sources: %s", strings.Join(failedSources, "; "))
-	}
-	start, end, label, err := aStockRecommendationWindow(strategyDate, period, normalizedPhase)
-	if err != nil {
-		return err
 	}
 	resp, err := w.client.R().
 		SetContext(ctx).
@@ -671,6 +676,10 @@ func (w *Worker) runAStockRecommendationForDate(ctx context.Context, strategyDat
 		Str("window", label).
 		Msg("a-stock recommendation window generated")
 	return nil
+}
+
+func formatAStockRecommendationCrawlTime(value time.Time) string {
+	return value.In(aStockLocation()).Format("2006-01-02 15:04:05")
 }
 
 func (w *Worker) generateAStockRecommendationSnapshot(ctx context.Context, strategyDate string, period string, phase string) error {

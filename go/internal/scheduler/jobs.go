@@ -571,10 +571,23 @@ func (w *Worker) recordTaskRun(ctx context.Context, name, status, message string
 }
 
 func (w *Worker) runCrawl(ctx context.Context, sourceType string) error {
-	resp, err := w.crawlClient.R().
+	return w.runCrawlWithOptions(ctx, sourceType, model.CrawlOptions{})
+}
+
+func (w *Worker) runCrawlWithOptions(ctx context.Context, sourceType string, options model.CrawlOptions) error {
+	req := w.crawlClient.R().
 		SetContext(ctx).
-		SetQueryParam("source_type", sourceType).
-		Post(w.cfg.CrawlerURL + "/api/v1/admin/tasks/crawl")
+		SetQueryParam("source_type", sourceType)
+	if start := strings.TrimSpace(options.Start); start != "" {
+		req.SetQueryParam("start", start)
+	}
+	if end := strings.TrimSpace(options.End); end != "" {
+		req.SetQueryParam("end", end)
+	}
+	if timeField := strings.TrimSpace(options.TimeField); timeField != "" {
+		req.SetQueryParam("time_field", timeField)
+	}
+	resp, err := req.Post(w.cfg.CrawlerURL + "/api/v1/admin/tasks/crawl")
 	if err != nil {
 		return err
 	}

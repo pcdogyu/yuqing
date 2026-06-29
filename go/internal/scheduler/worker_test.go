@@ -92,6 +92,37 @@ func TestRunCrawlIncludesCrawlerErrorMessage(t *testing.T) {
 	}
 }
 
+func TestRunCrawlWithOptionsPassesWindowQuery(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/admin/tasks/crawl" || r.URL.Query().Get("source_type") != "flash" {
+			t.Fatalf("unexpected crawl request: path=%s query=%s", r.URL.Path, r.URL.RawQuery)
+		}
+		if r.URL.Query().Get("start") != "2026-06-16 08:00:00" ||
+			r.URL.Query().Get("end") != "2026-06-16 09:26:59" ||
+			r.URL.Query().Get("time_field") != "publish_time" {
+			t.Fatalf("unexpected crawl options query: %s", r.URL.RawQuery)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	worker := NewWorker(config.Config{
+		CrawlerURL:            server.URL,
+		HTTPTimeout:           time.Second,
+		SchedulerCrawlTimeout: time.Second,
+		ExternalRetryWait:     time.Millisecond,
+	})
+
+	err := worker.runCrawlWithOptions(context.Background(), "flash", model.CrawlOptions{
+		Start:     "2026-06-16 08:00:00",
+		End:       "2026-06-16 09:26:59",
+		TimeField: "publish_time",
+	})
+	if err != nil {
+		t.Fatalf("runCrawlWithOptions error: %v", err)
+	}
+}
+
 func TestLoopRunsImmediatelyAndStopsOnCancel(t *testing.T) {
 	worker := NewWorker(config.Config{})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -339,6 +370,11 @@ func TestRunAStockRecommendationCrawlsSourcesAndQueriesWindow(t *testing.T) {
 		if r.Header.Get("X-Service-Token") != "secret-token" {
 			t.Fatalf("expected service token header, got %q", r.Header.Get("X-Service-Token"))
 		}
+		if r.URL.Query().Get("start") != "2026-06-16 09:30:00" ||
+			r.URL.Query().Get("end") != "2026-06-16 13:00:59" ||
+			r.URL.Query().Get("time_field") != "publish_time" {
+			t.Fatalf("unexpected A股 afternoon crawl window query: %s", r.URL.RawQuery)
+		}
 		sources = append(sources, r.URL.Query().Get("source_type"))
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -405,6 +441,11 @@ func TestRunAStockRecommendationGeneratesMorningSnapshot(t *testing.T) {
 	defer akshare.Close()
 
 	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("start") != "2026-06-16 08:00:00" ||
+			r.URL.Query().Get("end") != "2026-06-16 09:26:59" ||
+			r.URL.Query().Get("time_field") != "publish_time" {
+			t.Fatalf("unexpected A股 morning crawl window query: %s", r.URL.RawQuery)
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer crawler.Close()
