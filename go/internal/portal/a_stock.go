@@ -1355,10 +1355,11 @@ func (s *Server) loadAStockContextWithRecommendationPhase(strategyDate string, p
 	}
 	allowPersistedRecommendations := phase == aStockRecommendationPhaseFinal && isAStockOfficialSelectionContext(ignoreRecent, ignoreLimitUp, filterTodayMarket)
 	if allowPersistedRecommendations && !forceRecommendationRefresh && s.applyAStockRecommendationSnapshotWithCache(&ctx, cache) {
-		return ctx
+		if len(ctx.Recommendations) > 0 || !s.hasAStockRecommendationSelectionsWithCache(ctx.Date, ctx.Period, cache) {
+			return ctx
+		}
 	}
 	if allowPersistedRecommendations && s.applyAStockRecommendationSelectionsWithCache(&ctx, cache) {
-		s.applyAStockAfternoonSameDayCapsWithCache(&ctx, nil, cache)
 		ctx.Recommendations = s.applyAStockHoldingSummariesWithCache(ctx.Recommendations, cache)
 		ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus, ctx.LimitUpFiltered = s.loadAStockLockedMarketView(strategyDate, ctx.Period, ctx.Recommendations)
 		if forceRecommendationRefresh {
@@ -1468,6 +1469,11 @@ func (s *Server) applyAStockRecommendationSelectionsWithCache(ctx *aStockContext
 	ctx.Recommendations = aStockRecommendationSelectionsToRecommendations(result.Items)
 	ctx.GeneratedRecommendationCount = len(ctx.Recommendations)
 	return true
+}
+
+func (s *Server) hasAStockRecommendationSelectionsWithCache(strategyDate string, period string, cache *aStockRequestCache) bool {
+	result, ok := s.loadAStockRecommendationSelectionsWithCache(strategyDate, period, cache)
+	return ok && len(result.Items) > 0
 }
 
 func (s *Server) applyAStockRecommendationSnapshotRecommendations(ctx *aStockContext) bool {
