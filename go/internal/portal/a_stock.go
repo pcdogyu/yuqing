@@ -1040,13 +1040,22 @@ func renderAStockDateTabs(b *strings.Builder, strategyDate string, period string
 	b.WriteString(`<div class="astock-date-tabs">`)
 	normalizedPeriod := normalizeAStockPeriod(period).Key
 	tabs := aStockDateTabs(strategyDate)
+	today := aStockTodayDate()
 	if len(tabs) == 0 {
-		b.WriteString(`<span class="astock-muted">暂无推荐历史日期</span></div>`)
+		writeAStockDateTab(b, "今日", today, normalizedPeriod, strategyDate == today, ignoreRecent, ignoreLimitUp, filterTodayMarket)
+		b.WriteString(`</div>`)
 		return
 	}
+	hasToday := false
 	for _, tab := range tabs {
+		if tab.Date == today {
+			hasToday = true
+		}
 		active := strategyDate == tab.Date
 		writeAStockDateTab(b, tab.Label, tab.Date, normalizedPeriod, active, ignoreRecent, ignoreLimitUp, filterTodayMarket)
+	}
+	if !hasToday {
+		writeAStockDateTab(b, "今日", today, normalizedPeriod, strategyDate == today, ignoreRecent, ignoreLimitUp, filterTodayMarket)
 	}
 	b.WriteString(`</div>`)
 }

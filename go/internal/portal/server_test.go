@@ -2,6 +2,7 @@ package portal
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -4107,6 +4108,29 @@ func TestAStockRecommendationHistoryRendersDateTabs(t *testing.T) {
 	}
 }
 
+func TestAStockRecommendationHistoryAppendsTodayForPastDate(t *testing.T) {
+	setAStockNowForTest(t, time.Date(2026, 6, 30, 9, 30, 0, 0, time.FixedZone("CST", 8*3600)))
+	var b strings.Builder
+	renderAStockRecommendationHistoryTabs(&b, "2026-06-17", "morning", true, false, true)
+
+	body := b.String()
+	for _, want := range []string{
+		"2026-06-17 周三",
+		`/a-stock?date=2026-06-30&period=morning&ignore_recent=1&filter_today_market=1`,
+		`>今日</a>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected past history tabs to contain %q, got %s", want, body)
+		}
+	}
+	if strings.Count(body, `>今日</a>`) != 1 {
+		t.Fatalf("expected exactly one today tab, got %s", body)
+	}
+	if strings.LastIndex(body, `>今日</a>`) < strings.LastIndex(body, `2026-06-17 周三`) {
+		t.Fatalf("expected today tab to render to the right of the selected past date, got %s", body)
+	}
+}
+
 func TestAStockDatePeriodTabsCanRenderWithoutHeading(t *testing.T) {
 	setAStockNowForTest(t, time.Date(2026, 6, 18, 9, 30, 0, 0, time.FixedZone("CST", 8*3600)))
 	var b strings.Builder
@@ -6443,8 +6467,87 @@ func TestPortalNavPositionsLogoutTopRight(t *testing.T) {
 	if !strings.Contains(baseStyles, `.logout-link{position:fixed;top:14px;right:18px;`) {
 		t.Fatalf("expected logout link to be positioned at top right")
 	}
-	if !strings.Contains(portalNavHTML, `<a href="/system">系统</a><a href="/logs">日志</a>`) {
-		t.Fatalf("expected logs menu to appear immediately after system menu")
+	if !strings.Contains(portalNavHTML, `<a href="/system">系统</a><a href="/logs">日志</a><button id="portal-upgrade-button" class="portal-upgrade-button" type="button">升级</button>`) {
+		t.Fatalf("expected upgrade button to appear immediately after logs menu")
+	}
+	for _, expected := range []string{
+		`nav .portal-upgrade-button{display:inline-flex`,
+		`.portal-upgrade-mask{position:fixed`,
+		`.portal-upgrade-log{margin:0`,
+	} {
+		if !strings.Contains(baseStyles, expected) {
+			t.Fatalf("expected upgrade style %q", expected)
+		}
+	}
+	for _, expected := range []string{
+		`id="portal-upgrade-mask"`,
+		`fetch("/system/upgrade"`,
+		`setTimeout(hide,15000)`,
+	} {
+		if !strings.Contains(portalUpgradeShellHTML, expected) {
+			t.Fatalf("expected upgrade shell to include %q", expected)
+		}
+	}
+}
+
+func TestSimplePageIncludesPortalUpgradeShell(t *testing.T) {
+	srv := NewServer(config.Config{})
+	rr := httptest.NewRecorder()
+	if err := srv.writeSimplePage(rr, "test-page", "测试页", "<section>body</section>"); err != nil {
+		t.Fatalf("writeSimplePage error: %v", err)
+	}
+	body := rr.Body.String()
+	for _, expected := range []string{
+		`id="portal-upgrade-button"`,
+		`id="portal-upgrade-mask"`,
+		`/system/upgrade`,
+	} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("expected simple page to include upgrade shell %q, got %s", expected, body)
+		}
+	}
+}
+
+type fakePortalUpgradeRunner struct {
+	called bool
+	result portalUpgradeResult
+}
+
+func (f *fakePortalUpgradeRunner) Run(_ context.Context, _ config.Config) portalUpgradeResult {
+	f.called = true
+	return f.result
+}
+
+func TestSystemUpgradeEndpointReturnsRunnerLog(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+	fake := &fakePortalUpgradeRunner{result: portalUpgradeResult{
+		OK:         true,
+		Status:     "success",
+		Message:    "升级完成",
+		Log:        "git pull --ff-only origin golang\nbuild ok",
+		StartedAt:  time.Date(2026, 6, 30, 9, 0, 0, 0, time.UTC),
+		FinishedAt: time.Date(2026, 6, 30, 9, 1, 0, 0, time.UTC),
+	}}
+	srv.upgradeRunner = fake
+
+	req := httptest.NewRequest(http.MethodPost, "/system/upgrade", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "session-admin"})
+	rr := httptest.NewRecorder()
+	srv.Router().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected upgrade 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !fake.called {
+		t.Fatal("expected fake upgrade runner to be called")
+	}
+	var result portalUpgradeResult
+	if err := json.Unmarshal(rr.Body.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal upgrade response: %v", err)
+	}
+	if !result.OK || result.Status != "success" || !strings.Contains(result.Log, "build ok") {
+		t.Fatalf("unexpected upgrade response: %+v", result)
 	}
 }
 
