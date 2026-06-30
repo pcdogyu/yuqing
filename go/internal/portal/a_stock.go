@@ -25,9 +25,14 @@ type aStockContext struct {
 	NewsPageSize                 int
 	NewsTotal                    int
 	NewsTotalPages               int
+	NewsWindowStart              time.Time
+	NewsWindowEnd                time.Time
 	WindowStart                  time.Time
 	WindowEnd                    time.Time
+	RecommendationWindowLabel    string
+	RecommendationNewsTotal      int
 	Articles                     []model.Item
+	NewsArticles                 []model.Item
 	PagedArticles                []model.Item
 	Hotspots                     []aStockHotspot
 	Recommendations              []aStockRecommendation
@@ -380,6 +385,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-news-table{table-layout:fixed}
 		.astock-news-table th,.astock-news-table td{vertical-align:top}
 		.astock-news-counts{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+		.astock-news-diagnostic{margin-top:6px;color:#8a5a17;font-size:12px;line-height:1.35}
 		.astock-help{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:#eef4ec;color:#214e34;font-size:12px;font-weight:700;line-height:1;cursor:help;position:relative}
 		.astock-help-text{position:absolute;right:0;top:calc(100% + 8px);z-index:10;display:none;width:max-content;max-width:260px;padding:8px 10px;border:1px solid #d6ccbb;border-radius:8px;background:#fff;color:#2b261f;box-shadow:0 12px 28px rgba(31,40,34,.14);font-size:12px;font-weight:400;line-height:1.4;white-space:normal}
 		.astock-help:hover .astock-help-text,.astock-help:focus .astock-help-text{display:block}
@@ -766,7 +772,14 @@ func aStockNewsCount(ctx aStockContext) int {
 	if ctx.NewsTotal > 0 {
 		return ctx.NewsTotal
 	}
-	return len(ctx.Articles)
+	return len(aStockNewsArticles(ctx))
+}
+
+func aStockNewsArticles(ctx aStockContext) []model.Item {
+	if ctx.NewsArticles != nil {
+		return ctx.NewsArticles
+	}
+	return ctx.Articles
 }
 
 func renderAStockNewsSections(b *strings.Builder, morningCtx aStockContext, afternoonCtx aStockContext) {
@@ -777,10 +790,11 @@ func renderAStockNewsSections(b *strings.Builder, morningCtx aStockContext, afte
 }
 
 func renderAStockNewsWindow(b *strings.Builder, ctx aStockContext) {
+	newsArticles := aStockNewsArticles(ctx)
 	b.WriteString(`<div class="astock-news-window"><h3>`)
 	b.WriteString(html.EscapeString(ctx.WindowLabel))
 	b.WriteString(` 财经新闻</h3>`)
-	if len(ctx.Articles) == 0 {
+	if len(newsArticles) == 0 {
 		b.WriteString(`<div class="astock-empty">暂无数据：请点击“抓取 A 股新闻”，或确认 `)
 		b.WriteString(html.EscapeString(ctx.Date))
 		b.WriteString(` `)
@@ -790,8 +804,16 @@ func renderAStockNewsWindow(b *strings.Builder, ctx aStockContext) {
 	b.WriteString(`<div class="astock-scroll"><table class="astock-news-table"><tr><th>来源</th><th>新闻条数</th><th>最近抓取</th><th>抓取/入库/更新 `)
 	renderAStockTooltip(b, "源站抓取数 / 入库新增数 / 更新数")
 	b.WriteString(`</th></tr>`)
-	for _, source := range summarizeAStockNewsSources(ctx.Articles, ctx.SourceRuns) {
+	for _, source := range summarizeAStockNewsSources(newsArticles, ctx.SourceRuns) {
 		note := strings.TrimSpace(formatAStockCrawlRunNote(source.Run))
+		diagnostic := strings.TrimSpace(formatAStockNewsSourceDiagnostic(source, ctx))
+		if diagnostic != "" {
+			if note != "" {
+				note += "；" + diagnostic
+			} else {
+				note = diagnostic
+			}
+		}
 		b.WriteString(`<tr><td>`)
 		b.WriteString(html.EscapeString(source.Label))
 		b.WriteString(`</td><td>`)
@@ -804,9 +826,48 @@ func renderAStockNewsWindow(b *strings.Builder, ctx aStockContext) {
 		if note != "" {
 			renderAStockTooltip(b, note)
 		}
-		b.WriteString(`</span></td></tr>`)
+		b.WriteString(`</span>`)
+		if diagnostic != "" {
+			b.WriteString(`<div class="astock-news-diagnostic">`)
+			b.WriteString(html.EscapeString(diagnostic))
+			b.WriteString(`</div>`)
+		}
+		b.WriteString(`</td></tr>`)
 	}
 	b.WriteString(`</table></div></div>`)
+}
+
+const aStockSourceCoverageStaleAfter = 30 * time.Minute
+
+func formatAStockNewsSourceDiagnostic(source aStockNewsSourceCount, ctx aStockContext) string {
+	if source.Count > 0 || strings.TrimSpace(source.Run.SourceType) == "" || source.Run.StartedAt.IsZero() || strings.TrimSpace(source.Run.ErrorText) != "" {
+		return ""
+	}
+	deadline, ok := aStockNewsCoverageDeadline(ctx)
+	if !ok {
+		return ""
+	}
+	if source.Run.StartedAt.Before(deadline.Add(-aStockSourceCoverageStaleAfter)) {
+		return "最近抓取早于统计截止，可能未覆盖后续新闻"
+	}
+	return ""
+}
+
+func aStockNewsCoverageDeadline(ctx aStockContext) (time.Time, bool) {
+	start := ctx.NewsWindowStart
+	end := ctx.NewsWindowEnd
+	if start.IsZero() || end.IsZero() {
+		start = ctx.WindowStart
+		end = ctx.WindowEnd
+	}
+	if start.IsZero() || end.IsZero() {
+		return time.Time{}, false
+	}
+	now := aStockNow()
+	if now.After(start) && now.Before(end) {
+		return now, true
+	}
+	return end, true
 }
 
 func renderAStockTooltip(b *strings.Builder, text string) {
@@ -1329,31 +1390,45 @@ func (s *Server) loadAStockContextWithCache(strategyDate string, periodKey strin
 func (s *Server) loadAStockContextWithRecommendationPhase(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, recommendationPhase string, cache *aStockRequestCache) aStockContext {
 	period := normalizeAStockPeriod(periodKey)
 	phase := normalizeAStockRecommendationPhase(recommendationPhase)
-	start, end, windowLabel := aStockRecommendationPhaseWindow(strategyDate, period.Key, phase)
+	recommendationStart, recommendationEnd, recommendationWindowLabel := aStockRecommendationPhaseWindow(strategyDate, period.Key, phase)
+	newsStart, newsEnd := aStockWindow(strategyDate, period.Key)
 	ctx := aStockContext{
-		Date:                     strategyDate,
-		Period:                   period.Key,
-		PeriodLabel:              period.Label,
-		WindowLabel:              windowLabel,
-		NewsPage:                 newsPage,
-		NewsPageSize:             aStockNewsPageSize,
-		WindowStart:              start,
-		WindowEnd:                end,
-		BacktestStatus:           "等待行情接口",
-		IgnoreRecent:             ignoreRecent,
-		IgnoreLimitUp:            ignoreLimitUp,
-		TodayMarketFilterEnabled: filterTodayMarket,
+		Date:                      strategyDate,
+		Period:                    period.Key,
+		PeriodLabel:               period.Label,
+		WindowLabel:               period.WindowLabel,
+		NewsPage:                  newsPage,
+		NewsPageSize:              aStockNewsPageSize,
+		NewsWindowStart:           newsStart,
+		NewsWindowEnd:             newsEnd,
+		WindowStart:               recommendationStart,
+		WindowEnd:                 recommendationEnd,
+		RecommendationWindowLabel: recommendationWindowLabel,
+		BacktestStatus:            "等待行情接口",
+		IgnoreRecent:              ignoreRecent,
+		IgnoreLimitUp:             ignoreLimitUp,
+		TodayMarketFilterEnabled:  filterTodayMarket,
 	}
 	ctx.LimitUpFilterEnabled = period.Key == "afternoon" && !ignoreLimitUp
 	ctx.SourceRuns = s.loadAStockSourceRunsWithCache(cache)
-	articles, err := s.loadAStockWindowArticlesWithCache(start, end, cache)
+	articles, err := s.loadAStockWindowArticlesWithCache(recommendationStart, recommendationEnd, cache)
 	if err != nil {
 		ctx.LoadMessage = "A股新闻读取失败：" + err.Error()
 		return ctx
 	}
+	newsArticles := articles
+	if !sameAStockWindow(recommendationStart, recommendationEnd, newsStart, newsEnd) {
+		newsArticles, err = s.loadAStockWindowArticlesWithCache(newsStart, newsEnd, cache)
+		if err != nil {
+			ctx.LoadMessage = "A股新闻统计读取失败：" + err.Error()
+			return ctx
+		}
+	}
 	ctx.Articles = articles
-	ctx.NewsTotal = len(ctx.Articles)
-	ctx.PagedArticles, ctx.NewsPage, ctx.NewsTotalPages = paginateAStockNews(ctx.Articles, newsPage, aStockNewsPageSize)
+	ctx.NewsArticles = newsArticles
+	ctx.NewsTotal = len(ctx.NewsArticles)
+	ctx.RecommendationNewsTotal = len(ctx.Articles)
+	ctx.PagedArticles, ctx.NewsPage, ctx.NewsTotalPages = paginateAStockNews(ctx.NewsArticles, newsPage, aStockNewsPageSize)
 	ctx.Hotspots = buildAStockHotspots(ctx.Articles)
 	ctx.AuctionAmountLabel = s.loadAStockAuctionAmountLabelWithCache(strategyDate, cache)
 	if blocked, message, reason := s.aStockRecommendationBlockedStatusWithCache(strategyDate, cache); blocked {
@@ -2287,6 +2362,14 @@ func aStockRecommendationEmptyReason(ctx aStockContext) string {
 	if len(ctx.Recommendations) > 0 {
 		return ""
 	}
+	newsTotal := ctx.RecommendationNewsTotal
+	if newsTotal == 0 {
+		newsTotal = len(ctx.Articles)
+	}
+	windowLabel := strings.TrimSpace(ctx.RecommendationWindowLabel)
+	if windowLabel == "" {
+		windowLabel = ctx.WindowLabel
+	}
 	if ctx.TradingDayBlocked {
 		message := strings.TrimSpace(ctx.TradingDayMessage)
 		if message == "" {
@@ -2294,37 +2377,37 @@ func aStockRecommendationEmptyReason(ctx aStockContext) string {
 		}
 		return "暂无推荐股票：" + message
 	}
-	if ctx.NewsTotal == 0 {
-		return fmt.Sprintf("暂无推荐股票：%s %s 没有新闻，请先抓取或补抓财经信息。", ctx.PeriodLabel, ctx.WindowLabel)
+	if newsTotal == 0 {
+		return fmt.Sprintf("暂无推荐股票：%s %s 没有新闻，请先抓取或补抓财经信息。", ctx.PeriodLabel, windowLabel)
 	}
 	if len(ctx.Hotspots) == 0 {
-		return fmt.Sprintf("暂无推荐股票：%s %s 有 %d 条新闻，但未命中 A股热点关键词。", ctx.PeriodLabel, ctx.WindowLabel, ctx.NewsTotal)
+		return fmt.Sprintf("暂无推荐股票：%s %s 有 %d 条新闻，但未命中 A股热点关键词。", ctx.PeriodLabel, windowLabel, newsTotal)
 	}
 	if ctx.MarketCandidateStatus == "no_auction_candidates" || ctx.MarketCandidateStatus == "content_unconfigured" {
-		return fmt.Sprintf("暂无推荐股票：%s %s 有新闻和热点，但没有集合竞价候选数据。请点击“补录集合竞价”后重新生成推荐。", ctx.PeriodLabel, ctx.WindowLabel)
+		return fmt.Sprintf("暂无推荐股票：%s %s 有新闻和热点，但没有集合竞价候选数据。请点击“补录集合竞价”后重新生成推荐。", ctx.PeriodLabel, windowLabel)
 	}
 	if ctx.GeneratedRecommendationCount == 0 {
 		if ctx.MarketCandidateStatus == "latest_auction_fallback" {
-			return fmt.Sprintf("暂无推荐股票：%s %s 有新闻和热点；策略日没有集合竞价，已使用最新集合竞价字典，但新闻没有明确匹配到股票名称或代码。", ctx.PeriodLabel, ctx.WindowLabel)
+			return fmt.Sprintf("暂无推荐股票：%s %s 有新闻和热点；策略日没有集合竞价，已使用最新集合竞价字典，但新闻没有明确匹配到股票名称或代码。", ctx.PeriodLabel, windowLabel)
 		}
-		return fmt.Sprintf("暂无推荐股票：%s %s 有新闻和热点，也有 %d 条集合竞价候选，但新闻没有明确匹配到股票名称或代码。", ctx.PeriodLabel, ctx.WindowLabel, ctx.MarketCandidateCount)
+		return fmt.Sprintf("暂无推荐股票：%s %s 有新闻和热点，也有 %d 条集合竞价候选，但新闻没有明确匹配到股票名称或代码。", ctx.PeriodLabel, windowLabel, ctx.MarketCandidateCount)
 	}
 	if ctx.RecentFiltered > 0 {
-		return fmt.Sprintf("暂无推荐股票：%s %s 已生成候选，但5日内重复推荐过滤 %d 只。可关闭5日过滤后重新生成。", ctx.PeriodLabel, ctx.WindowLabel, ctx.RecentFiltered)
+		return fmt.Sprintf("暂无推荐股票：%s %s 已生成候选，但5日内重复推荐过滤 %d 只。可关闭5日过滤后重新生成。", ctx.PeriodLabel, windowLabel, ctx.RecentFiltered)
 	}
 	if ctx.SameDayMorningFiltered > 0 {
-		return fmt.Sprintf("暂无推荐股票：%s %s 已生成候选，但过滤上午同股票或已满热点名额 %d 只。", ctx.PeriodLabel, ctx.WindowLabel, ctx.SameDayMorningFiltered)
+		return fmt.Sprintf("暂无推荐股票：%s %s 已生成候选，但过滤上午同股票或已满热点名额 %d 只。", ctx.PeriodLabel, windowLabel, ctx.SameDayMorningFiltered)
 	}
 	if ctx.LimitUpFiltered > 0 {
-		return fmt.Sprintf("暂无推荐股票：%s %s 已生成候选，但涨停过滤 %d 只。", ctx.PeriodLabel, ctx.WindowLabel, ctx.LimitUpFiltered)
+		return fmt.Sprintf("暂无推荐股票：%s %s 已生成候选，但涨停过滤 %d 只。", ctx.PeriodLabel, windowLabel, ctx.LimitUpFiltered)
 	}
 	if ctx.TodayMarketFilterEnabled && (strings.Contains(ctx.BacktestStatus, "无当日行情") || strings.Contains(ctx.BacktestStatus, "过滤无当日行情")) {
-		return fmt.Sprintf("暂无推荐股票：%s %s 已生成 %d 只候选，但没有当日行情或开盘价。请点击“同步行情”后重试。", ctx.PeriodLabel, ctx.WindowLabel, ctx.GeneratedRecommendationCount)
+		return fmt.Sprintf("暂无推荐股票：%s %s 已生成 %d 只候选，但没有当日行情或开盘价。请点击“同步行情”后重试。", ctx.PeriodLabel, windowLabel, ctx.GeneratedRecommendationCount)
 	}
 	if strings.Contains(ctx.BacktestStatus, "回撤过滤") || strings.Contains(ctx.BacktestStatus, "过滤回撤") {
-		return fmt.Sprintf("暂无推荐股票：%s %s 已生成 %d 只候选，但被30/60天回撤过滤。", ctx.PeriodLabel, ctx.WindowLabel, ctx.GeneratedRecommendationCount)
+		return fmt.Sprintf("暂无推荐股票：%s %s 已生成 %d 只候选，但被30/60天回撤过滤。", ctx.PeriodLabel, windowLabel, ctx.GeneratedRecommendationCount)
 	}
-	return fmt.Sprintf("暂无推荐股票：%s %s 已生成 %d 只候选，但未通过行情、回撤或回测过滤。状态：%s", ctx.PeriodLabel, ctx.WindowLabel, ctx.GeneratedRecommendationCount, ctx.BacktestStatus)
+	return fmt.Sprintf("暂无推荐股票：%s %s 已生成 %d 只候选，但未通过行情、回撤或回测过滤。状态：%s", ctx.PeriodLabel, windowLabel, ctx.GeneratedRecommendationCount, ctx.BacktestStatus)
 }
 
 func normalizeAStockBool(raw string) bool {
@@ -4676,6 +4759,10 @@ func aStockWindow(strategyDate string, periodKey string) (time.Time, time.Time) 
 	return start, end
 }
 
+func sameAStockWindow(startA time.Time, endA time.Time, startB time.Time, endB time.Time) bool {
+	return startA.Equal(startB) && endA.Equal(endB)
+}
+
 func aStockRecommendationPhaseWindow(strategyDate string, periodKey string, phase string) (time.Time, time.Time, string) {
 	location := aStockLocation()
 	day, err := time.ParseInLocation("2006-01-02", normalizeAStockStrategyDate(strategyDate), location)
@@ -4700,7 +4787,7 @@ func aStockRecommendationPhaseWindow(strategyDate string, periodKey string, phas
 	}
 	return time.Date(day.Year(), day.Month(), day.Day(), 8, 0, 0, 0, location),
 		time.Date(day.Year(), day.Month(), day.Day(), 9, 26, 59, 0, location),
-		"08:00-09:30"
+		"08:00-09:26:59"
 }
 
 func normalizeAStockRecommendationPhase(value string) string {

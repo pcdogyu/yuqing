@@ -2150,6 +2150,88 @@ func TestAStockWindowArticlesFetchesAllPublishTimePages(t *testing.T) {
 	}
 }
 
+func TestAStockContextUsesLiteralNewsWindowForSourceStats(t *testing.T) {
+	var seenRecommendationWindow bool
+	var seenStatsWindow bool
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if handleAStockRecommendationSnapshotTestEndpoint(w, r) {
+			return
+		}
+		if r.URL.Path != "/api/v1/articles" {
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+		if r.URL.Query().Get("time_field") == "captured_at" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0},
+			})
+			return
+		}
+		if r.URL.Query().Get("time_field") != "publish_time" {
+			t.Fatalf("unexpected article time_field: %s", r.URL.RawQuery)
+		}
+		start := r.URL.Query().Get("start")
+		end := r.URL.Query().Get("end")
+		switch {
+		case start == "2026-06-26 08:00:00" && end == "2026-06-26 09:26:59":
+			seenRecommendationWindow = true
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": model.ItemListResult{
+					Items: []model.Item{{
+						ID:          9401,
+						SourceType:  "headline",
+						Title:       "策略窗口金十资讯",
+						PublishTime: "2026-06-26 09:20:00",
+						CapturedAt:  time.Date(2026, 6, 26, 1, 20, 0, 0, time.UTC),
+					}},
+					Page: 1, PageSize: 200, Total: 1,
+				},
+			})
+		case start == "2026-06-26 08:00:00" && end == "2026-06-26 09:30:59":
+			seenStatsWindow = true
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": model.ItemListResult{
+					Items: []model.Item{
+						{
+							ID:          9402,
+							SourceType:  "headline",
+							Title:       "统计窗口金十资讯",
+							PublishTime: "2026-06-26 09:20:00",
+							CapturedAt:  time.Date(2026, 6, 26, 1, 20, 0, 0, time.UTC),
+						},
+						{
+							ID:          9403,
+							SourceType:  "flash",
+							Title:       "09:28 金十快讯",
+							PublishTime: "2026-06-26 09:28:00",
+							CapturedAt:  time.Date(2026, 6, 26, 1, 28, 0, 0, time.UTC),
+						},
+					},
+					Page: 1, PageSize: 200, Total: 2,
+				},
+			})
+		default:
+			t.Fatalf("unexpected publish_time window query: %s", r.URL.RawQuery)
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	ctx := srv.loadAStockContextWithRecommendationPhase("2026-06-26", "morning", 1, false, false, false, true, aStockRecommendationPhaseFinal, newAStockRequestCache())
+	if !seenRecommendationWindow || !seenStatsWindow {
+		t.Fatalf("expected recommendation and stats windows to be queried, recommendation=%v stats=%v", seenRecommendationWindow, seenStatsWindow)
+	}
+	if ctx.WindowLabel != "08:00-09:30" || ctx.RecommendationWindowLabel != "08:00-09:26:59" {
+		t.Fatalf("unexpected window labels: stats=%q recommendation=%q", ctx.WindowLabel, ctx.RecommendationWindowLabel)
+	}
+	if len(ctx.Articles) != 1 || len(ctx.NewsArticles) != 2 || ctx.RecommendationNewsTotal != 1 || ctx.NewsTotal != 2 {
+		t.Fatalf("expected recommendation and source stats article sets to stay separate, ctx=%+v", ctx)
+	}
+}
+
 func TestAStockNewsSectionSummarizesSources(t *testing.T) {
 	items := make([]model.Item, 0, 12)
 	for i := 1; i <= 12; i++ {
@@ -2243,21 +2325,25 @@ func TestAStockNewsSectionSummarizesSources(t *testing.T) {
 }
 
 func TestAStockNewsSectionShowsSourceRunDiagnostics(t *testing.T) {
+	setAStockNowForTest(t, time.Date(2026, 6, 22, 12, 20, 0, 0, aStockLocation()))
 	ctx := aStockContext{
-		Date:        "2026-06-22",
-		WindowLabel: "09:30-13:00",
+		Date:            "2026-06-22",
+		WindowLabel:     "09:30-13:00",
+		NewsWindowStart: time.Date(2026, 6, 22, 9, 30, 0, 0, aStockLocation()),
+		NewsWindowEnd:   time.Date(2026, 6, 22, 13, 0, 59, 0, aStockLocation()),
 		Articles: []model.Item{
 			{SourceType: "flash", Title: "金十新闻"},
 		},
 		SourceRuns: []aStockSourceRun{
 			{SourceType: "flash", Status: "success", FetchedCount: 18, InsertedCount: 18, StartedAt: time.Date(2026, 6, 22, 5, 1, 0, 0, time.UTC)},
+			{SourceType: "eastmoney_kuaixun", Status: "success", FetchedCount: 2600, InsertedCount: 20, UpdatedCount: 2300, StartedAt: time.Date(2026, 6, 22, 1, 33, 0, 0, time.UTC)},
 			{SourceType: "sina_finance_7x24", Status: "failed", ErrorText: "upstream timeout", StartedAt: time.Date(2026, 6, 22, 5, 2, 0, 0, time.UTC)},
 		},
 	}
 	var b strings.Builder
 	renderAStockNewsWindow(&b, ctx)
 	body := b.String()
-	for _, want := range []string{"金十快讯", "1条", "success", "18/18/0", "新浪财经", "failed", `title="upstream timeout"`, `role="tooltip">upstream timeout`, "东方财富网", "0条", "源站抓取数 / 入库新增数 / 更新数"} {
+	for _, want := range []string{"金十快讯", "1条", "success", "18/18/0", "新浪财经", "failed", `title="upstream timeout"`, `role="tooltip">upstream timeout`, "东方财富网", "0条", "最近抓取早于统计截止，可能未覆盖后续新闻", "源站抓取数 / 入库新增数 / 更新数"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 news diagnostics to contain %q, got %s", want, body)
 		}
@@ -4009,7 +4095,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		if r.URL.Query().Get("time_field") != "publish_time" {
 			t.Fatalf("unexpected A股 window query: %s", r.URL.RawQuery)
 		}
-		if r.URL.Query().Get("start") != "2026-06-16 08:00:00" || r.URL.Query().Get("end") != "2026-06-16 09:26:59" {
+		if r.URL.Query().Get("start") != "2026-06-16 08:00:00" || (r.URL.Query().Get("end") != "2026-06-16 09:26:59" && r.URL.Query().Get("end") != "2026-06-16 09:30:59") {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"code":    200,
 				"message": "ok",

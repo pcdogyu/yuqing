@@ -72,6 +72,7 @@ func TestCrawlerRunWithOptionsFiltersPublishTimeWindow(t *testing.T) {
 			items: []model.Item{
 				{Title: "上午新闻", PublishTime: "2026-06-16 09:10:00"},
 				{Title: "下午新闻", PublishTime: "2026-06-16 13:10:00"},
+				{Title: "旧发布时间新抓取", PublishTime: "2026-06-15 15:10:00", CapturedAt: time.Date(2026, 6, 16, 1, 10, 0, 0, time.UTC)},
 				{Title: "无发布时间新闻"},
 			},
 		},
@@ -85,7 +86,7 @@ func TestCrawlerRunWithOptionsFiltersPublishTimeWindow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunWithOptions error: %v", err)
 	}
-	if summary.FetchedCount != 3 || summary.InsertedCount != 1 {
+	if summary.FetchedCount != 4 || summary.InsertedCount != 1 {
 		t.Fatalf("unexpected summary: %+v", summary)
 	}
 	items, err := store.ListItems(context.Background(), model.ArticleFilter{

@@ -326,6 +326,16 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 			},
 		}, "AStockAfternoonRecommendationPreview", "0 57 12 * * ?"),
 		withJobMeta(jobDefinition{
+			Name:        "a-stock-midday-news-crawl",
+			Group:       "a-stock",
+			Description: "A股午间新闻补抓：12:30 抓取 09:30-13:00 财经新闻，补齐午间来源统计",
+			Interval:    24 * time.Hour,
+			Enabled:     true,
+			Run: func(ctx context.Context) error {
+				return w.runAStockWindowNewsCrawl(ctx, "afternoon", "final")
+			},
+		}, "AStockMiddayNewsCrawl", "0 30 12 * * ?"),
+		withJobMeta(jobDefinition{
 			Name:        "a-stock-afternoon-recommendation",
 			Group:       "a-stock",
 			Description: "A股下午推荐补全：13:02 抓取 09:30-13:00 财经新闻并补全推荐快照",
