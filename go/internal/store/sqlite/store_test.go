@@ -105,7 +105,7 @@ func TestUpsertItemsSkipsRecentDuplicateTitles(t *testing.T) {
 	assertItemTitleCount(t, store, ctx, "批内重复标题", 1)
 }
 
-func TestUpsertItemsAllowsJin10FullDuplicateTitle(t *testing.T) {
+func TestUpsertItemsSkipsJin10FullDuplicateTitle(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -123,19 +123,19 @@ func TestUpsertItemsAllowsJin10FullDuplicateTitle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpsertItems duplicate jin10_full error: %v", err)
 	}
-	if inserted != 2 || updated != 0 {
-		t.Fatalf("expected flash and jin10_full duplicate titles to both insert, got %d/%d", inserted, updated)
+	if inserted != 1 || updated != 0 {
+		t.Fatalf("expected jin10_full duplicate title to be skipped, got %d/%d", inserted, updated)
 	}
-	assertItemTitleCount(t, store, ctx, "同标题金十快讯", 2)
+	assertItemTitleCount(t, store, ctx, "同标题金十快讯", 1)
 }
 
-func TestUpsertItemsAllowsDuplicateTitleAfterTwelveHours(t *testing.T) {
+func TestUpsertItemsAllowsDuplicateTitleAfterTwentyFourHours(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
 	old := sampleItem("flash", "old-title-1", "跨日标题")
-	old.CapturedAt = now.Add(-13 * time.Hour)
+	old.CapturedAt = now.Add(-25 * time.Hour)
 	old.CreatedAt = old.CapturedAt
 	old.UpdatedAt = old.CapturedAt
 	fresh := sampleItem("headline", "old-title-2", "跨日标题")
@@ -155,7 +155,7 @@ func TestUpsertItemsAllowsDuplicateTitleAfterTwelveHours(t *testing.T) {
 		t.Fatalf("UpsertItems fresh duplicate title error: %v", err)
 	}
 	if inserted != 1 || updated != 0 {
-		t.Fatalf("expected fresh title to insert after 12 hours, got %d/%d", inserted, updated)
+		t.Fatalf("expected fresh title to insert after 24 hours, got %d/%d", inserted, updated)
 	}
 	assertItemTitleCount(t, store, ctx, "跨日标题", 2)
 }

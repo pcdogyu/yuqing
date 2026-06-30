@@ -19,7 +19,7 @@ import (
 
 const (
 	busyTimeoutMillis          = 30000
-	recentDuplicateTitleWindow = 12 * time.Hour
+	recentDuplicateTitleWindow = 24 * time.Hour
 )
 
 type Store struct {
@@ -1368,7 +1368,7 @@ func nonEmpty(values ...string) string {
 }
 
 func shouldApplyRecentTitleDedupe(sourceType string) bool {
-	return strings.TrimSpace(sourceType) != "jin10_full"
+	return true
 }
 
 func firstKeyword(values ...string) string {

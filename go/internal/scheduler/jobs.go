@@ -229,13 +229,53 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 		withJobMeta(jobDefinition{
 			Name:        "eastmoney-kuaixun-crawl",
 			Group:       "crawl",
-			Description: "东方财富网实时快讯抓取，来源 https://kuaixun.eastmoney.com/，补充详情页全文",
-			Interval:    time.Minute,
+			Description: "东方财富网实时快讯抓取，每 5 分钟抓取近期财经新闻并补充详情页全文",
+			Interval:    5 * time.Minute,
 			Enabled:     strings.TrimSpace(w.cfg.EastMoneyKuaixunURL) != "",
 			Run: func(ctx context.Context) error {
-				return w.runCrawl(ctx, provider.SourceTypeEastMoneyKuaixun)
+				return w.runAStockIncrementalNewsCrawl(ctx, provider.SourceTypeEastMoneyKuaixun)
 			},
-		}, "EastMoneyKuaixunCrawler", "0 0/1 * * * ?"),
+		}, "EastMoneyKuaixunCrawler", "0 0/5 * * * ?"),
+		withJobMeta(jobDefinition{
+			Name:        "jin10-full-crawl",
+			Group:       "crawl",
+			Description: "金十全站财经新闻增量抓取，每 5 分钟抓取近期快讯和资讯窗口",
+			Interval:    5 * time.Minute,
+			Enabled:     w.cfg.Jin10FullEnabled,
+			Run: func(ctx context.Context) error {
+				return w.runAStockIncrementalNewsCrawl(ctx, provider.SourceTypeJin10Full)
+			},
+		}, "Jin10FullCrawler", "0 0/5 * * * ?"),
+		withJobMeta(jobDefinition{
+			Name:        "wallstreetcn-a-stock-crawl",
+			Group:       "crawl",
+			Description: "华尔街见闻 A股快讯增量抓取，每 5 分钟抓取近期财经新闻",
+			Interval:    5 * time.Minute,
+			Enabled:     strings.TrimSpace(w.cfg.WallStreetCNAStockURL) != "",
+			Run: func(ctx context.Context) error {
+				return w.runAStockIncrementalNewsCrawl(ctx, provider.SourceTypeWallStreetCNAStock)
+			},
+		}, "WallStreetCNAStockCrawler", "0 0/5 * * * ?"),
+		withJobMeta(jobDefinition{
+			Name:        "cls-telegraph-crawl",
+			Group:       "crawl",
+			Description: "财联社电报增量抓取，每 5 分钟抓取近期财经新闻",
+			Interval:    5 * time.Minute,
+			Enabled:     strings.TrimSpace(w.cfg.CLSTelegraphURL) != "",
+			Run: func(ctx context.Context) error {
+				return w.runAStockIncrementalNewsCrawl(ctx, provider.SourceTypeCLSTelegraph)
+			},
+		}, "CLSTelegraphCrawler", "0 0/5 * * * ?"),
+		withJobMeta(jobDefinition{
+			Name:        "sina-finance-7x24-crawl",
+			Group:       "crawl",
+			Description: "新浪财经 7x24 增量抓取，每 5 分钟抓取近期财经新闻",
+			Interval:    5 * time.Minute,
+			Enabled:     strings.TrimSpace(w.cfg.SinaFinance7x24URL) != "",
+			Run: func(ctx context.Context) error {
+				return w.runAStockIncrementalNewsCrawl(ctx, provider.SourceTypeSinaFinance7x24)
+			},
+		}, "SinaFinance7x24Crawler", "0 0/5 * * * ?"),
 		withJobMeta(jobDefinition{
 			Name:        "crypto-x-crawl",
 			Group:       "crawl",

@@ -218,10 +218,10 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	if err := json.Unmarshal(listRR.Body.Bytes(), &listEnvelope); err != nil {
 		t.Fatalf("unmarshal jobs list: %v", err)
 	}
-	if len(listEnvelope.Data) != 36 {
-		t.Fatalf("expected 36 scheduler jobs, got %d", len(listEnvelope.Data))
+	if len(listEnvelope.Data) != 40 {
+		t.Fatalf("expected 40 scheduler jobs, got %d", len(listEnvelope.Data))
 	}
-	var heartbeatJob, hotJob, eastmoneyJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningNewsCrawlJob, aStockMorningPreviewJob, aStockMorningJob, aStockAfternoonPreviewJob, aStockMiddayNewsCrawlJob, aStockAfternoonJob, aStockAfternoonOpenRefreshJob, aStockDailyBacktestRefreshJob, aStockAuctionJob, aStockHoldingsJob, stockResearchJob, investorRelationsJob Job
+	var heartbeatJob, hotJob, eastmoneyJob, jin10FullJob, wallStreetCNJob, clsJob, sinaJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningNewsCrawlJob, aStockMorningPreviewJob, aStockMorningJob, aStockAfternoonPreviewJob, aStockMiddayNewsCrawlJob, aStockAfternoonJob, aStockAfternoonOpenRefreshJob, aStockDailyBacktestRefreshJob, aStockAuctionJob, aStockHoldingsJob, stockResearchJob, investorRelationsJob Job
 	for _, job := range listEnvelope.Data {
 		switch job.Name {
 		case "crawl-link-heartbeat":
@@ -230,6 +230,14 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 			hotJob = job
 		case "eastmoney-kuaixun-crawl":
 			eastmoneyJob = job
+		case "jin10-full-crawl":
+			jin10FullJob = job
+		case "wallstreetcn-a-stock-crawl":
+			wallStreetCNJob = job
+		case "cls-telegraph-crawl":
+			clsJob = job
+		case "sina-finance-7x24-crawl":
+			sinaJob = job
 		case "crypto-x-crawl":
 			cryptoXJob = job
 		case "crypto-telegram-crawl":
@@ -274,8 +282,20 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	if heartbeatJob.JavaQuartzName != "CrawlLinkHeartbeat" || heartbeatJob.Cron != "0 0/5 * * * ?" || heartbeatJob.IntervalSec != 300 || heartbeatJob.NextRunAt == nil {
 		t.Fatalf("expected crawl link heartbeat metadata, got %+v", heartbeatJob)
 	}
-	if eastmoneyJob.JavaQuartzName != "EastMoneyKuaixunCrawler" || eastmoneyJob.Cron != "0 0/1 * * * ?" || eastmoneyJob.IntervalSec != 60 || eastmoneyJob.Enabled {
+	if eastmoneyJob.JavaQuartzName != "EastMoneyKuaixunCrawler" || eastmoneyJob.Cron != "0 0/5 * * * ?" || eastmoneyJob.IntervalSec != 300 || eastmoneyJob.Enabled {
 		t.Fatalf("expected eastmoney realtime crawl listed but disabled without URL, got %+v", eastmoneyJob)
+	}
+	if jin10FullJob.JavaQuartzName != "Jin10FullCrawler" || jin10FullJob.Cron != "0 0/5 * * * ?" || jin10FullJob.IntervalSec != 300 || jin10FullJob.Enabled {
+		t.Fatalf("expected jin10 full crawl listed but disabled by default, got %+v", jin10FullJob)
+	}
+	if wallStreetCNJob.JavaQuartzName != "WallStreetCNAStockCrawler" || wallStreetCNJob.Cron != "0 0/5 * * * ?" || wallStreetCNJob.IntervalSec != 300 || wallStreetCNJob.Enabled {
+		t.Fatalf("expected wallstreetcn A股 crawl listed but disabled without URL, got %+v", wallStreetCNJob)
+	}
+	if clsJob.JavaQuartzName != "CLSTelegraphCrawler" || clsJob.Cron != "0 0/5 * * * ?" || clsJob.IntervalSec != 300 || clsJob.Enabled {
+		t.Fatalf("expected cls telegraph crawl listed but disabled without URL, got %+v", clsJob)
+	}
+	if sinaJob.JavaQuartzName != "SinaFinance7x24Crawler" || sinaJob.Cron != "0 0/5 * * * ?" || sinaJob.IntervalSec != 300 || sinaJob.Enabled {
+		t.Fatalf("expected sina finance 7x24 crawl listed but disabled without URL, got %+v", sinaJob)
 	}
 	if cryptoXJob.Name == "" || cryptoTelegramJob.Name == "" {
 		t.Fatalf("expected crypto scheduler jobs, got %+v", listEnvelope.Data)
@@ -2139,35 +2159,57 @@ func TestSchedulerCryptoJobsEnabledWhenEndpointsConfigured(t *testing.T) {
 	}
 }
 
-func TestSchedulerEastMoneyKuaixunJobEnabledWhenEndpointConfigured(t *testing.T) {
+func TestSchedulerFinanceNewsCrawlJobsEnabledWhenConfigured(t *testing.T) {
 	worker := NewWorker(config.Config{
 		HTTPTimeout:           time.Second,
 		EastMoneyKuaixunURL:   "https://kuaixun.eastmoney.com/",
+		Jin10FullEnabled:      true,
+		WallStreetCNAStockURL: "https://wallstreetcn.com/live/a-stock",
+		CLSTelegraphURL:       "https://www.cls.cn/telegraph",
+		SinaFinance7x24URL:    "https://finance.sina.com.cn/7x24/?tag=10",
 		FlashInterval:         time.Hour,
 		HeadlineInterval:      time.Hour,
 		AnalysisInterval:      time.Hour,
 		WechatCleanupInterval: time.Hour,
 		WechatPushInterval:    time.Hour,
 	})
-	var eastmoneyJob Job
+	jobs := map[string]Job{}
 	for _, job := range worker.Jobs() {
-		if job.Name == "eastmoney-kuaixun-crawl" {
-			eastmoneyJob = job
-			break
-		}
+		jobs[job.Name] = job
 	}
-	if !eastmoneyJob.Enabled || eastmoneyJob.Cron != "0 0/1 * * * ?" || eastmoneyJob.IntervalSec != 60 || eastmoneyJob.NextRunAt == nil {
-		t.Fatalf("expected enabled eastmoney kuaixun realtime crawl job, got %+v", eastmoneyJob)
+
+	for _, name := range []string{
+		"eastmoney-kuaixun-crawl",
+		"jin10-full-crawl",
+		"wallstreetcn-a-stock-crawl",
+		"cls-telegraph-crawl",
+		"sina-finance-7x24-crawl",
+	} {
+		job := jobs[name]
+		if !job.Enabled || job.Cron != "0 0/5 * * * ?" || job.IntervalSec != 300 || job.NextRunAt == nil {
+			t.Fatalf("expected enabled 5-minute finance news crawl job %s, got %+v", name, job)
+		}
 	}
 }
 
-func TestRunEastMoneyKuaixunCrawlJobUsesSourceType(t *testing.T) {
-	var gotSource string
+func TestRunAStockIncrementalCrawlJobsUseRecentPublishWindow(t *testing.T) {
+	type crawlRequest struct {
+		sourceType string
+		start      string
+		end        string
+		timeField  string
+	}
+	var got []crawlRequest
 	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/admin/tasks/crawl" {
 			t.Fatalf("unexpected crawler request: %s %s", r.Method, r.URL.String())
 		}
-		gotSource = r.URL.Query().Get("source_type")
+		got = append(got, crawlRequest{
+			sourceType: r.URL.Query().Get("source_type"),
+			start:      r.URL.Query().Get("start"),
+			end:        r.URL.Query().Get("end"),
+			timeField:  r.URL.Query().Get("time_field"),
+		})
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer crawler.Close()
@@ -2177,13 +2219,48 @@ func TestRunEastMoneyKuaixunCrawlJobUsesSourceType(t *testing.T) {
 		SchedulerCrawlTimeout: time.Second,
 		CrawlerURL:            crawler.URL,
 		EastMoneyKuaixunURL:   "https://kuaixun.eastmoney.com/",
+		Jin10FullEnabled:      true,
+		WallStreetCNAStockURL: "https://wallstreetcn.com/live/a-stock",
+		CLSTelegraphURL:       "https://www.cls.cn/telegraph",
+		SinaFinance7x24URL:    "https://finance.sina.com.cn/7x24/?tag=10",
 	})
 
-	if err := worker.RunJobByName(context.Background(), "eastmoney-kuaixun-crawl"); err != nil {
-		t.Fatalf("RunJobByName eastmoney-kuaixun-crawl error: %v", err)
+	jobs := []struct {
+		name       string
+		sourceType string
+	}{
+		{name: "eastmoney-kuaixun-crawl", sourceType: provider.SourceTypeEastMoneyKuaixun},
+		{name: "jin10-full-crawl", sourceType: provider.SourceTypeJin10Full},
+		{name: "wallstreetcn-a-stock-crawl", sourceType: provider.SourceTypeWallStreetCNAStock},
+		{name: "cls-telegraph-crawl", sourceType: provider.SourceTypeCLSTelegraph},
+		{name: "sina-finance-7x24-crawl", sourceType: provider.SourceTypeSinaFinance7x24},
 	}
-	if gotSource != provider.SourceTypeEastMoneyKuaixun {
-		t.Fatalf("expected eastmoney source type, got %q", gotSource)
+	for _, job := range jobs {
+		if err := worker.RunJobByName(context.Background(), job.name); err != nil {
+			t.Fatalf("RunJobByName %s error: %v", job.name, err)
+		}
+	}
+	if len(got) != len(jobs) {
+		t.Fatalf("expected %d crawl requests, got %d: %+v", len(jobs), len(got), got)
+	}
+	for idx, request := range got {
+		if request.sourceType != jobs[idx].sourceType {
+			t.Fatalf("request %d expected source type %q, got %q", idx, jobs[idx].sourceType, request.sourceType)
+		}
+		if request.timeField != "publish_time" {
+			t.Fatalf("request %d expected publish_time filter, got %q", idx, request.timeField)
+		}
+		start, err := time.ParseInLocation("2006-01-02 15:04:05", request.start, aStockLocation())
+		if err != nil {
+			t.Fatalf("request %d invalid start time %q: %v", idx, request.start, err)
+		}
+		end, err := time.ParseInLocation("2006-01-02 15:04:05", request.end, aStockLocation())
+		if err != nil {
+			t.Fatalf("request %d invalid end time %q: %v", idx, request.end, err)
+		}
+		if end.Sub(start) != 32*time.Minute {
+			t.Fatalf("request %d expected 32-minute recent window, got start=%s end=%s", idx, request.start, request.end)
+		}
 	}
 }
 

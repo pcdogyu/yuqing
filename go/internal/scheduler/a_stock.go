@@ -16,6 +16,11 @@ import (
 
 var aStockRecommendationSources = []string{provider.SourceTypeFlash, provider.SourceTypeHeadline, provider.SourceTypeJin10Full, provider.SourceTypeEastMoneyKuaixun, provider.SourceTypeWallStreetCNAStock, provider.SourceTypeCLSTelegraph, provider.SourceTypeSinaFinance7x24}
 
+const (
+	aStockIncrementalNewsLookback  = 30 * time.Minute
+	aStockIncrementalNewsLookahead = 2 * time.Minute
+)
+
 func (w *Worker) runAStockRecommendation(ctx context.Context, period string, phase string) error {
 	location, err := time.LoadLocation("Asia/Shanghai")
 	if err != nil {
@@ -26,6 +31,22 @@ func (w *Worker) runAStockRecommendation(ctx context.Context, period string, pha
 
 func (w *Worker) runAStockWindowNewsCrawl(ctx context.Context, period string, phase string) error {
 	return w.runAStockWindowNewsCrawlForDate(ctx, time.Now().In(aStockLocation()).Format("2006-01-02"), period, phase)
+}
+
+func (w *Worker) runAStockIncrementalNewsCrawl(ctx context.Context, sourceType string) error {
+	return w.runCrawlWithOptions(ctx, sourceType, aStockIncrementalNewsCrawlOptions(time.Now()))
+}
+
+func aStockIncrementalNewsCrawlOptions(now time.Time) model.CrawlOptions {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	current := now.In(aStockLocation())
+	return model.CrawlOptions{
+		Start:     formatAStockRecommendationCrawlTime(current.Add(-aStockIncrementalNewsLookback)),
+		End:       formatAStockRecommendationCrawlTime(current.Add(aStockIncrementalNewsLookahead)),
+		TimeField: "publish_time",
+	}
 }
 
 type aStockBacktestRefreshTarget struct {
