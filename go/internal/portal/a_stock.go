@@ -396,8 +396,8 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-news-table th,.astock-news-table td{vertical-align:top}
 		.astock-news-counts{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
 		.astock-news-diagnostic{margin-top:6px;color:#8a5a17;font-size:12px;line-height:1.35}
-		.astock-hotspot-stocks{line-height:1.55;white-space:nowrap}
-		.astock-hotspot-stock{display:block}
+		.astock-hotspot-stocks{display:flex;gap:14px;flex-wrap:wrap;align-items:center;line-height:1.55;white-space:normal}
+		.astock-hotspot-stock{display:inline-flex;white-space:nowrap}
 		.astock-help{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:#eef4ec;color:#214e34;font-size:12px;font-weight:700;line-height:1;cursor:help;position:relative}
 		.astock-help-text{position:absolute;right:0;top:calc(100% + 8px);z-index:10;display:none;width:max-content;max-width:260px;padding:8px 10px;border:1px solid #d6ccbb;border-radius:8px;background:#fff;color:#2b261f;box-shadow:0 12px 28px rgba(31,40,34,.14);font-size:12px;font-weight:400;line-height:1.4;white-space:normal}
 		.astock-help:hover .astock-help-text,.astock-help:focus .astock-help-text{display:block}

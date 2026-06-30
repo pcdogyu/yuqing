@@ -296,6 +296,8 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		`.astock-scroll{width:100%;overflow:auto}`,
 		`.astock-news-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}`,
 		`.astock-help:hover .astock-help-text,.astock-help:focus .astock-help-text{display:block}`,
+		`.astock-hotspot-stocks{display:flex`,
+		`.astock-hotspot-stock{display:inline-flex`,
 		`class="astock-overview-strategy" rowspan="2"`,
 		"08:00-09:30",
 		"09:30-13:00",
