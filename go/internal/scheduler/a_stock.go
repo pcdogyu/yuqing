@@ -23,6 +23,10 @@ func (w *Worker) runAStockRecommendation(ctx context.Context, period string, pha
 	return w.runAStockRecommendationForDate(ctx, time.Now().In(location).Format("2006-01-02"), period, phase)
 }
 
+func (w *Worker) runAStockWindowNewsCrawl(ctx context.Context, period string, phase string) error {
+	return w.runAStockWindowNewsCrawlForDate(ctx, time.Now().In(aStockLocation()).Format("2006-01-02"), period, phase)
+}
+
 type aStockBacktestRefreshTarget struct {
 	StrategyDate string
 	Period       string
@@ -629,29 +633,8 @@ func (w *Worker) runAStockRecommendationForDate(ctx context.Context, strategyDat
 	if err != nil {
 		return err
 	}
-	crawlOptions := model.CrawlOptions{
-		Start:     formatAStockRecommendationCrawlTime(start),
-		End:       formatAStockRecommendationCrawlTime(end),
-		TimeField: "publish_time",
-	}
-	failedSources := make([]string, 0)
-	successCount := 0
-	for _, sourceType := range w.aStockRecommendationCrawlSources() {
-		if err := w.runCrawlWithOptions(ctx, sourceType, crawlOptions); err != nil {
-			failedSources = append(failedSources, sourceType+": "+err.Error())
-			log.Warn().
-				Err(err).
-				Str("source_type", sourceType).
-				Str("strategy_date", strategyDate).
-				Str("period", period).
-				Str("phase", normalizedPhase).
-				Msg("a-stock recommendation crawl source failed")
-			continue
-		}
-		successCount++
-	}
-	if successCount == 0 && len(failedSources) > 0 {
-		return fmt.Errorf("a-stock recommendation crawl failed for all sources: %s", strings.Join(failedSources, "; "))
+	if err := w.crawlAStockRecommendationSources(ctx, strategyDate, period, normalizedPhase, start, end, "a-stock recommendation"); err != nil {
+		return err
 	}
 	resp, err := w.client.R().
 		SetContext(ctx).
@@ -675,6 +658,64 @@ func (w *Worker) runAStockRecommendationForDate(ctx context.Context, strategyDat
 		Str("phase", normalizedPhase).
 		Str("window", label).
 		Msg("a-stock recommendation window generated")
+	return nil
+}
+
+func (w *Worker) runAStockWindowNewsCrawlForDate(ctx context.Context, strategyDate string, period string, phase string) error {
+	normalizedPhase := normalizeAStockRecommendationPhase(phase)
+	tradingDay, err := w.loadAStockTradingDayStatus(ctx, strategyDate)
+	if err != nil {
+		return fmt.Errorf("a-stock trading calendar unavailable for %s: %w", strategyDate, err)
+	}
+	if !tradingDay.IsTradingDay {
+		message := strings.TrimSpace(tradingDay.Message)
+		if message == "" {
+			message = "A-share market is closed; stock news crawl is disabled."
+		}
+		return jobSkippedError{message: fmt.Sprintf("a-stock window news crawl skipped for %s: %s", tradingDay.Date, message)}
+	}
+	start, end, label, err := aStockRecommendationWindow(strategyDate, period, normalizedPhase)
+	if err != nil {
+		return err
+	}
+	if err := w.crawlAStockRecommendationSources(ctx, strategyDate, period, normalizedPhase, start, end, "a-stock window news crawl"); err != nil {
+		return err
+	}
+	log.Info().
+		Str("strategy_date", strategyDate).
+		Str("period", period).
+		Str("phase", normalizedPhase).
+		Str("window", label).
+		Msg("a-stock window news crawled")
+	return nil
+}
+
+func (w *Worker) crawlAStockRecommendationSources(ctx context.Context, strategyDate string, period string, phase string, start time.Time, end time.Time, label string) error {
+	crawlOptions := model.CrawlOptions{
+		Start:     formatAStockRecommendationCrawlTime(start),
+		End:       formatAStockRecommendationCrawlTime(end),
+		TimeField: "publish_time",
+	}
+	failedSources := make([]string, 0)
+	successCount := 0
+	for _, sourceType := range w.aStockRecommendationCrawlSources() {
+		if err := w.runCrawlWithOptions(ctx, sourceType, crawlOptions); err != nil {
+			failedSources = append(failedSources, sourceType+": "+err.Error())
+			log.Warn().
+				Err(err).
+				Str("source_type", sourceType).
+				Str("strategy_date", strategyDate).
+				Str("period", period).
+				Str("phase", phase).
+				Str("job", label).
+				Msg("a-stock crawl source failed")
+			continue
+		}
+		successCount++
+	}
+	if successCount == 0 && len(failedSources) > 0 {
+		return fmt.Errorf("%s failed for all sources: %s", label, strings.Join(failedSources, "; "))
+	}
 	return nil
 }
 

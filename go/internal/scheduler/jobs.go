@@ -286,6 +286,16 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 			},
 		}, "TheBlockLatestCrawler", "0 2/5 * * * ?"),
 		withJobMeta(jobDefinition{
+			Name:        "a-stock-morning-news-crawl",
+			Group:       "a-stock",
+			Description: "A股上午新闻预抓：09:05 抓取 08:00-09:26:59 财经新闻，便于开盘前页面已有多源数据",
+			Interval:    24 * time.Hour,
+			Enabled:     true,
+			Run: func(ctx context.Context) error {
+				return w.runAStockWindowNewsCrawl(ctx, "morning", "preopen")
+			},
+		}, "AStockMorningNewsCrawl", "0 5 9 * * ?"),
+		withJobMeta(jobDefinition{
 			Name:        "a-stock-morning-recommendation-preview",
 			Group:       "a-stock",
 			Description: "A股上午盘前推荐：09:27 生成上午盘前推荐快照并触发弹窗",

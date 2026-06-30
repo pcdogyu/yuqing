@@ -217,10 +217,10 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	if err := json.Unmarshal(listRR.Body.Bytes(), &listEnvelope); err != nil {
 		t.Fatalf("unmarshal jobs list: %v", err)
 	}
-	if len(listEnvelope.Data) != 33 {
-		t.Fatalf("expected 33 scheduler jobs, got %d", len(listEnvelope.Data))
+	if len(listEnvelope.Data) != 34 {
+		t.Fatalf("expected 34 scheduler jobs, got %d", len(listEnvelope.Data))
 	}
-	var heartbeatJob, hotJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningPreviewJob, aStockMorningJob, aStockAfternoonPreviewJob, aStockAfternoonJob, aStockAfternoonOpenRefreshJob, aStockDailyBacktestRefreshJob, aStockAuctionJob, aStockHoldingsJob, stockResearchJob, investorRelationsJob Job
+	var heartbeatJob, hotJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningNewsCrawlJob, aStockMorningPreviewJob, aStockMorningJob, aStockAfternoonPreviewJob, aStockAfternoonJob, aStockAfternoonOpenRefreshJob, aStockDailyBacktestRefreshJob, aStockAuctionJob, aStockHoldingsJob, stockResearchJob, investorRelationsJob Job
 	for _, job := range listEnvelope.Data {
 		switch job.Name {
 		case "crawl-link-heartbeat":
@@ -239,6 +239,8 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 			panewsJob = job
 		case "theblock-latest-crawl":
 			theBlockJob = job
+		case "a-stock-morning-news-crawl":
+			aStockMorningNewsCrawlJob = job
 		case "a-stock-morning-recommendation":
 			aStockMorningJob = job
 		case "a-stock-morning-recommendation-preview":
@@ -278,6 +280,9 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	}
 	if theBlockJob.Name == "" {
 		t.Fatalf("expected theblock scheduler job, got %+v", listEnvelope.Data)
+	}
+	if aStockMorningNewsCrawlJob.Cron != "0 5 9 * * ?" || aStockMorningNewsCrawlJob.NextRunAt == nil {
+		t.Fatalf("expected A股 morning news crawl cron metadata, got %+v", aStockMorningNewsCrawlJob)
 	}
 	if aStockMorningJob.Cron != "0 32 9 * * ?" || aStockMorningJob.NextRunAt == nil {
 		t.Fatalf("expected A股 morning recommendation cron metadata, got %+v", aStockMorningJob)
@@ -485,6 +490,56 @@ func TestRunAStockRecommendationGeneratesMorningSnapshot(t *testing.T) {
 	}
 	if len(generatedPeriods) != 1 || generatedPeriods[0] != "morning" || len(generatedPhases) != 1 || generatedPhases[0] != "final" {
 		t.Fatalf("expected morning final recommendation snapshot generation, got periods=%v phases=%v", generatedPeriods, generatedPhases)
+	}
+}
+
+func TestRunAStockWindowNewsCrawlForDateCrawlsMorningSourcesOnly(t *testing.T) {
+	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/a-stock/trading-day" || r.URL.Query().Get("date") != "2026-06-16" {
+			t.Fatalf("unexpected trading-day request: %s", r.URL.String())
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"date":           "2026-06-16",
+			"is_trading_day": true,
+			"source":         "test",
+			"reason":         "trading_day",
+			"message":        "open",
+		})
+	}))
+	defer akshare.Close()
+
+	var sources []string
+	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/admin/tasks/crawl" {
+			t.Fatalf("unexpected crawler request: %s %s", r.Method, r.URL.String())
+		}
+		if r.Header.Get("X-Service-Token") != "secret-token" {
+			t.Fatalf("expected service token header, got %q", r.Header.Get("X-Service-Token"))
+		}
+		if r.URL.Query().Get("start") != "2026-06-16 08:00:00" ||
+			r.URL.Query().Get("end") != "2026-06-16 09:26:59" ||
+			r.URL.Query().Get("time_field") != "publish_time" {
+			t.Fatalf("unexpected A股 morning news crawl window query: %s", r.URL.RawQuery)
+		}
+		sources = append(sources, r.URL.Query().Get("source_type"))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer crawler.Close()
+
+	worker := NewWorker(config.Config{
+		AStockAuctionURL:      akshare.URL,
+		CrawlerURL:            crawler.URL,
+		HTTPTimeout:           time.Second,
+		SchedulerCrawlTimeout: time.Second,
+		ServiceToken:          "secret-token",
+	})
+
+	if err := worker.runAStockWindowNewsCrawlForDate(context.Background(), "2026-06-16", "morning", "preopen"); err != nil {
+		t.Fatalf("runAStockWindowNewsCrawlForDate error: %v", err)
+	}
+	sort.Strings(sources)
+	if strings.Join(sources, ",") != "cls_telegraph,eastmoney_kuaixun,flash,headline,sina_finance_7x24,wallstreetcn_a_stock" {
+		t.Fatalf("expected all enabled A股 news sources to be crawled, got %v", sources)
 	}
 }
 
