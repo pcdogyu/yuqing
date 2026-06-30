@@ -18,6 +18,7 @@ import (
 
 	"github.com/pcdogyu/yuqing/go/internal/config"
 	"github.com/pcdogyu/yuqing/go/internal/model"
+	"github.com/pcdogyu/yuqing/go/internal/provider"
 	sqlitestore "github.com/pcdogyu/yuqing/go/internal/store/sqlite"
 )
 
@@ -38,7 +39,7 @@ func TestNewWorkerSetsTokenHeader(t *testing.T) {
 func TestRunCrawlUsesDedicatedTimeout(t *testing.T) {
 	var sawToken atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/admin/tasks/crawl" || r.URL.Query().Get("source_type") != "headline" {
+		if r.URL.Path != "/api/v1/admin/tasks/crawl" || r.URL.Query().Get("source_type") != provider.SourceTypeHeadline {
 			t.Fatalf("unexpected crawl request: path=%s query=%s", r.URL.Path, r.URL.RawQuery)
 		}
 		if r.Header.Get("X-Service-Token") == "secret-token" {
@@ -59,7 +60,7 @@ func TestRunCrawlUsesDedicatedTimeout(t *testing.T) {
 		WechatPushInterval:    time.Hour,
 	})
 
-	if err := worker.runCrawl(context.Background(), "headline"); err != nil {
+	if err := worker.runCrawl(context.Background(), provider.SourceTypeHeadline); err != nil {
 		t.Fatalf("expected crawl request to use dedicated timeout, got %v", err)
 	}
 	if !sawToken.Load() {
@@ -94,7 +95,7 @@ func TestRunCrawlIncludesCrawlerErrorMessage(t *testing.T) {
 
 func TestRunCrawlWithOptionsPassesWindowQuery(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/admin/tasks/crawl" || r.URL.Query().Get("source_type") != "flash" {
+		if r.URL.Path != "/api/v1/admin/tasks/crawl" || r.URL.Query().Get("source_type") != provider.SourceTypeFlash {
 			t.Fatalf("unexpected crawl request: path=%s query=%s", r.URL.Path, r.URL.RawQuery)
 		}
 		if r.URL.Query().Get("start") != "2026-06-16 08:00:00" ||
@@ -113,7 +114,7 @@ func TestRunCrawlWithOptionsPassesWindowQuery(t *testing.T) {
 		ExternalRetryWait:     time.Millisecond,
 	})
 
-	err := worker.runCrawlWithOptions(context.Background(), "flash", model.CrawlOptions{
+	err := worker.runCrawlWithOptions(context.Background(), provider.SourceTypeFlash, model.CrawlOptions{
 		Start:     "2026-06-16 08:00:00",
 		End:       "2026-06-16 09:26:59",
 		TimeField: "publish_time",
@@ -428,7 +429,7 @@ func TestRunAStockRecommendationCrawlsSourcesAndQueriesWindow(t *testing.T) {
 		t.Fatalf("runAStockRecommendationForDate error: %v", err)
 	}
 	sort.Strings(sources)
-	if strings.Join(sources, ",") != "cls_telegraph,eastmoney_kuaixun,flash,headline,sina_finance_7x24,wallstreetcn_a_stock" {
+	if strings.Join(sources, ",") != "cls_telegraph,eastmoney_kuaixun,jin10_kuaixun,jin10_资讯,sina_finance_7x24,wallstreetcn_a_stock" {
 		t.Fatalf("expected all A股 sources to be crawled, got %v", sources)
 	}
 	if len(generatedPeriods) != 1 || generatedPeriods[0] != "afternoon" || len(generatedPhases) != 1 || generatedPhases[0] != "final" {
@@ -543,7 +544,7 @@ func TestRunAStockWindowNewsCrawlForDateCrawlsMorningSourcesOnly(t *testing.T) {
 		t.Fatalf("runAStockWindowNewsCrawlForDate error: %v", err)
 	}
 	sort.Strings(sources)
-	if strings.Join(sources, ",") != "cls_telegraph,eastmoney_kuaixun,flash,headline,sina_finance_7x24,wallstreetcn_a_stock" {
+	if strings.Join(sources, ",") != "cls_telegraph,eastmoney_kuaixun,jin10_kuaixun,jin10_资讯,sina_finance_7x24,wallstreetcn_a_stock" {
 		t.Fatalf("expected all enabled A股 news sources to be crawled, got %v", sources)
 	}
 }
@@ -590,7 +591,7 @@ func TestRunAStockWindowNewsCrawlForDateCrawlsMiddaySources(t *testing.T) {
 		t.Fatalf("runAStockWindowNewsCrawlForDate midday error: %v", err)
 	}
 	sort.Strings(sources)
-	if strings.Join(sources, ",") != "cls_telegraph,eastmoney_kuaixun,flash,headline,jin10_full,sina_finance_7x24,wallstreetcn_a_stock" {
+	if strings.Join(sources, ",") != "cls_telegraph,eastmoney_kuaixun,jin10_full,jin10_kuaixun,jin10_资讯,sina_finance_7x24,wallstreetcn_a_stock" {
 		t.Fatalf("expected midday crawl to cover all A股 news sources including 金十全站, got %v", sources)
 	}
 }
@@ -639,7 +640,7 @@ func TestRunAStockRecommendationContinuesWhenOneSourceFails(t *testing.T) {
 	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sourceType := r.URL.Query().Get("source_type")
 		sources = append(sources, sourceType)
-		if sourceType == "headline" {
+		if sourceType == provider.SourceTypeHeadline {
 			w.WriteHeader(http.StatusBadGateway)
 			_, _ = w.Write([]byte(`{"code":502,"message":"headline timeout","data":null}`))
 			return

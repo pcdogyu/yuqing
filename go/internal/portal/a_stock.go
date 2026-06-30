@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/pcdogyu/yuqing/go/internal/model"
+	"github.com/pcdogyu/yuqing/go/internal/provider"
 )
 
 type aStockContext struct {
@@ -472,7 +473,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 	}
 	b.WriteString(`</div></div><p class="astock-muted">已接入已有新闻抓取链路：抓取按钮会触发金十快讯、金十资讯、金十全站信息、东方财富网快讯、华尔街见闻、财联社和新浪财经，页面按策略日期和推荐窗口聚合财经新闻。行情接口读取 `)
 	b.WriteString(aStockMarketConfigHint())
-	b.WriteString(`，用于展示昨日收盘价、现价、涨跌幅和消息回测。</p><div class="astock-source-list"><span class="astock-badge">flash: https://www.jin10.com/</span><span class="astock-badge">headline: https://xnews.jin10.com/</span><span class="astock-badge">jin10_full: 金十全站</span><span class="astock-badge">eastmoney_kuaixun: 东方财富网</span><span class="astock-badge">wallstreetcn_a_stock: 华尔街见闻</span><span class="astock-badge">cls_telegraph: 财联社</span><span class="astock-badge">sina_finance_7x24: 新浪财经</span></div></section>`)
+	b.WriteString(`，用于展示昨日收盘价、现价、涨跌幅和消息回测。</p><div class="astock-source-list"><span class="astock-badge">jin10_kuaixun: https://www.jin10.com/</span><span class="astock-badge">jin10_资讯: https://xnews.jin10.com/</span><span class="astock-badge">jin10_full: 金十全站</span><span class="astock-badge">eastmoney_kuaixun: 东方财富网</span><span class="astock-badge">wallstreetcn_a_stock: 华尔街见闻</span><span class="astock-badge">cls_telegraph: 财联社</span><span class="astock-badge">sina_finance_7x24: 新浪财经</span></div></section>`)
 
 	renderAStockNewsSections(&b, morningCtx, afternoonCtx)
 	renderAStockHotspotSection(&b, ctx.Hotspots)
@@ -888,7 +889,7 @@ func renderAStockTooltip(b *strings.Builder, text string) {
 func summarizeAStockNewsSources(items []model.Item, runs []aStockSourceRun) []aStockNewsSourceCount {
 	counts := make(map[string]int)
 	for _, item := range items {
-		sourceType := strings.TrimSpace(item.SourceType)
+		sourceType := provider.CanonicalSourceType(item.SourceType)
 		if sourceType == "" {
 			sourceType = "unknown"
 		}
@@ -896,8 +897,10 @@ func summarizeAStockNewsSources(items []model.Item, runs []aStockSourceRun) []aS
 	}
 	runBySource := make(map[string]aStockSourceRun, len(runs))
 	for _, run := range runs {
-		if run.SourceType != "" {
-			runBySource[run.SourceType] = run
+		sourceType := provider.CanonicalSourceType(run.SourceType)
+		if sourceType != "" {
+			run.SourceType = sourceType
+			runBySource[sourceType] = run
 		}
 	}
 	sources := aStockCrawlSources()
@@ -2707,7 +2710,7 @@ func mergeAStockPublishWindowArticles(primary []model.Item, capturedFallback []m
 	seen := make(map[string]struct{}, len(primary)+len(capturedFallback))
 	result := make([]model.Item, 0, len(primary)+len(capturedFallback))
 	for _, item := range primary {
-		sourceType := strings.TrimSpace(item.SourceType)
+		sourceType := provider.CanonicalSourceType(item.SourceType)
 		if sourceType != "" {
 			sourceHasPublish[sourceType] = struct{}{}
 		}
@@ -2718,7 +2721,7 @@ func mergeAStockPublishWindowArticles(primary []model.Item, capturedFallback []m
 		if strings.TrimSpace(item.PublishTime) != "" {
 			continue
 		}
-		sourceType := strings.TrimSpace(item.SourceType)
+		sourceType := provider.CanonicalSourceType(item.SourceType)
 		if _, ok := sourceHasPublish[sourceType]; ok {
 			continue
 		}
@@ -4663,24 +4666,24 @@ func (s *Server) triggerAStockWindowCrawl(strategyDate string, periodKey string)
 }
 
 func aStockCrawlSources() []string {
-	return []string{"flash", "headline", "jin10_full", "eastmoney_kuaixun", "wallstreetcn_a_stock", "cls_telegraph", "sina_finance_7x24"}
+	return []string{provider.SourceTypeFlash, provider.SourceTypeHeadline, provider.SourceTypeJin10Full, provider.SourceTypeEastMoneyKuaixun, provider.SourceTypeWallStreetCNAStock, provider.SourceTypeCLSTelegraph, provider.SourceTypeSinaFinance7x24}
 }
 
 func aStockNewsSourceLabel(sourceType string) string {
-	switch strings.TrimSpace(sourceType) {
-	case "flash":
+	switch provider.CanonicalSourceType(sourceType) {
+	case provider.SourceTypeFlash:
 		return "金十快讯"
-	case "headline":
+	case provider.SourceTypeHeadline:
 		return "金十资讯"
-	case "jin10_full":
+	case provider.SourceTypeJin10Full:
 		return "金十全站"
-	case "eastmoney_kuaixun":
+	case provider.SourceTypeEastMoneyKuaixun:
 		return "东方财富网"
-	case "wallstreetcn_a_stock":
+	case provider.SourceTypeWallStreetCNAStock:
 		return "华尔街见闻"
-	case "cls_telegraph":
+	case provider.SourceTypeCLSTelegraph:
 		return "财联社"
-	case "sina_finance_7x24":
+	case provider.SourceTypeSinaFinance7x24:
 		return "新浪财经"
 	default:
 		return nonEmpty(strings.TrimSpace(sourceType), "未知来源")
@@ -4801,9 +4804,12 @@ func normalizeAStockRecommendationPhase(value string) string {
 
 func filterAStockNews(items []model.Item) []model.Item {
 	filtered := make([]model.Item, 0, len(items))
+	allowed := make(map[string]struct{}, len(aStockCrawlSources()))
+	for _, sourceType := range aStockCrawlSources() {
+		allowed[sourceType] = struct{}{}
+	}
 	for _, item := range items {
-		sourceType := strings.TrimSpace(item.SourceType)
-		if sourceType != "flash" && sourceType != "headline" && sourceType != "jin10_full" && sourceType != "eastmoney_kuaixun" && sourceType != "wallstreetcn_a_stock" && sourceType != "cls_telegraph" && sourceType != "sina_finance_7x24" {
+		if _, ok := allowed[provider.CanonicalSourceType(item.SourceType)]; !ok {
 			continue
 		}
 		filtered = append(filtered, item)

@@ -15,6 +15,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/pcdogyu/yuqing/go/internal/model"
+	"github.com/pcdogyu/yuqing/go/internal/provider"
 )
 
 type Job struct {
@@ -212,17 +213,17 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 			Interval:    w.cfg.FlashInterval,
 			Enabled:     true,
 			Run: func(ctx context.Context) error {
-				return w.runCrawl(ctx, "flash")
+				return w.runCrawl(ctx, provider.SourceTypeFlash)
 			},
 		}, "FlashCrawlerQuartz", "0/15 * * * * ?"),
 		withJobMeta(jobDefinition{
 			Name:        "headline-crawl",
 			Group:       "crawl",
-			Description: "金十头条抓取，延续 Java 新闻采集链路",
+			Description: "金十资讯抓取，延续 Java 新闻采集链路",
 			Interval:    w.cfg.HeadlineInterval,
 			Enabled:     true,
 			Run: func(ctx context.Context) error {
-				return w.runCrawl(ctx, "headline")
+				return w.runCrawl(ctx, provider.SourceTypeHeadline)
 			},
 		}, "HeadlineCrawlerQuartz", "0 0/1 * * * ?"),
 		withJobMeta(jobDefinition{
@@ -633,8 +634,8 @@ func (w *Worker) runCrawlLinkHeartbeat(ctx context.Context) error {
 
 func (w *Worker) crawlLinkHeartbeatSites() []crawlLinkHeartbeatSite {
 	sites := []crawlLinkHeartbeatSite{
-		{SourceType: "flash", Name: "金十快讯", URL: "https://www.jin10.com/"},
-		{SourceType: "headline", Name: "金十头条", URL: "https://xnews.jin10.com/"},
+		{SourceType: provider.SourceTypeFlash, Name: "金十快讯", URL: "https://www.jin10.com/"},
+		{SourceType: provider.SourceTypeHeadline, Name: "金十资讯", URL: "https://xnews.jin10.com/"},
 	}
 	if w.cfg.Jin10FullEnabled {
 		sites = append(sites, crawlLinkHeartbeatSite{SourceType: "jin10_full", Name: "金十全站", URL: "https://www.jin10.com/"})

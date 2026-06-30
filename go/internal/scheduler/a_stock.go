@@ -11,9 +11,10 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/pcdogyu/yuqing/go/internal/model"
+	"github.com/pcdogyu/yuqing/go/internal/provider"
 )
 
-var aStockRecommendationSources = []string{"flash", "headline", "jin10_full", "eastmoney_kuaixun", "wallstreetcn_a_stock", "cls_telegraph", "sina_finance_7x24"}
+var aStockRecommendationSources = []string{provider.SourceTypeFlash, provider.SourceTypeHeadline, provider.SourceTypeJin10Full, provider.SourceTypeEastMoneyKuaixun, provider.SourceTypeWallStreetCNAStock, provider.SourceTypeCLSTelegraph, provider.SourceTypeSinaFinance7x24}
 
 func (w *Worker) runAStockRecommendation(ctx context.Context, period string, phase string) error {
 	location, err := time.LoadLocation("Asia/Shanghai")

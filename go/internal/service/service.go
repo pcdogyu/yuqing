@@ -316,8 +316,9 @@ func channelMatches(channels, sourceType string) bool {
 	if len(parts) == 0 {
 		return true
 	}
+	sourceType = provider.CanonicalSourceType(sourceType)
 	for _, part := range parts {
-		if strings.EqualFold(part, sourceType) || strings.EqualFold(part, "all") {
+		if strings.EqualFold(provider.CanonicalSourceType(part), sourceType) || strings.EqualFold(part, "all") {
 			return true
 		}
 	}

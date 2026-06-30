@@ -55,6 +55,12 @@ func TestValidSourceType(t *testing.T) {
 	if got := validSourceType(provider.SourceTypeHeadline); got != provider.SourceTypeHeadline {
 		t.Fatalf("expected headline source type, got %q", got)
 	}
+	if got := validSourceType(provider.LegacySourceTypeFlash); got != provider.SourceTypeFlash {
+		t.Fatalf("expected legacy flash source type to normalize, got %q", got)
+	}
+	if got := validSourceType(provider.LegacySourceTypeHeadline); got != provider.SourceTypeHeadline {
+		t.Fatalf("expected legacy headline source type to normalize, got %q", got)
+	}
 	if got := validSourceType(provider.SourceTypeJin10Full); got != provider.SourceTypeJin10Full {
 		t.Fatalf("expected jin10 full source type, got %q", got)
 	}

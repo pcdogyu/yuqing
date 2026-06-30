@@ -8,8 +8,10 @@ import (
 )
 
 const (
-	SourceTypeFlash              = "flash"
-	SourceTypeHeadline           = "headline"
+	SourceTypeFlash              = "jin10_kuaixun"
+	SourceTypeHeadline           = "jin10_资讯"
+	LegacySourceTypeFlash        = "flash"
+	LegacySourceTypeHeadline     = "headline"
 	SourceTypeJin10Full          = "jin10_full"
 	SourceTypeCryptoX            = "crypto_x"
 	SourceTypeCryptoTelegram     = "crypto_telegram"
@@ -25,9 +27,9 @@ const (
 
 func ValidSourceType(value string) string {
 	switch strings.TrimSpace(value) {
-	case SourceTypeFlash:
+	case SourceTypeFlash, LegacySourceTypeFlash:
 		return SourceTypeFlash
-	case SourceTypeHeadline:
+	case SourceTypeHeadline, LegacySourceTypeHeadline:
 		return SourceTypeHeadline
 	case SourceTypeJin10Full:
 		return SourceTypeJin10Full
@@ -54,6 +56,27 @@ func ValidSourceType(value string) string {
 	default:
 		return ""
 	}
+}
+
+func SourceTypeAliases(value string) []string {
+	switch ValidSourceType(value) {
+	case SourceTypeFlash:
+		return []string{SourceTypeFlash, LegacySourceTypeFlash}
+	case SourceTypeHeadline:
+		return []string{SourceTypeHeadline, LegacySourceTypeHeadline}
+	case "":
+		return nil
+	default:
+		return []string{ValidSourceType(value)}
+	}
+}
+
+func CanonicalSourceType(value string) string {
+	canonical := ValidSourceType(value)
+	if canonical != "" {
+		return canonical
+	}
+	return strings.TrimSpace(value)
 }
 
 type Provider interface {
@@ -83,7 +106,7 @@ type Registry struct {
 }
 
 func (r Registry) Resolve(sourceType string) Provider {
-	switch sourceType {
+	switch ValidSourceType(sourceType) {
 	case SourceTypeFlash:
 		return r.Flash
 	case SourceTypeHeadline:

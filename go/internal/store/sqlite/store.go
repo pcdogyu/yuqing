@@ -14,6 +14,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/pcdogyu/yuqing/go/internal/model"
+	"github.com/pcdogyu/yuqing/go/internal/provider"
 )
 
 const (
@@ -1017,8 +1018,14 @@ func (s *Store) ListCrawlRuns(ctx context.Context, limit int, sourceType string)
 	where := ""
 	args := make([]any, 0, 2)
 	if sourceType != "" {
-		where = "WHERE source_type = ?"
-		args = append(args, sourceType)
+		sourceTypes := provider.SourceTypeAliases(sourceType)
+		if len(sourceTypes) == 0 {
+			sourceTypes = []string{sourceType}
+		}
+		where = "WHERE source_type IN (" + placeholders(len(sourceTypes)) + ")"
+		for _, value := range sourceTypes {
+			args = append(args, value)
+		}
 	}
 	query := `SELECT id, source_type, template_id, template_name, template_snapshot, started_at, finished_at, status, fetched_count, inserted_count, updated_count, error_text FROM crawl_runs ` + where + ` ORDER BY started_at DESC, id DESC LIMIT ?`
 	args = append(args, limit)
@@ -1128,8 +1135,14 @@ func buildItemFilter(filter model.ArticleFilter) (where string, args []any, join
 		args = append(args, filter.ProjectID)
 	}
 	if filter.SourceType != "" {
-		filters = append(filters, "items.source_type = ?")
-		args = append(args, filter.SourceType)
+		sourceTypes := provider.SourceTypeAliases(filter.SourceType)
+		if len(sourceTypes) == 0 {
+			sourceTypes = []string{filter.SourceType}
+		}
+		filters = append(filters, "items.source_type IN ("+placeholders(len(sourceTypes))+")")
+		for _, value := range sourceTypes {
+			args = append(args, value)
+		}
 	}
 	if filter.Keyword != "" {
 		filters = append(filters, "(items.title LIKE ? OR items.content LIKE ? OR items.summary LIKE ?)")
@@ -1158,6 +1171,13 @@ func itemFilterTimeColumn(raw string) string {
 	default:
 		return "captured_at"
 	}
+}
+
+func placeholders(count int) string {
+	if count <= 0 {
+		return ""
+	}
+	return strings.TrimRight(strings.Repeat("?,", count), ",")
 }
 
 const itemListSelectColumns = "items.id, items.source_type, items.source_key, items.title, items.content, items.summary, items.publish_time, items.publish_time_text, items.detail_url, items.source_url, items.tag_flags, items.from_text, items.external_source_host, items.is_vip, items.has_image, items.raw_payload, items.captured_at, items.created_at, items.updated_at"

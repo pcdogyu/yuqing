@@ -18,11 +18,17 @@ import (
 )
 
 func TestValidSourceType(t *testing.T) {
-	if got := validSourceType("flash"); got != "flash" {
-		t.Fatalf("expected flash, got %q", got)
+	if got := validSourceType(provider.SourceTypeFlash); got != provider.SourceTypeFlash {
+		t.Fatalf("expected jin10_kuaixun, got %q", got)
 	}
-	if got := validSourceType("headline"); got != "headline" {
-		t.Fatalf("expected headline, got %q", got)
+	if got := validSourceType(provider.SourceTypeHeadline); got != provider.SourceTypeHeadline {
+		t.Fatalf("expected jin10_资讯, got %q", got)
+	}
+	if got := validSourceType(provider.LegacySourceTypeFlash); got != provider.SourceTypeFlash {
+		t.Fatalf("expected legacy flash to normalize to jin10_kuaixun, got %q", got)
+	}
+	if got := validSourceType(provider.LegacySourceTypeHeadline); got != provider.SourceTypeHeadline {
+		t.Fatalf("expected legacy headline to normalize to jin10_资讯, got %q", got)
 	}
 	if got := validSourceType("jin10_full"); got != "jin10_full" {
 		t.Fatalf("expected jin10_full, got %q", got)

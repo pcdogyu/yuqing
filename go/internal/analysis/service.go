@@ -18,6 +18,7 @@ import (
 	"github.com/pcdogyu/yuqing/go/internal/apiutil"
 	"github.com/pcdogyu/yuqing/go/internal/config"
 	"github.com/pcdogyu/yuqing/go/internal/model"
+	"github.com/pcdogyu/yuqing/go/internal/provider"
 )
 
 type Store interface {
@@ -313,7 +314,7 @@ func buildPublicOpinionAnalysisViewFromItems(criteria model.PublicOpinionAnalysi
 		})
 	}
 	stats := map[string]any{
-		"website":      bucketToNamedValues(bucketSourceCounts(items, []string{"flash", "headline"})),
+		"website":      bucketToNamedValues(bucketSourceCounts(items, []string{provider.SourceTypeFlash, provider.SourceTypeHeadline})),
 		"weibo":        bucketToNamedValues(bucketSourceCounts(items, []string{"weibo"})),
 		"social_media": bucketToNamedValues(bucketSourceCounts(items, []string{"wechat", "social"})),
 		"wemedia":      bucketToNamedValues(bucketSourceCounts(items, nil)),
@@ -482,16 +483,17 @@ func articleTitles(items []model.Item) []string {
 func bucketSourceCounts(items []model.Item, kinds []string) map[string]int {
 	allowed := map[string]struct{}{}
 	for _, kind := range kinds {
-		allowed[strings.ToLower(strings.TrimSpace(kind))] = struct{}{}
+		allowed[strings.ToLower(provider.CanonicalSourceType(kind))] = struct{}{}
 	}
 	counts := map[string]int{}
 	for _, item := range items {
-		name := strings.TrimSpace(firstNonEmpty(item.FromText, item.SourceType))
+		sourceType := provider.CanonicalSourceType(item.SourceType)
+		name := strings.TrimSpace(firstNonEmpty(item.FromText, sourceType))
 		if name == "" {
 			name = "未知来源"
 		}
 		if len(allowed) > 0 {
-			if _, ok := allowed[strings.ToLower(strings.TrimSpace(item.SourceType))]; !ok {
+			if _, ok := allowed[strings.ToLower(sourceType)]; !ok {
 				continue
 			}
 		}

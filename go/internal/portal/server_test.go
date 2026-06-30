@@ -26,6 +26,7 @@ import (
 	"github.com/pcdogyu/yuqing/go/internal/config"
 	"github.com/pcdogyu/yuqing/go/internal/model"
 	"github.com/pcdogyu/yuqing/go/internal/nlp"
+	"github.com/pcdogyu/yuqing/go/internal/provider"
 )
 
 var testLastCrawlRequest struct {
@@ -1346,7 +1347,7 @@ func TestAStockBackfillWindowActionPassesMorningWindow(t *testing.T) {
 	if rr.Code != http.StatusSeeOther {
 		t.Fatalf("expected redirect, got %d", rr.Code)
 	}
-	for _, sourceType := range []string{"flash", "headline", "jin10_full", "eastmoney_kuaixun", "wallstreetcn_a_stock", "cls_telegraph", "sina_finance_7x24"} {
+	for _, sourceType := range []string{provider.SourceTypeFlash, provider.SourceTypeHeadline, provider.SourceTypeJin10Full, provider.SourceTypeEastMoneyKuaixun, provider.SourceTypeWallStreetCNAStock, provider.SourceTypeCLSTelegraph, provider.SourceTypeSinaFinance7x24} {
 		if !seen[sourceType] {
 			t.Fatalf("expected source %s to be backfilled, got %+v", sourceType, seen)
 		}
@@ -5827,7 +5828,7 @@ func TestAStockCrawlActionTriggersAllJin10Sources(t *testing.T) {
 		t.Fatalf("expected redirect, got %d", rr.Code)
 	}
 	sort.Strings(sources)
-	if strings.Join(sources, ",") != "cls_telegraph,eastmoney_kuaixun,flash,headline,jin10_full,sina_finance_7x24,wallstreetcn_a_stock" {
+	if strings.Join(sources, ",") != "cls_telegraph,eastmoney_kuaixun,jin10_full,jin10_kuaixun,jin10_资讯,sina_finance_7x24,wallstreetcn_a_stock" {
 		t.Fatalf("expected all A股 public news sources to be crawled, got %v", sources)
 	}
 	if loc := rr.Header().Get("Location"); !strings.Contains(loc, "/a-stock?") || !strings.Contains(loc, "date=2026-06-16") {

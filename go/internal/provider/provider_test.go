@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/pcdogyu/yuqing/go/internal/model"
@@ -41,6 +42,12 @@ func TestRegistryResolve(t *testing.T) {
 	if got := registry.Resolve(SourceTypeHeadline); got != headline {
 		t.Fatalf("expected headline provider, got %#v", got)
 	}
+	if got := registry.Resolve(LegacySourceTypeFlash); got != flash {
+		t.Fatalf("expected legacy flash provider, got %#v", got)
+	}
+	if got := registry.Resolve(LegacySourceTypeHeadline); got != headline {
+		t.Fatalf("expected legacy headline provider, got %#v", got)
+	}
 	if got := registry.Resolve(SourceTypeJin10Full); got != jin10Full {
 		t.Fatalf("expected jin10 full provider, got %#v", got)
 	}
@@ -76,6 +83,23 @@ func TestRegistryResolve(t *testing.T) {
 	}
 	if got := registry.Resolve("unknown"); got != nil {
 		t.Fatalf("expected nil for unknown source type, got %#v", got)
+	}
+}
+
+func TestSourceTypeAliases(t *testing.T) {
+	if got := ValidSourceType(LegacySourceTypeFlash); got != SourceTypeFlash {
+		t.Fatalf("expected legacy flash to normalize to %q, got %q", SourceTypeFlash, got)
+	}
+	if got := ValidSourceType(LegacySourceTypeHeadline); got != SourceTypeHeadline {
+		t.Fatalf("expected legacy headline to normalize to %q, got %q", SourceTypeHeadline, got)
+	}
+	flashAliases := strings.Join(SourceTypeAliases(SourceTypeFlash), ",")
+	if flashAliases != SourceTypeFlash+","+LegacySourceTypeFlash {
+		t.Fatalf("unexpected flash aliases: %s", flashAliases)
+	}
+	headlineAliases := strings.Join(SourceTypeAliases(SourceTypeHeadline), ",")
+	if headlineAliases != SourceTypeHeadline+","+LegacySourceTypeHeadline {
+		t.Fatalf("unexpected headline aliases: %s", headlineAliases)
 	}
 }
 

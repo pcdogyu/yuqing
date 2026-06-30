@@ -11,6 +11,7 @@ import (
 	"github.com/pcdogyu/yuqing/go/internal/apiutil"
 	"github.com/pcdogyu/yuqing/go/internal/cryptoutil"
 	"github.com/pcdogyu/yuqing/go/internal/model"
+	"github.com/pcdogyu/yuqing/go/internal/provider"
 )
 
 func (s *Service) handleCryptoPairResolve(w http.ResponseWriter, r *http.Request) {
@@ -341,10 +342,10 @@ func cryptoArticleScore(item model.Item, term string, resolution model.CryptoPai
 		recencyScore = 0.8
 	}
 	sourceScore := 1.0
-	switch item.SourceType {
-	case "headline":
+	switch provider.CanonicalSourceType(item.SourceType) {
+	case provider.SourceTypeHeadline:
 		sourceScore = 1.5
-	case "flash":
+	case provider.SourceTypeFlash:
 		sourceScore = 1.2
 	case "foresight_newsflash", "coindesk_zh_latest", "panews_newsflash", "theblock_latest":
 		sourceScore = 1.4

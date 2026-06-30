@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/pcdogyu/yuqing/go/internal/model"
+	"github.com/pcdogyu/yuqing/go/internal/provider"
 )
 
 func TestUpsertAndListItems(t *testing.T) {
@@ -43,6 +44,13 @@ func TestUpsertAndListItems(t *testing.T) {
 	}
 	if list.Items[0].SourceType != "headline" {
 		t.Fatalf("unexpected source type: %s", list.Items[0].SourceType)
+	}
+	canonicalList, err := store.ListItems(ctx, model.ArticleFilter{Page: 1, PageSize: 10, Keyword: "华尔街", SourceType: provider.SourceTypeHeadline})
+	if err != nil {
+		t.Fatalf("ListItems canonical source error: %v", err)
+	}
+	if canonicalList.Total != 1 || len(canonicalList.Items) != 1 || canonicalList.Items[0].SourceType != "headline" {
+		t.Fatalf("expected canonical source filter to include legacy headline row, got %+v", canonicalList)
 	}
 }
 

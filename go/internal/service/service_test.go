@@ -104,6 +104,18 @@ func TestCrawlerRunWithOptionsFiltersPublishTimeWindow(t *testing.T) {
 	}
 }
 
+func TestChannelMatchesJin10LegacySourceTypes(t *testing.T) {
+	if !channelMatches("flash,headline", provider.SourceTypeFlash) {
+		t.Fatal("expected legacy flash channel to match jin10_kuaixun")
+	}
+	if !channelMatches("flash,headline", provider.SourceTypeHeadline) {
+		t.Fatal("expected legacy headline channel to match jin10_资讯")
+	}
+	if !channelMatches("jin10_kuaixun,jin10_资讯", provider.LegacySourceTypeHeadline) {
+		t.Fatal("expected canonical channels to match legacy headline")
+	}
+}
+
 func TestCrawlerStartupMarksRunningCrawlRunsInterrupted(t *testing.T) {
 	store, err := sqlitestore.New(filepath.Join(t.TempDir(), "crawler-restart.db"))
 	if err != nil {
