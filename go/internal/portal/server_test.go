@@ -3582,6 +3582,50 @@ func TestAStockAfternoonBacktestSnapshotRejectsLegacyEntryOpen(t *testing.T) {
 	}
 }
 
+func TestAStockRecommendationSnapshotRejectsWaitingMorningBacktest(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/a-stock/recommendations" {
+			http.NotFound(w, r)
+			return
+		}
+		writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{
+			Found:               true,
+			StrategyDate:        "2026-06-30",
+			Period:              "morning",
+			RecommendationsJSON: mustAStockTestJSON(t, []aStockRecommendation{{Code: "603259", Name: "药明康德"}}),
+			BacktestsJSON: mustAStockTestJSON(t, []aStockBacktestRow{{
+				Stock:     "603259 药明康德",
+				EntryOpen: "--",
+				Status:    "等待当日开盘价",
+			}}),
+			BacktestStatus: "已回测 0/1，等待当日开盘价股票 1",
+		})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	ctx := aStockContext{Date: "2026-06-30", Period: "morning"}
+	if srv.applyAStockRecommendationSnapshot(&ctx) {
+		t.Fatalf("expected waiting morning snapshot to be rejected, got %+v", ctx)
+	}
+}
+
+func TestAStockMorningBacktestSnapshotRejectsWaitingEntryOpen(t *testing.T) {
+	backtests := []aStockBacktestRow{{
+		Stock:         "603259 药明康德",
+		EntryOpen:     "--",
+		T0Return:      "--",
+		T0Close:       "--",
+		Status:        "等待当日开盘价",
+		Days:          []aStockBacktestCell{{Close: "--", Return: "--", ReturnClass: "astock-flat"}},
+		BestReturn:    "--",
+		AfternoonOpen: "--",
+	}}
+	if isFreshAStockBacktestSnapshot("morning", backtests) {
+		t.Fatalf("expected waiting morning snapshot to be rejected, got %+v", backtests)
+	}
+}
+
 func TestAStockPopupShowsAndDismissesAfternoonRecommendations(t *testing.T) {
 	setAStockNowForTest(t, time.Date(2026, 6, 23, 12, 57, 0, 0, time.FixedZone("CST", 8*3600)))
 

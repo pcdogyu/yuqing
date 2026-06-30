@@ -2856,17 +2856,25 @@ func isFreshAStockLimitUpReplacementSnapshot(snapshot model.AStockRecommendation
 func isFreshAStockBacktestSnapshot(period string, backtests []aStockBacktestRow) bool {
 	normalizedPeriod := normalizeAStockPeriod(period).Key
 	for _, row := range backtests {
+		if strings.TrimSpace(row.Status) != "" && aStockBacktestStatusNeedsRestore(row.Status) {
+			return false
+		}
 		t0Return := strings.TrimSpace(row.T0Return)
 		t0Close := strings.TrimSpace(row.T0Close)
 		if t0Return != "" && t0Return != "--" && (t0Close == "" || t0Close == "--") {
 			return false
 		}
-		if normalizedPeriod != "afternoon" {
-			continue
+		if normalizedPeriod == "afternoon" {
+			morningOpen := strings.TrimSpace(row.EntryOpen)
+			afternoonOpen := strings.TrimSpace(row.AfternoonOpen)
+			if morningOpen != "" && morningOpen != "--" && (afternoonOpen == "" || afternoonOpen == "--") {
+				return false
+			}
 		}
-		morningOpen := strings.TrimSpace(row.EntryOpen)
-		afternoonOpen := strings.TrimSpace(row.AfternoonOpen)
-		if morningOpen != "" && morningOpen != "--" && (afternoonOpen == "" || afternoonOpen == "--") {
+		if normalizedPeriod == "morning" && aStockBacktestValueMissing(row.EntryOpen) {
+			return false
+		}
+		if normalizedPeriod == "afternoon" && aStockBacktestValueMissing(row.AfternoonOpen) {
 			return false
 		}
 	}
