@@ -2085,6 +2085,71 @@ func TestAStockWindowArticlesSupplementsMissingPublishSourceFromCapturedAt(t *te
 	}
 }
 
+func TestAStockWindowArticlesFetchesAllPublishTimePages(t *testing.T) {
+	firstPage := make([]model.Item, 0, 200)
+	for i := 0; i < 200; i++ {
+		firstPage = append(firstPage, model.Item{
+			ID:          int64(9000 + i),
+			SourceType:  "eastmoney_kuaixun",
+			Title:       fmt.Sprintf("东方财富分页新闻%03d", i),
+			PublishTime: "2026-06-26 09:00:00",
+			CapturedAt:  time.Date(2026, 6, 26, 1, 0, i%60, 0, time.UTC),
+		})
+	}
+	secondPage := []model.Item{
+		{ID: 9301, SourceType: "flash", Title: "第二页金十快讯", PublishTime: "2026-06-26 09:10:00", CapturedAt: time.Date(2026, 6, 26, 1, 10, 0, 0, time.UTC)},
+		{ID: 9302, SourceType: "headline", Title: "第二页金十资讯", PublishTime: "2026-06-26 09:11:00", CapturedAt: time.Date(2026, 6, 26, 1, 11, 0, 0, time.UTC)},
+		{ID: 9303, SourceType: "jin10_full", Title: "第二页金十全站", PublishTime: "2026-06-26 09:12:00", CapturedAt: time.Date(2026, 6, 26, 1, 12, 0, 0, time.UTC)},
+	}
+	seenPublishPages := map[string]bool{}
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/articles" {
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+		if got := r.URL.Query().Get("page_size"); got != "200" {
+			t.Fatalf("expected article page_size=200, got %q", got)
+		}
+		switch r.URL.Query().Get("time_field") {
+		case "publish_time":
+			page := r.URL.Query().Get("page")
+			seenPublishPages[page] = true
+			items := firstPage
+			if page == "2" {
+				items = secondPage
+			}
+			pageNumber, _ := strconv.Atoi(page)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": model.ItemListResult{Items: items, Page: pageNumber, PageSize: 200, Total: 203},
+			})
+		case "captured_at":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0},
+			})
+		default:
+			t.Fatalf("unexpected article time_field: %s", r.URL.RawQuery)
+		}
+	}))
+	defer content.Close()
+
+	start, end := aStockWindow("2026-06-26", "morning")
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	items, err := srv.loadAStockWindowArticles(start, end)
+	if err != nil {
+		t.Fatalf("loadAStockWindowArticles error: %v", err)
+	}
+	if !seenPublishPages["1"] || !seenPublishPages["2"] {
+		t.Fatalf("expected publish_time pagination to fetch pages 1 and 2, got %+v", seenPublishPages)
+	}
+	counts := make(map[string]int)
+	for _, item := range items {
+		counts[item.SourceType]++
+	}
+	if len(items) != 203 || counts["flash"] != 1 || counts["headline"] != 1 || counts["jin10_full"] != 1 {
+		t.Fatalf("expected all paged items including three Jin10 sources, total=%d counts=%+v", len(items), counts)
+	}
+}
+
 func TestAStockNewsSectionSummarizesSources(t *testing.T) {
 	items := make([]model.Item, 0, 12)
 	for i := 1; i <= 12; i++ {

@@ -251,6 +251,8 @@ const (
 	aStockDrawdownFilterThreshold    = -15.0
 	aStockSectorDrawdownPenalty      = 15
 	aStockNewsPageSize               = 10
+	aStockArticleFetchPageSize       = 200
+	aStockArticleFetchMaxPages       = 100
 	aStockRecentLookbackDays         = 5
 	aStockMarketCandidateLimit       = 5000
 	aStockRecommendationLimit        = 12
@@ -2594,15 +2596,13 @@ func (s *Server) loadAStockWindowArticlesWithCache(start time.Time, end time.Tim
 		}
 		return filtered, nil
 	}
-	fallbackResult := model.ItemListResult{}
-	fallbackQuery := "/api/v1/articles?page=1&page_size=200&time_field=captured_at&start=" + url.QueryEscape(start.UTC().Format(time.RFC3339)) + "&end=" + url.QueryEscape(end.UTC().Format(time.RFC3339))
-	if err := s.getJSON(s.cfg.ContentURL+fallbackQuery, &fallbackResult); err != nil {
+	items, err := s.loadAStockWindowArticlePages("captured_at", start, end)
+	if err != nil {
 		if cache != nil {
 			cache.articles[cacheKey] = aStockArticlesCacheEntry{items: filtered}
 		}
 		return filtered, nil
 	}
-	items := filterAStockNews(fallbackResult.Items)
 	if cache != nil {
 		cache.articles[cacheKey] = aStockArticlesCacheEntry{items: items}
 	}
@@ -2610,12 +2610,7 @@ func (s *Server) loadAStockWindowArticlesWithCache(start time.Time, end time.Tim
 }
 
 func (s *Server) loadAStockWindowArticlesByCapturedAt(start time.Time, end time.Time) ([]model.Item, error) {
-	fallbackResult := model.ItemListResult{}
-	fallbackQuery := "/api/v1/articles?page=1&page_size=200&time_field=captured_at&start=" + url.QueryEscape(start.UTC().Format(time.RFC3339)) + "&end=" + url.QueryEscape(end.UTC().Format(time.RFC3339))
-	if err := s.getJSON(s.cfg.ContentURL+fallbackQuery, &fallbackResult); err != nil {
-		return nil, err
-	}
-	return filterAStockNews(fallbackResult.Items), nil
+	return s.loadAStockWindowArticlePages("captured_at", start, end)
 }
 
 func mergeAStockPublishWindowArticles(primary []model.Item, capturedFallback []model.Item) []model.Item {
@@ -2681,19 +2676,69 @@ func (s *Server) loadAStockWindowArticlesByPublishTimeWithCache(start time.Time,
 			return entry.items, entry.err
 		}
 	}
-	result := model.ItemListResult{}
-	query := "/api/v1/articles?page=1&page_size=200&time_field=publish_time&start=" + url.QueryEscape(formatAStockPublishTime(start)) + "&end=" + url.QueryEscape(formatAStockPublishTime(end))
-	if err := s.getJSON(s.cfg.ContentURL+query, &result); err != nil {
+	items, err := s.loadAStockWindowArticlePages("publish_time", start, end)
+	if err != nil {
 		if cache != nil {
 			cache.articles[cacheKey] = aStockArticlesCacheEntry{err: err}
 		}
 		return nil, err
 	}
-	items := filterAStockNews(result.Items)
 	if cache != nil {
 		cache.articles[cacheKey] = aStockArticlesCacheEntry{items: items}
 	}
 	return items, nil
+}
+
+func (s *Server) loadAStockWindowArticlePages(timeField string, start time.Time, end time.Time) ([]model.Item, error) {
+	all := make([]model.Item, 0, aStockArticleFetchPageSize)
+	for page := 1; page <= aStockArticleFetchMaxPages; page++ {
+		result := model.ItemListResult{}
+		query := aStockWindowArticlesQuery(timeField, start, end, page, aStockArticleFetchPageSize)
+		if err := s.getJSON(s.cfg.ContentURL+query, &result); err != nil {
+			return nil, err
+		}
+		if len(result.Items) == 0 {
+			break
+		}
+		all = append(all, result.Items...)
+		if result.Total > 0 && len(all) >= result.Total {
+			break
+		}
+		if len(result.Items) < aStockArticleFetchPageSize {
+			break
+		}
+	}
+	return filterAStockNews(all), nil
+}
+
+func aStockWindowArticlesQuery(timeField string, start time.Time, end time.Time, page int, pageSize int) string {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = aStockArticleFetchPageSize
+	}
+	timeField = strings.TrimSpace(timeField)
+	if timeField == "" {
+		timeField = "captured_at"
+	}
+	startText, endText := aStockWindowArticleQueryBounds(timeField, start, end)
+	query := url.Values{}
+	query.Set("page", fmt.Sprint(page))
+	query.Set("page_size", fmt.Sprint(pageSize))
+	query.Set("time_field", timeField)
+	query.Set("start", startText)
+	query.Set("end", endText)
+	return "/api/v1/articles?" + query.Encode()
+}
+
+func aStockWindowArticleQueryBounds(timeField string, start time.Time, end time.Time) (string, string) {
+	switch strings.ToLower(strings.TrimSpace(timeField)) {
+	case "publish_time", "published_at":
+		return formatAStockPublishTime(start), formatAStockPublishTime(end)
+	default:
+		return start.UTC().Format(time.RFC3339), end.UTC().Format(time.RFC3339)
+	}
 }
 
 func (s *Server) loadAStockMarketCandidates(strategyDate string) []aStockMarketCandidate {
@@ -4608,12 +4653,11 @@ func formatAStockWindowCrawlStats(results []aStockWindowCrawlResult) string {
 }
 
 func (s *Server) countAStockWindowNews(start time.Time, end time.Time) (int, error) {
-	result := model.ItemListResult{}
-	query := "/api/v1/articles?page=1&page_size=200&time_field=publish_time&start=" + url.QueryEscape(formatAStockPublishTime(start)) + "&end=" + url.QueryEscape(formatAStockPublishTime(end))
-	if err := s.getJSON(s.cfg.ContentURL+query, &result); err != nil {
+	items, err := s.loadAStockWindowArticlesByPublishTime(start, end)
+	if err != nil {
 		return 0, err
 	}
-	return len(filterAStockNews(result.Items)), nil
+	return len(items), nil
 }
 
 func aStockWindow(strategyDate string, periodKey string) (time.Time, time.Time) {
