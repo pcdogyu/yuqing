@@ -124,6 +124,8 @@ type Server struct {
 	client        *resty.Client
 	templates     *template.Template
 	upgradeRunner portalUpgradeRunner
+	upgradeMu     sync.Mutex
+	upgradeState  portalUpgradeResult
 	mu            sync.Mutex
 	captchas      map[string]string
 	mobileQRs     map[string]mobileQRCodeState
@@ -409,6 +411,7 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/system/warningmsg", s.requireSession(s.handleSystemWarningMessage))
 	mux.HandleFunc("/system/feedback", s.requireSession(s.handleSystemSectionRedirect("feedback")))
 	mux.HandleFunc("/system/warningedit", s.requireSession(s.handleSystemWarningEdit))
+	mux.HandleFunc("/system/upgrade/status", s.requireSessionJSON(s.handleSystemUpgradeStatus))
 	mux.HandleFunc("/system/upgrade", s.requireSessionJSON(s.handleSystemUpgrade))
 	mux.HandleFunc("/wechat/getQrCode", s.handleWechatGetQrCode)
 	mux.HandleFunc("/wechat/getBindQrCode", s.handleWechatGetBindQRCode)
@@ -4865,7 +4868,51 @@ func collectLegacyLiveRoutes() []legacyRouteSpec {
 }
 
 const portalNavHTML = `<nav><a href="/">总览</a><a href="/projects">项目</a><a href="/monitor-rules">规则</a><a href="/articles">文章</a><a href="/reports">报告</a><a href="/crawl-templates">模板中心</a><a href="/crawl-templates/manage">模板管理</a><a href="/a-stock">A股</a><a href="/stock-research">研报调研</a><a href="/investor-relations">投资者关系</a><a href="/a-stock/holdings">机构持仓</a><a href="/a-stock/auction">集合竞价</a><a href="/crypto">Crypto</a><a href="/system">系统</a><a href="/logs">日志</a><button id="portal-upgrade-button" class="portal-upgrade-button" type="button">升级</button><a class="logout-link" href="/logout">退出</a></nav>`
-const portalUpgradeShellHTML = `<div id="portal-upgrade-mask" class="portal-upgrade-mask" hidden><div class="portal-upgrade-panel" role="dialog" aria-modal="true" aria-labelledby="portal-upgrade-title"><div class="portal-upgrade-header"><div><h2 id="portal-upgrade-title">系统升级</h2><p id="portal-upgrade-status" class="portal-upgrade-status">等待执行</p></div><button id="portal-upgrade-close" class="portal-upgrade-close" type="button">关闭</button></div><pre id="portal-upgrade-log" class="portal-upgrade-log">等待升级日志</pre></div></div><script>(function(){if(window.__portalUpgradeBound){return}window.__portalUpgradeBound=true;function byId(id){return document.getElementById(id)}function now(){var d=new Date();return d.toLocaleTimeString("zh-CN",{hour12:false})}var button=byId("portal-upgrade-button");var mask=byId("portal-upgrade-mask");var close=byId("portal-upgrade-close");var status=byId("portal-upgrade-status");var log=byId("portal-upgrade-log");var hideTimer=0;function show(){if(mask){mask.hidden=false}}function hide(){if(mask){mask.hidden=true}}function scheduleHide(){clearTimeout(hideTimer);hideTimer=setTimeout(hide,15000)}function setLog(text){if(log){log.textContent=text||"无升级日志"}}if(close){close.addEventListener("click",function(){clearTimeout(hideTimer);hide()})}if(button&&mask&&status&&log){button.addEventListener("click",function(){if(button.disabled){return}clearTimeout(hideTimer);show();button.disabled=true;status.textContent="升级执行中";setLog(now()+" 正在触发升级，请等待...\n");fetch("/system/upgrade",{method:"POST",credentials:"same-origin",headers:{"Accept":"application/json"}}).then(function(resp){return resp.json().catch(function(){return {ok:false,message:"升级接口返回非 JSON"}}).then(function(data){data.__httpOK=resp.ok;return data})}).then(function(data){var ok=!!data.ok&&data.__httpOK;status.textContent=ok?"升级完成":"升级失败";setLog(data.log||data.message||"无升级日志");scheduleHide()}).catch(function(err){status.textContent="升级失败";setLog((log.textContent||"")+now()+" 请求失败: "+err.message);scheduleHide()}).finally(function(){button.disabled=false})})}})();</script>`
+const portalUpgradeShellHTML = `<div id="portal-upgrade-mask" class="portal-upgrade-mask" hidden><div class="portal-upgrade-panel" role="dialog" aria-modal="true" aria-labelledby="portal-upgrade-title"><div class="portal-upgrade-header"><div><h2 id="portal-upgrade-title">系统升级</h2><p id="portal-upgrade-status" class="portal-upgrade-status">等待执行</p></div><button id="portal-upgrade-close" class="portal-upgrade-close" type="button">关闭</button></div><pre id="portal-upgrade-log" class="portal-upgrade-log">等待升级日志</pre></div></div><script>
+(function(){
+if(window.__portalUpgradeBound){return}
+window.__portalUpgradeBound=true;
+function byId(id){return document.getElementById(id)}
+function now(){var d=new Date();return d.toLocaleTimeString("zh-CN",{hour12:false})}
+var button=byId("portal-upgrade-button");
+var mask=byId("portal-upgrade-mask");
+var close=byId("portal-upgrade-close");
+var status=byId("portal-upgrade-status");
+var log=byId("portal-upgrade-log");
+var hideTimer=0;
+var pollTimer=0;
+function show(){if(mask){mask.hidden=false}}
+function hide(){if(mask){mask.hidden=true}}
+function scheduleHide(){clearTimeout(hideTimer);hideTimer=setTimeout(hide,15000)}
+function stopPoll(){clearTimeout(pollTimer);pollTimer=0}
+function schedulePoll(){stopPoll();pollTimer=setTimeout(pollStatus,1500)}
+function setLog(text){if(log){log.textContent=text||"无升级日志"}}
+function parseJSON(resp){return resp.json().catch(function(){return {ok:false,message:"升级接口返回非 JSON"}}).then(function(data){data.__httpOK=resp.ok;return data})}
+function renderUpgrade(data){
+data=data||{};
+if(data.running){status.textContent=data.message||"升级执行中";button.disabled=true;setLog((data.log||"")+"\n"+now()+" 状态检查: "+(data.message||"升级仍在后台执行"));schedulePoll();return}
+stopPoll();
+button.disabled=false;
+var idle=data.status==="idle";
+var ok=!!data.ok&&data.__httpOK!==false&&!idle;
+status.textContent=idle?"等待执行":(ok?"升级完成":"升级失败");
+setLog(data.log||data.message||"无升级日志");
+if(!idle){scheduleHide()}
+}
+function pollStatus(){fetch("/system/upgrade/status",{method:"GET",credentials:"same-origin",headers:{"Accept":"application/json"}}).then(parseJSON).then(renderUpgrade).catch(function(err){status.textContent="升级执行中";setLog((log.textContent||"")+now()+" 状态查询失败: "+err.message+"\n");schedulePoll()})}
+if(close){close.addEventListener("click",function(){clearTimeout(hideTimer);hide()})}
+if(button&&mask&&status&&log){button.addEventListener("click",function(){
+if(button.disabled){return}
+clearTimeout(hideTimer);
+stopPoll();
+show();
+button.disabled=true;
+status.textContent="升级执行中";
+setLog(now()+" 正在启动后台升级，请等待...\n");
+fetch("/system/upgrade",{method:"POST",credentials:"same-origin",headers:{"Accept":"application/json"}}).then(parseJSON).then(renderUpgrade).catch(function(err){stopPoll();status.textContent="升级失败";button.disabled=false;setLog((log.textContent||"")+now()+" 请求失败: "+err.message);scheduleHide()})
+})}
+})();
+</script>`
 const portalFooterHTML = `<footer class="site-footer"><div>Code By Yuhao@jiansutech.com - {{.FooterBuildTime}} - {{.FooterCommit}} - {{.FooterBranch}} - <a class="footer-feedback-link" href="/system?section=feedback">反馈建议</a></div></footer>` + portalRulesFormEnhancementScript + portalSystemServiceLogsScript
 
 const portalRulesFormEnhancementScript = `<script>(function(){if(location.pathname!=="/monitor-rules"){return}var headings=[].slice.call(document.querySelectorAll("h2"));var heading=headings.find(function(node){return node.textContent.trim()==="新建规则"});if(!heading){return}var section=heading.closest("section");var form=section&&section.querySelector("form");if(!form){return}var project=form.querySelector('select[name="project_id"]');if(project&&project.options.length===0){var option=document.createElement("option");option.value="";option.textContent="无可选项目，提交时自动创建项目";project.appendChild(option)}if(project&&!form.querySelector('input[name="project_name"]')){var input=document.createElement("input");input.name="project_name";input.placeholder="新项目名称（可选，未选择项目时使用）";project.insertAdjacentElement("afterend",input)}var channels=form.querySelector('input[name="channels"]');if(channels){channels.setAttribute("list","monitor-rule-channel-options");if(!document.getElementById("monitor-rule-channel-options")){var list=document.createElement("datalist");list.id="monitor-rule-channel-options";["flash","headline","crypto_x","crypto_telegram","flash,headline","all"].forEach(function(value){var option=document.createElement("option");option.value=value;list.appendChild(option)});document.body.appendChild(list)}}var name=form.querySelector('input[name="name"]');var include=form.querySelector('input[name="include_keywords"]');form.addEventListener("submit",function(){if(name&&include&&!name.value.trim()&&include.value.trim()){name.value="关键词监测："+include.value.trim()}})})();</script>`

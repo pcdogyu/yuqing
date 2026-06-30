@@ -6678,6 +6678,7 @@ func TestPortalNavPlacesLogoutAfterUpgrade(t *testing.T) {
 	for _, expected := range []string{
 		`id="portal-upgrade-mask"`,
 		`fetch("/system/upgrade"`,
+		`fetch("/system/upgrade/status"`,
 		`setTimeout(hide,15000)`,
 	} {
 		if !strings.Contains(portalUpgradeShellHTML, expected) {
@@ -6705,19 +6706,29 @@ func TestSimplePageIncludesPortalUpgradeShell(t *testing.T) {
 }
 
 type fakePortalUpgradeRunner struct {
-	called bool
-	result portalUpgradeResult
+	called     chan struct{}
+	calledOnce sync.Once
+	release    <-chan struct{}
+	result     portalUpgradeResult
 }
 
 func (f *fakePortalUpgradeRunner) Run(_ context.Context, _ config.Config) portalUpgradeResult {
-	f.called = true
+	f.calledOnce.Do(func() {
+		if f.called != nil {
+			close(f.called)
+		}
+	})
+	if f.release != nil {
+		<-f.release
+	}
 	return f.result
 }
 
-func TestSystemUpgradeEndpointReturnsRunnerLog(t *testing.T) {
+func TestSystemUpgradeEndpointStartsBackgroundRunnerAndStatusReturnsLog(t *testing.T) {
 	srv, cleanup := newPortalCompatServer(t)
 	defer cleanup()
-	fake := &fakePortalUpgradeRunner{result: portalUpgradeResult{
+	release := make(chan struct{})
+	fake := &fakePortalUpgradeRunner{called: make(chan struct{}), release: release, result: portalUpgradeResult{
 		OK:         true,
 		Status:     "success",
 		Message:    "升级完成",
@@ -6732,18 +6743,46 @@ func TestSystemUpgradeEndpointReturnsRunnerLog(t *testing.T) {
 	rr := httptest.NewRecorder()
 	srv.Router().ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected upgrade 200, got %d body=%s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("expected upgrade 202, got %d body=%s", rr.Code, rr.Body.String())
 	}
-	if !fake.called {
+	select {
+	case <-fake.called:
+	case <-time.After(time.Second):
 		t.Fatal("expected fake upgrade runner to be called")
 	}
 	var result portalUpgradeResult
 	if err := json.Unmarshal(rr.Body.Bytes(), &result); err != nil {
 		t.Fatalf("unmarshal upgrade response: %v", err)
 	}
-	if !result.OK || result.Status != "success" || !strings.Contains(result.Log, "build ok") {
-		t.Fatalf("unexpected upgrade response: %+v", result)
+	if result.OK || result.Status != "running" || !result.Running || !strings.Contains(result.Log, "后台执行") {
+		t.Fatalf("unexpected initial upgrade response: %+v", result)
+	}
+
+	close(release)
+	statusReq := httptest.NewRequest(http.MethodGet, "/system/upgrade/status", nil)
+	statusReq.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "session-admin"})
+	var statusResult portalUpgradeResult
+	deadline := time.Now().Add(time.Second)
+	for {
+		statusRR := httptest.NewRecorder()
+		srv.Router().ServeHTTP(statusRR, statusReq)
+		if statusRR.Code != http.StatusOK {
+			t.Fatalf("expected upgrade status 200, got %d body=%s", statusRR.Code, statusRR.Body.String())
+		}
+		if err := json.Unmarshal(statusRR.Body.Bytes(), &statusResult); err != nil {
+			t.Fatalf("unmarshal upgrade status response: %v", err)
+		}
+		if statusResult.Status == "success" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for upgrade status: %+v", statusResult)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !statusResult.OK || statusResult.Running || !strings.Contains(statusResult.Log, "build ok") {
+		t.Fatalf("unexpected final upgrade status: %+v", statusResult)
 	}
 }
 

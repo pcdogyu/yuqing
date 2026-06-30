@@ -41,6 +41,7 @@ type portalUpgradeResult struct {
 	Log        string    `json:"log"`
 	StartedAt  time.Time `json:"started_at"`
 	FinishedAt time.Time `json:"finished_at"`
+	Running    bool      `json:"running"`
 }
 
 type defaultPortalUpgradeRunner struct{}
@@ -54,16 +55,72 @@ func (s *Server) handleSystemUpgrade(w http.ResponseWriter, r *http.Request, _ a
 		writeRawJSON(w, http.StatusMethodNotAllowed, map[string]any{"message": "method not allowed"})
 		return
 	}
+	result := s.startPortalUpgrade()
+	writeRawJSON(w, http.StatusAccepted, result)
+}
+
+func (s *Server) handleSystemUpgradeStatus(w http.ResponseWriter, r *http.Request, _ any) {
+	if r.Method != http.MethodGet {
+		writeRawJSON(w, http.StatusMethodNotAllowed, map[string]any{"message": "method not allowed"})
+		return
+	}
+	writeRawJSON(w, http.StatusOK, s.portalUpgradeSnapshot())
+}
+
+func (s *Server) startPortalUpgrade() portalUpgradeResult {
+	s.upgradeMu.Lock()
+	if s.upgradeState.Running {
+		result := s.upgradeState
+		s.upgradeMu.Unlock()
+		return result
+	}
 	runner := s.upgradeRunner
 	if runner == nil {
 		runner = defaultPortalUpgradeRunner{}
 	}
-	result := runner.Run(r.Context(), s.cfg)
-	status := http.StatusOK
-	if !result.OK {
-		status = http.StatusInternalServerError
+	cfg := s.cfg
+	startedAt := time.Now()
+	s.upgradeState = portalUpgradeResult{
+		OK:        false,
+		Status:    "running",
+		Message:   "升级执行中",
+		Log:       timestampedUpgradeLine("升级已在后台执行，页面会自动刷新状态。"),
+		StartedAt: startedAt,
+		Running:   true,
 	}
-	writeRawJSON(w, status, result)
+	result := s.upgradeState
+	s.upgradeMu.Unlock()
+
+	go func() {
+		completed := runner.Run(context.Background(), cfg)
+		completed.Running = false
+		s.upgradeMu.Lock()
+		s.upgradeState = completed
+		s.upgradeMu.Unlock()
+	}()
+
+	return result
+}
+
+func (s *Server) portalUpgradeSnapshot() portalUpgradeResult {
+	s.upgradeMu.Lock()
+	defer s.upgradeMu.Unlock()
+	if s.upgradeState.StartedAt.IsZero() {
+		return portalUpgradeResult{
+			Status:  "idle",
+			Message: "等待执行",
+			Log:     "等待升级日志",
+		}
+	}
+	result := s.upgradeState
+	if result.Running && !result.StartedAt.IsZero() {
+		elapsed := time.Since(result.StartedAt).Round(time.Second)
+		if elapsed < 0 {
+			elapsed = 0
+		}
+		result.Message = fmt.Sprintf("升级执行中，已运行 %s", elapsed)
+	}
+	return result
 }
 
 func runPortalUpgrade(parent context.Context, _ config.Config) portalUpgradeResult {
