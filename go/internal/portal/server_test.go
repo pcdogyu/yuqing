@@ -2773,7 +2773,10 @@ func TestAStockContextLoadsPersistedRecommendationSnapshot(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/v1/articles":
-			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.ItemListResult{
+				Items: []model.Item{{ID: 1, SourceType: "flash", Title: "科大讯飞午间活跃", Summary: "AI 人工智能算力需求增长", PublishTime: "2026-06-22 12:05:00", TagFlags: "0.002230"}},
+				Page:  1, PageSize: 200, Total: 1,
+			}})
 		case "/api/v1/a-stock/recommendation-selections":
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.AStockRecommendationSelectionListResult{Found: false}})
 		case "/api/v1/a-stock/recommendations":
@@ -2809,6 +2812,9 @@ func TestAStockContextLoadsPersistedRecommendationSnapshot(t *testing.T) {
 	ctx := srv.loadAStockContext("2026-06-22", "afternoon", 1, false)
 	if len(ctx.Recommendations) != 1 || ctx.Recommendations[0].Code != "002230" || ctx.BacktestStatus != "已读取推荐快照" {
 		t.Fatalf("expected persisted recommendation snapshot, got recs=%+v status=%q", ctx.Recommendations, ctx.BacktestStatus)
+	}
+	if len(ctx.Hotspots) == 0 || len(ctx.Hotspots[0].TopStocks) == 0 || ctx.Hotspots[0].TopStocks[0].Code != "002230" {
+		t.Fatalf("expected hotspot top stocks to be populated before snapshot return, got %+v", ctx.Hotspots)
 	}
 	if !ctx.LimitUpFilterEnabled {
 		t.Fatalf("expected persisted afternoon snapshot to preserve limit-up filter state")
@@ -4132,7 +4138,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"金十快讯", "金十资讯", "1条", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "5日内过滤", "涨停过滤", "当日行情", "不过滤", "重新计算", "关闭5日过滤", "关闭涨停过滤", "启用当日行情过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "推荐历史", "上午推荐", "下午推荐", "推荐窗口", "08:00-09:30", "上午开盘价", "下午开盘价", "补抓上午新闻", "重新生成上午推荐", "补抓下午新闻", "重新生成下午推荐", "补行情收益", "刷新全部回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="refresh_current_backtest"`, `name="action" value="refresh_backtest"`, `name="action" value="recalculate"`, "2026-06-12 周五", "2026-06-15 周一", "今日", "T+0 收益", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
+	for _, want := range []string{"金十快讯", "金十资讯", "1条", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "5日内过滤", "涨停过滤", "当日行情", "不过滤", "重新计算", "关闭5日过滤", "关闭涨停过滤", "启用当日行情过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "推荐历史", "上午推荐", "下午推荐", "推荐窗口", "08:00-09:30", "上午开盘价", "下午开盘价", "补抓上午新闻", "重新生成上午推荐", "补抓下午新闻", "重新生成下午推荐", "补行情收益", "刷新全部回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="refresh_current_backtest"`, `name="action" value="refresh_backtest"`, `name="action" value="recalculate"`, "2026-06-12 周五", "2026-06-15 周一", "今日", "T+0 收益", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "排名前5股票", "1. 002230 科大讯飞", "1. 688981 中芯国际", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}
@@ -4216,8 +4222,13 @@ func TestAStockPageBlocksRecommendationsOnNonTradingDay(t *testing.T) {
 	if !strings.Contains(body, "该日 A 股休市，不生成股票推荐") {
 		t.Fatalf("expected non-trading day message, got %s", body)
 	}
-	if strings.Contains(body, "002230") {
-		t.Fatalf("expected no stock recommendation code on non-trading day, got %s", body)
+	recommendationStart := strings.Index(body, `<section><h2>推荐股票</h2>`)
+	actionStart := strings.Index(body, `<section><h2>操作区</h2>`)
+	if recommendationStart < 0 || actionStart <= recommendationStart {
+		t.Fatalf("expected recommendation section before actions, got %s", body)
+	}
+	if strings.Contains(body[recommendationStart:actionStart], "002230") {
+		t.Fatalf("expected no stock recommendation code on non-trading day, got %s", body[recommendationStart:actionStart])
 	}
 }
 
@@ -5435,6 +5446,42 @@ func TestAStockRecommendationsUseTopThreeHotspotIndustries(t *testing.T) {
 	for _, rec := range recommendations {
 		if _, ok := wantCodes[rec.Code]; !ok {
 			t.Fatalf("expected fixed-pool recommendation, got %+v from %+v", rec, recommendations)
+		}
+	}
+}
+
+func TestAStockHotspotTopStocksUseRecommendationScoreAndLimit(t *testing.T) {
+	hotspot := aStockHotspot{
+		Name:     "人工智能",
+		Keywords: []string{"AI"},
+		Score:    80,
+		Evidence: 1,
+		MatchedItems: []model.Item{
+			{Title: "AI六号午后活跃"},
+		},
+	}
+	stocks := buildAStockHotspotTopStocks(hotspot, []aStockMarketCandidate{
+		{Code: "000001", Name: "AI一号", Rank: 1, AuctionAmount: 6000000},
+		{Code: "000002", Name: "AI二号", Rank: 2, AuctionAmount: 5000000},
+		{Code: "000003", Name: "AI三号", Rank: 3, AuctionAmount: 4000000},
+		{Code: "000004", Name: "AI四号", Rank: 4, AuctionAmount: 3000000},
+		{Code: "000005", Name: "AI五号", Rank: 5, AuctionAmount: 2000000},
+		{Code: "000006", Name: "AI六号", Rank: 6, AuctionAmount: 1000000},
+	}, aStockHotspotTopStockLimit)
+
+	if len(stocks) != 5 {
+		t.Fatalf("expected top 5 hotspot stocks, got %+v", stocks)
+	}
+	gotCodes := make([]string, 0, len(stocks))
+	for _, stock := range stocks {
+		gotCodes = append(gotCodes, stock.Code)
+	}
+	if strings.Join(gotCodes, ",") != "000006,000001,000002,000003,000004" {
+		t.Fatalf("expected recommendation-score order with evidence boost and limit, got %+v", stocks)
+	}
+	for i, stock := range stocks {
+		if stock.Rank != i+1 || stock.Name == "" || stock.Score <= 0 {
+			t.Fatalf("expected ranked stock display data, got %+v", stocks)
 		}
 	}
 }

@@ -66,6 +66,14 @@ type aStockHotspot struct {
 	Score        int
 	Evidence     int
 	MatchedItems []model.Item
+	TopStocks    []aStockHotspotStock
+}
+
+type aStockHotspotStock struct {
+	Rank  int
+	Code  string
+	Name  string
+	Score int
 }
 
 type aStockRecommendation struct {
@@ -264,6 +272,7 @@ const (
 	aStockRecommendationLimit        = 12
 	aStockReplacementPoolLimit       = 36
 	aStockReplacementPerHotspot      = 12
+	aStockHotspotTopStockLimit       = 5
 	aStockHotspotLimit               = 3
 	aStockMarketRankScoreBase        = 200
 	aStockStocksPerHotspot           = 3
@@ -387,6 +396,8 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-news-table th,.astock-news-table td{vertical-align:top}
 		.astock-news-counts{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
 		.astock-news-diagnostic{margin-top:6px;color:#8a5a17;font-size:12px;line-height:1.35}
+		.astock-hotspot-stocks{line-height:1.55;white-space:nowrap}
+		.astock-hotspot-stock{display:block}
 		.astock-help{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:#eef4ec;color:#214e34;font-size:12px;font-weight:700;line-height:1;cursor:help;position:relative}
 		.astock-help-text{position:absolute;right:0;top:calc(100% + 8px);z-index:10;display:none;width:max-content;max-width:260px;padding:8px 10px;border:1px solid #d6ccbb;border-radius:8px;background:#fff;color:#2b261f;box-shadow:0 12px 28px rgba(31,40,34,.14);font-size:12px;font-weight:400;line-height:1.4;white-space:normal}
 		.astock-help:hover .astock-help-text,.astock-help:focus .astock-help-text{display:block}
@@ -953,10 +964,10 @@ func renderAStockNewsPageLink(b *strings.Builder, ctx aStockContext, page int, l
 func renderAStockHotspotSection(b *strings.Builder, hotspots []aStockHotspot) {
 	b.WriteString(`<section><h2>热点归纳</h2><p><span class="astock-badge">规则+词典</span><span class="astock-badge">可复现回测</span></p>`)
 	if len(hotspots) == 0 {
-		b.WriteString(`<div class="astock-empty">暂无数据：当前新闻窗口未命中 A 股热点词典。</div><table><tr><th>热点</th><th>关键词</th><th>热度分</th><th>证据新闻数</th></tr><tr><td colspan="4">暂无热点</td></tr></table></section>`)
+		b.WriteString(`<div class="astock-empty">暂无数据：当前新闻窗口未命中 A 股热点词典。</div><table><tr><th>热点</th><th>关键词</th><th>热度分</th><th>证据新闻数</th><th>排名前5股票</th></tr><tr><td colspan="5">暂无热点</td></tr></table></section>`)
 		return
 	}
-	b.WriteString(`<table><tr><th>热点</th><th>关键词</th><th>热度分</th><th>证据新闻数</th></tr>`)
+	b.WriteString(`<table><tr><th>热点</th><th>关键词</th><th>热度分</th><th>证据新闻数</th><th>排名前5股票</th></tr>`)
 	for _, hotspot := range hotspots {
 		b.WriteString(`<tr><td>`)
 		b.WriteString(html.EscapeString(hotspot.Name))
@@ -966,9 +977,34 @@ func renderAStockHotspotSection(b *strings.Builder, hotspots []aStockHotspot) {
 		b.WriteString(fmt.Sprintf("%d", hotspot.Score))
 		b.WriteString(`</td><td>`)
 		b.WriteString(fmt.Sprintf("%d", hotspot.Evidence))
+		b.WriteString(`</td><td>`)
+		renderAStockHotspotTopStocks(b, hotspot.TopStocks)
 		b.WriteString(`</td></tr>`)
 	}
 	b.WriteString(`</table></section>`)
+}
+
+func renderAStockHotspotTopStocks(b *strings.Builder, stocks []aStockHotspotStock) {
+	if len(stocks) == 0 {
+		b.WriteString(`--`)
+		return
+	}
+	b.WriteString(`<div class="astock-hotspot-stocks">`)
+	for i, stock := range stocks {
+		rank := stock.Rank
+		if rank <= 0 {
+			rank = i + 1
+		}
+		b.WriteString(`<span class="astock-hotspot-stock">`)
+		b.WriteString(fmt.Sprintf("%d. ", rank))
+		b.WriteString(html.EscapeString(strings.TrimSpace(stock.Code)))
+		if name := strings.TrimSpace(stock.Name); name != "" {
+			b.WriteString(` `)
+			b.WriteString(html.EscapeString(name))
+		}
+		b.WriteString(`</span>`)
+	}
+	b.WriteString(`</div>`)
 }
 
 func renderAStockRecommendationSection(b *strings.Builder, morningCtx aStockContext, afternoonCtx aStockContext) {
@@ -1434,6 +1470,17 @@ func (s *Server) loadAStockContextWithRecommendationPhase(strategyDate string, p
 	ctx.PagedArticles, ctx.NewsPage, ctx.NewsTotalPages = paginateAStockNews(ctx.NewsArticles, newsPage, aStockNewsPageSize)
 	ctx.Hotspots = buildAStockHotspots(ctx.Articles)
 	ctx.AuctionAmountLabel = s.loadAStockAuctionAmountLabelWithCache(strategyDate, cache)
+	var marketCandidates []aStockMarketCandidate
+	if len(ctx.Hotspots) > 0 {
+		candidates, candidateStatus, auctionResult := s.loadAStockMarketCandidatesWithStatusWithCache(strategyDate, cache)
+		marketCandidates = candidates
+		ctx.Hotspots = buildAStockHotspotsWithTopStocks(ctx.Hotspots, marketCandidates, aStockHotspotTopStockLimit)
+		ctx.MarketCandidateStatus = candidateStatus
+		ctx.MarketCandidateCount = len(fixedPoolAStockMarketCandidates(aStockRecommendationHotspotSlice(ctx.Hotspots), marketCandidates))
+		if auctionLabel := normalizeAStockAuctionSummaryLabel(formatAStockAuctionSummaryAmount(auctionResult)); auctionLabel != "" {
+			ctx.AuctionAmountLabel = auctionLabel
+		}
+	}
 	if blocked, message, reason := s.aStockRecommendationBlockedStatusWithCache(strategyDate, cache); blocked {
 		ctx.TradingDayBlocked = true
 		ctx.TradingDayMessage = message
@@ -1488,12 +1535,7 @@ func (s *Server) loadAStockContextWithRecommendationPhase(strategyDate string, p
 	}
 	recommendationTarget := 0
 	if len(ctx.Hotspots) > 0 {
-		candidates, candidateStatus, auctionResult := s.loadAStockMarketCandidatesWithStatusWithCache(strategyDate, cache)
-		ctx.MarketCandidateStatus = candidateStatus
-		ctx.MarketCandidateCount = len(fixedPoolAStockMarketCandidates(aStockRecommendationHotspotSlice(ctx.Hotspots), candidates))
-		if auctionLabel := normalizeAStockAuctionSummaryLabel(formatAStockAuctionSummaryAmount(auctionResult)); auctionLabel != "" {
-			ctx.AuctionAmountLabel = auctionLabel
-		}
+		candidates := marketCandidates
 		baseRecommendations := buildAStockSnapshotRecommendationsWithPhase(strategyDate, period.Key, phase, ctx.Articles, candidates)
 		recommendationTarget = len(baseRecommendations)
 		ctx.GeneratedRecommendationCount = recommendationTarget
@@ -4865,6 +4907,42 @@ func buildAStockHotspots(items []model.Item) []aStockHotspot {
 		return hotspots[:8]
 	}
 	return hotspots
+}
+
+func buildAStockHotspotsWithTopStocks(hotspots []aStockHotspot, marketCandidates []aStockMarketCandidate, limit int) []aStockHotspot {
+	if len(hotspots) == 0 {
+		return hotspots
+	}
+	if limit <= 0 {
+		limit = aStockHotspotTopStockLimit
+	}
+	candidates := fixedPoolAStockMarketCandidates(hotspots, marketCandidates)
+	result := make([]aStockHotspot, len(hotspots))
+	copy(result, hotspots)
+	for i := range result {
+		result[i].TopStocks = buildAStockHotspotTopStocks(result[i], candidates, limit)
+	}
+	return result
+}
+
+func buildAStockHotspotTopStocks(hotspot aStockHotspot, candidates []aStockMarketCandidate, limit int) []aStockHotspotStock {
+	if limit <= 0 {
+		limit = aStockHotspotTopStockLimit
+	}
+	scored := scoreAStockMarketCandidates(hotspot, candidates)
+	if len(scored) > limit {
+		scored = scored[:limit]
+	}
+	stocks := make([]aStockHotspotStock, 0, len(scored))
+	for i, stock := range scored {
+		stocks = append(stocks, aStockHotspotStock{
+			Rank:  i + 1,
+			Code:  normalizeAStockCode(stock.Code),
+			Name:  strings.TrimSpace(stock.Name),
+			Score: hotspot.Score + stock.MatchedScore,
+		})
+	}
+	return stocks
 }
 
 func buildAStockRecommendations(hotspots []aStockHotspot, candidates []aStockMarketCandidate) []aStockRecommendation {
