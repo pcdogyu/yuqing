@@ -6504,12 +6504,12 @@ func TestPortalPageTemplatesUseCommonFooter(t *testing.T) {
 	}
 }
 
-func TestPortalNavPositionsLogoutTopRight(t *testing.T) {
-	if !strings.Contains(portalNavHTML, `class="logout-link" href="/logout"`) {
-		t.Fatalf("expected logout link to use fixed-position class")
+func TestPortalNavPlacesLogoutAfterUpgrade(t *testing.T) {
+	if !strings.Contains(portalNavHTML, `<button id="portal-upgrade-button" class="portal-upgrade-button" type="button">升级</button><a class="logout-link" href="/logout">退出</a>`) {
+		t.Fatalf("expected logout link to appear immediately after upgrade button")
 	}
-	if !strings.Contains(baseStyles, `.logout-link{position:fixed;top:14px;right:18px;`) {
-		t.Fatalf("expected logout link to be positioned at top right")
+	if strings.Contains(baseStyles, `.logout-link{position:fixed`) {
+		t.Fatalf("expected logout link to inherit nav text-link styles")
 	}
 	if !strings.Contains(portalNavHTML, `<a href="/system">系统</a><a href="/logs">日志</a><button id="portal-upgrade-button" class="portal-upgrade-button" type="button">升级</button>`) {
 		t.Fatalf("expected upgrade button to appear immediately after logs menu")
