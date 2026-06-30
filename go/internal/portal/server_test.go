@@ -6726,6 +6726,7 @@ func TestPortalNavPlacesLogoutAfterUpgrade(t *testing.T) {
 		`id="portal-upgrade-mask"`,
 		`fetch("/system/upgrade"`,
 		`fetch("/system/upgrade/status"`,
+		`data.status==="running"`,
 		`setTimeout(hide,15000)`,
 	} {
 		if !strings.Contains(portalUpgradeShellHTML, expected) {
@@ -6802,7 +6803,7 @@ func TestSystemUpgradeEndpointStartsBackgroundRunnerAndStatusReturnsLog(t *testi
 	if err := json.Unmarshal(rr.Body.Bytes(), &result); err != nil {
 		t.Fatalf("unmarshal upgrade response: %v", err)
 	}
-	if result.OK || result.Status != "running" || !result.Running || !strings.Contains(result.Log, "后台执行") {
+	if !result.OK || result.Status != "running" || !result.Running || !strings.Contains(result.Log, "后台执行") {
 		t.Fatalf("unexpected initial upgrade response: %+v", result)
 	}
 

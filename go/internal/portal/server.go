@@ -4890,7 +4890,7 @@ function setLog(text){if(log){log.textContent=text||"无升级日志"}}
 function parseJSON(resp){return resp.json().catch(function(){return {ok:false,message:"升级接口返回非 JSON"}}).then(function(data){data.__httpOK=resp.ok;return data})}
 function renderUpgrade(data){
 data=data||{};
-if(data.running){status.textContent=data.message||"升级执行中";button.disabled=true;setLog((data.log||"")+"\n"+now()+" 状态检查: "+(data.message||"升级仍在后台执行"));schedulePoll();return}
+if(data.running||data.status==="running"){status.textContent=data.message||"升级执行中";button.disabled=true;setLog((data.log||"")+"\n"+now()+" 状态检查: "+(data.message||"升级仍在后台执行"));schedulePoll();return}
 stopPoll();
 button.disabled=false;
 var idle=data.status==="idle";

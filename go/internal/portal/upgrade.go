@@ -81,7 +81,7 @@ func (s *Server) startPortalUpgrade() portalUpgradeResult {
 	cfg := s.cfg
 	startedAt := time.Now()
 	s.upgradeState = portalUpgradeResult{
-		OK:        false,
+		OK:        true,
 		Status:    "running",
 		Message:   "升级执行中",
 		Log:       timestampedUpgradeLine("升级已在后台执行，页面会自动刷新状态。"),
