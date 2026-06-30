@@ -227,6 +227,16 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 			},
 		}, "HeadlineCrawlerQuartz", "0 0/1 * * * ?"),
 		withJobMeta(jobDefinition{
+			Name:        "eastmoney-kuaixun-crawl",
+			Group:       "crawl",
+			Description: "东方财富网实时快讯抓取，来源 https://kuaixun.eastmoney.com/，补充详情页全文",
+			Interval:    time.Minute,
+			Enabled:     strings.TrimSpace(w.cfg.EastMoneyKuaixunURL) != "",
+			Run: func(ctx context.Context) error {
+				return w.runCrawl(ctx, provider.SourceTypeEastMoneyKuaixun)
+			},
+		}, "EastMoneyKuaixunCrawler", "0 0/1 * * * ?"),
+		withJobMeta(jobDefinition{
 			Name:        "crypto-x-crawl",
 			Group:       "crawl",
 			Description: "Crypto X 社媒抓取，补充币对社媒证据",
@@ -641,7 +651,7 @@ func (w *Worker) crawlLinkHeartbeatSites() []crawlLinkHeartbeatSite {
 		sites = append(sites, crawlLinkHeartbeatSite{SourceType: "jin10_full", Name: "金十全站", URL: "https://www.jin10.com/"})
 	}
 	sites = append(sites,
-		crawlLinkHeartbeatSite{SourceType: "eastmoney_kuaixun", Name: "东方财富快讯", URL: w.cfg.EastMoneyKuaixunURL},
+		crawlLinkHeartbeatSite{SourceType: "eastmoney_kuaixun", Name: "东方财富网", URL: w.cfg.EastMoneyKuaixunURL},
 		crawlLinkHeartbeatSite{SourceType: "wallstreetcn_a_stock", Name: "华尔街见闻 A股快讯", URL: w.cfg.WallStreetCNAStockURL},
 		crawlLinkHeartbeatSite{SourceType: "cls_telegraph", Name: "财联社电报", URL: w.cfg.CLSTelegraphURL},
 		crawlLinkHeartbeatSite{SourceType: "sina_finance_7x24", Name: "新浪财经 7x24", URL: w.cfg.SinaFinance7x24URL},

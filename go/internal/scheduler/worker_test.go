@@ -218,16 +218,18 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	if err := json.Unmarshal(listRR.Body.Bytes(), &listEnvelope); err != nil {
 		t.Fatalf("unmarshal jobs list: %v", err)
 	}
-	if len(listEnvelope.Data) != 35 {
-		t.Fatalf("expected 35 scheduler jobs, got %d", len(listEnvelope.Data))
+	if len(listEnvelope.Data) != 36 {
+		t.Fatalf("expected 36 scheduler jobs, got %d", len(listEnvelope.Data))
 	}
-	var heartbeatJob, hotJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningNewsCrawlJob, aStockMorningPreviewJob, aStockMorningJob, aStockAfternoonPreviewJob, aStockMiddayNewsCrawlJob, aStockAfternoonJob, aStockAfternoonOpenRefreshJob, aStockDailyBacktestRefreshJob, aStockAuctionJob, aStockHoldingsJob, stockResearchJob, investorRelationsJob Job
+	var heartbeatJob, hotJob, eastmoneyJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningNewsCrawlJob, aStockMorningPreviewJob, aStockMorningJob, aStockAfternoonPreviewJob, aStockMiddayNewsCrawlJob, aStockAfternoonJob, aStockAfternoonOpenRefreshJob, aStockDailyBacktestRefreshJob, aStockAuctionJob, aStockHoldingsJob, stockResearchJob, investorRelationsJob Job
 	for _, job := range listEnvelope.Data {
 		switch job.Name {
 		case "crawl-link-heartbeat":
 			heartbeatJob = job
 		case "hot-data-refresh":
 			hotJob = job
+		case "eastmoney-kuaixun-crawl":
+			eastmoneyJob = job
 		case "crypto-x-crawl":
 			cryptoXJob = job
 		case "crypto-telegram-crawl":
@@ -271,6 +273,9 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	}
 	if heartbeatJob.JavaQuartzName != "CrawlLinkHeartbeat" || heartbeatJob.Cron != "0 0/5 * * * ?" || heartbeatJob.IntervalSec != 300 || heartbeatJob.NextRunAt == nil {
 		t.Fatalf("expected crawl link heartbeat metadata, got %+v", heartbeatJob)
+	}
+	if eastmoneyJob.JavaQuartzName != "EastMoneyKuaixunCrawler" || eastmoneyJob.Cron != "0 0/1 * * * ?" || eastmoneyJob.IntervalSec != 60 || eastmoneyJob.Enabled {
+		t.Fatalf("expected eastmoney realtime crawl listed but disabled without URL, got %+v", eastmoneyJob)
 	}
 	if cryptoXJob.Name == "" || cryptoTelegramJob.Name == "" {
 		t.Fatalf("expected crypto scheduler jobs, got %+v", listEnvelope.Data)
@@ -2131,6 +2136,54 @@ func TestSchedulerCryptoJobsEnabledWhenEndpointsConfigured(t *testing.T) {
 	}
 	if !theBlockJob.Enabled || theBlockJob.IntervalSec != 420 || theBlockJob.NextRunAt == nil {
 		t.Fatalf("expected enabled theblock job with runtime metadata, got %+v", theBlockJob)
+	}
+}
+
+func TestSchedulerEastMoneyKuaixunJobEnabledWhenEndpointConfigured(t *testing.T) {
+	worker := NewWorker(config.Config{
+		HTTPTimeout:           time.Second,
+		EastMoneyKuaixunURL:   "https://kuaixun.eastmoney.com/",
+		FlashInterval:         time.Hour,
+		HeadlineInterval:      time.Hour,
+		AnalysisInterval:      time.Hour,
+		WechatCleanupInterval: time.Hour,
+		WechatPushInterval:    time.Hour,
+	})
+	var eastmoneyJob Job
+	for _, job := range worker.Jobs() {
+		if job.Name == "eastmoney-kuaixun-crawl" {
+			eastmoneyJob = job
+			break
+		}
+	}
+	if !eastmoneyJob.Enabled || eastmoneyJob.Cron != "0 0/1 * * * ?" || eastmoneyJob.IntervalSec != 60 || eastmoneyJob.NextRunAt == nil {
+		t.Fatalf("expected enabled eastmoney kuaixun realtime crawl job, got %+v", eastmoneyJob)
+	}
+}
+
+func TestRunEastMoneyKuaixunCrawlJobUsesSourceType(t *testing.T) {
+	var gotSource string
+	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/admin/tasks/crawl" {
+			t.Fatalf("unexpected crawler request: %s %s", r.Method, r.URL.String())
+		}
+		gotSource = r.URL.Query().Get("source_type")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer crawler.Close()
+
+	worker := NewWorker(config.Config{
+		HTTPTimeout:           time.Second,
+		SchedulerCrawlTimeout: time.Second,
+		CrawlerURL:            crawler.URL,
+		EastMoneyKuaixunURL:   "https://kuaixun.eastmoney.com/",
+	})
+
+	if err := worker.RunJobByName(context.Background(), "eastmoney-kuaixun-crawl"); err != nil {
+		t.Fatalf("RunJobByName eastmoney-kuaixun-crawl error: %v", err)
+	}
+	if gotSource != provider.SourceTypeEastMoneyKuaixun {
+		t.Fatalf("expected eastmoney source type, got %q", gotSource)
 	}
 }
 

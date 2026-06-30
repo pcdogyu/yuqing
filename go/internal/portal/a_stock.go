@@ -471,7 +471,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		b.WriteString(html.EscapeString(action.Label))
 		b.WriteString(`</button></form>`)
 	}
-	b.WriteString(`</div></div><p class="astock-muted">已接入已有新闻抓取链路：抓取按钮会触发金十快讯、金十资讯、金十全站信息、东方财富网快讯、华尔街见闻、财联社和新浪财经，页面按策略日期和推荐窗口聚合财经新闻。行情接口读取 `)
+	b.WriteString(`</div></div><p class="astock-muted">已接入已有新闻抓取链路：抓取按钮会触发金十快讯、金十资讯、金十全站信息、东方财富网、华尔街见闻、财联社和新浪财经，页面按策略日期和推荐窗口聚合财经新闻。行情接口读取 `)
 	b.WriteString(aStockMarketConfigHint())
 	b.WriteString(`，用于展示昨日收盘价、现价、涨跌幅和消息回测。</p><div class="astock-source-list"><span class="astock-badge">jin10_kuaixun: https://www.jin10.com/</span><span class="astock-badge">jin10_资讯: https://xnews.jin10.com/</span><span class="astock-badge">jin10_full: 金十全站</span><span class="astock-badge">eastmoney_kuaixun: 东方财富网</span><span class="astock-badge">wallstreetcn_a_stock: 华尔街见闻</span><span class="astock-badge">cls_telegraph: 财联社</span><span class="astock-badge">sina_finance_7x24: 新浪财经</span></div></section>`)
 

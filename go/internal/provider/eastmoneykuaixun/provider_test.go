@@ -73,6 +73,74 @@ func TestParseSearchResponse(t *testing.T) {
 	}
 }
 
+func TestParseDetailHTML(t *testing.T) {
+	body := `<!doctype html><html><head><title>房地产板块震荡走弱 _ 东方财富网</title><meta name="description" content="房地产板块震荡走弱，京能置业触及跌停。[点击查看全文]"><link rel="canonical" href="https://finance.eastmoney.com/a/20260630001.html"></head><body><div id="ContentBody"><p>房地产板块震荡走弱，京能置业触及跌停。</p><p>*ST南置此前跌停，中洲控股、香江控股等跌幅居前。</p></div></body></html>`
+
+	title, content, summary, sourceURL, source := parseDetailHTML(body)
+	if title != "房地产板块震荡走弱" {
+		t.Fatalf("unexpected detail title: %q", title)
+	}
+	if !strings.Contains(content, "京能置业触及跌停") || !strings.Contains(content, "*ST南置此前跌停") || strings.Contains(content, "点击查看全文") {
+		t.Fatalf("unexpected detail content: %q", content)
+	}
+	if summary != "房地产板块震荡走弱，京能置业触及跌停。" {
+		t.Fatalf("unexpected detail summary: %q", summary)
+	}
+	if sourceURL != "https://finance.eastmoney.com/a/20260630001.html" || source != "东方财富网" {
+		t.Fatalf("unexpected detail metadata sourceURL=%q source=%q", sourceURL, source)
+	}
+}
+
+func TestProviderEnrichesReadMoreDetail(t *testing.T) {
+	detailCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		detailCalls++
+		_, _ = w.Write([]byte(`<html><head><title>房地产板块震荡走弱 _ 东方财富网</title><meta name="description" content="房地产板块震荡走弱，京能置业触及跌停。"></head><body><div id="ContentBody">房地产板块震荡走弱，京能置业触及跌停，*ST南置此前跌停，中洲控股、香江控股等跌幅居前。</div></body></html>`))
+	}))
+	defer server.Close()
+
+	prov := NewProvider(resty.New().SetRetryCount(0), "")
+	items := prov.enrichItems(context.Background(), []model.Item{{
+		SourceType:  provider.SourceTypeEastMoneyKuaixun,
+		Title:       "房地产板块震荡走弱",
+		Summary:     "房地产板块震荡走弱。[点击查看全文]",
+		Content:     "房地产板块震荡走弱。[点击查看全文]",
+		DetailURL:   server.URL + "/a/20260630001.html",
+		PublishTime: "2026-06-30 13:58:00",
+	}})
+	if detailCalls != 1 {
+		t.Fatalf("expected one detail request, got %d", detailCalls)
+	}
+	if len(items) != 1 || !strings.Contains(items[0].Content, "*ST南置此前跌停") || strings.Contains(items[0].Content, "点击查看全文") {
+		t.Fatalf("expected detail content to replace read-more stub, got %+v", items)
+	}
+}
+
+func TestProviderSkipsDetailForCompleteListItem(t *testing.T) {
+	detailCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		detailCalls++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	prov := NewProvider(resty.New().SetRetryCount(0), "")
+	items := prov.enrichItems(context.Background(), []model.Item{{
+		SourceType:  provider.SourceTypeEastMoneyKuaixun,
+		Title:       "新叶股份6月30日快速上涨",
+		Summary:     "新叶股份盘中快速上涨，5分钟内涨幅超过2%。",
+		Content:     "新叶股份盘中快速上涨，5分钟内涨幅超过2%。",
+		DetailURL:   server.URL + "/a/20260630002.html",
+		PublishTime: "2026-06-30 14:02:00",
+	}})
+	if detailCalls != 0 {
+		t.Fatalf("expected no detail request for complete list item, got %d", detailCalls)
+	}
+	if len(items) != 1 || items[0].Content == "" {
+		t.Fatalf("unexpected items: %+v", items)
+	}
+}
+
 func TestProviderFetchUsesEastMoneyListAPI(t *testing.T) {
 	var gotPageSize, gotClient, gotBiz string
 	searchCalls := 0

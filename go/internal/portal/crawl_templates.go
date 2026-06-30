@@ -223,7 +223,7 @@ func crawlTemplateSourceOptions(selected string) string {
 		{provider.SourceTypeFlash, "jin10_kuaixun"},
 		{provider.SourceTypeHeadline, "jin10_资讯"},
 		{provider.SourceTypeJin10Full, "金十公开资讯全量"},
-		{provider.SourceTypeEastMoneyKuaixun, "东方财富网快讯"},
+		{provider.SourceTypeEastMoneyKuaixun, "东方财富网"},
 		{provider.SourceTypeCryptoX, provider.SourceTypeCryptoX},
 		{provider.SourceTypeCryptoTelegram, provider.SourceTypeCryptoTelegram},
 		{provider.SourceTypeForesightNewsflash, provider.SourceTypeForesightNewsflash},

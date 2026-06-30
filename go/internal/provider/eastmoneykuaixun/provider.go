@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PuerkitoBio/goquery"
 	"github.com/go-resty/resty/v2"
 
 	"github.com/pcdogyu/yuqing/go/internal/model"
@@ -21,6 +22,7 @@ const (
 	defaultSearchAPIURL = "https://search-api-web.eastmoney.com/search/jsonp"
 	fromText            = "东方财富网"
 	maxWindowPages      = 80
+	maxDetailEnrich     = 30
 )
 
 type Provider struct {
@@ -65,7 +67,7 @@ func (p *Provider) Fetch(ctx context.Context) ([]model.Item, error) {
 		collected = append(collected, searchItems...)
 	}
 
-	collected = dedupe(collected)
+	collected = p.enrichItems(ctx, dedupe(collected))
 	if len(collected) == 0 && len(errs) > 0 {
 		return nil, fmt.Errorf("%s", strings.Join(errs, "; "))
 	}
@@ -110,7 +112,7 @@ func (p *Provider) FetchWithOptions(ctx context.Context, options model.CrawlOpti
 	} else {
 		collected = append(collected, searchItems...)
 	}
-	collected = dedupe(collected)
+	collected = p.enrichItems(ctx, dedupe(collected))
 	if len(collected) == 0 && len(errs) > 0 {
 		return nil, fmt.Errorf("%s", strings.Join(errs, "; "))
 	}
@@ -316,7 +318,7 @@ type searchRow struct {
 
 func rowToItem(row newsRow, pageURL string, capturedAt time.Time) model.Item {
 	title := cleanText(row.Title)
-	summary := cleanText(row.Summary)
+	summary := cleanEastMoneyText(row.Summary)
 	publishTime := cleanText(row.ShowTime)
 	detailURL := eastmoneyDetailURL(row.Code)
 	return model.Item{
@@ -339,7 +341,7 @@ func rowToItem(row newsRow, pageURL string, capturedAt time.Time) model.Item {
 
 func searchRowToItem(row searchRow, pageURL string, capturedAt time.Time) model.Item {
 	title := cleanHTMLText(row.Title)
-	summary := cleanHTMLText(nonEmpty(row.Summary, row.Content))
+	summary := cleanEastMoneyText(cleanHTMLText(nonEmpty(row.Summary, row.Content)))
 	publishTime := cleanText(nonEmpty(row.Date, row.ShowTime))
 	detailURL := normalizeURL(nonEmpty(row.URL, eastmoneyDetailURL(row.Code)))
 	source := cleanText(nonEmpty(row.MediaName, row.Source, fromText))
@@ -357,6 +359,125 @@ func searchRowToItem(row searchRow, pageURL string, capturedAt time.Time) model.
 		RawPayload:         marshalRaw(row),
 		CapturedAt:         capturedAt,
 	}
+}
+
+func (p *Provider) enrichItems(ctx context.Context, items []model.Item) []model.Item {
+	enriched := 0
+	for idx := range items {
+		if enriched >= maxDetailEnrich {
+			break
+		}
+		if !shouldFetchDetail(items[idx]) {
+			continue
+		}
+		resp, err := p.client.R().
+			SetContext(ctx).
+			SetHeader("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8").
+			SetHeader("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8").
+			SetHeader("Referer", defaultPageURL).
+			SetHeader("User-Agent", "Mozilla/5.0 (compatible; YuqingBot/1.0; +https://kuaixun.eastmoney.com/)").
+			Get(items[idx].DetailURL)
+		enriched++
+		if err != nil || resp.IsError() {
+			continue
+		}
+		title, content, summary, sourceURL, fromText := parseDetailHTML(resp.String())
+		if title != "" {
+			items[idx].Title = title
+		}
+		if content != "" {
+			items[idx].Content = content
+		}
+		if summary != "" {
+			items[idx].Summary = summary
+		}
+		if sourceURL != "" {
+			items[idx].SourceURL = sourceURL
+		}
+		if fromText != "" {
+			items[idx].FromText = fromText
+		}
+	}
+	return items
+}
+
+func shouldFetchDetail(item model.Item) bool {
+	detailURL := strings.TrimSpace(item.DetailURL)
+	if detailURL == "" {
+		return false
+	}
+	if strings.TrimSpace(item.Content) == "" || strings.TrimSpace(item.Summary) == "" {
+		return true
+	}
+	text := item.Title + " " + item.Summary + " " + item.Content
+	return strings.Contains(text, "点击查看全文")
+}
+
+func parseDetailHTML(raw string) (title string, content string, summary string, sourceURL string, source string) {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(raw))
+	if err != nil {
+		return "", "", "", "", ""
+	}
+	title = cleanEastMoneyTitle(doc.Find("title").First().Text())
+	if metaTitle, ok := doc.Find(`meta[property="og:title"], meta[name="title"]`).First().Attr("content"); ok {
+		if cleaned := cleanEastMoneyTitle(metaTitle); cleaned != "" {
+			title = cleaned
+		}
+	}
+	if metaSummary, ok := doc.Find(`meta[name="description"], meta[property="og:description"]`).First().Attr("content"); ok {
+		summary = cleanEastMoneyText(metaSummary)
+	}
+	content = extractDetailContent(doc)
+	if content == "" {
+		content = summary
+	}
+	if node := doc.Find(`link[rel="canonical"], meta[property="og:url"]`).First(); node.Length() > 0 {
+		if value, ok := node.Attr("href"); ok {
+			sourceURL = normalizeURL(value)
+		}
+		if sourceURL == "" {
+			if value, ok := node.Attr("content"); ok {
+				sourceURL = normalizeURL(value)
+			}
+		}
+	}
+	source = cleanText(doc.Find(".source, .info .source, .time-source .source").First().Text())
+	if source == "" {
+		source = fromText
+	}
+	return title, content, summary, sourceURL, source
+}
+
+func extractDetailContent(doc *goquery.Document) string {
+	selectors := []string{
+		"#ContentBody",
+		".txtinfos",
+		".zwinfos .txtinfos",
+		"article",
+		".newsContent",
+		".content",
+	}
+	for _, selector := range selectors {
+		node := doc.Find(selector).First()
+		if node.Length() == 0 {
+			continue
+		}
+		node.Find("script,style,iframe,noscript,input,button,.em_xuangu,.statement,.copyright").Remove()
+		text := cleanEastMoneyText(node.Text())
+		if text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+func cleanEastMoneyTitle(raw string) string {
+	title := cleanText(html.UnescapeString(raw))
+	title = strings.TrimSuffix(title, "_ 东方财富网")
+	title = strings.TrimSuffix(title, " _ 东方财富网")
+	title = strings.TrimSuffix(title, "- 东方财富网")
+	title = strings.TrimSuffix(title, " - 东方财富网")
+	return cleanText(title)
 }
 
 func listAPIURL(pageURL string) string {
@@ -417,7 +538,15 @@ func cleanText(raw string) string {
 func cleanHTMLText(raw string) string {
 	raw = strings.ReplaceAll(raw, "<em>", "")
 	raw = strings.ReplaceAll(raw, "</em>", "")
-	return cleanText(html.UnescapeString(raw))
+	return cleanEastMoneyText(raw)
+}
+
+func cleanEastMoneyText(raw string) string {
+	text := cleanText(html.UnescapeString(raw))
+	for _, marker := range []string{"[点击查看全文]", "［点击查看全文］", "【点击查看全文】", "点击查看全文"} {
+		text = strings.ReplaceAll(text, marker, "")
+	}
+	return cleanText(text)
 }
 
 func hostOf(raw string) string {
