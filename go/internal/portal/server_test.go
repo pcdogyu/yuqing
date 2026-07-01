@@ -3178,8 +3178,10 @@ func TestAStockContextRefreshDoesNotRefilterLockedAfternoonSelectionsByMorningQu
 	}
 }
 
-func TestAStockContextEmptySnapshotFallsBackToLockedSelections(t *testing.T) {
+func TestAStockContextEmptySnapshotIsAuthoritative(t *testing.T) {
+	marketHits := 0
 	market := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		marketHits++
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"data": map[string]any{
@@ -3193,12 +3195,16 @@ func TestAStockContextEmptySnapshotFallsBackToLockedSelections(t *testing.T) {
 	defer market.Close()
 	t.Setenv("YUQING_ASTOCK_MARKET_URL", market.URL)
 
+	selectionHits := 0
+	holdingHits := 0
+	saveHits := 0
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/v1/articles":
 			writeEnvelope(w, http.StatusOK, "ok", model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0})
 		case "/api/v1/a-stock/recommendation-selections":
+			selectionHits++
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{
 				Found:        true,
 				StrategyDate: "2026-06-23",
@@ -3219,8 +3225,10 @@ func TestAStockContextEmptySnapshotFallsBackToLockedSelections(t *testing.T) {
 				LimitUpFilterEnabled: true,
 			})
 		case "/api/v1/internal/a-stock/recommendations":
+			saveHits++
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Updated: 1})
 		case "/api/v1/a-stock/holdings/summary":
+			holdingHits++
 			writeEnvelope(w, http.StatusOK, "ok", model.StockInstitutionHoldingSummary{})
 		default:
 			if handleEmptyAStockAuctionTestEndpoint(w, r) {
@@ -3233,8 +3241,14 @@ func TestAStockContextEmptySnapshotFallsBackToLockedSelections(t *testing.T) {
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
 	ctx := srv.loadAStockContextWithCache("2026-06-23", "afternoon", 1, false, false, false, false, newAStockRequestCache())
-	if len(ctx.Recommendations) != 1 || ctx.Recommendations[0].Code != "002008" {
-		t.Fatalf("expected empty snapshot to fall back to locked selection, got %+v", ctx.Recommendations)
+	if len(ctx.Recommendations) != 0 || len(ctx.Backtests) != 0 {
+		t.Fatalf("expected empty snapshot to remain empty, got recommendations=%+v backtests=%+v", ctx.Recommendations, ctx.Backtests)
+	}
+	if ctx.BacktestStatus != "无推荐股票" || ctx.EmptyReason != "空快照" {
+		t.Fatalf("expected empty snapshot status/reason, got status=%q reason=%q", ctx.BacktestStatus, ctx.EmptyReason)
+	}
+	if marketHits != 0 || selectionHits != 0 || holdingHits != 0 || saveHits != 0 {
+		t.Fatalf("expected empty snapshot to avoid recompute and writes, got market=%d selections=%d holdings=%d saves=%d", marketHits, selectionHits, holdingHits, saveHits)
 	}
 }
 

@@ -1576,9 +1576,7 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistence(strategyDat
 	}
 	allowPersistedRecommendations := phase == aStockRecommendationPhaseFinal && isAStockOfficialSelectionContext(ignoreRecent, ignoreLimitUp, filterTodayMarket)
 	if allowPersistedRecommendations && !forceRecommendationRefresh && s.applyAStockRecommendationSnapshotWithCache(&ctx, cache) {
-		if len(ctx.Recommendations) > 0 || !s.hasAStockRecommendationSelectionsWithCache(ctx.Date, ctx.Period, cache) {
-			return ctx
-		}
+		return ctx
 	}
 	if allowPersistedRecommendations && s.applyAStockRecommendationSelectionsWithCache(&ctx, cache) {
 		ctx.Recommendations = s.applyAStockHoldingSummariesWithCache(ctx.Recommendations, cache)
@@ -1783,12 +1781,34 @@ func (s *Server) applyAStockRecommendationSnapshotWithCache(ctx *aStockContext, 
 		return false
 	}
 	var recommendations []aStockRecommendation
-	if err := json.Unmarshal([]byte(nonEmpty(snapshot.RecommendationsJSON, "[]")), &recommendations); err != nil {
+	recommendationsJSON := nonEmpty(snapshot.RecommendationsJSON, "[]")
+	if err := json.Unmarshal([]byte(recommendationsJSON), &recommendations); err != nil {
 		return false
 	}
 	var backtests []aStockBacktestRow
-	if err := json.Unmarshal([]byte(nonEmpty(snapshot.BacktestsJSON, "[]")), &backtests); err != nil {
+	backtestsJSON := nonEmpty(snapshot.BacktestsJSON, "[]")
+	if err := json.Unmarshal([]byte(backtestsJSON), &backtests); err != nil {
 		return false
+	}
+	if strings.TrimSpace(recommendationsJSON) == "[]" && strings.TrimSpace(backtestsJSON) == "[]" && len(recommendations) == 0 && len(backtests) == 0 {
+		ctx.Recommendations = nil
+		ctx.Backtests = nil
+		ctx.BacktestStatus = nonEmpty(snapshot.BacktestStatus, "无推荐股票")
+		ctx.GeneratedRecommendationCount = snapshot.GeneratedCount
+		ctx.RecentFiltered = snapshot.RecentFiltered
+		ctx.SameDayMorningFiltered = snapshot.SameDayMorningFiltered
+		ctx.LimitUpFilterEnabled = snapshot.LimitUpFilterEnabled
+		ctx.LimitUpFiltered = snapshot.LimitUpFiltered
+		ctx.TodayMarketFilterEnabled = snapshot.TodayMarketFilterEnabled
+		ctx.NoTodayMarketCount = snapshot.NoTodayMarketCount
+		ctx.MarketCandidateStatus = snapshot.MarketCandidateStatus
+		ctx.MarketCandidateCount = snapshot.MarketCandidateCount
+		if auctionLabel := normalizeAStockAuctionSummaryLabel(snapshot.AuctionAmountLabel); auctionLabel != "" {
+			ctx.AuctionAmountLabel = auctionLabel
+		}
+		ctx.EmptyReason = nonEmpty(snapshot.EmptyReason, aStockRecommendationEmptyReason(*ctx))
+		ctx.SnapshotUpdatedAt = snapshot.UpdatedAt
+		return true
 	}
 	if !isFreshAStockBacktestSnapshot(ctx.Period, backtests) {
 		return false
