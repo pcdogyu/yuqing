@@ -272,7 +272,7 @@ const (
 	aStockRecommendationLimit        = 12
 	aStockReplacementPoolLimit       = 36
 	aStockReplacementPerHotspot      = 12
-	aStockHotspotTopStockLimit       = 5
+	aStockHotspotTopStockLimit       = 9
 	aStockHotspotLimit               = 3
 	aStockMarketRankScoreBase        = 200
 	aStockStocksPerHotspot           = 3
@@ -396,8 +396,8 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-news-table th,.astock-news-table td{vertical-align:top}
 		.astock-news-counts{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
 		.astock-news-diagnostic{margin-top:6px;color:#8a5a17;font-size:12px;line-height:1.35}
-		.astock-hotspot-stocks{display:flex;gap:14px;flex-wrap:wrap;align-items:center;line-height:1.55;white-space:normal}
-		.astock-hotspot-stock{display:inline-flex;white-space:nowrap}
+		.astock-hotspot-stocks{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px 14px;align-items:start;line-height:1.55;white-space:normal}
+		.astock-hotspot-stock{display:block;min-width:0;white-space:nowrap}
 		.astock-help{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:#eef4ec;color:#214e34;font-size:12px;font-weight:700;line-height:1;cursor:help;position:relative}
 		.astock-help-text{position:absolute;right:0;top:calc(100% + 8px);z-index:10;display:none;width:max-content;max-width:260px;padding:8px 10px;border:1px solid #d6ccbb;border-radius:8px;background:#fff;color:#2b261f;box-shadow:0 12px 28px rgba(31,40,34,.14);font-size:12px;font-weight:400;line-height:1.4;white-space:normal}
 		.astock-help:hover .astock-help-text,.astock-help:focus .astock-help-text{display:block}
@@ -964,10 +964,10 @@ func renderAStockNewsPageLink(b *strings.Builder, ctx aStockContext, page int, l
 func renderAStockHotspotSection(b *strings.Builder, hotspots []aStockHotspot) {
 	b.WriteString(`<section><h2>热点归纳</h2><p><span class="astock-badge">规则+词典</span><span class="astock-badge">可复现回测</span></p>`)
 	if len(hotspots) == 0 {
-		b.WriteString(`<div class="astock-empty">暂无数据：当前新闻窗口未命中 A 股热点词典。</div><table><tr><th>热点</th><th>关键词</th><th>热度分</th><th>证据新闻数</th><th>排名前5股票</th></tr><tr><td colspan="5">暂无热点</td></tr></table></section>`)
+		b.WriteString(`<div class="astock-empty">暂无数据：当前新闻窗口未命中 A 股热点词典。</div><table><tr><th>热点</th><th>关键词</th><th>热度分</th><th>证据新闻数</th><th>推荐排名前9股票</th></tr><tr><td colspan="5">暂无热点</td></tr></table></section>`)
 		return
 	}
-	b.WriteString(`<table><tr><th>热点</th><th>关键词</th><th>热度分</th><th>证据新闻数</th><th>排名前5股票</th></tr>`)
+	b.WriteString(`<table><tr><th>热点</th><th>关键词</th><th>热度分</th><th>证据新闻数</th><th>推荐排名前9股票</th></tr>`)
 	for _, hotspot := range hotspots {
 		b.WriteString(`<tr><td>`)
 		b.WriteString(html.EscapeString(hotspot.Name))
@@ -4919,28 +4919,43 @@ func buildAStockHotspotsWithTopStocks(hotspots []aStockHotspot, marketCandidates
 	candidates := fixedPoolAStockMarketCandidates(hotspots, marketCandidates)
 	result := make([]aStockHotspot, len(hotspots))
 	copy(result, hotspots)
+	seen := make(map[string]struct{})
 	for i := range result {
-		result[i].TopStocks = buildAStockHotspotTopStocks(result[i], candidates, limit)
+		result[i].TopStocks = buildAStockHotspotTopStocksWithSeen(result[i], candidates, limit, seen)
 	}
 	return result
 }
 
 func buildAStockHotspotTopStocks(hotspot aStockHotspot, candidates []aStockMarketCandidate, limit int) []aStockHotspotStock {
+	return buildAStockHotspotTopStocksWithSeen(hotspot, candidates, limit, nil)
+}
+
+func buildAStockHotspotTopStocksWithSeen(hotspot aStockHotspot, candidates []aStockMarketCandidate, limit int, seen map[string]struct{}) []aStockHotspotStock {
 	if limit <= 0 {
 		limit = aStockHotspotTopStockLimit
 	}
 	scored := scoreAStockMarketCandidates(hotspot, candidates)
-	if len(scored) > limit {
-		scored = scored[:limit]
-	}
-	stocks := make([]aStockHotspotStock, 0, len(scored))
-	for i, stock := range scored {
+	stocks := make([]aStockHotspotStock, 0, limit)
+	for _, stock := range scored {
+		code := normalizeAStockCode(stock.Code)
+		if code == "" {
+			continue
+		}
+		if seen != nil {
+			if _, exists := seen[code]; exists {
+				continue
+			}
+			seen[code] = struct{}{}
+		}
 		stocks = append(stocks, aStockHotspotStock{
-			Rank:  i + 1,
-			Code:  normalizeAStockCode(stock.Code),
+			Rank:  len(stocks) + 1,
+			Code:  code,
 			Name:  strings.TrimSpace(stock.Name),
 			Score: hotspot.Score + stock.MatchedScore,
 		})
+		if len(stocks) >= limit {
+			break
+		}
 	}
 	return stocks
 }

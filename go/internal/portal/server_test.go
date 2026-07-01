@@ -296,8 +296,8 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		`.astock-scroll{width:100%;overflow:auto}`,
 		`.astock-news-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}`,
 		`.astock-help:hover .astock-help-text,.astock-help:focus .astock-help-text{display:block}`,
-		`.astock-hotspot-stocks{display:flex`,
-		`.astock-hotspot-stock{display:inline-flex`,
+		`.astock-hotspot-stocks{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))`,
+		`.astock-hotspot-stock{display:block;min-width:0;white-space:nowrap}`,
 		`class="astock-overview-strategy" rowspan="2"`,
 		"08:00-09:30",
 		"09:30-13:00",
@@ -4140,7 +4140,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"金十快讯", "金十资讯", "1条", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "5日内过滤", "涨停过滤", "当日行情", "不过滤", "重新计算", "关闭5日过滤", "关闭涨停过滤", "启用当日行情过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "推荐历史", "上午推荐", "下午推荐", "推荐窗口", "08:00-09:30", "上午开盘价", "下午开盘价", "补抓上午新闻", "重新生成上午推荐", "补抓下午新闻", "重新生成下午推荐", "补行情收益", "刷新全部回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="refresh_current_backtest"`, `name="action" value="refresh_backtest"`, `name="action" value="recalculate"`, "2026-06-12 周五", "2026-06-15 周一", "今日", "T+0 收益", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "排名前5股票", "1. 002230 科大讯飞", "1. 688981 中芯国际", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
+	for _, want := range []string{"金十快讯", "金十资讯", "1条", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "5日内过滤", "涨停过滤", "当日行情", "不过滤", "重新计算", "关闭5日过滤", "关闭涨停过滤", "启用当日行情过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "推荐历史", "上午推荐", "下午推荐", "推荐窗口", "08:00-09:30", "上午开盘价", "下午开盘价", "补抓上午新闻", "重新生成上午推荐", "补抓下午新闻", "重新生成下午推荐", "补行情收益", "刷新全部回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="refresh_current_backtest"`, `name="action" value="refresh_backtest"`, `name="action" value="recalculate"`, "2026-06-12 周五", "2026-06-15 周一", "今日", "T+0 收益", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "推荐排名前9股票", "1. 002230 科大讯飞", "1. 688981 中芯国际", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}
@@ -5469,7 +5469,7 @@ func TestAStockHotspotTopStocksUseRecommendationScoreAndLimit(t *testing.T) {
 		{Code: "000004", Name: "AI四号", Rank: 4, AuctionAmount: 3000000},
 		{Code: "000005", Name: "AI五号", Rank: 5, AuctionAmount: 2000000},
 		{Code: "000006", Name: "AI六号", Rank: 6, AuctionAmount: 1000000},
-	}, aStockHotspotTopStockLimit)
+	}, 5)
 
 	if len(stocks) != 5 {
 		t.Fatalf("expected top 5 hotspot stocks, got %+v", stocks)
@@ -5485,6 +5485,81 @@ func TestAStockHotspotTopStocksUseRecommendationScoreAndLimit(t *testing.T) {
 		if stock.Rank != i+1 || stock.Name == "" || stock.Score <= 0 {
 			t.Fatalf("expected ranked stock display data, got %+v", stocks)
 		}
+	}
+}
+
+func TestAStockHotspotTopStocksDefaultLimitIsNine(t *testing.T) {
+	hotspot := aStockHotspot{
+		Name:     "人工智能",
+		Keywords: []string{"AI"},
+		Score:    80,
+		Evidence: 1,
+	}
+	candidates := make([]aStockMarketCandidate, 0, 10)
+	for i := 1; i <= 10; i++ {
+		candidates = append(candidates, aStockMarketCandidate{
+			Code:          fmt.Sprintf("000%03d", i),
+			Name:          fmt.Sprintf("AI%d号", i),
+			Rank:          i,
+			AuctionAmount: float64(1000000 - i),
+		})
+	}
+
+	stocks := buildAStockHotspotTopStocks(hotspot, candidates, 0)
+
+	if len(stocks) != 9 {
+		t.Fatalf("expected default top 9 hotspot stocks, got %+v", stocks)
+	}
+	if stocks[0].Code != "000001" || stocks[8].Code != "000009" {
+		t.Fatalf("expected first nine ranked candidates, got %+v", stocks)
+	}
+	for i, stock := range stocks {
+		if stock.Rank != i+1 {
+			t.Fatalf("expected hotspot display ranks to be sequential, got %+v", stocks)
+		}
+	}
+}
+
+func TestAStockHotspotsWithTopStocksDedupesAcrossHotspots(t *testing.T) {
+	hotspots := []aStockHotspot{
+		{
+			Name:     "人工智能",
+			Keywords: []string{"AI"},
+			Score:    120,
+			Evidence: 1,
+			MatchedItems: []model.Item{
+				{Title: "AI 主题带动东方财富活跃", TagFlags: "0.300059"},
+			},
+		},
+		{
+			Name:     "金融券商",
+			Keywords: []string{"证券"},
+			Score:    100,
+			Evidence: 1,
+			MatchedItems: []model.Item{
+				{Title: "证券板块东方财富与中信证券放量", TagFlags: "0.300059 1.600030"},
+			},
+		},
+	}
+	marketCandidates := []aStockMarketCandidate{
+		{Code: "300059", Name: "东方财富", Rank: 1, AuctionAmount: 9000000},
+		{Code: "600030", Name: "中信证券", Rank: 2, AuctionAmount: 8000000},
+		{Code: "600036", Name: "招商银行", Rank: 3, AuctionAmount: 7000000},
+		{Code: "002230", Name: "科大讯飞", Rank: 100, AuctionAmount: 1000000},
+		{Code: "603019", Name: "中科曙光", Rank: 101, AuctionAmount: 900000},
+		{Code: "601138", Name: "工业富联", Rank: 102, AuctionAmount: 800000},
+	}
+
+	result := buildAStockHotspotsWithTopStocks(hotspots, marketCandidates, 1)
+
+	if len(result) != 2 || len(result[0].TopStocks) != 1 || len(result[1].TopStocks) != 1 {
+		t.Fatalf("expected one top stock per hotspot, got %+v", result)
+	}
+	if result[0].TopStocks[0].Code != "300059" {
+		t.Fatalf("expected first hotspot to claim duplicate stock, got %+v", result[0].TopStocks)
+	}
+	if result[1].TopStocks[0].Code != "600030" || result[1].TopStocks[0].Rank != 1 {
+		t.Fatalf("expected second hotspot to skip duplicate and rerank replacement, got %+v", result[1].TopStocks)
 	}
 }
 
