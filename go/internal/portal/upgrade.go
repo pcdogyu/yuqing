@@ -30,8 +30,10 @@ var portalUpgradeBuildPackages = []string{
 	"./cmd/release-service",
 }
 
+type portalUpgradeProgress func(message string, logText string)
+
 type portalUpgradeRunner interface {
-	Run(context.Context, config.Config) portalUpgradeResult
+	Run(context.Context, config.Config, portalUpgradeProgress) portalUpgradeResult
 }
 
 type portalUpgradeResult struct {
@@ -46,8 +48,8 @@ type portalUpgradeResult struct {
 
 type defaultPortalUpgradeRunner struct{}
 
-func (defaultPortalUpgradeRunner) Run(ctx context.Context, cfg config.Config) portalUpgradeResult {
-	return runPortalUpgrade(ctx, cfg)
+func (defaultPortalUpgradeRunner) Run(ctx context.Context, cfg config.Config, progress portalUpgradeProgress) portalUpgradeResult {
+	return runPortalUpgrade(ctx, cfg, progress)
 }
 
 func (s *Server) requirePortalUpgradeSession(next func(http.ResponseWriter, *http.Request, any)) http.HandlerFunc {
@@ -116,8 +118,21 @@ func (s *Server) startPortalUpgrade() portalUpgradeResult {
 	result := s.upgradeState
 	s.upgradeMu.Unlock()
 
+	progress := func(message string, logText string) {
+		s.upgradeMu.Lock()
+		defer s.upgradeMu.Unlock()
+		if !s.upgradeState.Running || !s.upgradeState.StartedAt.Equal(startedAt) {
+			return
+		}
+		if strings.TrimSpace(message) != "" {
+			s.upgradeState.Message = strings.TrimSpace(message)
+		}
+		if strings.TrimSpace(logText) != "" {
+			s.upgradeState.Log = strings.TrimRight(logText, "\r\n")
+		}
+	}
 	go func() {
-		completed := runner.Run(context.Background(), cfg)
+		completed := runner.Run(context.Background(), cfg, progress)
 		completed.Running = false
 		s.upgradeMu.Lock()
 		s.upgradeState = completed
@@ -143,17 +158,39 @@ func (s *Server) portalUpgradeSnapshot() portalUpgradeResult {
 		if elapsed < 0 {
 			elapsed = 0
 		}
-		result.Message = fmt.Sprintf("升级执行中，已运行 %s", elapsed)
+		if result.Message == "" || result.Message == "升级执行中" {
+			result.Message = fmt.Sprintf("升级执行中，已运行 %s", elapsed)
+		} else {
+			result.Message = fmt.Sprintf("%s，已运行 %s", result.Message, elapsed)
+		}
 	}
 	return result
 }
 
-func runPortalUpgrade(parent context.Context, _ config.Config) portalUpgradeResult {
+func runPortalUpgrade(parent context.Context, _ config.Config, progress portalUpgradeProgress) portalUpgradeResult {
 	startedAt := time.Now()
 	ctx, cancel := context.WithTimeout(parent, portalUpgradeTimeout)
 	defer cancel()
 
 	var log bytes.Buffer
+	publish := func(message string) {
+		if progress != nil {
+			progress(message, strings.TrimRight(log.String(), "\r\n"))
+		}
+	}
+	stage := func(name string) {
+		message := "阶段: " + name
+		appendUpgradeLog(&log, message)
+		publish(message)
+	}
+	runStage := func(name string, dir string, allowFailure bool, command string, args ...string) error {
+		stage(name)
+		err := runPortalUpgradeCommand(ctx, &log, dir, allowFailure, command, args...)
+		publish("阶段: " + name)
+		return err
+	}
+
+	stage("初始化")
 	appendUpgradeLog(&log, "开始系统升级")
 	goDir, err := resolvePortalGoDir()
 	if err != nil {
@@ -162,21 +199,40 @@ func runPortalUpgrade(parent context.Context, _ config.Config) portalUpgradeResu
 	repoRoot := filepath.Dir(goDir)
 	appendUpgradeLog(&log, "Go 目录: "+goDir)
 	appendUpgradeLog(&log, "仓库目录: "+repoRoot)
+	publish("阶段: 初始化")
 
-	_ = runPortalUpgradeCommand(ctx, &log, repoRoot, true, "git", "fsmonitor--daemon", "stop")
-	if err := runPortalUpgradeCommand(ctx, &log, repoRoot, false, "git", "fetch", "--prune", "origin"); err != nil {
-		return finishPortalUpgrade(false, startedAt, log.String(), err)
-	}
-
+	_ = runStage("准备仓库", repoRoot, true, "git", "fsmonitor--daemon", "stop")
+	stage("读取当前分支")
 	branch := strings.TrimSpace(portalUpgradeCommandOutput(ctx, repoRoot, "git", "rev-parse", "--abbrev-ref", "HEAD"))
 	if branch == "" || strings.EqualFold(branch, "HEAD") {
 		branch = "golang"
 	}
 	appendUpgradeLog(&log, "当前分支: "+branch)
-	if err := runPortalUpgradeCommand(ctx, &log, repoRoot, false, "git", "pull", "--ff-only", "origin", branch); err != nil {
+	publish("阶段: 读取当前分支")
+	if err := runStage("拉取代码信息", repoRoot, false, "git", "fetch", "--prune", "origin"); err != nil {
 		return finishPortalUpgrade(false, startedAt, log.String(), err)
 	}
-	_ = runPortalUpgradeCommand(ctx, &log, goDir, true, "go", "clean", "-cache", "-testcache")
+	stage("版本检测")
+	currentCommit := strings.TrimSpace(portalUpgradeCommandOutput(ctx, repoRoot, "git", "rev-parse", "HEAD"))
+	latestCommit := strings.TrimSpace(portalUpgradeCommandOutput(ctx, repoRoot, "git", "rev-parse", portalUpgradeRemoteRef(branch)))
+	if currentCommit == "" || latestCommit == "" {
+		return finishPortalUpgrade(false, startedAt, log.String(), fmt.Errorf("无法读取当前版本或最新版本"))
+	}
+	appendUpgradeLog(&log, "当前版本: "+shortGitCommit(currentCommit))
+	appendUpgradeLog(&log, "最新版本: "+shortGitCommit(latestCommit))
+	if currentCommit == latestCommit {
+		appendUpgradeLog(&log, "已经是最新版本了")
+		publish("已经是最新版本了")
+		return finishPortalUpgradeWithMessage(true, startedAt, log.String(), nil, "已经是最新版本了")
+	}
+	publish("阶段: 版本检测")
+	if err := runStage("拉取代码", repoRoot, false, "git", "pull", "--ff-only", "origin", branch); err != nil {
+		return finishPortalUpgrade(false, startedAt, log.String(), err)
+	}
+	_ = runStage("清理构建缓存", goDir, true, "go", "clean", "-cache", "-testcache")
+	if err := runStage("测试", goDir, false, "go", "test", "./..."); err != nil {
+		return finishPortalUpgrade(false, startedAt, log.String(), err)
+	}
 
 	binDir := filepath.Join(goDir, "bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
@@ -195,17 +251,23 @@ func runPortalUpgrade(parent context.Context, _ config.Config) portalUpgradeResu
 	}, " ")
 	args := []string{"build", "-ldflags", ldflags, "-o", binDir + string(os.PathSeparator)}
 	args = append(args, portalUpgradeBuildPackages...)
-	if err := runPortalUpgradeCommand(ctx, &log, goDir, false, "go", args...); err != nil {
+	if err := runStage("打包构建", goDir, false, "go", args...); err != nil {
 		return finishPortalUpgrade(false, startedAt, log.String(), err)
 	}
+	stage("完成")
 	appendUpgradeLog(&log, "升级构建完成。新二进制已写入 "+binDir+"；如需让当前服务加载新代码，请重启对应服务。")
+	publish("阶段: 完成")
 	return finishPortalUpgrade(true, startedAt, log.String(), nil)
 }
 
 func finishPortalUpgrade(ok bool, startedAt time.Time, logText string, err error) portalUpgradeResult {
+	return finishPortalUpgradeWithMessage(ok, startedAt, logText, err, "升级完成")
+}
+
+func finishPortalUpgradeWithMessage(ok bool, startedAt time.Time, logText string, err error, successMessage string) portalUpgradeResult {
 	finishedAt := time.Now()
 	status := "success"
-	message := "升级完成"
+	message := successMessage
 	if err != nil {
 		status = "failed"
 		message = err.Error()
@@ -219,6 +281,22 @@ func finishPortalUpgrade(ok bool, startedAt time.Time, logText string, err error
 		StartedAt:  startedAt,
 		FinishedAt: finishedAt,
 	}
+}
+
+func portalUpgradeRemoteRef(branch string) string {
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		branch = "golang"
+	}
+	return "refs/remotes/origin/" + branch
+}
+
+func shortGitCommit(commit string) string {
+	commit = strings.TrimSpace(commit)
+	if len(commit) <= 8 {
+		return commit
+	}
+	return commit[:8]
 }
 
 func resolvePortalGoDir() (string, error) {

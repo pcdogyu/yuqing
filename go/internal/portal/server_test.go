@@ -6886,7 +6886,8 @@ func TestPortalNavPlacesLogoutAfterUpgrade(t *testing.T) {
 		`data.__httpStatus=resp.status`,
 		`upgradeLog(data)`,
 		`data.status==="running"`,
-		`setTimeout(hide,15000)`,
+		`finalMessage=upgradeMessage(data)`,
+		`setTimeout(hide,30000)`,
 	} {
 		if !strings.Contains(portalUpgradeShellHTML, expected) {
 			t.Fatalf("expected upgrade shell to include %q", expected)
@@ -6919,7 +6920,7 @@ type fakePortalUpgradeRunner struct {
 	result     portalUpgradeResult
 }
 
-func (f *fakePortalUpgradeRunner) Run(_ context.Context, _ config.Config) portalUpgradeResult {
+func (f *fakePortalUpgradeRunner) Run(_ context.Context, _ config.Config, _ portalUpgradeProgress) portalUpgradeResult {
 	f.calledOnce.Do(func() {
 		if f.called != nil {
 			close(f.called)

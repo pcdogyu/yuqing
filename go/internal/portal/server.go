@@ -4883,7 +4883,7 @@ var hideTimer=0;
 var pollTimer=0;
 function show(){if(mask){mask.hidden=false}}
 function hide(){if(mask){mask.hidden=true}}
-function scheduleHide(){clearTimeout(hideTimer);hideTimer=setTimeout(hide,15000)}
+function scheduleHide(){clearTimeout(hideTimer);hideTimer=setTimeout(hide,30000)}
 function stopPoll(){clearTimeout(pollTimer);pollTimer=0}
 function schedulePoll(){stopPoll();pollTimer=setTimeout(pollStatus,1500)}
 function setLog(text){if(log){log.textContent=text||"无升级日志"}}
@@ -4897,7 +4897,8 @@ stopPoll();
 button.disabled=false;
 var idle=data.status==="idle";
 var ok=!!data.ok&&data.__httpOK!==false&&!idle;
-status.textContent=idle?"等待执行":(ok?"升级完成":"升级失败");
+var finalMessage=upgradeMessage(data);
+status.textContent=idle?"等待执行":(ok?(finalMessage||"升级完成"):(finalMessage||"升级失败"));
 setLog(upgradeLog(data));
 if(!idle){scheduleHide()}
 }
