@@ -152,6 +152,11 @@ type aStockMarketCandidate struct {
 	FixedPool     bool
 }
 
+type aStockHotspotTopStockCandidateSet struct {
+	scored   []aStockMarketCandidate
+	fallback []aStockMarketCandidate
+}
+
 type aStockTradingDayStatus struct {
 	Date               string `json:"date"`
 	IsTradingDay       bool   `json:"is_trading_day"`
@@ -262,22 +267,23 @@ type aStockPopupPayload struct {
 }
 
 const (
-	aStockDrawdownFilterThreshold    = -15.0
-	aStockSectorDrawdownPenalty      = 15
-	aStockNewsPageSize               = 10
-	aStockArticleFetchPageSize       = 200
-	aStockArticleFetchMaxPages       = 100
-	aStockRecentLookbackDays         = 5
-	aStockMarketCandidateLimit       = 5000
-	aStockRecommendationLimit        = 12
-	aStockReplacementPoolLimit       = 36
-	aStockReplacementPerHotspot      = 12
-	aStockHotspotTopStockLimit       = 9
-	aStockHotspotLimit               = 3
-	aStockMarketRankScoreBase        = 200
-	aStockStocksPerHotspot           = 3
-	aStockRecommendationPhasePreopen = "preopen"
-	aStockRecommendationPhaseFinal   = "final"
+	aStockDrawdownFilterThreshold     = -15.0
+	aStockSectorDrawdownPenalty       = 15
+	aStockNewsPageSize                = 10
+	aStockArticleFetchPageSize        = 200
+	aStockArticleFetchMaxPages        = 100
+	aStockRecentLookbackDays          = 5
+	aStockMarketCandidateLimit        = 5000
+	aStockRecommendationLimit         = 12
+	aStockReplacementPoolLimit        = 36
+	aStockReplacementPerHotspot       = 12
+	aStockHotspotTopStockLimit        = 9
+	aStockHotspotScoredCandidateLimit = 240
+	aStockHotspotLimit                = 3
+	aStockMarketRankScoreBase         = 200
+	aStockStocksPerHotspot            = 3
+	aStockRecommendationPhasePreopen  = "preopen"
+	aStockRecommendationPhaseFinal    = "final"
 )
 
 var (
@@ -4916,20 +4922,20 @@ func buildAStockHotspotsWithTopStocks(hotspots []aStockHotspot, marketCandidates
 	copy(result, hotspots)
 	seen := make(map[string]struct{})
 	for i := range result {
-		result[i].TopStocks = buildAStockHotspotTopStocksWithSeen(result[i], candidates, limit, seen)
+		result[i].TopStocks = buildAStockHotspotTopStocksWithSeen(result[i], candidates.scored, candidates.fallback, limit, seen)
 	}
 	return result
 }
 
 func buildAStockHotspotTopStocks(hotspot aStockHotspot, candidates []aStockMarketCandidate, limit int) []aStockHotspotStock {
-	return buildAStockHotspotTopStocksWithSeen(hotspot, candidates, limit, nil)
+	return buildAStockHotspotTopStocksWithSeen(hotspot, candidates, sortedAStockHotspotFallbackCandidates(candidates), limit, nil)
 }
 
-func buildAStockHotspotTopStocksWithSeen(hotspot aStockHotspot, candidates []aStockMarketCandidate, limit int, seen map[string]struct{}) []aStockHotspotStock {
+func buildAStockHotspotTopStocksWithSeen(hotspot aStockHotspot, scoredCandidates []aStockMarketCandidate, fallbackCandidates []aStockMarketCandidate, limit int, seen map[string]struct{}) []aStockHotspotStock {
 	if limit <= 0 {
 		limit = aStockHotspotTopStockLimit
 	}
-	scored := scoreAStockMarketCandidates(hotspot, candidates)
+	scored := scoreAStockMarketCandidates(hotspot, scoredCandidates)
 	stocks := make([]aStockHotspotStock, 0, limit)
 	rowSeen := make(map[string]struct{})
 	for _, stock := range scored {
@@ -4938,7 +4944,7 @@ func buildAStockHotspotTopStocksWithSeen(hotspot aStockHotspot, candidates []aSt
 			break
 		}
 	}
-	for _, stock := range sortedAStockHotspotFallbackCandidates(candidates) {
+	for _, stock := range fallbackCandidates {
 		if len(stocks) >= limit {
 			break
 		}
@@ -4973,30 +4979,33 @@ func appendAStockHotspotTopStock(stocks []aStockHotspotStock, stock aStockMarket
 	})
 }
 
-func aStockHotspotTopStockCandidates(hotspots []aStockHotspot, marketCandidates []aStockMarketCandidate) []aStockMarketCandidate {
-	candidates := fixedPoolAStockMarketCandidates(hotspots, marketCandidates)
-	seen := make(map[string]struct{}, len(candidates)+len(marketCandidates))
-	for _, candidate := range candidates {
+func aStockHotspotTopStockCandidates(hotspots []aStockHotspot, marketCandidates []aStockMarketCandidate) aStockHotspotTopStockCandidateSet {
+	fixedCandidates := fixedPoolAStockMarketCandidates(hotspots, marketCandidates)
+	fallbackCandidates := sortedAStockHotspotFallbackCandidates(marketCandidates)
+	scoredCandidates := make([]aStockMarketCandidate, 0, len(fixedCandidates)+minInt(aStockHotspotScoredCandidateLimit, len(fallbackCandidates)))
+	seen := make(map[string]struct{}, len(fixedCandidates)+minInt(aStockHotspotScoredCandidateLimit, len(fallbackCandidates)))
+	for _, candidate := range fixedCandidates {
 		code := normalizeAStockCode(candidate.Code)
 		if code != "" {
+			scoredCandidates = append(scoredCandidates, candidate)
 			seen[code] = struct{}{}
 		}
 	}
-	for _, candidate := range marketCandidates {
-		code := normalizeAStockCode(candidate.Code)
-		name := strings.TrimSpace(candidate.Name)
-		if code == "" || name == "" {
-			continue
+	for _, candidate := range fallbackCandidates {
+		if len(scoredCandidates) >= len(fixedCandidates)+aStockHotspotScoredCandidateLimit {
+			break
 		}
+		code := candidate.Code
 		if _, exists := seen[code]; exists {
 			continue
 		}
-		candidate.Code = code
-		candidate.Name = name
-		candidates = append(candidates, candidate)
+		scoredCandidates = append(scoredCandidates, candidate)
 		seen[code] = struct{}{}
 	}
-	return candidates
+	return aStockHotspotTopStockCandidateSet{
+		scored:   scoredCandidates,
+		fallback: fallbackCandidates,
+	}
 }
 
 func sortedAStockHotspotFallbackCandidates(candidates []aStockMarketCandidate) []aStockMarketCandidate {
