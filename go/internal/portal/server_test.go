@@ -5468,12 +5468,12 @@ func TestAStockHotspotTopStocksUseRecommendationScoreAndLimit(t *testing.T) {
 		},
 	}
 	stocks := buildAStockHotspotTopStocks(hotspot, []aStockMarketCandidate{
-		{Code: "000001", Name: "AI一号", Rank: 1, AuctionAmount: 6000000},
-		{Code: "000002", Name: "AI二号", Rank: 2, AuctionAmount: 5000000},
-		{Code: "000003", Name: "AI三号", Rank: 3, AuctionAmount: 4000000},
-		{Code: "000004", Name: "AI四号", Rank: 4, AuctionAmount: 3000000},
-		{Code: "000005", Name: "AI五号", Rank: 5, AuctionAmount: 2000000},
-		{Code: "000006", Name: "AI六号", Rank: 6, AuctionAmount: 1000000},
+		{Code: "000101", Name: "AI一号", Rank: 1, AuctionAmount: 6000000},
+		{Code: "000102", Name: "AI二号", Rank: 2, AuctionAmount: 5000000},
+		{Code: "000103", Name: "AI三号", Rank: 3, AuctionAmount: 4000000},
+		{Code: "000104", Name: "AI四号", Rank: 4, AuctionAmount: 3000000},
+		{Code: "000105", Name: "AI五号", Rank: 5, AuctionAmount: 2000000},
+		{Code: "000106", Name: "AI六号", Rank: 6, AuctionAmount: 1000000},
 	}, 5)
 
 	if len(stocks) != 5 {
@@ -5483,7 +5483,7 @@ func TestAStockHotspotTopStocksUseRecommendationScoreAndLimit(t *testing.T) {
 	for _, stock := range stocks {
 		gotCodes = append(gotCodes, stock.Code)
 	}
-	if strings.Join(gotCodes, ",") != "000006,000001,000002,000003,000004" {
+	if strings.Join(gotCodes, ",") != "000106,000101,000102,000103,000104" {
 		t.Fatalf("expected recommendation-score order with evidence boost and limit, got %+v", stocks)
 	}
 	for i, stock := range stocks {
@@ -5503,7 +5503,7 @@ func TestAStockHotspotTopStocksDefaultLimitIsNine(t *testing.T) {
 	candidates := make([]aStockMarketCandidate, 0, 10)
 	for i := 1; i <= 10; i++ {
 		candidates = append(candidates, aStockMarketCandidate{
-			Code:          fmt.Sprintf("000%03d", i),
+			Code:          fmt.Sprintf("000%03d", i+100),
 			Name:          fmt.Sprintf("AI%d号", i),
 			Rank:          i,
 			AuctionAmount: float64(1000000 - i),
@@ -5515,7 +5515,7 @@ func TestAStockHotspotTopStocksDefaultLimitIsNine(t *testing.T) {
 	if len(stocks) != 9 {
 		t.Fatalf("expected default top 9 hotspot stocks, got %+v", stocks)
 	}
-	if stocks[0].Code != "000001" || stocks[8].Code != "000009" {
+	if stocks[0].Code != "000101" || stocks[8].Code != "000109" {
 		t.Fatalf("expected first nine ranked candidates, got %+v", stocks)
 	}
 	for i, stock := range stocks {
@@ -5554,7 +5554,7 @@ func TestAStockHotspotsWithTopStocksDedupesAcrossHotspots(t *testing.T) {
 			Score:    120,
 			Evidence: 1,
 			MatchedItems: []model.Item{
-				{Title: "AI 主题带动东方财富活跃", TagFlags: "0.300059"},
+				{Title: "AI 主题带动科大讯飞活跃", TagFlags: "0.002230"},
 			},
 		},
 		{
@@ -5563,15 +5563,14 @@ func TestAStockHotspotsWithTopStocksDedupesAcrossHotspots(t *testing.T) {
 			Score:    100,
 			Evidence: 1,
 			MatchedItems: []model.Item{
-				{Title: "证券板块东方财富与中信证券放量", TagFlags: "0.300059 1.600030"},
+				{Title: "证券板块科大讯飞与中信证券放量", TagFlags: "0.002230 1.600030"},
 			},
 		},
 	}
 	marketCandidates := []aStockMarketCandidate{
-		{Code: "300059", Name: "东方财富", Rank: 1, AuctionAmount: 9000000},
+		{Code: "002230", Name: "科大讯飞", Rank: 1, AuctionAmount: 9000000},
 		{Code: "600030", Name: "中信证券", Rank: 2, AuctionAmount: 8000000},
 		{Code: "600036", Name: "招商银行", Rank: 3, AuctionAmount: 7000000},
-		{Code: "002230", Name: "科大讯飞", Rank: 100, AuctionAmount: 1000000},
 		{Code: "603019", Name: "中科曙光", Rank: 101, AuctionAmount: 900000},
 		{Code: "601138", Name: "工业富联", Rank: 102, AuctionAmount: 800000},
 	}
@@ -5581,7 +5580,7 @@ func TestAStockHotspotsWithTopStocksDedupesAcrossHotspots(t *testing.T) {
 	if len(result) != 2 || len(result[0].TopStocks) != 1 || len(result[1].TopStocks) != 1 {
 		t.Fatalf("expected one top stock per hotspot, got %+v", result)
 	}
-	if result[0].TopStocks[0].Code != "300059" {
+	if result[0].TopStocks[0].Code != "002230" {
 		t.Fatalf("expected first hotspot to claim duplicate stock, got %+v", result[0].TopStocks)
 	}
 	if result[1].TopStocks[0].Code != "600030" || result[1].TopStocks[0].Rank != 1 {
@@ -5687,6 +5686,77 @@ func TestAStockRecommendationsUseFixedPoolWhenAuctionCandidatesEmpty(t *testing.
 	}
 	if !strings.Contains(recommendations[0].Reason, "原始固定股票池") {
 		t.Fatalf("expected reason to explain fixed-pool fallback, got %q", recommendations[0].Reason)
+	}
+}
+
+func TestAStockRecommendationsBlockEastmoneyAndBankStocks(t *testing.T) {
+	recommendations := buildAStockRecommendations([]aStockHotspot{
+		{
+			Name:     "金融券商",
+			Keywords: []string{"证券", "银行", "资本市场"},
+			Score:    245,
+			Evidence: 2,
+			MatchedItems: []model.Item{
+				{SourceType: "flash", Title: "证券与银行板块活跃", Summary: "资本市场情绪修复"},
+			},
+		},
+	}, []aStockMarketCandidate{
+		{Code: "300059", Name: "东方财富", Rank: 1, AuctionAmount: 9000000},
+		{Code: "600036", Name: "招商银行", Rank: 2, AuctionAmount: 8000000},
+		{Code: "600030", Name: "中信证券", Rank: 3, AuctionAmount: 7000000},
+		{Code: "000001", Name: "平安银行", Rank: 4, AuctionAmount: 6000000},
+	})
+
+	if len(recommendations) != 1 {
+		t.Fatalf("expected only non-bank non-Eastmoney finance recommendation, got %+v", recommendations)
+	}
+	if recommendations[0].Code != "600030" || recommendations[0].Rank != 1 {
+		t.Fatalf("expected 中信证券 to remain reranked first, got %+v", recommendations)
+	}
+	for _, rec := range recommendations {
+		if rec.Code == "300059" || strings.Contains(rec.Name, "银行") {
+			t.Fatalf("expected 东方财富 and bank stocks to be blocked, got %+v", recommendations)
+		}
+	}
+}
+
+func TestAStockPersistedRecommendationsBlockEastmoneyAndBankStocks(t *testing.T) {
+	recommendations := aStockRecommendationSelectionsToRecommendations([]model.AStockRecommendationSelection{
+		{Rank: 1, Code: "300059", Name: "东方财富", Hotspot: "金融券商"},
+		{Rank: 2, Code: "600036", Name: "招商银行", Hotspot: "金融券商"},
+		{Rank: 3, Code: "600030", Name: "中信证券", Hotspot: "金融券商"},
+		{Rank: 4, Code: "000001", Name: "平安银行", Hotspot: "金融券商"},
+	})
+
+	if len(recommendations) != 1 || recommendations[0].Code != "600030" || recommendations[0].Rank != 3 {
+		t.Fatalf("expected persisted selections to keep only 中信证券 before rerank, got %+v", recommendations)
+	}
+	filtered, skipped := filterBlockedAStockRecommendations(recommendations)
+	if skipped != 0 || len(filtered) != 1 || filtered[0].Code != "600030" || filtered[0].Rank != 1 {
+		t.Fatalf("expected filtered persisted recommendation to rerank, skipped=%d filtered=%+v", skipped, filtered)
+	}
+	backtests := filterBlockedAStockBacktests([]aStockBacktestRow{
+		{Stock: "300059 东方财富"},
+		{Stock: "600036 招商银行"},
+		{Stock: "600030 中信证券"},
+	})
+	if len(backtests) != 1 || !strings.Contains(backtests[0].Stock, "600030") {
+		t.Fatalf("expected persisted backtests to drop blocked stocks, got %+v", backtests)
+	}
+}
+
+func TestAStockHotspotTopStocksBlockEastmoneyAndBankStocks(t *testing.T) {
+	hotspot := aStockHotspot{Name: "金融券商", Keywords: []string{"证券", "银行"}, Score: 100, Evidence: 1}
+
+	stocks := buildAStockHotspotTopStocks(hotspot, []aStockMarketCandidate{
+		{Code: "300059", Name: "东方财富", Rank: 1, AuctionAmount: 9000000},
+		{Code: "600036", Name: "招商银行", Rank: 2, AuctionAmount: 8000000},
+		{Code: "600030", Name: "中信证券", Rank: 3, AuctionAmount: 7000000},
+		{Code: "000001", Name: "平安银行", Rank: 4, AuctionAmount: 6000000},
+	}, 3)
+
+	if len(stocks) != 1 || stocks[0].Code != "600030" || stocks[0].Rank != 1 {
+		t.Fatalf("expected hotspot top stocks to block 东方财富 and banks, got %+v", stocks)
 	}
 }
 
@@ -5885,8 +5955,8 @@ func TestAStockRecommendationsExcludeFullMarketCandidateOutsideFixedPool(t *test
 		{Code: "601688", Name: "华泰证券", Rank: 320, AuctionAmount: 1200000, AuctionVolume: 50000},
 	})
 
-	if len(recommendations) != 3 {
-		t.Fatalf("expected fixed finance stock pool, got %+v", recommendations)
+	if len(recommendations) != 1 {
+		t.Fatalf("expected fixed finance stock pool to exclude 东方财富 and banks, got %+v", recommendations)
 	}
 	got := map[string]string{}
 	for _, rec := range recommendations {
@@ -5895,9 +5965,12 @@ func TestAStockRecommendationsExcludeFullMarketCandidateOutsideFixedPool(t *test
 	if _, ok := got["601688"]; ok {
 		t.Fatalf("expected non-fixed full-market candidate to be excluded, got %+v", recommendations)
 	}
-	for code, name := range map[string]string{"300059": "东方财富", "600030": "中信证券", "600036": "招商银行"} {
-		if got[code] != name {
-			t.Fatalf("expected fixed finance stock %s:%s, got %+v", code, name, recommendations)
+	if got["600030"] != "中信证券" {
+		t.Fatalf("expected non-bank fixed finance stock 中信证券, got %+v", recommendations)
+	}
+	for _, blockedCode := range []string{"300059", "600036"} {
+		if _, ok := got[blockedCode]; ok {
+			t.Fatalf("expected blocked fixed finance stock %s to be excluded, got %+v", blockedCode, recommendations)
 		}
 	}
 }
@@ -5907,12 +5980,8 @@ func TestAStockContextFallsBackToLatestAuctionDictionary(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"data": map[string]any{"items": []map[string]any{
-				{"code": "300059", "date": "2026-06-16", "open": 18.90, "close": 19.12, "pct": 1.22},
-				{"code": "300059", "date": "2026-06-17", "open": 19.04, "close": 19.04, "pct": -0.42},
 				{"code": "600030", "date": "2026-06-16", "open": 27.10, "close": 27.25, "pct": 1.45},
 				{"code": "600030", "date": "2026-06-17", "open": 27.37, "close": 27.37, "pct": 0.44},
-				{"code": "600036", "date": "2026-06-16", "open": 38.20, "close": 38.57, "pct": -0.98},
-				{"code": "600036", "date": "2026-06-17", "open": 38.23, "close": 38.23, "pct": -0.88},
 			}},
 		})
 	}))
@@ -5938,7 +6007,7 @@ func TestAStockContextFallsBackToLatestAuctionDictionary(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.AStockAuctionListResult{
 				Date: "2026-06-18", Page: 1, PageSize: 5000, Total: 1,
-				Items: []model.AStockAuctionAmount{{TradeDate: "2026-06-18", Code: "300059", Name: "东方财富", AuctionVolume: 100000, AuctionAmount: 1500000, Status: "ok"}},
+				Items: []model.AStockAuctionAmount{{TradeDate: "2026-06-18", Code: "600030", Name: "中信证券", AuctionVolume: 100000, AuctionAmount: 1500000, Status: "ok"}},
 			}})
 		case "/api/v1/articles":
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.ItemListResult{
@@ -5960,10 +6029,10 @@ func TestAStockContextFallsBackToLatestAuctionDictionary(t *testing.T) {
 	srv := NewServer(config.Config{ContentURL: content.URL, SchedulerURL: scheduler.URL})
 	ctx := srv.loadAStockContext("2026-06-17", "morning", 1, true)
 
-	if len(ctx.Recommendations) != 3 {
+	if len(ctx.Recommendations) != 1 {
 		t.Fatalf("expected latest auction dictionary to produce recommendation, got %+v empty=%q", ctx.Recommendations, ctx.EmptyReason)
 	}
-	if ctx.Recommendations[0].Code != "300059" || ctx.Recommendations[0].Name != "东方财富" {
+	if ctx.Recommendations[0].Code != "600030" || ctx.Recommendations[0].Name != "中信证券" {
 		t.Fatalf("unexpected latest dictionary recommendation: %+v", ctx.Recommendations[0])
 	}
 	if len(auctionQueries) < 2 || !strings.Contains(auctionQueries[0], "date=2026-06-17") || strings.Contains(auctionQueries[1], "date=") {

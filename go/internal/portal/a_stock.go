@@ -329,6 +329,14 @@ var (
 	}
 )
 
+var aStockBlockedRecommendationBankCodes = map[string]struct{}{
+	"000001": {}, "001227": {}, "002142": {}, "002807": {}, "002839": {}, "002936": {}, "002948": {}, "002958": {}, "002966": {},
+	"600000": {}, "600015": {}, "600016": {}, "600036": {}, "600908": {}, "600919": {}, "600926": {}, "600928": {},
+	"601009": {}, "601077": {}, "601128": {}, "601166": {}, "601169": {}, "601187": {}, "601229": {}, "601288": {}, "601328": {},
+	"601398": {}, "601528": {}, "601577": {}, "601658": {}, "601665": {}, "601818": {}, "601825": {}, "601838": {}, "601860": {},
+	"601916": {}, "601939": {}, "601963": {}, "601988": {}, "601997": {}, "601998": {}, "603323": {},
+}
+
 func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user any) {
 	if r.Method == http.MethodPost {
 		s.handleAStockPageAction(w, r)
@@ -1598,7 +1606,10 @@ func (s *Server) applyAStockRecommendationSelectionsWithCache(ctx *aStockContext
 	if !ok || len(result.Items) == 0 {
 		return false
 	}
-	ctx.Recommendations = aStockRecommendationSelectionsToRecommendations(result.Items)
+	ctx.Recommendations, _ = filterBlockedAStockRecommendations(aStockRecommendationSelectionsToRecommendations(result.Items))
+	if len(ctx.Recommendations) == 0 {
+		return false
+	}
 	ctx.GeneratedRecommendationCount = len(ctx.Recommendations)
 	return true
 }
@@ -1633,7 +1644,10 @@ func (s *Server) applyAStockRecommendationSnapshotRecommendationsWithCache(ctx *
 	if err := json.Unmarshal([]byte(nonEmpty(snapshot.RecommendationsJSON, "[]")), &recommendations); err != nil || len(recommendations) == 0 {
 		return false
 	}
-	ctx.Recommendations = rerankAStockRecommendations(recommendations)
+	ctx.Recommendations, _ = filterBlockedAStockRecommendations(recommendations)
+	if len(ctx.Recommendations) == 0 {
+		return false
+	}
 	ctx.GeneratedRecommendationCount = snapshot.GeneratedCount
 	if ctx.GeneratedRecommendationCount <= 0 {
 		ctx.GeneratedRecommendationCount = len(ctx.Recommendations)
@@ -1689,8 +1703,11 @@ func (s *Server) applyAStockRecommendationSnapshotWithCache(ctx *aStockContext, 
 	if ctx.Period == "afternoon" && !isFreshAStockLimitUpReplacementSnapshot(snapshot, recommendations) {
 		return false
 	}
-	ctx.Recommendations = recommendations
-	ctx.Backtests = backtests
+	ctx.Recommendations, _ = filterBlockedAStockRecommendations(recommendations)
+	if len(ctx.Recommendations) == 0 {
+		return false
+	}
+	ctx.Backtests = filterBlockedAStockBacktests(backtests)
 	ctx.BacktestStatus = nonEmpty(snapshot.BacktestStatus, "已读取推荐快照")
 	ctx.GeneratedRecommendationCount = snapshot.GeneratedCount
 	ctx.RecentFiltered = snapshot.RecentFiltered
@@ -1777,10 +1794,11 @@ func (s *Server) saveAStockRecommendationSelections(ctx aStockContext) error {
 	if strings.TrimSpace(s.cfg.ContentURL) == "" {
 		return nil
 	}
+	recommendations, _ := filterBlockedAStockRecommendations(ctx.Recommendations)
 	selectionSet := model.AStockRecommendationSelectionSet{
 		StrategyDate: ctx.Date,
 		Period:       ctx.Period,
-		Items:        aStockRecommendationsToSelectionItems(ctx.Recommendations, ctx.Date, ctx.Period),
+		Items:        aStockRecommendationsToSelectionItems(recommendations, ctx.Date, ctx.Period),
 	}
 	resp, err := s.client.R().
 		SetBody(selectionSet).
@@ -1798,11 +1816,12 @@ func (s *Server) saveAStockRecommendationSnapshot(ctx aStockContext) error {
 	if strings.TrimSpace(s.cfg.ContentURL) == "" {
 		return nil
 	}
-	recommendationsJSON, err := json.Marshal(ctx.Recommendations)
+	recommendations, _ := filterBlockedAStockRecommendations(ctx.Recommendations)
+	recommendationsJSON, err := json.Marshal(recommendations)
 	if err != nil {
 		return err
 	}
-	backtestsJSON, err := json.Marshal(ctx.Backtests)
+	backtestsJSON, err := json.Marshal(filterBlockedAStockBacktests(ctx.Backtests))
 	if err != nil {
 		return err
 	}
@@ -2069,7 +2088,11 @@ func (s *Server) buildAStockPreopenPopup(userID int64, strategyDate string) aSto
 func (s *Server) loadAStockPopupRecommendations(strategyDate string, period string) ([]aStockRecommendation, time.Time, bool) {
 	normalizedPeriod := normalizeAStockPeriod(period).Key
 	if result, ok := s.loadAStockRecommendationSelections(strategyDate, normalizedPeriod); ok && len(result.Items) > 0 {
-		return aStockRecommendationSelectionsToRecommendations(result.Items), result.UpdatedAt, true
+		recommendations, _ := filterBlockedAStockRecommendations(aStockRecommendationSelectionsToRecommendations(result.Items))
+		if len(recommendations) == 0 {
+			return nil, time.Time{}, false
+		}
+		return recommendations, result.UpdatedAt, true
 	}
 	snapshot, ok := s.loadAStockRecommendationSnapshot(strategyDate, normalizedPeriod, false)
 	if !ok {
@@ -2077,6 +2100,10 @@ func (s *Server) loadAStockPopupRecommendations(strategyDate string, period stri
 	}
 	var recommendations []aStockRecommendation
 	if err := json.Unmarshal([]byte(nonEmpty(snapshot.RecommendationsJSON, "[]")), &recommendations); err != nil || len(recommendations) == 0 {
+		return nil, time.Time{}, false
+	}
+	recommendations, _ = filterBlockedAStockRecommendations(recommendations)
+	if len(recommendations) == 0 {
 		return nil, time.Time{}, false
 	}
 	return recommendations, snapshot.UpdatedAt, true
@@ -2616,7 +2643,8 @@ func (s *Server) loadPersistedAStockRecommendations(strategyDate string, period 
 func (s *Server) loadPersistedAStockRecommendationsWithCache(strategyDate string, period string, ignoreRecent bool, cache *aStockRequestCache) []aStockRecommendation {
 	if !ignoreRecent {
 		if result, ok := s.loadAStockRecommendationSelectionsWithCache(strategyDate, period, cache); ok && len(result.Items) > 0 {
-			return aStockRecommendationSelectionsToRecommendations(result.Items)
+			recommendations, _ := filterBlockedAStockRecommendations(aStockRecommendationSelectionsToRecommendations(result.Items))
+			return recommendations
 		}
 	}
 	snapshot, ok := s.loadAStockRecommendationSnapshotWithCache(strategyDate, period, ignoreRecent, cache)
@@ -2627,7 +2655,8 @@ func (s *Server) loadPersistedAStockRecommendationsWithCache(strategyDate string
 	if err := json.Unmarshal([]byte(nonEmpty(snapshot.RecommendationsJSON, "[]")), &recommendations); err != nil {
 		return nil
 	}
-	return rerankAStockRecommendations(recommendations)
+	recommendations, _ = filterBlockedAStockRecommendations(recommendations)
+	return recommendations
 }
 
 func (s *Server) applyAStockHoldingSummaries(recommendations []aStockRecommendation) []aStockRecommendation {
@@ -4961,6 +4990,9 @@ func appendAStockHotspotTopStock(stocks []aStockHotspotStock, stock aStockMarket
 	if code == "" {
 		return stocks
 	}
+	if isBlockedAStockRecommendationStock(code, stock.Name) {
+		return stocks
+	}
 	if _, exists := rowSeen[code]; exists {
 		return stocks
 	}
@@ -5154,6 +5186,9 @@ func fixedPoolAStockMarketCandidates(hotspots []aStockHotspot, marketCandidates 
 			code := normalizeAStockCode(stock.Code)
 			name := strings.TrimSpace(stock.Name)
 			if code == "" || name == "" {
+				continue
+			}
+			if isBlockedAStockRecommendationStock(code, name) {
 				continue
 			}
 			if _, exists := seen[code]; exists {
@@ -5398,6 +5433,9 @@ func aStockRecommendationSelectionsToRecommendations(items []model.AStockRecomme
 		if code == "" {
 			continue
 		}
+		if isBlockedAStockRecommendationStock(code, item.Name) {
+			continue
+		}
 		recommendations = append(recommendations, aStockRecommendation{
 			Rank:         item.Rank,
 			Hotspot:      strings.TrimSpace(item.Hotspot),
@@ -5427,6 +5465,9 @@ func aStockRecommendationsToSelectionItems(recommendations []aStockRecommendatio
 	for i, rec := range recommendations {
 		code := normalizeAStockCode(rec.Code)
 		if code == "" {
+			continue
+		}
+		if isBlockedAStockRecommendationStock(code, rec.Name) {
 			continue
 		}
 		rank := rec.Rank
@@ -5462,6 +5503,51 @@ func filterAStockRecommendationsByCodes(recommendations []aStockRecommendation, 
 		filtered = append(filtered, rec)
 	}
 	return rerankAStockRecommendations(filtered), skipped
+}
+
+func filterBlockedAStockRecommendations(recommendations []aStockRecommendation) ([]aStockRecommendation, int) {
+	if len(recommendations) == 0 {
+		return recommendations, 0
+	}
+	filtered := make([]aStockRecommendation, 0, len(recommendations))
+	skipped := 0
+	for _, rec := range recommendations {
+		if isBlockedAStockRecommendationStock(rec.Code, rec.Name) {
+			skipped++
+			continue
+		}
+		filtered = append(filtered, rec)
+	}
+	return rerankAStockRecommendations(filtered), skipped
+}
+
+func filterBlockedAStockBacktests(rows []aStockBacktestRow) []aStockBacktestRow {
+	if len(rows) == 0 {
+		return rows
+	}
+	filtered := make([]aStockBacktestRow, 0, len(rows))
+	for _, row := range rows {
+		if isBlockedAStockRecommendationStock(aStockBacktestRowCode(row), row.Stock) {
+			continue
+		}
+		filtered = append(filtered, row)
+	}
+	return filtered
+}
+
+func isBlockedAStockRecommendationCandidate(candidate aStockMarketCandidate) bool {
+	return isBlockedAStockRecommendationStock(candidate.Code, candidate.Name)
+}
+
+func isBlockedAStockRecommendationStock(code string, name string) bool {
+	code = normalizeAStockCode(code)
+	if code == "300059" {
+		return true
+	}
+	if _, ok := aStockBlockedRecommendationBankCodes[code]; ok {
+		return true
+	}
+	return strings.Contains(strings.TrimSpace(name), "银行")
 }
 
 func newsDerivedAStockMarketCandidates(hotspots []aStockHotspot) []aStockMarketCandidate {
@@ -5729,6 +5815,9 @@ func scoreAStockMarketCandidates(hotspot aStockHotspot, candidates []aStockMarke
 		candidate.Code = normalizeAStockCode(candidate.Code)
 		candidate.Name = strings.TrimSpace(candidate.Name)
 		if candidate.Code == "" || candidate.Name == "" {
+			continue
+		}
+		if isBlockedAStockRecommendationCandidate(candidate) {
 			continue
 		}
 		evidence := aStockStockEvidenceCount(hotspot.MatchedItems, candidate)
