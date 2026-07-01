@@ -2224,8 +2224,8 @@ func TestAStockContextUsesLiteralNewsWindowForSourceStats(t *testing.T) {
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
 	ctx := srv.loadAStockContextWithRecommendationPhase("2026-06-26", "morning", 1, false, false, false, true, aStockRecommendationPhaseFinal, newAStockRequestCache())
-	if !seenRecommendationWindow || !seenStatsWindow {
-		t.Fatalf("expected recommendation and stats windows to be queried, recommendation=%v stats=%v", seenRecommendationWindow, seenStatsWindow)
+	if seenRecommendationWindow || !seenStatsWindow {
+		t.Fatalf("expected stats window to cover recommendation window without duplicate query, recommendation=%v stats=%v", seenRecommendationWindow, seenStatsWindow)
 	}
 	if ctx.WindowLabel != "08:00-09:30" || ctx.RecommendationWindowLabel != "08:00-09:26:59" {
 		t.Fatalf("unexpected window labels: stats=%q recommendation=%q", ctx.WindowLabel, ctx.RecommendationWindowLabel)
@@ -4625,36 +4625,21 @@ func TestAStockRecentRecommendationCodesUseRequestCache(t *testing.T) {
 			mu.Lock()
 			articleCalls++
 			mu.Unlock()
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"data": model.ItemListResult{
-					Items: []model.Item{{
-						ID:         900,
-						SourceType: "flash",
-						Title:      "AI 算力政策加码，科大讯飞活跃",
-						Summary:    "人工智能产业链活跃",
-						TagFlags:   "0.002230",
-						CapturedAt: time.Date(2026, 6, 15, 1, 5, 0, 0, time.UTC),
-					}},
-					Page: 1, PageSize: 200, Total: 1,
-				},
-			})
+			t.Fatalf("recent recommendation scan should not rebuild history from articles: %s", r.URL.String())
 		case "/api/v1/a-stock/auction":
 			mu.Lock()
 			auctionCalls++
 			mu.Unlock()
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"data": model.AStockAuctionListResult{
-					Date: r.URL.Query().Get("date"),
-					Items: []model.AStockAuctionAmount{{
-						TradeDate: r.URL.Query().Get("date"),
-						Code:      "002230",
-						Name:      "科大讯飞",
-						Status:    "ok",
-					}},
-				},
-			})
+			t.Fatalf("recent recommendation scan should not rebuild history from auction candidates: %s", r.URL.String())
 		case "/api/v1/a-stock/recommendation-selections":
-			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.AStockRecommendationSelectionListResult{Found: false}})
+			result := model.AStockRecommendationSelectionListResult{Found: false}
+			if r.URL.Query().Get("date") == "2026-06-15" && r.URL.Query().Get("period") == "morning" {
+				result = model.AStockRecommendationSelectionListResult{
+					Found: true,
+					Items: []model.AStockRecommendationSelection{{Rank: 1, Code: "002230", Name: "科大讯飞"}},
+				}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": result})
 		case "/api/v1/a-stock/recommendations":
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.AStockRecommendationSnapshot{Found: false}})
 		default:
@@ -4676,8 +4661,8 @@ func TestAStockRecentRecommendationCodesUseRequestCache(t *testing.T) {
 	firstArticleCalls := articleCalls
 	firstAuctionCalls := auctionCalls
 	mu.Unlock()
-	if firstArticleCalls == 0 || firstAuctionCalls == 0 {
-		t.Fatalf("expected first scan to load articles and auction candidates, got articles=%d auction=%d", firstArticleCalls, firstAuctionCalls)
+	if firstArticleCalls != 0 || firstAuctionCalls != 0 {
+		t.Fatalf("expected recent scan to use persisted recommendations only, got articles=%d auction=%d", firstArticleCalls, firstAuctionCalls)
 	}
 
 	second := srv.loadRecentAStockRecommendationCodesWithCache("2026-06-16", 5, cache)
@@ -4708,6 +4693,19 @@ func TestAStockContextCanIgnoreRecentRecommendationFilter(t *testing.T) {
 
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/v1/a-stock/recommendation-selections" && r.URL.Query().Get("date") == "2026-06-15" && r.URL.Query().Get("period") == "morning" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": model.AStockRecommendationSelectionListResult{
+					Found: true,
+					Items: []model.AStockRecommendationSelection{
+						{Rank: 1, Code: "601138", Name: "工业富联", Hotspot: "人工智能", Reason: "recent"},
+						{Rank: 2, Code: "603019", Name: "中科曙光", Hotspot: "人工智能", Reason: "recent"},
+						{Rank: 3, Code: "002230", Name: "科大讯飞", Hotspot: "人工智能", Reason: "recent"},
+					},
+				},
+			})
+			return
+		}
 		if handleAStockRecommendationSnapshotTestEndpoint(w, r) {
 			return
 		}

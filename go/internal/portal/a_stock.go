@@ -1459,13 +1459,29 @@ func (s *Server) loadAStockContextWithRecommendationPhase(strategyDate string, p
 	}
 	ctx.LimitUpFilterEnabled = period.Key == "afternoon" && !ignoreLimitUp
 	ctx.SourceRuns = s.loadAStockSourceRunsWithCache(cache)
-	articles, err := s.loadAStockWindowArticlesWithCache(recommendationStart, recommendationEnd, cache)
-	if err != nil {
-		ctx.LoadMessage = "A股新闻读取失败：" + err.Error()
-		return ctx
-	}
-	newsArticles := articles
-	if !sameAStockWindow(recommendationStart, recommendationEnd, newsStart, newsEnd) {
+	var articles []model.Item
+	var newsArticles []model.Item
+	var err error
+	if sameAStockWindow(recommendationStart, recommendationEnd, newsStart, newsEnd) {
+		articles, err = s.loadAStockWindowArticlesWithCache(recommendationStart, recommendationEnd, cache)
+		if err != nil {
+			ctx.LoadMessage = "A股新闻读取失败：" + err.Error()
+			return ctx
+		}
+		newsArticles = articles
+	} else if aStockWindowContains(newsStart, newsEnd, recommendationStart, recommendationEnd) {
+		newsArticles, err = s.loadAStockWindowArticlesWithCache(newsStart, newsEnd, cache)
+		if err != nil {
+			ctx.LoadMessage = "A股新闻统计读取失败：" + err.Error()
+			return ctx
+		}
+		articles = filterAStockArticlesByPublishWindow(newsArticles, recommendationStart, recommendationEnd)
+	} else {
+		articles, err = s.loadAStockWindowArticlesWithCache(recommendationStart, recommendationEnd, cache)
+		if err != nil {
+			ctx.LoadMessage = "A股新闻读取失败：" + err.Error()
+			return ctx
+		}
 		newsArticles, err = s.loadAStockWindowArticlesWithCache(newsStart, newsEnd, cache)
 		if err != nil {
 			ctx.LoadMessage = "A股新闻统计读取失败：" + err.Error()
@@ -2568,23 +2584,8 @@ func (s *Server) loadRecentAStockRecommendationCodesWithCache(strategyDate strin
 	for offset := 1; offset <= lookbackDays; offset++ {
 		date := day.AddDate(0, 0, -offset).Format("2006-01-02")
 		for _, period := range aStockPeriods() {
-			if persisted := s.loadPersistedAStockRecommendationCodesWithCache(date, period.Key, false, cache); len(persisted) > 0 {
-				for code := range persisted {
-					result[code] = struct{}{}
-				}
-				continue
-			}
-			start, end := aStockWindow(date, period.Key)
-			items, err := s.loadAStockWindowArticlesByPublishTimeWithCache(start, end, cache)
-			if err != nil || len(items) == 0 {
-				continue
-			}
-			candidates := s.loadAStockMarketCandidates(date)
-			for _, rec := range buildAStockSnapshotRecommendations(date, period.Key, items, candidates) {
-				code := normalizeAStockCode(rec.Code)
-				if code != "" {
-					result[code] = struct{}{}
-				}
+			for code := range s.loadPersistedAStockRecommendationCodesWithCache(date, period.Key, false, cache) {
+				result[code] = struct{}{}
 			}
 		}
 	}
@@ -4838,6 +4839,10 @@ func sameAStockWindow(startA time.Time, endA time.Time, startB time.Time, endB t
 	return startA.Equal(startB) && endA.Equal(endB)
 }
 
+func aStockWindowContains(outerStart time.Time, outerEnd time.Time, innerStart time.Time, innerEnd time.Time) bool {
+	return !innerStart.Before(outerStart) && !innerEnd.After(outerEnd)
+}
+
 func aStockRecommendationPhaseWindow(strategyDate string, periodKey string, phase string) (time.Time, time.Time, string) {
 	location := aStockLocation()
 	day, err := time.ParseInLocation("2006-01-02", normalizeAStockStrategyDate(strategyDate), location)
@@ -5811,6 +5816,7 @@ func validAStockMentionName(name string) bool {
 
 func scoreAStockMarketCandidates(hotspot aStockHotspot, candidates []aStockMarketCandidate) []aStockMarketCandidate {
 	scored := make([]aStockMarketCandidate, 0, len(candidates))
+	evidenceIndex := newAStockStockEvidenceIndex(hotspot.MatchedItems)
 	for _, candidate := range candidates {
 		candidate.Code = normalizeAStockCode(candidate.Code)
 		candidate.Name = strings.TrimSpace(candidate.Name)
@@ -5820,7 +5826,7 @@ func scoreAStockMarketCandidates(hotspot aStockHotspot, candidates []aStockMarke
 		if isBlockedAStockRecommendationCandidate(candidate) {
 			continue
 		}
-		evidence := aStockStockEvidenceCount(hotspot.MatchedItems, candidate)
+		evidence := evidenceIndex.Count(candidate)
 		keywords := aStockCandidateKeywordMatches(candidate.Name, hotspot.Keywords)
 		if (candidate.Fallback || candidate.FixedPool) && len(keywords) == 0 {
 			keywords = intersectAStockKeywords(candidate.Keywords, hotspot.Keywords)
@@ -5892,13 +5898,93 @@ func aStockMarketRankScore(rank int) int {
 }
 
 func aStockStockEvidenceCount(items []model.Item, candidate aStockMarketCandidate) int {
-	count := 0
+	return newAStockStockEvidenceIndex(items).Count(candidate)
+}
+
+type aStockStockEvidenceIndex struct {
+	items []aStockStockEvidenceItem
+}
+
+type aStockStockEvidenceItem struct {
+	codes map[string]struct{}
+	text  string
+}
+
+func newAStockStockEvidenceIndex(items []model.Item) aStockStockEvidenceIndex {
+	if len(items) == 0 {
+		return aStockStockEvidenceIndex{}
+	}
+	index := aStockStockEvidenceIndex{items: make([]aStockStockEvidenceItem, 0, len(items))}
 	for _, item := range items {
-		if aStockItemMentionsStock(item, candidate) {
+		codes := aStockStockListCodeSet(item.TagFlags)
+		if strings.Contains(item.RawPayload, "stockList") {
+			codes = mergeAStockStockListCodeSet(codes, item.RawPayload)
+		}
+		index.items = append(index.items, aStockStockEvidenceItem{
+			codes: codes,
+			text:  strings.ToLower(item.Title + " " + item.Summary + " " + item.Content + " " + item.RawPayload),
+		})
+	}
+	return index
+}
+
+func (idx aStockStockEvidenceIndex) Count(candidate aStockMarketCandidate) int {
+	if len(idx.items) == 0 {
+		return 0
+	}
+	code := normalizeAStockCode(candidate.Code)
+	name := strings.ToLower(strings.TrimSpace(candidate.Name))
+	if code == "" && name == "" {
+		return 0
+	}
+	count := 0
+	for _, item := range idx.items {
+		if code != "" {
+			if _, ok := item.codes[code]; ok {
+				count++
+				continue
+			}
+		}
+		if name != "" && strings.Contains(item.text, name) {
 			count++
 		}
 	}
 	return count
+}
+
+func aStockStockListCodeSet(raw string) map[string]struct{} {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	codes := make(map[string]struct{})
+	for _, token := range strings.FieldsFunc(raw, func(r rune) bool {
+		return r < '0' || r > '9'
+	}) {
+		if len(token) >= 6 {
+			if code := normalizeAStockCode(token[len(token)-6:]); code != "" {
+				codes[code] = struct{}{}
+			}
+		}
+	}
+	if len(codes) == 0 {
+		return nil
+	}
+	return codes
+}
+
+func mergeAStockStockListCodeSet(codes map[string]struct{}, raw string) map[string]struct{} {
+	extra := aStockStockListCodeSet(raw)
+	if len(extra) == 0 {
+		return codes
+	}
+	if codes == nil {
+		codes = make(map[string]struct{}, len(extra))
+	}
+	for code := range extra {
+		codes[code] = struct{}{}
+	}
+	return codes
 }
 
 func aStockItemMentionsStock(item model.Item, candidate aStockMarketCandidate) bool {
