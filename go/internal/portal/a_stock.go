@@ -42,6 +42,8 @@ type aStockContext struct {
 	BacktestStatus               string
 	EmptyReason                  string
 	RecentFiltered               int
+	RecentReplenished            int
+	RecentReplenishShortfall     bool
 	IgnoreRecent                 bool
 	IgnoreLimitUp                bool
 	LimitUpFilterEnabled         bool
@@ -809,7 +811,7 @@ func aStockOverviewBacktestStatus(ctx aStockContext) string {
 		status = "--"
 	}
 	reasons := make([]string, 0, 2)
-	if ctx.RecentFiltered > 0 {
+	if ctx.RecentFiltered > 0 && !strings.Contains(status, "5日内重复") {
 		reasons = append(reasons, fmt.Sprintf("5日内重复过滤股票 %d", ctx.RecentFiltered))
 	}
 	if ctx.SameDayMorningFiltered > 0 {
@@ -1643,6 +1645,8 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceMode(strateg
 		}
 	}
 	recommendationTarget := 0
+	var recentReplacementPool []aStockRecommendation
+	recentReplacementStatus := ""
 	if len(ctx.Hotspots) > 0 {
 		if marketCandidates == nil {
 			candidates, candidateStatus, auctionResult := s.loadAStockMarketCandidatesWithStatusWithCache(strategyDate, cache)
@@ -1658,6 +1662,9 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceMode(strateg
 		recommendationTarget = len(baseRecommendations)
 		ctx.GeneratedRecommendationCount = recommendationTarget
 		ctx.Recommendations = baseRecommendations
+		if period.Key == "morning" && !ctx.IgnoreRecent && recommendationTarget > 0 {
+			recentReplacementPool = buildAStockSnapshotReplacementRecommendations(strategyDate, period.Key, phase, ctx.Articles, candidates)
+		}
 		if ctx.LimitUpFilterEnabled && recommendationTarget > 0 {
 			replacementPool := buildAStockSnapshotRecommendationsWithPhaseAndLimit(strategyDate, period.Key, phase, ctx.Articles, candidates, aStockReplacementPoolLimit, aStockReplacementPerHotspot)
 			if len(replacementPool) > len(ctx.Recommendations) {
@@ -1670,12 +1677,24 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceMode(strateg
 	}
 	if len(ctx.Recommendations) > 0 && !ctx.IgnoreRecent {
 		recentCodes := s.loadRecentAStockRecommendationCodesWithCache(strategyDate, aStockRecentLookbackDays, cache)
-		ctx.Recommendations, ctx.RecentFiltered = filterRecentAStockRecommendations(ctx.Recommendations, recentCodes)
+		if period.Key == "morning" && len(recentReplacementPool) > 0 && recommendationTarget > 0 {
+			result := filterRecentAStockRecommendationsWithReplenishment(ctx.Recommendations, recentReplacementPool, recentCodes, recommendationTarget)
+			ctx.Recommendations = result.Recommendations
+			ctx.RecentFiltered = result.Filtered
+			ctx.RecentReplenished = result.Replenished
+			ctx.RecentReplenishShortfall = result.Shortfall
+			recentReplacementStatus = formatAStockRecentReplenishmentStatus(result.Filtered, result.Replenished, result.Shortfall)
+		} else {
+			ctx.Recommendations, ctx.RecentFiltered = filterRecentAStockRecommendations(ctx.Recommendations, recentCodes)
+		}
 	}
 	ctx.Recommendations = s.applyAStockHoldingSummariesWithCache(ctx.Recommendations, cache)
 	ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus, ctx.LimitUpFiltered, ctx.NoTodayMarketCount = s.loadAStockMarketView(strategyDate, ctx.Period, ctx.Recommendations, ctx.LimitUpFilterEnabled, ctx.TodayMarketFilterEnabled, recommendationTarget)
 	if forceRecommendationRefresh {
 		s.restoreAStockBacktestsFromSnapshotWithCache(&ctx, cache)
+	}
+	if recentReplacementStatus != "" {
+		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, recentReplacementStatus)
 	}
 	if persist && shouldPersistAStockRecommendationSelections(ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh) && (len(ctx.Recommendations) > 0 || rebuildRecommendations) {
 		if err := s.saveAStockRecommendationSelections(ctx); err != nil && ctx.LoadMessage == "" {
@@ -2701,7 +2720,11 @@ func aStockRecommendationEmptyReason(ctx aStockContext) string {
 		return fmt.Sprintf("暂无推荐股票：%s %s 有新闻和热点，也有 %d 条集合竞价候选，但新闻没有明确匹配到股票名称或代码。", ctx.PeriodLabel, windowLabel, ctx.MarketCandidateCount)
 	}
 	if ctx.RecentFiltered > 0 {
-		return fmt.Sprintf("暂无推荐股票：%s %s 已生成候选，但5日内重复推荐过滤 %d 只。可关闭5日过滤后重新生成。", ctx.PeriodLabel, windowLabel, ctx.RecentFiltered)
+		recentStatus := formatAStockRecentReplenishmentStatus(ctx.RecentFiltered, ctx.RecentReplenished, ctx.RecentReplenishShortfall)
+		if recentStatus == "" {
+			recentStatus = fmt.Sprintf("5日内重复推荐过滤 %d 只", ctx.RecentFiltered)
+		}
+		return fmt.Sprintf("暂无推荐股票：%s %s 已生成候选，但%s。可关闭5日过滤后重新生成。", ctx.PeriodLabel, windowLabel, recentStatus)
 	}
 	if ctx.SameDayMorningFiltered > 0 {
 		return fmt.Sprintf("暂无推荐股票：%s %s 已生成候选，但过滤上午同股票或已满热点名额 %d 只。", ctx.PeriodLabel, windowLabel, ctx.SameDayMorningFiltered)
@@ -3279,19 +3302,173 @@ func aStockMarketCandidatesFromAuctionResult(result model.AStockAuctionListResul
 }
 
 func filterRecentAStockRecommendations(recommendations []aStockRecommendation, recentCodes map[string]struct{}) ([]aStockRecommendation, int) {
-	if len(recommendations) == 0 || len(recentCodes) == 0 {
-		return rerankAStockRecommendations(recommendations), 0
+	result := filterRecentAStockRecommendationsWithReplenishment(recommendations, nil, recentCodes, len(recommendations))
+	return result.Recommendations, result.Filtered
+}
+
+type aStockRecentRecommendationFilterResult struct {
+	Recommendations []aStockRecommendation
+	Filtered        int
+	Replenished     int
+	Shortfall       bool
+}
+
+func filterRecentAStockRecommendationsWithReplenishment(base []aStockRecommendation, replacementPool []aStockRecommendation, recentCodes map[string]struct{}, target int) aStockRecentRecommendationFilterResult {
+	if target <= 0 {
+		target = len(base)
 	}
-	filtered := make([]aStockRecommendation, 0, len(recommendations))
-	skipped := 0
-	for _, rec := range recommendations {
-		if _, ok := recentCodes[normalizeAStockCode(rec.Code)]; ok {
-			skipped++
+	if len(base) == 0 || len(recentCodes) == 0 {
+		return aStockRecentRecommendationFilterResult{Recommendations: rerankAStockRecommendations(base)}
+	}
+	if len(replacementPool) == 0 {
+		replacementPool = base
+	}
+	result := aStockRecentRecommendationFilterResult{}
+	filteredCodes := make(map[string]struct{})
+	recordRecent := func(code string) {
+		code = normalizeAStockCode(code)
+		if code == "" {
+			return
+		}
+		if _, exists := filteredCodes[code]; exists {
+			return
+		}
+		filteredCodes[code] = struct{}{}
+		result.Filtered++
+	}
+	isRecent := func(code string) bool {
+		_, ok := recentCodes[normalizeAStockCode(code)]
+		return ok
+	}
+
+	baseHotspotCounts := make(map[string]int)
+	keptHotspotCounts := make(map[string]int)
+	seen := make(map[string]struct{}, len(base))
+	kept := make([]aStockRecommendation, 0, minInt(len(base), target))
+	for _, rec := range base {
+		code := normalizeAStockCode(rec.Code)
+		if code == "" {
 			continue
 		}
-		filtered = append(filtered, rec)
+		rec.Code = code
+		hotspot := normalizeAStockRecommendationHotspot(rec.Hotspot)
+		if hotspot != "" {
+			baseHotspotCounts[hotspot]++
+		}
+		if isRecent(code) {
+			recordRecent(code)
+			continue
+		}
+		if _, exists := seen[code]; exists {
+			continue
+		}
+		seen[code] = struct{}{}
+		kept = append(kept, rec)
+		if hotspot != "" {
+			keptHotspotCounts[hotspot]++
+		}
+		if len(kept) >= target {
+			result.Recommendations = rerankAStockRecommendations(kept[:target])
+			return result
+		}
 	}
-	return rerankAStockRecommendations(filtered), skipped
+
+	hotspotDeficits := make(map[string]int, len(baseHotspotCounts))
+	for hotspot, baseCount := range baseHotspotCounts {
+		if deficit := baseCount - keptHotspotCounts[hotspot]; deficit > 0 {
+			hotspotDeficits[hotspot] = deficit
+		}
+	}
+	candidates := sortedAStockReplacementRecommendations(replacementPool)
+	appendCandidate := func(rec aStockRecommendation) bool {
+		if len(kept) >= target {
+			return false
+		}
+		code := normalizeAStockCode(rec.Code)
+		if code == "" {
+			return false
+		}
+		rec.Code = code
+		if _, exists := seen[code]; exists {
+			return false
+		}
+		if isBlockedAStockRecommendationStock(rec.Code, rec.Name) {
+			return false
+		}
+		if isRecent(code) {
+			recordRecent(code)
+			return false
+		}
+		seen[code] = struct{}{}
+		kept = append(kept, rec)
+		result.Replenished++
+		return true
+	}
+	for _, rec := range candidates {
+		hotspot := normalizeAStockRecommendationHotspot(rec.Hotspot)
+		if hotspot == "" || hotspotDeficits[hotspot] <= 0 {
+			continue
+		}
+		if appendCandidate(rec) {
+			hotspotDeficits[hotspot]--
+		}
+		if len(kept) >= target {
+			break
+		}
+	}
+	if len(kept) < target {
+		for _, rec := range candidates {
+			if appendCandidate(rec) && len(kept) >= target {
+				break
+			}
+		}
+	}
+	result.Shortfall = len(kept) < target
+	result.Recommendations = rerankAStockRecommendations(kept)
+	return result
+}
+
+func sortedAStockReplacementRecommendations(recommendations []aStockRecommendation) []aStockRecommendation {
+	result := append([]aStockRecommendation(nil), recommendations...)
+	sort.SliceStable(result, func(i, j int) bool {
+		if result[i].MarketScore == result[j].MarketScore {
+			if result[i].Hotspot == result[j].Hotspot {
+				return normalizeAStockCode(result[i].Code) < normalizeAStockCode(result[j].Code)
+			}
+			return result[i].Hotspot < result[j].Hotspot
+		}
+		return result[i].MarketScore > result[j].MarketScore
+	})
+	return result
+}
+
+func formatAStockRecentReplenishmentStatus(filtered int, replenished int, shortfall bool) string {
+	if filtered <= 0 {
+		return ""
+	}
+	parts := []string{fmt.Sprintf("5日内重复过滤 %d 只", filtered)}
+	if replenished > 0 {
+		parts = append(parts, fmt.Sprintf("递补 %d 只", replenished))
+	}
+	if shortfall {
+		parts = append(parts, "候选不足未补满")
+	}
+	return strings.Join(parts, "，")
+}
+
+func appendAStockBacktestStatus(status string, addition string) string {
+	status = strings.TrimSpace(status)
+	addition = strings.TrimSpace(addition)
+	if addition == "" {
+		return status
+	}
+	if status == "" {
+		return addition
+	}
+	if strings.Contains(status, addition) {
+		return status
+	}
+	return status + "，" + addition
 }
 
 func rerankAStockRecommendations(recommendations []aStockRecommendation) []aStockRecommendation {
@@ -5359,15 +5536,15 @@ func buildAStockRecommendationsWithLimit(hotspots []aStockHotspot, candidates []
 	if len(hotspots) > aStockHotspotLimit {
 		hotspots = hotspots[:aStockHotspotLimit]
 	}
-	candidates = fixedPoolAStockMarketCandidates(hotspots, candidates)
-	if len(candidates) == 0 {
-		return nil
-	}
 	if maxRecommendations <= 0 {
 		maxRecommendations = aStockRecommendationLimit
 	}
 	if maxPerHotspot <= 0 {
 		maxPerHotspot = aStockStocksPerHotspot
+	}
+	candidates = aStockRecommendationCandidatesForLimit(hotspots, candidates, maxRecommendations, maxPerHotspot)
+	if len(candidates) == 0 {
+		return nil
 	}
 	recommendations := make([]aStockRecommendation, 0)
 	seen := make(map[string]struct{})
@@ -5396,7 +5573,7 @@ func buildAStockRecommendationsWithLimit(hotspots []aStockHotspot, candidates []
 				}
 			} else if stock.Fallback {
 				reason = fmt.Sprintf(
-					"命中 %s，证据新闻 %d 条，热度分 %d；集合竞价候选为空，使用实时新闻明确提及股票，个股证据 %d 条，匹配分 %d，综合分 %d",
+					"命中 %s，证据新闻 %d 条，热度分 %d；使用实时新闻明确提及股票，个股证据 %d 条，匹配分 %d，综合分 %d",
 					strings.Join(hotspot.Keywords, "、"),
 					hotspot.Evidence,
 					hotspot.Score,
@@ -5439,6 +5616,45 @@ func buildAStockRecommendationsWithLimit(hotspots []aStockHotspot, candidates []
 		}
 	}
 	return recommendations
+}
+
+func aStockRecommendationCandidatesForLimit(hotspots []aStockHotspot, marketCandidates []aStockMarketCandidate, maxRecommendations int, maxPerHotspot int) []aStockMarketCandidate {
+	fixedCandidates := fixedPoolAStockMarketCandidates(hotspots, marketCandidates)
+	if maxRecommendations <= aStockRecommendationLimit && maxPerHotspot <= aStockStocksPerHotspot {
+		return fixedCandidates
+	}
+	candidates := make([]aStockMarketCandidate, 0, len(fixedCandidates)+aStockHotspotScoredCandidateLimit)
+	seen := make(map[string]struct{}, len(fixedCandidates)+aStockHotspotScoredCandidateLimit)
+	appendCandidate := func(candidate aStockMarketCandidate) {
+		code := normalizeAStockCode(candidate.Code)
+		name := strings.TrimSpace(candidate.Name)
+		if code == "" || name == "" {
+			return
+		}
+		if _, exists := seen[code]; exists {
+			return
+		}
+		if isBlockedAStockRecommendationCandidate(candidate) {
+			return
+		}
+		candidate.Code = code
+		candidate.Name = name
+		candidates = append(candidates, candidate)
+		seen[code] = struct{}{}
+	}
+	for _, candidate := range fixedCandidates {
+		appendCandidate(candidate)
+	}
+	for _, candidate := range newsDerivedAStockMarketCandidates(hotspots) {
+		appendCandidate(candidate)
+	}
+	for _, candidate := range sortedAStockHotspotFallbackCandidates(marketCandidates) {
+		if len(candidates) >= len(fixedCandidates)+aStockHotspotScoredCandidateLimit {
+			break
+		}
+		appendCandidate(candidate)
+	}
+	return candidates
 }
 
 func fixedPoolAStockMarketCandidates(hotspots []aStockHotspot, marketCandidates []aStockMarketCandidate) []aStockMarketCandidate {
@@ -5528,6 +5744,10 @@ func buildAStockSnapshotRecommendationsWithLimit(strategyDate string, periodKey 
 
 func buildAStockSnapshotRecommendationsWithPhase(strategyDate string, periodKey string, phase string, articles []model.Item, candidates []aStockMarketCandidate) []aStockRecommendation {
 	return buildAStockSnapshotRecommendationsWithPhaseAndLimit(strategyDate, periodKey, phase, articles, candidates, aStockRecommendationLimit, aStockStocksPerHotspot)
+}
+
+func buildAStockSnapshotReplacementRecommendations(strategyDate string, periodKey string, phase string, articles []model.Item, candidates []aStockMarketCandidate) []aStockRecommendation {
+	return buildAStockSnapshotRecommendationsWithPhaseAndLimit(strategyDate, periodKey, phase, articles, candidates, aStockReplacementPoolLimit, aStockReplacementPerHotspot)
 }
 
 func buildAStockSnapshotRecommendationsWithPhaseAndLimit(strategyDate string, periodKey string, phase string, articles []model.Item, candidates []aStockMarketCandidate, maxRecommendations int, maxPerHotspot int) []aStockRecommendation {

@@ -3263,6 +3263,111 @@ func TestAStockRebuildRefiltersLockedMorningSelectionsAndClearsPersistedRows(t *
 	}
 }
 
+func TestAStockMorningRebuildReplenishesAfterRecentFilter(t *testing.T) {
+	market := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		items := make([]map[string]any, 0)
+		for _, code := range []string{"300024", "300857", "688327", "002230", "603019", "601138"} {
+			items = append(items,
+				map[string]any{"code": code, "date": "2026-06-15", "open": 10.00, "close": 10.00, "pct": 0.10},
+				map[string]any{"code": code, "date": "2026-06-16", "open": 10.10, "close": 10.30, "pct": 2.00, "entry_price": 10.10},
+			)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"items": items}})
+	}))
+	defer market.Close()
+	t.Setenv("YUQING_ASTOCK_MARKET_URL", market.URL)
+
+	var savedSelections model.AStockRecommendationSelectionSet
+	var savedSnapshot model.AStockRecommendationSnapshot
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/articles":
+			writeEnvelope(w, http.StatusOK, "ok", model.ItemListResult{
+				Items: []model.Item{{
+					ID:          1,
+					SourceType:  "flash",
+					Title:       "AI 人工智能算力持续升温",
+					Summary:     "人工智能产业链盘前活跃",
+					PublishTime: "2026-06-16 09:20:00",
+					TagFlags:    "0.002230 0.603019 0.601138",
+					RawPayload:  `{"stock_list":[{"code":"300024","name":"机器人"},{"code":"300857","name":"协创数据"},{"code":"688327","name":"云从科技"}]}`,
+				}},
+				Page: 1, PageSize: 200, Total: 1,
+			})
+		case "/api/v1/a-stock/auction":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockAuctionListResult{
+				Date: r.URL.Query().Get("date"),
+				Items: []model.AStockAuctionAmount{
+					{TradeDate: r.URL.Query().Get("date"), Code: "300024", Name: "机器人", AuctionVolume: 1000000, AuctionAmount: 12000000, Status: "ok"},
+					{TradeDate: r.URL.Query().Get("date"), Code: "300857", Name: "协创数据", AuctionVolume: 900000, AuctionAmount: 11000000, Status: "ok"},
+					{TradeDate: r.URL.Query().Get("date"), Code: "688327", Name: "云从科技", AuctionVolume: 800000, AuctionAmount: 10000000, Status: "ok"},
+					{TradeDate: r.URL.Query().Get("date"), Code: "002230", Name: "科大讯飞", AuctionVolume: 700000, AuctionAmount: 9000000, Status: "ok"},
+					{TradeDate: r.URL.Query().Get("date"), Code: "603019", Name: "中科曙光", AuctionVolume: 600000, AuctionAmount: 8000000, Status: "ok"},
+					{TradeDate: r.URL.Query().Get("date"), Code: "601138", Name: "工业富联", AuctionVolume: 500000, AuctionAmount: 7000000, Status: "ok"},
+				},
+			})
+		case "/api/v1/a-stock/recommendation-selections":
+			if r.URL.Query().Get("date") == "2026-06-15" && r.URL.Query().Get("period") == "morning" {
+				writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{
+					Found: true,
+					Items: []model.AStockRecommendationSelection{
+						{Rank: 1, Code: "002230", Name: "科大讯飞", Hotspot: "人工智能", Reason: "recent"},
+						{Rank: 2, Code: "603019", Name: "中科曙光", Hotspot: "人工智能", Reason: "recent"},
+						{Rank: 3, Code: "601138", Name: "工业富联", Hotspot: "人工智能", Reason: "recent"},
+					},
+				})
+				return
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{Found: false})
+		case "/api/v1/a-stock/recommendations":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
+		case "/api/v1/internal/a-stock/recommendation-selections":
+			if err := json.NewDecoder(r.Body).Decode(&savedSelections); err != nil {
+				t.Fatalf("decode saved selections: %v", err)
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionUpsertResult{Total: len(savedSelections.Items)})
+		case "/api/v1/internal/a-stock/recommendations":
+			if err := json.NewDecoder(r.Body).Decode(&savedSnapshot); err != nil {
+				t.Fatalf("decode saved snapshot: %v", err)
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Updated: 1})
+		case "/api/v1/a-stock/holdings/summary":
+			writeEnvelope(w, http.StatusOK, "ok", model.StockInstitutionHoldingSummary{})
+		default:
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	ctx := srv.loadAStockContextWithRecommendationPhasePersistenceMode("2026-06-16", "morning", 1, false, false, false, true, aStockRecommendationPhaseFinal, newAStockRequestCache(), false, true, aStockRecommendationRebuild)
+	if ctx.RecentFiltered != 3 || ctx.RecentReplenished != 3 || ctx.RecentReplenishShortfall {
+		t.Fatalf("expected three recent stocks to be replenished, got filtered=%d replenished=%d shortfall=%v recs=%+v", ctx.RecentFiltered, ctx.RecentReplenished, ctx.RecentReplenishShortfall, ctx.Recommendations)
+	}
+	if len(ctx.Recommendations) != 3 || len(savedSelections.Items) != 3 {
+		t.Fatalf("expected three replenished recommendations to be saved, ctx=%+v saved=%+v", ctx.Recommendations, savedSelections)
+	}
+	gotCodes := aStockRecommendationCodeSet(ctx.Recommendations)
+	for _, code := range []string{"300024", "300857", "688327"} {
+		if _, ok := gotCodes[code]; !ok {
+			t.Fatalf("expected replacement code %s, got %+v", code, ctx.Recommendations)
+		}
+	}
+	for _, code := range []string{"002230", "603019", "601138"} {
+		if _, ok := gotCodes[code]; ok {
+			t.Fatalf("expected recent fixed-pool code %s to stay filtered, got %+v", code, ctx.Recommendations)
+		}
+	}
+	if !strings.Contains(ctx.BacktestStatus, "5日内重复过滤 3 只，递补 3 只") {
+		t.Fatalf("expected backtest status to mention replenishment, got %q", ctx.BacktestStatus)
+	}
+	if savedSnapshot.RecentFiltered != 3 || !strings.Contains(savedSnapshot.BacktestStatus, "递补 3 只") {
+		t.Fatalf("expected saved snapshot to preserve replenishment status, got %+v", savedSnapshot)
+	}
+}
+
 func TestAStockContextEmptySnapshotIsAuthoritative(t *testing.T) {
 	marketHits := 0
 	market := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -4921,6 +5026,62 @@ func TestFilterRecentAStockRecommendationsDropsPast5DayCodes(t *testing.T) {
 	}
 	if filtered[0].Rank != 1 || filtered[0].Code != "000099" {
 		t.Fatalf("expected remaining recommendation to be reranked, got %+v", filtered)
+	}
+}
+
+func TestFilterRecentAStockRecommendationsReplenishesSameHotspotThenGlobal(t *testing.T) {
+	base := []aStockRecommendation{
+		{Rank: 1, Hotspot: "人工智能", Code: "002230", Name: "科大讯飞", MarketScore: 210},
+		{Rank: 2, Hotspot: "人工智能", Code: "603019", Name: "中科曙光", MarketScore: 200},
+		{Rank: 3, Hotspot: "半导体", Code: "688981", Name: "中芯国际", MarketScore: 190},
+	}
+	replacementPool := []aStockRecommendation{
+		{Rank: 1, Hotspot: "人工智能", Code: "002230", Name: "科大讯飞", MarketScore: 210},
+		{Rank: 2, Hotspot: "人工智能", Code: "300024", Name: "机器人", MarketScore: 180},
+		{Rank: 3, Hotspot: "半导体", Code: "688981", Name: "中芯国际", MarketScore: 190},
+		{Rank: 4, Hotspot: "军工航天", Code: "600760", Name: "中航沈飞", MarketScore: 260},
+	}
+
+	result := filterRecentAStockRecommendationsWithReplenishment(base, replacementPool, map[string]struct{}{
+		"002230": {},
+		"688981": {},
+	}, len(base))
+
+	if result.Filtered != 2 || result.Replenished != 2 || result.Shortfall {
+		t.Fatalf("unexpected replenishment stats: %+v", result)
+	}
+	gotCodes := aStockRecommendationCodeSet(result.Recommendations)
+	for _, code := range []string{"603019", "300024", "600760"} {
+		if _, ok := gotCodes[code]; !ok {
+			t.Fatalf("expected replenished recommendations to contain %s, got %+v", code, result.Recommendations)
+		}
+	}
+	for _, code := range []string{"002230", "688981"} {
+		if _, ok := gotCodes[code]; ok {
+			t.Fatalf("expected recent code %s to stay filtered, got %+v", code, result.Recommendations)
+		}
+	}
+}
+
+func TestFilterRecentAStockRecommendationsShortfallDoesNotReuseRecent(t *testing.T) {
+	base := []aStockRecommendation{
+		{Rank: 1, Hotspot: "人工智能", Code: "002230", Name: "科大讯飞", MarketScore: 210},
+		{Rank: 2, Hotspot: "人工智能", Code: "603019", Name: "中科曙光", MarketScore: 200},
+	}
+	replacementPool := []aStockRecommendation{
+		{Rank: 1, Hotspot: "人工智能", Code: "002230", Name: "科大讯飞", MarketScore: 210},
+		{Rank: 2, Hotspot: "人工智能", Code: "603019", Name: "中科曙光", MarketScore: 200},
+		{Rank: 3, Hotspot: "人工智能", Code: "601138", Name: "工业富联", MarketScore: 190},
+	}
+
+	result := filterRecentAStockRecommendationsWithReplenishment(base, replacementPool, map[string]struct{}{
+		"002230": {},
+		"603019": {},
+		"601138": {},
+	}, len(base))
+
+	if result.Filtered != 3 || result.Replenished != 0 || !result.Shortfall || len(result.Recommendations) != 0 {
+		t.Fatalf("expected recent-only pool to remain empty with shortfall, got %+v", result)
 	}
 }
 
