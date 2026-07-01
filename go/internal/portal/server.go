@@ -411,8 +411,8 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/system/warningmsg", s.requireSession(s.handleSystemWarningMessage))
 	mux.HandleFunc("/system/feedback", s.requireSession(s.handleSystemSectionRedirect("feedback")))
 	mux.HandleFunc("/system/warningedit", s.requireSession(s.handleSystemWarningEdit))
-	mux.HandleFunc("/system/upgrade/status", s.requireSessionJSON(s.handleSystemUpgradeStatus))
-	mux.HandleFunc("/system/upgrade", s.requireSessionJSON(s.handleSystemUpgrade))
+	mux.HandleFunc("/system/upgrade/status", s.requirePortalUpgradeSession(s.handleSystemUpgradeStatus))
+	mux.HandleFunc("/system/upgrade", s.requirePortalUpgradeSession(s.handleSystemUpgrade))
 	mux.HandleFunc("/wechat/getQrCode", s.handleWechatGetQrCode)
 	mux.HandleFunc("/wechat/getBindQrCode", s.handleWechatGetBindQRCode)
 	mux.HandleFunc("/wechat/checkBind", s.handleWechatCheckBind)
@@ -4887,16 +4887,18 @@ function scheduleHide(){clearTimeout(hideTimer);hideTimer=setTimeout(hide,15000)
 function stopPoll(){clearTimeout(pollTimer);pollTimer=0}
 function schedulePoll(){stopPoll();pollTimer=setTimeout(pollStatus,1500)}
 function setLog(text){if(log){log.textContent=text||"无升级日志"}}
-function parseJSON(resp){return resp.json().catch(function(){return {ok:false,message:"升级接口返回非 JSON"}}).then(function(data){data.__httpOK=resp.ok;return data})}
+function upgradeMessage(data){data=data||{};var text=data.message||data.msg||data.error||"";if(text){return String(text)}if(data.__httpOK===false){return "升级请求失败：HTTP "+(data.__httpStatus||"")+(data.__httpStatusText?(" "+data.__httpStatusText):"")}return ""}
+function upgradeLog(data){data=data||{};return data.log||upgradeMessage(data)||"无升级日志"}
+function parseJSON(resp){return resp.json().catch(function(){return {ok:false,message:"升级接口返回非 JSON"}}).then(function(data){data=data||{};data.__httpOK=resp.ok;data.__httpStatus=resp.status;data.__httpStatusText=resp.statusText||"";return data})}
 function renderUpgrade(data){
 data=data||{};
-if(data.running||data.status==="running"){status.textContent=data.message||"升级执行中";button.disabled=true;setLog((data.log||"")+"\n"+now()+" 状态检查: "+(data.message||"升级仍在后台执行"));schedulePoll();return}
+if(data.running||data.status==="running"){var runningMessage=upgradeMessage(data)||"升级执行中";status.textContent=runningMessage;button.disabled=true;setLog((data.log||runningMessage)+"\n"+now()+" 状态检查: "+runningMessage);schedulePoll();return}
 stopPoll();
 button.disabled=false;
 var idle=data.status==="idle";
 var ok=!!data.ok&&data.__httpOK!==false&&!idle;
 status.textContent=idle?"等待执行":(ok?"升级完成":"升级失败");
-setLog(data.log||data.message||"无升级日志");
+setLog(upgradeLog(data));
 if(!idle){scheduleHide()}
 }
 function pollStatus(){fetch("/system/upgrade/status",{method:"GET",credentials:"same-origin",headers:{"Accept":"application/json"}}).then(parseJSON).then(renderUpgrade).catch(function(err){status.textContent="升级执行中";setLog((log.textContent||"")+now()+" 状态查询失败: "+err.message+"\n");schedulePoll()})}

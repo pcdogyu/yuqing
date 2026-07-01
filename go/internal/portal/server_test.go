@@ -6803,6 +6803,9 @@ func TestPortalNavPlacesLogoutAfterUpgrade(t *testing.T) {
 		`id="portal-upgrade-mask"`,
 		`fetch("/system/upgrade"`,
 		`fetch("/system/upgrade/status"`,
+		`data.message||data.msg||data.error`,
+		`data.__httpStatus=resp.status`,
+		`upgradeLog(data)`,
 		`data.status==="running"`,
 		`setTimeout(hide,15000)`,
 	} {
@@ -6908,6 +6911,32 @@ func TestSystemUpgradeEndpointStartsBackgroundRunnerAndStatusReturnsLog(t *testi
 	}
 	if !statusResult.OK || statusResult.Running || !strings.Contains(statusResult.Log, "build ok") {
 		t.Fatalf("unexpected final upgrade status: %+v", statusResult)
+	}
+}
+
+func TestSystemUpgradeEndpointReturnsReadableAuthFailure(t *testing.T) {
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+
+	for _, path := range []string{"/system/upgrade", "/system/upgrade/status"} {
+		method := http.MethodPost
+		if strings.HasSuffix(path, "/status") {
+			method = http.MethodGet
+		}
+		req := httptest.NewRequest(method, path, nil)
+		rr := httptest.NewRecorder()
+		srv.Router().ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusForbidden {
+			t.Fatalf("expected auth failure 403 for %s, got %d body=%s", path, rr.Code, rr.Body.String())
+		}
+		var result portalUpgradeResult
+		if err := json.Unmarshal(rr.Body.Bytes(), &result); err != nil {
+			t.Fatalf("unmarshal auth failure response for %s: %v", path, err)
+		}
+		if result.OK || result.Status != "failed" || result.Message != "未登录" || !strings.Contains(result.Log, "升级请求失败: 未登录") {
+			t.Fatalf("expected readable upgrade auth failure for %s, got %+v", path, result)
+		}
 	}
 }
 

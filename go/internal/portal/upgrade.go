@@ -50,6 +50,31 @@ func (defaultPortalUpgradeRunner) Run(ctx context.Context, cfg config.Config) po
 	return runPortalUpgrade(ctx, cfg)
 }
 
+func (s *Server) requirePortalUpgradeSession(next func(http.ResponseWriter, *http.Request, any)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		cookie, err := r.Cookie(sessionCookieName)
+		if err != nil || strings.TrimSpace(cookie.Value) == "" {
+			writePortalUpgradeFailureJSON(w, http.StatusForbidden, "未登录")
+			return
+		}
+		user, err := s.getSessionUser(cookie.Value)
+		if err != nil {
+			writePortalUpgradeFailureJSON(w, http.StatusForbidden, "会话无效")
+			return
+		}
+		next(w, r, user)
+	}
+}
+
+func writePortalUpgradeFailureJSON(w http.ResponseWriter, status int, message string) {
+	writeRawJSON(w, status, portalUpgradeResult{
+		OK:      false,
+		Status:  "failed",
+		Message: message,
+		Log:     timestampedUpgradeLine("升级请求失败: " + message),
+	})
+}
+
 func (s *Server) handleSystemUpgrade(w http.ResponseWriter, r *http.Request, _ any) {
 	if r.Method != http.MethodPost {
 		writeRawJSON(w, http.StatusMethodNotAllowed, map[string]any{"message": "method not allowed"})
