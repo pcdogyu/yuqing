@@ -149,6 +149,7 @@ type ArticleFilter struct {
 	Read       string `json:"read"`
 	Favorite   string `json:"favorite"`
 	Limit      int    `json:"limit"`
+	Lite       bool   `json:"lite,omitempty"`
 }
 
 type SearchFacetBucket struct {

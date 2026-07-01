@@ -362,11 +362,11 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 	ctx := s.loadAStockContextWithCache(strategyDate, period.Key, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, requestCache)
 	morningCtx := ctx
 	if ctx.Period != "morning" {
-		morningCtx = s.loadAStockContextWithCache(strategyDate, "morning", 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, refreshAllBacktests, requestCache)
+		morningCtx = s.loadAStockCompanionContextWithCache(strategyDate, "morning", 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, refreshAllBacktests, requestCache)
 	}
 	afternoonCtx := ctx
 	if ctx.Period != "afternoon" {
-		afternoonCtx = s.loadAStockContextWithCache(strategyDate, "afternoon", 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, refreshAllBacktests, requestCache)
+		afternoonCtx = s.loadAStockCompanionContextWithCache(strategyDate, "afternoon", 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, refreshAllBacktests, requestCache)
 	}
 	message := strings.TrimSpace(r.URL.Query().Get("msg"))
 	if message == "" {
@@ -1432,10 +1432,18 @@ func newAStockRequestCache() *aStockRequestCache {
 }
 
 func (s *Server) loadAStockContextWithCache(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, cache *aStockRequestCache) aStockContext {
-	return s.loadAStockContextWithRecommendationPhase(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, aStockRecommendationPhaseFinal, cache)
+	return s.loadAStockContextWithRecommendationPhaseOptions(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, aStockRecommendationPhaseFinal, cache, true)
+}
+
+func (s *Server) loadAStockCompanionContextWithCache(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, cache *aStockRequestCache) aStockContext {
+	return s.loadAStockContextWithRecommendationPhaseOptions(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, aStockRecommendationPhaseFinal, cache, false)
 }
 
 func (s *Server) loadAStockContextWithRecommendationPhase(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, recommendationPhase string, cache *aStockRequestCache) aStockContext {
+	return s.loadAStockContextWithRecommendationPhaseOptions(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, recommendationPhase, cache, true)
+}
+
+func (s *Server) loadAStockContextWithRecommendationPhaseOptions(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, recommendationPhase string, cache *aStockRequestCache, includeHotspotTopStocks bool) aStockContext {
 	period := normalizeAStockPeriod(periodKey)
 	phase := normalizeAStockRecommendationPhase(recommendationPhase)
 	recommendationStart, recommendationEnd, recommendationWindowLabel := aStockRecommendationPhaseWindow(strategyDate, period.Key, phase)
@@ -1496,7 +1504,7 @@ func (s *Server) loadAStockContextWithRecommendationPhase(strategyDate string, p
 	ctx.Hotspots = buildAStockHotspots(ctx.Articles)
 	ctx.AuctionAmountLabel = s.loadAStockAuctionAmountLabelWithCache(strategyDate, cache)
 	var marketCandidates []aStockMarketCandidate
-	if len(ctx.Hotspots) > 0 {
+	if len(ctx.Hotspots) > 0 && includeHotspotTopStocks {
 		candidates, candidateStatus, auctionResult := s.loadAStockMarketCandidatesWithStatusWithCache(strategyDate, cache)
 		marketCandidates = candidates
 		ctx.Hotspots = buildAStockHotspotsWithTopStocks(ctx.Hotspots, marketCandidates, aStockHotspotTopStockLimit)
@@ -1560,6 +1568,15 @@ func (s *Server) loadAStockContextWithRecommendationPhase(strategyDate string, p
 	}
 	recommendationTarget := 0
 	if len(ctx.Hotspots) > 0 {
+		if marketCandidates == nil {
+			candidates, candidateStatus, auctionResult := s.loadAStockMarketCandidatesWithStatusWithCache(strategyDate, cache)
+			marketCandidates = candidates
+			ctx.MarketCandidateStatus = candidateStatus
+			ctx.MarketCandidateCount = len(fixedPoolAStockMarketCandidates(aStockRecommendationHotspotSlice(ctx.Hotspots), marketCandidates))
+			if auctionLabel := normalizeAStockAuctionSummaryLabel(formatAStockAuctionSummaryAmount(auctionResult)); auctionLabel != "" {
+				ctx.AuctionAmountLabel = auctionLabel
+			}
+		}
 		candidates := marketCandidates
 		baseRecommendations := buildAStockSnapshotRecommendationsWithPhase(strategyDate, period.Key, phase, ctx.Articles, candidates)
 		recommendationTarget = len(baseRecommendations)
@@ -2888,6 +2905,7 @@ func aStockWindowArticlesQuery(timeField string, start time.Time, end time.Time,
 	query.Set("time_field", timeField)
 	query.Set("start", startText)
 	query.Set("end", endText)
+	query.Set("lite", "1")
 	return "/api/v1/articles?" + query.Encode()
 }
 
@@ -4897,23 +4915,38 @@ func filterAStockNews(items []model.Item) []model.Item {
 	return filtered
 }
 
+type aStockHotspotMatchItem struct {
+	item model.Item
+	text string
+}
+
 func buildAStockHotspots(items []model.Item) []aStockHotspot {
 	rules := aStockTopicRules()
 	hotspots := make([]aStockHotspot, 0, len(rules))
+	matchItems := make([]aStockHotspotMatchItem, 0, len(items))
+	for _, item := range items {
+		matchItems = append(matchItems, aStockHotspotMatchItem{
+			item: item,
+			text: strings.ToLower(item.Title + " " + item.Summary + " " + item.Content),
+		})
+	}
 	for _, rule := range rules {
 		keywordSet := make(map[string]struct{})
 		matches := make([]model.Item, 0)
-		for _, item := range items {
-			text := strings.ToLower(item.Title + " " + item.Summary + " " + item.Content)
+		lowerKeywords := make([]string, 0, len(rule.Keywords))
+		for _, keyword := range rule.Keywords {
+			lowerKeywords = append(lowerKeywords, strings.ToLower(keyword))
+		}
+		for _, matchItem := range matchItems {
 			itemMatched := false
-			for _, keyword := range rule.Keywords {
-				if strings.Contains(text, strings.ToLower(keyword)) {
+			for i, keyword := range rule.Keywords {
+				if strings.Contains(matchItem.text, lowerKeywords[i]) {
 					keywordSet[keyword] = struct{}{}
 					itemMatched = true
 				}
 			}
 			if itemMatched {
-				matches = append(matches, item)
+				matches = append(matches, matchItem.item)
 			}
 		}
 		if len(matches) == 0 {

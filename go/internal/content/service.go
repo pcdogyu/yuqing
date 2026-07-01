@@ -3337,6 +3337,7 @@ func articleFilterFromRequest(r *http.Request) model.ArticleFilter {
 		Sort:       strings.TrimSpace(r.URL.Query().Get("sort")),
 		Read:       strings.TrimSpace(r.URL.Query().Get("read")),
 		Favorite:   strings.TrimSpace(r.URL.Query().Get("favorite")),
+		Lite:       normalizeBoolQuery(r.URL.Query().Get("lite")),
 	}
 }
 

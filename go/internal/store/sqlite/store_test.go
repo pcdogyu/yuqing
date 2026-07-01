@@ -54,6 +54,38 @@ func TestUpsertAndListItems(t *testing.T) {
 	}
 }
 
+func TestListItemsLiteOmitsLargeFields(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	item := sampleItemWithPayload("flash", "flash-lite-1", "AI 算力消息", `{"stockList":[{"code":"002230"}],"body":"large"}`)
+	item.TagFlags = "0.002230"
+
+	if _, _, err := store.UpsertItems(ctx, []model.Item{item}); err != nil {
+		t.Fatalf("UpsertItems error: %v", err)
+	}
+	full, err := store.ListItems(ctx, model.ArticleFilter{Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListItems full error: %v", err)
+	}
+	if len(full.Items) != 1 || full.Items[0].Content == "" || full.Items[0].RawPayload == "" {
+		t.Fatalf("expected full list to include large fields, got %+v", full.Items)
+	}
+	lite, err := store.ListItems(ctx, model.ArticleFilter{Page: 1, PageSize: 10, Lite: true})
+	if err != nil {
+		t.Fatalf("ListItems lite error: %v", err)
+	}
+	if len(lite.Items) != 1 {
+		t.Fatalf("expected one lite item, got %+v", lite)
+	}
+	got := lite.Items[0]
+	if got.Content != "" || got.RawPayload != "" {
+		t.Fatalf("expected lite list to omit large fields, got content=%q raw=%q", got.Content, got.RawPayload)
+	}
+	if got.Title != item.Title || got.Summary != item.Summary || got.TagFlags != item.TagFlags || got.SourceType != item.SourceType {
+		t.Fatalf("expected lite list to keep match fields, got %+v", got)
+	}
+}
+
 func TestUpsertItemsSkipsRecentDuplicateTitles(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
