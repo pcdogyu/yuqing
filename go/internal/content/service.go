@@ -2681,10 +2681,11 @@ func (s *Service) operationsSummary(ctx context.Context) model.OperationsSummary
 }
 
 type serviceRestartSpec struct {
-	Name string
-	Path string
-	Port int
-	Root string
+	Name  string
+	Path  string
+	Port  int
+	Ports []int
+	Root  string
 }
 
 func (s *Service) serviceRestartSpec(name string) (serviceRestartSpec, bool) {
@@ -2709,11 +2710,41 @@ func (s *Service) serviceRestartSpec(name string) (serviceRestartSpec, bool) {
 	if port <= 0 {
 		return serviceRestartSpec{}, false
 	}
+	ports := []int{port}
+	if name == "gateway-web" {
+		for _, addr := range s.gatewayWebListenAddrs() {
+			if extraPort := portFromAddr(addr); extraPort > 0 {
+				ports = append(ports, extraPort)
+			}
+		}
+	}
 	root, err := os.Getwd()
 	if err != nil {
 		root = "."
 	}
-	return serviceRestartSpec{Name: name, Path: def.path, Port: port, Root: root}, true
+	return serviceRestartSpec{Name: name, Path: def.path, Port: port, Ports: uniqueServiceRestartPorts(ports), Root: root}, true
+}
+
+func (s *Service) gatewayWebListenAddrs() []string {
+	addrs := append([]string(nil), s.cfg.GatewayWebHTTPAddrs...)
+	addrs = append(addrs, s.cfg.GatewayWebRedirectAddr, s.cfg.GatewayWebTLSAddr)
+	return addrs
+}
+
+func uniqueServiceRestartPorts(ports []int) []int {
+	seen := make(map[int]struct{}, len(ports))
+	out := make([]int, 0, len(ports))
+	for _, port := range ports {
+		if port <= 0 {
+			continue
+		}
+		if _, ok := seen[port]; ok {
+			continue
+		}
+		seen[port] = struct{}{}
+		out = append(out, port)
+	}
+	return out
 }
 
 func portFromAddr(addr string) int {
@@ -2732,31 +2763,58 @@ func portFromAddr(addr string) int {
 }
 
 var startServiceRestart = func(spec serviceRestartSpec) error {
+	ports := spec.Ports
+	if len(ports) == 0 && spec.Port > 0 {
+		ports = []int{spec.Port}
+	}
 	script := fmt.Sprintf(`
 $ErrorActionPreference = "SilentlyContinue"
 Start-Sleep -Seconds 1
 $root = %q
 $name = %q
 $servicePath = %q
-$port = %d
+$ports = @(%s)
 $pidDir = Join-Path $root "runtime-pids"
 New-Item -ItemType Directory -Force -Path $pidDir | Out-Null
 $pidFile = Join-Path $pidDir ($name + ".pid")
+function Stop-ProcessTree($targetPid) {
+    if (-not $targetPid) { return }
+    Get-CimInstance Win32_Process -Filter ("ParentProcessId=" + $targetPid) -ErrorAction SilentlyContinue | ForEach-Object {
+        Stop-ProcessTree $_.ProcessId
+    }
+    Stop-Process -Id $targetPid -Force -ErrorAction SilentlyContinue
+}
 if (Test-Path $pidFile) {
     $oldPid = Get-Content $pidFile -ErrorAction SilentlyContinue
     if ($oldPid) {
-        Stop-Process -Id $oldPid -Force -ErrorAction SilentlyContinue
+        Stop-ProcessTree $oldPid
     }
     Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
 }
-Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object {
-    Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue
+$ports | ForEach-Object {
+    $port = $_
+    Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object {
+        Stop-ProcessTree $_
+    }
 }
 Start-Sleep -Milliseconds 500
 $process = Start-Process -FilePath "go" -ArgumentList @("run", $servicePath) -WorkingDirectory $root -PassThru -WindowStyle Hidden
 Set-Content -Path $pidFile -Value $process.Id
-`, spec.Root, spec.Name, spec.Path, spec.Port)
+`, spec.Root, spec.Name, spec.Path, serviceRestartPortsPowerShellLiteral(ports))
 	return exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script).Start()
+}
+
+func serviceRestartPortsPowerShellLiteral(ports []int) string {
+	if len(ports) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(ports))
+	for _, port := range ports {
+		if port > 0 {
+			parts = append(parts, strconv.Itoa(port))
+		}
+	}
+	return strings.Join(parts, ",")
 }
 
 var startAllServicesRestart = func() error {

@@ -946,6 +946,38 @@ func TestRestartServiceAPIRequiresTokenAndSubmitsKnownService(t *testing.T) {
 	if restarted.Name != "crawler-service" || restarted.Port != 8083 || restarted.Path != ".\\cmd\\crawler-service" {
 		t.Fatalf("unexpected restart spec: %+v", restarted)
 	}
+	if !testIntSliceContains(restarted.Ports, 8083) {
+		t.Fatalf("expected crawler restart ports to include 8083, got %+v", restarted.Ports)
+	}
+
+	gateway := NewService(config.Config{
+		ServiceToken:        "secret",
+		GatewayWebAddr:      ":8079",
+		GatewayWebHTTPAddrs: []string{":8079", ":80"},
+		HTTPTimeout:         time.Second,
+	}, store)
+	gatewayReq := httptest.NewRequest(http.MethodPost, "/api/v1/system/services/gateway-web/restart", nil)
+	gatewayReq.Header.Set("X-Service-Token", "secret")
+	gatewayRR := httptest.NewRecorder()
+	gateway.Router().ServeHTTP(gatewayRR, gatewayReq)
+	if gatewayRR.Code != http.StatusAccepted {
+		t.Fatalf("expected gateway restart accepted, got %d body=%s", gatewayRR.Code, gatewayRR.Body.String())
+	}
+	if restarted.Name != "gateway-web" || restarted.Port != 8079 || restarted.Path != ".\\cmd\\gateway-web" {
+		t.Fatalf("unexpected gateway restart spec: %+v", restarted)
+	}
+	if !testIntSliceContains(restarted.Ports, 8079) || !testIntSliceContains(restarted.Ports, 80) {
+		t.Fatalf("expected gateway restart ports to include 8079 and 80, got %+v", restarted.Ports)
+	}
+}
+
+func testIntSliceContains(values []int, target int) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func TestServiceLogsAPIRequiresTokenAndReadsTail(t *testing.T) {
