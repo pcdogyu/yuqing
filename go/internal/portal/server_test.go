@@ -307,6 +307,10 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		"源站抓取数 / 入库新增数 / 更新数",
 		"上午推荐",
 		"下午推荐",
+		"推荐生成窗口",
+		"新闻统计窗口",
+		"08:00-09:26:59",
+		"09:30-13:00:59",
 		"热点归纳",
 		"推荐股票",
 		"集合竞价",
@@ -1083,28 +1087,26 @@ func TestAStockHoldingsPagePostTriggersFullMarketBackfill(t *testing.T) {
 func TestAStockStockGenerateActionsSelectPeriod(t *testing.T) {
 	srv := NewServer(config.Config{})
 	tests := []struct {
-		name           string
-		fromPeriod     string
-		action         string
-		wantPeriod     string
-		wantMsg        string
-		wantIgnore     bool
-		wantRefresh    bool
-		wantRefreshAll bool
+		name       string
+		fromPeriod string
+		action     string
+		wantPeriod string
+		wantMsg    string
+		wantIgnore bool
 	}{
 		{
 			name:       "switch to afternoon",
 			fromPeriod: "morning",
 			action:     "generate_afternoon_stock",
 			wantPeriod: "afternoon",
-			wantMsg:    "已切换到下午窗口，按 09:30-13:00 历史新闻重新计算推荐。",
+			wantMsg:    "已切换到下午窗口，按 09:30-13:00:59 推荐生成窗口重新计算推荐。",
 		},
 		{
 			name:       "regenerate morning from afternoon",
 			fromPeriod: "afternoon",
 			action:     "generate_morning_stock",
 			wantPeriod: "morning",
-			wantMsg:    "已切换到上午窗口，按 08:00-09:30 历史新闻重新计算推荐。",
+			wantMsg:    "已切换到上午窗口，按 08:00-09:26:59 推荐生成窗口重新计算推荐。",
 		},
 		{
 			name:       "ignore recent filter",
@@ -1115,20 +1117,18 @@ func TestAStockStockGenerateActionsSelectPeriod(t *testing.T) {
 			wantIgnore: true,
 		},
 		{
-			name:           "refresh all backtests",
-			fromPeriod:     "morning",
-			action:         "refresh_backtest",
-			wantPeriod:     "morning",
-			wantMsg:        "上午和下午消息回测已按当前推荐股票、13:01价格和行情收益重新刷新。",
-			wantRefreshAll: true,
+			name:       "refresh all backtests",
+			fromPeriod: "morning",
+			action:     "refresh_backtest",
+			wantPeriod: "morning",
+			wantMsg:    "上午和下午消息回测已按当前推荐股票、13:01价格和行情收益重新刷新。",
 		},
 		{
-			name:        "refresh current backtest",
-			fromPeriod:  "afternoon",
-			action:      "refresh_current_backtest",
-			wantPeriod:  "afternoon",
-			wantMsg:     "下午推荐行情收益已按当前推荐股票重新补齐。",
-			wantRefresh: true,
+			name:       "refresh current backtest",
+			fromPeriod: "afternoon",
+			action:     "refresh_current_backtest",
+			wantPeriod: "afternoon",
+			wantMsg:    "下午推荐行情收益已按当前推荐股票重新补齐。",
 		},
 	}
 
@@ -1150,15 +1150,8 @@ func TestAStockStockGenerateActionsSelectPeriod(t *testing.T) {
 			if tc.wantIgnore && !strings.Contains(loc, "ignore_recent=1") {
 				t.Fatalf("expected ignore_recent redirect, got %q", loc)
 			}
-			if tc.wantRefreshAll {
-				if !strings.Contains(loc, "refresh_all_backtests=1") || !strings.Contains(loc, "refresh_recommendations=1") {
-					t.Fatalf("expected full backtest refresh redirect, got %q", loc)
-				}
-			}
-			if tc.wantRefresh {
-				if !strings.Contains(loc, "refresh_recommendations=1") || strings.Contains(loc, "refresh_all_backtests=1") {
-					t.Fatalf("expected current-period refresh redirect, got %q", loc)
-				}
+			if strings.Contains(loc, "refresh_recommendations=1") || strings.Contains(loc, "refresh_all_backtests=1") {
+				t.Fatalf("expected POST action to persist before redirect instead of delegating writes to GET, got %q", loc)
 			}
 			decoded, _ := url.QueryUnescape(loc)
 			if !strings.Contains(decoded, tc.wantMsg) {
@@ -1301,6 +1294,11 @@ func TestAStockBackfillWindowActionPassesMorningWindow(t *testing.T) {
 	var mu sync.Mutex
 	seen := map[string]bool{}
 	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/admin/tasks/crawl/runs" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "message": "ok", "data": []model.CrawlRun{}})
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/admin/tasks/crawl" {
 			t.Fatalf("unexpected crawler request: %s %s", r.Method, r.URL.String())
 		}
@@ -1315,28 +1313,35 @@ func TestAStockBackfillWindowActionPassesMorningWindow(t *testing.T) {
 	}))
 	defer crawler.Close()
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/articles" {
-			t.Fatalf("unexpected content request: %s", r.URL.String())
-		}
-		if r.URL.Query().Get("start") != "2026-06-16 08:00:00" || r.URL.Query().Get("end") != "2026-06-16 09:30:59" {
-			t.Fatalf("unexpected content window query: %s", r.URL.RawQuery)
-		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"code":    200,
-			"message": "ok",
-			"data": model.ItemListResult{
-				Items: []model.Item{{
+		switch r.URL.Path {
+		case "/api/v1/articles":
+			items := []model.Item{}
+			if r.URL.Query().Get("start") == "2026-06-16 08:00:00" && r.URL.Query().Get("end") == "2026-06-16 09:30:59" {
+				items = []model.Item{{
 					ID:         1,
 					SourceType: "flash",
 					Title:      "上午财经新闻",
 					CapturedAt: time.Date(2026, 6, 16, 1, 5, 0, 0, time.UTC),
-				}},
-				Page:     1,
-				PageSize: 200,
-				Total:    1,
-			},
-		})
+				}}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    200,
+				"message": "ok",
+				"data":    model.ItemListResult{Items: items, Page: 1, PageSize: 200, Total: len(items)},
+			})
+		case "/api/v1/a-stock/recommendation-selections":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{Found: false})
+		case "/api/v1/a-stock/recommendations":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
+		case "/api/v1/internal/a-stock/recommendations":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Updated: 1})
+		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
+			t.Fatalf("unexpected content request: %s", r.URL.String())
+		}
 	}))
 	defer content.Close()
 
@@ -1365,6 +1370,11 @@ func TestAStockBackfillWindowActionPassesMorningWindow(t *testing.T) {
 
 func TestAStockBackfillWindowActionExplainsZeroWindowNews(t *testing.T) {
 	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/admin/tasks/crawl/runs" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "message": "ok", "data": []model.CrawlRun{}})
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/admin/tasks/crawl" {
 			t.Fatalf("unexpected crawler request: %s %s", r.Method, r.URL.String())
 		}
@@ -1382,15 +1392,26 @@ func TestAStockBackfillWindowActionExplainsZeroWindowNews(t *testing.T) {
 	}))
 	defer crawler.Close()
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/articles" {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/articles":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    200,
+				"message": "ok",
+				"data":    model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0},
+			})
+		case "/api/v1/a-stock/recommendation-selections":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{Found: false})
+		case "/api/v1/a-stock/recommendations":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
+		case "/api/v1/internal/a-stock/recommendations":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Updated: 1})
+		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content request: %s", r.URL.String())
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"code":    200,
-			"message": "ok",
-			"data":    model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0},
-		})
 	}))
 	defer content.Close()
 
@@ -1414,6 +1435,11 @@ func TestAStockBackfillWindowActionExplainsZeroWindowNews(t *testing.T) {
 
 func TestAStockBackfillMorningStockActionSelectsMorningWindow(t *testing.T) {
 	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/admin/tasks/crawl/runs" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "message": "ok", "data": []model.CrawlRun{}})
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/admin/tasks/crawl" {
 			t.Fatalf("unexpected crawler request: %s %s", r.Method, r.URL.String())
 		}
@@ -2490,6 +2516,38 @@ func mustAStockTestJSON(t *testing.T, value any) string {
 	return string(raw)
 }
 
+func writeAStockTestMarketBars(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	codes := strings.Split(r.URL.Query().Get("codes"), ",")
+	items := make([]map[string]any, 0, len(codes))
+	for _, rawCode := range codes {
+		code := normalizeAStockCode(rawCode)
+		if code == "" {
+			continue
+		}
+		items = append(items, map[string]any{
+			"code":                  code,
+			"date":                  r.URL.Query().Get("date"),
+			"open":                  10.00,
+			"close":                 10.50,
+			"pct":                   5.00,
+			"entry_price":           10.00,
+			"afternoon_entry_price": 10.20,
+		})
+	}
+	writeEnvelope(w, http.StatusOK, "ok", map[string]any{"items": items})
+}
+
+func newAStockRefreshBacktestPostRequest(strategyDate string, period string) *http.Request {
+	form := url.Values{}
+	form.Set("date", strategyDate)
+	form.Set("period", period)
+	form.Set("action", "refresh_backtest")
+	req := httptest.NewRequest(http.MethodPost, "/a-stock", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	return req
+}
+
 func TestAStockPageUsesValidSnapshotsBeforeSelections(t *testing.T) {
 	marketHits := 0
 	market := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2584,6 +2642,135 @@ func TestAStockPageUsesValidSnapshotsBeforeSelections(t *testing.T) {
 	}
 	if marketHits != 0 || selectionHits != 0 || holdingHits != 0 || saveHits != 0 {
 		t.Fatalf("expected snapshot fast path to avoid market/selection/holdings/save, got market=%d selection=%d holdings=%d save=%d", marketHits, selectionHits, holdingHits, saveHits)
+	}
+}
+
+func TestAStockPageGetDoesNotPersistComputedRecommendations(t *testing.T) {
+	market := httptest.NewServer(http.HandlerFunc(writeAStockTestMarketBars))
+	defer market.Close()
+	t.Setenv("YUQING_ASTOCK_MARKET_URL", market.URL)
+
+	internalPosts := 0
+	selectionPeriods := map[string]int{}
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/articles":
+			writeEnvelope(w, http.StatusOK, "ok", model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0})
+		case "/api/v1/a-stock/recommendations":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
+		case "/api/v1/a-stock/recommendation-selections":
+			period := normalizeAStockPeriod(r.URL.Query().Get("period")).Key
+			selectionPeriods[period]++
+			code := "600010"
+			name := "上午已选"
+			if period == "afternoon" {
+				code = "600020"
+				name = "下午已选"
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{
+				Found:        true,
+				StrategyDate: "2026-06-24",
+				Period:       period,
+				Items:        []model.AStockRecommendationSelection{{Rank: 1, Code: code, Name: name, Hotspot: "只读", MarketScore: 80, Reason: "selection"}},
+			})
+		case "/api/v1/a-stock/holdings/summary":
+			writeEnvelope(w, http.StatusOK, "ok", model.StockInstitutionHoldingSummary{})
+		case "/api/v1/internal/a-stock/recommendations", "/api/v1/internal/a-stock/recommendation-selections":
+			internalPosts++
+			writeEnvelope(w, http.StatusOK, "ok", map[string]any{"updated": 1})
+		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-24&period=morning&refresh_recommendations=1", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if internalPosts != 0 {
+		t.Fatalf("GET /a-stock must not persist recommendations, got %d internal posts", internalPosts)
+	}
+	if selectionPeriods["morning"] == 0 || selectionPeriods["afternoon"] == 0 {
+		t.Fatalf("expected both displayed periods to load selections without writes, got %+v", selectionPeriods)
+	}
+}
+
+func TestAStockPageMorningGetDoesNotCreateAfternoonCompanionSnapshot(t *testing.T) {
+	market := httptest.NewServer(http.HandlerFunc(writeAStockTestMarketBars))
+	defer market.Close()
+	t.Setenv("YUQING_ASTOCK_MARKET_URL", market.URL)
+
+	afternoonSnapshotPosts := 0
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/articles":
+			writeEnvelope(w, http.StatusOK, "ok", model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0})
+		case "/api/v1/a-stock/recommendations":
+			if r.Method == http.MethodPost {
+				var snapshot model.AStockRecommendationSnapshot
+				_ = json.NewDecoder(r.Body).Decode(&snapshot)
+				if snapshot.Period == "afternoon" {
+					afternoonSnapshotPosts++
+				}
+				writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Updated: 1})
+				return
+			}
+			if r.URL.Query().Get("period") == "morning" {
+				writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{
+					Found:               true,
+					StrategyDate:        "2026-06-24",
+					Period:              "morning",
+					RecommendationsJSON: mustAStockTestJSON(t, []aStockRecommendation{{Rank: 1, Hotspot: "快照", Code: "600001", Name: "上午快照", Reason: "snapshot"}}),
+					BacktestsJSON:       mustAStockTestJSON(t, []aStockBacktestRow{{Stock: "600001 上午快照", EntryOpen: "10.00", T0Return: "+1.00%", T0Close: "10.10", Status: "已回测T+1"}}),
+					BacktestStatus:      "已读取上午快照",
+					GeneratedCount:      1,
+				})
+				return
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
+		case "/api/v1/a-stock/recommendation-selections":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{
+				Found:        true,
+				StrategyDate: "2026-06-24",
+				Period:       "afternoon",
+				Items:        []model.AStockRecommendationSelection{{Rank: 1, Code: "600020", Name: "下午已选", Hotspot: "伴随", MarketScore: 80, Reason: "selection"}},
+			})
+		case "/api/v1/a-stock/holdings/summary":
+			writeEnvelope(w, http.StatusOK, "ok", model.StockInstitutionHoldingSummary{})
+		case "/api/v1/internal/a-stock/recommendations":
+			afternoonSnapshotPosts++
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Updated: 1})
+		case "/api/v1/internal/a-stock/recommendation-selections":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionUpsertResult{Updated: 1})
+		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-24&period=morning", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if afternoonSnapshotPosts != 0 {
+		t.Fatalf("morning GET must not create afternoon companion snapshot, got %d posts", afternoonSnapshotPosts)
 	}
 }
 
@@ -3158,12 +3345,12 @@ func TestAStockPageRefreshAllBacktestsPersistsAfternoonBacktestUpdate(t *testing
 	defer content.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
-	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-23&period=morning&refresh_all_backtests=1", nil)
+	req := newAStockRefreshBacktestPostRequest("2026-06-23", "morning")
 	rr := httptest.NewRecorder()
 	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
 
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d body=%s", rr.Code, rr.Body.String())
 	}
 	afternoonSnapshot, ok := savedSnapshots["afternoon"]
 	if !ok {
@@ -3301,12 +3488,12 @@ func TestAStockPageRefreshAllBacktestsSupplementsPartialCustomMarketHistory(t *t
 	defer content.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
-	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-23&period=morning&refresh_all_backtests=1", nil)
+	req := newAStockRefreshBacktestPostRequest("2026-06-23", "morning")
 	rr := httptest.NewRecorder()
 	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
 
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d body=%s", rr.Code, rr.Body.String())
 	}
 	afternoonSnapshot, ok := savedSnapshots["afternoon"]
 	if !ok {
@@ -3444,12 +3631,12 @@ func TestAStockPageRefreshAllBacktestsSupplementsCurrentDayAfternoonBacktest(t *
 	defer content.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
-	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-24&period=morning&refresh_all_backtests=1", nil)
+	req := newAStockRefreshBacktestPostRequest("2026-06-24", "morning")
 	rr := httptest.NewRecorder()
 	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
 
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d body=%s", rr.Code, rr.Body.String())
 	}
 	afternoonSnapshot, ok := savedSnapshots["afternoon"]
 	if !ok {
@@ -3607,11 +3794,11 @@ func TestAStockPageRefreshAllBacktestsPreservesPersistedAfternoonPrices(t *testi
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
 	for i := 0; i < 2; i++ {
-		req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-23&period=morning&refresh_all_backtests=1", nil)
+		req := newAStockRefreshBacktestPostRequest("2026-06-23", "morning")
 		rr := httptest.NewRecorder()
 		srv.handleAStockPage(rr, req, map[string]any{"id": 1})
-		if rr.Code != http.StatusOK {
-			t.Fatalf("refresh %d expected 200, got %d body=%s", i+1, rr.Code, rr.Body.String())
+		if rr.Code != http.StatusSeeOther {
+			t.Fatalf("refresh %d expected 303, got %d body=%s", i+1, rr.Code, rr.Body.String())
 		}
 		if i == 0 {
 			afternoonSnapshot := savedSnapshots["afternoon"]

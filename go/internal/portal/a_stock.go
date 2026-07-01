@@ -361,14 +361,14 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		forceRecommendationRefresh = true
 	}
 	requestCache := newAStockRequestCache()
-	ctx := s.loadAStockContextWithCache(strategyDate, period.Key, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, requestCache)
+	ctx := s.loadAStockContextReadOnlyWithCache(strategyDate, period.Key, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, requestCache)
 	morningCtx := ctx
 	if ctx.Period != "morning" {
-		morningCtx = s.loadAStockCompanionContextWithCache(strategyDate, "morning", 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, refreshAllBacktests, requestCache)
+		morningCtx = s.loadAStockCompanionContextReadOnlyWithCache(strategyDate, "morning", 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, refreshAllBacktests, requestCache)
 	}
 	afternoonCtx := ctx
 	if ctx.Period != "afternoon" {
-		afternoonCtx = s.loadAStockCompanionContextWithCache(strategyDate, "afternoon", 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, refreshAllBacktests, requestCache)
+		afternoonCtx = s.loadAStockCompanionContextReadOnlyWithCache(strategyDate, "afternoon", 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, refreshAllBacktests, requestCache)
 	}
 	message := strings.TrimSpace(r.URL.Query().Get("msg"))
 	if message == "" {
@@ -513,80 +513,109 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
 	query := url.Values{}
-	if date := normalizeAStockStrategyDate(r.FormValue("date")); date != "" {
-		query.Set("date", date)
+	strategyDate := normalizeAStockStrategyDate(r.FormValue("date"))
+	if strategyDate != "" {
+		query.Set("date", strategyDate)
 	}
 	period := normalizeAStockPeriod(r.FormValue("period"))
 	query.Set("period", period.Key)
-	if normalizeAStockBool(r.FormValue("ignore_recent")) {
+	ignoreRecent := normalizeAStockBool(r.FormValue("ignore_recent"))
+	ignoreLimitUp := normalizeAStockBool(r.FormValue("ignore_limit_up"))
+	filterTodayMarket := normalizeAStockBool(r.FormValue("filter_today_market"))
+	if ignoreRecent {
 		query.Set("ignore_recent", "1")
 	}
-	if normalizeAStockBool(r.FormValue("ignore_limit_up")) {
+	if ignoreLimitUp {
 		query.Set("ignore_limit_up", "1")
 	}
-	if normalizeAStockBool(r.FormValue("filter_today_market")) {
+	if filterTodayMarket {
 		query.Set("filter_today_market", "1")
 	}
 	action := strings.TrimSpace(r.FormValue("action"))
 	if aStockActionRequiresTradingDay(action) {
-		date := normalizeAStockStrategyDate(r.FormValue("date"))
-		if blocked, message := s.aStockRecommendationBlockedMessage(date); blocked {
+		if blocked, message := s.aStockRecommendationBlockedMessage(strategyDate); blocked {
 			query.Set("msg", message)
 			http.Redirect(w, r, "/a-stock?"+query.Encode(), http.StatusSeeOther)
 			return
 		}
 	}
+	persistRecommendation := false
+	persistAllBacktests := false
 	switch action {
 	case "crawl":
 		query.Set("msg", s.triggerAStockCrawl())
 	case "backfill_window_news":
-		date := normalizeAStockStrategyDate(r.FormValue("date"))
-		query.Set("refresh_recommendations", "1")
-		query.Set("msg", s.triggerAStockWindowCrawl(date, period.Key))
+		query.Set("msg", s.triggerAStockWindowCrawl(strategyDate, period.Key))
+		persistRecommendation = true
 	case "backfill_morning_stock":
-		date := normalizeAStockStrategyDate(r.FormValue("date"))
 		period = normalizeAStockPeriod("morning")
 		query.Set("period", period.Key)
-		query.Set("refresh_recommendations", "1")
-		query.Set("msg", s.triggerAStockWindowCrawl(date, period.Key)+"上午推荐已按补录后的新闻窗口重新计算。")
+		query.Set("msg", s.triggerAStockWindowCrawl(strategyDate, period.Key)+"上午推荐已按补录后的新闻窗口重新计算。")
+		persistRecommendation = true
 	case "generate_morning_stock":
 		period = normalizeAStockPeriod("morning")
 		query.Set("period", period.Key)
-		query.Set("refresh_recommendations", "1")
-		query.Set("msg", "已切换到上午窗口，按 08:00-09:30 历史新闻重新计算推荐。")
+		query.Set("msg", "已切换到上午窗口，按 08:00-09:26:59 推荐生成窗口重新计算推荐。")
+		persistRecommendation = true
 	case "generate_afternoon_stock":
 		period = normalizeAStockPeriod("afternoon")
 		query.Set("period", period.Key)
-		query.Set("refresh_recommendations", "1")
-		query.Set("msg", "已切换到下午窗口，按 09:30-13:00 历史新闻重新计算推荐。")
+		query.Set("msg", "已切换到下午窗口，按 09:30-13:00:59 推荐生成窗口重新计算推荐。")
+		persistRecommendation = true
 	case "generate_ignore_recent_stock":
 		query.Set("ignore_recent", "1")
-		query.Set("refresh_recommendations", "1")
+		ignoreRecent = true
 		query.Set("msg", period.Label+"已忽略5日内重复推荐过滤，按当前新闻窗口重新计算推荐。")
+		persistRecommendation = true
 	case "generate":
-		query.Set("refresh_recommendations", "1")
 		query.Set("msg", period.Label+"热点已按当前新闻窗口重新计算。")
+		persistRecommendation = true
 	case "sync_market":
-		query.Set("refresh_recommendations", "1")
 		query.Set("msg", "行情已按当前策略日期刷新，页面已重新计算昨日收盘价、现价、涨跌幅和回测。")
+		persistRecommendation = true
 	case "refresh_current_backtest":
-		query.Set("refresh_recommendations", "1")
 		query.Set("msg", period.Label+"行情收益已按当前推荐股票重新补齐。")
+		persistRecommendation = true
 	case "backfill_auction":
-		date := normalizeAStockStrategyDate(r.FormValue("date"))
-		query.Set("refresh_recommendations", "1")
-		query.Set("msg", s.triggerAStockAuctionBackfillDate(date))
+		query.Set("msg", s.triggerAStockAuctionBackfillDate(strategyDate))
+		persistRecommendation = true
 	case "refresh_backtest":
-		query.Set("refresh_recommendations", "1")
-		query.Set("refresh_all_backtests", "1")
 		query.Set("msg", "上午和下午消息回测已按当前推荐股票、13:01价格和行情收益重新刷新。")
+		persistRecommendation = true
+		persistAllBacktests = true
 	case "recalculate":
-		query.Set("refresh_recommendations", "1")
 		query.Set("msg", period.Label+"已按当前过滤开关重新计算推荐和回测。")
+		persistRecommendation = true
 	default:
 		query.Set("msg", "未知操作")
 	}
+	if persistRecommendation {
+		if loadMessage := s.persistAStockActionRecommendation(strategyDate, period.Key, ignoreRecent, ignoreLimitUp, filterTodayMarket, persistAllBacktests); loadMessage != "" {
+			existing := strings.TrimSpace(query.Get("msg"))
+			if existing != "" {
+				query.Set("msg", existing+" "+loadMessage)
+			} else {
+				query.Set("msg", loadMessage)
+			}
+		}
+	}
 	http.Redirect(w, r, "/a-stock?"+query.Encode(), http.StatusSeeOther)
+}
+
+func (s *Server) persistAStockActionRecommendation(strategyDate string, periodKey string, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, allPeriods bool) string {
+	cache := newAStockRequestCache()
+	periods := []string{normalizeAStockPeriod(periodKey).Key}
+	if allPeriods {
+		periods = []string{"morning", "afternoon"}
+	}
+	messages := make([]string, 0, len(periods))
+	for _, period := range periods {
+		ctx := s.loadAStockContextWithRecommendationPhasePersistence(strategyDate, period, 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, true, aStockRecommendationPhaseFinal, cache, true, true)
+		if message := strings.TrimSpace(ctx.LoadMessage); message != "" {
+			messages = append(messages, fmt.Sprintf("%s：%s", ctx.PeriodLabel, message))
+		}
+	}
+	return strings.Join(messages, " ")
 }
 
 func renderAStockPopupShell(b *strings.Builder) {
@@ -637,7 +666,8 @@ func writeAStockOverviewStrategyCell(b *strings.Builder, date string, auctionAmo
 
 func writeAStockOverviewPeriodCells(b *strings.Builder, ctx aStockContext) {
 	writeAStockOverviewCell(b, "推荐窗口", ctx.PeriodLabel, "")
-	writeAStockOverviewCell(b, "新闻窗口", ctx.WindowLabel, ` class="astock-overview-window"`)
+	writeAStockOverviewCell(b, "推荐生成窗口", nonEmpty(ctx.RecommendationWindowLabel, ctx.WindowLabel), ` class="astock-overview-window"`)
+	writeAStockOverviewCell(b, "新闻统计窗口", ctx.WindowLabel, ` class="astock-overview-window"`)
 	writeAStockOverviewNewsCountCell(b, ctx)
 	writeAStockOverviewCell(b, "候选热点数", fmt.Sprintf("%d", len(ctx.Hotspots)), "")
 	writeAStockOverviewCell(b, "推荐股票数", fmt.Sprintf("%d", len(ctx.Recommendations)), "")
@@ -1441,18 +1471,30 @@ func newAStockRequestCache() *aStockRequestCache {
 }
 
 func (s *Server) loadAStockContextWithCache(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, cache *aStockRequestCache) aStockContext {
-	return s.loadAStockContextWithRecommendationPhaseOptions(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, aStockRecommendationPhaseFinal, cache, true)
+	return s.loadAStockContextWithRecommendationPhasePersistence(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, aStockRecommendationPhaseFinal, cache, true, true)
+}
+
+func (s *Server) loadAStockContextReadOnlyWithCache(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, cache *aStockRequestCache) aStockContext {
+	return s.loadAStockContextWithRecommendationPhasePersistence(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, aStockRecommendationPhaseFinal, cache, true, false)
 }
 
 func (s *Server) loadAStockCompanionContextWithCache(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, cache *aStockRequestCache) aStockContext {
-	return s.loadAStockContextWithRecommendationPhaseOptions(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, aStockRecommendationPhaseFinal, cache, false)
+	return s.loadAStockContextWithRecommendationPhasePersistence(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, aStockRecommendationPhaseFinal, cache, false, true)
+}
+
+func (s *Server) loadAStockCompanionContextReadOnlyWithCache(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, cache *aStockRequestCache) aStockContext {
+	return s.loadAStockContextWithRecommendationPhasePersistence(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, aStockRecommendationPhaseFinal, cache, false, false)
 }
 
 func (s *Server) loadAStockContextWithRecommendationPhase(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, recommendationPhase string, cache *aStockRequestCache) aStockContext {
-	return s.loadAStockContextWithRecommendationPhaseOptions(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, recommendationPhase, cache, true)
+	return s.loadAStockContextWithRecommendationPhasePersistence(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, recommendationPhase, cache, true, true)
 }
 
 func (s *Server) loadAStockContextWithRecommendationPhaseOptions(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, recommendationPhase string, cache *aStockRequestCache, includeHotspotTopStocks bool) aStockContext {
+	return s.loadAStockContextWithRecommendationPhasePersistence(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, recommendationPhase, cache, includeHotspotTopStocks, true)
+}
+
+func (s *Server) loadAStockContextWithRecommendationPhasePersistence(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, recommendationPhase string, cache *aStockRequestCache, includeHotspotTopStocks bool, persist bool) aStockContext {
 	period := normalizeAStockPeriod(periodKey)
 	phase := normalizeAStockRecommendationPhase(recommendationPhase)
 	recommendationStart, recommendationEnd, recommendationWindowLabel := aStockRecommendationPhaseWindow(strategyDate, period.Key, phase)
@@ -1545,15 +1587,19 @@ func (s *Server) loadAStockContextWithRecommendationPhaseOptions(strategyDate st
 			s.restoreAStockBacktestsFromSnapshotWithCache(&ctx, cache)
 		}
 		ctx.EmptyReason = aStockRecommendationEmptyReason(ctx)
-		if err := s.saveAStockRecommendationSnapshot(ctx); err != nil && ctx.LoadMessage == "" {
-			ctx.LoadMessage = "A股推荐保存失败：" + err.Error()
+		if persist && ctx.LoadMessage == "" {
+			if err := s.saveAStockRecommendationSnapshot(ctx); err != nil {
+				ctx.LoadMessage = "A股推荐保存失败：" + err.Error()
+			}
 		}
 		return ctx
 	}
 	if allowPersistedRecommendations && s.applyAStockRecommendationSnapshotRecommendationsWithCache(&ctx, cache) {
 		s.applyAStockAfternoonSameDayCapsWithCache(&ctx, nil, cache)
-		if err := s.saveAStockRecommendationSelections(ctx); err != nil && ctx.LoadMessage == "" {
-			ctx.LoadMessage = "A股已选股票保存失败：" + err.Error()
+		if persist && ctx.LoadMessage == "" {
+			if err := s.saveAStockRecommendationSelections(ctx); err != nil {
+				ctx.LoadMessage = "A股已选股票保存失败：" + err.Error()
+			}
 		}
 		if !forceRecommendationRefresh {
 			if s.applyAStockRecommendationSnapshotWithCache(&ctx, cache) {
@@ -1566,8 +1612,10 @@ func (s *Server) loadAStockContextWithRecommendationPhaseOptions(strategyDate st
 			s.restoreAStockBacktestsFromSnapshotWithCache(&ctx, cache)
 		}
 		ctx.EmptyReason = aStockRecommendationEmptyReason(ctx)
-		if err := s.saveAStockRecommendationSnapshot(ctx); err != nil && ctx.LoadMessage == "" {
-			ctx.LoadMessage = "A股推荐保存失败：" + err.Error()
+		if persist && ctx.LoadMessage == "" {
+			if err := s.saveAStockRecommendationSnapshot(ctx); err != nil {
+				ctx.LoadMessage = "A股推荐保存失败：" + err.Error()
+			}
 		}
 		return ctx
 	}
@@ -1611,15 +1659,17 @@ func (s *Server) loadAStockContextWithRecommendationPhaseOptions(strategyDate st
 	if forceRecommendationRefresh {
 		s.restoreAStockBacktestsFromSnapshotWithCache(&ctx, cache)
 	}
-	if shouldPersistAStockRecommendationSelections(ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh) && len(ctx.Recommendations) > 0 {
+	if persist && shouldPersistAStockRecommendationSelections(ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh) && len(ctx.Recommendations) > 0 {
 		if err := s.saveAStockRecommendationSelections(ctx); err != nil && ctx.LoadMessage == "" {
 			ctx.LoadMessage = "A股已选股票保存失败：" + err.Error()
 		}
 	}
 	ctx.EmptyReason = aStockRecommendationEmptyReason(ctx)
-	if err := s.saveAStockRecommendationSnapshot(ctx); err != nil {
-		if ctx.LoadMessage == "" {
-			ctx.LoadMessage = "A股推荐保存失败：" + err.Error()
+	if persist {
+		if err := s.saveAStockRecommendationSnapshot(ctx); err != nil {
+			if ctx.LoadMessage == "" {
+				ctx.LoadMessage = "A股推荐保存失败：" + err.Error()
+			}
 		}
 	}
 	return ctx
@@ -4988,7 +5038,7 @@ func aStockRecommendationPhaseWindow(strategyDate string, periodKey string, phas
 				"09:30-12:56:59"
 		}
 		start, end := aStockWindow(day.Format("2006-01-02"), period.Key)
-		return start, end, period.WindowLabel
+		return start, end, "09:30-13:00:59"
 	}
 	if normalizedPhase == aStockRecommendationPhasePreopen {
 		return time.Date(day.Year(), day.Month(), day.Day(), 8, 0, 0, 0, location),

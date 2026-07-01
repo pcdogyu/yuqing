@@ -68,6 +68,41 @@ func TestRunCrawlUsesDedicatedTimeout(t *testing.T) {
 	}
 }
 
+func TestGenerateAStockRecommendationSnapshotUsesDedicatedTimeout(t *testing.T) {
+	var sawToken atomic.Bool
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/internal/a-stock/recommendations/generate" {
+			t.Fatalf("unexpected gateway request: %s %s", r.Method, r.URL.String())
+		}
+		if r.URL.Query().Get("date") != "2026-06-16" || r.URL.Query().Get("period") != "morning" || r.URL.Query().Get("phase") != "final" {
+			t.Fatalf("unexpected generate query: %s", r.URL.RawQuery)
+		}
+		if r.Header.Get("X-Service-Token") == "secret-token" {
+			sawToken.Store(true)
+		}
+		time.Sleep(50 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer gateway.Close()
+
+	worker := NewWorker(config.Config{
+		GatewayWebURL:         gateway.URL,
+		HTTPTimeout:           10 * time.Millisecond,
+		SchedulerCrawlTimeout: 250 * time.Millisecond,
+		ServiceToken:          "secret-token",
+		ExternalRetryWait:     time.Millisecond,
+		WechatCleanupInterval: time.Hour,
+		WechatPushInterval:    time.Hour,
+	})
+
+	if err := worker.generateAStockRecommendationSnapshot(context.Background(), "2026-06-16", "morning", "final"); err != nil {
+		t.Fatalf("expected A股 recommendation generation to use dedicated timeout, got %v", err)
+	}
+	if !sawToken.Load() {
+		t.Fatal("expected generate request to include service token")
+	}
+}
+
 func TestRunCrawlIncludesCrawlerErrorMessage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/admin/tasks/crawl" || r.URL.Query().Get("source_type") != "foresight_newsflash" {
@@ -633,7 +668,7 @@ func TestAStockRecommendationWindowUsesPhase(t *testing.T) {
 		{name: "morning preopen", period: "morning", phase: "preopen", wantStart: "08:00:00", wantEnd: "09:26:59", wantLabel: "08:00-09:26:59"},
 		{name: "morning final", period: "morning", phase: "final", wantStart: "08:00:00", wantEnd: "09:26:59", wantLabel: "08:00-09:26:59"},
 		{name: "afternoon preopen", period: "afternoon", phase: "preopen", wantStart: "09:30:00", wantEnd: "12:56:59", wantLabel: "09:30-12:56:59"},
-		{name: "afternoon final", period: "afternoon", phase: "final", wantStart: "09:30:00", wantEnd: "13:00:59", wantLabel: "09:30-13:00"},
+		{name: "afternoon final", period: "afternoon", phase: "final", wantStart: "09:30:00", wantEnd: "13:00:59", wantLabel: "09:30-13:00:59"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

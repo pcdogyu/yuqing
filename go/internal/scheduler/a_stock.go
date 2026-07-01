@@ -230,7 +230,7 @@ func (w *Worker) loadAStockRecommendationSnapshot(ctx context.Context, strategyD
 	if baseURL == "" {
 		return model.AStockRecommendationSnapshot{}, fmt.Errorf("YUQING_CONTENT_URL not configured")
 	}
-	resp, err := w.client.R().
+	resp, err := w.crawlClient.R().
 		SetContext(ctx).
 		SetQueryParam("date", normalizeAStockRecommendationDate(strategyDate)).
 		SetQueryParam("period", normalizeAStockRecommendationPeriod(period)).
@@ -750,7 +750,7 @@ func (w *Worker) generateAStockRecommendationSnapshot(ctx context.Context, strat
 	if baseURL == "" {
 		return fmt.Errorf("YUQING_GATEWAY_URL not configured")
 	}
-	resp, err := w.client.R().
+	resp, err := w.crawlClient.R().
 		SetContext(ctx).
 		SetQueryParam("date", normalizeAStockRecommendationDate(strategyDate)).
 		SetQueryParam("period", normalizeAStockRecommendationPeriod(period)).
@@ -950,7 +950,7 @@ func aStockRecommendationWindow(strategyDate string, period string, phase string
 		}
 		return time.Date(day.Year(), day.Month(), day.Day(), 9, 30, 0, 0, location),
 			time.Date(day.Year(), day.Month(), day.Day(), 13, 0, 59, 0, location),
-			"09:30-13:00", nil
+			"09:30-13:00:59", nil
 	default:
 		if normalizedPhase == "preopen" {
 			return time.Date(day.Year(), day.Month(), day.Day(), 8, 0, 0, 0, location),
