@@ -1736,8 +1736,8 @@ func TestAStockPageLoadsAfternoonWindow(t *testing.T) {
 	if strings.Contains(body, "午间低空经济订单增加") {
 		t.Fatalf("expected A股 afternoon page not to render individual news title, got %s", body)
 	}
-	if strings.Contains(body, "无人机龙头") {
-		t.Fatalf("expected broad market stock outside fixed pool to be absent, got %s", body)
+	if strings.Contains(body, "<td>300777</td><td>无人机龙头</td>") {
+		t.Fatalf("expected broad market stock outside fixed pool to be absent from recommendation table, got %s", body)
 	}
 }
 
@@ -4140,9 +4140,14 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"金十快讯", "金十资讯", "1条", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "5日内过滤", "涨停过滤", "当日行情", "不过滤", "重新计算", "关闭5日过滤", "关闭涨停过滤", "启用当日行情过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "推荐历史", "上午推荐", "下午推荐", "推荐窗口", "08:00-09:30", "上午开盘价", "下午开盘价", "补抓上午新闻", "重新生成上午推荐", "补抓下午新闻", "重新生成下午推荐", "补行情收益", "刷新全部回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="refresh_current_backtest"`, `name="action" value="refresh_backtest"`, `name="action" value="recalculate"`, "2026-06-12 周五", "2026-06-15 周一", "今日", "T+0 收益", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "推荐排名前9股票", "1. 002230 科大讯飞", "1. 688981 中芯国际", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
+	for _, want := range []string{"金十快讯", "金十资讯", "1条", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "5日内过滤", "涨停过滤", "当日行情", "不过滤", "重新计算", "关闭5日过滤", "关闭涨停过滤", "启用当日行情过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "推荐历史", "上午推荐", "下午推荐", "推荐窗口", "08:00-09:30", "上午开盘价", "下午开盘价", "补抓上午新闻", "重新生成上午推荐", "补抓下午新闻", "重新生成下午推荐", "补行情收益", "刷新全部回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="refresh_current_backtest"`, `name="action" value="refresh_backtest"`, `name="action" value="recalculate"`, "2026-06-12 周五", "2026-06-15 周一", "今日", "T+0 收益", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "推荐排名前9股票", "002230 科大讯飞", "688981 中芯国际", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
+		}
+	}
+	for _, notWant := range []string{"1. 002230 科大讯飞", "1. 688981 中芯国际"} {
+		if strings.Contains(body, notWant) {
+			t.Fatalf("expected A股 hotspot stocks to omit display ranks %q, got %s", notWant, body)
 		}
 	}
 	for _, notWant := range []string{"08:00-09:30 2 / 09:30-13:00 0", "08:00-09:26:59 2 / 09:30-13:00 0", "astock-overview-meta"} {
@@ -5520,6 +5525,27 @@ func TestAStockHotspotTopStocksDefaultLimitIsNine(t *testing.T) {
 	}
 }
 
+func TestRenderAStockHotspotTopStocksOmitsDisplayRanks(t *testing.T) {
+	var b strings.Builder
+
+	renderAStockHotspotTopStocks(&b, []aStockHotspotStock{
+		{Rank: 1, Code: "300059", Name: "东方财富"},
+		{Rank: 2, Code: "600030", Name: "中信证券"},
+	})
+
+	body := b.String()
+	for _, want := range []string{"300059 东方财富", "600030 中信证券"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected rendered hotspot stock %q, got %s", want, body)
+		}
+	}
+	for _, notWant := range []string{"1. 300059", "2. 600030"} {
+		if strings.Contains(body, notWant) {
+			t.Fatalf("expected rendered hotspot stocks to omit display ranks, got %s", body)
+		}
+	}
+}
+
 func TestAStockHotspotsWithTopStocksDedupesAcrossHotspots(t *testing.T) {
 	hotspots := []aStockHotspot{
 		{
@@ -5560,6 +5586,59 @@ func TestAStockHotspotsWithTopStocksDedupesAcrossHotspots(t *testing.T) {
 	}
 	if result[1].TopStocks[0].Code != "600030" || result[1].TopStocks[0].Rank != 1 {
 		t.Fatalf("expected second hotspot to skip duplicate and rerank replacement, got %+v", result[1].TopStocks)
+	}
+}
+
+func TestAStockHotspotsWithTopStocksFillsNinePerHotspot(t *testing.T) {
+	hotspots := []aStockHotspot{
+		{
+			Name:     "人工智能",
+			Keywords: []string{"AI"},
+			Score:    120,
+			Evidence: 1,
+			MatchedItems: []model.Item{
+				{Title: "AI 主题活跃", TagFlags: "0.300059"},
+			},
+		},
+		{
+			Name:     "金融券商",
+			Keywords: []string{"证券"},
+			Score:    100,
+			Evidence: 1,
+			MatchedItems: []model.Item{
+				{Title: "证券板块活跃", TagFlags: "0.300059 1.600030"},
+			},
+		},
+	}
+	marketCandidates := make([]aStockMarketCandidate, 0, 24)
+	for i, code := range []string{
+		"300059", "600030", "688981", "600036", "000725", "002230", "603019", "601138", "002371", "603986", "601899", "600111",
+		"600547", "603259", "300760", "600276", "300750", "300274", "601012", "300433", "002475", "600893", "600760", "002179",
+	} {
+		marketCandidates = append(marketCandidates, aStockMarketCandidate{
+			Code:          code,
+			Name:          fmt.Sprintf("候选%s", code),
+			Rank:          i + 1,
+			AuctionAmount: float64(1000000 - i),
+		})
+	}
+
+	result := buildAStockHotspotsWithTopStocks(hotspots, marketCandidates, aStockHotspotTopStockLimit)
+
+	if len(result) != 2 {
+		t.Fatalf("expected two hotspots, got %+v", result)
+	}
+	seen := make(map[string]struct{})
+	for _, hotspot := range result {
+		if len(hotspot.TopStocks) != aStockHotspotTopStockLimit {
+			t.Fatalf("expected hotspot %s to fill %d stocks, got %+v", hotspot.Name, aStockHotspotTopStockLimit, hotspot.TopStocks)
+		}
+		for _, stock := range hotspot.TopStocks {
+			if _, exists := seen[stock.Code]; exists {
+				t.Fatalf("expected cross-hotspot display stocks to stay unique, duplicate %s in %+v", stock.Code, result)
+			}
+			seen[stock.Code] = struct{}{}
+		}
 	}
 }
 

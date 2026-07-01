@@ -990,13 +990,8 @@ func renderAStockHotspotTopStocks(b *strings.Builder, stocks []aStockHotspotStoc
 		return
 	}
 	b.WriteString(`<div class="astock-hotspot-stocks">`)
-	for i, stock := range stocks {
-		rank := stock.Rank
-		if rank <= 0 {
-			rank = i + 1
-		}
+	for _, stock := range stocks {
 		b.WriteString(`<span class="astock-hotspot-stock">`)
-		b.WriteString(fmt.Sprintf("%d. ", rank))
 		b.WriteString(html.EscapeString(strings.TrimSpace(stock.Code)))
 		if name := strings.TrimSpace(stock.Name); name != "" {
 			b.WriteString(` `)
@@ -4916,7 +4911,7 @@ func buildAStockHotspotsWithTopStocks(hotspots []aStockHotspot, marketCandidates
 	if limit <= 0 {
 		limit = aStockHotspotTopStockLimit
 	}
-	candidates := fixedPoolAStockMarketCandidates(hotspots, marketCandidates)
+	candidates := aStockHotspotTopStockCandidates(hotspots, marketCandidates)
 	result := make([]aStockHotspot, len(hotspots))
 	copy(result, hotspots)
 	seen := make(map[string]struct{})
@@ -4936,28 +4931,105 @@ func buildAStockHotspotTopStocksWithSeen(hotspot aStockHotspot, candidates []aSt
 	}
 	scored := scoreAStockMarketCandidates(hotspot, candidates)
 	stocks := make([]aStockHotspotStock, 0, limit)
+	rowSeen := make(map[string]struct{})
 	for _, stock := range scored {
-		code := normalizeAStockCode(stock.Code)
-		if code == "" {
-			continue
-		}
-		if seen != nil {
-			if _, exists := seen[code]; exists {
-				continue
-			}
-			seen[code] = struct{}{}
-		}
-		stocks = append(stocks, aStockHotspotStock{
-			Rank:  len(stocks) + 1,
-			Code:  code,
-			Name:  strings.TrimSpace(stock.Name),
-			Score: hotspot.Score + stock.MatchedScore,
-		})
+		stocks = appendAStockHotspotTopStock(stocks, stock, hotspot.Score+stock.MatchedScore, limit, seen, rowSeen)
 		if len(stocks) >= limit {
 			break
 		}
 	}
+	for _, stock := range sortedAStockHotspotFallbackCandidates(candidates) {
+		if len(stocks) >= limit {
+			break
+		}
+		stocks = appendAStockHotspotTopStock(stocks, stock, hotspot.Score+aStockMarketRankScore(stock.Rank), limit, seen, rowSeen)
+	}
 	return stocks
+}
+
+func appendAStockHotspotTopStock(stocks []aStockHotspotStock, stock aStockMarketCandidate, score int, limit int, seen map[string]struct{}, rowSeen map[string]struct{}) []aStockHotspotStock {
+	if len(stocks) >= limit {
+		return stocks
+	}
+	code := normalizeAStockCode(stock.Code)
+	if code == "" {
+		return stocks
+	}
+	if _, exists := rowSeen[code]; exists {
+		return stocks
+	}
+	if seen != nil {
+		if _, exists := seen[code]; exists {
+			return stocks
+		}
+		seen[code] = struct{}{}
+	}
+	rowSeen[code] = struct{}{}
+	return append(stocks, aStockHotspotStock{
+		Rank:  len(stocks) + 1,
+		Code:  code,
+		Name:  strings.TrimSpace(stock.Name),
+		Score: score,
+	})
+}
+
+func aStockHotspotTopStockCandidates(hotspots []aStockHotspot, marketCandidates []aStockMarketCandidate) []aStockMarketCandidate {
+	candidates := fixedPoolAStockMarketCandidates(hotspots, marketCandidates)
+	seen := make(map[string]struct{}, len(candidates)+len(marketCandidates))
+	for _, candidate := range candidates {
+		code := normalizeAStockCode(candidate.Code)
+		if code != "" {
+			seen[code] = struct{}{}
+		}
+	}
+	for _, candidate := range marketCandidates {
+		code := normalizeAStockCode(candidate.Code)
+		name := strings.TrimSpace(candidate.Name)
+		if code == "" || name == "" {
+			continue
+		}
+		if _, exists := seen[code]; exists {
+			continue
+		}
+		candidate.Code = code
+		candidate.Name = name
+		candidates = append(candidates, candidate)
+		seen[code] = struct{}{}
+	}
+	return candidates
+}
+
+func sortedAStockHotspotFallbackCandidates(candidates []aStockMarketCandidate) []aStockMarketCandidate {
+	fallback := make([]aStockMarketCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		code := normalizeAStockCode(candidate.Code)
+		name := strings.TrimSpace(candidate.Name)
+		if code == "" || name == "" {
+			continue
+		}
+		candidate.Code = code
+		candidate.Name = name
+		fallback = append(fallback, candidate)
+	}
+	sort.SliceStable(fallback, func(i, j int) bool {
+		if fallback[i].Rank != fallback[j].Rank {
+			if fallback[i].Rank <= 0 {
+				return false
+			}
+			if fallback[j].Rank <= 0 {
+				return true
+			}
+			return fallback[i].Rank < fallback[j].Rank
+		}
+		if fallback[i].AuctionAmount != fallback[j].AuctionAmount {
+			return fallback[i].AuctionAmount > fallback[j].AuctionAmount
+		}
+		if fallback[i].AuctionVolume != fallback[j].AuctionVolume {
+			return fallback[i].AuctionVolume > fallback[j].AuctionVolume
+		}
+		return fallback[i].Code < fallback[j].Code
+	})
+	return fallback
 }
 
 func buildAStockRecommendations(hotspots []aStockHotspot, candidates []aStockMarketCandidate) []aStockRecommendation {
