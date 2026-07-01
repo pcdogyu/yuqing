@@ -658,6 +658,8 @@ CREATE TABLE IF NOT EXISTS wechat_bindings (
 );
 
 CREATE INDEX IF NOT EXISTS idx_items_source_type_captured_at ON items(source_type, captured_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_items_captured_at ON items(captured_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_items_publish_time ON items(publish_time DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_items_title ON items(title);
 CREATE INDEX IF NOT EXISTS idx_crawl_runs_source_type_started_at ON crawl_runs(source_type, started_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_crawl_states_updated ON crawl_states(source_type, updated_at DESC);

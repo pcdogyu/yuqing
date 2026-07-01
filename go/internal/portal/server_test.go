@@ -2089,8 +2089,8 @@ func TestAStockWindowArticlesSupplementsMissingPublishSourceFromCapturedAt(t *te
 }
 
 func TestAStockWindowArticlesFetchesAllPublishTimePages(t *testing.T) {
-	firstPage := make([]model.Item, 0, 200)
-	for i := 0; i < 200; i++ {
+	firstPage := make([]model.Item, 0, aStockArticleFetchPageSize)
+	for i := 0; i < aStockArticleFetchPageSize; i++ {
 		firstPage = append(firstPage, model.Item{
 			ID:          int64(9000 + i),
 			SourceType:  "eastmoney_kuaixun",
@@ -2110,8 +2110,8 @@ func TestAStockWindowArticlesFetchesAllPublishTimePages(t *testing.T) {
 		if r.URL.Path != "/api/v1/articles" {
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
-		if got := r.URL.Query().Get("page_size"); got != "200" {
-			t.Fatalf("expected article page_size=200, got %q", got)
+		if got := r.URL.Query().Get("page_size"); got != fmt.Sprint(aStockArticleFetchPageSize) {
+			t.Fatalf("expected article page_size=%d, got %q", aStockArticleFetchPageSize, got)
 		}
 		switch r.URL.Query().Get("time_field") {
 		case "publish_time":
@@ -2123,11 +2123,11 @@ func TestAStockWindowArticlesFetchesAllPublishTimePages(t *testing.T) {
 			}
 			pageNumber, _ := strconv.Atoi(page)
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"data": model.ItemListResult{Items: items, Page: pageNumber, PageSize: 200, Total: 203},
+				"data": model.ItemListResult{Items: items, Page: pageNumber, PageSize: aStockArticleFetchPageSize, Total: aStockArticleFetchPageSize + len(secondPage)},
 			})
 		case "captured_at":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"data": model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0},
+				"data": model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: aStockArticleFetchPageSize, Total: 0},
 			})
 		default:
 			t.Fatalf("unexpected article time_field: %s", r.URL.RawQuery)
@@ -2148,7 +2148,7 @@ func TestAStockWindowArticlesFetchesAllPublishTimePages(t *testing.T) {
 	for _, item := range items {
 		counts[item.SourceType]++
 	}
-	if len(items) != 203 || counts["flash"] != 1 || counts["headline"] != 1 || counts["jin10_full"] != 1 {
+	if len(items) != aStockArticleFetchPageSize+len(secondPage) || counts["flash"] != 1 || counts["headline"] != 1 || counts["jin10_full"] != 1 {
 		t.Fatalf("expected all paged items including three Jin10 sources, total=%d counts=%+v", len(items), counts)
 	}
 }

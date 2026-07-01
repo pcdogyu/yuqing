@@ -270,7 +270,7 @@ const (
 	aStockDrawdownFilterThreshold     = -15.0
 	aStockSectorDrawdownPenalty       = 15
 	aStockNewsPageSize                = 10
-	aStockArticleFetchPageSize        = 200
+	aStockArticleFetchPageSize        = 1000
 	aStockArticleFetchMaxPages        = 100
 	aStockRecentLookbackDays          = 5
 	aStockMarketCandidateLimit        = 5000

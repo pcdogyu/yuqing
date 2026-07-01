@@ -207,6 +207,21 @@ func TestListItemsCanFilterByPublishTime(t *testing.T) {
 	}
 }
 
+func TestStoreCreatesItemTimeRangeIndexes(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	for _, name := range []string{
+		"idx_items_captured_at",
+		"idx_items_publish_time",
+	} {
+		var found string
+		if err := store.db.QueryRowContext(ctx, `SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?`, name).Scan(&found); err != nil {
+			t.Fatalf("expected index %s to exist: %v", name, err)
+		}
+	}
+}
+
 func TestListItemsCanSortByPublishTimeDesc(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
