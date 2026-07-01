@@ -70,10 +70,11 @@ type aStockHotspot struct {
 }
 
 type aStockHotspotStock struct {
-	Rank  int
-	Code  string
-	Name  string
-	Score int
+	Rank               int
+	Code               string
+	Name               string
+	Score              int
+	RecommendationDate string
 }
 
 type aStockRecommendation struct {
@@ -169,14 +170,15 @@ type aStockTradingDayStatus struct {
 }
 
 type aStockRequestCache struct {
-	tradingDay       map[string]aStockTradingDayCacheEntry
-	recentCodes      map[string]map[string]struct{}
-	articles         map[string]aStockArticlesCacheEntry
-	snapshots        map[string]aStockRecommendationSnapshotCacheEntry
-	selections       map[string]aStockRecommendationSelectionCacheEntry
-	holdingSummaries map[string]aStockHoldingSummaryCacheEntry
-	auctionResults   map[string]aStockAuctionResultCacheEntry
-	sourceRuns       []aStockSourceRun
+	tradingDay                map[string]aStockTradingDayCacheEntry
+	recentCodes               map[string]map[string]struct{}
+	latestRecommendationDates map[string]map[string]string
+	articles                  map[string]aStockArticlesCacheEntry
+	snapshots                 map[string]aStockRecommendationSnapshotCacheEntry
+	selections                map[string]aStockRecommendationSelectionCacheEntry
+	holdingSummaries          map[string]aStockHoldingSummaryCacheEntry
+	auctionResults            map[string]aStockAuctionResultCacheEntry
+	sourceRuns                []aStockSourceRun
 }
 
 type aStockTradingDayCacheEntry struct {
@@ -412,6 +414,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-news-diagnostic{margin-top:6px;color:#8a5a17;font-size:12px;line-height:1.35}
 		.astock-hotspot-stocks{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px 14px;align-items:start;line-height:1.55;white-space:normal}
 		.astock-hotspot-stock{display:block;min-width:0;white-space:nowrap}
+		.astock-hotspot-date{color:#7a7064;font-size:12px}
 		.astock-help{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:#eef4ec;color:#214e34;font-size:12px;font-weight:700;line-height:1;cursor:help;position:relative}
 		.astock-help-text{position:absolute;right:0;top:calc(100% + 8px);z-index:10;display:none;width:max-content;max-width:260px;padding:8px 10px;border:1px solid #d6ccbb;border-radius:8px;background:#fff;color:#2b261f;box-shadow:0 12px 28px rgba(31,40,34,.14);font-size:12px;font-weight:400;line-height:1.4;white-space:normal}
 		.astock-help:hover .astock-help-text,.astock-help:focus .astock-help-text{display:block}
@@ -1011,6 +1014,11 @@ func renderAStockHotspotTopStocks(b *strings.Builder, stocks []aStockHotspotStoc
 			b.WriteString(` `)
 			b.WriteString(html.EscapeString(name))
 		}
+		if recommendationDate := strings.TrimSpace(stock.RecommendationDate); recommendationDate != "" {
+			b.WriteString(`<span class="astock-hotspot-date">（`)
+			b.WriteString(html.EscapeString(recommendationDate))
+			b.WriteString(`）</span>`)
+		}
 		b.WriteString(`</span>`)
 	}
 	b.WriteString(`</div>`)
@@ -1421,13 +1429,14 @@ func (s *Server) handleAStockPopupDismiss(w http.ResponseWriter, r *http.Request
 
 func newAStockRequestCache() *aStockRequestCache {
 	return &aStockRequestCache{
-		tradingDay:       make(map[string]aStockTradingDayCacheEntry),
-		recentCodes:      make(map[string]map[string]struct{}),
-		articles:         make(map[string]aStockArticlesCacheEntry),
-		snapshots:        make(map[string]aStockRecommendationSnapshotCacheEntry),
-		selections:       make(map[string]aStockRecommendationSelectionCacheEntry),
-		holdingSummaries: make(map[string]aStockHoldingSummaryCacheEntry),
-		auctionResults:   make(map[string]aStockAuctionResultCacheEntry),
+		tradingDay:                make(map[string]aStockTradingDayCacheEntry),
+		recentCodes:               make(map[string]map[string]struct{}),
+		latestRecommendationDates: make(map[string]map[string]string),
+		articles:                  make(map[string]aStockArticlesCacheEntry),
+		snapshots:                 make(map[string]aStockRecommendationSnapshotCacheEntry),
+		selections:                make(map[string]aStockRecommendationSelectionCacheEntry),
+		holdingSummaries:          make(map[string]aStockHoldingSummaryCacheEntry),
+		auctionResults:            make(map[string]aStockAuctionResultCacheEntry),
 	}
 }
 
@@ -1508,6 +1517,7 @@ func (s *Server) loadAStockContextWithRecommendationPhaseOptions(strategyDate st
 		candidates, candidateStatus, auctionResult := s.loadAStockMarketCandidatesWithStatusWithCache(strategyDate, cache)
 		marketCandidates = candidates
 		ctx.Hotspots = buildAStockHotspotsWithTopStocks(ctx.Hotspots, marketCandidates, aStockHotspotTopStockLimit)
+		ctx.Hotspots = s.applyAStockHotspotRecommendationDatesWithCache(ctx.Hotspots, strategyDate, period.Key, cache)
 		ctx.MarketCandidateStatus = candidateStatus
 		ctx.MarketCandidateCount = len(fixedPoolAStockMarketCandidates(aStockRecommendationHotspotSlice(ctx.Hotspots), marketCandidates))
 		if auctionLabel := normalizeAStockAuctionSummaryLabel(formatAStockAuctionSummaryAmount(auctionResult)); auctionLabel != "" {
@@ -1821,6 +1831,108 @@ func (s *Server) loadAStockRecommendationSelectionsWithCache(strategyDate string
 		cache.selections[cacheKey] = aStockRecommendationSelectionCacheEntry{result: result, found: found}
 	}
 	return result, found
+}
+
+func (s *Server) applyAStockHotspotRecommendationDatesWithCache(hotspots []aStockHotspot, strategyDate string, period string, cache *aStockRequestCache) []aStockHotspot {
+	codes := aStockHotspotTopStockCodes(hotspots)
+	if len(codes) == 0 {
+		return hotspots
+	}
+	latestDates := s.loadAStockRecommendationLatestDatesWithCache(strategyDate, period, codes, cache)
+	if len(latestDates) == 0 {
+		return hotspots
+	}
+	result := make([]aStockHotspot, len(hotspots))
+	copy(result, hotspots)
+	for i := range result {
+		if len(result[i].TopStocks) == 0 {
+			continue
+		}
+		result[i].TopStocks = append([]aStockHotspotStock(nil), result[i].TopStocks...)
+		for j := range result[i].TopStocks {
+			code := normalizeAStockCode(result[i].TopStocks[j].Code)
+			if recommendationDate := latestDates[code]; recommendationDate != "" {
+				result[i].TopStocks[j].RecommendationDate = recommendationDate
+			}
+		}
+	}
+	return result
+}
+
+func (s *Server) loadAStockRecommendationLatestDatesWithCache(strategyDate string, period string, codes []string, cache *aStockRequestCache) map[string]string {
+	if strings.TrimSpace(s.cfg.ContentURL) == "" {
+		return nil
+	}
+	normalizedCodes := normalizeAStockCodeList(codes)
+	if len(normalizedCodes) == 0 {
+		return nil
+	}
+	date := normalizeAStockStrategyDate(strategyDate)
+	normalizedPeriod := normalizeAStockPeriod(period).Key
+	cacheKey := aStockRecommendationLatestDateCacheKey(date, normalizedPeriod, normalizedCodes)
+	if cache != nil {
+		if cached, ok := cache.latestRecommendationDates[cacheKey]; ok {
+			return cached
+		}
+	}
+	query := "/api/v1/a-stock/recommendation-latest-dates?date=" + url.QueryEscape(date) + "&period=" + url.QueryEscape(normalizedPeriod) + "&codes=" + url.QueryEscape(strings.Join(normalizedCodes, ","))
+	result := model.AStockRecommendationLatestDateListResult{}
+	latestDates := make(map[string]string)
+	if err := s.getJSON(strings.TrimRight(s.cfg.ContentURL, "/")+query, &result); err == nil {
+		for _, item := range result.Items {
+			code := normalizeAStockCode(item.Code)
+			latestDate := strings.TrimSpace(item.LatestDate)
+			if code != "" && latestDate != "" {
+				latestDates[code] = latestDate
+			}
+		}
+	}
+	if cache != nil {
+		cache.latestRecommendationDates[cacheKey] = latestDates
+	}
+	return latestDates
+}
+
+func aStockHotspotTopStockCodes(hotspots []aStockHotspot) []string {
+	codes := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, hotspot := range hotspots {
+		for _, stock := range hotspot.TopStocks {
+			code := normalizeAStockCode(stock.Code)
+			if code == "" {
+				continue
+			}
+			if _, exists := seen[code]; exists {
+				continue
+			}
+			seen[code] = struct{}{}
+			codes = append(codes, code)
+		}
+	}
+	return codes
+}
+
+func normalizeAStockCodeList(codes []string) []string {
+	normalized := make([]string, 0, len(codes))
+	seen := make(map[string]struct{}, len(codes))
+	for _, raw := range codes {
+		code := normalizeAStockCode(raw)
+		if code == "" {
+			continue
+		}
+		if _, exists := seen[code]; exists {
+			continue
+		}
+		seen[code] = struct{}{}
+		normalized = append(normalized, code)
+	}
+	return normalized
+}
+
+func aStockRecommendationLatestDateCacheKey(strategyDate string, period string, codes []string) string {
+	keyCodes := append([]string(nil), codes...)
+	sort.Strings(keyCodes)
+	return strings.TrimSpace(strategyDate) + "|" + strings.TrimSpace(period) + "|" + strings.Join(keyCodes, ",")
 }
 
 func (s *Server) saveAStockRecommendationSelections(ctx aStockContext) error {

@@ -102,6 +102,7 @@ type Store interface {
 	GetAStockRecommendationSnapshot(rctx context.Context, strategyDate string, period string, ignoreRecent bool) (model.AStockRecommendationSnapshot, bool, error)
 	UpsertAStockRecommendationSelections(rctx context.Context, selectionSet model.AStockRecommendationSelectionSet) (model.AStockRecommendationSelectionUpsertResult, error)
 	ListAStockRecommendationSelections(rctx context.Context, strategyDate string, period string) (model.AStockRecommendationSelectionListResult, error)
+	ListAStockRecommendationLatestDates(rctx context.Context, strategyDate string, period string, codes []string) (model.AStockRecommendationLatestDateListResult, error)
 	UpsertStockResearchSurveys(rctx context.Context, items []model.StockResearchSurvey) (model.StockResearchUpsertResult, error)
 	ListStockResearchSurveys(rctx context.Context, filter model.StockResearchFilter) (model.StockResearchListResult, error)
 	GetStockResearchSurvey(rctx context.Context, id int64) (model.StockResearchSurvey, error)
@@ -179,6 +180,7 @@ func (s *Service) Routes(r chi.Router) {
 	r.Post("/api/v1/internal/a-stock/recommendations", s.handleUpsertAStockRecommendationSnapshot)
 	r.Get("/api/v1/a-stock/recommendation-selections", s.handleListAStockRecommendationSelections)
 	r.Post("/api/v1/internal/a-stock/recommendation-selections", s.handleUpsertAStockRecommendationSelections)
+	r.Get("/api/v1/a-stock/recommendation-latest-dates", s.handleListAStockRecommendationLatestDates)
 	r.Get("/api/v1/stock-research", s.handleListStockResearchSurveys)
 	r.Get("/api/v1/stock-research/{id}", s.handleGetStockResearchSurvey)
 	r.Get("/api/v1/stock-research/{id}/pdf", s.handleGetStockResearchPDF)
@@ -689,6 +691,40 @@ func (s *Service) handleListAStockRecommendationSelections(w http.ResponseWriter
 	}
 	result.Found = len(result.Items) > 0
 	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleListAStockRecommendationLatestDates(w http.ResponseWriter, r *http.Request) {
+	date := strings.TrimSpace(r.URL.Query().Get("date"))
+	period := strings.TrimSpace(r.URL.Query().Get("period"))
+	codes := splitAStockRecommendationCodes(r.URL.Query().Get("codes"))
+	if date == "" || period == "" || len(codes) == 0 {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "date, period and codes required", nil)
+		return
+	}
+	result, err := s.store.ListAStockRecommendationLatestDates(r.Context(), date, period, codes)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func splitAStockRecommendationCodes(raw string) []string {
+	parts := strings.Split(raw, ",")
+	codes := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+	for _, part := range parts {
+		code := strings.TrimSpace(part)
+		if code == "" {
+			continue
+		}
+		if _, exists := seen[code]; exists {
+			continue
+		}
+		seen[code] = struct{}{}
+		codes = append(codes, code)
+	}
+	return codes
 }
 
 func (s *Service) handleUpsertAStockRecommendationSelections(w http.ResponseWriter, r *http.Request) {

@@ -124,3 +124,14 @@ type AStockRecommendationSelectionUpsertResult struct {
 	Updated  int `json:"updated"`
 	Total    int `json:"total"`
 }
+
+type AStockRecommendationLatestDate struct {
+	Code       string `json:"code"`
+	LatestDate string `json:"latest_date"`
+}
+
+type AStockRecommendationLatestDateListResult struct {
+	StrategyDate string                           `json:"strategy_date"`
+	Period       string                           `json:"period"`
+	Items        []AStockRecommendationLatestDate `json:"items"`
+}

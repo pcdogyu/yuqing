@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -317,6 +318,179 @@ ORDER BY rank ASC, code ASC`,
 	}
 	result.Found = len(result.Items) > 0
 	return result, nil
+}
+
+func (s *Store) ListAStockRecommendationLatestDates(ctx context.Context, strategyDate string, period string, codes []string) (model.AStockRecommendationLatestDateListResult, error) {
+	result := model.AStockRecommendationLatestDateListResult{
+		StrategyDate: strings.TrimSpace(strategyDate),
+		Period:       strings.TrimSpace(period),
+		Items:        make([]model.AStockRecommendationLatestDate, 0),
+	}
+	normalizedCodes := normalizeAStockRecommendationDateCodes(codes)
+	if result.StrategyDate == "" || result.Period == "" || len(normalizedCodes) == 0 {
+		return result, nil
+	}
+	wanted := make(map[string]struct{}, len(normalizedCodes))
+	for _, code := range normalizedCodes {
+		wanted[code] = struct{}{}
+	}
+	latestByCode := make(map[string]string, len(normalizedCodes))
+	if err := s.collectAStockRecommendationLatestDatesFromSelections(ctx, result.StrategyDate, result.Period, normalizedCodes, latestByCode); err != nil {
+		return result, err
+	}
+	if err := s.collectAStockRecommendationLatestDatesFromSnapshots(ctx, result.StrategyDate, result.Period, wanted, latestByCode); err != nil {
+		return result, err
+	}
+	for _, code := range normalizedCodes {
+		if latestDate := latestByCode[code]; latestDate != "" {
+			result.Items = append(result.Items, model.AStockRecommendationLatestDate{
+				Code:       code,
+				LatestDate: latestDate,
+			})
+		}
+	}
+	return result, nil
+}
+
+func (s *Store) collectAStockRecommendationLatestDatesFromSelections(ctx context.Context, strategyDate string, period string, codes []string, latestByCode map[string]string) error {
+	where, whereArgs := aStockRecommendationHistoryWhere(strategyDate, period)
+	args := make([]any, 0, len(codes)+len(whereArgs))
+	for _, code := range codes {
+		args = append(args, code)
+	}
+	args = append(args, whereArgs...)
+	rows, err := s.db.QueryContext(ctx, `
+SELECT code, strategy_date
+FROM a_stock_recommendation_selections
+WHERE code IN (`+questionPlaceholders(len(codes))+`) AND `+where,
+		args...,
+	)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var code string
+		var latestDate string
+		if err := rows.Scan(&code, &latestDate); err != nil {
+			return err
+		}
+		updateAStockRecommendationLatestDate(latestByCode, code, latestDate)
+	}
+	return rows.Err()
+}
+
+func (s *Store) collectAStockRecommendationLatestDatesFromSnapshots(ctx context.Context, strategyDate string, period string, wanted map[string]struct{}, latestByCode map[string]string) error {
+	where, whereArgs := aStockRecommendationHistoryWhere(strategyDate, period)
+	rows, err := s.db.QueryContext(ctx, `
+SELECT strategy_date, recommendations_json
+FROM a_stock_recommendation_snapshots
+WHERE ignore_recent = 0 AND `+where,
+		whereArgs...,
+	)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var latestDate string
+		var recommendationsJSON string
+		if err := rows.Scan(&latestDate, &recommendationsJSON); err != nil {
+			return err
+		}
+		for _, code := range aStockRecommendationSnapshotCodes(recommendationsJSON) {
+			if _, ok := wanted[code]; !ok {
+				continue
+			}
+			updateAStockRecommendationLatestDate(latestByCode, code, latestDate)
+		}
+	}
+	return rows.Err()
+}
+
+func aStockRecommendationHistoryWhere(strategyDate string, period string) (string, []any) {
+	strategyDate = strings.TrimSpace(strategyDate)
+	period = strings.ToLower(strings.TrimSpace(period))
+	if period == "afternoon" {
+		return `(strategy_date < ? OR (strategy_date = ? AND period = ?))`, []any{strategyDate, strategyDate, "morning"}
+	}
+	return `strategy_date < ?`, []any{strategyDate}
+}
+
+func normalizeAStockRecommendationDateCodes(codes []string) []string {
+	normalized := make([]string, 0, len(codes))
+	seen := make(map[string]struct{}, len(codes))
+	for _, raw := range codes {
+		code := normalizeAStockRecommendationDateCode(raw)
+		if code == "" {
+			continue
+		}
+		if _, exists := seen[code]; exists {
+			continue
+		}
+		seen[code] = struct{}{}
+		normalized = append(normalized, code)
+	}
+	return normalized
+}
+
+func normalizeAStockRecommendationDateCode(raw string) string {
+	raw = strings.TrimSpace(strings.ToUpper(raw))
+	raw = strings.TrimSuffix(strings.TrimPrefix(raw, "SH"), ".SH")
+	raw = strings.TrimSuffix(strings.TrimPrefix(raw, "SZ"), ".SZ")
+	raw = strings.TrimPrefix(raw, "1.")
+	raw = strings.TrimPrefix(raw, "0.")
+	if len(raw) >= 6 {
+		return raw[:6]
+	}
+	return raw
+}
+
+func questionPlaceholders(count int) string {
+	if count <= 0 {
+		return ""
+	}
+	parts := make([]string, count)
+	for i := range parts {
+		parts[i] = "?"
+	}
+	return strings.Join(parts, ",")
+}
+
+func aStockRecommendationSnapshotCodes(recommendationsJSON string) []string {
+	recommendationsJSON = strings.TrimSpace(recommendationsJSON)
+	if recommendationsJSON == "" {
+		return nil
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(recommendationsJSON), &rows); err != nil {
+		return nil
+	}
+	codes := make([]string, 0, len(rows))
+	for _, row := range rows {
+		code := ""
+		for _, key := range []string{"Code", "code", "stock_code"} {
+			if raw, ok := row[key].(string); ok {
+				code = normalizeAStockRecommendationDateCode(raw)
+				break
+			}
+		}
+		if code != "" {
+			codes = append(codes, code)
+		}
+	}
+	return codes
+}
+
+func updateAStockRecommendationLatestDate(latestByCode map[string]string, code string, latestDate string) {
+	code = normalizeAStockRecommendationDateCode(code)
+	latestDate = strings.TrimSpace(latestDate)
+	if code == "" || latestDate == "" {
+		return
+	}
+	if current := latestByCode[code]; current == "" || latestDate > current {
+		latestByCode[code] = latestDate
+	}
 }
 
 func scanAStockRecommendationSelection(scanner scanner) (model.AStockRecommendationSelection, error) {

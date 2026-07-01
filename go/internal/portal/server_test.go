@@ -298,6 +298,7 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		`.astock-help:hover .astock-help-text,.astock-help:focus .astock-help-text{display:block}`,
 		`.astock-hotspot-stocks{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))`,
 		`.astock-hotspot-stock{display:block;min-width:0;white-space:nowrap}`,
+		`.astock-hotspot-date{color:#7a7064;font-size:12px}`,
 		`class="astock-overview-strategy" rowspan="2"`,
 		"08:00-09:30",
 		"09:30-13:00",
@@ -2440,6 +2441,13 @@ func handleAStockRecommendationSnapshotTestEndpoint(w http.ResponseWriter, r *ht
 			"data":    model.AStockRecommendationSelectionListResult{Found: false},
 		})
 		return true
+	case "/api/v1/a-stock/recommendation-latest-dates":
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    http.StatusOK,
+			"message": "ok",
+			"data":    model.AStockRecommendationLatestDateListResult{Items: []model.AStockRecommendationLatestDate{}},
+		})
+		return true
 	case "/api/v1/internal/a-stock/recommendations":
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"code":    http.StatusOK,
@@ -2781,6 +2789,8 @@ func TestAStockContextLoadsPersistedRecommendationSnapshot(t *testing.T) {
 			}})
 		case "/api/v1/a-stock/recommendation-selections":
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.AStockRecommendationSelectionListResult{Found: false}})
+		case "/api/v1/a-stock/recommendation-latest-dates":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.AStockRecommendationLatestDateListResult{Items: []model.AStockRecommendationLatestDate{}}})
 		case "/api/v1/a-stock/recommendations":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"data": model.AStockRecommendationSnapshot{
@@ -4063,6 +4073,20 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/v1/a-stock/recommendation-latest-dates" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    200,
+				"message": "ok",
+				"data": model.AStockRecommendationLatestDateListResult{
+					StrategyDate: "2026-06-16",
+					Period:       "morning",
+					Items: []model.AStockRecommendationLatestDate{
+						{Code: "002230", LatestDate: "2026-06-12"},
+					},
+				},
+			})
+			return
+		}
 		if handleAStockRecommendationSnapshotTestEndpoint(w, r) {
 			return
 		}
@@ -4140,7 +4164,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"金十快讯", "金十资讯", "1条", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "5日内过滤", "涨停过滤", "当日行情", "不过滤", "重新计算", "关闭5日过滤", "关闭涨停过滤", "启用当日行情过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "推荐历史", "上午推荐", "下午推荐", "推荐窗口", "08:00-09:30", "上午开盘价", "下午开盘价", "补抓上午新闻", "重新生成上午推荐", "补抓下午新闻", "重新生成下午推荐", "补行情收益", "刷新全部回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="refresh_current_backtest"`, `name="action" value="refresh_backtest"`, `name="action" value="recalculate"`, "2026-06-12 周五", "2026-06-15 周一", "今日", "T+0 收益", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "推荐排名前9股票", "002230 科大讯飞", "688981 中芯国际", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
+	for _, want := range []string{"金十快讯", "金十资讯", "1条", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "5日内过滤", "涨停过滤", "当日行情", "不过滤", "重新计算", "关闭5日过滤", "关闭涨停过滤", "启用当日行情过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "推荐历史", "上午推荐", "下午推荐", "推荐窗口", "08:00-09:30", "上午开盘价", "下午开盘价", "补抓上午新闻", "重新生成上午推荐", "补抓下午新闻", "重新生成下午推荐", "补行情收益", "刷新全部回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="refresh_current_backtest"`, `name="action" value="refresh_backtest"`, `name="action" value="recalculate"`, "2026-06-12 周五", "2026-06-15 周一", "今日", "T+0 收益", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "推荐排名前9股票", "002230 科大讯飞", `002230 科大讯飞<span class="astock-hotspot-date">（2026-06-12）</span>`, "688981 中芯国际", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}
@@ -5541,6 +5565,69 @@ func TestRenderAStockHotspotTopStocksOmitsDisplayRanks(t *testing.T) {
 		if strings.Contains(body, notWant) {
 			t.Fatalf("expected rendered hotspot stocks to omit display ranks, got %s", body)
 		}
+	}
+}
+
+func TestRenderAStockHotspotTopStocksAppendsRecommendationDate(t *testing.T) {
+	var b strings.Builder
+
+	renderAStockHotspotTopStocks(&b, []aStockHotspotStock{
+		{Rank: 1, Code: "300024", Name: "机器人", RecommendationDate: "2026-06-28"},
+		{Rank: 2, Code: "603019", Name: "中科曙光"},
+	})
+
+	body := b.String()
+	if !strings.Contains(body, `300024 机器人<span class="astock-hotspot-date">（2026-06-28）</span>`) {
+		t.Fatalf("expected rendered recommendation date, got %s", body)
+	}
+	if strings.Contains(body, "603019 中科曙光（") || strings.Contains(body, "1. 300024") {
+		t.Fatalf("expected no empty date or display rank, got %s", body)
+	}
+}
+
+func TestAStockHotspotRecommendationDatesAreAppliedFromContent(t *testing.T) {
+	var requestedCodes string
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/a-stock/recommendation-latest-dates" {
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+		if r.URL.Query().Get("date") != "2026-06-30" || r.URL.Query().Get("period") != "afternoon" {
+			t.Fatalf("unexpected latest-date query: %s", r.URL.RawQuery)
+		}
+		requestedCodes = r.URL.Query().Get("codes")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    200,
+			"message": "ok",
+			"data": model.AStockRecommendationLatestDateListResult{
+				StrategyDate: "2026-06-30",
+				Period:       "afternoon",
+				Items: []model.AStockRecommendationLatestDate{
+					{Code: "300024", LatestDate: "2026-06-28"},
+				},
+			},
+		})
+	}))
+	defer content.Close()
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	hotspots := []aStockHotspot{{
+		Name: "人工智能",
+		TopStocks: []aStockHotspotStock{
+			{Code: "300024", Name: "机器人"},
+			{Code: "603019", Name: "中科曙光"},
+		},
+	}}
+
+	result := srv.applyAStockHotspotRecommendationDatesWithCache(hotspots, "2026-06-30", "afternoon", newAStockRequestCache())
+
+	if requestedCodes != "300024,603019" {
+		t.Fatalf("expected batched hotspot codes, got %q", requestedCodes)
+	}
+	if result[0].TopStocks[0].RecommendationDate != "2026-06-28" {
+		t.Fatalf("expected recommendation date to be applied, got %+v", result)
+	}
+	if result[0].TopStocks[1].RecommendationDate != "" || hotspots[0].TopStocks[0].RecommendationDate != "" {
+		t.Fatalf("expected unmatched and source stocks to stay without dates, got result=%+v source=%+v", result, hotspots)
 	}
 }
 

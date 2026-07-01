@@ -589,6 +589,97 @@ func TestAStockRecommendationSelectionsUpsertAndList(t *testing.T) {
 	}
 }
 
+func TestAStockRecommendationLatestDatesUseSelectionsAndSnapshots(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	if _, err := store.UpsertAStockRecommendationSelections(ctx, model.AStockRecommendationSelectionSet{
+		StrategyDate: "2026-06-23",
+		Period:       "morning",
+		Items: []model.AStockRecommendationSelection{
+			{Rank: 1, Code: "688367", Name: "工大高科", Hotspot: "机器人"},
+		},
+	}); err != nil {
+		t.Fatalf("upsert old morning selections: %v", err)
+	}
+	if _, err := store.UpsertAStockRecommendationSelections(ctx, model.AStockRecommendationSelectionSet{
+		StrategyDate: "2026-06-24",
+		Period:       "afternoon",
+		Items: []model.AStockRecommendationSelection{
+			{Rank: 1, Code: "002008", Name: "大族激光", Hotspot: "机器人"},
+		},
+	}); err != nil {
+		t.Fatalf("upsert old afternoon selections: %v", err)
+	}
+	if _, err := store.UpsertAStockRecommendationSelections(ctx, model.AStockRecommendationSelectionSet{
+		StrategyDate: "2026-06-25",
+		Period:       "morning",
+		Items: []model.AStockRecommendationSelection{
+			{Rank: 1, Code: "688367", Name: "工大高科", Hotspot: "机器人"},
+		},
+	}); err != nil {
+		t.Fatalf("upsert same-day morning selections: %v", err)
+	}
+	if _, err := store.UpsertAStockRecommendationSelections(ctx, model.AStockRecommendationSelectionSet{
+		StrategyDate: "2026-06-25",
+		Period:       "afternoon",
+		Items: []model.AStockRecommendationSelection{
+			{Rank: 1, Code: "600030", Name: "中信证券", Hotspot: "金融券商"},
+		},
+	}); err != nil {
+		t.Fatalf("upsert current afternoon selections: %v", err)
+	}
+	if _, err := store.UpsertAStockRecommendationSnapshot(ctx, model.AStockRecommendationSnapshot{
+		StrategyDate:        "2026-06-24",
+		Period:              "morning",
+		RecommendationsJSON: `[{"Rank":1,"Code":"300024","Name":"机器人"}]`,
+	}); err != nil {
+		t.Fatalf("upsert old snapshot: %v", err)
+	}
+	if _, err := store.UpsertAStockRecommendationSnapshot(ctx, model.AStockRecommendationSnapshot{
+		StrategyDate:        "2026-06-25",
+		Period:              "afternoon",
+		RecommendationsJSON: `[{"Rank":1,"Code":"300024","Name":"机器人"},{"Rank":2,"Code":"600030","Name":"中信证券"}]`,
+	}); err != nil {
+		t.Fatalf("upsert current snapshot: %v", err)
+	}
+
+	afternoon, err := store.ListAStockRecommendationLatestDates(ctx, "2026-06-25", "afternoon", []string{"002008", "688367", "600030", "300024", "999999"})
+	if err != nil {
+		t.Fatalf("ListAStockRecommendationLatestDates afternoon error: %v", err)
+	}
+	afternoonDates := aStockLatestDateTestMap(afternoon.Items)
+	if afternoonDates["002008"] != "2026-06-24" || afternoonDates["688367"] != "2026-06-25" || afternoonDates["300024"] != "2026-06-24" {
+		t.Fatalf("unexpected afternoon latest dates: %+v", afternoon.Items)
+	}
+	if _, ok := afternoonDates["600030"]; ok {
+		t.Fatalf("expected current afternoon recommendation to be excluded, got %+v", afternoon.Items)
+	}
+	if _, ok := afternoonDates["999999"]; ok {
+		t.Fatalf("expected missing code to be omitted, got %+v", afternoon.Items)
+	}
+
+	morning, err := store.ListAStockRecommendationLatestDates(ctx, "2026-06-25", "morning", []string{"688367", "600030"})
+	if err != nil {
+		t.Fatalf("ListAStockRecommendationLatestDates morning error: %v", err)
+	}
+	morningDates := aStockLatestDateTestMap(morning.Items)
+	if morningDates["688367"] != "2026-06-23" {
+		t.Fatalf("expected morning query to exclude same-day morning recommendation, got %+v", morning.Items)
+	}
+	if _, ok := morningDates["600030"]; ok {
+		t.Fatalf("expected morning query to exclude same-day afternoon recommendation, got %+v", morning.Items)
+	}
+}
+
+func aStockLatestDateTestMap(items []model.AStockRecommendationLatestDate) map[string]string {
+	result := make(map[string]string, len(items))
+	for _, item := range items {
+		result[item.Code] = item.LatestDate
+	}
+	return result
+}
+
 func TestStockResearchSurveysUpsertAndFilter(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()

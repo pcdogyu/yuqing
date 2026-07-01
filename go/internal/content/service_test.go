@@ -273,6 +273,49 @@ func TestAStockRecommendationSelectionsAPIUpsertsAndLists(t *testing.T) {
 	}
 }
 
+func TestAStockRecommendationLatestDatesAPIListsBatchHits(t *testing.T) {
+	store := newContentSearchTestStore(t)
+	if _, err := store.UpsertAStockRecommendationSelections(context.Background(), model.AStockRecommendationSelectionSet{
+		StrategyDate: "2026-06-23",
+		Period:       "afternoon",
+		Items: []model.AStockRecommendationSelection{
+			{Rank: 1, Code: "002008", Name: "大族激光", Hotspot: "机器人"},
+		},
+	}); err != nil {
+		t.Fatalf("upsert old selection: %v", err)
+	}
+	if _, err := store.UpsertAStockRecommendationSelections(context.Background(), model.AStockRecommendationSelectionSet{
+		StrategyDate: "2026-06-24",
+		Period:       "morning",
+		Items: []model.AStockRecommendationSelection{
+			{Rank: 1, Code: "688367", Name: "工大高科", Hotspot: "机器人"},
+		},
+	}); err != nil {
+		t.Fatalf("upsert current selection: %v", err)
+	}
+	svc := NewService(config.Config{}, store)
+	router := svc.Router()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/recommendation-latest-dates?date=2026-06-24&period=morning&codes=002008,688367,000000", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected recommendation latest dates get 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	var envelope struct {
+		Data model.AStockRecommendationLatestDateListResult `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode latest dates response error: %v", err)
+	}
+	if envelope.Data.StrategyDate != "2026-06-24" || envelope.Data.Period != "morning" || len(envelope.Data.Items) != 1 {
+		t.Fatalf("unexpected latest dates response: %+v", envelope.Data)
+	}
+	if envelope.Data.Items[0].Code != "002008" || envelope.Data.Items[0].LatestDate != "2026-06-23" {
+		t.Fatalf("unexpected latest date item: %+v", envelope.Data.Items)
+	}
+}
+
 func TestStockResearchAPIUpsertsAndLists(t *testing.T) {
 	store := newContentSearchTestStore(t)
 	svc := NewService(config.Config{}, store)
