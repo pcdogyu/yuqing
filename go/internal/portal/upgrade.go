@@ -176,9 +176,7 @@ func runPortalUpgrade(parent context.Context, _ config.Config) portalUpgradeResu
 	if err := runPortalUpgradeCommand(ctx, &log, repoRoot, false, "git", "pull", "--ff-only", "origin", branch); err != nil {
 		return finishPortalUpgrade(false, startedAt, log.String(), err)
 	}
-	if err := runPortalUpgradeCommand(ctx, &log, goDir, false, "go", "clean", "-cache", "-testcache"); err != nil {
-		return finishPortalUpgrade(false, startedAt, log.String(), err)
-	}
+	_ = runPortalUpgradeCommand(ctx, &log, goDir, true, "go", "clean", "-cache", "-testcache")
 
 	binDir := filepath.Join(goDir, "bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {

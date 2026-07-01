@@ -7019,6 +7019,19 @@ func TestSystemUpgradeEndpointReturnsReadableAuthFailure(t *testing.T) {
 	}
 }
 
+func TestRunPortalUpgradeCommandIgnoresAllowedFailure(t *testing.T) {
+	var log bytes.Buffer
+
+	err := runPortalUpgradeCommand(context.Background(), &log, t.TempDir(), true, "go", "tool", "codex-not-a-real-go-tool")
+
+	if err != nil {
+		t.Fatalf("expected allowed upgrade command failure to be ignored, got %v", err)
+	}
+	if !strings.Contains(log.String(), "忽略非关键命令失败") {
+		t.Fatalf("expected ignored failure to be logged, got %s", log.String())
+	}
+}
+
 func TestArticlesTemplateUsesSharedHeaderNavDirectly(t *testing.T) {
 	for _, unexpected := range []string{
 		`top-menu-card`,
