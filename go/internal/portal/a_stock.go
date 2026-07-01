@@ -249,6 +249,13 @@ type aStockRecommendationGenerateResult struct {
 	LoadMessage              string `json:"load_message"`
 }
 
+type aStockRecommendationRefreshMode string
+
+const (
+	aStockRecommendationPreserveLocked aStockRecommendationRefreshMode = "preserve_locked"
+	aStockRecommendationRebuild        aStockRecommendationRefreshMode = "rebuild"
+)
+
 type aStockPopupRecommendation struct {
 	Rank    int    `json:"rank"`
 	Code    string `json:"code"`
@@ -541,35 +548,42 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request) 
 	}
 	persistRecommendation := false
 	persistAllBacktests := false
+	recommendationRefreshMode := aStockRecommendationPreserveLocked
 	switch action {
 	case "crawl":
 		query.Set("msg", s.triggerAStockCrawl())
 	case "backfill_window_news":
 		query.Set("msg", s.triggerAStockWindowCrawl(strategyDate, period.Key))
 		persistRecommendation = true
+		recommendationRefreshMode = aStockRecommendationRebuild
 	case "backfill_morning_stock":
 		period = normalizeAStockPeriod("morning")
 		query.Set("period", period.Key)
 		query.Set("msg", s.triggerAStockWindowCrawl(strategyDate, period.Key)+"上午推荐已按补录后的新闻窗口重新计算。")
 		persistRecommendation = true
+		recommendationRefreshMode = aStockRecommendationRebuild
 	case "generate_morning_stock":
 		period = normalizeAStockPeriod("morning")
 		query.Set("period", period.Key)
 		query.Set("msg", "已切换到上午窗口，按 08:00-09:26:59 推荐生成窗口重新计算推荐。")
 		persistRecommendation = true
+		recommendationRefreshMode = aStockRecommendationRebuild
 	case "generate_afternoon_stock":
 		period = normalizeAStockPeriod("afternoon")
 		query.Set("period", period.Key)
 		query.Set("msg", "已切换到下午窗口，按 09:30-13:00:59 推荐生成窗口重新计算推荐。")
 		persistRecommendation = true
+		recommendationRefreshMode = aStockRecommendationRebuild
 	case "generate_ignore_recent_stock":
 		query.Set("ignore_recent", "1")
 		ignoreRecent = true
 		query.Set("msg", period.Label+"已忽略5日内重复推荐过滤，按当前新闻窗口重新计算推荐。")
 		persistRecommendation = true
+		recommendationRefreshMode = aStockRecommendationRebuild
 	case "generate":
 		query.Set("msg", period.Label+"热点已按当前新闻窗口重新计算。")
 		persistRecommendation = true
+		recommendationRefreshMode = aStockRecommendationRebuild
 	case "sync_market":
 		query.Set("msg", "行情已按当前策略日期刷新，页面已重新计算昨日收盘价、现价、涨跌幅和回测。")
 		persistRecommendation = true
@@ -586,11 +600,12 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request) 
 	case "recalculate":
 		query.Set("msg", period.Label+"已按当前过滤开关重新计算推荐和回测。")
 		persistRecommendation = true
+		recommendationRefreshMode = aStockRecommendationRebuild
 	default:
 		query.Set("msg", "未知操作")
 	}
 	if persistRecommendation {
-		if loadMessage := s.persistAStockActionRecommendation(strategyDate, period.Key, ignoreRecent, ignoreLimitUp, filterTodayMarket, persistAllBacktests); loadMessage != "" {
+		if loadMessage := s.persistAStockActionRecommendation(strategyDate, period.Key, ignoreRecent, ignoreLimitUp, filterTodayMarket, persistAllBacktests, recommendationRefreshMode); loadMessage != "" {
 			existing := strings.TrimSpace(query.Get("msg"))
 			if existing != "" {
 				query.Set("msg", existing+" "+loadMessage)
@@ -602,7 +617,7 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request) 
 	http.Redirect(w, r, "/a-stock?"+query.Encode(), http.StatusSeeOther)
 }
 
-func (s *Server) persistAStockActionRecommendation(strategyDate string, periodKey string, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, allPeriods bool) string {
+func (s *Server) persistAStockActionRecommendation(strategyDate string, periodKey string, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, allPeriods bool, refreshMode aStockRecommendationRefreshMode) string {
 	cache := newAStockRequestCache()
 	periods := []string{normalizeAStockPeriod(periodKey).Key}
 	if allPeriods {
@@ -610,7 +625,7 @@ func (s *Server) persistAStockActionRecommendation(strategyDate string, periodKe
 	}
 	messages := make([]string, 0, len(periods))
 	for _, period := range periods {
-		ctx := s.loadAStockContextWithRecommendationPhasePersistence(strategyDate, period, 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, true, aStockRecommendationPhaseFinal, cache, true, true)
+		ctx := s.loadAStockContextWithRecommendationPhasePersistenceMode(strategyDate, period, 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, true, aStockRecommendationPhaseFinal, cache, true, true, refreshMode)
 		if message := strings.TrimSpace(ctx.LoadMessage); message != "" {
 			messages = append(messages, fmt.Sprintf("%s：%s", ctx.PeriodLabel, message))
 		}
@@ -1384,7 +1399,7 @@ func (s *Server) handleAStockRecommendationGenerate(w http.ResponseWriter, r *ht
 	ignoreRecent := normalizeAStockBool(r.URL.Query().Get("ignore_recent"))
 	ignoreLimitUp := normalizeAStockBool(r.URL.Query().Get("ignore_limit_up"))
 	filterTodayMarket := normalizeAStockBool(r.URL.Query().Get("filter_today_market"))
-	ctx := s.loadAStockContextWithRecommendationPhase(strategyDate, period.Key, 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, true, phase, newAStockRequestCache())
+	ctx := s.loadAStockContextWithRecommendationPhasePersistenceMode(strategyDate, period.Key, 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, true, phase, newAStockRequestCache(), true, true, aStockRecommendationRebuild)
 	writeRawJSON(w, http.StatusOK, map[string]any{
 		"code":    http.StatusOK,
 		"message": "ok",
@@ -1495,6 +1510,10 @@ func (s *Server) loadAStockContextWithRecommendationPhaseOptions(strategyDate st
 }
 
 func (s *Server) loadAStockContextWithRecommendationPhasePersistence(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, recommendationPhase string, cache *aStockRequestCache, includeHotspotTopStocks bool, persist bool) aStockContext {
+	return s.loadAStockContextWithRecommendationPhasePersistenceMode(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, recommendationPhase, cache, includeHotspotTopStocks, persist, aStockRecommendationPreserveLocked)
+}
+
+func (s *Server) loadAStockContextWithRecommendationPhasePersistenceMode(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, recommendationPhase string, cache *aStockRequestCache, includeHotspotTopStocks bool, persist bool, refreshMode aStockRecommendationRefreshMode) aStockContext {
 	period := normalizeAStockPeriod(periodKey)
 	phase := normalizeAStockRecommendationPhase(recommendationPhase)
 	recommendationStart, recommendationEnd, recommendationWindowLabel := aStockRecommendationPhaseWindow(strategyDate, period.Key, phase)
@@ -1575,10 +1594,11 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistence(strategyDat
 		return ctx
 	}
 	allowPersistedRecommendations := phase == aStockRecommendationPhaseFinal && isAStockOfficialSelectionContext(ignoreRecent, ignoreLimitUp, filterTodayMarket)
+	rebuildRecommendations := refreshMode == aStockRecommendationRebuild
 	if allowPersistedRecommendations && !forceRecommendationRefresh && s.applyAStockRecommendationSnapshotWithCache(&ctx, cache) {
 		return ctx
 	}
-	if allowPersistedRecommendations && s.applyAStockRecommendationSelectionsWithCache(&ctx, cache) {
+	if allowPersistedRecommendations && !rebuildRecommendations && s.applyAStockRecommendationSelectionsWithCache(&ctx, cache) {
 		ctx.Recommendations = s.applyAStockHoldingSummariesWithCache(ctx.Recommendations, cache)
 		ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus, ctx.LimitUpFiltered = s.loadAStockLockedMarketView(strategyDate, ctx.Period, ctx.Recommendations)
 		if forceRecommendationRefresh {
@@ -1592,7 +1612,7 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistence(strategyDat
 		}
 		return ctx
 	}
-	if allowPersistedRecommendations && s.applyAStockRecommendationSnapshotRecommendationsWithCache(&ctx, cache) {
+	if allowPersistedRecommendations && !rebuildRecommendations && s.applyAStockRecommendationSnapshotRecommendationsWithCache(&ctx, cache) {
 		s.applyAStockAfternoonSameDayCapsWithCache(&ctx, nil, cache)
 		if persist && ctx.LoadMessage == "" {
 			if err := s.saveAStockRecommendationSelections(ctx); err != nil {
@@ -1657,7 +1677,7 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistence(strategyDat
 	if forceRecommendationRefresh {
 		s.restoreAStockBacktestsFromSnapshotWithCache(&ctx, cache)
 	}
-	if persist && shouldPersistAStockRecommendationSelections(ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh) && len(ctx.Recommendations) > 0 {
+	if persist && shouldPersistAStockRecommendationSelections(ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh) && (len(ctx.Recommendations) > 0 || rebuildRecommendations) {
 		if err := s.saveAStockRecommendationSelections(ctx); err != nil && ctx.LoadMessage == "" {
 			ctx.LoadMessage = "A股已选股票保存失败：" + err.Error()
 		}
@@ -2769,19 +2789,18 @@ func (s *Server) loadRecentAStockRecommendationCodesWithCache(strategyDate strin
 		return nil
 	}
 	dateKey := normalizeAStockStrategyDate(strategyDate)
-	cacheKey := dateKey + "|" + fmt.Sprint(lookbackDays)
+	cacheKey := dateKey + "|" + fmt.Sprint(lookbackDays) + "|trading"
 	if cache != nil {
 		if cached, ok := cache.recentCodes[cacheKey]; ok {
 			return cached
 		}
 	}
-	day, err := time.ParseInLocation("2006-01-02", dateKey, aStockLocation())
-	if err != nil {
-		return nil
+	dates := s.loadRecentAStockRecommendationTradingDatesWithCache(dateKey, lookbackDays, cache)
+	if len(dates) == 0 {
+		dates = recentAStockCalendarDates(dateKey, lookbackDays)
 	}
 	result := make(map[string]struct{})
-	for offset := 1; offset <= lookbackDays; offset++ {
-		date := day.AddDate(0, 0, -offset).Format("2006-01-02")
+	for _, date := range dates {
 		for _, period := range aStockPeriods() {
 			for code := range s.loadPersistedAStockRecommendationCodesWithCache(date, period.Key, false, cache) {
 				result[code] = struct{}{}
@@ -2792,6 +2811,45 @@ func (s *Server) loadRecentAStockRecommendationCodesWithCache(strategyDate strin
 		cache.recentCodes[cacheKey] = result
 	}
 	return result
+}
+
+func (s *Server) loadRecentAStockRecommendationTradingDatesWithCache(strategyDate string, lookbackDays int, cache *aStockRequestCache) []string {
+	dateKey := normalizeAStockStrategyDate(strategyDate)
+	day, err := time.ParseInLocation("2006-01-02", dateKey, aStockLocation())
+	if err != nil {
+		return nil
+	}
+	dates := make([]string, 0, lookbackDays)
+	for offset := 1; offset <= lookbackDays*6 && len(dates) < lookbackDays; offset++ {
+		date := day.AddDate(0, 0, -offset).Format("2006-01-02")
+		if s.isAStockRecommendationLookbackTradingDayWithCache(date, cache) {
+			dates = append(dates, date)
+		}
+	}
+	return dates
+}
+
+func (s *Server) isAStockRecommendationLookbackTradingDayWithCache(date string, cache *aStockRequestCache) bool {
+	if strings.TrimSpace(s.cfg.SchedulerURL) == "" {
+		return isLocalAStockTradingDay(date)
+	}
+	status, err := s.loadAStockTradingDayStatusWithCache(date, cache)
+	if err != nil {
+		return isLocalAStockTradingDay(date)
+	}
+	return status.IsTradingDay
+}
+
+func recentAStockCalendarDates(strategyDate string, lookbackDays int) []string {
+	day, err := time.ParseInLocation("2006-01-02", normalizeAStockStrategyDate(strategyDate), aStockLocation())
+	if err != nil || lookbackDays <= 0 {
+		return nil
+	}
+	dates := make([]string, 0, lookbackDays)
+	for offset := 1; offset <= lookbackDays; offset++ {
+		dates = append(dates, day.AddDate(0, 0, -offset).Format("2006-01-02"))
+	}
+	return dates
 }
 
 func (s *Server) applyAStockAfternoonSameDayCaps(ctx *aStockContext, candidates []aStockMarketCandidate) {

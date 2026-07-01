@@ -1334,6 +1334,8 @@ func TestAStockBackfillWindowActionPassesMorningWindow(t *testing.T) {
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{Found: false})
 		case "/api/v1/a-stock/recommendations":
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
+		case "/api/v1/internal/a-stock/recommendation-selections":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionUpsertResult{})
 		case "/api/v1/internal/a-stock/recommendations":
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Updated: 1})
 		default:
@@ -1404,6 +1406,8 @@ func TestAStockBackfillWindowActionExplainsZeroWindowNews(t *testing.T) {
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{Found: false})
 		case "/api/v1/a-stock/recommendations":
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
+		case "/api/v1/internal/a-stock/recommendation-selections":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionUpsertResult{})
 		case "/api/v1/internal/a-stock/recommendations":
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Updated: 1})
 		default:
@@ -3175,6 +3179,87 @@ func TestAStockContextRefreshDoesNotRefilterLockedAfternoonSelectionsByMorningQu
 	}
 	if len(savedRecommendations) != 2 || savedRecommendations[0].Code != "002008" || savedRecommendations[1].Code != "688367" {
 		t.Fatalf("expected saved snapshot to keep locked selections, got %+v", savedRecommendations)
+	}
+}
+
+func TestAStockRebuildRefiltersLockedMorningSelectionsAndClearsPersistedRows(t *testing.T) {
+	currentSelectionGets := 0
+	var savedSelections model.AStockRecommendationSelectionSet
+	var savedSnapshot model.AStockRecommendationSnapshot
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/articles":
+			writeEnvelope(w, http.StatusOK, "ok", model.ItemListResult{
+				Items: []model.Item{{
+					ID:         900,
+					SourceType: "flash",
+					Title:      "AI 算力政策加码，科大讯飞活跃",
+					Summary:    "人工智能产业链活跃",
+					TagFlags:   "0.002230",
+					CapturedAt: time.Date(2026, 6, 16, 1, 5, 0, 0, time.UTC),
+				}},
+				Page: 1, PageSize: 200, Total: 1,
+			})
+		case "/api/v1/a-stock/auction":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockAuctionListResult{
+				Date:  r.URL.Query().Get("date"),
+				Items: []model.AStockAuctionAmount{{TradeDate: r.URL.Query().Get("date"), Code: "002230", Name: "科大讯飞", AuctionVolume: 1000000, AuctionAmount: 10000000, Status: "ok"}},
+			})
+		case "/api/v1/a-stock/recommendation-selections":
+			if r.URL.Query().Get("date") == "2026-06-16" {
+				currentSelectionGets++
+				writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{
+					Found: true,
+					Items: []model.AStockRecommendationSelection{{Rank: 1, Code: "002230", Name: "科大讯飞", Hotspot: "人工智能", Reason: "locked"}},
+				})
+				return
+			}
+			if r.URL.Query().Get("date") == "2026-06-15" && r.URL.Query().Get("period") == "morning" {
+				writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{
+					Found: true,
+					Items: []model.AStockRecommendationSelection{
+						{Rank: 1, Code: "002230", Name: "科大讯飞", Hotspot: "人工智能", Reason: "recent"},
+						{Rank: 2, Code: "603019", Name: "中科曙光", Hotspot: "人工智能", Reason: "recent"},
+						{Rank: 3, Code: "601138", Name: "工业富联", Hotspot: "人工智能", Reason: "recent"},
+					},
+				})
+				return
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{Found: false})
+		case "/api/v1/a-stock/recommendations":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
+		case "/api/v1/internal/a-stock/recommendation-selections":
+			if err := json.NewDecoder(r.Body).Decode(&savedSelections); err != nil {
+				t.Fatalf("decode saved selections: %v", err)
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionUpsertResult{Total: len(savedSelections.Items)})
+		case "/api/v1/internal/a-stock/recommendations":
+			if err := json.NewDecoder(r.Body).Decode(&savedSnapshot); err != nil {
+				t.Fatalf("decode saved snapshot: %v", err)
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Updated: 1})
+		case "/api/v1/a-stock/holdings/summary":
+			writeEnvelope(w, http.StatusOK, "ok", model.StockInstitutionHoldingSummary{})
+		default:
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	ctx := srv.loadAStockContextWithRecommendationPhasePersistenceMode("2026-06-16", "morning", 1, false, false, false, true, aStockRecommendationPhaseFinal, newAStockRequestCache(), false, true, aStockRecommendationRebuild)
+	if currentSelectionGets != 0 {
+		t.Fatalf("expected rebuild to skip current locked selections, got %d current selection reads", currentSelectionGets)
+	}
+	if ctx.RecentFiltered == 0 || len(ctx.Recommendations) != 0 {
+		t.Fatalf("expected rebuild to filter the regenerated recommendation, got filtered=%d recommendations=%+v", ctx.RecentFiltered, ctx.Recommendations)
+	}
+	if savedSelections.StrategyDate != "2026-06-16" || savedSelections.Period != "morning" || len(savedSelections.Items) != 0 {
+		t.Fatalf("expected rebuild to save empty selections for cleanup, got %+v", savedSelections)
+	}
+	if savedSnapshot.StrategyDate != "2026-06-16" || savedSnapshot.Period != "morning" || savedSnapshot.RecentFiltered == 0 || strings.TrimSpace(savedSnapshot.RecommendationsJSON) != "[]" {
+		t.Fatalf("expected rebuild to save empty filtered snapshot, got %+v", savedSnapshot)
 	}
 }
 
@@ -4973,6 +5058,42 @@ func TestAStockContextCanIgnoreRecentRecommendationFilter(t *testing.T) {
 	ignored := srv.loadAStockContext("2026-06-16", "morning", 1, true)
 	if ignored.RecentFiltered != 0 || len(ignored.Recommendations) == 0 {
 		t.Fatalf("expected ignoreRecent to keep recommendations, got filtered=%d recommendations=%+v", ignored.RecentFiltered, ignored.Recommendations)
+	}
+}
+
+func TestAStockRecentRecommendationFilterUsesTradingDays(t *testing.T) {
+	queriedSelectionDates := map[string]struct{}{}
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/a-stock/recommendation-selections":
+			date := r.URL.Query().Get("date")
+			queriedSelectionDates[date] = struct{}{}
+			if date == "2026-06-25" && r.URL.Query().Get("period") == "morning" {
+				writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{
+					Found: true,
+					Items: []model.AStockRecommendationSelection{{Rank: 1, Code: "600030", Name: "中信证券", Hotspot: "金融券商", Reason: "recent"}},
+				})
+				return
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{Found: false})
+		case "/api/v1/a-stock/recommendations":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
+		default:
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	recentCodes := srv.loadRecentAStockRecommendationCodes("2026-07-01", 5)
+	if _, ok := recentCodes["600030"]; !ok {
+		t.Fatalf("expected 2026-06-25 recommendation in five-trading-day lookback, got %+v", recentCodes)
+	}
+	for _, weekend := range []string{"2026-06-28", "2026-06-27"} {
+		if _, ok := queriedSelectionDates[weekend]; ok {
+			t.Fatalf("expected weekend %s to be skipped in trading-day lookback, queried dates=%+v", weekend, queriedSelectionDates)
+		}
 	}
 }
 
