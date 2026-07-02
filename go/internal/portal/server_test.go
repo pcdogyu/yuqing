@@ -812,7 +812,7 @@ func TestSectorFundFlowPageLoadsFiltersRowsAndRefreshAction(t *testing.T) {
 		t.Fatalf("expected sector fund flow page 200, got %d body=%s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"版块资金", "人工智能", "中科曙光", "刷新版块资金", "行业资金流", "概念资金流", "今日", "5日", "10日", "+2.30亿", "+5.60%", "-3000.00万", `href="/a-stock">A股</a><a href="/sector-fund-flow">版块资金</a><a href="/stock-research">研报调研</a>`, `body[data-page='sector-fund-flow'] main,body[data-page='sector-fund-flow'] .site-footer{max-width:none;width:100%;box-sizing:border-box}`} {
+	for _, want := range []string{"版块资金", "人工智能", "中科曙光", "刷新版块资金", "行业资金流", "概念资金流", "今日", "5日", "10日", "+2.30亿", "+5.60%", "-3000.00万", `href="/a-stock">A股</a><a href="/sector-fund-flow">版块资金</a><a href="/stock-research">研报调研</a>`, `body[data-page='sector-fund-flow'] main,body[data-page='sector-fund-flow'] .site-footer{max-width:none;width:100%;box-sizing:border-box}`, `.sector-table th:nth-child(1),.sector-table td:nth-child(1){width:54px;text-align:center}`, `.sector-table th:nth-child(3),.sector-table th:nth-child(4),.sector-table th:nth-child(5)`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected sector fund flow page to contain %q, got %s", want, body)
 		}
