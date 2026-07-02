@@ -956,6 +956,9 @@ func TestRunAStockDailyBacktestRefreshForDateRefreshesCurrentAndPreviousTradingD
 
 	gatewayCalls := make([]string, 0)
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("refresh_mode"); got != "preserve_locked" {
+			t.Fatalf("expected preserve_locked refresh mode for backtest refresh, got %q in %s", got, r.URL.String())
+		}
 		gatewayCalls = append(gatewayCalls, r.URL.Query().Get("date")+"/"+r.URL.Query().Get("period"))
 		w.WriteHeader(http.StatusOK)
 	}))

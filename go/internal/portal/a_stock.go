@@ -1403,7 +1403,11 @@ func (s *Server) handleAStockRecommendationGenerate(w http.ResponseWriter, r *ht
 	ignoreRecent := normalizeAStockBool(r.URL.Query().Get("ignore_recent"))
 	ignoreLimitUp := normalizeAStockBool(r.URL.Query().Get("ignore_limit_up"))
 	filterTodayMarket := normalizeAStockBool(r.URL.Query().Get("filter_today_market"))
-	ctx := s.loadAStockContextWithRecommendationPhasePersistenceMode(strategyDate, period.Key, 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, true, phase, newAStockRequestCache(), true, true, aStockRecommendationRebuild)
+	refreshMode := aStockRecommendationRebuild
+	if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("refresh_mode")), string(aStockRecommendationPreserveLocked)) {
+		refreshMode = aStockRecommendationPreserveLocked
+	}
+	ctx := s.loadAStockContextWithRecommendationPhasePersistenceMode(strategyDate, period.Key, 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, true, phase, newAStockRequestCache(), true, true, refreshMode)
 	writeRawJSON(w, http.StatusOK, map[string]any{
 		"code":    http.StatusOK,
 		"message": "ok",

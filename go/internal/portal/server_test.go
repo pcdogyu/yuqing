@@ -3200,6 +3200,67 @@ func TestAStockContextRefreshKeepsPersistedRecommendationSelections(t *testing.T
 	}
 }
 
+func TestAStockRecommendationGeneratePreserveLockedRefreshModeKeepsSelections(t *testing.T) {
+	market := httptest.NewServer(http.HandlerFunc(writeAStockTestMarketBars))
+	defer market.Close()
+	t.Setenv("YUQING_ASTOCK_MARKET_URL", market.URL)
+
+	selectionPosts := 0
+	var savedSnapshot model.AStockRecommendationSnapshot
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/articles":
+			writeEnvelope(w, http.StatusOK, "ok", model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0})
+		case "/api/v1/a-stock/recommendation-selections":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{
+				Found:        true,
+				StrategyDate: "2026-06-23",
+				Period:       "morning",
+				Items: []model.AStockRecommendationSelection{
+					{Rank: 1, Code: "603986", Name: "Locked Corp", Hotspot: "locked", MarketScore: 90, Reason: "locked selection"},
+				},
+			})
+		case "/api/v1/a-stock/recommendations":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
+		case "/api/v1/internal/a-stock/recommendations":
+			if err := json.NewDecoder(r.Body).Decode(&savedSnapshot); err != nil {
+				t.Fatalf("decode saved snapshot: %v", err)
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Updated: 1})
+		case "/api/v1/internal/a-stock/recommendation-selections":
+			selectionPosts++
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionUpsertResult{Updated: 1})
+		case "/api/v1/a-stock/holdings/summary":
+			writeEnvelope(w, http.StatusOK, "ok", model.StockInstitutionHoldingSummary{})
+		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	req := httptest.NewRequest(http.MethodPost, "/internal/a-stock/recommendations/generate?date=2026-06-23&period=morning&phase=final&refresh_mode=preserve_locked", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAStockRecommendationGenerate(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected generate 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if selectionPosts != 0 {
+		t.Fatalf("expected preserve_locked mode not to rewrite selections, got %d posts", selectionPosts)
+	}
+	var recommendations []aStockRecommendation
+	if err := json.Unmarshal([]byte(savedSnapshot.RecommendationsJSON), &recommendations); err != nil {
+		t.Fatalf("decode saved recommendations: %v", err)
+	}
+	if len(recommendations) != 1 || recommendations[0].Code != "603986" {
+		t.Fatalf("expected locked selection to be preserved in snapshot, got %+v", recommendations)
+	}
+}
+
 func TestAStockContextRefreshDoesNotRefilterLockedAfternoonSelectionsByMorningQuota(t *testing.T) {
 	market := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

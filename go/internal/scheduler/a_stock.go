@@ -110,7 +110,7 @@ func (w *Worker) runAStockBacktestRefreshForDate(ctx context.Context, strategyDa
 			summary.Missing++
 			continue
 		}
-		if err := w.generateAStockRecommendationSnapshot(ctx, target.StrategyDate, target.Period, "final"); err != nil {
+		if err := w.refreshAStockRecommendationBacktestSnapshot(ctx, target.StrategyDate, target.Period); err != nil {
 			summary.Failed++
 			summary.Failures = append(summary.Failures, fmt.Sprintf("%s: %v", aStockBacktestRefreshTargetLabel(target), err))
 			continue
@@ -944,16 +944,27 @@ func formatAStockRecommendationCrawlTime(value time.Time) string {
 }
 
 func (w *Worker) generateAStockRecommendationSnapshot(ctx context.Context, strategyDate string, period string, phase string) error {
+	return w.generateAStockRecommendationSnapshotWithMode(ctx, strategyDate, period, phase, "")
+}
+
+func (w *Worker) refreshAStockRecommendationBacktestSnapshot(ctx context.Context, strategyDate string, period string) error {
+	return w.generateAStockRecommendationSnapshotWithMode(ctx, strategyDate, period, "final", "preserve_locked")
+}
+
+func (w *Worker) generateAStockRecommendationSnapshotWithMode(ctx context.Context, strategyDate string, period string, phase string, refreshMode string) error {
 	baseURL := strings.TrimRight(strings.TrimSpace(w.cfg.GatewayWebURL), "/")
 	if baseURL == "" {
 		return fmt.Errorf("YUQING_GATEWAY_URL not configured")
 	}
-	resp, err := w.crawlClient.R().
+	req := w.crawlClient.R().
 		SetContext(ctx).
 		SetQueryParam("date", normalizeAStockRecommendationDate(strategyDate)).
 		SetQueryParam("period", normalizeAStockRecommendationPeriod(period)).
-		SetQueryParam("phase", normalizeAStockRecommendationPhase(phase)).
-		Post(baseURL + "/internal/a-stock/recommendations/generate")
+		SetQueryParam("phase", normalizeAStockRecommendationPhase(phase))
+	if strings.TrimSpace(refreshMode) != "" {
+		req.SetQueryParam("refresh_mode", strings.TrimSpace(refreshMode))
+	}
+	resp, err := req.Post(baseURL + "/internal/a-stock/recommendations/generate")
 	if err != nil {
 		return err
 	}
