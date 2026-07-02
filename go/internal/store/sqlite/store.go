@@ -607,6 +607,32 @@ CREATE TABLE IF NOT EXISTS a_stock_recommendation_selections (
 	PRIMARY KEY (strategy_date, period, code)
 );
 
+CREATE TABLE IF NOT EXISTS a_stock_sector_fund_flows (
+	trade_date TEXT NOT NULL,
+	sector_type TEXT NOT NULL,
+	indicator TEXT NOT NULL,
+	rank INTEGER NOT NULL DEFAULT 0,
+	name TEXT NOT NULL,
+	change_pct REAL NOT NULL DEFAULT 0,
+	main_net_inflow REAL NOT NULL DEFAULT 0,
+	main_net_inflow_pct REAL NOT NULL DEFAULT 0,
+	super_large_net_inflow REAL NOT NULL DEFAULT 0,
+	super_large_net_inflow_pct REAL NOT NULL DEFAULT 0,
+	large_net_inflow REAL NOT NULL DEFAULT 0,
+	large_net_inflow_pct REAL NOT NULL DEFAULT 0,
+	medium_net_inflow REAL NOT NULL DEFAULT 0,
+	medium_net_inflow_pct REAL NOT NULL DEFAULT 0,
+	small_net_inflow REAL NOT NULL DEFAULT 0,
+	small_net_inflow_pct REAL NOT NULL DEFAULT 0,
+	top_stock TEXT NOT NULL DEFAULT '',
+	source_type TEXT NOT NULL DEFAULT '',
+	raw_payload TEXT NOT NULL DEFAULT '{}',
+	fetched_at TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	PRIMARY KEY (trade_date, sector_type, indicator, name)
+);
+
 CREATE TABLE IF NOT EXISTS task_runs (
 	id INTEGER PRIMARY KEY,
 	task_name TEXT NOT NULL,
@@ -674,6 +700,8 @@ CREATE INDEX IF NOT EXISTS idx_a_stock_auction_date_amount ON a_stock_auction_am
 CREATE INDEX IF NOT EXISTS idx_a_stock_auction_code ON a_stock_auction_amounts(code);
 CREATE INDEX IF NOT EXISTS idx_a_stock_recommendations_updated ON a_stock_recommendation_snapshots(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_a_stock_recommendation_selections_lookup ON a_stock_recommendation_selections(strategy_date, period, rank, code);
+CREATE INDEX IF NOT EXISTS idx_a_stock_sector_fund_flow_lookup ON a_stock_sector_fund_flows(trade_date DESC, sector_type, indicator, rank);
+CREATE INDEX IF NOT EXISTS idx_a_stock_sector_fund_flow_name ON a_stock_sector_fund_flows(name);
 CREATE INDEX IF NOT EXISTS idx_projects_group_id ON projects(group_id);
 CREATE INDEX IF NOT EXISTS idx_monitor_rules_project_id ON monitor_rules(project_id);
 CREATE INDEX IF NOT EXISTS idx_reports_project_id ON reports(project_id);

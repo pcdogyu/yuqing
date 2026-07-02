@@ -475,6 +475,40 @@ func TestStockInstitutionHoldingAPIUpsertsListsAndSummarizes(t *testing.T) {
 	}
 }
 
+func TestAStockSectorFundFlowAPIUpsertsAndLists(t *testing.T) {
+	store := newContentSearchTestStore(t)
+	svc := NewService(config.Config{}, store)
+	router := svc.Router()
+
+	payload := `{"date":"2026-07-01","sector_type":"行业资金流","indicator":"今日","replace":true,"items":[{"rank":1,"name":"半导体","change_pct":2.5,"main_net_inflow":120000000,"main_net_inflow_pct":4.2,"top_stock":"中芯国际"}]}`
+	postReq := httptest.NewRequest(http.MethodPost, "/api/v1/internal/a-stock/sector-fund-flows", strings.NewReader(payload))
+	postReq.Header.Set("Content-Type", "application/json")
+	postRR := httptest.NewRecorder()
+	router.ServeHTTP(postRR, postReq)
+	if postRR.Code != http.StatusOK {
+		t.Fatalf("expected sector fund flow upsert 200, got %d body=%s", postRR.Code, postRR.Body.String())
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/sector-fund-flows?date=2026-07-01&sector_type=行业资金流&indicator=今日&keyword=半导&page=1&page_size=10", nil)
+	listRR := httptest.NewRecorder()
+	router.ServeHTTP(listRR, listReq)
+	if listRR.Code != http.StatusOK {
+		t.Fatalf("expected sector fund flow list 200, got %d body=%s", listRR.Code, listRR.Body.String())
+	}
+	var envelope struct {
+		Data model.AStockSectorFundFlowListResult `json:"data"`
+	}
+	if err := json.Unmarshal(listRR.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode sector fund flow list: %v", err)
+	}
+	if envelope.Data.Total != 1 || len(envelope.Data.Items) != 1 || envelope.Data.Items[0].Name != "半导体" || envelope.Data.Items[0].TradeDate != "2026-07-01" {
+		t.Fatalf("unexpected sector fund flow list: %+v", envelope.Data)
+	}
+	if envelope.Data.SectorType != "行业资金流" || envelope.Data.Indicator != "今日" || envelope.Data.Items[0].SourceType != "akshare_sector_fund_flow" {
+		t.Fatalf("unexpected normalized sector fund flow fields: %+v", envelope.Data)
+	}
+}
+
 func TestStockInstitutionHoldingSignalsAPI(t *testing.T) {
 	store := newContentSearchTestStore(t)
 	svc := NewService(config.Config{}, store)

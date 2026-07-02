@@ -253,10 +253,10 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	if err := json.Unmarshal(listRR.Body.Bytes(), &listEnvelope); err != nil {
 		t.Fatalf("unmarshal jobs list: %v", err)
 	}
-	if len(listEnvelope.Data) != 40 {
-		t.Fatalf("expected 40 scheduler jobs, got %d", len(listEnvelope.Data))
+	if len(listEnvelope.Data) != 41 {
+		t.Fatalf("expected 41 scheduler jobs, got %d", len(listEnvelope.Data))
 	}
-	var heartbeatJob, hotJob, eastmoneyJob, jin10FullJob, wallStreetCNJob, clsJob, sinaJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningNewsCrawlJob, aStockMorningPreviewJob, aStockMorningJob, aStockAfternoonPreviewJob, aStockMiddayNewsCrawlJob, aStockAfternoonJob, aStockAfternoonOpenRefreshJob, aStockDailyBacktestRefreshJob, aStockAuctionJob, aStockHoldingsJob, stockResearchJob, investorRelationsJob Job
+	var heartbeatJob, hotJob, eastmoneyJob, jin10FullJob, wallStreetCNJob, clsJob, sinaJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningNewsCrawlJob, aStockMorningPreviewJob, aStockMorningJob, aStockAfternoonPreviewJob, aStockMiddayNewsCrawlJob, aStockAfternoonJob, aStockAfternoonOpenRefreshJob, aStockDailyBacktestRefreshJob, aStockAuctionJob, aStockSectorFundFlowJob, aStockHoldingsJob, stockResearchJob, investorRelationsJob Job
 	for _, job := range listEnvelope.Data {
 		switch job.Name {
 		case "crawl-link-heartbeat":
@@ -303,6 +303,8 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 			aStockDailyBacktestRefreshJob = job
 		case "a-stock-auction-crawl":
 			aStockAuctionJob = job
+		case "a-stock-sector-fund-flow-crawl":
+			aStockSectorFundFlowJob = job
 		case "a-stock-holdings-crawl":
 			aStockHoldingsJob = job
 		case "stock-research-crawl":
@@ -370,6 +372,9 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	}
 	if aStockAuctionJob.Cron != "0 26 9 * * ?" || aStockAuctionJob.Enabled {
 		t.Fatalf("expected A股 auction crawl disabled by default with 09:26 cron, got %+v", aStockAuctionJob)
+	}
+	if aStockSectorFundFlowJob.Cron != "0 0/5 9-15 * * ?" || aStockSectorFundFlowJob.Enabled {
+		t.Fatalf("expected A股 sector fund flow crawl disabled by default with 5 minute trading cron, got %+v", aStockSectorFundFlowJob)
 	}
 	if aStockHoldingsJob.Cron != "0 35 2 * * ?" || aStockHoldingsJob.Enabled {
 		t.Fatalf("expected A股 holdings crawl disabled by default with 02:35 cron, got %+v", aStockHoldingsJob)
@@ -1435,6 +1440,91 @@ func TestRunAStockAuctionLatestUsesAdapterDate(t *testing.T) {
 	}
 	if result.Date != "2026-06-15" || contentPayload.Date != "2026-06-15" || len(contentPayload.Items) != 1 {
 		t.Fatalf("expected latest adapter date to be written, result=%+v payload=%+v", result, contentPayload)
+	}
+}
+
+func TestRunAStockSectorFundFlowLatestFetchesAllGroupsAndWritesContent(t *testing.T) {
+	requested := map[string]bool{}
+	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/a-stock/trading-day":
+			_ = json.NewEncoder(w).Encode(aStockTradingDayStatus{Date: "2026-07-01", IsTradingDay: true, Message: "open"})
+		case "/api/a-stock/sector-fund-flow":
+			sectorType := r.URL.Query().Get("sector_type")
+			indicator := r.URL.Query().Get("indicator")
+			requested[sectorType+"/"+indicator] = true
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"date":        "2026-07-01",
+				"sector_type": sectorType,
+				"indicator":   indicator,
+				"items": []model.AStockSectorFundFlow{{
+					TradeDate:     "2026-07-01",
+					SectorType:    sectorType,
+					Indicator:     indicator,
+					Rank:          1,
+					Name:          sectorType + indicator,
+					MainNetInflow: 100000000,
+				}},
+			})
+		default:
+			t.Fatalf("unexpected akshare request: %s", r.URL.Path)
+		}
+	}))
+	defer akshare.Close()
+
+	var writes int
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/internal/a-stock/sector-fund-flows" {
+			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.Path)
+		}
+		var payload struct {
+			Date       string                       `json:"date"`
+			SectorType string                       `json:"sector_type"`
+			Indicator  string                       `json:"indicator"`
+			Items      []model.AStockSectorFundFlow `json:"items"`
+			Replace    bool                         `json:"replace"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode content sector payload: %v", err)
+		}
+		if payload.Date != "2026-07-01" || !payload.Replace || len(payload.Items) != 1 || payload.Items[0].Name == "" {
+			t.Fatalf("unexpected content sector payload: %+v", payload)
+		}
+		writes++
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusOK, "message": "ok", "data": map[string]any{"inserted": len(payload.Items), "total": len(payload.Items)}})
+	}))
+	defer content.Close()
+
+	worker := NewWorker(config.Config{AStockAuctionURL: akshare.URL, ContentURL: content.URL, HTTPTimeout: 2 * time.Second})
+	result, err := worker.runAStockSectorFundFlowLatest(context.Background(), false)
+	if err != nil {
+		t.Fatalf("runAStockSectorFundFlowLatest error: %v", err)
+	}
+	if result.Date != "2026-07-01" || result.Groups != 6 || result.Items != 6 || writes != 6 {
+		t.Fatalf("unexpected sector fund flow result=%+v writes=%d", result, writes)
+	}
+	for _, key := range []string{"行业资金流/今日", "行业资金流/5日", "行业资金流/10日", "概念资金流/今日", "概念资金流/5日", "概念资金流/10日"} {
+		if !requested[key] {
+			t.Fatalf("expected akshare request for %s, got %+v", key, requested)
+		}
+	}
+}
+
+func TestRunAStockSectorFundFlowCrawlSkipsNonTradingDay(t *testing.T) {
+	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/a-stock/trading-day" {
+			t.Fatalf("unexpected akshare request on non-trading day: %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(aStockTradingDayStatus{Date: "2026-06-19", IsTradingDay: false, Message: "holiday"})
+	}))
+	defer akshare.Close()
+	worker := NewWorker(config.Config{AStockAuctionURL: akshare.URL, HTTPTimeout: 2 * time.Second})
+	result, err := worker.runAStockSectorFundFlowLatest(context.Background(), false)
+	if err != nil {
+		t.Fatalf("runAStockSectorFundFlowLatest non-trading error: %v", err)
+	}
+	if !result.Skipped || !strings.Contains(result.Message, "holiday") {
+		t.Fatalf("expected sector fund flow non-trading skip, got %+v", result)
 	}
 }
 

@@ -103,6 +103,8 @@ type Store interface {
 	UpsertAStockRecommendationSelections(rctx context.Context, selectionSet model.AStockRecommendationSelectionSet) (model.AStockRecommendationSelectionUpsertResult, error)
 	ListAStockRecommendationSelections(rctx context.Context, strategyDate string, period string) (model.AStockRecommendationSelectionListResult, error)
 	ListAStockRecommendationLatestDates(rctx context.Context, strategyDate string, period string, codes []string) (model.AStockRecommendationLatestDateListResult, error)
+	UpsertAStockSectorFundFlows(rctx context.Context, tradeDate string, items []model.AStockSectorFundFlow, replace bool) (model.AStockSectorFundFlowUpsertResult, error)
+	ListAStockSectorFundFlows(rctx context.Context, filter model.AStockSectorFundFlowFilter) (model.AStockSectorFundFlowListResult, error)
 	UpsertStockResearchSurveys(rctx context.Context, items []model.StockResearchSurvey) (model.StockResearchUpsertResult, error)
 	ListStockResearchSurveys(rctx context.Context, filter model.StockResearchFilter) (model.StockResearchListResult, error)
 	GetStockResearchSurvey(rctx context.Context, id int64) (model.StockResearchSurvey, error)
@@ -181,6 +183,8 @@ func (s *Service) Routes(r chi.Router) {
 	r.Get("/api/v1/a-stock/recommendation-selections", s.handleListAStockRecommendationSelections)
 	r.Post("/api/v1/internal/a-stock/recommendation-selections", s.handleUpsertAStockRecommendationSelections)
 	r.Get("/api/v1/a-stock/recommendation-latest-dates", s.handleListAStockRecommendationLatestDates)
+	r.Get("/api/v1/a-stock/sector-fund-flows", s.handleListAStockSectorFundFlows)
+	r.Post("/api/v1/internal/a-stock/sector-fund-flows", s.handleUpsertAStockSectorFundFlows)
 	r.Get("/api/v1/stock-research", s.handleListStockResearchSurveys)
 	r.Get("/api/v1/stock-research/{id}", s.handleGetStockResearchSurvey)
 	r.Get("/api/v1/stock-research/{id}/pdf", s.handleGetStockResearchPDF)
@@ -753,6 +757,102 @@ func normalizeBoolQuery(raw string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func (s *Service) handleListAStockSectorFundFlows(w http.ResponseWriter, r *http.Request) {
+	filter := model.AStockSectorFundFlowFilter{
+		Date:       strings.TrimSpace(r.URL.Query().Get("date")),
+		SectorType: strings.TrimSpace(r.URL.Query().Get("sector_type")),
+		Indicator:  strings.TrimSpace(r.URL.Query().Get("indicator")),
+		Keyword:    strings.TrimSpace(nonEmpty(r.URL.Query().Get("keyword"), r.URL.Query().Get("q"))),
+		Page:       apiutil.IntQuery(r, "page", 1),
+		PageSize:   apiutil.IntQuery(r, "page_size", 100),
+	}
+	result, err := s.store.ListAStockSectorFundFlows(r.Context(), filter)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleUpsertAStockSectorFundFlows(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		Date       string                       `json:"date"`
+		SectorType string                       `json:"sector_type"`
+		Indicator  string                       `json:"indicator"`
+		Items      []model.AStockSectorFundFlow `json:"items"`
+		Replace    bool                         `json:"replace"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid json", nil)
+		return
+	}
+	payload.Date = strings.TrimSpace(payload.Date)
+	payload.SectorType = normalizeAStockSectorFundFlowSectorType(payload.SectorType)
+	payload.Indicator = normalizeAStockSectorFundFlowIndicator(payload.Indicator)
+	if payload.Date == "" {
+		for _, item := range payload.Items {
+			if date := strings.TrimSpace(item.TradeDate); date != "" {
+				payload.Date = date
+				break
+			}
+		}
+	}
+	if payload.Date == "" {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "date required", nil)
+		return
+	}
+	now := time.Now().UTC()
+	for i := range payload.Items {
+		payload.Items[i] = normalizeAStockSectorFundFlow(payload.Items[i], payload.Date, payload.SectorType, payload.Indicator, now)
+	}
+	result, err := s.store.UpsertAStockSectorFundFlows(r.Context(), payload.Date, payload.Items, payload.Replace)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func normalizeAStockSectorFundFlow(item model.AStockSectorFundFlow, date string, sectorType string, indicator string, now time.Time) model.AStockSectorFundFlow {
+	item.TradeDate = nonEmpty(strings.TrimSpace(item.TradeDate), strings.TrimSpace(date))
+	item.SectorType = normalizeAStockSectorFundFlowSectorType(nonEmpty(strings.TrimSpace(item.SectorType), sectorType))
+	item.Indicator = normalizeAStockSectorFundFlowIndicator(nonEmpty(strings.TrimSpace(item.Indicator), indicator))
+	item.Name = strings.TrimSpace(item.Name)
+	item.TopStock = strings.TrimSpace(item.TopStock)
+	item.SourceType = nonEmpty(strings.TrimSpace(item.SourceType), "akshare_sector_fund_flow")
+	item.RawPayload = nonEmpty(strings.TrimSpace(item.RawPayload), "{}")
+	if item.FetchedAt.IsZero() {
+		item.FetchedAt = now
+	}
+	if item.CreatedAt.IsZero() {
+		item.CreatedAt = now
+	}
+	if item.UpdatedAt.IsZero() {
+		item.UpdatedAt = now
+	}
+	return item
+}
+
+func normalizeAStockSectorFundFlowSectorType(value string) string {
+	switch strings.TrimSpace(value) {
+	case "概念", "概念资金", "概念资金流":
+		return "概念资金流"
+	default:
+		return "行业资金流"
+	}
+}
+
+func normalizeAStockSectorFundFlowIndicator(value string) string {
+	switch strings.TrimSpace(value) {
+	case "5", "5日":
+		return "5日"
+	case "10", "10日":
+		return "10日"
+	default:
+		return "今日"
 	}
 }
 

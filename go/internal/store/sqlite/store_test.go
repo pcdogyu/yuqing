@@ -870,6 +870,58 @@ func TestStockInstitutionHoldingsUpsertListAndSummary(t *testing.T) {
 	}
 }
 
+func TestAStockSectorFundFlowsUpsertReplaceAndList(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	fetchedAt := time.Date(2026, 7, 1, 2, 30, 0, 0, time.UTC)
+
+	first, err := store.UpsertAStockSectorFundFlows(ctx, "2026-07-01", []model.AStockSectorFundFlow{
+		{TradeDate: "2026-07-01", SectorType: "行业资金流", Indicator: "今日", Rank: 1, Name: "半导体", ChangePct: 2.5, MainNetInflow: 120000000, MainNetInflowPct: 4.2, TopStock: "中芯国际", SourceType: "akshare_sector_fund_flow", FetchedAt: fetchedAt},
+		{TradeDate: "2026-07-01", SectorType: "行业资金流", Indicator: "今日", Rank: 2, Name: "证券", ChangePct: -1.2, MainNetInflow: -30000000, MainNetInflowPct: -1.1, TopStock: "中信证券", SourceType: "akshare_sector_fund_flow", FetchedAt: fetchedAt},
+	}, true)
+	if err != nil {
+		t.Fatalf("UpsertAStockSectorFundFlows insert error: %v", err)
+	}
+	if first.Inserted != 2 || first.Updated != 0 || first.Total != 2 {
+		t.Fatalf("unexpected first sector fund flow upsert result: %+v", first)
+	}
+
+	second, err := store.UpsertAStockSectorFundFlows(ctx, "2026-07-01", []model.AStockSectorFundFlow{
+		{TradeDate: "2026-07-01", SectorType: "行业资金流", Indicator: "今日", Rank: 1, Name: "机器人", ChangePct: 3.1, MainNetInflow: 210000000, MainNetInflowPct: 5.6, TopStock: "埃斯顿", SourceType: "akshare_sector_fund_flow", FetchedAt: fetchedAt.Add(time.Minute)},
+	}, true)
+	if err != nil {
+		t.Fatalf("UpsertAStockSectorFundFlows replace error: %v", err)
+	}
+	if second.Inserted != 1 || second.Total != 1 {
+		t.Fatalf("unexpected replacement upsert result: %+v", second)
+	}
+
+	if _, err := store.UpsertAStockSectorFundFlows(ctx, "2026-07-01", []model.AStockSectorFundFlow{
+		{TradeDate: "2026-07-01", SectorType: "概念资金流", Indicator: "5日", Rank: 1, Name: "人工智能", MainNetInflow: 300000000, SourceType: "akshare_sector_fund_flow", FetchedAt: fetchedAt},
+	}, true); err != nil {
+		t.Fatalf("UpsertAStockSectorFundFlows concept error: %v", err)
+	}
+
+	list, err := store.ListAStockSectorFundFlows(ctx, model.AStockSectorFundFlowFilter{Date: "2026-07-01", SectorType: "行业资金流", Indicator: "今日", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListAStockSectorFundFlows error: %v", err)
+	}
+	if list.Total != 1 || len(list.Items) != 1 || list.Items[0].Name != "机器人" || list.Items[0].MainNetInflow != 210000000 {
+		t.Fatalf("unexpected sector fund flow list: %+v", list)
+	}
+	if len(list.Dates) != 1 || list.LatestDate != "2026-07-01" || len(list.SectorTypes) < 2 || len(list.Indicators) < 3 {
+		t.Fatalf("unexpected sector fund flow filter options: %+v", list)
+	}
+
+	keyword, err := store.ListAStockSectorFundFlows(ctx, model.AStockSectorFundFlowFilter{Date: "2026-07-01", SectorType: "概念资金流", Indicator: "5日", Keyword: "智能", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("keyword ListAStockSectorFundFlows error: %v", err)
+	}
+	if keyword.Total != 1 || keyword.Items[0].Name != "人工智能" {
+		t.Fatalf("unexpected keyword sector fund flow list: %+v", keyword)
+	}
+}
+
 func TestStockInstitutionHoldingSignalsComparePeriods(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()

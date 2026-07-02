@@ -719,7 +719,7 @@ func TestStockResearchPageLoadsFiltersAndRows(t *testing.T) {
 		t.Fatalf("expected stock research page 200, got %d body=%s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"研报调研", "深度研究", "中金公司", "张三", "新浪财经", "东方财富", "搜狐财经", "回补近一年", "解析当前筛选研报PDF", "下载PDF", "查看文本", "已解析", "无PDF", "重新解析", `value="科大"`, `href="/a-stock">A股</a><a href="/stock-research">研报调研</a><a href="/investor-relations">投资者关系</a><a href="/a-stock/holdings">机构持仓</a>`, "body[data-page='stock-research'] main,body[data-page='stock-research'] .site-footer{max-width:none;width:100%;box-sizing:border-box}", "body[data-page='stock-research'] main{font-size:14px;line-height:1.45}", "body[data-page='stock-research'] section{width:100%;box-sizing:border-box}", ".research-scroll{width:100%;overflow:auto}", ".research-table{width:100%;min-width:0;table-layout:fixed}", ".research-col-title{width:32.6%}", ".research-col-pdf{width:8.4%}", ".research-col-status{width:14%}", ".research-col-date{width:7.5%}", ".research-col-stock{width:8.5%}", ".research-col-source{width:6%}", ".research-col-link{width:5%}", ".research-status-actions{display:flex;align-items:center;gap:8px;white-space:nowrap}", ".research-status-actions .research-action-form{flex:1 1 auto;min-width:0}", ".research-status-actions button{width:90%;height:90%;min-height:32px;margin:0;padding:7px 10px}", "<th>日期</th><th>股票</th><th>标题</th>", "投资者关系管理信息20260617"} {
+	for _, want := range []string{"研报调研", "深度研究", "中金公司", "张三", "新浪财经", "东方财富", "搜狐财经", "回补近一年", "解析当前筛选研报PDF", "下载PDF", "查看文本", "已解析", "无PDF", "重新解析", `value="科大"`, `href="/a-stock">A股</a><a href="/sector-fund-flow">版块资金</a><a href="/stock-research">研报调研</a><a href="/investor-relations">投资者关系</a><a href="/a-stock/holdings">机构持仓</a>`, "body[data-page='stock-research'] main,body[data-page='stock-research'] .site-footer{max-width:none;width:100%;box-sizing:border-box}", "body[data-page='stock-research'] main{font-size:14px;line-height:1.45}", "body[data-page='stock-research'] section{width:100%;box-sizing:border-box}", ".research-scroll{width:100%;overflow:auto}", ".research-table{width:100%;min-width:0;table-layout:fixed}", ".research-col-title{width:32.6%}", ".research-col-pdf{width:8.4%}", ".research-col-status{width:14%}", ".research-col-date{width:7.5%}", ".research-col-stock{width:8.5%}", ".research-col-source{width:6%}", ".research-col-link{width:5%}", ".research-status-actions{display:flex;align-items:center;gap:8px;white-space:nowrap}", ".research-status-actions .research-action-form{flex:1 1 auto;min-width:0}", ".research-status-actions button{width:90%;height:90%;min-height:32px;margin:0;padding:7px 10px}", "<th>日期</th><th>股票</th><th>标题</th>", "投资者关系管理信息20260617"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected stock research page to contain %q, got %s", want, body)
 		}
@@ -739,6 +739,96 @@ func TestStockResearchPageLoadsFiltersAndRows(t *testing.T) {
 		if strings.Contains(body, notWant) {
 			t.Fatalf("expected stock research page not to contain %q, got %s", notWant, body)
 		}
+	}
+}
+
+func TestSectorFundFlowPageLoadsFiltersRowsAndRefreshAction(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/a-stock/sector-fund-flows" {
+			t.Fatalf("unexpected content request: %s", r.URL.String())
+		}
+		if r.URL.Query().Get("sector_type") != "概念资金流" || r.URL.Query().Get("indicator") != "5日" || r.URL.Query().Get("keyword") != "AI" {
+			t.Fatalf("unexpected sector fund flow query: %s", r.URL.RawQuery)
+		}
+		fetchedAt := time.Date(2026, 7, 1, 2, 35, 0, 0, time.UTC)
+		writeRawJSON(w, http.StatusOK, map[string]any{
+			"code":    http.StatusOK,
+			"message": "ok",
+			"data": model.AStockSectorFundFlowListResult{
+				Items: []model.AStockSectorFundFlow{{
+					TradeDate:              "2026-07-01",
+					SectorType:             "概念资金流",
+					Indicator:              "5日",
+					Rank:                   1,
+					Name:                   "人工智能",
+					ChangePct:              2.34,
+					MainNetInflow:          230000000,
+					MainNetInflowPct:       5.6,
+					SuperLargeNetInflow:    120000000,
+					SuperLargeNetInflowPct: 3.4,
+					LargeNetInflow:         110000000,
+					LargeNetInflowPct:      2.2,
+					MediumNetInflow:        -30000000,
+					SmallNetInflow:         -90000000,
+					TopStock:               "中科曙光",
+					FetchedAt:              fetchedAt,
+				}},
+				Page:        1,
+				PageSize:    200,
+				Total:       1,
+				Date:        "2026-07-01",
+				LatestDate:  "2026-07-01",
+				SectorType:  "概念资金流",
+				Indicator:   "5日",
+				Keyword:     "AI",
+				Dates:       []string{"2026-07-01"},
+				SectorTypes: []string{"行业资金流", "概念资金流"},
+				Indicators:  []string{"今日", "5日", "10日"},
+				FetchedAt:   &fetchedAt,
+			},
+		})
+	}))
+	defer content.Close()
+	scheduler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/scheduler/a-stock/sector-fund-flow/latest" {
+			t.Fatalf("unexpected scheduler request: %s %s", r.Method, r.URL.Path)
+		}
+		writeRawJSON(w, http.StatusOK, map[string]any{
+			"code":    http.StatusOK,
+			"message": "ok",
+			"data": map[string]any{
+				"status": "completed",
+				"result": map[string]any{"date": "2026-07-01", "groups": 6, "items": 6},
+			},
+		})
+	}))
+	defer scheduler.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL, SchedulerURL: scheduler.URL, ServiceToken: "secret-token"})
+	req := httptest.NewRequest(http.MethodGet, "/sector-fund-flow?sector_type=概念资金流&indicator=5日&keyword=AI", nil)
+	rr := httptest.NewRecorder()
+	srv.handleSectorFundFlowPage(rr, req, map[string]any{"id": 1})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected sector fund flow page 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"版块资金", "人工智能", "中科曙光", "刷新版块资金", "行业资金流", "概念资金流", "今日", "5日", "10日", "+2.30亿", "+5.60%", "-3000.00万", `href="/a-stock">A股</a><a href="/sector-fund-flow">版块资金</a><a href="/stock-research">研报调研</a>`, `body[data-page='sector-fund-flow'] main,body[data-page='sector-fund-flow'] .site-footer{max-width:none;width:100%;box-sizing:border-box}`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected sector fund flow page to contain %q, got %s", want, body)
+		}
+	}
+
+	form := url.Values{}
+	form.Set("action", "refresh_sector_fund_flow")
+	form.Set("sector_type", "概念资金流")
+	form.Set("indicator", "5日")
+	form.Set("keyword", "AI")
+	postReq := httptest.NewRequest(http.MethodPost, "/sector-fund-flow", strings.NewReader(form.Encode()))
+	postReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	postRR := httptest.NewRecorder()
+	srv.handleSectorFundFlowPage(postRR, postReq, map[string]any{"id": 1})
+	if postRR.Code != http.StatusSeeOther || !strings.Contains(postRR.Header().Get("Location"), "/sector-fund-flow?") || !strings.Contains(postRR.Header().Get("Location"), "sector_type=") {
+		t.Fatalf("expected sector fund flow refresh redirect, status=%d location=%s", postRR.Code, postRR.Header().Get("Location"))
 	}
 }
 

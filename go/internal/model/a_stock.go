@@ -135,3 +135,60 @@ type AStockRecommendationLatestDateListResult struct {
 	Period       string                           `json:"period"`
 	Items        []AStockRecommendationLatestDate `json:"items"`
 }
+
+type AStockSectorFundFlow struct {
+	TradeDate              string    `json:"trade_date"`
+	SectorType             string    `json:"sector_type"`
+	Indicator              string    `json:"indicator"`
+	Rank                   int       `json:"rank"`
+	Name                   string    `json:"name"`
+	ChangePct              float64   `json:"change_pct"`
+	MainNetInflow          float64   `json:"main_net_inflow"`
+	MainNetInflowPct       float64   `json:"main_net_inflow_pct"`
+	SuperLargeNetInflow    float64   `json:"super_large_net_inflow"`
+	SuperLargeNetInflowPct float64   `json:"super_large_net_inflow_pct"`
+	LargeNetInflow         float64   `json:"large_net_inflow"`
+	LargeNetInflowPct      float64   `json:"large_net_inflow_pct"`
+	MediumNetInflow        float64   `json:"medium_net_inflow"`
+	MediumNetInflowPct     float64   `json:"medium_net_inflow_pct"`
+	SmallNetInflow         float64   `json:"small_net_inflow"`
+	SmallNetInflowPct      float64   `json:"small_net_inflow_pct"`
+	TopStock               string    `json:"top_stock"`
+	SourceType             string    `json:"source_type"`
+	RawPayload             string    `json:"raw_payload"`
+	FetchedAt              time.Time `json:"fetched_at"`
+	CreatedAt              time.Time `json:"created_at"`
+	UpdatedAt              time.Time `json:"updated_at"`
+}
+
+type AStockSectorFundFlowFilter struct {
+	Date       string `json:"date"`
+	SectorType string `json:"sector_type"`
+	Indicator  string `json:"indicator"`
+	Keyword    string `json:"keyword"`
+	Page       int    `json:"page"`
+	PageSize   int    `json:"page_size"`
+}
+
+type AStockSectorFundFlowListResult struct {
+	Items       []AStockSectorFundFlow `json:"items"`
+	Page        int                    `json:"page"`
+	PageSize    int                    `json:"page_size"`
+	Total       int                    `json:"total"`
+	Date        string                 `json:"date"`
+	LatestDate  string                 `json:"latest_date"`
+	SectorType  string                 `json:"sector_type"`
+	Indicator   string                 `json:"indicator"`
+	Keyword     string                 `json:"keyword"`
+	Dates       []string               `json:"dates"`
+	SectorTypes []string               `json:"sector_types"`
+	Indicators  []string               `json:"indicators"`
+	FetchedAt   *time.Time             `json:"fetched_at,omitempty"`
+}
+
+type AStockSectorFundFlowUpsertResult struct {
+	Date     string `json:"date"`
+	Inserted int    `json:"inserted"`
+	Updated  int    `json:"updated"`
+	Total    int    `json:"total"`
+}

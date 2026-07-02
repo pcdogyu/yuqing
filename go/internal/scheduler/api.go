@@ -31,6 +31,7 @@ func (w *Worker) Router() http.Handler {
 	r.Post("/api/v1/scheduler/a-stock/auction/backfill", w.handleRunAStockAuctionBackfill)
 	r.Get("/api/v1/scheduler/a-stock/trading-day", w.handleGetAStockTradingDay)
 	r.Post("/api/v1/scheduler/a-stock/holdings/backfill", w.handleRunAStockHoldingsBackfill)
+	r.Post("/api/v1/scheduler/a-stock/sector-fund-flow/latest", w.handleRunAStockSectorFundFlowLatest)
 	return r
 }
 
@@ -250,4 +251,34 @@ func (w *Worker) handleRunAStockHoldingsBackfill(wr http.ResponseWriter, r *http
 		return
 	}
 	apiutil.WriteJSON(wr, http.StatusOK, "ok", map[string]string{"status": "triggered"})
+}
+
+func (w *Worker) handleRunAStockSectorFundFlowLatest(wr http.ResponseWriter, r *http.Request) {
+	if strings.TrimSpace(r.Header.Get("X-Service-Token")) != strings.TrimSpace(w.cfg.ServiceToken) {
+		apiutil.WriteJSON(wr, http.StatusUnauthorized, "unauthorized", nil)
+		return
+	}
+	startedAt := time.Now().UTC()
+	result, err := w.runAStockSectorFundFlowLatest(r.Context(), false)
+	finishedAt := time.Now().UTC()
+	status := "success"
+	message := fmt.Sprintf("a-stock sector fund flow completed: date=%s groups=%d items=%d", result.Date, result.Groups, result.Items)
+	if result.Skipped {
+		status = "skipped"
+		message = result.Message
+	}
+	if err != nil {
+		status = "failed"
+		message = err.Error()
+	}
+	_ = w.recordTaskRun(r.Context(), "a-stock-sector-fund-flow-latest", status, message, startedAt, &finishedAt)
+	if err != nil {
+		apiutil.WriteJSON(wr, http.StatusInternalServerError, err.Error(), result)
+		return
+	}
+	if result.Skipped {
+		apiutil.WriteJSON(wr, http.StatusUnprocessableEntity, message, result)
+		return
+	}
+	apiutil.WriteJSON(wr, http.StatusOK, "ok", map[string]any{"status": "completed", "result": result})
 }

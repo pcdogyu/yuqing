@@ -3,6 +3,7 @@
 
 The Go scheduler calls:
   GET /api/a-stock/auction?date=YYYY-MM-DD
+  GET /api/a-stock/sector-fund-flow?sector_type=行业资金流&indicator=今日
   GET /api/a-stock/holdings?period=YYYYMMDD&code=002230
   GET /api/stock-research?code=002230&start=YYYY-MM-DD&end=YYYY-MM-DD
 
@@ -789,6 +790,69 @@ def fetch_research_reports_for_symbol(ak: Any, symbol: str, start: str, end: str
     return items
 
 
+def normalize_sector_fund_flow_sector_type(value: str | None) -> str:
+    text = text_value(value)
+    if text in {"概念", "概念资金", "概念资金流"}:
+        return "概念资金流"
+    return "行业资金流"
+
+
+def normalize_sector_fund_flow_indicator(value: str | None) -> str:
+    text = text_value(value)
+    if text in {"5", "5日"}:
+        return "5日"
+    if text in {"10", "10日"}:
+        return "10日"
+    return "今日"
+
+
+def sector_fund_flow_item(row: Any, trade_date: str, sector_type: str, indicator: str) -> dict[str, Any] | None:
+    name = text_value(first_existing(row, ["名称", "板块名称", "版块名称", "name"]))
+    if not name:
+        return None
+    rank = int(finite_float(first_existing(row, ["序号", "排名", "rank"])))
+    raw_payload = json.dumps(json_safe_row(row), ensure_ascii=False, separators=(",", ":"))
+    return {
+        "trade_date": trade_date,
+        "sector_type": sector_type,
+        "indicator": indicator,
+        "rank": rank,
+        "name": name,
+        "change_pct": finite_float(first_existing(row, [f"{indicator}涨跌幅", "今日涨跌幅", "涨跌幅"])),
+        "main_net_inflow": finite_float(first_existing(row, [f"{indicator}主力净流入-净额", "今日主力净流入-净额", "主力净流入-净额"])),
+        "main_net_inflow_pct": finite_float(first_existing(row, [f"{indicator}主力净流入-净占比", "今日主力净流入-净占比", "主力净流入-净占比"])),
+        "super_large_net_inflow": finite_float(first_existing(row, [f"{indicator}超大单净流入-净额", "今日超大单净流入-净额", "超大单净流入-净额"])),
+        "super_large_net_inflow_pct": finite_float(first_existing(row, [f"{indicator}超大单净流入-净占比", "今日超大单净流入-净占比", "超大单净流入-净占比"])),
+        "large_net_inflow": finite_float(first_existing(row, [f"{indicator}大单净流入-净额", "今日大单净流入-净额", "大单净流入-净额"])),
+        "large_net_inflow_pct": finite_float(first_existing(row, [f"{indicator}大单净流入-净占比", "今日大单净流入-净占比", "大单净流入-净占比"])),
+        "medium_net_inflow": finite_float(first_existing(row, [f"{indicator}中单净流入-净额", "今日中单净流入-净额", "中单净流入-净额"])),
+        "medium_net_inflow_pct": finite_float(first_existing(row, [f"{indicator}中单净流入-净占比", "今日中单净流入-净占比", "中单净流入-净占比"])),
+        "small_net_inflow": finite_float(first_existing(row, [f"{indicator}小单净流入-净额", "今日小单净流入-净额", "小单净流入-净额"])),
+        "small_net_inflow_pct": finite_float(first_existing(row, [f"{indicator}小单净流入-净占比", "今日小单净流入-净占比", "小单净流入-净占比"])),
+        "top_stock": text_value(first_existing(row, [f"{indicator}主力净流入最大股", "今日主力净流入最大股", "主力净流入最大股"])),
+        "source_type": "akshare_sector_fund_flow",
+        "raw_payload": raw_payload,
+        "fetched_at": utc_now_iso(),
+    }
+
+
+def fetch_sector_fund_flow_rank(ak: Any, trade_date: str, sector_type: str, indicator: str, limit: int) -> list[dict[str, Any]]:
+    frame = ak.stock_sector_fund_flow_rank(indicator=indicator, sector_type=sector_type)
+    items: list[dict[str, Any]] = []
+    try:
+        iterator = frame.iterrows()
+    except Exception:
+        return items
+    for _, row in iterator:
+        item = sector_fund_flow_item(row, trade_date, sector_type, indicator)
+        if item is None:
+            continue
+        items.append(item)
+        if limit > 0 and len(items) >= limit:
+            break
+    return items
+
+
 def normalize_holding_period(value: str | None) -> str:
     text = text_value(value).replace("-", "").replace("/", "").replace(".", "")
     if len(text) == 8 and text.isdigit():
@@ -1116,6 +1180,28 @@ class AuctionService:
             payload["_http_status"] = 502
         return payload
 
+    def fetch_sector_fund_flow(self, query: dict[str, list[str]]) -> dict[str, Any]:
+        ak = load_akshare()
+        trade_date = normalize_date(first_query_value(query, "date"))
+        sector_type = normalize_sector_fund_flow_sector_type(first_query_value(query, "sector_type"))
+        indicator = normalize_sector_fund_flow_indicator(first_query_value(query, "indicator"))
+        limit = int_value(first_query_value(query, "limit"), 0)
+        started = time.time()
+        items = fetch_sector_fund_flow_rank(ak, trade_date, sector_type, indicator, limit)
+        payload: dict[str, Any] = {
+            "items": items,
+            "count": len(items),
+            "date": trade_date,
+            "sector_type": sector_type,
+            "indicator": indicator,
+            "elapsed_sec": round(time.time() - started, 3),
+            "fetched_at": utc_now_iso(),
+        }
+        if not items:
+            payload["warning"] = "AKShare sector fund flow endpoint returned no rows"
+            payload["_http_status"] = 502
+        return payload
+
     def fetch_holdings(self, query: dict[str, list[str]]) -> dict[str, Any]:
         ak = load_akshare()
         period = normalize_holding_period(first_query_value(query, "period"))
@@ -1198,6 +1284,14 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/a-stock/holdings":
                 payload = self.service.fetch_holdings(query)
+                status = int(payload.get("_http_status", 200))
+                if "_http_status" in payload:
+                    payload = dict(payload)
+                    payload.pop("_http_status", None)
+                self.write_json(status, payload)
+                return
+            if parsed.path == "/api/a-stock/sector-fund-flow":
+                payload = self.service.fetch_sector_fund_flow(query)
                 status = int(payload.get("_http_status", 200))
                 if "_http_status" in payload:
                     payload = dict(payload)
