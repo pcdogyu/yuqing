@@ -331,7 +331,7 @@ func runPortalUpgradeCommand(ctx context.Context, log *bytes.Buffer, dir string,
 	appendUpgradeLog(log, "$ "+shellQuoteCommand(name, args))
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = portalUpgradeCommandEnv(name, dir)
 	output, err := cmd.CombinedOutput()
 	if len(output) > 0 {
 		log.Write(output)
@@ -355,12 +355,39 @@ func runPortalUpgradeCommand(ctx context.Context, log *bytes.Buffer, dir string,
 func portalUpgradeCommandOutput(ctx context.Context, dir string, name string, args ...string) string {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = portalUpgradeCommandEnv(name, dir)
 	output, err := cmd.Output()
 	if err != nil {
 		return ""
 	}
 	return string(output)
+}
+
+func portalUpgradeCommandEnv(name string, dir string) []string {
+	env := append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	if isPortalUpgradeGoCommand(name) {
+		if cacheDir := portalUpgradeGoCacheDir(dir); cacheDir != "" {
+			env = append(env, "GOCACHE="+cacheDir)
+		}
+	}
+	return env
+}
+
+func isPortalUpgradeGoCommand(name string) bool {
+	base := strings.TrimSuffix(strings.ToLower(filepath.Base(strings.TrimSpace(name))), ".exe")
+	return base == "go"
+}
+
+func portalUpgradeGoCacheDir(dir string) string {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return ""
+	}
+	cacheDir := filepath.Join(dir, ".upgrade-cache", "go-build")
+	if abs, err := filepath.Abs(cacheDir); err == nil {
+		return abs
+	}
+	return cacheDir
 }
 
 func appendUpgradeLog(log *bytes.Buffer, message string) {

@@ -7,6 +7,7 @@
 
 # Go build and runtime output
 go/bin/
+go/.upgrade-cache/
 go/data/
 go/data/*.db
 go/data/*.db-shm

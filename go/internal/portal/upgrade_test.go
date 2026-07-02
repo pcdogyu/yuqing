@@ -84,6 +84,29 @@ func TestPortalUpgradeVersionHelpers(t *testing.T) {
 	}
 }
 
+func TestPortalUpgradeCommandEnvUsesIsolatedGoCache(t *testing.T) {
+	dir := t.TempDir()
+	env := portalUpgradeCommandEnv("go", dir)
+	want := "GOCACHE=" + filepath.Join(dir, ".upgrade-cache", "go-build")
+
+	if !containsString(env, want) {
+		t.Fatalf("expected go command env to include %q, got %+v", want, env)
+	}
+	if !containsString(env, "GIT_TERMINAL_PROMPT=0") {
+		t.Fatalf("expected git prompt to be disabled, got %+v", env)
+	}
+}
+
+func TestPortalUpgradeCommandEnvLeavesGitCacheUntouched(t *testing.T) {
+	env := portalUpgradeCommandEnv("git", t.TempDir())
+
+	for _, value := range env {
+		if strings.HasPrefix(value, "GOCACHE=") {
+			t.Fatalf("expected git command env to avoid upgrade GOCACHE, got %+v", env)
+		}
+	}
+}
+
 func runGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)
