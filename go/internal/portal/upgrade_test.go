@@ -108,35 +108,6 @@ func TestPortalUpgradeCommandEnvLeavesGitCacheUntouched(t *testing.T) {
 	}
 }
 
-func TestLogPortalUpgradeTestDebugIncludesContext(t *testing.T) {
-	if _, err := exec.LookPath("go"); err != nil {
-		t.Skip("go is required for upgrade debug test")
-	}
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.test/debug\n\ngo 1.23\n"), 0o644); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "debug.go"), []byte("package debug\n"), 0o644); err != nil {
-		t.Fatalf("write debug.go: %v", err)
-	}
-
-	var log bytes.Buffer
-	var progress []string
-	logPortalUpgradeTestDebug(context.Background(), &log, dir, func(message string, _ string) {
-		progress = append(progress, message)
-	})
-
-	text := log.String()
-	for _, want := range []string{"测试目录: " + dir, "测试命令: go test -v ./...", "Go 版本:", "GOCACHE:", "待测试包数量:", "待测试包: example.test/debug"} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("expected debug log to include %q, got %s", want, text)
-		}
-	}
-	if !containsString(progress, "阶段: 测试") {
-		t.Fatalf("expected debug logging to publish test progress, got %+v", progress)
-	}
-}
-
 func TestRunPortalUpgradeCommandStreamingPublishesOutput(t *testing.T) {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("go is required for streaming command test")

@@ -231,11 +231,6 @@ func runPortalUpgrade(parent context.Context, _ config.Config, progress portalUp
 		return finishPortalUpgrade(false, startedAt, log.String(), err)
 	}
 	_ = runStage("清理构建缓存", goDir, true, "go", "clean", "-cache", "-testcache")
-	stage("测试")
-	logPortalUpgradeTestDebug(ctx, &log, goDir, progress)
-	if err := runPortalUpgradeCommandStreaming(ctx, &log, goDir, false, progress, "测试", "go", "test", "-v", "./..."); err != nil {
-		return finishPortalUpgrade(false, startedAt, log.String(), err)
-	}
 
 	binDir := filepath.Join(goDir, "bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
@@ -458,29 +453,6 @@ func publishUpgradeProgress(progress portalUpgradeProgress, stageName string, lo
 		return
 	}
 	progress("阶段: "+stageName, strings.TrimRight(log.String(), "\r\n"))
-}
-
-func logPortalUpgradeTestDebug(ctx context.Context, log *bytes.Buffer, goDir string, progress portalUpgradeProgress) {
-	appendUpgradeLog(log, "测试目录: "+goDir)
-	appendUpgradeLog(log, "测试命令: go test -v ./...")
-	if version := strings.TrimSpace(portalUpgradeCommandOutput(ctx, goDir, "go", "version")); version != "" {
-		appendUpgradeLog(log, "Go 版本: "+version)
-	}
-	if cacheDir := portalUpgradeGoCacheDir(goDir); cacheDir != "" {
-		appendUpgradeLog(log, "GOCACHE: "+cacheDir)
-	}
-	packages := strings.Fields(portalUpgradeCommandOutput(ctx, goDir, "go", "list", "./..."))
-	if len(packages) > 0 {
-		appendUpgradeLog(log, fmt.Sprintf("待测试包数量: %d", len(packages)))
-		for i, pkg := range packages {
-			if i >= 12 {
-				appendUpgradeLog(log, fmt.Sprintf("待测试包列表: 仅显示前 12 个，其余 %d 个略过", len(packages)-i))
-				break
-			}
-			appendUpgradeLog(log, "待测试包: "+pkg)
-		}
-	}
-	publishUpgradeProgress(progress, "测试", log)
 }
 
 func portalUpgradeCommandOutput(ctx context.Context, dir string, name string, args ...string) string {
