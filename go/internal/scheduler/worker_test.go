@@ -1360,7 +1360,7 @@ func TestRunAStockAuctionCrawlFetchesAkshareAndWritesContent(t *testing.T) {
 			t.Fatalf("unexpected akshare request: %s", r.URL.String())
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":{"date":"2026-06-16","items":[{"code":"002230","name":"科大讯飞","auction_price":41.2,"auction_volume":123400,"auction_amount":5084080,"source":"akshare_pre_min","status":"ok"},{"code":"000001","name":"平安银行","auction_price":12,"auction_volume":0,"auction_amount":0,"source":"akshare_pre_min","status":"no_auction_data"}]}}`))
+		_, _ = w.Write([]byte(`{"data":{"date":"2026-06-16","items":[{"code":"002230","name":"科大讯飞","auction_price":41.2,"auction_volume":123400,"auction_amount":5084080,"source":"akshare_pre_min","status":"ok"},{"code":"012322","name":"012322","auction_price":1.1,"auction_volume":120000,"auction_amount":132000,"source":"akshare_pre_min","status":"ok"},{"code":"011631","name":"基金测试","auction_price":1.2,"auction_volume":110000,"auction_amount":132000,"source":"akshare_pre_min","status":"ok"},{"code":"301696","name":"301696","auction_price":118.22,"auction_volume":100000,"auction_amount":11822000,"source":"akshare_pre_min","status":"ok"},{"code":"000001","name":"平安银行","auction_price":12,"auction_volume":0,"auction_amount":0,"source":"akshare_pre_min","status":"no_auction_data"}]}}`))
 	}))
 	defer akshare.Close()
 

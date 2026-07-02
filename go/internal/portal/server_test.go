@@ -6378,6 +6378,40 @@ func TestAStockRecommendationsBlockEastmoneyAndBankStocks(t *testing.T) {
 	}
 }
 
+func TestAStockRecommendationsFilterInvalidCodesAndUnresolvedNames(t *testing.T) {
+	recommendations := buildAStockRecommendationsWithLimit([]aStockHotspot{
+		{
+			Name:     "AI测试",
+			Keywords: []string{"AI"},
+			Score:    100,
+			Evidence: 1,
+			MatchedItems: []model.Item{{
+				SourceType: "flash",
+				Title:      "AI芯片公司获关注",
+				RawPayload: `{"stock_list":[{"StockID":"301696","name":"301696"},{"StockID":"301697","name":"301697"},{"StockID":"012322","name":"012322"}]}`,
+			}},
+		},
+	}, []aStockMarketCandidate{
+		{Code: "012322", Name: "012322", Rank: 1, AuctionAmount: 9000000},
+		{Code: "011631", Name: "基金测试", Rank: 2, AuctionAmount: 8000000},
+		{Code: "301696", Name: "301696", Rank: 3, AuctionAmount: 7000000},
+		{Code: "301697", Name: "301697", Rank: 4, AuctionAmount: 6000000},
+		{Code: "301696", Name: "AI芯片股份", Rank: 5, AuctionAmount: 5000000},
+	}, aStockReplacementPoolLimit, aStockReplacementPerHotspot)
+
+	if len(recommendations) != 1 {
+		t.Fatalf("expected only one valid resolved recommendation, got %+v", recommendations)
+	}
+	if recommendations[0].Code != "301696" || recommendations[0].Name != "AI芯片股份" {
+		t.Fatalf("expected 301696 name to be repaired from market dictionary, got %+v", recommendations[0])
+	}
+	for _, rec := range recommendations {
+		if rec.Code == "012322" || rec.Code == "011631" || rec.Code == "301697" || rec.Name == rec.Code {
+			t.Fatalf("expected invalid and unresolved recommendations to be filtered, got %+v", recommendations)
+		}
+	}
+}
+
 func TestAStockPersistedRecommendationsBlockEastmoneyAndBankStocks(t *testing.T) {
 	recommendations := aStockRecommendationSelectionsToRecommendations([]model.AStockRecommendationSelection{
 		{Rank: 1, Code: "300059", Name: "东方财富", Hotspot: "金融券商"},
@@ -6386,11 +6420,11 @@ func TestAStockPersistedRecommendationsBlockEastmoneyAndBankStocks(t *testing.T)
 		{Rank: 4, Code: "000001", Name: "平安银行", Hotspot: "金融券商"},
 	})
 
-	if len(recommendations) != 1 || recommendations[0].Code != "600030" || recommendations[0].Rank != 3 {
-		t.Fatalf("expected persisted selections to keep only 中信证券 before rerank, got %+v", recommendations)
+	if len(recommendations) != 4 || recommendations[2].Code != "600030" || recommendations[2].Rank != 3 {
+		t.Fatalf("expected persisted selections to convert before filtering, got %+v", recommendations)
 	}
 	filtered, skipped := filterBlockedAStockRecommendations(recommendations)
-	if skipped != 0 || len(filtered) != 1 || filtered[0].Code != "600030" || filtered[0].Rank != 1 {
+	if skipped != 3 || len(filtered) != 1 || filtered[0].Code != "600030" || filtered[0].Rank != 1 {
 		t.Fatalf("expected filtered persisted recommendation to rerank, skipped=%d filtered=%+v", skipped, filtered)
 	}
 	backtests := filterBlockedAStockBacktests([]aStockBacktestRow{
@@ -6400,6 +6434,55 @@ func TestAStockPersistedRecommendationsBlockEastmoneyAndBankStocks(t *testing.T)
 	})
 	if len(backtests) != 1 || !strings.Contains(backtests[0].Stock, "600030") {
 		t.Fatalf("expected persisted backtests to drop blocked stocks, got %+v", backtests)
+	}
+}
+
+func TestAStockPersistedRecommendationsRepairNamesAndFilterBacktests(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/a-stock/auction" {
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+		writeEnvelope(w, http.StatusOK, "ok", model.AStockAuctionListResult{
+			Date:  r.URL.Query().Get("date"),
+			Total: 1,
+			Items: []model.AStockAuctionAmount{{
+				TradeDate:     r.URL.Query().Get("date"),
+				Code:          "301696",
+				Name:          "测试股份",
+				AuctionAmount: 5000000,
+				AuctionVolume: 100000,
+				Status:        "ok",
+			}},
+		})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	recommendations, skipped := srv.repairAStockPersistedRecommendationsWithCache("2026-07-02", []aStockRecommendation{
+		{Rank: 1, Code: "012322", Name: "012322", Hotspot: "人工智能"},
+		{Rank: 2, Code: "011631", Name: "基金测试", Hotspot: "黄金有色"},
+		{Rank: 3, Code: "301696", Name: "301696", Hotspot: "人工智能"},
+		{Rank: 4, Code: "600030", Name: "中信证券", Hotspot: "金融券商"},
+	}, newAStockRequestCache())
+
+	if skipped != 2 || len(recommendations) != 2 {
+		t.Fatalf("expected two invalid persisted recommendations to be skipped, skipped=%d recommendations=%+v", skipped, recommendations)
+	}
+	if recommendations[0].Code != "301696" || recommendations[0].Name != "测试股份" {
+		t.Fatalf("expected 301696 name to be repaired from auction dictionary, got %+v", recommendations)
+	}
+	if recommendations[1].Code != "600030" || recommendations[1].Name != "中信证券" {
+		t.Fatalf("expected valid recommendation to remain, got %+v", recommendations)
+	}
+
+	backtests := filterAStockBacktestsForRecommendations([]aStockBacktestRow{
+		{Stock: "012322 012322"},
+		{Stock: "301696 301696", Status: "已回测"},
+		{Stock: "600030 中信证券", Status: "已回测"},
+	}, recommendations)
+	if len(backtests) != 2 || backtests[0].Stock != "301696 测试股份" || backtests[1].Stock != "600030 中信证券" {
+		t.Fatalf("expected backtests to follow repaired recommendations, got %+v", backtests)
 	}
 }
 

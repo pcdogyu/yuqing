@@ -6,10 +6,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pcdogyu/yuqing/go/internal/astockcode"
 	"github.com/pcdogyu/yuqing/go/internal/model"
 )
 
-const aStockAuctionSHSZFilterSQL = `(code LIKE '6%' OR code LIKE '0%' OR code LIKE '3%')`
+var aStockAuctionSHSZFilterSQL = astockcode.SQLWhere()
 
 func (s *Store) UpsertAStockAuctionAmounts(ctx context.Context, tradeDate string, items []model.AStockAuctionAmount, replace bool) (model.AStockAuctionUpsertResult, error) {
 	tradeDate = strings.TrimSpace(tradeDate)
@@ -70,8 +71,9 @@ ON CONFLICT(trade_date, code) DO UPDATE SET
 	now := time.Now().UTC()
 	for _, item := range items {
 		date := nonEmpty(strings.TrimSpace(item.TradeDate), tradeDate)
-		code := strings.TrimSpace(item.Code)
-		if date == "" || code == "" {
+		code := astockcode.Normalize(item.Code)
+		name := astockcode.DisplayName(code, item.Name)
+		if date == "" || !astockcode.IsShanghaiShenzhen(code) || !astockcode.HasResolvedName(code, name) {
 			continue
 		}
 		existed := false
@@ -99,7 +101,7 @@ ON CONFLICT(trade_date, code) DO UPDATE SET
 			ctx,
 			date,
 			code,
-			strings.TrimSpace(item.Name),
+			name,
 			item.AuctionPrice,
 			item.AuctionVolume,
 			item.AuctionAmount,

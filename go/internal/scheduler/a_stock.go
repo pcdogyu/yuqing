@@ -10,6 +10,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 
+	"github.com/pcdogyu/yuqing/go/internal/astockcode"
 	"github.com/pcdogyu/yuqing/go/internal/model"
 	"github.com/pcdogyu/yuqing/go/internal/provider"
 )
@@ -391,6 +392,7 @@ func (w *Worker) runAStockAuctionCrawlForDateResult(ctx context.Context, tradeDa
 			payload.Items[i].FetchedAt = time.Now().UTC()
 		}
 	}
+	payload.Items = filterAStockAuctionPayloadItems(payload.Items)
 	okCount := 0
 	for _, item := range payload.Items {
 		if isUsableAStockAuctionItem(item) {
@@ -675,11 +677,32 @@ func decodeAStockAuctionEndpointMessage(body []byte, fallback string) string {
 }
 
 func isUsableAStockAuctionItem(item model.AStockAuctionAmount) bool {
+	if !astockcode.IsShanghaiShenzhen(item.Code) || !astockcode.HasResolvedName(item.Code, item.Name) {
+		return false
+	}
 	status := strings.TrimSpace(item.Status)
 	if status != "" && !strings.EqualFold(status, "ok") {
 		return false
 	}
 	return item.AuctionAmount > 0 || item.AuctionVolume > 0
+}
+
+func filterAStockAuctionPayloadItems(items []model.AStockAuctionAmount) []model.AStockAuctionAmount {
+	if len(items) == 0 {
+		return items
+	}
+	filtered := make([]model.AStockAuctionAmount, 0, len(items))
+	for _, item := range items {
+		code := astockcode.Normalize(item.Code)
+		name := astockcode.DisplayName(code, item.Name)
+		if !astockcode.IsShanghaiShenzhen(code) || !astockcode.HasResolvedName(code, name) {
+			continue
+		}
+		item.Code = code
+		item.Name = name
+		filtered = append(filtered, item)
+	}
+	return filtered
 }
 
 func nonEmpty(values ...string) string {

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pcdogyu/yuqing/go/internal/astockcode"
 	"github.com/pcdogyu/yuqing/go/internal/model"
 	"github.com/pcdogyu/yuqing/go/internal/provider"
 )
@@ -1667,9 +1668,7 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceMode(strateg
 		}
 		if ctx.LimitUpFilterEnabled && recommendationTarget > 0 {
 			replacementPool := buildAStockSnapshotRecommendationsWithPhaseAndLimit(strategyDate, period.Key, phase, ctx.Articles, candidates, aStockReplacementPoolLimit, aStockReplacementPerHotspot)
-			if len(replacementPool) > len(ctx.Recommendations) {
-				ctx.Recommendations = replacementPool
-			}
+			ctx.Recommendations = mergeAStockLimitUpReplacementPool(ctx.Recommendations, replacementPool)
 		}
 		if period.Key == "afternoon" && len(ctx.Recommendations) > 0 {
 			s.applyAStockAfternoonSameDayCapsWithCache(&ctx, candidates, cache)
@@ -1736,7 +1735,7 @@ func (s *Server) applyAStockRecommendationSelectionsWithCache(ctx *aStockContext
 	if !ok || len(result.Items) == 0 {
 		return false
 	}
-	ctx.Recommendations, _ = filterBlockedAStockRecommendations(aStockRecommendationSelectionsToRecommendations(result.Items))
+	ctx.Recommendations, _ = s.repairAStockPersistedRecommendationsWithCache(ctx.Date, aStockRecommendationSelectionsToRecommendations(result.Items), cache)
 	if len(ctx.Recommendations) == 0 {
 		return false
 	}
@@ -1774,7 +1773,7 @@ func (s *Server) applyAStockRecommendationSnapshotRecommendationsWithCache(ctx *
 	if err := json.Unmarshal([]byte(nonEmpty(snapshot.RecommendationsJSON, "[]")), &recommendations); err != nil || len(recommendations) == 0 {
 		return false
 	}
-	ctx.Recommendations, _ = filterBlockedAStockRecommendations(recommendations)
+	ctx.Recommendations, _ = s.repairAStockPersistedRecommendationsWithCache(ctx.Date, recommendations, cache)
 	if len(ctx.Recommendations) == 0 {
 		return false
 	}
@@ -1855,11 +1854,11 @@ func (s *Server) applyAStockRecommendationSnapshotWithCache(ctx *aStockContext, 
 	if ctx.Period == "afternoon" && !isFreshAStockLimitUpReplacementSnapshot(snapshot, recommendations) {
 		return false
 	}
-	ctx.Recommendations, _ = filterBlockedAStockRecommendations(recommendations)
+	ctx.Recommendations, _ = s.repairAStockPersistedRecommendationsWithCache(ctx.Date, recommendations, cache)
 	if len(ctx.Recommendations) == 0 {
 		return false
 	}
-	ctx.Backtests = filterBlockedAStockBacktests(backtests)
+	ctx.Backtests = filterAStockBacktestsForRecommendations(backtests, ctx.Recommendations)
 	ctx.BacktestStatus = nonEmpty(snapshot.BacktestStatus, "已读取推荐快照")
 	ctx.GeneratedRecommendationCount = snapshot.GeneratedCount
 	ctx.RecentFiltered = snapshot.RecentFiltered
@@ -2075,7 +2074,7 @@ func (s *Server) saveAStockRecommendationSnapshot(ctx aStockContext) error {
 	if err != nil {
 		return err
 	}
-	backtestsJSON, err := json.Marshal(filterBlockedAStockBacktests(ctx.Backtests))
+	backtestsJSON, err := json.Marshal(filterAStockBacktestsForRecommendations(ctx.Backtests, recommendations))
 	if err != nil {
 		return err
 	}
@@ -2342,7 +2341,7 @@ func (s *Server) buildAStockPreopenPopup(userID int64, strategyDate string) aSto
 func (s *Server) loadAStockPopupRecommendations(strategyDate string, period string) ([]aStockRecommendation, time.Time, bool) {
 	normalizedPeriod := normalizeAStockPeriod(period).Key
 	if result, ok := s.loadAStockRecommendationSelections(strategyDate, normalizedPeriod); ok && len(result.Items) > 0 {
-		recommendations, _ := filterBlockedAStockRecommendations(aStockRecommendationSelectionsToRecommendations(result.Items))
+		recommendations, _ := s.repairAStockPersistedRecommendationsWithCache(strategyDate, aStockRecommendationSelectionsToRecommendations(result.Items), nil)
 		if len(recommendations) == 0 {
 			return nil, time.Time{}, false
 		}
@@ -2356,7 +2355,7 @@ func (s *Server) loadAStockPopupRecommendations(strategyDate string, period stri
 	if err := json.Unmarshal([]byte(nonEmpty(snapshot.RecommendationsJSON, "[]")), &recommendations); err != nil || len(recommendations) == 0 {
 		return nil, time.Time{}, false
 	}
-	recommendations, _ = filterBlockedAStockRecommendations(recommendations)
+	recommendations, _ = s.repairAStockPersistedRecommendationsWithCache(strategyDate, recommendations, nil)
 	if len(recommendations) == 0 {
 		return nil, time.Time{}, false
 	}
@@ -2924,7 +2923,7 @@ func (s *Server) loadPersistedAStockRecommendations(strategyDate string, period 
 func (s *Server) loadPersistedAStockRecommendationsWithCache(strategyDate string, period string, ignoreRecent bool, cache *aStockRequestCache) []aStockRecommendation {
 	if !ignoreRecent {
 		if result, ok := s.loadAStockRecommendationSelectionsWithCache(strategyDate, period, cache); ok && len(result.Items) > 0 {
-			recommendations, _ := filterBlockedAStockRecommendations(aStockRecommendationSelectionsToRecommendations(result.Items))
+			recommendations, _ := s.repairAStockPersistedRecommendationsWithCache(strategyDate, aStockRecommendationSelectionsToRecommendations(result.Items), cache)
 			return recommendations
 		}
 	}
@@ -2936,7 +2935,7 @@ func (s *Server) loadPersistedAStockRecommendationsWithCache(strategyDate string
 	if err := json.Unmarshal([]byte(nonEmpty(snapshot.RecommendationsJSON, "[]")), &recommendations); err != nil {
 		return nil
 	}
-	recommendations, _ = filterBlockedAStockRecommendations(recommendations)
+	recommendations, _ = s.repairAStockPersistedRecommendationsWithCache(strategyDate, recommendations, cache)
 	return recommendations
 }
 
@@ -3282,8 +3281,8 @@ func aStockMarketCandidatesFromAuctionResult(result model.AStockAuctionListResul
 	candidates := make([]aStockMarketCandidate, 0, len(result.Items))
 	for i, item := range result.Items {
 		code := normalizeAStockCode(item.Code)
-		name := strings.TrimSpace(item.Name)
-		if code == "" || name == "" {
+		name := astockcode.DisplayName(code, item.Name)
+		if !astockcode.IsShanghaiShenzhen(code) || !astockcode.HasResolvedName(code, name) {
 			continue
 		}
 		if item.AuctionAmount <= 0 && item.AuctionVolume <= 0 {
@@ -3469,6 +3468,21 @@ func appendAStockBacktestStatus(status string, addition string) string {
 		return status
 	}
 	return status + "，" + addition
+}
+
+func appendAStockReason(reason string, addition string) string {
+	reason = strings.TrimSpace(reason)
+	addition = strings.TrimSpace(addition)
+	if addition == "" {
+		return reason
+	}
+	if reason == "" {
+		return addition
+	}
+	if strings.Contains(reason, addition) {
+		return reason
+	}
+	return reason + "，" + addition
 }
 
 func rerankAStockRecommendations(recommendations []aStockRecommendation) []aStockRecommendation {
@@ -4948,15 +4962,7 @@ func parseAStockFloat(raw string) float64 {
 }
 
 func normalizeAStockCode(raw string) string {
-	raw = strings.TrimSpace(strings.ToUpper(raw))
-	raw = strings.TrimSuffix(strings.TrimPrefix(raw, "SH"), ".SH")
-	raw = strings.TrimSuffix(strings.TrimPrefix(raw, "SZ"), ".SZ")
-	raw = strings.TrimPrefix(raw, "1.")
-	raw = strings.TrimPrefix(raw, "0.")
-	if len(raw) >= 6 {
-		return raw[:6]
-	}
-	return raw
+	return astockcode.Normalize(raw)
 }
 
 func normalizeAStockMarketDate(raw string) string {
@@ -5442,10 +5448,11 @@ func appendAStockHotspotTopStock(stocks []aStockHotspotStock, stock aStockMarket
 		return stocks
 	}
 	code := normalizeAStockCode(stock.Code)
-	if code == "" {
+	name := resolveAStockRecommendationName(code, stock.Name, nil)
+	if !astockcode.IsShanghaiShenzhen(code) || !astockcode.HasResolvedName(code, name) {
 		return stocks
 	}
-	if isBlockedAStockRecommendationStock(code, stock.Name) {
+	if isBlockedAStockRecommendationStock(code, name) {
 		return stocks
 	}
 	if _, exists := rowSeen[code]; exists {
@@ -5461,7 +5468,7 @@ func appendAStockHotspotTopStock(stocks []aStockHotspotStock, stock aStockMarket
 	return append(stocks, aStockHotspotStock{
 		Rank:  len(stocks) + 1,
 		Code:  code,
-		Name:  strings.TrimSpace(stock.Name),
+		Name:  name,
 		Score: score,
 	})
 }
@@ -5499,8 +5506,8 @@ func sortedAStockHotspotFallbackCandidates(candidates []aStockMarketCandidate) [
 	fallback := make([]aStockMarketCandidate, 0, len(candidates))
 	for _, candidate := range candidates {
 		code := normalizeAStockCode(candidate.Code)
-		name := strings.TrimSpace(candidate.Name)
-		if code == "" || name == "" {
+		name := astockcode.DisplayName(code, candidate.Name)
+		if !astockcode.IsShanghaiShenzhen(code) || !astockcode.HasResolvedName(code, name) {
 			continue
 		}
 		candidate.Code = code
@@ -5623,12 +5630,13 @@ func aStockRecommendationCandidatesForLimit(hotspots []aStockHotspot, marketCand
 	if maxRecommendations <= aStockRecommendationLimit && maxPerHotspot <= aStockStocksPerHotspot {
 		return fixedCandidates
 	}
+	nameResolver := newAStockRecommendationNameResolver(marketCandidates)
 	candidates := make([]aStockMarketCandidate, 0, len(fixedCandidates)+aStockHotspotScoredCandidateLimit)
 	seen := make(map[string]struct{}, len(fixedCandidates)+aStockHotspotScoredCandidateLimit)
 	appendCandidate := func(candidate aStockMarketCandidate) {
 		code := normalizeAStockCode(candidate.Code)
-		name := strings.TrimSpace(candidate.Name)
-		if code == "" || name == "" {
+		name := resolveAStockRecommendationName(code, candidate.Name, nameResolver)
+		if !astockcode.IsShanghaiShenzhen(code) || !astockcode.HasResolvedName(code, name) {
 			return
 		}
 		if _, exists := seen[code]; exists {
@@ -5657,12 +5665,51 @@ func aStockRecommendationCandidatesForLimit(hotspots []aStockHotspot, marketCand
 	return candidates
 }
 
+func newAStockRecommendationNameResolver(marketCandidates []aStockMarketCandidate) map[string]string {
+	names := make(map[string]string)
+	for _, rule := range aStockTopicRulesByName() {
+		for _, stock := range rule.Stocks {
+			addAStockRecommendationResolvedName(names, stock.Code, stock.Name)
+		}
+	}
+	for _, candidate := range marketCandidates {
+		addAStockRecommendationResolvedName(names, candidate.Code, candidate.Name)
+	}
+	return names
+}
+
+func addAStockRecommendationResolvedName(names map[string]string, code string, name string) {
+	code = normalizeAStockCode(code)
+	name = astockcode.DisplayName(code, name)
+	if !astockcode.IsShanghaiShenzhen(code) || !astockcode.HasResolvedName(code, name) {
+		return
+	}
+	if _, exists := names[code]; exists {
+		return
+	}
+	names[code] = name
+}
+
+func resolveAStockRecommendationName(code string, name string, names map[string]string) string {
+	code = normalizeAStockCode(code)
+	name = astockcode.DisplayName(code, name)
+	if astockcode.HasResolvedName(code, name) {
+		return name
+	}
+	if names != nil {
+		if resolved := strings.TrimSpace(names[code]); resolved != "" {
+			return resolved
+		}
+	}
+	return ""
+}
+
 func fixedPoolAStockMarketCandidates(hotspots []aStockHotspot, marketCandidates []aStockMarketCandidate) []aStockMarketCandidate {
 	rules := aStockTopicRulesByName()
 	marketByCode := make(map[string]aStockMarketCandidate, len(marketCandidates))
 	for _, candidate := range marketCandidates {
 		code := normalizeAStockCode(candidate.Code)
-		if code == "" {
+		if !astockcode.IsShanghaiShenzhen(code) {
 			continue
 		}
 		candidate.Code = code
@@ -5678,8 +5725,8 @@ func fixedPoolAStockMarketCandidates(hotspots []aStockHotspot, marketCandidates 
 		}
 		for _, stock := range rule.Stocks {
 			code := normalizeAStockCode(stock.Code)
-			name := strings.TrimSpace(stock.Name)
-			if code == "" || name == "" {
+			name := astockcode.DisplayName(code, stock.Name)
+			if !astockcode.IsShanghaiShenzhen(code) || !astockcode.HasResolvedName(code, name) {
 				continue
 			}
 			if isBlockedAStockRecommendationStock(code, name) {
@@ -5702,7 +5749,7 @@ func fixedPoolAStockMarketCandidates(hotspots []aStockHotspot, marketCandidates 
 				candidate.Rank = marketCandidate.Rank
 				candidate.AuctionAmount = marketCandidate.AuctionAmount
 				candidate.AuctionVolume = marketCandidate.AuctionVolume
-				if marketName := strings.TrimSpace(marketCandidate.Name); marketName != "" {
+				if marketName := astockcode.DisplayName(code, marketCandidate.Name); astockcode.HasResolvedName(code, marketName) {
 					candidate.Name = marketName
 				}
 			}
@@ -5888,6 +5935,47 @@ func aStockRecommendationCodeSet(recommendations []aStockRecommendation) map[str
 	return codes
 }
 
+func mergeAStockLimitUpReplacementPool(base []aStockRecommendation, replacementPool []aStockRecommendation) []aStockRecommendation {
+	if len(base) == 0 || len(replacementPool) <= len(base) {
+		return base
+	}
+	merged := make([]aStockRecommendation, 0, len(replacementPool))
+	merged = append(merged, base...)
+	seen := aStockRecommendationCodeSet(base)
+	lowScore := 0
+	if len(base) > 0 {
+		lowScore = base[0].MarketScore
+		if lowScore == 0 {
+			lowScore = base[0].HotspotScore
+		}
+		for _, rec := range base[1:] {
+			score := rec.MarketScore
+			if score == 0 {
+				score = rec.HotspotScore
+			}
+			if score < lowScore {
+				lowScore = score
+			}
+		}
+	}
+	for _, rec := range replacementPool {
+		code := normalizeAStockCode(rec.Code)
+		if code == "" {
+			continue
+		}
+		if _, exists := seen[code]; exists {
+			continue
+		}
+		rec.Code = code
+		rec.MarketScore = lowScore - len(merged) - 1
+		rec.Reason = appendAStockReason(rec.Reason, "作为过滤递补候选")
+		rec.Rank = len(merged) + 1
+		merged = append(merged, rec)
+		seen[code] = struct{}{}
+	}
+	return rerankAStockRecommendations(merged)
+}
+
 func aStockRecommendationHotspotCounts(recommendations []aStockRecommendation) map[string]int {
 	if len(recommendations) == 0 {
 		return nil
@@ -5931,14 +6019,11 @@ func aStockRecommendationSelectionsToRecommendations(items []model.AStockRecomme
 		if code == "" {
 			continue
 		}
-		if isBlockedAStockRecommendationStock(code, item.Name) {
-			continue
-		}
 		recommendations = append(recommendations, aStockRecommendation{
 			Rank:         item.Rank,
 			Hotspot:      strings.TrimSpace(item.Hotspot),
 			Code:         code,
-			Name:         strings.TrimSpace(item.Name),
+			Name:         astockcode.DisplayName(code, item.Name),
 			HotspotScore: item.HotspotScore,
 			MarketScore:  item.MarketScore,
 			Reason:       strings.TrimSpace(item.Reason),
@@ -5978,7 +6063,7 @@ func aStockRecommendationsToSelectionItems(recommendations []aStockRecommendatio
 			Rank:         rank,
 			Hotspot:      strings.TrimSpace(rec.Hotspot),
 			Code:         code,
-			Name:         strings.TrimSpace(rec.Name),
+			Name:         astockcode.DisplayName(code, rec.Name),
 			HotspotScore: rec.HotspotScore,
 			MarketScore:  rec.MarketScore,
 			Reason:       strings.TrimSpace(rec.Reason),
@@ -6019,6 +6104,55 @@ func filterBlockedAStockRecommendations(recommendations []aStockRecommendation) 
 	return rerankAStockRecommendations(filtered), skipped
 }
 
+func (s *Server) repairAStockPersistedRecommendationsWithCache(strategyDate string, recommendations []aStockRecommendation, cache *aStockRequestCache) ([]aStockRecommendation, int) {
+	if len(recommendations) == 0 {
+		return recommendations, 0
+	}
+	resolver := newAStockRecommendationNameResolver(nil)
+	if needsAStockMarketNameResolver(recommendations, resolver) {
+		resolver = s.loadAStockRecommendationNameResolverWithCache(strategyDate, cache)
+	}
+	filtered := make([]aStockRecommendation, 0, len(recommendations))
+	skipped := 0
+	for _, rec := range recommendations {
+		code := normalizeAStockCode(rec.Code)
+		name := resolveAStockRecommendationName(code, rec.Name, resolver)
+		if !astockcode.IsShanghaiShenzhen(code) || !astockcode.HasResolvedName(code, name) {
+			skipped++
+			continue
+		}
+		if isBlockedAStockRecommendationStock(code, name) {
+			skipped++
+			continue
+		}
+		rec.Code = code
+		rec.Name = name
+		filtered = append(filtered, rec)
+	}
+	return rerankAStockRecommendations(filtered), skipped
+}
+
+func needsAStockMarketNameResolver(recommendations []aStockRecommendation, resolver map[string]string) bool {
+	for _, rec := range recommendations {
+		code := normalizeAStockCode(rec.Code)
+		if !astockcode.IsShanghaiShenzhen(code) {
+			continue
+		}
+		if resolveAStockRecommendationName(code, rec.Name, resolver) == "" {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) loadAStockRecommendationNameResolverWithCache(strategyDate string, cache *aStockRequestCache) map[string]string {
+	var marketCandidates []aStockMarketCandidate
+	if strings.TrimSpace(s.cfg.ContentURL) != "" {
+		marketCandidates, _, _ = s.loadAStockMarketCandidatesWithStatusWithCache(strategyDate, cache)
+	}
+	return newAStockRecommendationNameResolver(marketCandidates)
+}
+
 func filterBlockedAStockBacktests(rows []aStockBacktestRow) []aStockBacktestRow {
 	if len(rows) == 0 {
 		return rows
@@ -6033,19 +6167,51 @@ func filterBlockedAStockBacktests(rows []aStockBacktestRow) []aStockBacktestRow 
 	return filtered
 }
 
+func filterAStockBacktestsForRecommendations(rows []aStockBacktestRow, recommendations []aStockRecommendation) []aStockBacktestRow {
+	if len(rows) == 0 {
+		return rows
+	}
+	if len(recommendations) == 0 {
+		return []aStockBacktestRow{}
+	}
+	namesByCode := make(map[string]string, len(recommendations))
+	for _, rec := range recommendations {
+		code := normalizeAStockCode(rec.Code)
+		name := astockcode.DisplayName(code, rec.Name)
+		if astockcode.IsShanghaiShenzhen(code) && astockcode.HasResolvedName(code, name) {
+			namesByCode[code] = name
+		}
+	}
+	filtered := make([]aStockBacktestRow, 0, len(rows))
+	for _, row := range rows {
+		code := aStockBacktestRowCode(row)
+		name, ok := namesByCode[code]
+		if !ok {
+			continue
+		}
+		row.Stock = code + " " + name
+		filtered = append(filtered, row)
+	}
+	return filtered
+}
+
 func isBlockedAStockRecommendationCandidate(candidate aStockMarketCandidate) bool {
 	return isBlockedAStockRecommendationStock(candidate.Code, candidate.Name)
 }
 
 func isBlockedAStockRecommendationStock(code string, name string) bool {
 	code = normalizeAStockCode(code)
+	name = astockcode.DisplayName(code, name)
+	if !astockcode.IsShanghaiShenzhen(code) || !astockcode.HasResolvedName(code, name) {
+		return true
+	}
 	if code == "300059" {
 		return true
 	}
 	if _, ok := aStockBlockedRecommendationBankCodes[code]; ok {
 		return true
 	}
-	return strings.Contains(strings.TrimSpace(name), "银行")
+	return strings.Contains(name, "银行")
 }
 
 func newsDerivedAStockMarketCandidates(hotspots []aStockHotspot) []aStockMarketCandidate {
@@ -6219,15 +6385,7 @@ func extractAStockCodes(raw string) []string {
 }
 
 func isAStockCode(code string) bool {
-	if len(code) != 6 {
-		return false
-	}
-	for _, r := range code {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return strings.HasPrefix(code, "0") || strings.HasPrefix(code, "3") || strings.HasPrefix(code, "6") || strings.HasPrefix(code, "8")
+	return astockcode.IsShanghaiShenzhen(code)
 }
 
 func inferAStockNameFromNews(item model.Item) string {
@@ -6312,8 +6470,8 @@ func scoreAStockMarketCandidates(hotspot aStockHotspot, candidates []aStockMarke
 	evidenceIndex := newAStockStockEvidenceIndex(hotspot.MatchedItems)
 	for _, candidate := range candidates {
 		candidate.Code = normalizeAStockCode(candidate.Code)
-		candidate.Name = strings.TrimSpace(candidate.Name)
-		if candidate.Code == "" || candidate.Name == "" {
+		candidate.Name = astockcode.DisplayName(candidate.Code, candidate.Name)
+		if !astockcode.IsShanghaiShenzhen(candidate.Code) || !astockcode.HasResolvedName(candidate.Code, candidate.Name) {
 			continue
 		}
 		if isBlockedAStockRecommendationCandidate(candidate) {

@@ -409,13 +409,15 @@ func TestAStockAuctionAmountsUpsertAndList(t *testing.T) {
 		{Code: "601398", Name: "工商银行", AuctionPrice: 5.2, AuctionVolume: 120000, AuctionAmount: 900000, Source: "akshare_pre_min", Status: "ok", FetchedAt: fetchedAt},
 		{Code: "000001", Name: "平安银行", AuctionPrice: 12, AuctionVolume: 100000, AuctionAmount: 1200000, Source: "akshare_pre_min", Status: "ok", FetchedAt: fetchedAt},
 		{Code: "300750", Name: "宁德时代", AuctionPrice: 210, AuctionVolume: 20000, AuctionAmount: 800000, Source: "akshare_pre_min", Status: "ok", FetchedAt: fetchedAt},
+		{Code: "012322", Name: "012322", AuctionPrice: 1.1, AuctionVolume: 120000, AuctionAmount: 132000, Source: "akshare_pre_min", Status: "ok", FetchedAt: fetchedAt},
+		{Code: "011631", Name: "基金测试", AuctionPrice: 1.2, AuctionVolume: 110000, AuctionAmount: 132000, Source: "akshare_pre_min", Status: "ok", FetchedAt: fetchedAt},
 		{Code: "920118", Name: "太湖远大", AuctionPrice: 18, AuctionVolume: 10000, AuctionAmount: 700000, Source: "akshare_pre_min", Status: "ok", FetchedAt: fetchedAt},
 		{Code: "831526", Name: "凯华材料", AuctionPrice: 15, AuctionVolume: 12000, AuctionAmount: 600000, Source: "akshare_pre_min", Status: "ok", FetchedAt: fetchedAt},
 	}, false)
 	if err != nil {
 		t.Fatalf("UpsertAStockAuctionAmounts insert error: %v", err)
 	}
-	if first.Inserted != 7 || first.Updated != 0 {
+	if first.Inserted != 5 || first.Updated != 0 {
 		t.Fatalf("unexpected insert result: %+v", first)
 	}
 

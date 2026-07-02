@@ -51,6 +51,78 @@ EASTMONEY_CLIST_URLS = [
 EASTMONEY_A_STOCK_FS = "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23"
 EASTMONEY_FIELDS = "f12,f14,f2,f5,f6"
 EASTMONEY_SORT_FIELD = "f12"
+EASTMONEY_SECTOR_TYPE_IDS = {
+    "行业资金流": "2",
+    "概念资金流": "3",
+    "地域资金流": "1",
+}
+EASTMONEY_SECTOR_FUND_FLOW_SPECS = {
+    "今日": {
+        "sort_field": "f62",
+        "stat": "1",
+        "fields": "f12,f14,f2,f3,f62,f184,f66,f69,f72,f75,f78,f81,f84,f87,f204,f205,f124",
+        "change_pct": "f3",
+        "main_net_inflow": "f62",
+        "main_net_inflow_pct": "f184",
+        "super_large_net_inflow": "f66",
+        "super_large_net_inflow_pct": "f69",
+        "large_net_inflow": "f72",
+        "large_net_inflow_pct": "f75",
+        "medium_net_inflow": "f78",
+        "medium_net_inflow_pct": "f81",
+        "small_net_inflow": "f84",
+        "small_net_inflow_pct": "f87",
+        "top_stock": "f204",
+    },
+    "5日": {
+        "sort_field": "f164",
+        "stat": "5",
+        "fields": "f12,f14,f2,f109,f164,f165,f166,f167,f168,f169,f170,f171,f172,f173,f257,f258,f124",
+        "change_pct": "f109",
+        "main_net_inflow": "f164",
+        "main_net_inflow_pct": "f165",
+        "super_large_net_inflow": "f166",
+        "super_large_net_inflow_pct": "f167",
+        "large_net_inflow": "f168",
+        "large_net_inflow_pct": "f169",
+        "medium_net_inflow": "f170",
+        "medium_net_inflow_pct": "f171",
+        "small_net_inflow": "f172",
+        "small_net_inflow_pct": "f173",
+        "top_stock": "f257",
+    },
+    "10日": {
+        "sort_field": "f174",
+        "stat": "10",
+        "fields": "f12,f14,f2,f160,f174,f175,f176,f177,f178,f179,f180,f181,f182,f183,f260,f261,f124",
+        "change_pct": "f160",
+        "main_net_inflow": "f174",
+        "main_net_inflow_pct": "f175",
+        "super_large_net_inflow": "f176",
+        "super_large_net_inflow_pct": "f177",
+        "large_net_inflow": "f178",
+        "large_net_inflow_pct": "f179",
+        "medium_net_inflow": "f180",
+        "medium_net_inflow_pct": "f181",
+        "small_net_inflow": "f182",
+        "small_net_inflow_pct": "f183",
+        "top_stock": "f260",
+    },
+}
+SH_SZ_A_STOCK_PREFIXES = (
+    "000",
+    "001",
+    "002",
+    "003",
+    "300",
+    "301",
+    "600",
+    "601",
+    "603",
+    "605",
+    "688",
+    "689",
+)
 EASTMONEY_HEADERS = {
     "Accept": "application/json,text/plain,*/*",
     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
@@ -405,7 +477,17 @@ def call_pre_market_minute(ak: Any, code: str) -> Any:
 
 def is_sh_sz_code(code: Any) -> bool:
     normalized = text_value(code).zfill(6)
-    return normalized.startswith(("0", "3", "6"))
+    return len(normalized) == 6 and normalized.isdigit() and normalized.startswith(SH_SZ_A_STOCK_PREFIXES)
+
+
+def has_resolved_stock_name(code: Any, name: Any) -> bool:
+    normalized_code = text_value(code).zfill(6)
+    normalized_name = text_value(name)
+    if not normalized_name:
+        return False
+    if normalized_name == normalized_code:
+        return False
+    return not normalized_name.isdigit()
 
 
 def load_symbols(ak: Any, explicit_codes: list[str], limit: int) -> list[dict[str, str]]:
@@ -427,7 +509,7 @@ def load_symbols(ak: Any, explicit_codes: list[str], limit: int) -> list[dict[st
     for _, row in frame.iterrows():
         code = text_value(first_existing(row, ["代码", "code", "股票代码"]))
         name = text_value(first_existing(row, ["名称", "name", "股票名称"]))
-        if not code or not is_sh_sz_code(code):
+        if not code or not is_sh_sz_code(code) or not has_resolved_stock_name(code, name):
             continue
         symbols.append({"code": code.zfill(6), "name": name})
         if limit > 0 and len(symbols) >= limit:
@@ -450,7 +532,7 @@ def fetch_market_snapshot(ak: Any, trade_date: str, limit: int) -> list[dict[str
     for _, row in frame.iterrows():
         code = text_value(first_existing(row, ["代码", "code", "股票代码"]))
         name = text_value(first_existing(row, ["名称", "name", "股票名称"]))
-        if not code or not is_sh_sz_code(code):
+        if not code or not is_sh_sz_code(code) or not has_resolved_stock_name(code, name):
             continue
         price = finite_float(first_existing(row, ["最新价", "今开", "开盘", "price"]))
         volume = finite_float(first_existing(row, ["成交量", "volume"]))
@@ -480,7 +562,7 @@ def eastmoney_rows_to_items(rows: list[dict[str, Any]], trade_date: str, limit: 
     for row in rows:
         code = text_value(row.get("f12"))
         name = text_value(row.get("f14"))
-        if not code or not is_sh_sz_code(code):
+        if not code or not is_sh_sz_code(code) or not has_resolved_stock_name(code, name):
             continue
         code = code.zfill(6)
         if code in seen_codes:
@@ -654,6 +736,8 @@ def write_cache(cache_dir: Path, trade_date: str, payload: dict[str, Any]) -> No
 
 
 def item_has_usable_amount(item: dict[str, Any]) -> bool:
+    if not is_sh_sz_code(item.get("code")) or not has_resolved_stock_name(item.get("code"), item.get("name")):
+        return False
     status = text_value(item.get("status")).lower()
     if status and status != "ok":
         return False
@@ -836,8 +920,130 @@ def sector_fund_flow_item(row: Any, trade_date: str, sector_type: str, indicator
     }
 
 
-def fetch_sector_fund_flow_rank(ak: Any, trade_date: str, sector_type: str, indicator: str, limit: int) -> list[dict[str, Any]]:
-    frame = ak.stock_sector_fund_flow_rank(indicator=indicator, sector_type=sector_type)
+def eastmoney_sector_fund_flow_rows_to_items(
+    rows: list[dict[str, Any]], trade_date: str, sector_type: str, indicator: str, limit: int
+) -> list[dict[str, Any]]:
+    spec = EASTMONEY_SECTOR_FUND_FLOW_SPECS[indicator]
+    ranked_rows = [row for row in rows if isinstance(row, dict) and text_value(row.get("f14"))]
+    ranked_rows.sort(key=lambda row: finite_float(row.get(spec["main_net_inflow"])), reverse=True)
+    items: list[dict[str, Any]] = []
+    for rank, row in enumerate(ranked_rows, start=1):
+        mapped = {
+            "序号": rank,
+            "名称": text_value(row.get("f14")),
+            f"{indicator}涨跌幅": row.get(spec["change_pct"]),
+            f"{indicator}主力净流入-净额": row.get(spec["main_net_inflow"]),
+            f"{indicator}主力净流入-净占比": row.get(spec["main_net_inflow_pct"]),
+            f"{indicator}超大单净流入-净额": row.get(spec["super_large_net_inflow"]),
+            f"{indicator}超大单净流入-净占比": row.get(spec["super_large_net_inflow_pct"]),
+            f"{indicator}大单净流入-净额": row.get(spec["large_net_inflow"]),
+            f"{indicator}大单净流入-净占比": row.get(spec["large_net_inflow_pct"]),
+            f"{indicator}中单净流入-净额": row.get(spec["medium_net_inflow"]),
+            f"{indicator}中单净流入-净占比": row.get(spec["medium_net_inflow_pct"]),
+            f"{indicator}小单净流入-净额": row.get(spec["small_net_inflow"]),
+            f"{indicator}小单净流入-净占比": row.get(spec["small_net_inflow_pct"]),
+            f"{indicator}主力净流入最大股": text_value(row.get(spec["top_stock"])),
+        }
+        item = sector_fund_flow_item(mapped, trade_date, sector_type, indicator)
+        if item is None:
+            continue
+        item["raw_payload"] = json.dumps(json_safe_row(row), ensure_ascii=False, separators=(",", ":"))
+        items.append(item)
+        if limit > 0 and len(items) >= limit:
+            break
+    return items
+
+
+def fetch_eastmoney_sector_fund_flow_rank(
+    trade_date: str, sector_type: str, indicator: str, limit: int
+) -> list[dict[str, Any]]:
+    spec = EASTMONEY_SECTOR_FUND_FLOW_SPECS[indicator]
+    sector_type_id = EASTMONEY_SECTOR_TYPE_IDS[sector_type]
+    errors: list[str] = []
+    for base_url in EASTMONEY_CLIST_URLS:
+        rows: list[dict[str, Any]] = []
+        total = 0
+        try:
+            page = 1
+            while True:
+                params = {
+                    "pn": str(page),
+                    "pz": "100",
+                    "po": "1",
+                    "np": "1",
+                    "ut": "b2884a393a59ad64002292a3e90d46a5",
+                    "fltt": "2",
+                    "invt": "2",
+                    "fid0": spec["sort_field"],
+                    "fs": f"m:90 t:{sector_type_id}",
+                    "stat": spec["stat"],
+                    "fields": spec["fields"],
+                    "rt": "52975239",
+                    "_": str(int(time.time() * 1000)),
+                }
+                url = base_url + "?" + urllib.parse.urlencode(params)
+                payload: dict[str, Any] | None = None
+                page_errors: list[str] = []
+                for attempt in range(3):
+                    try:
+                        request = urllib.request.Request(url, headers=EASTMONEY_HEADERS)
+                        with urllib.request.urlopen(request, timeout=20) as response:
+                            payload = json.loads(response.read().decode("utf-8"))
+                        break
+                    except Exception as exc:  # pragma: no cover - external service variability
+                        page_errors.append(f"{base_url} page {page} attempt {attempt + 1}: {exc}")
+                        time.sleep(0.3 * (attempt + 1))
+                if payload is None:
+                    raise RuntimeError("; ".join(page_errors) or f"{base_url}: request failed")
+                data = payload.get("data") if isinstance(payload, dict) else None
+                page_rows = data.get("diff") if isinstance(data, dict) else None
+                if total <= 0:
+                    total = int(data.get("total") or 0) if isinstance(data, dict) else 0
+                if not isinstance(page_rows, list) or not page_rows:
+                    if rows:
+                        break
+                    raise RuntimeError(f"{base_url}: empty diff on page {page}")
+                rows.extend(page_rows)
+                if total > 0 and len(rows) >= total:
+                    break
+                if len(page_rows) < 100:
+                    break
+                page += 1
+            if rows:
+                return eastmoney_sector_fund_flow_rows_to_items(rows, trade_date, sector_type, indicator, limit)
+            errors.append(f"{base_url}: empty diff")
+        except Exception as exc:  # pragma: no cover - external service variability
+            errors.append(str(exc))
+            continue
+    raise RuntimeError("; ".join(errors) or "Eastmoney sector fund flow returned no data")
+
+
+def fetch_sector_fund_flow_rank(
+    ak: Any | None, trade_date: str, sector_type: str, indicator: str, limit: int, akshare_error: str = ""
+) -> list[dict[str, Any]]:
+    errors: list[str] = []
+    if akshare_error:
+        errors.append(f"AKShare load failed: {akshare_error}")
+    if ak is not None:
+        try:
+            frame = ak.stock_sector_fund_flow_rank(indicator=indicator, sector_type=sector_type)
+        except Exception as exc:
+            errors.append(f"AKShare stock_sector_fund_flow_rank failed: {exc}")
+        else:
+            items = sector_fund_flow_frame_to_items(frame, trade_date, sector_type, indicator, limit)
+            if items:
+                return items
+            errors.append("AKShare stock_sector_fund_flow_rank returned no rows")
+    try:
+        return fetch_eastmoney_sector_fund_flow_rank(trade_date, sector_type, indicator, limit)
+    except Exception as exc:
+        errors.append(f"Eastmoney sector fund flow fallback failed: {exc}")
+        raise RuntimeError("; ".join(errors)) from exc
+
+
+def sector_fund_flow_frame_to_items(
+    frame: Any, trade_date: str, sector_type: str, indicator: str, limit: int
+) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     try:
         iterator = frame.iterrows()
@@ -1181,13 +1387,18 @@ class AuctionService:
         return payload
 
     def fetch_sector_fund_flow(self, query: dict[str, list[str]]) -> dict[str, Any]:
-        ak = load_akshare()
+        ak = None
+        akshare_error = ""
+        try:
+            ak = load_akshare()
+        except Exception as exc:
+            akshare_error = str(exc)
         trade_date = normalize_date(first_query_value(query, "date"))
         sector_type = normalize_sector_fund_flow_sector_type(first_query_value(query, "sector_type"))
         indicator = normalize_sector_fund_flow_indicator(first_query_value(query, "indicator"))
         limit = int_value(first_query_value(query, "limit"), 0)
         started = time.time()
-        items = fetch_sector_fund_flow_rank(ak, trade_date, sector_type, indicator, limit)
+        items = fetch_sector_fund_flow_rank(ak, trade_date, sector_type, indicator, limit, akshare_error)
         payload: dict[str, Any] = {
             "items": items,
             "count": len(items),
@@ -1352,8 +1563,8 @@ def run_self_test() -> None:
     assert normalize_date("20260617") == "2026-06-17"
     assert finite_float("12.3") == 12.3
     assert finite_float("nan") == 0.0
-    assert payload_has_usable_items({"items": [{"status": "ok", "auction_amount": 1}]})
-    assert not payload_has_usable_items({"items": [{"status": "no_auction_amount", "auction_amount": 0}]})
+    assert payload_has_usable_items({"items": [{"code": "000001", "name": "平安银行", "status": "ok", "auction_amount": 1}]})
+    assert not payload_has_usable_items({"items": [{"code": "000001", "name": "平安银行", "status": "no_auction_amount", "auction_amount": 0}]})
     assert normalize_symbol_limit(0) == 0
     assert normalize_symbol_limit(6000) == 6000
     assert normalize_symbol_limit(-1) == 0
@@ -1367,11 +1578,17 @@ def run_self_test() -> None:
     assert eastmoney_target_row_count(5534, 300) == 300
     assert eastmoney_target_row_count(0, 300) == 300
     assert is_sh_sz_code("000001")
+    assert is_sh_sz_code("301696")
+    assert not is_sh_sz_code("012322")
+    assert not is_sh_sz_code("011631")
     assert not is_sh_sz_code("920118")
+    assert has_resolved_stock_name("301696", "测试股份")
+    assert not has_resolved_stock_name("301696", "301696")
     eastmoney_items = eastmoney_rows_to_items(
         [
             {"f12": "1", "f14": "平安银行", "f2": "12.3", "f5": "1000", "f6": "12300"},
             {"f12": "000001", "f14": "平安银行", "f2": "12.3", "f5": "1000", "f6": "12300"},
+            {"f12": "301696", "f14": "301696", "f2": "11.1", "f5": "1000", "f6": "11100"},
         ],
         "2026-06-18",
         0,
@@ -1386,6 +1603,23 @@ def run_self_test() -> None:
         "2026-06-18",
         0,
     )
+    sector_items = eastmoney_sector_fund_flow_rows_to_items(
+        [
+            {"f14": "航空机场", "f3": -0.6, "f62": -100, "f184": -1.2, "f66": -60, "f69": -0.7, "f72": -40, "f75": -0.5, "f78": 20, "f81": 0.2, "f84": 80, "f87": 1.0, "f204": "春秋航空"},
+            {"f14": "风力发电", "f3": 2.6, "f62": 500, "f184": 4.8, "f66": 300, "f69": 2.5, "f72": 200, "f75": 2.3, "f78": -100, "f81": -0.8, "f84": -400, "f87": -4.0, "f204": "N华润"},
+        ],
+        "2026-07-02",
+        "行业资金流",
+        "今日",
+        1,
+    )
+    assert len(sector_items) == 1
+    assert sector_items[0]["rank"] == 1
+    assert sector_items[0]["name"] == "风力发电"
+    assert sector_items[0]["main_net_inflow"] == 500
+    assert sector_items[0]["main_net_inflow_pct"] == 4.8
+    assert sector_items[0]["top_stock"] == "N华润"
+    assert sector_items[0]["source_type"] == "akshare_sector_fund_flow"
 
     class FakeFrame:
         def iterrows(self) -> Any:
