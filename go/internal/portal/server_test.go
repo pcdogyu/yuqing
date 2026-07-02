@@ -2055,6 +2055,15 @@ func setAStockEastmoneyKlineURLForTest(t *testing.T, rawURL string) {
 	})
 }
 
+func setAStockEastmoneyQuoteURLForTest(t *testing.T, rawURL string) {
+	t.Helper()
+	previous := aStockEastmoneyQuoteURL
+	aStockEastmoneyQuoteURL = rawURL
+	t.Cleanup(func() {
+		aStockEastmoneyQuoteURL = previous
+	})
+}
+
 func setAStockTencentMinuteURLForTest(t *testing.T, rawURL string) {
 	t.Helper()
 	previous := aStockTencentMinuteURL
@@ -6483,6 +6492,62 @@ func TestAStockPersistedRecommendationsRepairNamesAndFilterBacktests(t *testing.
 	}, recommendations)
 	if len(backtests) != 2 || backtests[0].Stock != "301696 测试股份" || backtests[1].Stock != "600030 中信证券" {
 		t.Fatalf("expected backtests to follow repaired recommendations, got %+v", backtests)
+	}
+}
+
+func TestAStockSnapshotSaveRepairsNamesFromEastmoneyQuote(t *testing.T) {
+	var captured model.AStockRecommendationSnapshot
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/a-stock/auction":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockAuctionListResult{Date: r.URL.Query().Get("date"), Items: nil})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/internal/a-stock/recommendations":
+			if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+				t.Fatalf("decode snapshot payload: %v", err)
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Updated: 1})
+		default:
+			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	quote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("secid") != "0.301696" {
+			t.Fatalf("unexpected quote secid: %s", r.URL.RawQuery)
+		}
+		_, _ = w.Write([]byte(`{"data":{"f57":"301696","f58":"三瑞智能"}}`))
+	}))
+	defer quote.Close()
+	setAStockEastmoneyQuoteURLForTest(t, quote.URL)
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	err := srv.saveAStockRecommendationSnapshot(aStockContext{
+		Date:   "2026-07-02",
+		Period: "afternoon",
+		Recommendations: []aStockRecommendation{{
+			Rank: 1, Code: "301696", Name: "301696", Hotspot: "金融券商", HotspotScore: 978, MarketScore: 1111,
+		}},
+		Backtests: []aStockBacktestRow{{Stock: "301696 301696", Status: "等待T+1行情"}},
+	})
+	if err != nil {
+		t.Fatalf("save snapshot: %v", err)
+	}
+
+	var recommendations []aStockRecommendation
+	if err := json.Unmarshal([]byte(captured.RecommendationsJSON), &recommendations); err != nil {
+		t.Fatalf("decode recommendations: %v", err)
+	}
+	if len(recommendations) != 1 || recommendations[0].Code != "301696" || recommendations[0].Name != "三瑞智能" {
+		t.Fatalf("expected snapshot recommendations to repair stock name, got %+v", recommendations)
+	}
+	var backtests []aStockBacktestRow
+	if err := json.Unmarshal([]byte(captured.BacktestsJSON), &backtests); err != nil {
+		t.Fatalf("decode backtests: %v", err)
+	}
+	if len(backtests) != 1 || backtests[0].Stock != "301696 三瑞智能" {
+		t.Fatalf("expected snapshot backtests to use repaired stock name, got %+v", backtests)
 	}
 }
 

@@ -301,6 +301,7 @@ const (
 var (
 	aStockNow               = time.Now
 	aStockEastmoneyKlineURL = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+	aStockEastmoneyQuoteURL = "https://push2.eastmoney.com/api/qt/stock/get"
 	aStockTencentMinuteURL  = "https://web.ifzq.gtimg.cn/appstock/app/minute/query"
 	aStockSinaMinuteURL     = "https://quotes.sina.cn/cn/api/jsonp_v2.php/=/CN_MarketDataService.getKLineData"
 	aStockYahooChartURL     = "https://query1.finance.yahoo.com/v8/finance/chart/"
@@ -2047,7 +2048,7 @@ func (s *Server) saveAStockRecommendationSelections(ctx aStockContext) error {
 	if strings.TrimSpace(s.cfg.ContentURL) == "" {
 		return nil
 	}
-	recommendations, _ := filterBlockedAStockRecommendations(ctx.Recommendations)
+	recommendations, _ := s.repairAStockRecommendationsForPersistence(ctx.Date, ctx.Recommendations)
 	selectionSet := model.AStockRecommendationSelectionSet{
 		StrategyDate: ctx.Date,
 		Period:       ctx.Period,
@@ -2069,7 +2070,7 @@ func (s *Server) saveAStockRecommendationSnapshot(ctx aStockContext) error {
 	if strings.TrimSpace(s.cfg.ContentURL) == "" {
 		return nil
 	}
-	recommendations, _ := filterBlockedAStockRecommendations(ctx.Recommendations)
+	recommendations, _ := s.repairAStockRecommendationsForPersistence(ctx.Date, ctx.Recommendations)
 	recommendationsJSON, err := json.Marshal(recommendations)
 	if err != nil {
 		return err
@@ -6112,6 +6113,9 @@ func (s *Server) repairAStockPersistedRecommendationsWithCache(strategyDate stri
 	if needsAStockMarketNameResolver(recommendations, resolver) {
 		resolver = s.loadAStockRecommendationNameResolverWithCache(strategyDate, cache)
 	}
+	if needsAStockMarketNameResolver(recommendations, resolver) {
+		s.addEastmoneyAStockNamesToResolver(resolver, recommendations)
+	}
 	filtered := make([]aStockRecommendation, 0, len(recommendations))
 	skipped := 0
 	for _, rec := range recommendations {
@@ -6145,12 +6149,63 @@ func needsAStockMarketNameResolver(recommendations []aStockRecommendation, resol
 	return false
 }
 
+func (s *Server) addEastmoneyAStockNamesToResolver(resolver map[string]string, recommendations []aStockRecommendation) {
+	if resolver == nil {
+		return
+	}
+	for _, rec := range recommendations {
+		code := normalizeAStockCode(rec.Code)
+		if !astockcode.IsShanghaiShenzhen(code) {
+			continue
+		}
+		if resolveAStockRecommendationName(code, rec.Name, resolver) != "" {
+			continue
+		}
+		if _, exists := resolver[code]; exists {
+			continue
+		}
+		name := s.fetchEastmoneyAStockName(code)
+		addAStockRecommendationResolvedName(resolver, code, name)
+	}
+}
+
+func (s *Server) fetchEastmoneyAStockName(code string) string {
+	code = normalizeAStockCode(code)
+	if !astockcode.IsShanghaiShenzhen(code) {
+		return ""
+	}
+	resp, err := s.client.R().
+		SetQueryParam("secid", eastmoneyAStockSecID(code)).
+		SetQueryParam("fields", "f57,f58,f107").
+		Get(aStockEastmoneyQuoteURL)
+	if err != nil || !resp.IsSuccess() {
+		return ""
+	}
+	var payload struct {
+		Data struct {
+			Code string `json:"f57"`
+			Name string `json:"f58"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(resp.Body(), &payload); err != nil {
+		return ""
+	}
+	if normalizeAStockCode(payload.Data.Code) != code {
+		return ""
+	}
+	return astockcode.DisplayName(code, payload.Data.Name)
+}
+
 func (s *Server) loadAStockRecommendationNameResolverWithCache(strategyDate string, cache *aStockRequestCache) map[string]string {
 	var marketCandidates []aStockMarketCandidate
 	if strings.TrimSpace(s.cfg.ContentURL) != "" {
 		marketCandidates, _, _ = s.loadAStockMarketCandidatesWithStatusWithCache(strategyDate, cache)
 	}
 	return newAStockRecommendationNameResolver(marketCandidates)
+}
+
+func (s *Server) repairAStockRecommendationsForPersistence(strategyDate string, recommendations []aStockRecommendation) ([]aStockRecommendation, int) {
+	return s.repairAStockPersistedRecommendationsWithCache(strategyDate, recommendations, newAStockRequestCache())
 }
 
 func filterBlockedAStockBacktests(rows []aStockBacktestRow) []aStockBacktestRow {
