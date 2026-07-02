@@ -13,6 +13,7 @@ go/data/*.db
 go/data/*.db-shm
 go/data/*.db-wal
 go/runtime-logs/
+go/runtime-pids/
 go/tmp/
 go/go/
 go/**/*.test
