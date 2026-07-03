@@ -6547,27 +6547,15 @@ func TestAStockPersistedRecommendationsBlockEastmoneyAndBankStocks(t *testing.T)
 func TestAStockPersistedRecommendationsRepairNamesAndFilterBacktests(t *testing.T) {
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path != "/api/v1/a-stock/auction" {
+		if r.URL.Path != "/api/v1/a-stock/code-names" {
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
-		writeEnvelope(w, http.StatusOK, "ok", model.AStockAuctionListResult{
-			Date:  r.URL.Query().Get("date"),
+		writeEnvelope(w, http.StatusOK, "ok", model.AStockCodeNameListResult{
 			Total: 2,
-			Items: []model.AStockAuctionAmount{{
-				TradeDate:     r.URL.Query().Get("date"),
-				Code:          "301696",
-				Name:          "测试股份",
-				AuctionAmount: 5000000,
-				AuctionVolume: 100000,
-				Status:        "ok",
-			}, {
-				TradeDate:     r.URL.Query().Get("date"),
-				Code:          "002179",
-				Name:          "中航光电",
-				AuctionAmount: 4000000,
-				AuctionVolume: 80000,
-				Status:        "ok",
-			}},
+			Items: []model.AStockCodeName{
+				{Code: "301696", Name: "测试股份", Source: "akshare_code_name"},
+				{Code: "002179", Name: "中航光电", Source: "akshare_code_name"},
+			},
 		})
 	}))
 	defer content.Close()
@@ -6610,6 +6598,8 @@ func TestAStockSnapshotSaveRepairsNamesFromEastmoneyQuote(t *testing.T) {
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/a-stock/code-names":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockCodeNameListResult{Items: nil})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/a-stock/auction":
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockAuctionListResult{Date: r.URL.Query().Get("date"), Items: nil})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/internal/a-stock/recommendations":

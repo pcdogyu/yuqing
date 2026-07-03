@@ -397,6 +397,7 @@ func (w *Worker) runAStockAuctionCrawlForDateResult(ctx context.Context, tradeDa
 			payload.Items[i].FetchedAt = time.Now().UTC()
 		}
 	}
+	repairAStockAuctionPayloadItemNames(payload.Items, payload.CodeNames)
 	payload.Items = filterAStockAuctionPayloadItems(payload.Items)
 	okCount := 0
 	for _, item := range payload.Items {
@@ -416,9 +417,10 @@ func (w *Worker) runAStockAuctionCrawlForDateResult(ctx context.Context, tradeDa
 		return aStockAuctionCrawlResult{Date: payload.Date, Total: len(payload.Items), OK: okCount, Skipped: true, Message: message}, nil
 	}
 	writePayload := map[string]any{
-		"date":    payload.Date,
-		"items":   payload.Items,
-		"replace": true,
+		"date":       payload.Date,
+		"items":      payload.Items,
+		"code_names": payload.CodeNames,
+		"replace":    true,
 	}
 	writeResp, err := w.client.R().
 		SetContext(ctx).
@@ -761,10 +763,11 @@ func decodeAStockStockFundFlowPayload(body []byte) (aStockStockFundFlowPayload, 
 }
 
 type aStockAuctionPayload struct {
-	Date    string                      `json:"date"`
-	Items   []model.AStockAuctionAmount `json:"items"`
-	Message string                      `json:"message"`
-	Warning string                      `json:"warning"`
+	Date      string                      `json:"date"`
+	Items     []model.AStockAuctionAmount `json:"items"`
+	CodeNames []model.AStockCodeName      `json:"code_names"`
+	Message   string                      `json:"message"`
+	Warning   string                      `json:"warning"`
 }
 
 func decodeAStockAuctionPayload(body []byte) (aStockAuctionPayload, error) {
@@ -782,13 +785,15 @@ func decodeAStockAuctionPayload(body []byte) (aStockAuctionPayload, error) {
 	}
 	var envelope struct {
 		Data struct {
-			Date  string                      `json:"date"`
-			Items []model.AStockAuctionAmount `json:"items"`
+			Date      string                      `json:"date"`
+			Items     []model.AStockAuctionAmount `json:"items"`
+			CodeNames []model.AStockCodeName      `json:"code_names"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &envelope); err == nil && (envelope.Data.Date != "" || len(envelope.Data.Items) > 0) {
 		payload.Date = envelope.Data.Date
 		payload.Items = envelope.Data.Items
+		payload.CodeNames = envelope.Data.CodeNames
 	}
 	return payload, nil
 }
@@ -822,6 +827,26 @@ func isUsableAStockAuctionItem(item model.AStockAuctionAmount) bool {
 		return false
 	}
 	return item.AuctionAmount > 0 || item.AuctionVolume > 0
+}
+
+func repairAStockAuctionPayloadItemNames(items []model.AStockAuctionAmount, codeNames []model.AStockCodeName) {
+	if len(items) == 0 || len(codeNames) == 0 {
+		return
+	}
+	names := make(map[string]string, len(codeNames))
+	for _, item := range codeNames {
+		code := astockcode.Normalize(item.Code)
+		name := astockcode.DisplayName(code, item.Name)
+		if astockcode.IsShanghaiShenzhen(code) && astockcode.HasResolvedName(code, name) {
+			names[code] = name
+		}
+	}
+	for i := range items {
+		code := astockcode.Normalize(items[i].Code)
+		if name := names[code]; name != "" {
+			items[i].Name = name
+		}
+	}
 }
 
 func filterAStockAuctionPayloadItems(items []model.AStockAuctionAmount) []model.AStockAuctionAmount {

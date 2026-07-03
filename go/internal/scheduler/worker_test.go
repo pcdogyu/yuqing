@@ -1395,6 +1395,32 @@ func TestRunAStockAuctionCrawlFetchesAkshareAndWritesContent(t *testing.T) {
 	}
 }
 
+func TestAStockAuctionPayloadNamesUseCodeNamesBeforeFiltering(t *testing.T) {
+	items := []model.AStockAuctionAmount{
+		{Code: "000034", Name: "金十数据整理", AuctionVolume: 10000, AuctionAmount: 282500, Status: "ok"},
+		{Code: "601995", Name: "中金", AuctionVolume: 10000, AuctionAmount: 363800, Status: "ok"},
+		{Code: "002179", Name: "金十数据整理", AuctionVolume: 10000, AuctionAmount: 600000, Status: "ok"},
+	}
+	codeNames := []model.AStockCodeName{
+		{Code: "000034", Name: "神州数码"},
+		{Code: "601995", Name: "中金公司"},
+	}
+
+	repairAStockAuctionPayloadItemNames(items, codeNames)
+	filtered := filterAStockAuctionPayloadItems(items)
+
+	if len(filtered) != 2 {
+		t.Fatalf("expected unresolved placeholder row to be skipped after dictionary repair, got %+v", filtered)
+	}
+	got := map[string]string{}
+	for _, item := range filtered {
+		got[item.Code] = item.Name
+	}
+	if got["000034"] != "神州数码" || got["601995"] != "中金公司" {
+		t.Fatalf("expected dictionary names before filtering, got %+v", filtered)
+	}
+}
+
 func TestRunAStockAuctionLatestUsesAdapterDate(t *testing.T) {
 	var contentPayload struct {
 		Date  string                      `json:"date"`

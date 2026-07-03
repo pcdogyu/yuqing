@@ -46,6 +46,9 @@ func HasResolvedName(code string, name string) bool {
 	if name == "" {
 		return false
 	}
+	if IsPlaceholderName(name) {
+		return false
+	}
 	if isSixDigitCode(Normalize(name)) && Normalize(name) == Normalize(code) {
 		return false
 	}
@@ -67,6 +70,18 @@ func SQLWhere() string {
 		parts = append(parts, "code LIKE '"+prefix+"%'")
 	}
 	return "(" + strings.Join(parts, " OR ") + ")"
+}
+
+func IsPlaceholderName(name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false
+	}
+	switch name {
+	case "金十数据整理", "金十数据", "金十快讯", "金十资讯", "金十全站", "金十期货":
+		return true
+	}
+	return strings.Contains(name, "数据整理")
 }
 
 func isSixDigitCode(code string) bool {

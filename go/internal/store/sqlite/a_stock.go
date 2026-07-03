@@ -68,11 +68,25 @@ ON CONFLICT(trade_date, code) DO UPDATE SET
 	}
 	defer stmt.Close()
 
+	codeNames := make([]string, 0, len(items))
+	for _, item := range items {
+		if code := astockcode.Normalize(item.Code); code != "" {
+			codeNames = append(codeNames, code)
+		}
+	}
+	resolvedNames, err := loadAStockCodeNameMapTx(ctx, tx, codeNames)
+	if err != nil {
+		return result, err
+	}
+
 	now := time.Now().UTC()
 	for _, item := range items {
 		date := nonEmpty(strings.TrimSpace(item.TradeDate), tradeDate)
 		code := astockcode.Normalize(item.Code)
 		name := astockcode.DisplayName(code, item.Name)
+		if resolved := astockcode.DisplayName(code, resolvedNames[code]); astockcode.HasResolvedName(code, resolved) {
+			name = resolved
+		}
 		if date == "" || !astockcode.IsShanghaiShenzhen(code) || !astockcode.HasResolvedName(code, name) {
 			continue
 		}

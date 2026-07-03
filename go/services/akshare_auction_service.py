@@ -525,35 +525,74 @@ def has_resolved_stock_name(code: Any, name: Any) -> bool:
     normalized_name = text_value(name)
     if not normalized_name:
         return False
+    if is_placeholder_stock_name(normalized_name):
+        return False
     if normalized_name == normalized_code:
         return False
     return not normalized_name.isdigit()
 
 
-def load_symbols(ak: Any, explicit_codes: list[str], limit: int) -> list[dict[str, str]]:
+def is_placeholder_stock_name(name: Any) -> bool:
+    normalized_name = text_value(name)
+    if not normalized_name:
+        return False
+    if normalized_name in {"金十数据整理", "金十数据", "金十快讯", "金十资讯", "金十全站", "金十期货"}:
+        return True
+    return "数据整理" in normalized_name
+
+
+def stock_code_name_items_from_frame(frame: Any, source: str, limit: int = 0) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    seen_codes: set[str] = set()
+    for _, row in frame.iterrows():
+        code = text_value(first_existing(row, ["代码", "code", "股票代码"]))
+        name = text_value(first_existing(row, ["名称", "name", "股票名称"]))
+        if not code or not is_sh_sz_code(code) or not has_resolved_stock_name(code, name):
+            continue
+        code = code.zfill(6)
+        if code in seen_codes:
+            continue
+        seen_codes.add(code)
+        items.append({"code": code, "name": name, "source": source, "updated_at": utc_now_iso()})
+        if limit > 0 and len(items) >= limit:
+            break
+    return items
+
+
+def load_stock_code_names(ak: Any, limit: int = 0) -> tuple[list[dict[str, str]], str]:
+    errors: list[str] = []
+    for loader_name, source in (("stock_info_a_code_name", "akshare_code_name"), ("stock_zh_a_spot_em", "eastmoney_spot")):
+        loader = getattr(ak, loader_name, None)
+        if loader is None:
+            errors.append(f"{loader_name}: unavailable")
+            continue
+        try:
+            items = stock_code_name_items_from_frame(loader(), source, limit)
+            if items:
+                return items, ""
+            errors.append(f"{loader_name}: no usable code names")
+        except Exception as exc:
+            errors.append(f"{loader_name}: {exc}")
+    return [], "; ".join(errors)
+
+
+def load_symbols(ak: Any, explicit_codes: list[str], limit: int, code_names: list[dict[str, str]] | None = None) -> list[dict[str, str]]:
+    names_by_code = {text_value(item.get("code")).zfill(6): text_value(item.get("name")) for item in code_names or []}
     if explicit_codes:
         symbols = []
         for code in explicit_codes:
             normalized = text_value(code).zfill(6)
             if not is_sh_sz_code(normalized):
                 continue
-            symbols.append({"code": normalized, "name": ""})
+            symbols.append({"code": normalized, "name": names_by_code.get(normalized, "")})
             if limit > 0 and len(symbols) >= limit:
                 break
         return symbols
-    try:
-        frame = ak.stock_zh_a_spot_em()
-    except Exception:
-        frame = ak.stock_info_a_code_name()
-    symbols: list[dict[str, str]] = []
-    for _, row in frame.iterrows():
-        code = text_value(first_existing(row, ["代码", "code", "股票代码"]))
-        name = text_value(first_existing(row, ["名称", "name", "股票名称"]))
-        if not code or not is_sh_sz_code(code) or not has_resolved_stock_name(code, name):
-            continue
-        symbols.append({"code": code.zfill(6), "name": name})
-        if limit > 0 and len(symbols) >= limit:
-            break
+    if code_names is None:
+        code_names, _ = load_stock_code_names(ak, limit)
+    symbols = [{"code": item["code"], "name": item["name"]} for item in code_names if item.get("code")]
+    if limit > 0:
+        symbols = symbols[:limit]
     return symbols
 
 
@@ -1826,8 +1865,9 @@ class AuctionService:
 
         started = time.time()
         warning = ""
+        code_names, code_name_warning = load_stock_code_names(ak, 0)
         if explicit_codes:
-            symbols = load_symbols(ak, explicit_codes, limit)
+            symbols = load_symbols(ak, explicit_codes, limit, code_names)
             with concurrent.futures.ThreadPoolExecutor(max_workers=self.workers) as pool:
                 items = list(pool.map(lambda symbol: fetch_one_auction(ak, symbol, trade_date), symbols))
         else:
@@ -1855,7 +1895,7 @@ class AuctionService:
                 except Exception as eastmoney_exc:
                     effective_limit = normalize_symbol_limit(limit)
                     try:
-                        symbols = load_symbols(ak, [], effective_limit)
+                        symbols = load_symbols(ak, [], effective_limit, code_names)
                         with concurrent.futures.ThreadPoolExecutor(max_workers=self.workers) as pool:
                             items = list(pool.map(lambda symbol: fetch_one_auction(ak, symbol, trade_date), symbols))
                         warning = (
@@ -1880,9 +1920,13 @@ class AuctionService:
                         warning += f"; direct Eastmoney snapshot also failed: {eastmoney_exc}"
                     else:
                         warning = f"AKShare snapshot returned no usable amounts and direct Eastmoney snapshot failed: {eastmoney_exc}"
+        if code_name_warning:
+            warning = ((warning + "; ") if warning else "") + f"code name universe fallback failed: {code_name_warning}"
         payload = {
             "date": trade_date,
             "items": items,
+            "code_names": code_names,
+            "code_name_count": len(code_names),
             "count": len(items),
             "ok": sum(1 for item in items if item.get("status") == "ok"),
             "elapsed_sec": round(time.time() - started, 3),
@@ -2217,6 +2261,20 @@ def run_self_test() -> None:
     assert not is_sh_sz_code("920118")
     assert has_resolved_stock_name("301696", "测试股份")
     assert not has_resolved_stock_name("301696", "301696")
+    assert not has_resolved_stock_name("000034", "金十数据整理")
+    class FakeCodeNameFrame:
+        def iterrows(self) -> Any:
+            return iter(
+                [
+                    (0, {"代码": "000034", "名称": "神州数码"}),
+                    (1, {"代码": "601995", "名称": "中金公司"}),
+                    (2, {"代码": "301696", "名称": "金十数据整理"}),
+                ]
+            )
+
+    code_name_items = stock_code_name_items_from_frame(FakeCodeNameFrame(), "akshare_code_name")
+    assert [item["code"] for item in code_name_items] == ["000034", "601995"]
+    assert code_name_items[0]["name"] == "神州数码"
     eastmoney_items = eastmoney_rows_to_items(
         [
             {"f12": "1", "f14": "平安银行", "f2": "12.3", "f5": "1000", "f6": "12300"},

@@ -97,6 +97,8 @@ type Store interface {
 	CreatePublicOption(rctx context.Context, option model.PublicOption) (model.PublicOption, error)
 	UpdatePublicOption(rctx context.Context, option model.PublicOption) (model.PublicOption, error)
 	DeletePublicOption(rctx context.Context, id int64) error
+	UpsertAStockCodeNames(rctx context.Context, items []model.AStockCodeName) (model.AStockCodeNameUpsertResult, error)
+	ListAStockCodeNames(rctx context.Context, codes []string) (model.AStockCodeNameListResult, error)
 	UpsertAStockAuctionAmounts(rctx context.Context, tradeDate string, items []model.AStockAuctionAmount, replace bool) (model.AStockAuctionUpsertResult, error)
 	ListAStockAuctionAmounts(rctx context.Context, filter model.AStockAuctionFilter) (model.AStockAuctionListResult, error)
 	UpsertAStockRecommendationSnapshot(rctx context.Context, snapshot model.AStockRecommendationSnapshot) (model.AStockRecommendationSnapshotUpsertResult, error)
@@ -181,6 +183,7 @@ func (s *Service) Routes(r chi.Router) {
 	r.Delete("/api/v1/articles/{id}/read", s.handleUnmarkArticleRead)
 	r.Post("/api/v1/articles/{id}/favorite", s.handleToggleFavorite)
 	r.Post("/api/v1/articles/{id}/share", s.handleShareArticle)
+	r.Get("/api/v1/a-stock/code-names", s.handleListAStockCodeNames)
 	r.Get("/api/v1/a-stock/auction", s.handleListAStockAuctionAmounts)
 	r.Post("/api/v1/admin/a-stock/auction", s.handleUpsertAStockAuctionAmounts)
 	r.Get("/api/v1/a-stock/recommendations", s.handleGetAStockRecommendationSnapshot)
@@ -614,6 +617,19 @@ func (s *Service) handleListAStockAuctionAmounts(w http.ResponseWriter, r *http.
 	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
 }
 
+func (s *Service) handleListAStockCodeNames(w http.ResponseWriter, r *http.Request) {
+	codes := splitAStockRecommendationCodes(r.URL.Query().Get("codes"))
+	if code := strings.TrimSpace(r.URL.Query().Get("code")); code != "" {
+		codes = append(codes, code)
+	}
+	result, err := s.store.ListAStockCodeNames(r.Context(), codes)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
 func normalizeAStockAuctionTrendDays(days int) int {
 	switch days {
 	case 14:
@@ -627,9 +643,10 @@ func normalizeAStockAuctionTrendDays(days int) int {
 
 func (s *Service) handleUpsertAStockAuctionAmounts(w http.ResponseWriter, r *http.Request) {
 	var payload struct {
-		Date    string                      `json:"date"`
-		Items   []model.AStockAuctionAmount `json:"items"`
-		Replace bool                        `json:"replace"`
+		Date      string                      `json:"date"`
+		Items     []model.AStockAuctionAmount `json:"items"`
+		CodeNames []model.AStockCodeName      `json:"code_names"`
+		Replace   bool                        `json:"replace"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid json", nil)
@@ -643,6 +660,12 @@ func (s *Service) handleUpsertAStockAuctionAmounts(w http.ResponseWriter, r *htt
 	for i := range payload.Items {
 		if strings.TrimSpace(payload.Items[i].TradeDate) == "" {
 			payload.Items[i].TradeDate = payload.Date
+		}
+	}
+	if len(payload.CodeNames) > 0 {
+		if _, err := s.store.UpsertAStockCodeNames(r.Context(), payload.CodeNames); err != nil {
+			apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+			return
 		}
 	}
 	result, err := s.store.UpsertAStockAuctionAmounts(r.Context(), payload.Date, payload.Items, payload.Replace)

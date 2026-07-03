@@ -475,6 +475,13 @@ CREATE TABLE IF NOT EXISTS a_stock_auction_amounts (
 	PRIMARY KEY (trade_date, code)
 );
 
+CREATE TABLE IF NOT EXISTS a_stock_code_names (
+	code TEXT PRIMARY KEY,
+	name TEXT NOT NULL DEFAULT '',
+	source TEXT NOT NULL DEFAULT '',
+	updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS a_stock_recommendation_snapshots (
 	strategy_date TEXT NOT NULL,
 	period TEXT NOT NULL,
@@ -711,6 +718,7 @@ CREATE INDEX IF NOT EXISTS idx_crypto_price_candles_lookup ON crypto_price_candl
 CREATE INDEX IF NOT EXISTS idx_crypto_insight_snapshots_expiry ON crypto_insight_snapshots(expires_at, pair);
 CREATE INDEX IF NOT EXISTS idx_a_stock_auction_date_amount ON a_stock_auction_amounts(trade_date DESC, auction_amount DESC);
 CREATE INDEX IF NOT EXISTS idx_a_stock_auction_code ON a_stock_auction_amounts(code);
+CREATE INDEX IF NOT EXISTS idx_a_stock_code_names_updated ON a_stock_code_names(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_a_stock_recommendations_updated ON a_stock_recommendation_snapshots(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_a_stock_recommendation_selections_lookup ON a_stock_recommendation_selections(strategy_date, period, rank, code);
 CREATE INDEX IF NOT EXISTS idx_a_stock_sector_fund_flow_lookup ON a_stock_sector_fund_flows(trade_date DESC, sector_type, indicator, rank);

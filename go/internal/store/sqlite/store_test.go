@@ -498,6 +498,63 @@ func TestAStockAuctionAmountsUpsertAndList(t *testing.T) {
 	}
 }
 
+func TestAStockAuctionAmountsResolveNamesFromCodeDictionary(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	fetchedAt := time.Date(2026, 7, 3, 1, 30, 0, 0, time.UTC)
+
+	dictionary, err := store.UpsertAStockCodeNames(ctx, []model.AStockCodeName{
+		{Code: "000034", Name: "神州数码", Source: "akshare_code_name", UpdatedAt: fetchedAt},
+		{Code: "601995", Name: "中金公司", Source: "akshare_code_name", UpdatedAt: fetchedAt},
+		{Code: "301696", Name: "三瑞智能", Source: "akshare_code_name", UpdatedAt: fetchedAt},
+		{Code: "000001", Name: "金十数据整理", Source: "akshare_code_name", UpdatedAt: fetchedAt},
+	})
+	if err != nil {
+		t.Fatalf("UpsertAStockCodeNames error: %v", err)
+	}
+	if dictionary.Inserted != 3 || dictionary.Updated != 0 {
+		t.Fatalf("expected three valid dictionary rows, got %+v", dictionary)
+	}
+
+	names, err := store.ListAStockCodeNames(ctx, []string{"000034", "601995", "301696", "000001"})
+	if err != nil {
+		t.Fatalf("ListAStockCodeNames error: %v", err)
+	}
+	if names.Total != 3 {
+		t.Fatalf("expected placeholder name to be excluded from dictionary, got %+v", names)
+	}
+
+	result, err := store.UpsertAStockAuctionAmounts(ctx, "2026-07-03", []model.AStockAuctionAmount{
+		{Code: "000034", Name: "金十数据整理", AuctionPrice: 28.25, AuctionVolume: 10000, AuctionAmount: 282500, Source: "akshare_pre_min", Status: "ok", FetchedAt: fetchedAt},
+		{Code: "601995", Name: "中金", AuctionPrice: 36.38, AuctionVolume: 10000, AuctionAmount: 363800, Source: "akshare_pre_min", Status: "ok", FetchedAt: fetchedAt},
+		{Code: "301696", Name: "301696", AuctionPrice: 136.11, AuctionVolume: 10000, AuctionAmount: 1361100, Source: "akshare_pre_min", Status: "ok", FetchedAt: fetchedAt},
+		{Code: "002179", Name: "金十数据整理", AuctionPrice: 60, AuctionVolume: 10000, AuctionAmount: 600000, Source: "akshare_pre_min", Status: "ok", FetchedAt: fetchedAt},
+	}, false)
+	if err != nil {
+		t.Fatalf("UpsertAStockAuctionAmounts with dictionary error: %v", err)
+	}
+	if result.Inserted != 3 || result.Updated != 0 {
+		t.Fatalf("expected dictionary to repair three auction rows and skip unresolved placeholder, got %+v", result)
+	}
+
+	list, err := store.ListAStockAuctionAmounts(ctx, model.AStockAuctionFilter{Date: "2026-07-03", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListAStockAuctionAmounts error: %v", err)
+	}
+	got := map[string]string{}
+	for _, item := range list.Items {
+		got[item.Code] = item.Name
+	}
+	for code, want := range map[string]string{"000034": "神州数码", "601995": "中金公司", "301696": "三瑞智能"} {
+		if got[code] != want {
+			t.Fatalf("expected %s name %s, got %q in %+v", code, want, got[code], list.Items)
+		}
+	}
+	if _, exists := got["002179"]; exists {
+		t.Fatalf("expected unresolved placeholder row to be skipped, got %+v", list.Items)
+	}
+}
+
 func TestAStockRecommendationSnapshotUpsertAndGet(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()

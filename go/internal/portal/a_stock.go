@@ -181,6 +181,7 @@ type aStockRequestCache struct {
 	selections                map[string]aStockRecommendationSelectionCacheEntry
 	holdingSummaries          map[string]aStockHoldingSummaryCacheEntry
 	auctionResults            map[string]aStockAuctionResultCacheEntry
+	codeNames                 map[string]map[string]string
 	sourceRuns                []aStockSourceRun
 }
 
@@ -1492,6 +1493,7 @@ func newAStockRequestCache() *aStockRequestCache {
 		selections:                make(map[string]aStockRecommendationSelectionCacheEntry),
 		holdingSummaries:          make(map[string]aStockHoldingSummaryCacheEntry),
 		auctionResults:            make(map[string]aStockAuctionResultCacheEntry),
+		codeNames:                 make(map[string]map[string]string),
 	}
 }
 
@@ -2006,6 +2008,44 @@ func (s *Server) loadAStockRecommendationLatestDatesWithCache(strategyDate strin
 		cache.latestRecommendationDates[cacheKey] = latestDates
 	}
 	return latestDates
+}
+
+func (s *Server) loadAStockCodeNamesWithCache(codes []string, cache *aStockRequestCache) map[string]string {
+	if strings.TrimSpace(s.cfg.ContentURL) == "" {
+		return nil
+	}
+	normalizedCodes := normalizeAStockCodeList(codes)
+	if len(normalizedCodes) == 0 {
+		return nil
+	}
+	cacheKey := aStockCodeNameCacheKey(normalizedCodes)
+	if cache != nil {
+		if cached, ok := cache.codeNames[cacheKey]; ok {
+			return cached
+		}
+	}
+	query := "/api/v1/a-stock/code-names?codes=" + url.QueryEscape(strings.Join(normalizedCodes, ","))
+	result := model.AStockCodeNameListResult{}
+	names := make(map[string]string)
+	if err := s.getJSON(strings.TrimRight(s.cfg.ContentURL, "/")+query, &result); err == nil {
+		for _, item := range result.Items {
+			code := normalizeAStockCode(item.Code)
+			name := astockcode.DisplayName(code, item.Name)
+			if astockcode.IsShanghaiShenzhen(code) && hasResolvedAStockRecommendationName(code, name) {
+				names[code] = name
+			}
+		}
+	}
+	if cache != nil {
+		cache.codeNames[cacheKey] = names
+	}
+	return names
+}
+
+func aStockCodeNameCacheKey(codes []string) string {
+	keyCodes := append([]string(nil), codes...)
+	sort.Strings(keyCodes)
+	return strings.Join(keyCodes, ",")
 }
 
 func aStockHotspotTopStockCodes(hotspots []aStockHotspot) []string {
@@ -5697,6 +5737,15 @@ func addAStockRecommendationResolvedName(names map[string]string, code string, n
 	names[code] = name
 }
 
+func setAStockRecommendationResolvedName(names map[string]string, code string, name string) {
+	code = normalizeAStockCode(code)
+	name = astockcode.DisplayName(code, name)
+	if !astockcode.IsShanghaiShenzhen(code) || !hasResolvedAStockRecommendationName(code, name) {
+		return
+	}
+	names[code] = name
+}
+
 func resolveAStockRecommendationName(code string, name string, names map[string]string) string {
 	code = normalizeAStockCode(code)
 	name = astockcode.DisplayName(code, name)
@@ -5730,19 +5779,11 @@ func shouldUseResolvedAStockRecommendationName(code string, name string, resolve
 
 func hasResolvedAStockRecommendationName(code string, name string) bool {
 	name = astockcode.DisplayName(code, name)
-	return astockcode.HasResolvedName(code, name) && !isAStockRecommendationPlaceholderName(name)
+	return astockcode.HasResolvedName(code, name)
 }
 
 func isAStockRecommendationPlaceholderName(name string) bool {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return false
-	}
-	switch name {
-	case "金十数据整理", "金十数据", "金十快讯", "金十资讯", "金十全站", "金十期货":
-		return true
-	}
-	return strings.Contains(name, "数据整理")
+	return astockcode.IsPlaceholderName(name)
 }
 
 func fixedPoolAStockMarketCandidates(hotspots []aStockHotspot, marketCandidates []aStockMarketCandidate) []aStockMarketCandidate {
@@ -5976,6 +6017,26 @@ func aStockRecommendationCodeSet(recommendations []aStockRecommendation) map[str
 	return codes
 }
 
+func aStockRecommendationCodes(recommendations []aStockRecommendation) []string {
+	if len(recommendations) == 0 {
+		return nil
+	}
+	codes := make([]string, 0, len(recommendations))
+	seen := make(map[string]struct{}, len(recommendations))
+	for _, rec := range recommendations {
+		code := normalizeAStockCode(rec.Code)
+		if code == "" {
+			continue
+		}
+		if _, exists := seen[code]; exists {
+			continue
+		}
+		seen[code] = struct{}{}
+		codes = append(codes, code)
+	}
+	return codes
+}
+
 func mergeAStockLimitUpReplacementPool(base []aStockRecommendation, replacementPool []aStockRecommendation) []aStockRecommendation {
 	if len(base) == 0 || len(replacementPool) <= len(base) {
 		return base
@@ -6151,7 +6212,7 @@ func (s *Server) repairAStockPersistedRecommendationsWithCache(strategyDate stri
 	}
 	resolver := newAStockRecommendationNameResolver(nil)
 	if needsAStockMarketNameResolver(recommendations, resolver) {
-		resolver = s.loadAStockRecommendationNameResolverWithCache(strategyDate, cache)
+		resolver = s.loadAStockRecommendationNameResolverWithCache(strategyDate, recommendations, cache)
 	}
 	if needsAStockMarketNameResolver(recommendations, resolver) {
 		s.addEastmoneyAStockNamesToResolver(resolver, recommendations)
@@ -6182,17 +6243,25 @@ func needsAStockMarketNameResolver(recommendations []aStockRecommendation, resol
 		if !astockcode.IsShanghaiShenzhen(code) {
 			continue
 		}
-		if resolver == nil {
-			return true
+		if resolver != nil {
+			resolved := astockcode.DisplayName(code, resolver[code])
+			if hasResolvedAStockRecommendationName(code, resolved) && shouldUseResolvedAStockRecommendationName(code, rec.Name, resolved) {
+				continue
+			}
 		}
-		if _, ok := resolver[code]; !ok {
-			return true
-		}
-		if resolveAStockRecommendationName(code, rec.Name, resolver) == "" {
+		if shouldResolveAStockRecommendationName(code, rec.Name) {
 			return true
 		}
 	}
 	return false
+}
+
+func shouldResolveAStockRecommendationName(code string, name string) bool {
+	name = astockcode.DisplayName(code, name)
+	if !hasResolvedAStockRecommendationName(code, name) {
+		return true
+	}
+	return len([]rune(name)) <= 2
 }
 
 func (s *Server) addEastmoneyAStockNamesToResolver(resolver map[string]string, recommendations []aStockRecommendation) {
@@ -6239,12 +6308,22 @@ func (s *Server) fetchEastmoneyAStockName(code string) string {
 	return astockcode.DisplayName(code, payload.Data.Name)
 }
 
-func (s *Server) loadAStockRecommendationNameResolverWithCache(strategyDate string, cache *aStockRequestCache) map[string]string {
+func (s *Server) loadAStockRecommendationNameResolverWithCache(strategyDate string, recommendations []aStockRecommendation, cache *aStockRequestCache) map[string]string {
+	resolver := newAStockRecommendationNameResolver(nil)
+	for code, name := range s.loadAStockCodeNamesWithCache(aStockRecommendationCodes(recommendations), cache) {
+		setAStockRecommendationResolvedName(resolver, code, name)
+	}
+	if !needsAStockMarketNameResolver(recommendations, resolver) {
+		return resolver
+	}
 	var marketCandidates []aStockMarketCandidate
 	if strings.TrimSpace(s.cfg.ContentURL) != "" {
 		marketCandidates, _, _ = s.loadAStockMarketCandidatesWithStatusWithCache(strategyDate, cache)
 	}
-	return newAStockRecommendationNameResolver(marketCandidates)
+	for _, candidate := range marketCandidates {
+		addAStockRecommendationResolvedName(resolver, candidate.Code, candidate.Name)
+	}
+	return resolver
 }
 
 func (s *Server) repairAStockRecommendationsForPersistence(strategyDate string, recommendations []aStockRecommendation) ([]aStockRecommendation, int) {

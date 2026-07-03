@@ -47,6 +47,24 @@ type AStockAuctionUpsertResult struct {
 	Total    int    `json:"total"`
 }
 
+type AStockCodeName struct {
+	Code      string    `json:"code"`
+	Name      string    `json:"name"`
+	Source    string    `json:"source"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type AStockCodeNameListResult struct {
+	Items []AStockCodeName `json:"items"`
+	Total int              `json:"total"`
+}
+
+type AStockCodeNameUpsertResult struct {
+	Inserted int `json:"inserted"`
+	Updated  int `json:"updated"`
+	Total    int `json:"total"`
+}
+
 type AStockAuctionTrend struct {
 	Date         string                   `json:"date"`
 	StockCount   int                      `json:"stock_count"`
