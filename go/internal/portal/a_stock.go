@@ -536,7 +536,6 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 	b.WriteString(aStockMarketConfigHint())
 	b.WriteString(`，用于展示昨日收盘价、现价、涨跌幅和消息回测。</p><div class="astock-source-list"><span class="astock-badge">jin10_kuaixun: https://www.jin10.com/</span><span class="astock-badge">jin10_资讯: https://xnews.jin10.com/</span><span class="astock-badge">jin10_full: 金十全站</span><span class="astock-badge">eastmoney_kuaixun: 东方财富网</span><span class="astock-badge">wallstreetcn_a_stock: 华尔街见闻</span><span class="astock-badge">cls_telegraph: 财联社</span><span class="astock-badge">sina_finance_7x24: 新浪财经</span></div></section>`)
 
-	renderAStockNewsSections(&b, morningCtx, afternoonCtx)
 	renderAStockHotspotSection(&b, ctx.Hotspots)
 	renderAStockBacktestSection(&b, ctx.Date, ctx.Period, ctx.IgnoreRecent, ctx.IgnoreLimitUp, ctx.TodayMarketFilterEnabled, morningCtx, afternoonCtx)
 
@@ -998,10 +997,16 @@ func aStockNewsArticles(ctx aStockContext) []model.Item {
 }
 
 func renderAStockNewsSections(b *strings.Builder, morningCtx aStockContext, afternoonCtx aStockContext) {
-	b.WriteString(`<section><h2>财经新闻来源统计</h2><div class="astock-news-grid">`)
+	b.WriteString(`<section>`)
+	renderAStockNewsStatsContent(b, morningCtx, afternoonCtx)
+	b.WriteString(`</section>`)
+}
+
+func renderAStockNewsStatsContent(b *strings.Builder, morningCtx aStockContext, afternoonCtx aStockContext) {
+	b.WriteString(`<h2>财经新闻来源统计</h2><div class="astock-news-grid">`)
 	renderAStockNewsWindow(b, morningCtx)
 	renderAStockNewsWindow(b, afternoonCtx)
-	b.WriteString(`</div></section>`)
+	b.WriteString(`</div>`)
 }
 
 func renderAStockNewsWindow(b *strings.Builder, ctx aStockContext) {
@@ -1665,6 +1670,9 @@ func (s *Server) loadAStockCompanionContextReadOnlyWithCache(strategyDate string
 func (s *Server) loadAStockReadOnlySnapshotContextWithCache(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, cache *aStockRequestCache) (aStockContext, bool) {
 	ctx := newAStockBaseContext(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, aStockRecommendationPhaseFinal)
 	if s.applyAStockRecommendationSnapshotReadOnlyWithCache(&ctx, cache) {
+		if err := s.populateAStockContextArticleStatsWithCache(&ctx, newsPage, cache); err != nil && ctx.LoadMessage == "" {
+			ctx.LoadMessage = err.Error()
+		}
 		return ctx, true
 	}
 	return ctx, false
@@ -1716,41 +1724,35 @@ func newAStockBaseContext(strategyDate string, periodKey string, newsPage int, i
 	return ctx
 }
 
-func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTime(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, recommendationPhase string, cache *aStockRequestCache, includeHotspotTopStocks bool, persist bool, refreshMode aStockRecommendationRefreshMode, entryTimeOverride string) aStockContext {
-	period := normalizeAStockPeriod(periodKey)
-	phase := normalizeAStockRecommendationPhase(recommendationPhase)
-	strategyDate = normalizeAStockStrategyDate(strategyDate)
-	ctx := newAStockBaseContext(strategyDate, period.Key, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, phase)
+func (s *Server) populateAStockContextArticleStatsWithCache(ctx *aStockContext, newsPage int, cache *aStockRequestCache) error {
+	if ctx == nil {
+		return nil
+	}
 	recommendationStart, recommendationEnd := ctx.WindowStart, ctx.WindowEnd
 	newsStart, newsEnd := ctx.NewsWindowStart, ctx.NewsWindowEnd
-	ctx.SourceRuns = s.loadAStockSourceRunsWithCache(cache)
 	var articles []model.Item
 	var newsArticles []model.Item
 	var err error
 	if sameAStockWindow(recommendationStart, recommendationEnd, newsStart, newsEnd) {
 		articles, err = s.loadAStockWindowArticlesWithCache(recommendationStart, recommendationEnd, cache)
 		if err != nil {
-			ctx.LoadMessage = "A股新闻读取失败：" + err.Error()
-			return ctx
+			return fmt.Errorf("A股新闻读取失败：%w", err)
 		}
 		newsArticles = articles
 	} else if aStockWindowContains(newsStart, newsEnd, recommendationStart, recommendationEnd) {
 		newsArticles, err = s.loadAStockWindowArticlesWithCache(newsStart, newsEnd, cache)
 		if err != nil {
-			ctx.LoadMessage = "A股新闻统计读取失败：" + err.Error()
-			return ctx
+			return fmt.Errorf("A股新闻统计读取失败：%w", err)
 		}
 		articles = filterAStockArticlesByPublishWindow(newsArticles, recommendationStart, recommendationEnd)
 	} else {
 		articles, err = s.loadAStockWindowArticlesWithCache(recommendationStart, recommendationEnd, cache)
 		if err != nil {
-			ctx.LoadMessage = "A股新闻读取失败：" + err.Error()
-			return ctx
+			return fmt.Errorf("A股新闻读取失败：%w", err)
 		}
 		newsArticles, err = s.loadAStockWindowArticlesWithCache(newsStart, newsEnd, cache)
 		if err != nil {
-			ctx.LoadMessage = "A股新闻统计读取失败：" + err.Error()
-			return ctx
+			return fmt.Errorf("A股新闻统计读取失败：%w", err)
 		}
 	}
 	ctx.Articles = articles
@@ -1759,6 +1761,49 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 	ctx.RecommendationNewsTotal = len(ctx.Articles)
 	ctx.PagedArticles, ctx.NewsPage, ctx.NewsTotalPages = paginateAStockNews(ctx.NewsArticles, newsPage, aStockNewsPageSize)
 	ctx.Hotspots = buildAStockHotspots(ctx.Articles)
+	return nil
+}
+
+func (s *Server) loadAStockNewsStatsContextWithCache(strategyDate string, periodKey string, cache *aStockRequestCache) aStockContext {
+	period := normalizeAStockPeriod(periodKey)
+	strategyDate = normalizeAStockStrategyDate(strategyDate)
+	ctx := newAStockBaseContext(strategyDate, period.Key, 1, false, false, false, aStockRecommendationPhaseFinal)
+	ctx.SourceRuns = s.loadAStockSourceRunsWithCache(cache)
+	if err := s.populateAStockContextArticleStatsWithCache(&ctx, 1, cache); err != nil {
+		ctx.LoadMessage = err.Error()
+	}
+	return ctx
+}
+
+func (s *Server) renderAStockNewsStatsHTML(strategyDate string) string {
+	strategyDate = normalizeAStockStrategyDate(strategyDate)
+	cache := newAStockRequestCache()
+	morningCtx := s.loadAStockNewsStatsContextWithCache(strategyDate, "morning", cache)
+	afternoonCtx := s.loadAStockNewsStatsContextWithCache(strategyDate, "afternoon", cache)
+	var b strings.Builder
+	for _, msg := range []string{morningCtx.LoadMessage, afternoonCtx.LoadMessage} {
+		msg = strings.TrimSpace(msg)
+		if msg == "" {
+			continue
+		}
+		b.WriteString(`<div class="astock-empty">`)
+		b.WriteString(html.EscapeString(msg))
+		b.WriteString(`</div>`)
+	}
+	renderAStockNewsStatsContent(&b, morningCtx, afternoonCtx)
+	return b.String()
+}
+
+func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTime(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, recommendationPhase string, cache *aStockRequestCache, includeHotspotTopStocks bool, persist bool, refreshMode aStockRecommendationRefreshMode, entryTimeOverride string) aStockContext {
+	period := normalizeAStockPeriod(periodKey)
+	phase := normalizeAStockRecommendationPhase(recommendationPhase)
+	strategyDate = normalizeAStockStrategyDate(strategyDate)
+	ctx := newAStockBaseContext(strategyDate, period.Key, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, phase)
+	ctx.SourceRuns = s.loadAStockSourceRunsWithCache(cache)
+	if err := s.populateAStockContextArticleStatsWithCache(&ctx, newsPage, cache); err != nil {
+		ctx.LoadMessage = err.Error()
+		return ctx
+	}
 	ctx.AuctionAmountLabel = s.loadAStockAuctionAmountLabelWithCache(strategyDate, cache)
 	var marketCandidates []aStockMarketCandidate
 	if len(ctx.Hotspots) > 0 && includeHotspotTopStocks {

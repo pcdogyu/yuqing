@@ -316,9 +316,6 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		`class="astock-overview-recent-filter"`,
 		"08:00-09:30",
 		"09:30-13:00",
-		"08:00-09:30 财经新闻",
-		"09:30-13:00 财经新闻",
-		"源站抓取数 / 入库新增数 / 更新数",
 		"上午推荐",
 		"下午推荐",
 		"推荐生成窗口",
@@ -372,7 +369,7 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}
 	}
-	for _, notWant := range []string{"T+2 收盘价", "T+3 收盘价", "T+4 收盘价", "T+5 收盘价", "astock-overview-meta"} {
+	for _, notWant := range []string{"T+2 收盘价", "T+3 收盘价", "T+4 收盘价", "T+5 收盘价", "astock-overview-meta", "财经新闻来源统计", "08:00-09:30 财经新闻", "09:30-13:00 财经新闻"} {
 		if strings.Contains(body, notWant) {
 			t.Fatalf("expected A股 page not to contain removed backtest column %q, got %s", notWant, body)
 		}
@@ -384,11 +381,6 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 	}
 	if strings.Contains(body, `body[data-page='a-stock'] header`) {
 		t.Fatalf("expected A股 page to keep shared header width, got %s", body)
-	}
-	morningNewsIndex := strings.Index(body, "08:00-09:30 财经新闻")
-	afternoonNewsIndex := strings.Index(body, "09:30-13:00 财经新闻")
-	if morningNewsIndex < 0 || afternoonNewsIndex < 0 || morningNewsIndex > afternoonNewsIndex {
-		t.Fatalf("expected morning news table before afternoon news table, got %s", body)
 	}
 	if strings.Contains(body, `<th>说明</th>`) {
 		t.Fatalf("expected explanation column to move into tooltip, got %s", body)
@@ -1916,7 +1908,7 @@ func TestAStockPageLoadsAfternoonWindow(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"下午推荐", "09:30-13:00 财经新闻", "东方财富网", "1条", "中信海直"} {
+	for _, want := range []string{"下午推荐", "09:30-13:00", `财经新闻数</span><strong>1</strong>`, "中信海直"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 afternoon page to contain %q, got %s", want, body)
 		}
@@ -2432,7 +2424,7 @@ func TestAStockContextUsesLiteralNewsWindowForSourceStats(t *testing.T) {
 	}
 }
 
-func TestAStockNewsSectionSummarizesSources(t *testing.T) {
+func TestAStockPageOmitsNewsSourceStatsSection(t *testing.T) {
 	items := make([]model.Item, 0, 12)
 	for i := 1; i <= 12; i++ {
 		sourceType := "flash"
@@ -2499,28 +2491,90 @@ func TestAStockNewsSectionSummarizesSources(t *testing.T) {
 		t.Fatalf("expected first page 200, got %d", firstRR.Code)
 	}
 	firstBody := firstRR.Body.String()
-	for _, want := range []string{"08:00-09:30 财经新闻", "09:30-13:00 财经新闻", "来源", "新闻条数", "最近抓取", "金十快讯", "7条", "东方财富网", "5条", "财联社", "0条", "暂无数据", `财经新闻数</span><strong>12</strong>`} {
+	for _, want := range []string{`财经新闻数</span><strong>12</strong>`} {
 		if !strings.Contains(firstBody, want) {
-			t.Fatalf("expected news summary to contain %q, got %s", want, firstBody)
+			t.Fatalf("expected A股 overview to contain %q, got %s", want, firstBody)
 		}
 	}
-	for _, notWant := range []string{"08:00-09:30 0 / 09:30-13:00 12", "08:00-09:26:59 0 / 09:30-13:00 12", "astock-overview-meta"} {
+	for _, notWant := range []string{"财经新闻来源统计", "08:00-09:30 财经新闻", "09:30-13:00 财经新闻", "新闻条数", "最近抓取", "08:00-09:30 0 / 09:30-13:00 12", "08:00-09:26:59 0 / 09:30-13:00 12", "astock-overview-meta"} {
 		if strings.Contains(firstBody, notWant) {
-			t.Fatalf("expected overview news summary detail to be absent, got %q in %s", notWant, firstBody)
+			t.Fatalf("expected A股 page source stats to be absent, got %q in %s", notWant, firstBody)
 		}
-	}
-	morningNewsIndex := strings.Index(firstBody, "08:00-09:30 财经新闻")
-	afternoonNewsIndex := strings.Index(firstBody, "09:30-13:00 财经新闻")
-	if morningNewsIndex < 0 || afternoonNewsIndex < 0 || morningNewsIndex > afternoonNewsIndex {
-		t.Fatalf("expected morning source table before afternoon source table, got %s", firstBody)
-	}
-	if strings.Contains(firstBody, `<th>说明</th>`) {
-		t.Fatalf("expected news summary to remove explanation column, got %s", firstBody)
 	}
 	for _, notWant := range []string{"分页新闻01", "分页新闻10", "分页新闻11", "分页新闻12", "新闻分页：", `news_page=2`} {
 		if strings.Contains(firstBody, notWant) {
 			t.Fatalf("expected news summary not to contain detail %q, got %s", notWant, firstBody)
 		}
+	}
+}
+
+func TestSystemNewsStatsSectionRendersAStockSourceStats(t *testing.T) {
+	items := make([]model.Item, 0, 12)
+	for i := 1; i <= 12; i++ {
+		sourceType := "flash"
+		if i > 7 {
+			sourceType = "eastmoney_kuaixun"
+		}
+		items = append(items, model.Item{
+			ID:         int64(700 + i),
+			SourceType: sourceType,
+			Title:      fmt.Sprintf("分页新闻%02d", i),
+			Summary:    "普通财经新闻",
+			CapturedAt: time.Date(2026, 6, 11, 1, 26+i, 0, 0, time.UTC),
+		})
+	}
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/articles" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "message": "ok", "data": []any{}})
+			return
+		}
+		if r.URL.Query().Get("time_field") == "captured_at" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0}})
+			return
+		}
+		if r.URL.Query().Get("time_field") != "publish_time" {
+			t.Fatalf("unexpected A股 news window query: %s", r.URL.RawQuery)
+		}
+		resultItems := []model.Item{}
+		total := 0
+		if strings.Contains(r.URL.Query().Get("start"), "09:30") {
+			resultItems = items
+			total = len(items)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    200,
+			"message": "ok",
+			"data": model.ItemListResult{
+				Items:    resultItems,
+				Page:     1,
+				PageSize: 200,
+				Total:    total,
+			},
+		})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	req := httptest.NewRequest(http.MethodGet, "/system?section=newsstats&strategy_date=2026-06-11", nil)
+	rr := httptest.NewRecorder()
+	srv.handleSystem(rr, req, map[string]any{"id": 1})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected system page 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{`href="/system?section=newsstats">新闻统计</a>`, `name="section" value="newsstats"`, `value="2026-06-11"`, "财经新闻来源统计", "08:00-09:30 财经新闻", "09:30-13:00 财经新闻", "来源", "新闻条数", "最近抓取", "金十快讯", "7条", "东方财富网", "5条", "财联社", "0条", "暂无数据"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected news stats section to contain %q, got %s", want, body)
+		}
+	}
+	morningNewsIndex := strings.Index(body, "08:00-09:30 财经新闻")
+	afternoonNewsIndex := strings.Index(body, "09:30-13:00 财经新闻")
+	if morningNewsIndex < 0 || afternoonNewsIndex < 0 || morningNewsIndex > afternoonNewsIndex {
+		t.Fatalf("expected morning source table before afternoon source table, got %s", body)
+	}
+	if strings.Contains(body, `<th>说明</th>`) {
+		t.Fatalf("expected news stats to keep explanation in tooltip, got %s", body)
 	}
 }
 
@@ -2708,6 +2762,23 @@ func writeAStockTestMarketBars(w http.ResponseWriter, r *http.Request) {
 	writeEnvelope(w, http.StatusOK, "ok", map[string]any{"items": items})
 }
 
+func writeAStockSnapshotOverviewArticleFixture(w http.ResponseWriter, r *http.Request) {
+	start := r.URL.Query().Get("start")
+	items := []model.Item{}
+	switch {
+	case strings.Contains(start, "08:00"):
+		items = []model.Item{
+			{ID: 1, SourceType: "jin10_kuaixun", Title: "人工智能产业链活跃", Summary: "AI 算力需求增长", PublishTime: "2026-06-24 09:05:00"},
+			{ID: 2, SourceType: "eastmoney_kuaixun", Title: "算力板块继续走强", Summary: "人工智能投资升温", PublishTime: "2026-06-24 09:12:00"},
+		}
+	case strings.Contains(start, "09:30"):
+		items = []model.Item{
+			{ID: 3, SourceType: "cls_telegraph", Title: "人工智能应用端活跃", Summary: "AI 终端放量", PublishTime: "2026-06-24 10:30:00"},
+		}
+	}
+	writeEnvelope(w, http.StatusOK, "ok", model.ItemListResult{Items: items, Page: 1, PageSize: 200, Total: len(items)})
+}
+
 func newAStockRefreshBacktestPostRequest(strategyDate string, period string) *http.Request {
 	form := url.Values{}
 	form.Set("date", strategyDate)
@@ -2777,7 +2848,7 @@ func TestAStockPageUsesValidSnapshotsBeforeSelections(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/articles":
 			articleHits++
-			writeEnvelope(w, http.StatusOK, "ok", model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0})
+			writeAStockSnapshotOverviewArticleFixture(w, r)
 		case "/api/v1/a-stock/recommendations":
 			switch r.URL.Query().Get("period") {
 			case "morning":
@@ -2817,7 +2888,15 @@ func TestAStockPageUsesValidSnapshotsBeforeSelections(t *testing.T) {
 		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"快照上午", "快照下午", "10.00", "20.00"} {
+	for _, want := range []string{
+		"快照上午",
+		"快照下午",
+		"10.00",
+		"20.00",
+		`<span class="astock-muted">财经新闻数</span><strong>2</strong>`,
+		`<span class="astock-muted">财经新闻数</span><strong>1</strong>`,
+		`<span class="astock-muted">候选热点数</span><strong>1</strong>`,
+	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected snapshot response to contain %q, got %s", want, body)
 		}
@@ -2825,8 +2904,8 @@ func TestAStockPageUsesValidSnapshotsBeforeSelections(t *testing.T) {
 	if marketHits != 0 || selectionHits != 0 || holdingHits != 0 || saveHits != 0 {
 		t.Fatalf("expected snapshot fast path to avoid market/selection/holdings/save, got market=%d selection=%d holdings=%d save=%d", marketHits, selectionHits, holdingHits, saveHits)
 	}
-	if articleHits != 0 {
-		t.Fatalf("expected snapshot fast path to avoid articles, got %d", articleHits)
+	if articleHits == 0 {
+		t.Fatalf("expected snapshot fast path to load article stats")
 	}
 }
 
@@ -2857,7 +2936,7 @@ func TestAStockPageCompanionSnapshotMissingDoesNotRecompute(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/articles":
 			articleHits++
-			writeEnvelope(w, http.StatusOK, "ok", model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0})
+			writeAStockSnapshotOverviewArticleFixture(w, r)
 		case "/api/v1/a-stock/recommendations":
 			if r.URL.Query().Get("period") == "morning" {
 				writeEnvelope(w, http.StatusOK, "ok", morningSnapshot)
@@ -2900,8 +2979,11 @@ func TestAStockPageCompanionSnapshotMissingDoesNotRecompute(t *testing.T) {
 	if strings.Contains(body, "下午已选") {
 		t.Fatalf("expected missing companion snapshot not to load selections, got %s", body)
 	}
-	if marketHits != 0 || articleHits != 0 || selectionHits != 0 || holdingHits != 0 || saveHits != 0 {
-		t.Fatalf("expected missing companion snapshot to avoid recompute, got market=%d articles=%d selection=%d holdings=%d save=%d", marketHits, articleHits, selectionHits, holdingHits, saveHits)
+	if articleHits == 0 {
+		t.Fatalf("expected current snapshot to load article stats")
+	}
+	if marketHits != 0 || selectionHits != 0 || holdingHits != 0 || saveHits != 0 {
+		t.Fatalf("expected missing companion snapshot to avoid recompute, got market=%d selection=%d holdings=%d save=%d", marketHits, selectionHits, holdingHits, saveHits)
 	}
 }
 
@@ -5006,7 +5088,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"金十快讯", "金十资讯", "1条", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "14日内过滤", "涨停过滤", "当日行情", "不过滤", "重新计算", "关闭14日过滤", "关闭涨停过滤", "启用当日行情过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "推荐历史", "上午推荐", "下午推荐", "推荐窗口", "08:00-09:30", "上午开盘价", "下午开盘价", "补抓上午新闻", "重新生成上午推荐", "补抓下午新闻", "重新生成下午推荐", "补股票名称", "补行情收益", "刷新全部回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="repair_stock_names"`, `name="action" value="refresh_current_backtest"`, `name="action" value="refresh_backtest"`, `name="action" value="recalculate"`, "2026-06-12 周五", "2026-06-15 周一", "今日", "T+0 收益", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "推荐排名前9股票", "002230 科大讯飞", `002230 科大讯飞<span class="astock-hotspot-date">（2026-06-12）</span>`, "688981 中芯国际", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
+	for _, want := range []string{"金十快讯", "金十资讯", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "14日内过滤", "涨停过滤", "当日行情", "不过滤", "重新计算", "关闭14日过滤", "关闭涨停过滤", "启用当日行情过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "推荐历史", "上午推荐", "下午推荐", "推荐窗口", "08:00-09:30", "上午开盘价", "下午开盘价", "补抓上午新闻", "重新生成上午推荐", "补抓下午新闻", "重新生成下午推荐", "补股票名称", "补行情收益", "刷新全部回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="repair_stock_names"`, `name="action" value="refresh_current_backtest"`, `name="action" value="refresh_backtest"`, `name="action" value="recalculate"`, "2026-06-12 周五", "2026-06-15 周一", "今日", "T+0 收益", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "推荐排名前9股票", "002230 科大讯飞", `002230 科大讯飞<span class="astock-hotspot-date">（2026-06-12）</span>`, "688981 中芯国际", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}
@@ -5016,7 +5098,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 			t.Fatalf("expected A股 hotspot stocks to omit display ranks %q, got %s", notWant, body)
 		}
 	}
-	for _, notWant := range []string{"08:00-09:30 2 / 09:30-13:00 0", "08:00-09:26:59 2 / 09:30-13:00 0", "astock-overview-meta"} {
+	for _, notWant := range []string{"财经新闻来源统计", "新闻条数", "最近抓取", "08:00-09:30 财经新闻", "09:30-13:00 财经新闻", "08:00-09:30 2 / 09:30-13:00 0", "08:00-09:26:59 2 / 09:30-13:00 0", "astock-overview-meta"} {
 		if strings.Contains(body, notWant) {
 			t.Fatalf("expected overview news count details to be absent, got %q in %s", notWant, body)
 		}
@@ -8635,11 +8717,13 @@ func TestSystemTemplateIncludesServiceRestartActions(t *testing.T) {
 
 func TestSystemTemplateGroupsRepeatedPanelsBySection(t *testing.T) {
 	serviceTab := `href="/system?section=services">服务状态</a><a class="{{if eq .SectionKey "legacy"}}active{{end}}" href="/system?section=legacy">Legacy注册表`
-	opActionsTab := `href="/system?section=operations">生产运行</a><a class="{{if eq .SectionKey "opactions"}}active{{end}}" href="/system?section=opactions">运营操作`
+	newsStatsTab := `href="/system?section=operations">生产运行</a><a class="{{if eq .SectionKey "newsstats"}}active{{end}}" href="/system?section=newsstats">新闻统计`
+	opActionsTab := `href="/system?section=newsstats">新闻统计</a><a class="{{if eq .SectionKey "opactions"}}active{{end}}" href="/system?section=opactions">运营操作`
 	contractsTab := `href="/system?section=opactions">运营操作</a><a class="{{if eq .SectionKey "contracts"}}active{{end}}" href="/system?section=contracts">外部契约与审计`
 	announcementTab := `href="/system?section=contracts">外部契约与审计</a><a class="{{if eq .SectionKey "announcements"}}active{{end}}" href="/system?section=announcements">公告与任务`
 	for _, expected := range []string{
 		serviceTab,
+		newsStatsTab,
 		opActionsTab,
 		contractsTab,
 		announcementTab,
@@ -8647,6 +8731,9 @@ func TestSystemTemplateGroupsRepeatedPanelsBySection(t *testing.T) {
 		`{{if eq .SectionKey "legacy"}}<section class="section-block"><h2>Legacy 注册表</h2>`,
 		`name="section" value="services"`,
 		`{{if eq .SectionKey "operations"}}<section class="section-block"><h2>生产运行</h2>`,
+		`{{if eq .SectionKey "newsstats"}}<section class="section-block astock-newsstats-section">`,
+		`name="section" value="newsstats"`,
+		`{{.AStockNewsStatsHTML}}`,
 		`{{if eq .SectionKey "opactions"}}<section class="section-block"><h2>运营操作</h2>`,
 		`name="section" value="opactions"`,
 		`{{if eq .SectionKey "contracts"}}<section class="section-block"><h2>外部契约与审计</h2>`,

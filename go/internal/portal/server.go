@@ -143,6 +143,8 @@ type pageData struct {
 	User                       any
 	SectionKey                 string
 	AStockRepair               aStockRepairView
+	AStockNewsStatsDate        string
+	AStockNewsStatsHTML        template.HTML
 	Dashboard                  model.DashboardSnapshot
 	Groups                     []model.ProjectGroup
 	Project                    model.Project
@@ -2991,6 +2993,7 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) 
 	favoritePage := parsePositiveInt(r.URL.Query().Get("page"), 1)
 	logService := strings.TrimSpace(r.URL.Query().Get("log_service"))
 	aStockRepairDate := normalizeAStockStrategyDate(r.URL.Query().Get("strategy_date"))
+	aStockNewsStatsDate := normalizeAStockStrategyDate(nonEmpty(r.URL.Query().Get("strategy_date"), r.URL.Query().Get("date")))
 	aStockRepairPeriod := normalizeAStockPeriod(r.URL.Query().Get("period")).Key
 	aStockRepairIgnoreRecent := normalizeAStockBool(r.URL.Query().Get("ignore_recent"))
 	crawlTemplates := s.loadCrawlTemplates()
@@ -3001,6 +3004,7 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) 
 		projectID = nonEmpty(r.FormValue("project_id"), projectID)
 		favoritePage = parsePositiveInt(r.FormValue("page"), favoritePage)
 		aStockRepairDate = normalizeAStockStrategyDate(nonEmpty(r.FormValue("strategy_date"), aStockRepairDate))
+		aStockNewsStatsDate = normalizeAStockStrategyDate(nonEmpty(r.FormValue("strategy_date"), aStockNewsStatsDate))
 		aStockRepairPeriod = normalizeAStockPeriod(nonEmpty(r.FormValue("period"), aStockRepairPeriod)).Key
 		aStockRepairIgnoreRecent = normalizeAStockBool(nonEmpty(r.FormValue("ignore_recent"), r.FormValue("snapshot_ignore_recent")))
 		message := "操作已提交"
@@ -3435,6 +3439,7 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) 
 		"account":       "账号安全",
 		"preferences":   "偏好设置",
 		"stockrepair":   "推荐股票修复",
+		"newsstats":     "新闻统计",
 		"favorites":     "收藏夹",
 		"warningmsg":    "预警消息",
 		"warning":       "预警设置",
@@ -3455,11 +3460,17 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) 
 			normalizeAStockBool(r.URL.Query().Get("ignore_recent")),
 		)
 	}
+	aStockNewsStatsHTML := template.HTML("")
+	if sectionKey == "newsstats" {
+		aStockNewsStatsHTML = template.HTML(s.renderAStockNewsStatsHTML(aStockNewsStatsDate))
+	}
 	_ = s.render(w, "system", pageData{
 		Title:                    "系统设置",
 		User:                     user,
 		SectionKey:               sectionKey,
 		AStockRepair:             aStockRepair,
+		AStockNewsStatsDate:      aStockNewsStatsDate,
+		AStockNewsStatsHTML:      aStockNewsStatsHTML,
 		Notices:                  notices,
 		FeedbackItems:            feedbackItems,
 		AuditLogs:                auditLogs,
@@ -4101,6 +4112,8 @@ func normalizeSystemSection(section string) string {
 		return "preferences"
 	case "stockrepair", "stock_repair", "stock-repair", "astockrepair", "a-stock-repair":
 		return "stockrepair"
+	case "newsstats", "news_stats", "news-statistics", "news", "astock-news-stats", "a-stock-news-stats":
+		return "newsstats"
 	case "favorites", "favorite":
 		return "favorites"
 	case "warningmsg", "warningmessage":
@@ -5080,6 +5093,21 @@ func buildSystemTemplate() string {
 		`</div></section></main>{{template "footer" .}}</body></html>{{end}}`,
 		`</div></section>{{end}}{{if eq .SectionKey "stockrepair"}}<section class="section-block"><h2>推荐股票修复</h2><form class="inline" method="get" action="/system"><input type="hidden" name="section" value="stockrepair"><input type="date" name="strategy_date" value="{{.AStockRepair.StrategyDate}}"><select name="period"><option value="morning" {{if eq .AStockRepair.Period "morning"}}selected{{end}}>上午推荐</option><option value="afternoon" {{if eq .AStockRepair.Period "afternoon"}}selected{{end}}>下午推荐</option></select><label><input type="checkbox" name="ignore_recent" value="1" {{if .AStockRepair.IgnoreRecent}}checked{{end}}> 快照 ignore_recent</label><button type="submit">加载</button></form><p class="muted">按层修复推荐股票数据。已选股票层覆盖正式推荐结果；推荐快照层覆盖页面展示和回测快照。</p>{{if .AStockRepair.Error}}<p class="bad">{{.AStockRepair.Error}}</p>{{end}}<div class="repair-status"><div class="repair-status-item">已选股票层<strong>{{len .AStockRepair.Selections.Items}}</strong><div class="muted">{{if .AStockRepair.Selections.Found}}已入库{{else}}未找到{{end}}</div></div><div class="repair-status-item">推荐快照层<strong>{{if .AStockRepair.Snapshot.Found}}已入库{{else}}未找到{{end}}</strong><div class="muted">ignore_recent={{if .AStockRepair.IgnoreRecent}}1{{else}}0{{end}}</div></div><div class="repair-status-item">策略日期<strong>{{.AStockRepair.StrategyDate}}</strong><div class="muted">{{if eq .AStockRepair.Period "afternoon"}}下午推荐{{else}}上午推荐{{end}}</div></div></div><div class="repair-grid"><article class="repair-card"><h3>已选股票层</h3><div class="repair-meta">created_at={{.AStockRepair.SelectionsCreatedAtText}} | updated_at={{.AStockRepair.SelectionsUpdatedAtText}} | 此层不区分 ignore_recent</div><form method="post"><input type="hidden" name="form_type" value="astock_repair_selections_save"><input type="hidden" name="section" value="stockrepair"><input type="hidden" name="strategy_date" value="{{.AStockRepair.StrategyDate}}"><input type="hidden" name="period" value="{{.AStockRepair.Period}}"><input type="hidden" name="ignore_recent" value="{{if .AStockRepair.IgnoreRecent}}1{{end}}"><textarea class="repair-textarea" name="selection_items_json">{{.AStockRepair.SelectionsJSON}}</textarea><div class="repair-tip">按 AStockRecommendationSelection[] JSON 整体覆盖当前日期和窗口的正式推荐股票。保存空数组 [] 会清空这一层。</div><button type="submit">保存已选股票层</button></form></article><article class="repair-card"><h3>推荐快照层</h3><div class="repair-meta">created_at={{.AStockRepair.SnapshotCreatedAtText}} | updated_at={{.AStockRepair.SnapshotUpdatedAtText}} | ignore_recent={{if .AStockRepair.IgnoreRecent}}1{{else}}0{{end}}</div><form method="post"><input type="hidden" name="form_type" value="astock_repair_snapshot_save"><input type="hidden" name="section" value="stockrepair"><input type="hidden" name="strategy_date" value="{{.AStockRepair.StrategyDate}}"><input type="hidden" name="period" value="{{.AStockRepair.Period}}"><input type="hidden" name="snapshot_ignore_recent" value="{{if .AStockRepair.IgnoreRecent}}1{{end}}"><div class="repair-field-grid"><input type="number" name="snapshot_generated_count" placeholder="generated_count" value="{{.AStockRepair.Snapshot.GeneratedCount}}"><input type="number" name="snapshot_recent_filtered" placeholder="recent_filtered" value="{{.AStockRepair.Snapshot.RecentFiltered}}"><input type="number" name="snapshot_same_day_morning_filtered" placeholder="same_day_morning_filtered" value="{{.AStockRepair.Snapshot.SameDayMorningFiltered}}"><input type="number" name="snapshot_limit_up_filtered" placeholder="limit_up_filtered" value="{{.AStockRepair.Snapshot.LimitUpFiltered}}"><input type="number" name="snapshot_no_today_market_count" placeholder="no_today_market_count" value="{{.AStockRepair.Snapshot.NoTodayMarketCount}}"><input type="number" name="snapshot_market_candidate_count" placeholder="market_candidate_count" value="{{.AStockRepair.Snapshot.MarketCandidateCount}}"><label><input type="checkbox" name="snapshot_limit_up_filter_enabled" {{if .AStockRepair.Snapshot.LimitUpFilterEnabled}}checked{{end}}> 启用涨停过滤</label><label><input type="checkbox" name="snapshot_today_market_filter_enabled" {{if .AStockRepair.Snapshot.TodayMarketFilterEnabled}}checked{{end}}> 启用当日行情过滤</label></div><input name="snapshot_backtest_status" placeholder="backtest_status" value="{{.AStockRepair.Snapshot.BacktestStatus}}"><input name="snapshot_market_candidate_status" placeholder="market_candidate_status" value="{{.AStockRepair.Snapshot.MarketCandidateStatus}}"><input name="snapshot_auction_amount_label" placeholder="auction_amount_label" value="{{.AStockRepair.Snapshot.AuctionAmountLabel}}"><textarea class="repair-textarea compact" name="snapshot_empty_reason" placeholder="empty_reason">{{.AStockRepair.Snapshot.EmptyReason}}</textarea><textarea class="repair-textarea" name="snapshot_recommendations_json">{{.AStockRepair.SnapshotRecommendationsJSON}}</textarea><textarea class="repair-textarea" name="snapshot_backtests_json">{{.AStockRepair.SnapshotBacktestsJSON}}</textarea><div class="repair-tip">上面两个大文本框分别是 recommendations_json 和 backtests_json，保存前会校验 JSON 结构。</div><button type="submit">保存推荐快照层</button></form></article></div></section>{{end}}</main>{{template "footer" .}}</body></html>{{end}}`,
 	).Replace(systemTemplateRaw)
+	template = strings.Replace(template,
+		`href="/system?section=operations">生产运行</a><a class="{{if eq .SectionKey "opactions"}}active{{end}}" href="/system?section=opactions">运营操作`,
+		`href="/system?section=operations">生产运行</a><a class="{{if eq .SectionKey "newsstats"}}active{{end}}" href="/system?section=newsstats">新闻统计</a><a class="{{if eq .SectionKey "opactions"}}active{{end}}" href="/system?section=opactions">运营操作`,
+		1,
+	)
+	template = strings.Replace(template,
+		`{{end}}{{if eq .SectionKey "database"}}<section class="section-block"><h2>数据库配置</h2>`,
+		`{{end}}{{if eq .SectionKey "newsstats"}}<section class="section-block astock-newsstats-section"><form class="newsstats-filter inline" method="get" action="/system"><input type="hidden" name="section" value="newsstats"><label>策略日期 <input type="date" name="strategy_date" value="{{.AStockNewsStatsDate}}"></label><button type="submit">刷新新闻统计</button></form>{{.AStockNewsStatsHTML}}</section>{{end}}{{if eq .SectionKey "database"}}<section class="section-block"><h2>数据库配置</h2>`,
+		1,
+	)
+	template = strings.Replace(template,
+		`</style></head><body><header><h1>系统工作台</h1>`,
+		`.newsstats-filter{margin-bottom:14px}.astock-news-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}.astock-news-window{min-width:0}.astock-news-table{table-layout:fixed}.astock-news-table th,.astock-news-table td{vertical-align:top}.astock-news-counts{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}.astock-news-diagnostic{margin-top:6px;color:#8a5a17;font-size:12px;line-height:1.35}.astock-empty{padding:18px;border:1px dashed #d0c8b8;border-radius:12px;background:#fff;color:#6a6257}.astock-scroll{width:100%;overflow:auto}.astock-help{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:#eef4ec;color:#214e34;font-size:12px;font-weight:700;line-height:1;cursor:help;position:relative}.astock-help-text{position:absolute;right:0;top:calc(100% + 8px);z-index:10;display:none;width:max-content;max-width:260px;padding:8px 10px;border:1px solid #d6ccbb;border-radius:8px;background:#fff;color:#2b261f;box-shadow:0 12px 28px rgba(31,40,34,.14);font-size:12px;font-weight:400;line-height:1.4;white-space:normal}.astock-help:hover .astock-help-text,.astock-help:focus .astock-help-text{display:block}@media (max-width:1100px){.astock-news-grid{grid-template-columns:1fr}.astock-news-table{min-width:720px}}</style></head><body><header><h1>系统工作台</h1>`,
+		1,
+	)
 	return strings.Replace(template, "<style>"+baseStyles, "<style>"+baseStyles+systemFullWidthStyles, 1)
 }
 
