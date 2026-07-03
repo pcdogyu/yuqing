@@ -406,7 +406,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-card{padding:18px;border:1px solid #ece7dc;border-radius:14px;background:#fff}
 		.astock-overview-header{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;margin-bottom:14px}
 		.astock-overview-header h2{margin:0}
-		.astock-overview-summary{display:flex;justify-content:flex-end;gap:24px;flex-wrap:wrap;text-align:right;font-size:12px}
+		.astock-overview-summary{display:flex;justify-content:flex-start;gap:24px;flex-wrap:wrap;text-align:left;font-size:12px}
 		.astock-overview-summary .astock-muted{display:block;margin-bottom:4px;white-space:nowrap;word-break:keep-all}
 		.astock-overview-summary strong{display:block;font-size:18px;line-height:1.25;white-space:nowrap}
 		.astock-overview-table{width:100%;min-width:1560px;table-layout:fixed;font-size:12px}
@@ -419,6 +419,8 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-overview-metric .astock-muted,.astock-overview-metric strong{white-space:nowrap}
 		.astock-overview-recent-filter{width:6.6%;min-width:90px}
 		.astock-overview-recent-filter .astock-muted,.astock-overview-recent-filter strong{white-space:nowrap}
+		.astock-overview-recalculate{width:7.3%;min-width:100px}
+		.astock-overview-recalculate .astock-muted,.astock-overview-recalculate strong{white-space:nowrap}
 		.astock-overview-window{width:10.9%}
 		.astock-overview-window strong{white-space:nowrap}
 		.astock-overview-table strong{display:block;font-size:18px;line-height:1.25}
@@ -887,7 +889,7 @@ func writeAStockOverviewTodayMarketFilterCell(b *strings.Builder, ctx aStockCont
 }
 
 func writeAStockOverviewRecalculateCell(b *strings.Builder, ctx aStockContext) {
-	b.WriteString(`<td><span class="astock-muted">重新计算</span><strong>当前窗口</strong><form class="astock-filter-toggle-form" method="post"><input type="hidden" name="date" value="`)
+	b.WriteString(`<td class="astock-overview-recalculate"><span class="astock-muted">重新计算</span><strong>当前窗口</strong><form class="astock-filter-toggle-form" method="post"><input type="hidden" name="date" value="`)
 	b.WriteString(html.EscapeString(ctx.Date))
 	b.WriteString(`"><input type="hidden" name="period" value="`)
 	b.WriteString(html.EscapeString(ctx.Period))

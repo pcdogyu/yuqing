@@ -289,7 +289,7 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		`class="astock-overview-table"`,
 		`body[data-page='a-stock'] table{width:100%;min-width:100%;font-size:13px}`,
 		`.astock-overview-header{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;margin-bottom:14px}`,
-		`.astock-overview-summary{display:flex;justify-content:flex-end;gap:24px;flex-wrap:wrap;text-align:right;font-size:12px}`,
+		`.astock-overview-summary{display:flex;justify-content:flex-start;gap:24px;flex-wrap:wrap;text-align:left;font-size:12px}`,
 		`.astock-overview-summary strong{display:block;font-size:18px;line-height:1.25;white-space:nowrap}`,
 		`.astock-overview-table{width:100%;min-width:1560px;table-layout:fixed;font-size:12px}`,
 		`.astock-overview-table .astock-muted{display:block;margin-bottom:7px;font-size:12px;white-space:nowrap;word-break:keep-all}`,
@@ -299,6 +299,8 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		`.astock-overview-metric .astock-muted,.astock-overview-metric strong{white-space:nowrap}`,
 		`.astock-overview-recent-filter{width:6.6%;min-width:90px}`,
 		`.astock-overview-recent-filter .astock-muted,.astock-overview-recent-filter strong{white-space:nowrap}`,
+		`.astock-overview-recalculate{width:7.3%;min-width:100px}`,
+		`.astock-overview-recalculate .astock-muted,.astock-overview-recalculate strong{white-space:nowrap}`,
 		`.astock-overview-window{width:10.9%}`,
 		`.astock-overview-table strong{display:block;font-size:18px;line-height:1.25}`,
 		`.astock-overview-status{width:24%}`,
@@ -5462,6 +5464,9 @@ func TestAStockOverviewTodayMarketFilterToggleAndRecalculate(t *testing.T) {
 		if !strings.Contains(recalcBody, want) {
 			t.Fatalf("expected recalculate cell to contain %q, got %s", want, recalcBody)
 		}
+	}
+	if !strings.Contains(recalcBody, `class="astock-overview-recalculate"`) {
+		t.Fatalf("expected recalculate cell width class, got %s", recalcBody)
 	}
 }
 
