@@ -5,6 +5,7 @@ The Go scheduler calls:
   GET /api/a-stock/auction?date=YYYY-MM-DD
   GET /api/a-stock/sector-fund-flow?sector_type=行业资金流&indicator=今日&source=eastmoney
   GET /api/a-stock/stock-fund-flow?indicator=今日&source=eastmoney
+  GET /api/a-stock/sector-constituents?sector_type=行业资金流&sector_name=半导体
   GET /api/a-stock/holdings?period=YYYYMMDD&code=002230
   GET /api/stock-research?code=002230&start=YYYY-MM-DD&end=YYYY-MM-DD
 
@@ -1580,6 +1581,59 @@ def fetch_stock_fund_flow_source(
     raise ValueError(f"unsupported stock fund flow source: {source}")
 
 
+def sector_constituent_frame_to_items(frame: Any, source: str, limit: int) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    try:
+        iterator = frame.iterrows()
+    except Exception:
+        return items
+    for _, row in iterator:
+        code = compact_stock_code(first_existing(row, ["代码", "股票代码", "code", "f12"]))
+        name = text_value(first_existing(row, ["名称", "股票名称", "股票简称", "name", "f14"]))
+        if not code or not is_sh_sz_code(code) or not has_resolved_stock_name(code, name):
+            continue
+        items.append(
+            {
+                "code": code,
+                "name": name,
+                "source": source,
+                "updated_at": utc_now_iso(),
+            }
+        )
+        if limit > 0 and len(items) >= limit:
+            break
+    return items
+
+
+def fetch_sector_constituent_items(
+    ak: Any, sector_type: str, sector_name: str, indicator: str, limit: int
+) -> tuple[list[dict[str, Any]], list[str]]:
+    errors: list[str] = []
+    if sector_type == "概念资金流":
+        fetchers = [
+            ("eastmoney_concept_constituents", lambda: ak.stock_board_concept_cons_em(symbol=sector_name)),
+        ]
+    else:
+        fetchers = [
+            ("eastmoney_industry_constituents", lambda: ak.stock_board_industry_cons_em(symbol=sector_name)),
+            ("eastmoney_industry_fund_flow_summary", lambda: ak.stock_sector_fund_flow_summary(symbol=sector_name, indicator=indicator)),
+        ]
+    for source, fetcher in fetchers:
+        for attempt in range(3):
+            try:
+                frame = fetcher()
+                items = sector_constituent_frame_to_items(frame, source, limit)
+            except Exception as exc:  # pragma: no cover - external service variability
+                errors.append(f"{source} attempt {attempt + 1}: {exc}")
+                time.sleep(0.3 * (attempt + 1))
+                continue
+            if items:
+                return items, errors
+            errors.append(f"{source} returned no rows")
+            break
+    return [], errors
+
+
 def average_fund_flow_items(items: list[dict[str, Any]], key_fields: list[str], numeric_fields: tuple[str, ...]) -> list[dict[str, Any]]:
     grouped: dict[str, dict[str, Any]] = {}
     for item in items:
@@ -2082,6 +2136,51 @@ class AuctionService:
             payload["warning"] = "; ".join(source_errors)
         return payload
 
+    def fetch_sector_constituents(self, query: dict[str, list[str]]) -> dict[str, Any]:
+        sector_type = normalize_sector_fund_flow_sector_type(first_query_value(query, "sector_type"))
+        sector_name = text_value(
+            first_query_value(query, "sector_name")
+            or first_query_value(query, "name")
+            or first_query_value(query, "symbol")
+        )
+        indicator = normalize_sector_fund_flow_indicator(first_query_value(query, "indicator"))
+        limit = int_value(first_query_value(query, "limit"), 0)
+        if not sector_name:
+            return {
+                "_http_status": 400,
+                "items": [],
+                "count": 0,
+                "sector_type": sector_type,
+                "sector_name": sector_name,
+                "indicator": indicator,
+                "message": "sector_name is required",
+                "fetched_at": utc_now_iso(),
+            }
+        started = time.time()
+        try:
+            ak = load_akshare()
+            items, errors = fetch_sector_constituent_items(ak, sector_type, sector_name, indicator, limit)
+        except Exception as exc:
+            items = []
+            errors = [str(exc)]
+        payload: dict[str, Any] = {
+            "items": items,
+            "count": len(items),
+            "sector_type": sector_type,
+            "sector_name": sector_name,
+            "indicator": indicator,
+            "elapsed_sec": round(time.time() - started, 3),
+            "fetched_at": utc_now_iso(),
+        }
+        if errors:
+            payload["source_errors"] = errors
+        if not items:
+            payload["warning"] = "; ".join(errors) or "sector constituents endpoint returned no rows"
+            payload["_http_status"] = 502
+        elif errors:
+            payload["warning"] = "; ".join(errors)
+        return payload
+
     def fetch_holdings(self, query: dict[str, list[str]]) -> dict[str, Any]:
         ak = load_akshare()
         period = normalize_holding_period(first_query_value(query, "period"))
@@ -2180,6 +2279,14 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/a-stock/stock-fund-flow":
                 payload = self.service.fetch_stock_fund_flow(query)
+                status = int(payload.get("_http_status", 200))
+                if "_http_status" in payload:
+                    payload = dict(payload)
+                    payload.pop("_http_status", None)
+                self.write_json(status, payload)
+                return
+            if parsed.path == "/api/a-stock/sector-constituents":
+                payload = self.service.fetch_sector_constituents(query)
                 status = int(payload.get("_http_status", 200))
                 if "_http_status" in payload:
                     payload = dict(payload)
@@ -2361,6 +2468,25 @@ def run_self_test() -> None:
     )
     assert stock_items[0]["code"] == "300502"
     assert stock_items[0]["source_type"] == "eastmoney"
+    sector_constituents = sector_constituent_frame_to_items(
+        type(
+            "FakeSectorConstituentFrame",
+            (),
+            {
+                "iterrows": lambda self: iter(
+                    [
+                        (0, {"代码": "600760", "名称": "中航沈飞"}),
+                        (1, {"代码": "012322", "名称": "012322"}),
+                        (2, {"代码": "920118", "名称": "太湖远大"}),
+                    ]
+                )
+            },
+        )(),
+        "eastmoney_industry_constituents",
+        0,
+    )
+    assert [item["code"] for item in sector_constituents] == ["600760"]
+    assert sector_constituents[0]["name"] == "中航沈飞"
     sina_stock = sina_stock_fund_flow_rows_to_items(
         [{"symbol": "sz300308", "name": "中际旭创", "trade": "123.45", "changeratio": "0.00613", "turnover": "12.7552", "amount": "1000", "inamount": "700", "outamount": "300", "netamount": "400", "ratioamount": "0.93803"}],
         "2026-07-02",

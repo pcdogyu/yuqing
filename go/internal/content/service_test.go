@@ -540,7 +540,7 @@ func TestAStockSectorFundFlowAPIUpsertsAndLists(t *testing.T) {
 	if stockPostRR.Code != http.StatusOK {
 		t.Fatalf("expected stock fund flow source upsert 200, got %d body=%s", stockPostRR.Code, stockPostRR.Body.String())
 	}
-	stockListReq := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/stock-fund-flows?date=2026-07-02&indicator=今日&keyword=300502&page=1&page_size=10", nil)
+	stockListReq := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/stock-fund-flows?date=2026-07-02&indicator=今日&codes=sz300502,688981&page=1&page_size=10", nil)
 	stockListRR := httptest.NewRecorder()
 	router.ServeHTTP(stockListRR, stockListReq)
 	if stockListRR.Code != http.StatusOK {

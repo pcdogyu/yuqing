@@ -250,12 +250,13 @@ type AStockStockFundFlow struct {
 }
 
 type AStockStockFundFlowFilter struct {
-	Date       string `json:"date"`
-	Indicator  string `json:"indicator"`
-	Keyword    string `json:"keyword"`
-	SourceType string `json:"source_type"`
-	Page       int    `json:"page"`
-	PageSize   int    `json:"page_size"`
+	Date       string   `json:"date"`
+	Indicator  string   `json:"indicator"`
+	Keyword    string   `json:"keyword"`
+	SourceType string   `json:"source_type"`
+	Codes      []string `json:"codes"`
+	Page       int      `json:"page"`
+	PageSize   int      `json:"page_size"`
 }
 
 type AStockStockFundFlowListResult struct {

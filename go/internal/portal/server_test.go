@@ -756,51 +756,104 @@ func TestStockResearchPageLoadsFiltersAndRows(t *testing.T) {
 
 func TestSectorFundFlowPageLoadsFiltersRowsAndRefreshAction(t *testing.T) {
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/a-stock/sector-fund-flows" {
+		fetchedAt := time.Date(2026, 7, 1, 2, 35, 0, 0, time.UTC)
+		switch r.URL.Path {
+		case "/api/v1/a-stock/sector-fund-flows":
+			if r.URL.Query().Get("sector_type") != "概念资金流" || r.URL.Query().Get("indicator") != "5日" || r.URL.Query().Get("keyword") != "AI" {
+				t.Fatalf("unexpected sector fund flow query: %s", r.URL.RawQuery)
+			}
+			writeRawJSON(w, http.StatusOK, map[string]any{
+				"code":    http.StatusOK,
+				"message": "ok",
+				"data": model.AStockSectorFundFlowListResult{
+					Items: []model.AStockSectorFundFlow{{
+						TradeDate:              "2026-07-01",
+						SectorType:             "概念资金流",
+						Indicator:              "5日",
+						Rank:                   1,
+						Name:                   "人工智能",
+						ChangePct:              2.34,
+						MainNetInflow:          230000000,
+						MainNetInflowPct:       5.6,
+						SuperLargeNetInflow:    120000000,
+						SuperLargeNetInflowPct: 3.4,
+						LargeNetInflow:         110000000,
+						LargeNetInflowPct:      2.2,
+						MediumNetInflow:        -30000000,
+						SmallNetInflow:         -90000000,
+						TopStock:               "中科曙光",
+						FetchedAt:              fetchedAt,
+					}},
+					Page:        1,
+					PageSize:    200,
+					Total:       1,
+					Date:        "2026-07-01",
+					LatestDate:  "2026-07-01",
+					SectorType:  "概念资金流",
+					Indicator:   "5日",
+					Keyword:     "AI",
+					Dates:       []string{"2026-07-01"},
+					SectorTypes: []string{"行业资金流", "概念资金流"},
+					Indicators:  []string{"今日", "5日", "10日"},
+					FetchedAt:   &fetchedAt,
+				},
+			})
+		case "/api/v1/a-stock/stock-fund-flows":
+			if r.URL.Query().Get("indicator") != "5日" || r.URL.Query().Get("codes") != "300502,603019" {
+				t.Fatalf("unexpected stock fund flow query: %s", r.URL.RawQuery)
+			}
+			writeRawJSON(w, http.StatusOK, map[string]any{
+				"code":    http.StatusOK,
+				"message": "ok",
+				"data": model.AStockStockFundFlowListResult{
+					Items: []model.AStockStockFundFlow{{
+						TradeDate:           "2026-07-01",
+						Indicator:           "5日",
+						Rank:                8,
+						Code:                "300502",
+						Name:                "新易盛",
+						Price:               529.04,
+						ChangePct:           3.94,
+						MainNetInflow:       810968272,
+						MainNetInflowPct:    8.95,
+						SuperLargeNetInflow: 600000000,
+						LargeNetInflow:      210968272,
+						MediumNetInflow:     -100000000,
+						SmallNetInflow:      -710968272,
+						FetchedAt:           fetchedAt,
+					}},
+					Page:      1,
+					PageSize:  500,
+					Total:     1,
+					Date:      "2026-07-01",
+					Indicator: "5日",
+					FetchedAt: &fetchedAt,
+				},
+			})
+		default:
 			t.Fatalf("unexpected content request: %s", r.URL.String())
 		}
-		if r.URL.Query().Get("sector_type") != "概念资金流" || r.URL.Query().Get("indicator") != "5日" || r.URL.Query().Get("keyword") != "AI" {
-			t.Fatalf("unexpected sector fund flow query: %s", r.URL.RawQuery)
-		}
-		fetchedAt := time.Date(2026, 7, 1, 2, 35, 0, 0, time.UTC)
-		writeRawJSON(w, http.StatusOK, map[string]any{
-			"code":    http.StatusOK,
-			"message": "ok",
-			"data": model.AStockSectorFundFlowListResult{
-				Items: []model.AStockSectorFundFlow{{
-					TradeDate:              "2026-07-01",
-					SectorType:             "概念资金流",
-					Indicator:              "5日",
-					Rank:                   1,
-					Name:                   "人工智能",
-					ChangePct:              2.34,
-					MainNetInflow:          230000000,
-					MainNetInflowPct:       5.6,
-					SuperLargeNetInflow:    120000000,
-					SuperLargeNetInflowPct: 3.4,
-					LargeNetInflow:         110000000,
-					LargeNetInflowPct:      2.2,
-					MediumNetInflow:        -30000000,
-					SmallNetInflow:         -90000000,
-					TopStock:               "中科曙光",
-					FetchedAt:              fetchedAt,
-				}},
-				Page:        1,
-				PageSize:    200,
-				Total:       1,
-				Date:        "2026-07-01",
-				LatestDate:  "2026-07-01",
-				SectorType:  "概念资金流",
-				Indicator:   "5日",
-				Keyword:     "AI",
-				Dates:       []string{"2026-07-01"},
-				SectorTypes: []string{"行业资金流", "概念资金流"},
-				Indicators:  []string{"今日", "5日", "10日"},
-				FetchedAt:   &fetchedAt,
-			},
-		})
 	}))
 	defer content.Close()
+	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/a-stock/sector-constituents" {
+			t.Fatalf("unexpected akshare request: %s", r.URL.String())
+		}
+		if r.URL.Query().Get("sector_type") != "概念资金流" || r.URL.Query().Get("sector_name") != "人工智能" || r.URL.Query().Get("indicator") != "5日" {
+			t.Fatalf("unexpected sector constituents query: %s", r.URL.RawQuery)
+		}
+		writeRawJSON(w, http.StatusOK, map[string]any{
+			"items": []map[string]string{
+				{"code": "300502", "name": "新易盛", "source": "eastmoney_concept_constituents"},
+				{"code": "603019", "name": "中科曙光", "source": "eastmoney_concept_constituents"},
+			},
+			"count":       2,
+			"sector_type": "概念资金流",
+			"sector_name": "人工智能",
+			"indicator":   "5日",
+		})
+	}))
+	defer akshare.Close()
 	scheduler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/scheduler/a-stock/sector-fund-flow/latest" {
 			t.Fatalf("unexpected scheduler request: %s %s", r.Method, r.URL.Path)
@@ -816,15 +869,15 @@ func TestSectorFundFlowPageLoadsFiltersRowsAndRefreshAction(t *testing.T) {
 	}))
 	defer scheduler.Close()
 
-	srv := NewServer(config.Config{ContentURL: content.URL, SchedulerURL: scheduler.URL, ServiceToken: "secret-token"})
-	req := httptest.NewRequest(http.MethodGet, "/sector-fund-flow?sector_type=概念资金流&indicator=5日&keyword=AI", nil)
+	srv := NewServer(config.Config{ContentURL: content.URL, SchedulerURL: scheduler.URL, AStockAuctionURL: akshare.URL, ServiceToken: "secret-token"})
+	req := httptest.NewRequest(http.MethodGet, "/sector-fund-flow?sector_type=概念资金流&indicator=5日&keyword=AI&sector_name=人工智能", nil)
 	rr := httptest.NewRecorder()
 	srv.handleSectorFundFlowPage(rr, req, map[string]any{"id": 1})
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected sector fund flow page 200, got %d body=%s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"版块资金", "人工智能", "中科曙光", "刷新版块资金", "行业资金流", "概念资金流", "今日", "5日", "10日", "+2.30亿", "+5.60%", "-3000.00万", `href="/a-stock">A股</a><a href="/sector-fund-flow">版块资金</a><a href="/stock-research">研报调研</a>`, `body[data-page='sector-fund-flow'] main,body[data-page='sector-fund-flow'] .site-footer{max-width:none;width:100%;box-sizing:border-box}`, `.sector-table th:nth-child(1),.sector-table td:nth-child(1){width:54px;text-align:center}`, `.sector-table th:nth-child(3),.sector-table th:nth-child(4),.sector-table th:nth-child(5)`} {
+	for _, want := range []string{"版块资金", "人工智能", "中科曙光", "刷新版块资金", "行业资金流", "概念资金流", "今日", "5日", "10日", "+2.30亿", "+5.60%", "-3000.00万", "人工智能 个股资金流", "成分股 2 只，本地资金流命中 1 只", "300502", "新易盛", "+8.11亿", "sector_name", `href="/a-stock">A股</a><a href="/sector-fund-flow">版块资金</a><a href="/stock-research">研报调研</a>`, `body[data-page='sector-fund-flow'] main,body[data-page='sector-fund-flow'] .site-footer{max-width:none;width:100%;box-sizing:border-box}`, `.sector-table th:nth-child(1),.sector-table td:nth-child(1){width:54px;text-align:center}`, `.sector-table th:nth-child(3),.sector-table th:nth-child(4),.sector-table th:nth-child(5)`, `.sector-name-link`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected sector fund flow page to contain %q, got %s", want, body)
 		}

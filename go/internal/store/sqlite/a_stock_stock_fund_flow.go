@@ -336,6 +336,7 @@ func (s *Store) ListAStockStockFundFlows(ctx context.Context, filter model.AStoc
 		Keyword:    strings.TrimSpace(filter.Keyword),
 		SourceType: strings.TrimSpace(filter.SourceType),
 	}
+	codes := normalizeAStockFundFlowCodes(filter.Codes)
 	dates, err := s.listAStockStockFundFlowDistinct(ctx, "trade_date")
 	if err != nil {
 		return result, err
@@ -366,6 +367,12 @@ func (s *Store) ListAStockStockFundFlows(ctx context.Context, filter model.AStoc
 		like := "%" + result.Keyword + "%"
 		where += " AND (code LIKE ? OR name LIKE ?)"
 		args = append(args, like, like)
+	}
+	if len(codes) > 0 {
+		where += " AND code IN (" + questionPlaceholders(len(codes)) + ")"
+		for _, code := range codes {
+			args = append(args, code)
+		}
 	}
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM a_stock_stock_fund_flows `+where, args...).Scan(&result.Total); err != nil {
 		return result, err
@@ -411,10 +418,17 @@ LIMIT ? OFFSET ?`, queryArgs...)
 func (s *Store) listAStockStockFundFlowSourceRows(ctx context.Context, result model.AStockStockFundFlowListResult, filter model.AStockStockFundFlowFilter) (model.AStockStockFundFlowListResult, error) {
 	where := "WHERE trade_date = ? AND indicator = ? AND source_type = ?"
 	args := []any{result.Date, result.Indicator, result.SourceType}
+	codes := normalizeAStockFundFlowCodes(filter.Codes)
 	if result.Keyword != "" {
 		like := "%" + result.Keyword + "%"
 		where += " AND (code LIKE ? OR name LIKE ?)"
 		args = append(args, like, like)
+	}
+	if len(codes) > 0 {
+		where += " AND code IN (" + questionPlaceholders(len(codes)) + ")"
+		for _, code := range codes {
+			args = append(args, code)
+		}
 	}
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM a_stock_stock_fund_flow_source_rows `+where, args...).Scan(&result.Total); err != nil {
 		return result, err
@@ -786,4 +800,21 @@ func normalizeAStockFundFlowCode(raw string) string {
 		code = code[:6]
 	}
 	return strings.TrimSpace(code)
+}
+
+func normalizeAStockFundFlowCodes(raw []string) []string {
+	seen := map[string]struct{}{}
+	codes := make([]string, 0, len(raw))
+	for _, value := range raw {
+		code := normalizeAStockFundFlowCode(value)
+		if code == "" {
+			continue
+		}
+		if _, exists := seen[code]; exists {
+			continue
+		}
+		seen[code] = struct{}{}
+		codes = append(codes, code)
+	}
+	return codes
 }

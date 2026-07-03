@@ -1053,6 +1053,26 @@ func TestAStockStockFundFlowSourceRowsAverageAndList(t *testing.T) {
 	if sourceRows.Total != 1 || sourceRows.Items[0].Code != "300502" || sourceRows.Items[0].SourceType != "sina" {
 		t.Fatalf("unexpected source stock rows: %+v", sourceRows)
 	}
+
+	if _, err := store.UpsertAStockStockFundFlowSourceRows(ctx, "2026-07-02", []model.AStockStockFundFlow{
+		{TradeDate: "2026-07-02", Indicator: "今日", SourceType: "eastmoney", Rank: 3, Code: "sh688981", Name: "中芯国际", Price: 88, MainNetInflow: 80, FieldCountsJSON: `{"price":1,"main_net_inflow":1}`, FetchedAt: fetchedAt},
+	}, false); err != nil {
+		t.Fatalf("UpsertAStockStockFundFlowSourceRows extra error: %v", err)
+	}
+	filtered, err := store.ListAStockStockFundFlows(ctx, model.AStockStockFundFlowFilter{Date: "2026-07-02", Indicator: "今日", Codes: []string{"sz300502", "688981", "688981"}, Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListAStockStockFundFlows code filter error: %v", err)
+	}
+	if filtered.Total != 2 || len(filtered.Items) != 2 {
+		t.Fatalf("expected two code-filtered stock rows, got %+v", filtered)
+	}
+	sourceFiltered, err := store.ListAStockStockFundFlows(ctx, model.AStockStockFundFlowFilter{Date: "2026-07-02", Indicator: "今日", SourceType: "eastmoney", Codes: []string{"688981"}, Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListAStockStockFundFlows source code filter error: %v", err)
+	}
+	if sourceFiltered.Total != 1 || sourceFiltered.Items[0].Code != "688981" {
+		t.Fatalf("expected one source-filtered stock row for 688981, got %+v", sourceFiltered)
+	}
 }
 
 func TestStockInstitutionHoldingSignalsComparePeriods(t *testing.T) {

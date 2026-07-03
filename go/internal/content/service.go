@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -926,6 +927,7 @@ func (s *Service) handleListAStockStockFundFlows(w http.ResponseWriter, r *http.
 		Indicator:  strings.TrimSpace(r.URL.Query().Get("indicator")),
 		Keyword:    strings.TrimSpace(nonEmpty(r.URL.Query().Get("keyword"), r.URL.Query().Get("q"))),
 		SourceType: strings.TrimSpace(nonEmpty(r.URL.Query().Get("source_type"), r.URL.Query().Get("source"))),
+		Codes:      parseAStockCodeQuery(r.URL.Query()),
 		Page:       apiutil.IntQuery(r, "page", 1),
 		PageSize:   apiutil.IntQuery(r, "page_size", 100),
 	}
@@ -935,6 +937,28 @@ func (s *Service) handleListAStockStockFundFlows(w http.ResponseWriter, r *http.
 		return
 	}
 	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func parseAStockCodeQuery(query url.Values) []string {
+	values := make([]string, 0, len(query["code"])+len(query["codes"]))
+	values = append(values, query["code"]...)
+	values = append(values, query["codes"]...)
+	seen := map[string]struct{}{}
+	codes := make([]string, 0)
+	for _, value := range values {
+		for _, part := range strings.Split(value, ",") {
+			code := astockcode.Normalize(strings.TrimSpace(part))
+			if code == "" {
+				continue
+			}
+			if _, exists := seen[code]; exists {
+				continue
+			}
+			seen[code] = struct{}{}
+			codes = append(codes, code)
+		}
+	}
+	return codes
 }
 
 func (s *Service) handleUpsertAStockStockFundFlows(w http.ResponseWriter, r *http.Request) {
