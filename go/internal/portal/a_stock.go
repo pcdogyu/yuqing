@@ -404,15 +404,17 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		body[data-page='a-stock'] section{width:100%;box-sizing:border-box}
 		body[data-page='a-stock'] table{width:100%;min-width:100%}
 		.astock-card{padding:18px;border:1px solid #ece7dc;border-radius:14px;background:#fff}
-		.astock-overview-table{width:100%;min-width:100%;table-layout:fixed}
+		.astock-overview-table{width:100%;min-width:100%;table-layout:fixed;font-size:13px}
 		.astock-overview-table th,.astock-overview-table td{vertical-align:top}
-		.astock-overview-table .astock-muted{display:block;margin-bottom:8px;font-size:14px}
+		.astock-overview-table .astock-muted{display:block;margin-bottom:7px;font-size:13px}
 		.astock-overview-table .astock-overview-sub-label{margin-top:16px}
-		.astock-overview-strategy{width:10.9%;min-width:170px}
+		.astock-overview-strategy{width:9.5%;min-width:150px}
 		.astock-overview-strategy strong{white-space:nowrap}
+		.astock-overview-period{width:5.4%;min-width:76px}
+		.astock-overview-period strong{white-space:nowrap}
 		.astock-overview-window{width:10.9%}
 		.astock-overview-window strong{white-space:nowrap}
-		.astock-overview-table strong{display:block;font-size:22px;line-height:1.25}
+		.astock-overview-table strong{display:block;font-size:20px;line-height:1.25}
 		.astock-overview-status{width:24%}
 		.astock-overview-status strong{white-space:normal;word-break:break-word}
 		.astock-filter-toggle-form{margin:0}
@@ -804,7 +806,7 @@ func writeAStockOverviewStrategyCell(b *strings.Builder, date string, auctionAmo
 }
 
 func writeAStockOverviewPeriodCells(b *strings.Builder, ctx aStockContext) {
-	writeAStockOverviewCell(b, "推荐窗口", ctx.PeriodLabel, "")
+	writeAStockOverviewCell(b, "推荐窗口", ctx.PeriodLabel, ` class="astock-overview-period"`)
 	writeAStockOverviewCell(b, "推荐生成窗口", nonEmpty(ctx.RecommendationWindowLabel, ctx.WindowLabel), ` class="astock-overview-window"`)
 	writeAStockOverviewCell(b, "新闻统计窗口", ctx.WindowLabel, ` class="astock-overview-window"`)
 	writeAStockOverviewNewsCountCell(b, ctx)
