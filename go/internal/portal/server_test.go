@@ -1203,7 +1203,7 @@ func TestAStockStockGenerateActionsSelectPeriod(t *testing.T) {
 			fromPeriod: "morning",
 			action:     "generate_ignore_recent_stock",
 			wantPeriod: "morning",
-			wantMsg:    "上午推荐已忽略5日内重复推荐过滤，按当前新闻窗口重新计算推荐。",
+			wantMsg:    "上午推荐已忽略14日内重复推荐过滤，按当前新闻窗口重新计算推荐。",
 			wantIgnore: true,
 		},
 		{
@@ -3520,7 +3520,7 @@ func TestAStockMorningRebuildReplenishesAfterRecentFilter(t *testing.T) {
 			t.Fatalf("expected recent fixed-pool code %s to stay filtered, got %+v", code, ctx.Recommendations)
 		}
 	}
-	if !strings.Contains(ctx.BacktestStatus, "5日内重复过滤 3 只，递补 3 只") {
+	if !strings.Contains(ctx.BacktestStatus, "14日内重复过滤 3 只，递补 3 只") {
 		t.Fatalf("expected backtest status to mention replenishment, got %q", ctx.BacktestStatus)
 	}
 	if savedSnapshot.RecentFiltered != 3 || !strings.Contains(savedSnapshot.BacktestStatus, "递补 3 只") {
@@ -4715,7 +4715,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"金十快讯", "金十资讯", "1条", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "5日内过滤", "涨停过滤", "当日行情", "不过滤", "重新计算", "关闭5日过滤", "关闭涨停过滤", "启用当日行情过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "推荐历史", "上午推荐", "下午推荐", "推荐窗口", "08:00-09:30", "上午开盘价", "下午开盘价", "补抓上午新闻", "重新生成上午推荐", "补抓下午新闻", "重新生成下午推荐", "补行情收益", "刷新全部回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="refresh_current_backtest"`, `name="action" value="refresh_backtest"`, `name="action" value="recalculate"`, "2026-06-12 周五", "2026-06-15 周一", "今日", "T+0 收益", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "推荐排名前9股票", "002230 科大讯飞", `002230 科大讯飞<span class="astock-hotspot-date">（2026-06-12）</span>`, "688981 中芯国际", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
+	for _, want := range []string{"金十快讯", "金十资讯", "1条", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "14日内过滤", "涨停过滤", "当日行情", "不过滤", "重新计算", "关闭14日过滤", "关闭涨停过滤", "启用当日行情过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "推荐历史", "上午推荐", "下午推荐", "推荐窗口", "08:00-09:30", "上午开盘价", "下午开盘价", "补抓上午新闻", "重新生成上午推荐", "补抓下午新闻", "重新生成下午推荐", "补行情收益", "刷新全部回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="refresh_current_backtest"`, `name="action" value="refresh_backtest"`, `name="action" value="recalculate"`, "2026-06-12 周五", "2026-06-15 周一", "今日", "T+0 收益", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "推荐排名前9股票", "002230 科大讯飞", `002230 科大讯飞<span class="astock-hotspot-date">（2026-06-12）</span>`, "688981 中芯国际", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}
@@ -4977,7 +4977,7 @@ func TestAStockRecommendationHistoryActionsUseSelectedPeriod(t *testing.T) {
 		"重新生成上午推荐",
 		"补抓下午新闻",
 		"重新生成下午推荐",
-		"关闭5日过滤",
+		"关闭14日过滤",
 		"补录集合竞价",
 		"补行情收益",
 		"刷新全部回测",
@@ -5011,7 +5011,7 @@ func TestAStockIgnoreRecentStatePersistsInHistoryNavigation(t *testing.T) {
 	if !strings.Contains(actionsBody, `name="ignore_recent" value="1"`) {
 		t.Fatalf("expected history actions to preserve ignore_recent, got %s", actionsBody)
 	}
-	if !strings.Contains(actionsBody, "启用5日过滤") || !strings.Contains(actionsBody, `href="/a-stock?date=2026-06-16&amp;period=morning"`) {
+	if !strings.Contains(actionsBody, "启用14日过滤") || !strings.Contains(actionsBody, `href="/a-stock?date=2026-06-16&amp;period=morning"`) {
 		t.Fatalf("expected history actions to offer enabling 5-day filter, got %s", actionsBody)
 	}
 }
@@ -5073,7 +5073,7 @@ func TestAStockOverviewBacktestStatusIncludesFilterReasons(t *testing.T) {
 		SameDayMorningFiltered: 1,
 		LimitUpFiltered:        3,
 	})
-	for _, want := range []string{"已回测 3/3", "5日内重复过滤股票 2", "过滤上午同股票/热点名额 1", "涨停过滤股票 3"} {
+	for _, want := range []string{"已回测 3/3", "14日内重复过滤股票 2", "过滤上午同股票/热点名额 1", "涨停过滤股票 3"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected overview status to contain %q, got %q", want, got)
 		}
@@ -5407,9 +5407,9 @@ func TestAStockRecentRecommendationFilterUsesTradingDays(t *testing.T) {
 	defer content.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
-	recentCodes := srv.loadRecentAStockRecommendationCodes("2026-07-01", 5)
+	recentCodes := srv.loadRecentAStockRecommendationCodes("2026-07-15", aStockRecentLookbackDays)
 	if _, ok := recentCodes["600030"]; !ok {
-		t.Fatalf("expected 2026-06-25 recommendation in five-trading-day lookback, got %+v", recentCodes)
+		t.Fatalf("expected 2026-06-25 recommendation in fourteen-trading-day lookback, got %+v", recentCodes)
 	}
 	for _, weekend := range []string{"2026-06-28", "2026-06-27"} {
 		if _, ok := queriedSelectionDates[weekend]; ok {

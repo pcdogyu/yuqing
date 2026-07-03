@@ -284,7 +284,7 @@ const (
 	aStockNewsPageSize                = 10
 	aStockArticleFetchPageSize        = 1000
 	aStockArticleFetchMaxPages        = 100
-	aStockRecentLookbackDays          = 5
+	aStockRecentLookbackDays          = 14
 	aStockMarketCandidateLimit        = 5000
 	aStockRecommendationLimit         = 12
 	aStockReplacementPoolLimit        = 36
@@ -581,7 +581,7 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request) 
 	case "generate_ignore_recent_stock":
 		query.Set("ignore_recent", "1")
 		ignoreRecent = true
-		query.Set("msg", period.Label+"已忽略5日内重复推荐过滤，按当前新闻窗口重新计算推荐。")
+		query.Set("msg", period.Label+"已忽略"+aStockRecentLookbackStatusPrefix()+"推荐过滤，按当前新闻窗口重新计算推荐。")
 		persistRecommendation = true
 		recommendationRefreshMode = aStockRecommendationRebuild
 	case "generate":
@@ -706,7 +706,9 @@ func writeAStockOverviewFilterCell(b *strings.Builder, ctx aStockContext) {
 	if ctx.IgnoreRecent {
 		filterStatus = "已关闭"
 	}
-	b.WriteString(`<td><span class="astock-muted">5日内过滤</span><strong>`)
+	b.WriteString(`<td><span class="astock-muted">`)
+	b.WriteString(html.EscapeString(aStockRecentLookbackLabel() + "内过滤"))
+	b.WriteString(`</span><strong>`)
 	b.WriteString(html.EscapeString(filterStatus))
 	b.WriteString(`</strong><a class="astock-filter-toggle" data-preserve-scroll="1" href="`)
 	b.WriteString(html.EscapeString(aStockFilterToggleHref(ctx.Date, ctx.Period, ctx.NewsPage, ctx.IgnoreRecent, ctx.IgnoreLimitUp, ctx.TodayMarketFilterEnabled)))
@@ -813,8 +815,8 @@ func aStockOverviewBacktestStatus(ctx aStockContext) string {
 		status = "--"
 	}
 	reasons := make([]string, 0, 2)
-	if ctx.RecentFiltered > 0 && !strings.Contains(status, "5日内重复") {
-		reasons = append(reasons, fmt.Sprintf("5日内重复过滤股票 %d", ctx.RecentFiltered))
+	if ctx.RecentFiltered > 0 && !strings.Contains(status, aStockRecentLookbackStatusPrefix()) {
+		reasons = append(reasons, fmt.Sprintf("%s过滤股票 %d", aStockRecentLookbackStatusPrefix(), ctx.RecentFiltered))
 	}
 	if ctx.SameDayMorningFiltered > 0 {
 		reasons = append(reasons, fmt.Sprintf("过滤上午同股票/热点名额 %d", ctx.SameDayMorningFiltered))
@@ -2726,9 +2728,9 @@ func aStockRecommendationEmptyReason(ctx aStockContext) string {
 	if ctx.RecentFiltered > 0 {
 		recentStatus := formatAStockRecentReplenishmentStatus(ctx.RecentFiltered, ctx.RecentReplenished, ctx.RecentReplenishShortfall)
 		if recentStatus == "" {
-			recentStatus = fmt.Sprintf("5日内重复推荐过滤 %d 只", ctx.RecentFiltered)
+			recentStatus = fmt.Sprintf("%s推荐过滤 %d 只", aStockRecentLookbackStatusPrefix(), ctx.RecentFiltered)
 		}
-		return fmt.Sprintf("暂无推荐股票：%s %s 已生成候选，但%s。可关闭5日过滤后重新生成。", ctx.PeriodLabel, windowLabel, recentStatus)
+		return fmt.Sprintf("暂无推荐股票：%s %s 已生成候选，但%s。可关闭%s过滤后重新生成。", ctx.PeriodLabel, windowLabel, recentStatus, aStockRecentLookbackLabel())
 	}
 	if ctx.SameDayMorningFiltered > 0 {
 		return fmt.Sprintf("暂无推荐股票：%s %s 已生成候选，但过滤上午同股票或已满热点名额 %d 只。", ctx.PeriodLabel, windowLabel, ctx.SameDayMorningFiltered)
@@ -3450,7 +3452,7 @@ func formatAStockRecentReplenishmentStatus(filtered int, replenished int, shortf
 	if filtered <= 0 {
 		return ""
 	}
-	parts := []string{fmt.Sprintf("5日内重复过滤 %d 只", filtered)}
+	parts := []string{fmt.Sprintf("%s过滤 %d 只", aStockRecentLookbackStatusPrefix(), filtered)}
 	if replenished > 0 {
 		parts = append(parts, fmt.Sprintf("递补 %d 只", replenished))
 	}
@@ -6854,9 +6856,17 @@ func aStockFilterToggleHref(strategyDate string, period string, newsPage int, ig
 
 func aStockFilterToggleLabel(ignoreRecent bool) string {
 	if ignoreRecent {
-		return "启用5日过滤"
+		return "启用" + aStockRecentLookbackLabel() + "过滤"
 	}
-	return "关闭5日过滤"
+	return "关闭" + aStockRecentLookbackLabel() + "过滤"
+}
+
+func aStockRecentLookbackLabel() string {
+	return fmt.Sprintf("%d日", aStockRecentLookbackDays)
+}
+
+func aStockRecentLookbackStatusPrefix() string {
+	return aStockRecentLookbackLabel() + "内重复"
 }
 
 func aStockLimitUpFilterToggleHref(strategyDate string, period string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool) string {
