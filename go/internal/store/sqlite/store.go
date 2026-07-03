@@ -609,6 +609,7 @@ CREATE TABLE IF NOT EXISTS a_stock_recommendation_selections (
 	hotspot_score INTEGER NOT NULL DEFAULT 0,
 	market_score INTEGER NOT NULL DEFAULT 0,
 	reason TEXT NOT NULL DEFAULT '',
+	entry_time TEXT NOT NULL DEFAULT '',
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL,
 	PRIMARY KEY (strategy_date, period, code)
@@ -857,6 +858,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_action_created_at ON audit_logs(action
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN limit_up_filtered INTEGER NOT NULL DEFAULT 0`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN today_market_filter_enabled INTEGER NOT NULL DEFAULT 0`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN no_today_market_count INTEGER NOT NULL DEFAULT 0`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_selections ADD COLUMN entry_time TEXT NOT NULL DEFAULT ''`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_sector_fund_flows ADD COLUMN source_count INTEGER NOT NULL DEFAULT 1`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_sector_fund_flows ADD COLUMN source_types TEXT NOT NULL DEFAULT ''`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_sector_fund_flows ADD COLUMN field_counts_json TEXT NOT NULL DEFAULT '{}'`)
@@ -897,6 +899,9 @@ func (s *Store) migratePostgres(ctx context.Context) error {
 		return err
 	}
 	if _, err := s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN IF NOT EXISTS no_today_market_count INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_selections ADD COLUMN IF NOT EXISTS entry_time TEXT NOT NULL DEFAULT ''`); err != nil {
 		return err
 	}
 	if _, err := s.db.ExecContext(ctx, `ALTER TABLE a_stock_sector_fund_flows ADD COLUMN IF NOT EXISTS source_count INTEGER NOT NULL DEFAULT 1`); err != nil {

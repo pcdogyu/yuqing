@@ -4054,11 +4054,15 @@ func TestAStockPageRefreshCurrentBacktestPersistsT0Return(t *testing.T) {
 		if r.URL.Query().Get("secid") != "0.300024" || r.URL.Query().Get("klt") != "1" {
 			t.Fatalf("unexpected eastmoney query: %s", r.URL.RawQuery)
 		}
-		price := "16.08"
+		price := "16.80"
 		minute := "13:01"
-		if strings.Contains(r.URL.Query().Get("end"), "09:30") {
+		switch {
+		case strings.Contains(r.URL.Query().Get("end"), "09:30"):
 			price = "16.03"
 			minute = "09:30"
+		case strings.Contains(r.URL.Query().Get("end"), "10:30"):
+			price = "16.08"
+			minute = "10:30"
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"data": map[string]any{
@@ -4083,7 +4087,7 @@ func TestAStockPageRefreshCurrentBacktestPersistsT0Return(t *testing.T) {
 				StrategyDate: "2026-06-24",
 				Period:       "afternoon",
 				Items: []model.AStockRecommendationSelection{
-					{Rank: 1, Code: "300024", Name: "机器人", Hotspot: "人工智能", MarketScore: 92, Reason: "afternoon"},
+					{Rank: 1, Code: "300024", Name: "机器人", Hotspot: "人工智能", MarketScore: 92, Reason: "afternoon", EntryTime: "10:30"},
 				},
 			})
 		case "/api/v1/a-stock/recommendations":
@@ -5563,6 +5567,38 @@ func TestAStockRecentRecommendationFilterUsesTradingDays(t *testing.T) {
 	}
 }
 
+func TestAStockAfternoonRecentCodesIncludeSameDayMorningSelections(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/a-stock/recommendations":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
+		case "/api/v1/a-stock/recommendation-selections":
+			if r.URL.Query().Get("date") == "2026-07-03" && r.URL.Query().Get("period") == "morning" {
+				writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{
+					Found: true,
+					Items: []model.AStockRecommendationSelection{{Rank: 1, Code: "601138", Name: "工业富联", Hotspot: "算力", Reason: "same-day morning"}},
+				})
+				return
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{Found: false})
+		default:
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	afternoonCodes := srv.loadRecentAStockRecommendationCodesForPeriodWithCache("2026-07-03", "afternoon", aStockRecentLookbackDays, newAStockRequestCache())
+	if _, ok := afternoonCodes["601138"]; !ok {
+		t.Fatalf("expected afternoon lookback to include same-day morning recommendation, got %+v", afternoonCodes)
+	}
+	morningCodes := srv.loadRecentAStockRecommendationCodesForPeriodWithCache("2026-07-03", "morning", aStockRecentLookbackDays, newAStockRequestCache())
+	if _, ok := morningCodes["601138"]; ok {
+		t.Fatalf("expected morning lookback to exclude same-day morning recommendation, got %+v", morningCodes)
+	}
+}
+
 func TestAStockMarketViewFiltersDeepDrawdownsAndPenalizesSector(t *testing.T) {
 	recommendations := initializeAStockRecommendationMarket([]aStockRecommendation{
 		{Rank: 1, Hotspot: "人工智能", Code: "000001", Name: "回撤过滤", HotspotScore: 80, MarketScore: 80, Reason: "热度分 80"},
@@ -5743,6 +5779,31 @@ func TestAStockMarketViewKeepsAfternoonRecommendationWithout1300Price(t *testing
 	}
 }
 
+func TestAStockRecommendationEntryTimeNormalization(t *testing.T) {
+	tests := []struct {
+		name   string
+		period string
+		rec    aStockRecommendation
+		want   string
+	}{
+		{name: "morning early maps to open", period: "morning", rec: aStockRecommendation{EntryTime: "09:27"}, want: "09:30"},
+		{name: "afternoon pre-open maps to 13:01", period: "afternoon", rec: aStockRecommendation{EntryTime: "12:57"}, want: "13:01"},
+		{name: "afternoon 13:00 maps to 13:01", period: "afternoon", rec: aStockRecommendation{EntryTime: "13:00"}, want: "13:01"},
+		{name: "afternoon intraday keeps minute", period: "afternoon", rec: aStockRecommendation{EntryTime: "10:30"}, want: "10:30"},
+		{name: "afternoon parses generated reason", period: "afternoon", rec: aStockRecommendation{Reason: "按热度生成，生成点 10:30"}, want: "10:30"},
+		{name: "afternoon empty defaults", period: "afternoon", rec: aStockRecommendation{}, want: "13:01"},
+		{name: "morning empty defaults", period: "morning", rec: aStockRecommendation{}, want: "09:30"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := aStockRecommendationEffectiveEntryTime(tc.rec, tc.period); got != tc.want {
+				t.Fatalf("expected entry time %s, got %s", tc.want, got)
+			}
+		})
+	}
+}
+
 func TestAStockBacktestUses0930EntryPrice(t *testing.T) {
 	recommendations := []aStockRecommendation{{Code: "300285", Name: "国瓷材料"}}
 	byCode := groupAStockMarketBars([]aStockMarketBar{
@@ -5798,6 +5859,29 @@ func TestAStockBacktestUsesAfternoonEntryPrice(t *testing.T) {
 	}
 }
 
+func TestAStockBacktestUsesAfternoonRecommendationEntryTimePrice(t *testing.T) {
+	recommendations := []aStockRecommendation{{Code: "300024", Name: "机器人", EntryTime: "10:30"}}
+	byCode := groupAStockMarketBars([]aStockMarketBar{
+		{Code: "300024", Date: "2026-06-24", Open: 16, AfternoonEntryPrice: 18, SessionPrices: map[string]float64{"10:30": 17}, Close: 18, Pct: 4.10},
+		{Code: "300024", Date: "2026-06-25", Open: 18.2, Close: 19, Pct: 5.56},
+	})
+
+	rows := buildAStockBacktestRows("2026-06-24", "afternoon", recommendations, byCode)
+
+	if len(rows) != 1 {
+		t.Fatalf("expected one backtest row, got %+v", rows)
+	}
+	if rows[0].EntryOpen != "--" || rows[0].AfternoonOpen != "17.00" {
+		t.Fatalf("expected afternoon entry time price in afternoon column, got %+v", rows[0])
+	}
+	if rows[0].T0Close != "18.00" || rows[0].T0Return != "+5.88%" {
+		t.Fatalf("expected T+0 return to use 10:30 entry price, got %+v", rows[0])
+	}
+	if rows[0].Days[0].Return != "+11.76%" {
+		t.Fatalf("expected T+1 return to use 10:30 entry price, got %+v", rows[0])
+	}
+}
+
 func TestAStockBacktestDisplayOpenPricesKeepsAfternoonRowsOutOfMorningColumn(t *testing.T) {
 	morningOpen, afternoonOpen := aStockBacktestDisplayOpenPrices("afternoon", aStockBacktestRow{
 		EntryOpen:     "135.54",
@@ -5826,6 +5910,36 @@ func TestDecodeEastmoneyAStock1300Price(t *testing.T) {
 
 	if !ok || price != 67.3 {
 		t.Fatalf("expected 13:01 close price 67.3, got price=%v ok=%v", price, ok)
+	}
+}
+
+func TestDecodeEastmoneyAStockSessionPriceArbitraryMinute(t *testing.T) {
+	body := []byte(`{"data":{"klines":["2026-06-24 10:29,16.70,16.80,0,0,0,0,0,0","2026-06-24 10:30,16.80,16.88,0,0,0,0,0,0","2026-06-24 10:31,16.88,16.92,0,0,0,0,0,0"]}}`)
+
+	price, ok := decodeEastmoneyAStockSessionPrice(body, "2026-06-24", "10:30")
+
+	if !ok || price != 16.88 {
+		t.Fatalf("expected 10:30 close price 16.88, got price=%v ok=%v", price, ok)
+	}
+}
+
+func TestDecodeTencentAStockSessionPriceArbitraryMinute(t *testing.T) {
+	body := []byte(`{"code":0,"data":{"sz300024":{"data":{"date":"20260624","data":["1029 16.70 1200 200000.00","1030 16.88 1400 236320.00","1031 16.92 1100 186120.00"]}}}}`)
+
+	price, ok := decodeTencentAStockSessionPrice(body, "2026-06-24", "10:30")
+
+	if !ok || price != 16.88 {
+		t.Fatalf("expected 10:30 tencent price 16.88, got price=%v ok=%v", price, ok)
+	}
+}
+
+func TestDecodeSinaAStockSessionPriceArbitraryMinute(t *testing.T) {
+	body := []byte(`var data=([{"day":"2026-06-24 10:29:00","open":"16.70","close":"16.80"},{"day":"2026-06-24 10:30:00","open":"16.80","close":"16.88"}]);`)
+
+	price, ok := decodeSinaAStockSessionPrice(body, "2026-06-24", "10:30")
+
+	if !ok || price != 16.88 {
+		t.Fatalf("expected 10:30 sina price 16.88, got price=%v ok=%v", price, ok)
 	}
 }
 
@@ -5932,6 +6046,57 @@ func TestAStockMarketBarsCustomEndpointSupplementsMissingSessionPricesFromEastmo
 	}
 	if rows[0].T0Return != "+2.05%" {
 		t.Fatalf("expected T+0 return to use supplemented 13:01 price, got %+v", rows[0])
+	}
+}
+
+func TestAStockMarketBarsSupplementsRecommendationEntryTimeFromEastmoney(t *testing.T) {
+	custom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{
+				"items": []map[string]any{
+					{"code": "300024", "date": "2026-06-23", "open": 16.79, "close": 16.79, "pct": -2.21},
+					{"code": "300024", "date": "2026-06-24", "open": 16.66, "close": 16.42, "pct": 0.98},
+				},
+			},
+		})
+	}))
+	defer custom.Close()
+
+	eastmoney := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("secid") != "0.300024" {
+			t.Fatalf("unexpected eastmoney secid: %s", r.URL.RawQuery)
+		}
+		if r.URL.Query().Get("klt") != "1" {
+			t.Fatalf("expected minute eastmoney query, got %s", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{
+				"klines": []string{
+					"2026-06-24 09:30,16.62,16.70,0,0,0,0,0,0",
+					"2026-06-24 10:30,16.70,16.88,0,0,0,0,0,0",
+					"2026-06-24 13:01,16.90,17.02,0,0,0,0,0,0",
+				},
+			},
+		})
+	}))
+	defer eastmoney.Close()
+	setAStockEastmoneyKlineURLForTest(t, eastmoney.URL)
+
+	srv := NewServer(config.Config{})
+	bars, err := srv.loadAStockMarketBars("2026-06-24", []string{"300024"}, custom.URL)
+	if err != nil {
+		t.Fatalf("expected custom market bars with eastmoney session enrichment, got error: %v", err)
+	}
+	srv.enrichAStockRecommendationEntryPrices("2026-06-24", "afternoon", []aStockRecommendation{{Code: "300024", Name: "机器人", EntryTime: "10:30"}}, bars)
+
+	rows := buildAStockBacktestRows("2026-06-24", "afternoon", []aStockRecommendation{{Code: "300024", Name: "机器人", EntryTime: "10:30"}}, groupAStockMarketBars(bars))
+	if len(rows) != 1 {
+		t.Fatalf("expected one backtest row, got %+v", rows)
+	}
+	if rows[0].AfternoonOpen != "16.88" || rows[0].T0Close != "16.42" || rows[0].T0Return != "-2.73%" {
+		t.Fatalf("expected afternoon backtest to use supplemented 10:30 price, got %+v", rows[0])
 	}
 }
 
@@ -6633,7 +6798,7 @@ func TestAStockPersistedRecommendationsBlockEastmoneyAndBankStocks(t *testing.T)
 		{Rank: 2, Code: "600036", Name: "招商银行", Hotspot: "金融券商"},
 		{Rank: 3, Code: "600030", Name: "中信证券", Hotspot: "金融券商"},
 		{Rank: 4, Code: "000001", Name: "平安银行", Hotspot: "金融券商"},
-	})
+	}, "morning")
 
 	if len(recommendations) != 4 || recommendations[2].Code != "600030" || recommendations[2].Rank != 3 {
 		t.Fatalf("expected persisted selections to convert before filtering, got %+v", recommendations)

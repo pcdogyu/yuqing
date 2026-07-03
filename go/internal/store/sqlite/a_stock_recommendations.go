@@ -250,8 +250,8 @@ WHERE strategy_date = ? AND period = ? AND code NOT IN (` + strings.Join(placeho
 		}
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO a_stock_recommendation_selections (
-	strategy_date, period, code, rank, hotspot, name, hotspot_score, market_score, reason, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	strategy_date, period, code, rank, hotspot, name, hotspot_score, market_score, reason, entry_time, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(strategy_date, period, code) DO UPDATE SET
 	rank = excluded.rank,
 	hotspot = excluded.hotspot,
@@ -259,6 +259,7 @@ ON CONFLICT(strategy_date, period, code) DO UPDATE SET
 	hotspot_score = excluded.hotspot_score,
 	market_score = excluded.market_score,
 	reason = excluded.reason,
+	entry_time = excluded.entry_time,
 	updated_at = excluded.updated_at`,
 			strategyDate,
 			period,
@@ -269,6 +270,7 @@ ON CONFLICT(strategy_date, period, code) DO UPDATE SET
 			item.HotspotScore,
 			item.MarketScore,
 			item.Reason,
+			item.EntryTime,
 			createdAt.UTC().Format(time.RFC3339),
 			updatedAt.UTC().Format(time.RFC3339),
 		); err != nil {
@@ -289,7 +291,7 @@ func (s *Store) ListAStockRecommendationSelections(ctx context.Context, strategy
 		Items:        make([]model.AStockRecommendationSelection, 0),
 	}
 	rows, err := s.db.QueryContext(ctx, `
-SELECT strategy_date, period, rank, hotspot, code, name, hotspot_score, market_score, reason, created_at, updated_at
+SELECT strategy_date, period, rank, hotspot, code, name, hotspot_score, market_score, reason, entry_time, created_at, updated_at
 FROM a_stock_recommendation_selections
 WHERE strategy_date = ? AND period = ?
 ORDER BY rank ASC, code ASC`,
@@ -506,6 +508,7 @@ func scanAStockRecommendationSelection(scanner scanner) (model.AStockRecommendat
 		&item.HotspotScore,
 		&item.MarketScore,
 		&item.Reason,
+		&item.EntryTime,
 		&createdAt,
 		&updatedAt,
 	); err != nil {
@@ -526,6 +529,7 @@ func normalizeAStockRecommendationSelections(strategyDate string, period string,
 		item.Name = strings.TrimSpace(item.Name)
 		item.Hotspot = strings.TrimSpace(item.Hotspot)
 		item.Reason = strings.TrimSpace(item.Reason)
+		item.EntryTime = strings.TrimSpace(item.EntryTime)
 		if item.Code == "" {
 			continue
 		}

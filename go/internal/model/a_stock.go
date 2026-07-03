@@ -118,6 +118,7 @@ type AStockRecommendationSelection struct {
 	HotspotScore int       `json:"hotspot_score"`
 	MarketScore  int       `json:"market_score"`
 	Reason       string    `json:"reason"`
+	EntryTime    string    `json:"entry_time"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }

@@ -515,6 +515,7 @@ CREATE TABLE IF NOT EXISTS a_stock_recommendation_selections (
 	hotspot_score INTEGER NOT NULL DEFAULT 0,
 	market_score INTEGER NOT NULL DEFAULT 0,
 	reason TEXT NOT NULL DEFAULT '',
+	entry_time TEXT NOT NULL DEFAULT '',
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL,
 	PRIMARY KEY (strategy_date, period, code)

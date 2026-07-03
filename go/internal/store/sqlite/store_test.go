@@ -610,8 +610,8 @@ func TestAStockRecommendationSelectionsUpsertAndList(t *testing.T) {
 		StrategyDate: "2026-06-23",
 		Period:       "afternoon",
 		Items: []model.AStockRecommendationSelection{
-			{Rank: 1, Code: "002008", Name: "大族激光", Hotspot: "机器人", MarketScore: 91, Reason: "first"},
-			{Rank: 2, Code: "688367", Name: "工大高科", Hotspot: "机器人", MarketScore: 87, Reason: "second"},
+			{Rank: 1, Code: "002008", Name: "大族激光", Hotspot: "机器人", MarketScore: 91, Reason: "first", EntryTime: "10:30"},
+			{Rank: 2, Code: "688367", Name: "工大高科", Hotspot: "机器人", MarketScore: 87, Reason: "second", EntryTime: "13:01"},
 		},
 	})
 	if err != nil {
@@ -625,8 +625,8 @@ func TestAStockRecommendationSelectionsUpsertAndList(t *testing.T) {
 		StrategyDate: "2026-06-23",
 		Period:       "afternoon",
 		Items: []model.AStockRecommendationSelection{
-			{Rank: 1, Code: "002008", Name: "大族激光", Hotspot: "机器人", MarketScore: 93, Reason: "kept"},
-			{Rank: 2, Code: "688367", Name: "工大高科", Hotspot: "机器人", MarketScore: 88, Reason: "kept-too"},
+			{Rank: 1, Code: "002008", Name: "大族激光", Hotspot: "机器人", MarketScore: 93, Reason: "kept", EntryTime: "10:31"},
+			{Rank: 2, Code: "688367", Name: "工大高科", Hotspot: "机器人", MarketScore: 88, Reason: "kept-too", EntryTime: "13:01"},
 		},
 	})
 	if err != nil {
@@ -643,7 +643,7 @@ func TestAStockRecommendationSelectionsUpsertAndList(t *testing.T) {
 	if !list.Found || len(list.Items) != 2 {
 		t.Fatalf("expected two persisted selections, got %+v", list)
 	}
-	if list.Items[0].Code != "002008" || list.Items[0].MarketScore != 93 || list.Items[1].Code != "688367" {
+	if list.Items[0].Code != "002008" || list.Items[0].MarketScore != 93 || list.Items[0].EntryTime != "10:31" || list.Items[1].Code != "688367" || list.Items[1].EntryTime != "13:01" {
 		t.Fatalf("unexpected persisted selections: %+v", list.Items)
 	}
 }

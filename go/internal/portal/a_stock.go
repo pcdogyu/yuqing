@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -100,6 +101,7 @@ type aStockRecommendation struct {
 	HoldingSummary string
 	HoldingRatio   string
 	Reason         string
+	EntryTime      string
 }
 
 type aStockMarketBar struct {
@@ -110,6 +112,7 @@ type aStockMarketBar struct {
 	Pct                 float64
 	EntryPrice          float64
 	AfternoonEntryPrice float64
+	SessionPrices       map[string]float64
 }
 
 type aStockBacktestCell struct {
@@ -639,12 +642,26 @@ func (s *Server) persistAStockActionRecommendation(strategyDate string, periodKe
 	}
 	messages := make([]string, 0, len(periods))
 	for _, period := range periods {
-		ctx := s.loadAStockContextWithRecommendationPhasePersistenceMode(strategyDate, period, 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, true, aStockRecommendationPhaseFinal, cache, true, true, refreshMode)
+		entryTimeOverride := aStockManualRecommendationEntryTime(strategyDate, period, refreshMode)
+		ctx := s.loadAStockContextWithRecommendationPhasePersistenceModeEntryTime(strategyDate, period, 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, true, aStockRecommendationPhaseFinal, cache, true, true, refreshMode, entryTimeOverride)
 		if message := strings.TrimSpace(ctx.LoadMessage); message != "" {
 			messages = append(messages, fmt.Sprintf("%s：%s", ctx.PeriodLabel, message))
 		}
 	}
 	return strings.Join(messages, " ")
+}
+
+func aStockManualRecommendationEntryTime(strategyDate string, period string, refreshMode aStockRecommendationRefreshMode) string {
+	if normalizeAStockPeriod(period).Key != "afternoon" || refreshMode != aStockRecommendationRebuild || normalizeAStockStrategyDate(strategyDate) != aStockTodayDate() {
+		return ""
+	}
+	now := aStockNow().In(aStockLocation())
+	minutes := now.Hour()*60 + now.Minute()
+	inTradingSession := (minutes >= 9*60+30 && minutes <= 11*60+30) || (minutes >= 13*60 && minutes <= 15*60)
+	if !inTradingSession {
+		return ""
+	}
+	return normalizeAStockGeneratedEntryTime("afternoon", fmt.Sprintf("%02d:%02d", now.Hour(), now.Minute()))
 }
 
 func (s *Server) repairAStockActionRecommendationNames(strategyDate string, periodKey string, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool) string {
@@ -729,7 +746,7 @@ func (s *Server) loadAStockRecommendationNameRepairContext(strategyDate string, 
 	}
 	if !ignoreRecent {
 		if result, ok := s.loadAStockRecommendationSelectionsWithCache(ctx.Date, ctx.Period, cache); ok {
-			ctx.Recommendations = aStockRecommendationSelectionsToRecommendations(result.Items)
+			ctx.Recommendations = aStockRecommendationSelectionsToRecommendations(result.Items, ctx.Period)
 			ctx.GeneratedRecommendationCount = len(ctx.Recommendations)
 			if len(ctx.Recommendations) > 0 {
 				ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus, ctx.LimitUpFiltered = s.loadAStockLockedMarketView(ctx.Date, ctx.Period, ctx.Recommendations)
@@ -1629,6 +1646,10 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistence(strategyDat
 }
 
 func (s *Server) loadAStockContextWithRecommendationPhasePersistenceMode(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, recommendationPhase string, cache *aStockRequestCache, includeHotspotTopStocks bool, persist bool, refreshMode aStockRecommendationRefreshMode) aStockContext {
+	return s.loadAStockContextWithRecommendationPhasePersistenceModeEntryTime(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, recommendationPhase, cache, includeHotspotTopStocks, persist, refreshMode, "")
+}
+
+func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTime(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, recommendationPhase string, cache *aStockRequestCache, includeHotspotTopStocks bool, persist bool, refreshMode aStockRecommendationRefreshMode, entryTimeOverride string) aStockContext {
 	period := normalizeAStockPeriod(periodKey)
 	phase := normalizeAStockRecommendationPhase(recommendationPhase)
 	recommendationStart, recommendationEnd, recommendationWindowLabel := aStockRecommendationPhaseWindow(strategyDate, period.Key, phase)
@@ -1787,7 +1808,7 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceMode(strateg
 		}
 	}
 	if len(ctx.Recommendations) > 0 && !ctx.IgnoreRecent {
-		recentCodes := s.loadRecentAStockRecommendationCodesWithCache(strategyDate, aStockRecentLookbackDays, cache)
+		recentCodes := s.loadRecentAStockRecommendationCodesForPeriodWithCache(strategyDate, period.Key, aStockRecentLookbackDays, cache)
 		if period.Key == "morning" && len(recentReplacementPool) > 0 && recommendationTarget > 0 {
 			result := filterRecentAStockRecommendationsWithReplenishment(ctx.Recommendations, recentReplacementPool, recentCodes, recommendationTarget)
 			ctx.Recommendations = result.Recommendations
@@ -1799,6 +1820,7 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceMode(strateg
 			ctx.Recommendations, ctx.RecentFiltered = filterRecentAStockRecommendations(ctx.Recommendations, recentCodes)
 		}
 	}
+	ctx.Recommendations = withAStockRecommendationEntryTimes(ctx.Recommendations, period.Key, entryTimeOverride)
 	ctx.Recommendations = s.applyAStockHoldingSummariesWithCache(ctx.Recommendations, cache)
 	ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus, ctx.LimitUpFiltered, ctx.NoTodayMarketCount = s.loadAStockMarketView(strategyDate, ctx.Period, ctx.Recommendations, ctx.LimitUpFilterEnabled, ctx.TodayMarketFilterEnabled, recommendationTarget)
 	if forceRecommendationRefresh {
@@ -1831,6 +1853,19 @@ func shouldPersistAStockRecommendationSelections(ignoreRecent bool, ignoreLimitU
 	return forceRecommendationRefresh && isAStockOfficialSelectionContext(ignoreRecent, ignoreLimitUp, filterTodayMarket)
 }
 
+func (s *Server) loadRecentAStockRecommendationCodesForPeriodWithCache(strategyDate string, period string, lookbackDays int, cache *aStockRequestCache) map[string]struct{} {
+	result := s.loadRecentAStockRecommendationCodesWithCache(strategyDate, lookbackDays, cache)
+	if normalizeAStockPeriod(period).Key == "afternoon" {
+		if len(result) == 0 {
+			result = make(map[string]struct{})
+		}
+		for code := range s.loadPersistedAStockRecommendationCodesWithCache(strategyDate, "morning", false, cache) {
+			result[code] = struct{}{}
+		}
+	}
+	return result
+}
+
 func formatAStockPublishTime(value time.Time) string {
 	return value.In(aStockLocation()).Format("2006-01-02 15:04:05")
 }
@@ -1847,7 +1882,7 @@ func (s *Server) applyAStockRecommendationSelectionsWithCache(ctx *aStockContext
 	if !ok || len(result.Items) == 0 {
 		return false
 	}
-	ctx.Recommendations, _ = s.repairAStockPersistedRecommendationsWithCache(ctx.Date, aStockRecommendationSelectionsToRecommendations(result.Items), cache)
+	ctx.Recommendations, _ = s.repairAStockPersistedRecommendationsWithCache(ctx.Date, aStockRecommendationSelectionsToRecommendations(result.Items, ctx.Period), cache)
 	if len(ctx.Recommendations) == 0 {
 		return false
 	}
@@ -2491,7 +2526,7 @@ func (s *Server) buildAStockPreopenPopup(userID int64, strategyDate string) aSto
 func (s *Server) loadAStockPopupRecommendations(strategyDate string, period string) ([]aStockRecommendation, time.Time, bool) {
 	normalizedPeriod := normalizeAStockPeriod(period).Key
 	if result, ok := s.loadAStockRecommendationSelections(strategyDate, normalizedPeriod); ok && len(result.Items) > 0 {
-		recommendations, _ := s.repairAStockPersistedRecommendationsWithCache(strategyDate, aStockRecommendationSelectionsToRecommendations(result.Items), nil)
+		recommendations, _ := s.repairAStockPersistedRecommendationsWithCache(strategyDate, aStockRecommendationSelectionsToRecommendations(result.Items, normalizedPeriod), nil)
 		if len(recommendations) == 0 {
 			return nil, time.Time{}, false
 		}
@@ -3073,7 +3108,7 @@ func (s *Server) loadPersistedAStockRecommendations(strategyDate string, period 
 func (s *Server) loadPersistedAStockRecommendationsWithCache(strategyDate string, period string, ignoreRecent bool, cache *aStockRequestCache) []aStockRecommendation {
 	if !ignoreRecent {
 		if result, ok := s.loadAStockRecommendationSelectionsWithCache(strategyDate, period, cache); ok && len(result.Items) > 0 {
-			recommendations, _ := s.repairAStockPersistedRecommendationsWithCache(strategyDate, aStockRecommendationSelectionsToRecommendations(result.Items), cache)
+			recommendations, _ := s.repairAStockPersistedRecommendationsWithCache(strategyDate, aStockRecommendationSelectionsToRecommendations(result.Items, period), cache)
 			return recommendations
 		}
 	}
@@ -3764,6 +3799,7 @@ func (s *Server) loadAStockMarketView(strategyDate string, period string, recomm
 	if err != nil {
 		return recommendations, buildAStockBacktestRows(strategyDate, period, recommendations, nil), "行情读取失败", 0, 0
 	}
+	s.enrichAStockRecommendationEntryPrices(strategyDate, period, recommendations, bars)
 	return applyAStockMarketBars(strategyDate, period, recommendations, bars, filterLimitUp, filterTodayMarket, maxRecommendations)
 }
 
@@ -3781,6 +3817,7 @@ func (s *Server) loadAStockLockedMarketView(strategyDate string, period string, 
 	if err != nil {
 		return recommendations, buildAStockBacktestRows(strategyDate, period, recommendations, nil), "已锁定推荐股票，行情读取失败", 0
 	}
+	s.enrichAStockRecommendationEntryPrices(strategyDate, period, recommendations, bars)
 	return applyAStockLockedMarketBars(strategyDate, period, recommendations, bars)
 }
 
@@ -3903,6 +3940,17 @@ func mergeAStockMarketBar(primary aStockMarketBar, fallback aStockMarketBar) aSt
 	if primary.AfternoonEntryPrice <= 0 && fallback.AfternoonEntryPrice > 0 {
 		primary.AfternoonEntryPrice = fallback.AfternoonEntryPrice
 	}
+	for entryTime, price := range fallback.SessionPrices {
+		if price <= 0 {
+			continue
+		}
+		if primary.SessionPrices == nil {
+			primary.SessionPrices = make(map[string]float64)
+		}
+		if primary.SessionPrices[entryTime] <= 0 {
+			primary.SessionPrices[entryTime] = price
+		}
+	}
 	return primary
 }
 
@@ -3948,6 +3996,161 @@ func (s *Server) enrichAStockSessionPrices(strategyDate string, codes []string, 
 			}
 		}
 	}
+}
+
+func (s *Server) enrichAStockRecommendationEntryPrices(strategyDate string, period string, recommendations []aStockRecommendation, bars []aStockMarketBar) {
+	if len(recommendations) == 0 || len(bars) == 0 {
+		return
+	}
+	normalizedPeriod := normalizeAStockPeriod(period).Key
+	codesByTime := make(map[string][]string)
+	seen := make(map[string]map[string]struct{})
+	for _, rec := range recommendations {
+		code := normalizeAStockCode(rec.Code)
+		entryTime := aStockRecommendationEffectiveEntryTime(rec, normalizedPeriod)
+		if code == "" || entryTime == "" || isDefaultAStockBarEntryTime(normalizedPeriod, entryTime) {
+			continue
+		}
+		if seen[entryTime] == nil {
+			seen[entryTime] = make(map[string]struct{})
+		}
+		if _, exists := seen[entryTime][code]; exists {
+			continue
+		}
+		seen[entryTime][code] = struct{}{}
+		codesByTime[entryTime] = append(codesByTime[entryTime], code)
+	}
+	if len(codesByTime) == 0 {
+		return
+	}
+	for entryTime, codes := range codesByTime {
+		prices := s.loadAStockSessionPrices(strategyDate, codes, entryTime)
+		if len(prices) == 0 {
+			continue
+		}
+		for i := range bars {
+			if bars[i].Date != strategyDate {
+				continue
+			}
+			code := normalizeAStockCode(bars[i].Code)
+			price := prices[code]
+			if price <= 0 {
+				continue
+			}
+			if bars[i].SessionPrices == nil {
+				bars[i].SessionPrices = make(map[string]float64)
+			}
+			bars[i].SessionPrices[entryTime] = price
+		}
+	}
+}
+
+func isDefaultAStockBarEntryTime(period string, entryTime string) bool {
+	entryTime = normalizeAStockEntryTimeMinute(entryTime)
+	switch normalizeAStockPeriod(period).Key {
+	case "afternoon":
+		return entryTime == "13:01"
+	default:
+		return entryTime == "09:30"
+	}
+}
+
+func aStockDefaultRecommendationEntryTime(period string) string {
+	if normalizeAStockPeriod(period).Key == "afternoon" {
+		return "13:01"
+	}
+	return "09:30"
+}
+
+func aStockRecommendationEffectiveEntryTime(rec aStockRecommendation, period string) string {
+	if entryTime := normalizeAStockGeneratedEntryTime(period, rec.EntryTime); entryTime != "" {
+		return entryTime
+	}
+	if entryTime := aStockRecommendationEntryTimeFromReason(rec.Reason, period); entryTime != "" {
+		return entryTime
+	}
+	return aStockDefaultRecommendationEntryTime(period)
+}
+
+func aStockRecommendationEntryTimeFromReason(reason string, period string) string {
+	raw := aStockRecommendationRawEntryTimeFromReason(reason)
+	if raw == "" {
+		return ""
+	}
+	return normalizeAStockGeneratedEntryTime(period, raw)
+}
+
+func aStockRecommendationRawEntryTimeFromReason(reason string) string {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return ""
+	}
+	idx := strings.LastIndex(reason, "生成点")
+	if idx < 0 {
+		return ""
+	}
+	tail := reason[idx+len("生成点"):]
+	for i := 0; i+4 < len(tail); i++ {
+		if !isAStockASCIIDigit(tail[i]) {
+			continue
+		}
+		for j := i + 1; j < len(tail) && j <= i+2; j++ {
+			if j+2 >= len(tail) || tail[j] != ':' {
+				continue
+			}
+			candidate := tail[i : j+3]
+			if entryTime := normalizeAStockEntryTimeMinute(candidate); entryTime != "" {
+				return entryTime
+			}
+		}
+	}
+	return ""
+}
+
+func normalizeAStockGeneratedEntryTime(period string, raw string) string {
+	entryTime := normalizeAStockEntryTimeMinute(raw)
+	if entryTime == "" {
+		return ""
+	}
+	if normalizeAStockPeriod(period).Key != "afternoon" {
+		return "09:30"
+	}
+	switch entryTime {
+	case "12:57", "13:00":
+		return "13:01"
+	}
+	if entryTime < "09:30" {
+		return "09:30"
+	}
+	return entryTime
+}
+
+func normalizeAStockEntryTimeMinute(raw string) string {
+	raw = strings.TrimSpace(strings.ReplaceAll(raw, "：", ":"))
+	if raw == "" {
+		return ""
+	}
+	parts := strings.Split(raw, ":")
+	if len(parts) < 2 {
+		return ""
+	}
+	hour, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+	if err != nil {
+		return ""
+	}
+	minutePart := strings.TrimSpace(parts[1])
+	if len(minutePart) > 2 {
+		minutePart = minutePart[:2]
+	}
+	minute, err := strconv.Atoi(minutePart)
+	if err != nil || hour < 0 || hour > 23 || minute < 0 || minute > 59 {
+		return ""
+	}
+	return fmt.Sprintf("%02d:%02d", hour, minute)
+}
+
+func isAStockASCIIDigit(value byte) bool {
+	return value >= '0' && value <= '9'
 }
 
 func (s *Server) loadDefaultAStockBars(strategyDate string, codes []string) ([]aStockMarketBar, error) {
@@ -4029,15 +4232,19 @@ func (s *Server) loadEastmoneyAStockBars(strategyDate string, codes []string) ([
 }
 
 func (s *Server) loadEastmoneyAStock0930Prices(strategyDate string, codes []string) map[string]float64 {
-	return s.loadAStockSessionPrices(strategyDate, codes, "09:30", decodeEastmoneyAStock0930Price)
+	return s.loadAStockSessionPrices(strategyDate, codes, "09:30")
 }
 
 func (s *Server) loadEastmoneyAStock1300Prices(strategyDate string, codes []string) map[string]float64 {
-	return s.loadAStockSessionPrices(strategyDate, codes, "13:01", decodeEastmoneyAStock1300Price)
+	return s.loadAStockSessionPrices(strategyDate, codes, "13:01")
 }
 
-func (s *Server) loadAStockSessionPrices(strategyDate string, codes []string, endTime string, decoder func([]byte, string) (float64, bool)) map[string]float64 {
-	prices := s.loadEastmoneyAStockSessionPrices(strategyDate, codes, endTime, decoder)
+func (s *Server) loadAStockSessionPrices(strategyDate string, codes []string, endTime string) map[string]float64 {
+	endTime = normalizeAStockEntryTimeMinute(endTime)
+	if endTime == "" {
+		return nil
+	}
+	prices := s.loadEastmoneyAStockSessionPrices(strategyDate, codes, endTime)
 	missingCodes := make([]string, 0, len(codes))
 	for _, code := range codes {
 		code = normalizeAStockCode(code)
@@ -4077,7 +4284,7 @@ func (s *Server) loadAStockSessionPrices(strategyDate string, codes []string, en
 	return prices
 }
 
-func (s *Server) loadEastmoneyAStockSessionPrices(strategyDate string, codes []string, endTime string, decoder func([]byte, string) (float64, bool)) map[string]float64 {
+func (s *Server) loadEastmoneyAStockSessionPrices(strategyDate string, codes []string, endTime string) map[string]float64 {
 	endDate := strings.ReplaceAll(strategyDate, "-", "")
 	var wg sync.WaitGroup
 	type result struct {
@@ -4108,7 +4315,7 @@ func (s *Server) loadEastmoneyAStockSessionPrices(strategyDate string, codes []s
 			if err != nil || !resp.IsSuccess() {
 				return
 			}
-			price, ok := decoder(resp.Body(), strategyDate)
+			price, ok := decodeEastmoneyAStockSessionPrice(resp.Body(), strategyDate, endTime)
 			if ok {
 				priceCh <- result{code: code, price: price}
 			}
@@ -4306,7 +4513,7 @@ func applyAStockMarketBars(strategyDate string, period string, recommendations [
 	for i := range recommendations {
 		blockedByDrawdown := false
 		codeBars := byCode[recommendations[i].Code]
-		entry, ok := aStockEntryBar(codeBars, strategyDate, period)
+		entry, ok := aStockEntryBar(codeBars, strategyDate, period, recommendations[i])
 		if !ok {
 			if normalizedPeriod == "afternoon" {
 				if sameDay, hasSameDay := sameDayAStockBar(codeBars, strategyDate); hasSameDay {
@@ -4443,7 +4650,7 @@ func applyAStockLockedMarketBars(strategyDate string, period string, recommendat
 	normalizedPeriod := normalizeAStockPeriod(period).Key
 	for i := range recommendations {
 		codeBars := byCode[recommendations[i].Code]
-		if entry, ok := aStockEntryBar(codeBars, strategyDate, period); ok {
+		if entry, ok := aStockEntryBar(codeBars, strategyDate, period, recommendations[i]); ok {
 			if entry.Close > 0 {
 				recommendations[i].CurrentPrice = formatAStockPrice(entry.Close)
 				recommendations[i].TodayPct = formatAStockPct(entry.Pct)
@@ -4589,9 +4796,9 @@ func latestAStockBarOnOrBefore(bars []aStockMarketBar, targetDate string) (aStoc
 	return found, ok
 }
 
-func aStockEntryBar(bars []aStockMarketBar, strategyDate string, period string) (aStockMarketBar, bool) {
+func aStockEntryBar(bars []aStockMarketBar, strategyDate string, period string, rec aStockRecommendation) (aStockMarketBar, bool) {
 	for _, bar := range bars {
-		if bar.Date == strategyDate && aStockEntryPrice(bar, period) > 0 {
+		if bar.Date == strategyDate && aStockEntryPriceForRecommendation(bar, period, rec) > 0 {
 			return bar, true
 		}
 	}
@@ -4599,7 +4806,18 @@ func aStockEntryBar(bars []aStockMarketBar, strategyDate string, period string) 
 }
 
 func aStockEntryPrice(bar aStockMarketBar, period string) float64 {
+	return aStockEntryPriceForRecommendation(bar, period, aStockRecommendation{})
+}
+
+func aStockEntryPriceForRecommendation(bar aStockMarketBar, period string, rec aStockRecommendation) float64 {
 	if normalizeAStockPeriod(period).Key == "afternoon" {
+		entryTime := aStockRecommendationEffectiveEntryTime(rec, "afternoon")
+		if entryTime != "" && !isDefaultAStockBarEntryTime("afternoon", entryTime) {
+			if bar.SessionPrices != nil && bar.SessionPrices[entryTime] > 0 {
+				return bar.SessionPrices[entryTime]
+			}
+			return 0
+		}
 		if bar.AfternoonEntryPrice > 0 {
 			return bar.AfternoonEntryPrice
 		}
@@ -4638,7 +4856,7 @@ func buildAStockBacktestRows(strategyDate string, period string, recommendations
 			rows = append(rows, row)
 			continue
 		}
-		entryIdx := aStockEntryBarIndex(bars, strategyDate, normalizedPeriod)
+		entryIdx := aStockEntryBarIndex(bars, strategyDate, normalizedPeriod, rec)
 		if entryIdx < 0 {
 			if normalizedPeriod == "afternoon" {
 				row.Status = "等待下午开盘价"
@@ -4649,7 +4867,7 @@ func buildAStockBacktestRows(strategyDate string, period string, recommendations
 			continue
 		}
 		entry := bars[entryIdx]
-		entryPrice := aStockEntryPrice(entry, normalizedPeriod)
+		entryPrice := aStockEntryPriceForRecommendation(entry, normalizedPeriod, rec)
 		if normalizedPeriod == "afternoon" {
 			row.AfternoonOpen = formatAStockPrice(entryPrice)
 		} else {
@@ -4702,9 +4920,9 @@ func buildAStockBacktestRows(strategyDate string, period string, recommendations
 	return rows
 }
 
-func aStockEntryBarIndex(bars []aStockMarketBar, strategyDate string, period string) int {
+func aStockEntryBarIndex(bars []aStockMarketBar, strategyDate string, period string, rec aStockRecommendation) int {
 	for i, bar := range bars {
-		if bar.Date == strategyDate && aStockEntryPrice(bar, period) > 0 {
+		if bar.Date == strategyDate && aStockEntryPriceForRecommendation(bar, period, rec) > 0 {
 			return i
 		}
 	}
@@ -4870,28 +5088,31 @@ func eastmoneyKlineToAStockMarketBar(raw string) (aStockMarketBar, bool) {
 }
 
 func decodeEastmoneyAStock0930Price(body []byte, strategyDate string) (float64, bool) {
-	klines := collectAStockKlineStringsFromJSON(body)
-	for _, raw := range klines {
-		price, ok := eastmoneySessionKlinePrice(raw, strategyDate, "09:30")
-		if ok {
-			return price, true
-		}
-	}
-	return 0, false
+	return decodeEastmoneyAStockSessionPrice(body, strategyDate, "09:30")
 }
 
 func decodeEastmoneyAStock1300Price(body []byte, strategyDate string) (float64, bool) {
+	return decodeEastmoneyAStockSessionPrice(body, strategyDate, "13:01")
+}
+
+func decodeEastmoneyAStockSessionPrice(body []byte, strategyDate string, session string) (float64, bool) {
+	session = normalizeAStockEntryTimeMinute(session)
+	if session == "" {
+		return 0, false
+	}
 	klines := collectAStockKlineStringsFromJSON(body)
 	for _, raw := range klines {
-		price, ok := eastmoneySessionKlinePrice(raw, strategyDate, "13:01")
+		price, ok := eastmoneySessionKlinePrice(raw, strategyDate, session)
 		if ok {
 			return price, true
 		}
 	}
-	for _, raw := range klines {
-		price, ok := eastmoneySessionKlineOpen(raw, strategyDate, "13:00")
-		if ok {
-			return price, true
+	if session == "13:01" {
+		for _, raw := range klines {
+			price, ok := eastmoneySessionKlineOpen(raw, strategyDate, "13:00")
+			if ok {
+				return price, true
+			}
 		}
 	}
 	return 0, false
@@ -6051,7 +6272,7 @@ func buildAStockSnapshotReplacementRecommendations(strategyDate string, periodKe
 func buildAStockSnapshotRecommendationsWithPhaseAndLimit(strategyDate string, periodKey string, phase string, articles []model.Item, candidates []aStockMarketCandidate, maxRecommendations int, maxPerHotspot int) []aStockRecommendation {
 	snapshots := aStockRecommendationSnapshots(strategyDate, periodKey, phase)
 	if len(snapshots) == 0 {
-		return buildAStockRecommendationsWithLimit(buildAStockHotspots(articles), candidates, maxRecommendations, maxPerHotspot)
+		return withAStockRecommendationEntryTimes(buildAStockRecommendationsWithLimit(buildAStockHotspots(articles), candidates, maxRecommendations, maxPerHotspot), periodKey, "")
 	}
 	if maxRecommendations <= 0 {
 		maxRecommendations = aStockRecommendationLimit
@@ -6087,6 +6308,7 @@ func buildAStockSnapshotRecommendationsWithPhaseAndLimit(strategyDate string, pe
 			seen[code] = struct{}{}
 			rec.Code = code
 			rec.Rank = len(combined) + 1
+			rec.EntryTime = aStockRecommendationEffectiveEntryTime(aStockRecommendation{EntryTime: snapshot.Label}, periodKey)
 			if snapshot.Label != "" {
 				rec.Reason = rec.Reason + "，生成点 " + snapshot.Label
 			}
@@ -6100,9 +6322,21 @@ func buildAStockSnapshotRecommendationsWithPhaseAndLimit(strategyDate string, pe
 		}
 	}
 	if len(combined) == 0 && len(articles) > 0 {
-		return buildAStockRecommendationsWithLimit(buildAStockHotspots(articles), candidates, maxRecommendations, maxPerHotspot)
+		return withAStockRecommendationEntryTimes(buildAStockRecommendationsWithLimit(buildAStockHotspots(articles), candidates, maxRecommendations, maxPerHotspot), periodKey, "")
 	}
 	return combined
+}
+
+func withAStockRecommendationEntryTimes(recommendations []aStockRecommendation, period string, entryTimeOverride string) []aStockRecommendation {
+	entryTimeOverride = normalizeAStockGeneratedEntryTime(period, entryTimeOverride)
+	for i := range recommendations {
+		if entryTimeOverride != "" {
+			recommendations[i].EntryTime = entryTimeOverride
+			continue
+		}
+		recommendations[i].EntryTime = aStockRecommendationEffectiveEntryTime(recommendations[i], period)
+	}
+	return recommendations
 }
 
 func normalizeAStockRecommendationHotspot(value string) string {
@@ -6283,7 +6517,31 @@ func filterAStockRecommendationsByMorningHotspotQuota(recommendations []aStockRe
 	return rerankAStockRecommendations(filtered), skipped
 }
 
-func aStockRecommendationSelectionsToRecommendations(items []model.AStockRecommendationSelection) []aStockRecommendation {
+func aStockRecommendationSelectionEntryTime(item model.AStockRecommendationSelection, fallbackPeriod string) string {
+	period := strings.TrimSpace(item.Period)
+	if period == "" {
+		period = strings.TrimSpace(fallbackPeriod)
+	}
+	if raw := strings.TrimSpace(item.EntryTime); raw != "" {
+		if period == "" {
+			return normalizeAStockEntryTimeMinute(raw)
+		}
+		return normalizeAStockGeneratedEntryTime(period, raw)
+	}
+	if !strings.Contains(item.Reason, "生成点") {
+		return ""
+	}
+	if period == "" {
+		return aStockRecommendationRawEntryTimeFromReason(item.Reason)
+	}
+	return aStockRecommendationEntryTimeFromReason(item.Reason, period)
+}
+
+func aStockRecommendationSelectionsToRecommendations(items []model.AStockRecommendationSelection, fallbackPeriod ...string) []aStockRecommendation {
+	period := ""
+	if len(fallbackPeriod) > 0 {
+		period = strings.TrimSpace(fallbackPeriod[0])
+	}
 	recommendations := make([]aStockRecommendation, 0, len(items))
 	for _, item := range items {
 		code := normalizeAStockCode(item.Code)
@@ -6298,6 +6556,7 @@ func aStockRecommendationSelectionsToRecommendations(items []model.AStockRecomme
 			HotspotScore: item.HotspotScore,
 			MarketScore:  item.MarketScore,
 			Reason:       strings.TrimSpace(item.Reason),
+			EntryTime:    aStockRecommendationSelectionEntryTime(item, period),
 		})
 	}
 	sort.SliceStable(recommendations, func(i, j int) bool {
@@ -6338,6 +6597,7 @@ func aStockRecommendationsToSelectionItems(recommendations []aStockRecommendatio
 			HotspotScore: rec.HotspotScore,
 			MarketScore:  rec.MarketScore,
 			Reason:       strings.TrimSpace(rec.Reason),
+			EntryTime:    aStockRecommendationEffectiveEntryTime(rec, period),
 		})
 	}
 	return items

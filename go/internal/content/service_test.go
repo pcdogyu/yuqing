@@ -245,7 +245,7 @@ func TestAStockRecommendationSelectionsAPIUpsertsAndLists(t *testing.T) {
 	svc := NewService(config.Config{}, store)
 	router := svc.Router()
 
-	payload := `{"strategy_date":"2026-06-23","period":"afternoon","items":[{"rank":1,"code":"002008","name":"大族激光","hotspot":"机器人","market_score":91,"reason":"locked-1"},{"rank":2,"code":"688367","name":"工大高科","hotspot":"机器人","market_score":87,"reason":"locked-2"}]}`
+	payload := `{"strategy_date":"2026-06-23","period":"afternoon","items":[{"rank":1,"code":"002008","name":"大族激光","hotspot":"机器人","market_score":91,"reason":"locked-1","entry_time":"10:30"},{"rank":2,"code":"688367","name":"工大高科","hotspot":"机器人","market_score":87,"reason":"locked-2","entry_time":"13:01"}]}`
 	postReq := httptest.NewRequest(http.MethodPost, "/api/v1/internal/a-stock/recommendation-selections", strings.NewReader(payload))
 	postRR := httptest.NewRecorder()
 	router.ServeHTTP(postRR, postReq)
@@ -268,7 +268,7 @@ func TestAStockRecommendationSelectionsAPIUpsertsAndLists(t *testing.T) {
 	if !envelope.Data.Found || envelope.Data.StrategyDate != "2026-06-23" || envelope.Data.Period != "afternoon" || len(envelope.Data.Items) != 2 {
 		t.Fatalf("unexpected selection response: %+v", envelope.Data)
 	}
-	if envelope.Data.Items[0].Code != "002008" || envelope.Data.Items[1].Code != "688367" {
+	if envelope.Data.Items[0].Code != "002008" || envelope.Data.Items[0].EntryTime != "10:30" || envelope.Data.Items[1].Code != "688367" || envelope.Data.Items[1].EntryTime != "13:01" {
 		t.Fatalf("unexpected selection items: %+v", envelope.Data.Items)
 	}
 }
