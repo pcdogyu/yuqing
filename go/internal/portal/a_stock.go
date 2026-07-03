@@ -386,11 +386,11 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 	ctx := s.loadAStockContextReadOnlyWithCache(strategyDate, period.Key, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, requestCache)
 	morningCtx := ctx
 	if ctx.Period != "morning" {
-		morningCtx = s.loadAStockCompanionContextReadOnlyWithCache(strategyDate, "morning", 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, refreshAllBacktests, requestCache)
+		morningCtx = s.loadAStockCompanionContextReadOnlyWithCache(strategyDate, "morning", 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, requestCache)
 	}
 	afternoonCtx := ctx
 	if ctx.Period != "afternoon" {
-		afternoonCtx = s.loadAStockCompanionContextReadOnlyWithCache(strategyDate, "afternoon", 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, refreshAllBacktests, requestCache)
+		afternoonCtx = s.loadAStockCompanionContextReadOnlyWithCache(strategyDate, "afternoon", 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, requestCache)
 	}
 	message := strings.TrimSpace(r.URL.Query().Get("msg"))
 	if message == "" {
@@ -1628,6 +1628,11 @@ func (s *Server) loadAStockContextWithCache(strategyDate string, periodKey strin
 }
 
 func (s *Server) loadAStockContextReadOnlyWithCache(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, cache *aStockRequestCache) aStockContext {
+	if !forceRecommendationRefresh {
+		if ctx, ok := s.loadAStockReadOnlySnapshotContextWithCache(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, cache); ok {
+			return ctx
+		}
+	}
 	return s.loadAStockContextWithRecommendationPhasePersistence(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, aStockRecommendationPhaseFinal, cache, true, false)
 }
 
@@ -1636,7 +1641,24 @@ func (s *Server) loadAStockCompanionContextWithCache(strategyDate string, period
 }
 
 func (s *Server) loadAStockCompanionContextReadOnlyWithCache(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, cache *aStockRequestCache) aStockContext {
+	if !forceRecommendationRefresh {
+		ctx, ok := s.loadAStockReadOnlySnapshotContextWithCache(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, cache)
+		if ok {
+			return ctx
+		}
+		ctx.BacktestStatus = "无推荐快照"
+		ctx.EmptyReason = fmt.Sprintf("暂无推荐股票：%s暂无历史快照。", ctx.PeriodLabel)
+		return ctx
+	}
 	return s.loadAStockContextWithRecommendationPhasePersistence(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, aStockRecommendationPhaseFinal, cache, false, false)
+}
+
+func (s *Server) loadAStockReadOnlySnapshotContextWithCache(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, cache *aStockRequestCache) (aStockContext, bool) {
+	ctx := newAStockBaseContext(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, aStockRecommendationPhaseFinal)
+	if s.applyAStockRecommendationSnapshotReadOnlyWithCache(&ctx, cache) {
+		return ctx, true
+	}
+	return ctx, false
 }
 
 func (s *Server) loadAStockContextWithRecommendationPhase(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, recommendationPhase string, cache *aStockRequestCache) aStockContext {
@@ -1655,9 +1677,13 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceMode(strateg
 	return s.loadAStockContextWithRecommendationPhasePersistenceModeEntryTime(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, recommendationPhase, cache, includeHotspotTopStocks, persist, refreshMode, "")
 }
 
-func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTime(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, recommendationPhase string, cache *aStockRequestCache, includeHotspotTopStocks bool, persist bool, refreshMode aStockRecommendationRefreshMode, entryTimeOverride string) aStockContext {
+func newAStockBaseContext(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, recommendationPhase string) aStockContext {
+	strategyDate = normalizeAStockStrategyDate(strategyDate)
 	period := normalizeAStockPeriod(periodKey)
 	phase := normalizeAStockRecommendationPhase(recommendationPhase)
+	if newsPage < 1 {
+		newsPage = 1
+	}
 	recommendationStart, recommendationEnd, recommendationWindowLabel := aStockRecommendationPhaseWindow(strategyDate, period.Key, phase)
 	newsStart, newsEnd := aStockWindow(strategyDate, period.Key)
 	ctx := aStockContext{
@@ -1678,6 +1704,16 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 		TodayMarketFilterEnabled:  filterTodayMarket,
 	}
 	ctx.LimitUpFilterEnabled = period.Key == "afternoon" && !ignoreLimitUp
+	return ctx
+}
+
+func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTime(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, recommendationPhase string, cache *aStockRequestCache, includeHotspotTopStocks bool, persist bool, refreshMode aStockRecommendationRefreshMode, entryTimeOverride string) aStockContext {
+	period := normalizeAStockPeriod(periodKey)
+	phase := normalizeAStockRecommendationPhase(recommendationPhase)
+	strategyDate = normalizeAStockStrategyDate(strategyDate)
+	ctx := newAStockBaseContext(strategyDate, period.Key, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, phase)
+	recommendationStart, recommendationEnd := ctx.WindowStart, ctx.WindowEnd
+	newsStart, newsEnd := ctx.NewsWindowStart, ctx.NewsWindowEnd
 	ctx.SourceRuns = s.loadAStockSourceRunsWithCache(cache)
 	var articles []model.Item
 	var newsArticles []model.Item
@@ -1955,6 +1991,14 @@ func (s *Server) applyAStockRecommendationSnapshot(ctx *aStockContext) bool {
 }
 
 func (s *Server) applyAStockRecommendationSnapshotWithCache(ctx *aStockContext, cache *aStockRequestCache) bool {
+	return s.applyAStockRecommendationSnapshotWithFreshnessCache(ctx, cache, true)
+}
+
+func (s *Server) applyAStockRecommendationSnapshotReadOnlyWithCache(ctx *aStockContext, cache *aStockRequestCache) bool {
+	return s.applyAStockRecommendationSnapshotWithFreshnessCache(ctx, cache, false)
+}
+
+func (s *Server) applyAStockRecommendationSnapshotWithFreshnessCache(ctx *aStockContext, cache *aStockRequestCache, requireFreshBacktest bool) bool {
 	if ctx == nil || strings.TrimSpace(s.cfg.ContentURL) == "" {
 		return false
 	}
@@ -2001,11 +2045,13 @@ func (s *Server) applyAStockRecommendationSnapshotWithCache(ctx *aStockContext, 
 		ctx.SnapshotUpdatedAt = snapshot.UpdatedAt
 		return true
 	}
-	if !isFreshAStockBacktestSnapshot(ctx.Period, backtests) {
-		return false
-	}
-	if ctx.Period == "afternoon" && !isFreshAStockLimitUpReplacementSnapshot(snapshot, recommendations) {
-		return false
+	if requireFreshBacktest {
+		if !isFreshAStockBacktestSnapshot(ctx.Period, backtests) {
+			return false
+		}
+		if ctx.Period == "afternoon" && !isFreshAStockLimitUpReplacementSnapshot(snapshot, recommendations) {
+			return false
+		}
 	}
 	ctx.Recommendations, _ = s.repairAStockPersistedRecommendationsWithCache(ctx.Date, recommendations, cache)
 	if len(ctx.Recommendations) == 0 {

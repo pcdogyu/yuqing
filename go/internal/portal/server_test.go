@@ -1634,7 +1634,7 @@ func TestAStockPageExplainsMorningNoNews(t *testing.T) {
 	}
 }
 
-func TestAStockPageExplainsNewsAndHotspotsWithoutAuction(t *testing.T) {
+func TestAStockPageBuildsFixedPoolRecommendationsWithoutAuction(t *testing.T) {
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if handleAStockRecommendationSnapshotTestEndpoint(w, r) {
@@ -1671,9 +1671,9 @@ func TestAStockPageExplainsNewsAndHotspotsWithoutAuction(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"有新闻和热点", "没有集合竞价候选数据", "补录集合竞价"} {
+	for _, want := range []string{"人工智能", "科大讯飞", "使用原始固定股票池", "补录集合竞价"} {
 		if !strings.Contains(body, want) {
-			t.Fatalf("expected no-auction explanation %q, got %s", want, body)
+			t.Fatalf("expected fixed-pool recommendation without auction %q, got %s", want, body)
 		}
 	}
 }
@@ -2714,10 +2714,12 @@ func TestAStockPageUsesValidSnapshotsBeforeSelections(t *testing.T) {
 	selectionHits := 0
 	holdingHits := 0
 	saveHits := 0
+	articleHits := 0
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/v1/articles":
+			articleHits++
 			writeEnvelope(w, http.StatusOK, "ok", model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0})
 		case "/api/v1/a-stock/recommendations":
 			switch r.URL.Query().Get("period") {
@@ -2765,6 +2767,84 @@ func TestAStockPageUsesValidSnapshotsBeforeSelections(t *testing.T) {
 	}
 	if marketHits != 0 || selectionHits != 0 || holdingHits != 0 || saveHits != 0 {
 		t.Fatalf("expected snapshot fast path to avoid market/selection/holdings/save, got market=%d selection=%d holdings=%d save=%d", marketHits, selectionHits, holdingHits, saveHits)
+	}
+	if articleHits != 0 {
+		t.Fatalf("expected snapshot fast path to avoid articles, got %d", articleHits)
+	}
+}
+
+func TestAStockPageCompanionSnapshotMissingDoesNotRecompute(t *testing.T) {
+	marketHits := 0
+	market := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		marketHits++
+		writeEnvelope(w, http.StatusOK, "ok", map[string]any{"items": []map[string]any{}})
+	}))
+	defer market.Close()
+	t.Setenv("YUQING_ASTOCK_MARKET_URL", market.URL)
+
+	morningSnapshot := model.AStockRecommendationSnapshot{
+		Found:               true,
+		StrategyDate:        "2026-06-24",
+		Period:              "morning",
+		RecommendationsJSON: mustAStockTestJSON(t, []aStockRecommendation{{Rank: 1, Hotspot: "快照热点", Code: "600001", Name: "上午快照", Reason: "snapshot morning"}}),
+		BacktestsJSON:       mustAStockTestJSON(t, []aStockBacktestRow{{Stock: "600001 上午快照", EntryOpen: "10.00", T0Return: "+1.00%", T0Close: "10.10", Status: "已读取快照"}}),
+		BacktestStatus:      "已读取上午快照",
+		GeneratedCount:      1,
+	}
+	articleHits := 0
+	selectionHits := 0
+	holdingHits := 0
+	saveHits := 0
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/articles":
+			articleHits++
+			writeEnvelope(w, http.StatusOK, "ok", model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0})
+		case "/api/v1/a-stock/recommendations":
+			if r.URL.Query().Get("period") == "morning" {
+				writeEnvelope(w, http.StatusOK, "ok", morningSnapshot)
+				return
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
+		case "/api/v1/a-stock/recommendation-selections":
+			selectionHits++
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{
+				Found: true,
+				Items: []model.AStockRecommendationSelection{{Rank: 1, Code: "600020", Name: "下午已选", Hotspot: "伴随", MarketScore: 80, Reason: "selection"}},
+			})
+		case "/api/v1/a-stock/holdings/summary":
+			holdingHits++
+			writeEnvelope(w, http.StatusOK, "ok", model.StockInstitutionHoldingSummary{})
+		case "/api/v1/internal/a-stock/recommendations", "/api/v1/internal/a-stock/recommendation-selections":
+			saveHits++
+			writeEnvelope(w, http.StatusOK, "ok", map[string]any{"updated": 1})
+		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-24&period=morning", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "上午快照") {
+		t.Fatalf("expected current snapshot to render, got %s", body)
+	}
+	if strings.Contains(body, "下午已选") {
+		t.Fatalf("expected missing companion snapshot not to load selections, got %s", body)
+	}
+	if marketHits != 0 || articleHits != 0 || selectionHits != 0 || holdingHits != 0 || saveHits != 0 {
+		t.Fatalf("expected missing companion snapshot to avoid recompute, got market=%d articles=%d selection=%d holdings=%d save=%d", marketHits, articleHits, selectionHits, holdingHits, saveHits)
 	}
 }
 
