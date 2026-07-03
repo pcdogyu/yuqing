@@ -442,10 +442,10 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-tab{display:inline-flex;align-items:center;flex:0 0 auto;padding:8px 12px;border:1px solid #d6ccbb;border-radius:8px;color:#214e34;text-decoration:none;background:#fff}
 		.astock-tab.active{background:#214e34;color:#fff;border-color:#214e34}
 		.astock-tab.disabled{color:#9a9388;border-color:#ece7dc;background:#faf8f2;pointer-events:none}
-		.astock-history-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:0 0 18px}
-		.astock-history-actions form{margin:0}
-		.astock-history-actions button{margin:0;min-height:38px;padding:8px 12px}
-		.astock-history-actions .astock-filter-toggle{min-height:38px;box-sizing:border-box;background:#214e34;color:#fff;border-color:#214e34;padding:8px 12px}
+		.astock-history-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:stretch;margin:0 0 18px}
+		.astock-history-actions form{display:flex;margin:0}
+		.astock-history-actions button,.astock-history-actions .astock-filter-toggle{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;min-height:38px;margin:0;padding:8px 12px;line-height:1.2}
+		.astock-history-actions .astock-filter-toggle{background:#214e34;color:#fff;border-color:#214e34;text-decoration:none}
 		.astock-pagination{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:14px}
 		.astock-up{color:#b3261e;font-weight:700}
 		.astock-down{color:#1b7f3a;font-weight:700}
@@ -595,6 +595,8 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request) 
 	case "refresh_current_backtest":
 		query.Set("msg", period.Label+"行情收益已按当前推荐股票重新补齐。")
 		persistRecommendation = true
+	case "repair_stock_names":
+		query.Set("msg", s.repairAStockActionRecommendationNames(strategyDate, period.Key, ignoreRecent, ignoreLimitUp, filterTodayMarket))
 	case "backfill_auction":
 		query.Set("msg", s.triggerAStockAuctionBackfillDate(strategyDate))
 		persistRecommendation = true
@@ -636,6 +638,99 @@ func (s *Server) persistAStockActionRecommendation(strategyDate string, periodKe
 		}
 	}
 	return strings.Join(messages, " ")
+}
+
+func (s *Server) repairAStockActionRecommendationNames(strategyDate string, periodKey string, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool) string {
+	if strings.TrimSpace(s.cfg.ContentURL) == "" {
+		return "内容服务未配置，无法补股票名称。"
+	}
+	cache := newAStockRequestCache()
+	ctx, ok, loadMessage := s.loadAStockRecommendationNameRepairContext(strategyDate, periodKey, ignoreRecent, ignoreLimitUp, filterTodayMarket, cache)
+	if loadMessage != "" {
+		return loadMessage
+	}
+	if !ok || len(ctx.Recommendations) == 0 {
+		return ctx.PeriodLabel + "暂无推荐股票可补名称。"
+	}
+	originalNames := aStockRecommendationNameMap(ctx.Recommendations)
+	recommendations, skipped := s.repairAStockPersistedRecommendationsWithCache(ctx.Date, ctx.Recommendations, cache)
+	if len(recommendations) == 0 {
+		return ctx.PeriodLabel + "未从集合竞价名称库找到可补齐的股票名称。"
+	}
+	ctx.Recommendations = recommendations
+	ctx.Backtests = filterAStockBacktestsForRecommendations(ctx.Backtests, recommendations)
+	if ctx.GeneratedRecommendationCount <= 0 {
+		ctx.GeneratedRecommendationCount = len(recommendations)
+	}
+	if ctx.BacktestStatus == "" {
+		ctx.BacktestStatus = "已补齐股票名称"
+	}
+	if isAStockOfficialSelectionContext(ignoreRecent, ignoreLimitUp, filterTodayMarket) {
+		if err := s.saveAStockRecommendationSelections(ctx); err != nil {
+			return ctx.PeriodLabel + "股票名称补齐失败：" + err.Error()
+		}
+	}
+	if err := s.saveAStockRecommendationSnapshot(ctx); err != nil {
+		return ctx.PeriodLabel + "股票名称补齐失败：" + err.Error()
+	}
+	changed := countAStockRecommendationNameChanges(originalNames, recommendations)
+	message := fmt.Sprintf("%s股票名称已从集合竞价名称库补齐 %d 只", ctx.PeriodLabel, changed)
+	if skipped > 0 {
+		message = fmt.Sprintf("%s，跳过无有效名称股票 %d 只", message, skipped)
+	}
+	return message + "。"
+}
+
+func (s *Server) loadAStockRecommendationNameRepairContext(strategyDate string, periodKey string, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, cache *aStockRequestCache) (aStockContext, bool, string) {
+	period := normalizeAStockPeriod(periodKey)
+	ctx := aStockContext{
+		Date:                         normalizeAStockStrategyDate(strategyDate),
+		Period:                       period.Key,
+		PeriodLabel:                  period.Label,
+		WindowLabel:                  period.WindowLabel,
+		IgnoreRecent:                 ignoreRecent,
+		IgnoreLimitUp:                ignoreLimitUp,
+		TodayMarketFilterEnabled:     filterTodayMarket,
+		LimitUpFilterEnabled:         period.Key == "afternoon" && !ignoreLimitUp,
+		BacktestStatus:               "已补齐股票名称",
+		GeneratedRecommendationCount: 0,
+	}
+	if snapshot, ok := s.loadAStockRecommendationSnapshotWithCache(ctx.Date, ctx.Period, ignoreRecent, cache); ok {
+		var recommendations []aStockRecommendation
+		if err := json.Unmarshal([]byte(nonEmpty(snapshot.RecommendationsJSON, "[]")), &recommendations); err != nil {
+			return ctx, false, ctx.PeriodLabel + "推荐快照解析失败：" + err.Error()
+		}
+		var backtests []aStockBacktestRow
+		if err := json.Unmarshal([]byte(nonEmpty(snapshot.BacktestsJSON, "[]")), &backtests); err != nil {
+			return ctx, false, ctx.PeriodLabel + "回测快照解析失败：" + err.Error()
+		}
+		ctx.Recommendations = recommendations
+		ctx.Backtests = backtests
+		ctx.BacktestStatus = nonEmpty(snapshot.BacktestStatus, ctx.BacktestStatus)
+		ctx.GeneratedRecommendationCount = snapshot.GeneratedCount
+		ctx.RecentFiltered = snapshot.RecentFiltered
+		ctx.SameDayMorningFiltered = snapshot.SameDayMorningFiltered
+		ctx.LimitUpFilterEnabled = snapshot.LimitUpFilterEnabled
+		ctx.LimitUpFiltered = snapshot.LimitUpFiltered
+		ctx.TodayMarketFilterEnabled = snapshot.TodayMarketFilterEnabled
+		ctx.NoTodayMarketCount = snapshot.NoTodayMarketCount
+		ctx.MarketCandidateStatus = snapshot.MarketCandidateStatus
+		ctx.MarketCandidateCount = snapshot.MarketCandidateCount
+		ctx.AuctionAmountLabel = snapshot.AuctionAmountLabel
+		ctx.EmptyReason = snapshot.EmptyReason
+		return ctx, true, ""
+	}
+	if !ignoreRecent {
+		if result, ok := s.loadAStockRecommendationSelectionsWithCache(ctx.Date, ctx.Period, cache); ok {
+			ctx.Recommendations = aStockRecommendationSelectionsToRecommendations(result.Items)
+			ctx.GeneratedRecommendationCount = len(ctx.Recommendations)
+			if len(ctx.Recommendations) > 0 {
+				ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus, ctx.LimitUpFiltered = s.loadAStockLockedMarketView(ctx.Date, ctx.Period, ctx.Recommendations)
+			}
+			return ctx, len(ctx.Recommendations) > 0, ""
+		}
+	}
+	return ctx, false, ""
 }
 
 func renderAStockPopupShell(b *strings.Builder) {
@@ -1248,6 +1343,7 @@ func renderAStockRecommendationHistoryActions(b *strings.Builder, strategyDate s
 		{Period: "afternoon", Name: "backfill_window_news", Label: "补抓下午新闻"},
 		{Period: "afternoon", Name: "generate_afternoon_stock", Label: "重新生成下午推荐"},
 		{Period: "morning", Name: "backfill_auction", Label: "补录集合竞价"},
+		{Period: normalizeAStockPeriod(period).Key, Name: "repair_stock_names", Label: "补股票名称"},
 		{Period: normalizeAStockPeriod(period).Key, Name: "refresh_current_backtest", Label: "补行情收益"},
 		{Period: "morning", Name: "refresh_backtest", Label: "刷新全部回测"},
 	} {
@@ -6172,6 +6268,32 @@ func aStockRecommendationsToSelectionItems(recommendations []aStockRecommendatio
 		})
 	}
 	return items
+}
+
+func aStockRecommendationNameMap(recommendations []aStockRecommendation) map[string]string {
+	names := make(map[string]string, len(recommendations))
+	for _, rec := range recommendations {
+		code := normalizeAStockCode(rec.Code)
+		if code == "" {
+			continue
+		}
+		names[code] = astockcode.DisplayName(code, rec.Name)
+	}
+	return names
+}
+
+func countAStockRecommendationNameChanges(original map[string]string, recommendations []aStockRecommendation) int {
+	changed := 0
+	for _, rec := range recommendations {
+		code := normalizeAStockCode(rec.Code)
+		if code == "" {
+			continue
+		}
+		if astockcode.DisplayName(code, rec.Name) != strings.TrimSpace(original[code]) {
+			changed++
+		}
+	}
+	return changed
 }
 
 func filterAStockRecommendationsByCodes(recommendations []aStockRecommendation, blockedCodes map[string]struct{}) ([]aStockRecommendation, int) {

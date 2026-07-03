@@ -2651,6 +2651,16 @@ func newAStockRefreshBacktestPostRequest(strategyDate string, period string) *ht
 	return req
 }
 
+func newAStockRefreshCurrentBacktestPostRequest(strategyDate string, period string) *http.Request {
+	form := url.Values{}
+	form.Set("date", strategyDate)
+	form.Set("period", period)
+	form.Set("action", "refresh_current_backtest")
+	req := httptest.NewRequest(http.MethodPost, "/a-stock", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	return req
+}
+
 func TestAStockPageUsesValidSnapshotsBeforeSelections(t *testing.T) {
 	marketHits := 0
 	market := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -4021,6 +4031,99 @@ func TestAStockPageRefreshAllBacktestsSupplementsCurrentDayAfternoonBacktest(t *
 	}
 }
 
+func TestAStockPageRefreshCurrentBacktestPersistsT0Return(t *testing.T) {
+	setAStockNowForTest(t, time.Date(2026, 6, 24, 14, 2, 0, 0, time.FixedZone("CST", 8*3600)))
+
+	market := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if normalizeAStockCode(r.URL.Query().Get("codes")) != "300024" {
+			t.Fatalf("unexpected market query: %s", r.URL.RawQuery)
+		}
+		writeEnvelope(w, http.StatusOK, "ok", map[string]any{
+			"items": []map[string]any{
+				{"code": "300024", "date": "2026-06-23", "open": 16.79, "close": 16.79, "pct": -2.21},
+				{"code": "300024", "date": "2026-06-24", "open": 16.26, "close": 16.42, "pct": 0.98},
+			},
+		})
+	}))
+	defer market.Close()
+	t.Setenv("YUQING_ASTOCK_MARKET_URL", market.URL)
+
+	eastmoney := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("secid") != "0.300024" || r.URL.Query().Get("klt") != "1" {
+			t.Fatalf("unexpected eastmoney query: %s", r.URL.RawQuery)
+		}
+		price := "16.08"
+		minute := "13:01"
+		if strings.Contains(r.URL.Query().Get("end"), "09:30") {
+			price = "16.03"
+			minute = "09:30"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{
+				"klines": []string{
+					fmt.Sprintf("2026-06-24 %s,16.05,%s,0,0,0,0,0,0", minute, price),
+				},
+			},
+		})
+	}))
+	defer eastmoney.Close()
+	setAStockEastmoneyKlineURLForTest(t, eastmoney.URL)
+
+	var savedSnapshot model.AStockRecommendationSnapshot
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/articles":
+			writeEnvelope(w, http.StatusOK, "ok", model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0})
+		case "/api/v1/a-stock/recommendation-selections":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{
+				Found:        true,
+				StrategyDate: "2026-06-24",
+				Period:       "afternoon",
+				Items: []model.AStockRecommendationSelection{
+					{Rank: 1, Code: "300024", Name: "机器人", Hotspot: "人工智能", MarketScore: 92, Reason: "afternoon"},
+				},
+			})
+		case "/api/v1/a-stock/recommendations":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
+		case "/api/v1/internal/a-stock/recommendations":
+			if err := json.NewDecoder(r.Body).Decode(&savedSnapshot); err != nil {
+				t.Fatalf("decode snapshot: %v", err)
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Updated: 1})
+		case "/api/v1/a-stock/holdings/summary":
+			writeEnvelope(w, http.StatusOK, "ok", model.StockInstitutionHoldingSummary{})
+		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	req := newAStockRefreshCurrentBacktestPostRequest("2026-06-24", "afternoon")
+	rr := httptest.NewRecorder()
+	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if savedSnapshot.Period != "afternoon" {
+		t.Fatalf("expected current afternoon snapshot to be saved, got %+v", savedSnapshot)
+	}
+	var backtests []aStockBacktestRow
+	if err := json.Unmarshal([]byte(savedSnapshot.BacktestsJSON), &backtests); err != nil {
+		t.Fatalf("decode backtests: %v", err)
+	}
+	if len(backtests) != 1 || backtests[0].AfternoonOpen != "16.08" || backtests[0].T0Close != "16.42" || backtests[0].T0Return != "+2.11%" {
+		t.Fatalf("expected current backtest action to persist T+0 return, got %+v", backtests)
+	}
+}
+
 func TestAStockPageRefreshAllBacktestsPreservesPersistedAfternoonPrices(t *testing.T) {
 	setAStockSinaMinuteURLForTest(t, "")
 
@@ -4752,7 +4855,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"金十快讯", "金十资讯", "1条", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "14日内过滤", "涨停过滤", "当日行情", "不过滤", "重新计算", "关闭14日过滤", "关闭涨停过滤", "启用当日行情过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "推荐历史", "上午推荐", "下午推荐", "推荐窗口", "08:00-09:30", "上午开盘价", "下午开盘价", "补抓上午新闻", "重新生成上午推荐", "补抓下午新闻", "重新生成下午推荐", "补行情收益", "刷新全部回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="refresh_current_backtest"`, `name="action" value="refresh_backtest"`, `name="action" value="recalculate"`, "2026-06-12 周五", "2026-06-15 周一", "今日", "T+0 收益", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "推荐排名前9股票", "002230 科大讯飞", `002230 科大讯飞<span class="astock-hotspot-date">（2026-06-12）</span>`, "688981 中芯国际", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
+	for _, want := range []string{"金十快讯", "金十资讯", "1条", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "14日内过滤", "涨停过滤", "当日行情", "不过滤", "重新计算", "关闭14日过滤", "关闭涨停过滤", "启用当日行情过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "推荐历史", "上午推荐", "下午推荐", "推荐窗口", "08:00-09:30", "上午开盘价", "下午开盘价", "补抓上午新闻", "重新生成上午推荐", "补抓下午新闻", "重新生成下午推荐", "补股票名称", "补行情收益", "刷新全部回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="repair_stock_names"`, `name="action" value="refresh_current_backtest"`, `name="action" value="refresh_backtest"`, `name="action" value="recalculate"`, "2026-06-12 周五", "2026-06-15 周一", "今日", "T+0 收益", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "推荐排名前9股票", "002230 科大讯飞", `002230 科大讯飞<span class="astock-hotspot-date">（2026-06-12）</span>`, "688981 中芯国际", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}
@@ -5006,6 +5109,7 @@ func TestAStockRecommendationHistoryActionsUseSelectedPeriod(t *testing.T) {
 		`name="action" value="generate_morning_stock"`,
 		`name="action" value="generate_afternoon_stock"`,
 		`name="action" value="backfill_auction"`,
+		`name="action" value="repair_stock_names"`,
 		`name="action" value="refresh_current_backtest"`,
 		`name="action" value="refresh_backtest"`,
 		`data-preserve-scroll="1"`,
@@ -5016,6 +5120,7 @@ func TestAStockRecommendationHistoryActionsUseSelectedPeriod(t *testing.T) {
 		"重新生成下午推荐",
 		"关闭14日过滤",
 		"补录集合竞价",
+		"补股票名称",
 		"补行情收益",
 		"刷新全部回测",
 	} {
@@ -5025,6 +5130,9 @@ func TestAStockRecommendationHistoryActionsUseSelectedPeriod(t *testing.T) {
 	}
 	if strings.Index(body, "补行情收益") < 0 || strings.Index(body, "刷新全部回测") < 0 || strings.Index(body, "补行情收益") > strings.Index(body, "刷新全部回测") {
 		t.Fatalf("expected 补行情收益 button before 刷新全部回测, got %s", body)
+	}
+	if strings.Index(body, "补股票名称") < 0 || strings.Index(body, "补行情收益") < 0 || strings.Index(body, "补股票名称") > strings.Index(body, "补行情收益") {
+		t.Fatalf("expected 补股票名称 button before 补行情收益, got %s", body)
 	}
 }
 
@@ -6590,6 +6698,91 @@ func TestAStockPersistedRecommendationsRepairNamesAndFilterBacktests(t *testing.
 	}, recommendations)
 	if len(backtests) != 3 || backtests[0].Stock != "301696 测试股份" || backtests[1].Stock != "002179 中航光电" || backtests[2].Stock != "600030 中信证券" {
 		t.Fatalf("expected backtests to follow repaired recommendations, got %+v", backtests)
+	}
+}
+
+func TestAStockRepairStockNamesActionPersistsNamesFromLocalDictionary(t *testing.T) {
+	var savedSnapshot model.AStockRecommendationSnapshot
+	var savedSelections model.AStockRecommendationSelectionSet
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/a-stock/recommendations":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{
+				Found:        true,
+				StrategyDate: "2026-07-02",
+				Period:       "morning",
+				RecommendationsJSON: mustAStockTestJSON(t, []aStockRecommendation{
+					{Rank: 1, Code: "301696", Name: "301696", Hotspot: "人工智能", HotspotScore: 90, MarketScore: 100, Reason: "placeholder"},
+					{Rank: 2, Code: "002179", Name: "金十数据整理", Hotspot: "军工", HotspotScore: 80, MarketScore: 95, Reason: "placeholder"},
+				}),
+				BacktestsJSON: mustAStockTestJSON(t, []aStockBacktestRow{
+					{Stock: "301696 301696", EntryOpen: "10.00", T0Return: "+2.00%", T0Close: "10.20", Status: "等待T+1行情"},
+					{Stock: "002179 金十数据整理", EntryOpen: "20.00", T0Return: "+1.00%", T0Close: "20.20", Status: "等待T+1行情"},
+				}),
+				BacktestStatus: "已读取推荐快照",
+				GeneratedCount: 2,
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/a-stock/code-names":
+			if !strings.Contains(r.URL.Query().Get("codes"), "301696") || !strings.Contains(r.URL.Query().Get("codes"), "002179") {
+				t.Fatalf("expected code name lookup for recommendation codes, got %s", r.URL.RawQuery)
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockCodeNameListResult{
+				Total: 2,
+				Items: []model.AStockCodeName{
+					{Code: "301696", Name: "测试股份", Source: "auction"},
+					{Code: "002179", Name: "中航光电", Source: "auction"},
+				},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/internal/a-stock/recommendation-selections":
+			if err := json.NewDecoder(r.Body).Decode(&savedSelections); err != nil {
+				t.Fatalf("decode selections: %v", err)
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionUpsertResult{Updated: len(savedSelections.Items)})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/internal/a-stock/recommendations":
+			if err := json.NewDecoder(r.Body).Decode(&savedSnapshot); err != nil {
+				t.Fatalf("decode snapshot: %v", err)
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Updated: 1})
+		default:
+			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	form := url.Values{}
+	form.Set("date", "2026-07-02")
+	form.Set("period", "morning")
+	form.Set("action", "repair_stock_names")
+	req := httptest.NewRequest(http.MethodPost, "/a-stock", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if len(savedSelections.Items) != 2 || savedSelections.Items[0].Name != "测试股份" || savedSelections.Items[1].Name != "中航光电" {
+		t.Fatalf("expected repaired names to be saved into selections, got %+v", savedSelections)
+	}
+	var recommendations []aStockRecommendation
+	if err := json.Unmarshal([]byte(savedSnapshot.RecommendationsJSON), &recommendations); err != nil {
+		t.Fatalf("decode recommendations: %v", err)
+	}
+	if len(recommendations) != 2 || recommendations[0].Name != "测试股份" || recommendations[1].Name != "中航光电" {
+		t.Fatalf("expected repaired names to be saved into snapshot, got %+v", recommendations)
+	}
+	var backtests []aStockBacktestRow
+	if err := json.Unmarshal([]byte(savedSnapshot.BacktestsJSON), &backtests); err != nil {
+		t.Fatalf("decode backtests: %v", err)
+	}
+	if len(backtests) != 2 || backtests[0].Stock != "301696 测试股份" || backtests[1].Stock != "002179 中航光电" {
+		t.Fatalf("expected repaired names to be saved into backtests, got %+v", backtests)
+	}
+	decodedLocation, _ := url.QueryUnescape(rr.Header().Get("Location"))
+	if !strings.Contains(decodedLocation, "股票名称已从集合竞价名称库补齐 2 只") {
+		t.Fatalf("expected repair summary in redirect, got %q", decodedLocation)
 	}
 }
 
