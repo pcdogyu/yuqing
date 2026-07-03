@@ -4474,6 +4474,43 @@ func TestAStockPopupWaitsUntilAfternoonPreopenWindow(t *testing.T) {
 	}
 }
 
+func TestAStockPopupShowsMorningRecommendationsDuringDelayedGenerationWindow(t *testing.T) {
+	setAStockNowForTest(t, time.Date(2026, 6, 23, 9, 40, 0, 0, time.FixedZone("CST", 8*3600)))
+
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/system/popup":
+			writeEnvelope(w, http.StatusOK, "ok", model.PopupState{
+				UserID: parseTestInt64(r.URL.Query().Get("user_id")),
+				Key:    r.URL.Query().Get("key"),
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/a-stock/recommendation-selections":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{Found: false})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/a-stock/recommendations":
+			if r.URL.Query().Get("period") != "morning" {
+				t.Fatalf("expected morning popup recommendations, got query %s", r.URL.RawQuery)
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{
+				Found:               true,
+				StrategyDate:        "2026-06-23",
+				Period:              "morning",
+				RecommendationsJSON: `[{"Rank":1,"Code":"002230","Name":"科大讯飞","Hotspot":"人工智能","Reason":"上午盘前推荐"}]`,
+				UpdatedAt:           time.Date(2026, 6, 23, 1, 36, 0, 0, time.UTC),
+			})
+		default:
+			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	popup := srv.buildAStockPreopenPopup(1, "2026-06-23")
+	if !popup.Show || popup.Key != "a-stock-morning-preopen-recommendation-2026-06-23" || popup.Period != "morning" || len(popup.Recommendations) != 1 {
+		t.Fatalf("expected delayed morning preopen popup to show, got %+v", popup)
+	}
+}
+
 func TestAStockPopupDismissesMorningWithoutHidingAfternoon(t *testing.T) {
 	current := time.Date(2026, 6, 23, 9, 27, 0, 0, time.FixedZone("CST", 8*3600))
 	previousNow := aStockNow
