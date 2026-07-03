@@ -286,8 +286,8 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 	for _, want := range []string{
 		`class="astock-overview-table"`,
 		`body[data-page='a-stock'] table{width:100%;min-width:100%;font-size:13px}`,
-		`.astock-overview-table{width:100%;min-width:100%;table-layout:fixed;font-size:12px}`,
-		`.astock-overview-table .astock-muted{display:block;margin-bottom:7px;font-size:12px}`,
+		`.astock-overview-table{width:100%;min-width:1560px;table-layout:fixed;font-size:12px}`,
+		`.astock-overview-table .astock-muted{display:block;margin-bottom:7px;font-size:12px;white-space:nowrap;word-break:keep-all}`,
 		`.astock-overview-strategy{width:9.5%;min-width:150px}`,
 		`.astock-overview-strategy strong{white-space:nowrap}`,
 		`.astock-overview-period{width:5.94%;min-width:84px}`,

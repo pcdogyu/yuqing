@@ -404,9 +404,9 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		body[data-page='a-stock'] section{width:100%;box-sizing:border-box}
 		body[data-page='a-stock'] table{width:100%;min-width:100%;font-size:13px}
 		.astock-card{padding:18px;border:1px solid #ece7dc;border-radius:14px;background:#fff}
-		.astock-overview-table{width:100%;min-width:100%;table-layout:fixed;font-size:12px}
+		.astock-overview-table{width:100%;min-width:1560px;table-layout:fixed;font-size:12px}
 		.astock-overview-table th,.astock-overview-table td{vertical-align:top}
-		.astock-overview-table .astock-muted{display:block;margin-bottom:7px;font-size:12px}
+		.astock-overview-table .astock-muted{display:block;margin-bottom:7px;font-size:12px;white-space:nowrap;word-break:keep-all}
 		.astock-overview-table .astock-overview-sub-label{margin-top:16px}
 		.astock-overview-strategy{width:9.5%;min-width:150px}
 		.astock-overview-strategy strong{white-space:nowrap}
