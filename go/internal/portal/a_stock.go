@@ -404,12 +404,15 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		body[data-page='a-stock'] section{width:100%;box-sizing:border-box}
 		body[data-page='a-stock'] table{width:100%;min-width:100%;font-size:13px}
 		.astock-card{padding:18px;border:1px solid #ece7dc;border-radius:14px;background:#fff}
+		.astock-overview-header{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;margin-bottom:14px}
+		.astock-overview-header h2{margin:0}
+		.astock-overview-summary{display:flex;justify-content:flex-end;gap:24px;flex-wrap:wrap;text-align:right;font-size:12px}
+		.astock-overview-summary .astock-muted{display:block;margin-bottom:4px;white-space:nowrap;word-break:keep-all}
+		.astock-overview-summary strong{display:block;font-size:18px;line-height:1.25;white-space:nowrap}
 		.astock-overview-table{width:100%;min-width:1560px;table-layout:fixed;font-size:12px}
 		.astock-overview-table th,.astock-overview-table td{vertical-align:top}
 		.astock-overview-table .astock-muted{display:block;margin-bottom:7px;font-size:12px;white-space:nowrap;word-break:keep-all}
 		.astock-overview-table .astock-overview-sub-label{margin-top:16px}
-		.astock-overview-strategy{width:9.5%;min-width:150px}
-		.astock-overview-strategy strong{white-space:nowrap}
 		.astock-overview-period{width:5.94%;min-width:84px}
 		.astock-overview-period strong{white-space:nowrap}
 		.astock-overview-metric{width:6.1%;min-width:82px}
@@ -788,25 +791,29 @@ func writeAStockPageScript(b *strings.Builder, strategyDate string) {
 }
 
 func renderAStockOverviewSection(b *strings.Builder, morningCtx aStockContext, afternoonCtx aStockContext) {
-	b.WriteString(`<section><h2>顶部概览</h2><div class="astock-scroll"><table class="astock-overview-table"><tr>`)
-	writeAStockOverviewStrategyCell(b, morningCtx.Date, firstNonEmpty(morningCtx.AuctionAmountLabel, afternoonCtx.AuctionAmountLabel), ` rowspan="2"`)
+	auctionAmount := firstNonEmpty(morningCtx.AuctionAmountLabel, afternoonCtx.AuctionAmountLabel)
+	if strings.TrimSpace(auctionAmount) == "" {
+		auctionAmount = "--"
+	}
+	b.WriteString(`<section><div class="astock-overview-header"><h2>顶部概览</h2><div class="astock-overview-summary">`)
+	writeAStockOverviewSummaryItem(b, "策略日期", morningCtx.Date)
+	writeAStockOverviewSummaryItem(b, "集合竞价金额", auctionAmount)
+	b.WriteString(`</div></div><div class="astock-scroll"><table class="astock-overview-table"><tr>`)
 	writeAStockOverviewPeriodCells(b, morningCtx)
 	b.WriteString(`</tr><tr>`)
 	writeAStockOverviewPeriodCells(b, afternoonCtx)
 	b.WriteString(`</tr></table></div></section>`)
 }
 
-func writeAStockOverviewStrategyCell(b *strings.Builder, date string, auctionAmount string, attrs string) {
-	if strings.TrimSpace(auctionAmount) == "" {
-		auctionAmount = "--"
+func writeAStockOverviewSummaryItem(b *strings.Builder, label string, value string) {
+	if strings.TrimSpace(value) == "" {
+		value = "--"
 	}
-	b.WriteString(`<td class="astock-overview-strategy"`)
-	b.WriteString(attrs)
-	b.WriteString(`><span class="astock-muted">策略日期</span><strong>`)
-	b.WriteString(html.EscapeString(date))
-	b.WriteString(`</strong><span class="astock-muted astock-overview-sub-label">集合竞价金额</span><strong>`)
-	b.WriteString(html.EscapeString(auctionAmount))
-	b.WriteString(`</strong></td>`)
+	b.WriteString(`<div><span class="astock-muted">`)
+	b.WriteString(html.EscapeString(label))
+	b.WriteString(`</span><strong>`)
+	b.WriteString(html.EscapeString(value))
+	b.WriteString(`</strong></div>`)
 }
 
 func writeAStockOverviewPeriodCells(b *strings.Builder, ctx aStockContext) {

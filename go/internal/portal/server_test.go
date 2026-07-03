@@ -284,12 +284,15 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		t.Fatalf("expected A股, 研报调研, 集合竞价 nav links before Crypto, got %s", body)
 	}
 	for _, want := range []string{
+		`class="astock-overview-header"`,
+		`class="astock-overview-summary"`,
 		`class="astock-overview-table"`,
 		`body[data-page='a-stock'] table{width:100%;min-width:100%;font-size:13px}`,
+		`.astock-overview-header{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;margin-bottom:14px}`,
+		`.astock-overview-summary{display:flex;justify-content:flex-end;gap:24px;flex-wrap:wrap;text-align:right;font-size:12px}`,
+		`.astock-overview-summary strong{display:block;font-size:18px;line-height:1.25;white-space:nowrap}`,
 		`.astock-overview-table{width:100%;min-width:1560px;table-layout:fixed;font-size:12px}`,
 		`.astock-overview-table .astock-muted{display:block;margin-bottom:7px;font-size:12px;white-space:nowrap;word-break:keep-all}`,
-		`.astock-overview-strategy{width:9.5%;min-width:150px}`,
-		`.astock-overview-strategy strong{white-space:nowrap}`,
 		`.astock-overview-period{width:5.94%;min-width:84px}`,
 		`.astock-overview-period strong{white-space:nowrap}`,
 		`.astock-overview-metric{width:6.1%;min-width:82px}`,
@@ -306,7 +309,6 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		`.astock-hotspot-stocks{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))`,
 		`.astock-hotspot-stock{display:block;min-width:0;white-space:nowrap}`,
 		`.astock-hotspot-date{color:#7a7064;font-size:12px}`,
-		`class="astock-overview-strategy" rowspan="2"`,
 		`class="astock-overview-period"`,
 		`class="astock-overview-metric"`,
 		`class="astock-overview-recent-filter"`,
