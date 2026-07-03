@@ -1,12 +1,16 @@
 package portal
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/pcdogyu/yuqing/go/internal/config"
 )
@@ -105,6 +109,55 @@ func TestPortalUpgradeCommandEnvLeavesGitCacheUntouched(t *testing.T) {
 			t.Fatalf("expected git command env to avoid upgrade GOCACHE, got %+v", env)
 		}
 	}
+}
+
+func TestRunPortalUpgradeCommandWithProgressPublishesHeartbeat(t *testing.T) {
+	t.Setenv("PORTAL_UPGRADE_SLEEP_HELPER", "1")
+	var log bytes.Buffer
+	var snapshotsMu sync.Mutex
+	var snapshots []string
+
+	err := runPortalUpgradeCommandWithProgress(
+		context.Background(),
+		&log,
+		t.TempDir(),
+		false,
+		func(_ string, logText string) {
+			snapshotsMu.Lock()
+			defer snapshotsMu.Unlock()
+			snapshots = append(snapshots, logText)
+		},
+		"阶段: 调试",
+		10*time.Millisecond,
+		os.Args[0],
+		"-test.run=TestPortalUpgradeSleepHelper",
+	)
+	if err != nil {
+		t.Fatalf("runPortalUpgradeCommandWithProgress error: %v\n%s", err, log.String())
+	}
+	if !strings.Contains(log.String(), "debug: 工作目录:") || !strings.Contains(log.String(), "debug: 命令结束") {
+		t.Fatalf("expected debug command metadata, got %s", log.String())
+	}
+	foundHeartbeat := false
+	snapshotsMu.Lock()
+	for _, snapshot := range snapshots {
+		if strings.Contains(snapshot, "debug: 命令仍在运行") {
+			foundHeartbeat = true
+			break
+		}
+	}
+	snapshotsMu.Unlock()
+	if !foundHeartbeat {
+		t.Fatalf("expected heartbeat progress snapshot, got %+v", snapshots)
+	}
+}
+
+func TestPortalUpgradeSleepHelper(t *testing.T) {
+	if os.Getenv("PORTAL_UPGRADE_SLEEP_HELPER") != "1" {
+		return
+	}
+	time.Sleep(60 * time.Millisecond)
+	fmt.Println("sleep helper done")
 }
 
 func runGit(t *testing.T, dir string, args ...string) {

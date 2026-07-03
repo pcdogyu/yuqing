@@ -10,12 +10,14 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pcdogyu/yuqing/go/internal/config"
 )
 
 const portalUpgradeTimeout = 10 * time.Minute
+const portalUpgradeCommandHeartbeat = 15 * time.Second
 
 var portalUpgradeBuildPackages = []string{
 	"./cmd/auth-service",
@@ -185,7 +187,7 @@ func runPortalUpgrade(parent context.Context, _ config.Config, progress portalUp
 	}
 	runStage := func(name string, dir string, allowFailure bool, command string, args ...string) error {
 		stage(name)
-		err := runPortalUpgradeCommand(ctx, &log, dir, allowFailure, command, args...)
+		err := runPortalUpgradeCommandWithProgress(ctx, &log, dir, allowFailure, progress, "阶段: "+name, portalUpgradeCommandHeartbeat, command, args...)
 		publish("阶段: " + name)
 		return err
 	}
@@ -247,14 +249,41 @@ func runPortalUpgrade(parent context.Context, _ config.Config, progress portalUp
 		"-X github.com/pcdogyu/yuqing/go/internal/app.BranchName=" + branch,
 	}, " ")
 	args := []string{"build", "-ldflags", ldflags, "-o", binDir + string(os.PathSeparator)}
-	args = append(args, portalUpgradeBuildPackages...)
-	if err := runStage("打包构建", goDir, false, "go", args...); err != nil {
+	if err := runPortalUpgradeBuildPackages(ctx, &log, progress, goDir, binDir, args, portalUpgradeBuildPackages); err != nil {
 		return finishPortalUpgrade(false, startedAt, log.String(), err)
 	}
 	stage("完成")
 	appendUpgradeLog(&log, "升级构建完成。新二进制已写入 "+binDir+"；如需让当前服务加载新代码，请重启对应服务。")
 	publish("阶段: 完成")
 	return finishPortalUpgrade(true, startedAt, log.String(), nil)
+}
+
+func runPortalUpgradeBuildPackages(ctx context.Context, log *bytes.Buffer, progress portalUpgradeProgress, goDir string, binDir string, baseArgs []string, packages []string) error {
+	stageMessage := "阶段: 打包构建"
+	appendUpgradeLog(log, stageMessage)
+	appendUpgradeLog(log, fmt.Sprintf("debug: 构建输出目录: %s", binDir))
+	appendUpgradeLog(log, fmt.Sprintf("debug: 构建包数量: %d", len(packages)))
+	appendUpgradeLog(log, "debug: go version: "+strings.TrimSpace(portalUpgradeCommandOutput(ctx, goDir, "go", "version")))
+	if progress != nil {
+		progress(stageMessage, strings.TrimRight(log.String(), "\r\n"))
+	}
+	for i, pkg := range packages {
+		startedAt := time.Now()
+		appendUpgradeLog(log, fmt.Sprintf("debug: 开始构建包 %d/%d: %s", i+1, len(packages), pkg))
+		if progress != nil {
+			progress(stageMessage, strings.TrimRight(log.String(), "\r\n"))
+		}
+		args := append([]string{}, baseArgs...)
+		args = append(args, pkg)
+		if err := runPortalUpgradeCommandWithProgress(ctx, log, goDir, false, progress, stageMessage, portalUpgradeCommandHeartbeat, "go", args...); err != nil {
+			return err
+		}
+		appendUpgradeLog(log, fmt.Sprintf("debug: 完成构建包 %d/%d: %s，耗时 %s", i+1, len(packages), pkg, time.Since(startedAt).Round(time.Second)))
+		if progress != nil {
+			progress(stageMessage, strings.TrimRight(log.String(), "\r\n"))
+		}
+	}
+	return nil
 }
 
 func finishPortalUpgrade(ok bool, startedAt time.Time, logText string, err error) portalUpgradeResult {
@@ -325,17 +354,74 @@ func fileExists(path string) bool {
 }
 
 func runPortalUpgradeCommand(ctx context.Context, log *bytes.Buffer, dir string, allowFailure bool, name string, args ...string) error {
-	appendUpgradeLog(log, "$ "+shellQuoteCommand(name, args))
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Dir = dir
-	cmd.Env = portalUpgradeCommandEnv(name, dir)
-	output, err := cmd.CombinedOutput()
-	if len(output) > 0 {
+	return runPortalUpgradeCommandWithProgress(ctx, log, dir, allowFailure, nil, "", 0, name, args...)
+}
+
+func runPortalUpgradeCommandWithProgress(ctx context.Context, log *bytes.Buffer, dir string, allowFailure bool, progress portalUpgradeProgress, message string, heartbeat time.Duration, name string, args ...string) error {
+	var mu sync.Mutex
+	snapshot := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		if log == nil {
+			return ""
+		}
+		return strings.TrimRight(log.String(), "\r\n")
+	}
+	publishSnapshot := func() {
+		if progress != nil {
+			progress(message, snapshot())
+		}
+	}
+	appendLine := func(line string) {
+		mu.Lock()
+		appendUpgradeLog(log, line)
+		mu.Unlock()
+	}
+	appendBytes := func(output []byte) {
+		if len(output) == 0 || log == nil {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
 		log.Write(output)
 		if output[len(output)-1] != '\n' {
 			log.WriteByte('\n')
 		}
 	}
+
+	appendUpgradeLog(log, "$ "+shellQuoteCommand(name, args))
+	appendUpgradeLog(log, "debug: 工作目录: "+dir)
+	if isPortalUpgradeGoCommand(name) {
+		if cacheDir := portalUpgradeGoCacheDir(dir); cacheDir != "" {
+			appendUpgradeLog(log, "debug: GOCACHE: "+cacheDir)
+		}
+	}
+	publishSnapshot()
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = dir
+	cmd.Env = portalUpgradeCommandEnv(name, dir)
+	startedAt := time.Now()
+	done := make(chan struct{})
+	if heartbeat > 0 && progress != nil {
+		ticker := time.NewTicker(heartbeat)
+		defer ticker.Stop()
+		go func() {
+			for {
+				select {
+				case <-ticker.C:
+					appendLine(fmt.Sprintf("debug: 命令仍在运行，已耗时 %s: %s", time.Since(startedAt).Round(time.Second), shellQuoteCommand(name, args)))
+					publishSnapshot()
+				case <-done:
+					return
+				}
+			}
+		}()
+	}
+	output, err := cmd.CombinedOutput()
+	close(done)
+	appendBytes(output)
+	appendLine(fmt.Sprintf("debug: 命令结束，耗时 %s: %s", time.Since(startedAt).Round(time.Second), shellQuoteCommand(name, args)))
+	publishSnapshot()
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
