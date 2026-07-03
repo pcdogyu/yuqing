@@ -4442,7 +4442,7 @@ func TestAStockPopupShowsAndDismissesAfternoonRecommendations(t *testing.T) {
 }
 
 func TestAStockPopupWaitsUntilAfternoonPreopenWindow(t *testing.T) {
-	setAStockNowForTest(t, time.Date(2026, 6, 23, 12, 56, 59, 0, time.FixedZone("CST", 8*3600)))
+	setAStockNowForTest(t, time.Date(2026, 6, 23, 12, 44, 59, 0, time.FixedZone("CST", 8*3600)))
 
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -4474,8 +4474,8 @@ func TestAStockPopupWaitsUntilAfternoonPreopenWindow(t *testing.T) {
 	}
 }
 
-func TestAStockPopupShowsMorningRecommendationsDuringDelayedGenerationWindow(t *testing.T) {
-	setAStockNowForTest(t, time.Date(2026, 6, 23, 9, 40, 0, 0, time.FixedZone("CST", 8*3600)))
+func TestAStockPopupShowsMorningRecommendationsDuringPreopenWindow(t *testing.T) {
+	setAStockNowForTest(t, time.Date(2026, 6, 23, 9, 20, 0, 0, time.FixedZone("CST", 8*3600)))
 
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -4507,7 +4507,7 @@ func TestAStockPopupShowsMorningRecommendationsDuringDelayedGenerationWindow(t *
 	srv := NewServer(config.Config{ContentURL: content.URL})
 	popup := srv.buildAStockPreopenPopup(1, "2026-06-23")
 	if !popup.Show || popup.Key != "a-stock-morning-preopen-recommendation-2026-06-23" || popup.Period != "morning" || len(popup.Recommendations) != 1 {
-		t.Fatalf("expected delayed morning preopen popup to show, got %+v", popup)
+		t.Fatalf("expected morning preopen popup to show during configured window, got %+v", popup)
 	}
 }
 

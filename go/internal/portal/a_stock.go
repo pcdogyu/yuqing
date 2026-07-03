@@ -654,7 +654,7 @@ func writeAStockPageScript(b *strings.Builder, strategyDate string) {
 	b.WriteString(`function renderPopupRows(items){var body=popupBody();if(!body){return;}body.innerHTML="";(items||[]).forEach(function(item){var row=document.createElement("tr");["rank","code","name","hotspot","reason"].forEach(function(field){var cell=document.createElement("td");cell.textContent=item&&item[field]!==undefined&&item[field]!==null?String(item[field]):"";row.appendChild(cell);});body.appendChild(row);});}`)
 	b.WriteString(`function showPopup(data){var mask=popupMask();if(!mask||!data||!data.show){return;}if(popupVisible&&popupKey===data.key){return;}var title=document.getElementById("astock-popup-title");var meta=document.getElementById("astock-popup-meta");if(title){title.textContent=data.title||"盘前推荐股票";}if(meta){meta.textContent=data.meta||"";}renderPopupRows(data.recommendations||[]);popupKey=data.key||"";mask.hidden=false;popupVisible=true;}`)
 	b.WriteString(`function fetchPopup(){if(!popupEligible||!popupDate){return;}fetch("/a-stock/popup?date="+encodeURIComponent(popupDate),{credentials:"same-origin"}).then(function(resp){if(!resp.ok){return null;}return resp.json();}).then(function(data){if(!data){return;}if(data.show){showPopup(data);return;}if(!data.show&&popupVisible){hidePopup();}}).catch(function(){});}`)
-	b.WriteString(`function schedulePopupChecks(){fetchPopup();if(!popupEligible){return;}if(popupTimer){window.clearInterval(popupTimer);}popupTimer=window.setInterval(fetchPopup,5000);popupExactTimers.forEach(function(timer){window.clearTimeout(timer);});popupExactTimers=[];var now=new Date();[[9,27],[12,57]].forEach(function(parts){var target=new Date();target.setHours(parts[0],parts[1],0,0);if(now<target){popupExactTimers.push(window.setTimeout(fetchPopup,Math.max(0,target.getTime()-now.getTime()+100)));}});}`)
+	b.WriteString(`function schedulePopupChecks(){fetchPopup();if(!popupEligible){return;}if(popupTimer){window.clearInterval(popupTimer);}popupTimer=window.setInterval(fetchPopup,5000);popupExactTimers.forEach(function(timer){window.clearTimeout(timer);});popupExactTimers=[];var now=new Date();[[9,15],[9,27],[12,45],[12,57]].forEach(function(parts){var target=new Date();target.setHours(parts[0],parts[1],0,0);if(now<target){popupExactTimers.push(window.setTimeout(fetchPopup,Math.max(0,target.getTime()-now.getTime()+100)));}});}`)
 	b.WriteString(`window.addEventListener("DOMContentLoaded",function(){var y=sessionStorage.getItem(scrollKey);if(y!==null){sessionStorage.removeItem(scrollKey);var n=parseInt(y,10);if(!isNaN(n)){window.scrollTo(0,n);}}document.querySelectorAll("[data-preserve-scroll='1']").forEach(function(el){el.addEventListener("click",function(){sessionStorage.setItem(scrollKey,String(window.scrollY||0));});});document.querySelectorAll(".astock-action-form").forEach(function(form){form.addEventListener("submit",function(event){if(form.dataset.submitting==="1"){event.preventDefault();return;}form.dataset.submitting="1";var current=form.querySelector("button[type='submit']");document.querySelectorAll(".astock-action-form button[type='submit']").forEach(function(button){button.disabled=true;button.setAttribute("aria-disabled","true");});if(current){current.classList.add("astock-action-running");current.setAttribute("aria-busy","true");}});});var dismiss=document.getElementById("astock-popup-dismiss");if(dismiss){dismiss.addEventListener("click",function(){if(!popupKey){hidePopup();return;}fetch("/a-stock/popup/dismiss",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:popupKey})}).catch(function(){}).finally(function(){hidePopup();});});}schedulePopupChecks();});`)
 	b.WriteString(`window.addEventListener("pageshow",function(){document.querySelectorAll(".astock-action-form").forEach(function(form){form.dataset.submitting="";});document.querySelectorAll(".astock-action-form button[type='submit']").forEach(function(button){button.disabled=false;button.removeAttribute("aria-disabled");button.removeAttribute("aria-busy");button.classList.remove("astock-action-running");});schedulePopupChecks();});`)
 	b.WriteString(`window.addEventListener("beforeunload",function(){if(popupTimer){window.clearInterval(popupTimer);popupTimer=0;}popupExactTimers.forEach(function(timer){window.clearTimeout(timer);});popupExactTimers=[];});`)
@@ -2377,9 +2377,9 @@ func aStockPreopenPopupWindows() []aStockPreopenPopupWindow {
 			Title:       "09:27 上午盘前推荐股票",
 			WindowLabel: "08:00-09:26:59",
 			StartHour:   9,
-			StartMinute: 27,
+			StartMinute: 15,
 			EndHour:     9,
-			EndMinute:   45,
+			EndMinute:   30,
 		},
 		{
 			Period:      "afternoon",
@@ -2387,9 +2387,9 @@ func aStockPreopenPopupWindows() []aStockPreopenPopupWindow {
 			Title:       "12:57 下午盘前推荐股票",
 			WindowLabel: "09:30-12:56:59",
 			StartHour:   12,
-			StartMinute: 57,
+			StartMinute: 45,
 			EndHour:     13,
-			EndMinute:   15,
+			EndMinute:   0,
 		},
 	}
 }
