@@ -531,12 +531,106 @@ CREATE TABLE IF NOT EXISTS a_stock_sector_fund_flows (
 	small_net_inflow DOUBLE PRECISION NOT NULL DEFAULT 0,
 	small_net_inflow_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
 	top_stock TEXT NOT NULL DEFAULT '',
+	source_count INTEGER NOT NULL DEFAULT 1,
+	source_types TEXT NOT NULL DEFAULT '',
+	field_counts_json TEXT NOT NULL DEFAULT '{}',
 	source_type TEXT NOT NULL DEFAULT '',
 	raw_payload TEXT NOT NULL DEFAULT '{}',
 	fetched_at TEXT NOT NULL,
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL,
 	PRIMARY KEY (trade_date, sector_type, indicator, name)
+);
+
+CREATE TABLE IF NOT EXISTS a_stock_sector_fund_flow_source_rows (
+	trade_date TEXT NOT NULL,
+	sector_type TEXT NOT NULL,
+	indicator TEXT NOT NULL,
+	source_type TEXT NOT NULL,
+	rank INTEGER NOT NULL DEFAULT 0,
+	name TEXT NOT NULL,
+	change_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+	main_net_inflow DOUBLE PRECISION NOT NULL DEFAULT 0,
+	main_net_inflow_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+	super_large_net_inflow DOUBLE PRECISION NOT NULL DEFAULT 0,
+	super_large_net_inflow_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+	large_net_inflow DOUBLE PRECISION NOT NULL DEFAULT 0,
+	large_net_inflow_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+	medium_net_inflow DOUBLE PRECISION NOT NULL DEFAULT 0,
+	medium_net_inflow_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+	small_net_inflow DOUBLE PRECISION NOT NULL DEFAULT 0,
+	small_net_inflow_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+	top_stock TEXT NOT NULL DEFAULT '',
+	field_counts_json TEXT NOT NULL DEFAULT '{}',
+	raw_payload TEXT NOT NULL DEFAULT '{}',
+	fetched_at TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	PRIMARY KEY (trade_date, sector_type, indicator, source_type, name)
+);
+
+CREATE TABLE IF NOT EXISTS a_stock_stock_fund_flows (
+	trade_date TEXT NOT NULL,
+	indicator TEXT NOT NULL,
+	code TEXT NOT NULL,
+	rank INTEGER NOT NULL DEFAULT 0,
+	name TEXT NOT NULL DEFAULT '',
+	price DOUBLE PRECISION NOT NULL DEFAULT 0,
+	change_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+	turnover_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+	amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+	in_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+	out_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+	main_net_inflow DOUBLE PRECISION NOT NULL DEFAULT 0,
+	main_net_inflow_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+	super_large_net_inflow DOUBLE PRECISION NOT NULL DEFAULT 0,
+	super_large_net_inflow_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+	large_net_inflow DOUBLE PRECISION NOT NULL DEFAULT 0,
+	large_net_inflow_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+	medium_net_inflow DOUBLE PRECISION NOT NULL DEFAULT 0,
+	medium_net_inflow_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+	small_net_inflow DOUBLE PRECISION NOT NULL DEFAULT 0,
+	small_net_inflow_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+	source_count INTEGER NOT NULL DEFAULT 1,
+	source_types TEXT NOT NULL DEFAULT '',
+	field_counts_json TEXT NOT NULL DEFAULT '{}',
+	source_type TEXT NOT NULL DEFAULT '',
+	raw_payload TEXT NOT NULL DEFAULT '{}',
+	fetched_at TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	PRIMARY KEY (trade_date, indicator, code)
+);
+
+CREATE TABLE IF NOT EXISTS a_stock_stock_fund_flow_source_rows (
+	trade_date TEXT NOT NULL,
+	indicator TEXT NOT NULL,
+	source_type TEXT NOT NULL,
+	code TEXT NOT NULL,
+	rank INTEGER NOT NULL DEFAULT 0,
+	name TEXT NOT NULL DEFAULT '',
+	price DOUBLE PRECISION NOT NULL DEFAULT 0,
+	change_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+	turnover_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+	amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+	in_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+	out_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+	main_net_inflow DOUBLE PRECISION NOT NULL DEFAULT 0,
+	main_net_inflow_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+	super_large_net_inflow DOUBLE PRECISION NOT NULL DEFAULT 0,
+	super_large_net_inflow_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+	large_net_inflow DOUBLE PRECISION NOT NULL DEFAULT 0,
+	large_net_inflow_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+	medium_net_inflow DOUBLE PRECISION NOT NULL DEFAULT 0,
+	medium_net_inflow_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+	small_net_inflow DOUBLE PRECISION NOT NULL DEFAULT 0,
+	small_net_inflow_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+	field_counts_json TEXT NOT NULL DEFAULT '{}',
+	raw_payload TEXT NOT NULL DEFAULT '{}',
+	fetched_at TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	PRIMARY KEY (trade_date, indicator, source_type, code)
 );
 
 CREATE TABLE IF NOT EXISTS task_runs (
@@ -621,6 +715,11 @@ CREATE INDEX IF NOT EXISTS idx_a_stock_recommendations_updated ON a_stock_recomm
 CREATE INDEX IF NOT EXISTS idx_a_stock_recommendation_selections_lookup ON a_stock_recommendation_selections(strategy_date, period, rank, code);
 CREATE INDEX IF NOT EXISTS idx_a_stock_sector_fund_flow_lookup ON a_stock_sector_fund_flows(trade_date DESC, sector_type, indicator, rank);
 CREATE INDEX IF NOT EXISTS idx_a_stock_sector_fund_flow_name ON a_stock_sector_fund_flows(name);
+CREATE INDEX IF NOT EXISTS idx_a_stock_sector_fund_flow_source_lookup ON a_stock_sector_fund_flow_source_rows(trade_date DESC, sector_type, indicator, source_type, rank);
+CREATE INDEX IF NOT EXISTS idx_a_stock_stock_fund_flow_lookup ON a_stock_stock_fund_flows(trade_date DESC, indicator, rank);
+CREATE INDEX IF NOT EXISTS idx_a_stock_stock_fund_flow_code ON a_stock_stock_fund_flows(code);
+CREATE INDEX IF NOT EXISTS idx_a_stock_stock_fund_flow_source_lookup ON a_stock_stock_fund_flow_source_rows(trade_date DESC, indicator, source_type, rank);
+CREATE INDEX IF NOT EXISTS idx_a_stock_stock_fund_flow_source_code ON a_stock_stock_fund_flow_source_rows(code);
 CREATE INDEX IF NOT EXISTS idx_wechat_challenges_expires_at ON wechat_challenges(expires_at);
 CREATE INDEX IF NOT EXISTS idx_wechat_bindings_openid ON wechat_bindings(openid);
 CREATE INDEX IF NOT EXISTS idx_public_options_user_updated ON public_options(user_id, updatetime DESC, id DESC);

@@ -625,12 +625,106 @@ CREATE TABLE IF NOT EXISTS a_stock_sector_fund_flows (
 	small_net_inflow REAL NOT NULL DEFAULT 0,
 	small_net_inflow_pct REAL NOT NULL DEFAULT 0,
 	top_stock TEXT NOT NULL DEFAULT '',
+	source_count INTEGER NOT NULL DEFAULT 1,
+	source_types TEXT NOT NULL DEFAULT '',
+	field_counts_json TEXT NOT NULL DEFAULT '{}',
 	source_type TEXT NOT NULL DEFAULT '',
 	raw_payload TEXT NOT NULL DEFAULT '{}',
 	fetched_at TEXT NOT NULL,
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL,
 	PRIMARY KEY (trade_date, sector_type, indicator, name)
+);
+
+CREATE TABLE IF NOT EXISTS a_stock_sector_fund_flow_source_rows (
+	trade_date TEXT NOT NULL,
+	sector_type TEXT NOT NULL,
+	indicator TEXT NOT NULL,
+	source_type TEXT NOT NULL,
+	rank INTEGER NOT NULL DEFAULT 0,
+	name TEXT NOT NULL,
+	change_pct REAL NOT NULL DEFAULT 0,
+	main_net_inflow REAL NOT NULL DEFAULT 0,
+	main_net_inflow_pct REAL NOT NULL DEFAULT 0,
+	super_large_net_inflow REAL NOT NULL DEFAULT 0,
+	super_large_net_inflow_pct REAL NOT NULL DEFAULT 0,
+	large_net_inflow REAL NOT NULL DEFAULT 0,
+	large_net_inflow_pct REAL NOT NULL DEFAULT 0,
+	medium_net_inflow REAL NOT NULL DEFAULT 0,
+	medium_net_inflow_pct REAL NOT NULL DEFAULT 0,
+	small_net_inflow REAL NOT NULL DEFAULT 0,
+	small_net_inflow_pct REAL NOT NULL DEFAULT 0,
+	top_stock TEXT NOT NULL DEFAULT '',
+	field_counts_json TEXT NOT NULL DEFAULT '{}',
+	raw_payload TEXT NOT NULL DEFAULT '{}',
+	fetched_at TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	PRIMARY KEY (trade_date, sector_type, indicator, source_type, name)
+);
+
+CREATE TABLE IF NOT EXISTS a_stock_stock_fund_flows (
+	trade_date TEXT NOT NULL,
+	indicator TEXT NOT NULL,
+	code TEXT NOT NULL,
+	rank INTEGER NOT NULL DEFAULT 0,
+	name TEXT NOT NULL DEFAULT '',
+	price REAL NOT NULL DEFAULT 0,
+	change_pct REAL NOT NULL DEFAULT 0,
+	turnover_pct REAL NOT NULL DEFAULT 0,
+	amount REAL NOT NULL DEFAULT 0,
+	in_amount REAL NOT NULL DEFAULT 0,
+	out_amount REAL NOT NULL DEFAULT 0,
+	main_net_inflow REAL NOT NULL DEFAULT 0,
+	main_net_inflow_pct REAL NOT NULL DEFAULT 0,
+	super_large_net_inflow REAL NOT NULL DEFAULT 0,
+	super_large_net_inflow_pct REAL NOT NULL DEFAULT 0,
+	large_net_inflow REAL NOT NULL DEFAULT 0,
+	large_net_inflow_pct REAL NOT NULL DEFAULT 0,
+	medium_net_inflow REAL NOT NULL DEFAULT 0,
+	medium_net_inflow_pct REAL NOT NULL DEFAULT 0,
+	small_net_inflow REAL NOT NULL DEFAULT 0,
+	small_net_inflow_pct REAL NOT NULL DEFAULT 0,
+	source_count INTEGER NOT NULL DEFAULT 1,
+	source_types TEXT NOT NULL DEFAULT '',
+	field_counts_json TEXT NOT NULL DEFAULT '{}',
+	source_type TEXT NOT NULL DEFAULT '',
+	raw_payload TEXT NOT NULL DEFAULT '{}',
+	fetched_at TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	PRIMARY KEY (trade_date, indicator, code)
+);
+
+CREATE TABLE IF NOT EXISTS a_stock_stock_fund_flow_source_rows (
+	trade_date TEXT NOT NULL,
+	indicator TEXT NOT NULL,
+	source_type TEXT NOT NULL,
+	code TEXT NOT NULL,
+	rank INTEGER NOT NULL DEFAULT 0,
+	name TEXT NOT NULL DEFAULT '',
+	price REAL NOT NULL DEFAULT 0,
+	change_pct REAL NOT NULL DEFAULT 0,
+	turnover_pct REAL NOT NULL DEFAULT 0,
+	amount REAL NOT NULL DEFAULT 0,
+	in_amount REAL NOT NULL DEFAULT 0,
+	out_amount REAL NOT NULL DEFAULT 0,
+	main_net_inflow REAL NOT NULL DEFAULT 0,
+	main_net_inflow_pct REAL NOT NULL DEFAULT 0,
+	super_large_net_inflow REAL NOT NULL DEFAULT 0,
+	super_large_net_inflow_pct REAL NOT NULL DEFAULT 0,
+	large_net_inflow REAL NOT NULL DEFAULT 0,
+	large_net_inflow_pct REAL NOT NULL DEFAULT 0,
+	medium_net_inflow REAL NOT NULL DEFAULT 0,
+	medium_net_inflow_pct REAL NOT NULL DEFAULT 0,
+	small_net_inflow REAL NOT NULL DEFAULT 0,
+	small_net_inflow_pct REAL NOT NULL DEFAULT 0,
+	field_counts_json TEXT NOT NULL DEFAULT '{}',
+	raw_payload TEXT NOT NULL DEFAULT '{}',
+	fetched_at TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	PRIMARY KEY (trade_date, indicator, source_type, code)
 );
 
 CREATE TABLE IF NOT EXISTS task_runs (
@@ -702,6 +796,11 @@ CREATE INDEX IF NOT EXISTS idx_a_stock_recommendations_updated ON a_stock_recomm
 CREATE INDEX IF NOT EXISTS idx_a_stock_recommendation_selections_lookup ON a_stock_recommendation_selections(strategy_date, period, rank, code);
 CREATE INDEX IF NOT EXISTS idx_a_stock_sector_fund_flow_lookup ON a_stock_sector_fund_flows(trade_date DESC, sector_type, indicator, rank);
 CREATE INDEX IF NOT EXISTS idx_a_stock_sector_fund_flow_name ON a_stock_sector_fund_flows(name);
+CREATE INDEX IF NOT EXISTS idx_a_stock_sector_fund_flow_source_lookup ON a_stock_sector_fund_flow_source_rows(trade_date DESC, sector_type, indicator, source_type, rank);
+CREATE INDEX IF NOT EXISTS idx_a_stock_stock_fund_flow_lookup ON a_stock_stock_fund_flows(trade_date DESC, indicator, rank);
+CREATE INDEX IF NOT EXISTS idx_a_stock_stock_fund_flow_code ON a_stock_stock_fund_flows(code);
+CREATE INDEX IF NOT EXISTS idx_a_stock_stock_fund_flow_source_lookup ON a_stock_stock_fund_flow_source_rows(trade_date DESC, indicator, source_type, rank);
+CREATE INDEX IF NOT EXISTS idx_a_stock_stock_fund_flow_source_code ON a_stock_stock_fund_flow_source_rows(code);
 CREATE INDEX IF NOT EXISTS idx_projects_group_id ON projects(group_id);
 CREATE INDEX IF NOT EXISTS idx_monitor_rules_project_id ON monitor_rules(project_id);
 CREATE INDEX IF NOT EXISTS idx_reports_project_id ON reports(project_id);
@@ -750,6 +849,9 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_action_created_at ON audit_logs(action
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN limit_up_filtered INTEGER NOT NULL DEFAULT 0`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN today_market_filter_enabled INTEGER NOT NULL DEFAULT 0`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN no_today_market_count INTEGER NOT NULL DEFAULT 0`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_sector_fund_flows ADD COLUMN source_count INTEGER NOT NULL DEFAULT 1`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_sector_fund_flows ADD COLUMN source_types TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_sector_fund_flows ADD COLUMN field_counts_json TEXT NOT NULL DEFAULT '{}'`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE platform_bindings ADD COLUMN bound INTEGER NOT NULL DEFAULT 0`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE public_options ADD COLUMN detail_status INTEGER NOT NULL DEFAULT 3`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE warning_settings ADD COLUMN warning_setting_id INTEGER NOT NULL DEFAULT 0`)
@@ -787,6 +889,15 @@ func (s *Store) migratePostgres(ctx context.Context) error {
 		return err
 	}
 	if _, err := s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN IF NOT EXISTS no_today_market_count INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE a_stock_sector_fund_flows ADD COLUMN IF NOT EXISTS source_count INTEGER NOT NULL DEFAULT 1`); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE a_stock_sector_fund_flows ADD COLUMN IF NOT EXISTS source_types TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE a_stock_sector_fund_flows ADD COLUMN IF NOT EXISTS field_counts_json TEXT NOT NULL DEFAULT '{}'`); err != nil {
 		return err
 	}
 	return nil

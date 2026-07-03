@@ -262,7 +262,7 @@ func (w *Worker) handleRunAStockSectorFundFlowLatest(wr http.ResponseWriter, r *
 	result, err := w.runAStockSectorFundFlowLatest(r.Context(), false)
 	finishedAt := time.Now().UTC()
 	status := "success"
-	message := fmt.Sprintf("a-stock sector fund flow completed: date=%s groups=%d items=%d", result.Date, result.Groups, result.Items)
+	message := fmt.Sprintf("a-stock fund flow completed: date=%s groups=%d items=%d sector_groups=%d stock_groups=%d", result.Date, result.Groups, result.Items, result.SectorGroups, result.StockGroups)
 	if result.Skipped {
 		status = "skipped"
 		message = result.Message

@@ -3,7 +3,8 @@
 
 The Go scheduler calls:
   GET /api/a-stock/auction?date=YYYY-MM-DD
-  GET /api/a-stock/sector-fund-flow?sector_type=行业资金流&indicator=今日
+  GET /api/a-stock/sector-fund-flow?sector_type=行业资金流&indicator=今日&source=eastmoney
+  GET /api/a-stock/stock-fund-flow?indicator=今日&source=eastmoney
   GET /api/a-stock/holdings?period=YYYYMMDD&code=002230
   GET /api/stock-research?code=002230&start=YYYY-MM-DD&end=YYYY-MM-DD
 
@@ -109,6 +110,45 @@ EASTMONEY_SECTOR_FUND_FLOW_SPECS = {
         "top_stock": "f260",
     },
 }
+FUND_FLOW_SOURCES = ("eastmoney", "ths", "sina")
+STOCK_FUND_FLOW_SOURCES = ("eastmoney", "ths", "sina")
+FUND_FLOW_NUMERIC_FIELDS = (
+    "change_pct",
+    "main_net_inflow",
+    "main_net_inflow_pct",
+    "super_large_net_inflow",
+    "super_large_net_inflow_pct",
+    "large_net_inflow",
+    "large_net_inflow_pct",
+    "medium_net_inflow",
+    "medium_net_inflow_pct",
+    "small_net_inflow",
+    "small_net_inflow_pct",
+)
+STOCK_FUND_FLOW_NUMERIC_FIELDS = (
+    "price",
+    "change_pct",
+    "turnover_pct",
+    "amount",
+    "in_amount",
+    "out_amount",
+    "main_net_inflow",
+    "main_net_inflow_pct",
+    "super_large_net_inflow",
+    "super_large_net_inflow_pct",
+    "large_net_inflow",
+    "large_net_inflow_pct",
+    "medium_net_inflow",
+    "medium_net_inflow_pct",
+    "small_net_inflow",
+    "small_net_inflow_pct",
+)
+THS_FUND_FLOW_SYMBOLS = {
+    "今日": "即时",
+    "5日": "5日排行",
+    "10日": "10日排行",
+}
+SINA_MONEYFLOW_BASE = "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/"
 SH_SZ_A_STOCK_PREFIXES = (
     "000",
     "001",
@@ -890,34 +930,122 @@ def normalize_sector_fund_flow_indicator(value: str | None) -> str:
     return "今日"
 
 
+def normalize_fund_flow_source(value: str | None) -> str:
+    text = text_value(value).lower()
+    aliases = {
+        "em": "eastmoney",
+        "east_money": "eastmoney",
+        "东方财富": "eastmoney",
+        "akshare_sector_fund_flow": "eastmoney",
+        "同花顺": "ths",
+        "10jqka": "ths",
+        "新浪": "sina",
+        "sina_finance": "sina",
+        "sinafinance": "sina",
+        "average": "all",
+        "aggregate": "all",
+    }
+    if not text:
+        return "all"
+    return aliases.get(text, text)
+
+
+def fund_flow_field_counts_json(fields: list[str] | tuple[str, ...] | set[str]) -> str:
+    counts = {field: 1 for field in sorted(set(fields)) if text_value(field)}
+    return json.dumps(counts, ensure_ascii=False, separators=(",", ":")) if counts else "{}"
+
+
+def parse_fund_flow_field_counts(raw: Any) -> dict[str, int]:
+    text = text_value(raw)
+    if not text:
+        return {}
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    counts: dict[str, int] = {}
+    for key, value in parsed.items():
+        try:
+            number = int(float(value))
+        except Exception:
+            number = 0
+        if number > 0:
+            counts[str(key)] = number
+    return counts
+
+
+def parse_amount_to_yuan(value: Any, default_unit: str = "") -> float:
+    text = text_value(value).replace(",", "")
+    if not text or text in {"-", "--"}:
+        return 0.0
+    multiplier = 1.0
+    if "亿元" in text or "亿" in text:
+        multiplier = 100000000.0
+    elif "万元" in text or "万" in text:
+        multiplier = 10000.0
+    elif default_unit == "亿":
+        multiplier = 100000000.0
+    elif default_unit == "万":
+        multiplier = 10000.0
+    for token in ("亿元", "万元", "元", "亿", "万", "%"):
+        text = text.replace(token, "")
+    return finite_float(text) * multiplier
+
+
+def parse_percent_value(value: Any, decimal_ratio: bool = False) -> float:
+    text = text_value(value).replace(",", "")
+    if not text or text in {"-", "--"}:
+        return 0.0
+    has_percent = "%" in text
+    text = text.replace("%", "")
+    number = finite_float(text)
+    if decimal_ratio and not has_percent:
+        number *= 100.0
+    return number
+
+
+def set_numeric_field(item: dict[str, Any], row: Any, fields: list[str], key: str, names: list[str], transform: Any = finite_float) -> None:
+    value = first_existing(row, names)
+    if text_value(value) == "":
+        item[key] = 0.0
+        return
+    item[key] = transform(value)
+    fields.append(key)
+
+
 def sector_fund_flow_item(row: Any, trade_date: str, sector_type: str, indicator: str) -> dict[str, Any] | None:
     name = text_value(first_existing(row, ["名称", "板块名称", "版块名称", "name"]))
     if not name:
         return None
     rank = int(finite_float(first_existing(row, ["序号", "排名", "rank"])))
     raw_payload = json.dumps(json_safe_row(row), ensure_ascii=False, separators=(",", ":"))
-    return {
+    fields: list[str] = []
+    item = {
         "trade_date": trade_date,
         "sector_type": sector_type,
         "indicator": indicator,
         "rank": rank,
         "name": name,
-        "change_pct": finite_float(first_existing(row, [f"{indicator}涨跌幅", "今日涨跌幅", "涨跌幅"])),
-        "main_net_inflow": finite_float(first_existing(row, [f"{indicator}主力净流入-净额", "今日主力净流入-净额", "主力净流入-净额"])),
-        "main_net_inflow_pct": finite_float(first_existing(row, [f"{indicator}主力净流入-净占比", "今日主力净流入-净占比", "主力净流入-净占比"])),
-        "super_large_net_inflow": finite_float(first_existing(row, [f"{indicator}超大单净流入-净额", "今日超大单净流入-净额", "超大单净流入-净额"])),
-        "super_large_net_inflow_pct": finite_float(first_existing(row, [f"{indicator}超大单净流入-净占比", "今日超大单净流入-净占比", "超大单净流入-净占比"])),
-        "large_net_inflow": finite_float(first_existing(row, [f"{indicator}大单净流入-净额", "今日大单净流入-净额", "大单净流入-净额"])),
-        "large_net_inflow_pct": finite_float(first_existing(row, [f"{indicator}大单净流入-净占比", "今日大单净流入-净占比", "大单净流入-净占比"])),
-        "medium_net_inflow": finite_float(first_existing(row, [f"{indicator}中单净流入-净额", "今日中单净流入-净额", "中单净流入-净额"])),
-        "medium_net_inflow_pct": finite_float(first_existing(row, [f"{indicator}中单净流入-净占比", "今日中单净流入-净占比", "中单净流入-净占比"])),
-        "small_net_inflow": finite_float(first_existing(row, [f"{indicator}小单净流入-净额", "今日小单净流入-净额", "小单净流入-净额"])),
-        "small_net_inflow_pct": finite_float(first_existing(row, [f"{indicator}小单净流入-净占比", "今日小单净流入-净占比", "小单净流入-净占比"])),
         "top_stock": text_value(first_existing(row, [f"{indicator}主力净流入最大股", "今日主力净流入最大股", "主力净流入最大股"])),
-        "source_type": "akshare_sector_fund_flow",
+        "source_type": "eastmoney",
         "raw_payload": raw_payload,
         "fetched_at": utc_now_iso(),
     }
+    set_numeric_field(item, row, fields, "change_pct", [f"{indicator}涨跌幅", "今日涨跌幅", "涨跌幅"])
+    set_numeric_field(item, row, fields, "main_net_inflow", [f"{indicator}主力净流入-净额", "今日主力净流入-净额", "主力净流入-净额"])
+    set_numeric_field(item, row, fields, "main_net_inflow_pct", [f"{indicator}主力净流入-净占比", "今日主力净流入-净占比", "主力净流入-净占比"])
+    set_numeric_field(item, row, fields, "super_large_net_inflow", [f"{indicator}超大单净流入-净额", "今日超大单净流入-净额", "超大单净流入-净额"])
+    set_numeric_field(item, row, fields, "super_large_net_inflow_pct", [f"{indicator}超大单净流入-净占比", "今日超大单净流入-净占比", "超大单净流入-净占比"])
+    set_numeric_field(item, row, fields, "large_net_inflow", [f"{indicator}大单净流入-净额", "今日大单净流入-净额", "大单净流入-净额"])
+    set_numeric_field(item, row, fields, "large_net_inflow_pct", [f"{indicator}大单净流入-净占比", "今日大单净流入-净占比", "大单净流入-净占比"])
+    set_numeric_field(item, row, fields, "medium_net_inflow", [f"{indicator}中单净流入-净额", "今日中单净流入-净额", "中单净流入-净额"])
+    set_numeric_field(item, row, fields, "medium_net_inflow_pct", [f"{indicator}中单净流入-净占比", "今日中单净流入-净占比", "中单净流入-净占比"])
+    set_numeric_field(item, row, fields, "small_net_inflow", [f"{indicator}小单净流入-净额", "今日小单净流入-净额", "小单净流入-净额"])
+    set_numeric_field(item, row, fields, "small_net_inflow_pct", [f"{indicator}小单净流入-净占比", "今日小单净流入-净占比", "小单净流入-净占比"])
+    item["field_counts_json"] = fund_flow_field_counts_json(fields)
+    return item
 
 
 def eastmoney_sector_fund_flow_rows_to_items(
@@ -1057,6 +1185,427 @@ def sector_fund_flow_frame_to_items(
         if limit > 0 and len(items) >= limit:
             break
     return items
+
+
+def ths_sector_fund_flow_frame_to_items(
+    frame: Any, trade_date: str, sector_type: str, indicator: str, limit: int
+) -> list[dict[str, Any]]:
+    rows: list[Any] = []
+    try:
+        iterator = frame.iterrows()
+    except Exception:
+        return []
+    for _, row in iterator:
+        rows.append(row)
+    rows.sort(key=lambda row: parse_amount_to_yuan(first_existing(row, ["净额", "净额(亿)"]), "亿"), reverse=True)
+    items: list[dict[str, Any]] = []
+    for rank, row in enumerate(rows, start=1):
+        name = text_value(first_existing(row, ["行业", "概念", "板块", "名称"]))
+        if not name:
+            continue
+        fields: list[str] = []
+        item: dict[str, Any] = {
+            "trade_date": trade_date,
+            "sector_type": sector_type,
+            "indicator": indicator,
+            "rank": rank,
+            "name": name,
+            "top_stock": text_value(first_existing(row, ["领涨股"])),
+            "source_type": "ths",
+            "raw_payload": json.dumps(json_safe_row(row), ensure_ascii=False, separators=(",", ":")),
+            "fetched_at": utc_now_iso(),
+        }
+        set_numeric_field(item, row, fields, "change_pct", ["行业-涨跌幅", "涨跌幅"], parse_percent_value)
+        set_numeric_field(item, row, fields, "main_net_inflow", ["净额", "净额(亿)"], lambda value: parse_amount_to_yuan(value, "亿"))
+        item["field_counts_json"] = fund_flow_field_counts_json(fields)
+        items.append(item)
+        if limit > 0 and len(items) >= limit:
+            break
+    return items
+
+
+def fetch_ths_sector_fund_flow_direct(sector_type: str, indicator: str) -> Any:
+    try:
+        import pandas as pd  # type: ignore
+    except Exception as exc:
+        raise RuntimeError("pandas is required for THS direct fallback") from exc
+    from io import StringIO
+
+    board = {"行业资金流": "hyzjl", "概念资金流": "gnzjl"}[sector_type]
+    referer = f"https://data.10jqka.com.cn/funds/{board}/"
+    headers = {
+        "Accept": "text/html, */*; q=0.01",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "Connection": "close",
+        "Referer": referer,
+        "User-Agent": EASTMONEY_HEADERS["User-Agent"],
+        "X-Requested-With": "XMLHttpRequest",
+    }
+    if indicator == "今日":
+        first_url = f"https://data.10jqka.com.cn/funds/{board}/field/tradezdf/order/desc/ajax/1/free/1/"
+        page_url = f"https://data.10jqka.com.cn/funds/{board}/field/tradezdf/order/desc/page/{{}}/ajax/1/free/1/"
+    else:
+        board_days = indicator.replace("日", "")
+        first_url = f"https://data.10jqka.com.cn/funds/{board}/board/{board_days}/field/tradezdf/order/desc/ajax/1/free/1/"
+        page_url = f"https://data.10jqka.com.cn/funds/{board}/board/{board_days}/field/tradezdf/order/desc/page/{{}}/ajax/1/free/1/"
+    frames: list[Any] = []
+    for page in range(1, 20):
+        url = first_url if page == 1 else page_url.format(page)
+        request = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(request, timeout=20) as response:
+            text = response.read().decode("gbk", errors="replace")
+        try:
+            table = pd.read_html(StringIO(text))[0]
+        except Exception:
+            if page == 1:
+                continue
+            break
+        if getattr(table, "empty", False):
+            break
+        frames.append(table)
+        if len(table) < 50:
+            break
+    if not frames:
+        raise RuntimeError("THS direct sector fallback returned no tables")
+    return pd.concat(frames, ignore_index=True)
+
+
+def fetch_ths_sector_fund_flow_rank(
+    ak: Any, trade_date: str, sector_type: str, indicator: str, limit: int
+) -> list[dict[str, Any]]:
+    symbol = THS_FUND_FLOW_SYMBOLS[indicator]
+    try:
+        if sector_type == "概念资金流":
+            frame = ak.stock_fund_flow_concept(symbol=symbol)
+        else:
+            frame = ak.stock_fund_flow_industry(symbol=symbol)
+    except Exception:
+        frame = fetch_ths_sector_fund_flow_direct(sector_type, indicator)
+    return ths_sector_fund_flow_frame_to_items(frame, trade_date, sector_type, indicator, limit)
+
+
+def sina_moneyflow_json(endpoint: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+    url = SINA_MONEYFLOW_BASE + endpoint + "?" + urllib.parse.urlencode(params)
+    headers = dict(EASTMONEY_HEADERS)
+    headers["Referer"] = "https://vip.stock.finance.sina.com.cn/moneyflow/"
+    request = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(request, timeout=20) as response:
+        text = response.read().decode("utf-8", errors="replace").strip()
+    if not text:
+        return []
+    if "=" in text and not text.lstrip().startswith("["):
+        text = text.split("=", 1)[1].strip().rstrip(";")
+    parsed = json.loads(text)
+    return parsed if isinstance(parsed, list) else []
+
+
+def fetch_sina_moneyflow_pages(endpoint: str, params: dict[str, Any], limit: int) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    page = 1
+    page_size = 100 if limit <= 0 else min(max(limit, 1), 100)
+    while page <= 20:
+        page_params = dict(params)
+        page_params["page"] = page
+        page_params["num"] = page_size
+        page_rows = sina_moneyflow_json(endpoint, page_params)
+        if not page_rows:
+            break
+        rows.extend(page_rows)
+        if limit > 0 and len(rows) >= limit:
+            return rows[:limit]
+        if len(page_rows) < page_size:
+            break
+        page += 1
+    return rows
+
+
+def sina_sector_fund_flow_rows_to_items(
+    rows: list[dict[str, Any]], trade_date: str, sector_type: str, indicator: str, limit: int
+) -> list[dict[str, Any]]:
+    suffix = "" if indicator == "今日" else "_" + indicator.replace("日", "")
+    ranked_rows = [row for row in rows if text_value(row.get("name"))]
+    ranked_rows.sort(key=lambda row: finite_float(row.get("netamount" + suffix)), reverse=True)
+    items: list[dict[str, Any]] = []
+    for rank, row in enumerate(ranked_rows, start=1):
+        fields: list[str] = []
+        item: dict[str, Any] = {
+            "trade_date": trade_date,
+            "sector_type": sector_type,
+            "indicator": indicator,
+            "rank": rank,
+            "name": text_value(row.get("name")),
+            "top_stock": text_value(row.get("ts_name")) if indicator == "今日" else "",
+            "source_type": "sina",
+            "raw_payload": json.dumps(json_safe_row(row), ensure_ascii=False, separators=(",", ":")),
+            "fetched_at": utc_now_iso(),
+        }
+        set_numeric_field(item, row, fields, "change_pct", ["avg_changeratio" + suffix], lambda value: parse_percent_value(value, True))
+        set_numeric_field(item, row, fields, "main_net_inflow", ["netamount" + suffix], parse_amount_to_yuan)
+        set_numeric_field(item, row, fields, "main_net_inflow_pct", ["ratioamount" + suffix], lambda value: parse_percent_value(value, True))
+        item["field_counts_json"] = fund_flow_field_counts_json(fields)
+        items.append(item)
+        if limit > 0 and len(items) >= limit:
+            break
+    return items
+
+
+def fetch_sina_sector_fund_flow_rank(trade_date: str, sector_type: str, indicator: str, limit: int) -> list[dict[str, Any]]:
+    fenlei = "1" if sector_type == "概念资金流" else "0"
+    if indicator == "今日":
+        endpoint = "MoneyFlow.ssl_bkzj_bk"
+        params = {"fenlei": fenlei, "sort": "netamount", "asc": "0"}
+    else:
+        suffix = indicator.replace("日", "")
+        endpoint = "MoneyFlow.ssl_bkzjlxt"
+        params = {"fenlei": fenlei, "sort": "netamount_" + suffix, "asc": "0"}
+    rows = fetch_sina_moneyflow_pages(endpoint, params, limit)
+    return sina_sector_fund_flow_rows_to_items(rows, trade_date, sector_type, indicator, limit)
+
+
+def fetch_sector_fund_flow_source(
+    ak: Any | None,
+    trade_date: str,
+    sector_type: str,
+    indicator: str,
+    limit: int,
+    source: str,
+    akshare_error: str = "",
+) -> list[dict[str, Any]]:
+    if source == "eastmoney":
+        return fetch_sector_fund_flow_rank(ak, trade_date, sector_type, indicator, limit, akshare_error)
+    if source == "ths":
+        if ak is None:
+            raise RuntimeError(f"AKShare load failed: {akshare_error or 'akshare unavailable'}")
+        return fetch_ths_sector_fund_flow_rank(ak, trade_date, sector_type, indicator, limit)
+    if source == "sina":
+        return fetch_sina_sector_fund_flow_rank(trade_date, sector_type, indicator, limit)
+    raise ValueError(f"unsupported sector fund flow source: {source}")
+
+
+def eastmoney_stock_fund_flow_frame_to_items(frame: Any, trade_date: str, indicator: str, limit: int) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    try:
+        iterator = frame.iterrows()
+    except Exception:
+        return items
+    for _, row in iterator:
+        code = compact_stock_code(first_existing(row, ["代码", "股票代码", "code"]))
+        name = text_value(first_existing(row, ["名称", "股票简称", "name"]))
+        if not code or not is_sh_sz_code(code) or not has_resolved_stock_name(code, name):
+            continue
+        fields: list[str] = []
+        item: dict[str, Any] = {
+            "trade_date": trade_date,
+            "indicator": indicator,
+            "code": code,
+            "rank": int(finite_float(first_existing(row, ["序号", "排名", "rank"]))),
+            "name": name,
+            "source_type": "eastmoney",
+            "raw_payload": json.dumps(json_safe_row(row), ensure_ascii=False, separators=(",", ":")),
+            "fetched_at": utc_now_iso(),
+        }
+        set_numeric_field(item, row, fields, "price", ["最新价", "price"])
+        set_numeric_field(item, row, fields, "change_pct", [f"{indicator}涨跌幅", "今日涨跌幅", "涨跌幅"])
+        set_numeric_field(item, row, fields, "main_net_inflow", [f"{indicator}主力净流入-净额", "今日主力净流入-净额", "主力净流入-净额"])
+        set_numeric_field(item, row, fields, "main_net_inflow_pct", [f"{indicator}主力净流入-净占比", "今日主力净流入-净占比", "主力净流入-净占比"])
+        set_numeric_field(item, row, fields, "super_large_net_inflow", [f"{indicator}超大单净流入-净额", "今日超大单净流入-净额", "超大单净流入-净额"])
+        set_numeric_field(item, row, fields, "super_large_net_inflow_pct", [f"{indicator}超大单净流入-净占比", "今日超大单净流入-净占比", "超大单净流入-净占比"])
+        set_numeric_field(item, row, fields, "large_net_inflow", [f"{indicator}大单净流入-净额", "今日大单净流入-净额", "大单净流入-净额"])
+        set_numeric_field(item, row, fields, "large_net_inflow_pct", [f"{indicator}大单净流入-净占比", "今日大单净流入-净占比", "大单净流入-净占比"])
+        set_numeric_field(item, row, fields, "medium_net_inflow", [f"{indicator}中单净流入-净额", "今日中单净流入-净额", "中单净流入-净额"])
+        set_numeric_field(item, row, fields, "medium_net_inflow_pct", [f"{indicator}中单净流入-净占比", "今日中单净流入-净占比", "中单净流入-净占比"])
+        set_numeric_field(item, row, fields, "small_net_inflow", [f"{indicator}小单净流入-净额", "今日小单净流入-净额", "小单净流入-净额"])
+        set_numeric_field(item, row, fields, "small_net_inflow_pct", [f"{indicator}小单净流入-净占比", "今日小单净流入-净占比", "小单净流入-净占比"])
+        item["field_counts_json"] = fund_flow_field_counts_json(fields)
+        items.append(item)
+        if limit > 0 and len(items) >= limit:
+            break
+    return items
+
+
+def fetch_eastmoney_stock_fund_flow_rank(ak: Any, trade_date: str, indicator: str, limit: int) -> list[dict[str, Any]]:
+    frame = ak.stock_individual_fund_flow_rank(indicator=indicator)
+    return eastmoney_stock_fund_flow_frame_to_items(frame, trade_date, indicator, limit)
+
+
+def ths_stock_fund_flow_frame_to_items(frame: Any, trade_date: str, indicator: str, limit: int) -> list[dict[str, Any]]:
+    rows: list[Any] = []
+    try:
+        iterator = frame.iterrows()
+    except Exception:
+        return []
+    for _, row in iterator:
+        rows.append(row)
+    rows.sort(key=lambda row: parse_amount_to_yuan(first_existing(row, ["净额", "净额(亿)"]), "亿"), reverse=True)
+    items: list[dict[str, Any]] = []
+    for rank, row in enumerate(rows, start=1):
+        code = compact_stock_code(first_existing(row, ["股票代码", "代码", "code"]))
+        name = text_value(first_existing(row, ["股票简称", "名称", "name"]))
+        if not code or not is_sh_sz_code(code) or not has_resolved_stock_name(code, name):
+            continue
+        fields: list[str] = []
+        item: dict[str, Any] = {
+            "trade_date": trade_date,
+            "indicator": indicator,
+            "code": code,
+            "rank": rank,
+            "name": name,
+            "source_type": "ths",
+            "raw_payload": json.dumps(json_safe_row(row), ensure_ascii=False, separators=(",", ":")),
+            "fetched_at": utc_now_iso(),
+        }
+        set_numeric_field(item, row, fields, "price", ["最新价", "当前价"])
+        set_numeric_field(item, row, fields, "change_pct", ["涨跌幅"], parse_percent_value)
+        set_numeric_field(item, row, fields, "turnover_pct", ["换手率"], parse_percent_value)
+        set_numeric_field(item, row, fields, "in_amount", ["流入资金", "流入资金(亿)"], lambda value: parse_amount_to_yuan(value, "亿"))
+        set_numeric_field(item, row, fields, "out_amount", ["流出资金", "流出资金(亿)"], lambda value: parse_amount_to_yuan(value, "亿"))
+        set_numeric_field(item, row, fields, "main_net_inflow", ["净额", "净额(亿)"], lambda value: parse_amount_to_yuan(value, "亿"))
+        set_numeric_field(item, row, fields, "amount", ["成交额", "成交额(亿)"], lambda value: parse_amount_to_yuan(value, "亿"))
+        item["field_counts_json"] = fund_flow_field_counts_json(fields)
+        items.append(item)
+        if limit > 0 and len(items) >= limit:
+            break
+    return items
+
+
+def fetch_ths_stock_fund_flow_rank(ak: Any, trade_date: str, indicator: str, limit: int) -> list[dict[str, Any]]:
+    symbol = THS_FUND_FLOW_SYMBOLS[indicator]
+    frame = ak.stock_fund_flow_individual(symbol=symbol)
+    return ths_stock_fund_flow_frame_to_items(frame, trade_date, indicator, limit)
+
+
+def sina_stock_fund_flow_rows_to_items(rows: list[dict[str, Any]], trade_date: str, indicator: str, limit: int) -> list[dict[str, Any]]:
+    ranked_rows = [row for row in rows if compact_stock_code(row.get("symbol"))]
+    ranked_rows.sort(key=lambda row: finite_float(row.get("netamount")), reverse=True)
+    items: list[dict[str, Any]] = []
+    for rank, row in enumerate(ranked_rows, start=1):
+        code = compact_stock_code(row.get("symbol"))
+        name = text_value(row.get("name"))
+        if not code or not is_sh_sz_code(code) or not has_resolved_stock_name(code, name):
+            continue
+        fields: list[str] = []
+        item: dict[str, Any] = {
+            "trade_date": trade_date,
+            "indicator": indicator,
+            "code": code,
+            "rank": rank,
+            "name": name,
+            "source_type": "sina",
+            "raw_payload": json.dumps(json_safe_row(row), ensure_ascii=False, separators=(",", ":")),
+            "fetched_at": utc_now_iso(),
+        }
+        set_numeric_field(item, row, fields, "price", ["trade"])
+        set_numeric_field(item, row, fields, "change_pct", ["changeratio"], lambda value: parse_percent_value(value, True))
+        set_numeric_field(item, row, fields, "turnover_pct", ["turnover"])
+        set_numeric_field(item, row, fields, "amount", ["amount"], parse_amount_to_yuan)
+        set_numeric_field(item, row, fields, "in_amount", ["inamount"], parse_amount_to_yuan)
+        set_numeric_field(item, row, fields, "out_amount", ["outamount"], parse_amount_to_yuan)
+        set_numeric_field(item, row, fields, "main_net_inflow", ["netamount"], parse_amount_to_yuan)
+        set_numeric_field(item, row, fields, "main_net_inflow_pct", ["ratioamount"], lambda value: parse_percent_value(value, True))
+        item["field_counts_json"] = fund_flow_field_counts_json(fields)
+        items.append(item)
+        if limit > 0 and len(items) >= limit:
+            break
+    return items
+
+
+def fetch_sina_stock_fund_flow_rank(trade_date: str, indicator: str, limit: int) -> list[dict[str, Any]]:
+    if indicator != "今日":
+        return []
+    rows = fetch_sina_moneyflow_pages(
+        "MoneyFlow.ssl_bkzj_ssggzj",
+        {"bankuai": "", "sort": "netamount", "asc": "0"},
+        limit,
+    )
+    return sina_stock_fund_flow_rows_to_items(rows, trade_date, indicator, limit)
+
+
+def fetch_stock_fund_flow_source(
+    ak: Any | None,
+    trade_date: str,
+    indicator: str,
+    limit: int,
+    source: str,
+    akshare_error: str = "",
+) -> list[dict[str, Any]]:
+    if source == "eastmoney":
+        if ak is None:
+            raise RuntimeError(f"AKShare load failed: {akshare_error or 'akshare unavailable'}")
+        return fetch_eastmoney_stock_fund_flow_rank(ak, trade_date, indicator, limit)
+    if source == "ths":
+        if ak is None:
+            raise RuntimeError(f"AKShare load failed: {akshare_error or 'akshare unavailable'}")
+        return fetch_ths_stock_fund_flow_rank(ak, trade_date, indicator, limit)
+    if source == "sina":
+        return fetch_sina_stock_fund_flow_rank(trade_date, indicator, limit)
+    raise ValueError(f"unsupported stock fund flow source: {source}")
+
+
+def average_fund_flow_items(items: list[dict[str, Any]], key_fields: list[str], numeric_fields: tuple[str, ...]) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = {}
+    for item in items:
+        key = "\x1f".join(text_value(item.get(field)) for field in key_fields)
+        if not key.strip("\x1f"):
+            continue
+        avg = grouped.setdefault(
+            key,
+            {
+                "base": {field: item.get(field) for field in key_fields},
+                "fields": {field: {"sum": 0.0, "count": 0} for field in numeric_fields},
+                "counts": {},
+                "sources": set(),
+                "name": text_value(item.get("name")),
+                "top_stock": "",
+                "top_stock_net": None,
+                "fetched_at": text_value(item.get("fetched_at")),
+            },
+        )
+        source = text_value(item.get("source_type"))
+        if source:
+            avg["sources"].add(source)
+        if not avg.get("name") and text_value(item.get("name")):
+            avg["name"] = text_value(item.get("name"))
+        if text_value(item.get("fetched_at")) > text_value(avg.get("fetched_at")):
+            avg["fetched_at"] = text_value(item.get("fetched_at"))
+        counts = parse_fund_flow_field_counts(item.get("field_counts_json"))
+        if not counts:
+            counts = {field: 1 for field in numeric_fields if field in item}
+        for field in numeric_fields:
+            if counts.get(field, 0) <= 0:
+                continue
+            avg["fields"][field]["sum"] += finite_float(item.get(field))
+            avg["fields"][field]["count"] += 1
+            avg["counts"][field] = int(avg["counts"].get(field, 0)) + 1
+        top_stock = text_value(item.get("top_stock"))
+        if top_stock:
+            net = finite_float(item.get("main_net_inflow"))
+            if avg["top_stock_net"] is None or net > float(avg["top_stock_net"]):
+                avg["top_stock"] = top_stock
+                avg["top_stock_net"] = net
+
+    averaged: list[dict[str, Any]] = []
+    for avg in grouped.values():
+        out = dict(avg["base"])
+        if avg.get("name"):
+            out["name"] = avg["name"]
+        for field in numeric_fields:
+            field_avg = avg["fields"][field]
+            out[field] = field_avg["sum"] / field_avg["count"] if field_avg["count"] else 0.0
+        if avg.get("top_stock"):
+            out["top_stock"] = avg["top_stock"]
+        out["source_count"] = int(avg["counts"].get("main_net_inflow", 0))
+        out["source_types"] = ",".join(sorted(avg["sources"]))
+        out["source_type"] = "average"
+        out["field_counts_json"] = fund_flow_field_counts_json([])
+        if avg["counts"]:
+            out["field_counts_json"] = json.dumps(avg["counts"], ensure_ascii=False, separators=(",", ":"))
+        out["raw_payload"] = '{"aggregation":"average"}'
+        out["fetched_at"] = text_value(avg.get("fetched_at")) or utc_now_iso()
+        averaged.append(out)
+    averaged.sort(key=lambda item: (-finite_float(item.get("main_net_inflow")), text_value(item.get("name")) or text_value(item.get("code"))))
+    for rank, item in enumerate(averaged, start=1):
+        item["rank"] = rank
+    return averaged
 
 
 def normalize_holding_period(value: str | None) -> str:
@@ -1396,21 +1945,97 @@ class AuctionService:
         trade_date = normalize_date(first_query_value(query, "date"))
         sector_type = normalize_sector_fund_flow_sector_type(first_query_value(query, "sector_type"))
         indicator = normalize_sector_fund_flow_indicator(first_query_value(query, "indicator"))
+        source = normalize_fund_flow_source(first_query_value(query, "source") or first_query_value(query, "source_type"))
         limit = int_value(first_query_value(query, "limit"), 0)
         started = time.time()
-        items = fetch_sector_fund_flow_rank(ak, trade_date, sector_type, indicator, limit, akshare_error)
+        source_errors: list[str] = []
+        source_items: list[dict[str, Any]] = []
+        if source == "all":
+            for source_name in FUND_FLOW_SOURCES:
+                try:
+                    fetched = fetch_sector_fund_flow_source(ak, trade_date, sector_type, indicator, limit, source_name, akshare_error)
+                    source_items.extend(fetched)
+                except Exception as exc:
+                    source_errors.append(f"{source_name}: {exc}")
+            items = average_fund_flow_items(source_items, ["trade_date", "sector_type", "indicator", "name"], FUND_FLOW_NUMERIC_FIELDS)
+        else:
+            try:
+                items = fetch_sector_fund_flow_source(ak, trade_date, sector_type, indicator, limit, source, akshare_error)
+                source_items = list(items)
+            except Exception as exc:
+                items = []
+                source_errors.append(f"{source}: {exc}")
         payload: dict[str, Any] = {
             "items": items,
             "count": len(items),
             "date": trade_date,
             "sector_type": sector_type,
             "indicator": indicator,
+            "source": source,
+            "source_errors": source_errors,
             "elapsed_sec": round(time.time() - started, 3),
             "fetched_at": utc_now_iso(),
         }
+        if source == "all":
+            payload["source_items"] = source_items
+            payload["source_count"] = len(set(text_value(item.get("source_type")) for item in source_items if text_value(item.get("source_type"))))
         if not items:
-            payload["warning"] = "AKShare sector fund flow endpoint returned no rows"
+            payload["warning"] = "; ".join(source_errors) or "sector fund flow endpoint returned no rows"
             payload["_http_status"] = 502
+        elif source_errors:
+            payload["warning"] = "; ".join(source_errors)
+        return payload
+
+    def fetch_stock_fund_flow(self, query: dict[str, list[str]]) -> dict[str, Any]:
+        ak = None
+        akshare_error = ""
+        try:
+            ak = load_akshare()
+        except Exception as exc:
+            akshare_error = str(exc)
+        trade_date = normalize_date(first_query_value(query, "date"))
+        indicator = normalize_sector_fund_flow_indicator(first_query_value(query, "indicator"))
+        source = normalize_fund_flow_source(first_query_value(query, "source") or first_query_value(query, "source_type"))
+        limit = int_value(first_query_value(query, "limit"), 0)
+        started = time.time()
+        source_errors: list[str] = []
+        source_items: list[dict[str, Any]] = []
+        if source == "all":
+            source_names = list(STOCK_FUND_FLOW_SOURCES)
+            if indicator != "今日":
+                source_names = [item for item in source_names if item != "sina"]
+            for source_name in source_names:
+                try:
+                    fetched = fetch_stock_fund_flow_source(ak, trade_date, indicator, limit, source_name, akshare_error)
+                    source_items.extend(fetched)
+                except Exception as exc:
+                    source_errors.append(f"{source_name}: {exc}")
+            items = average_fund_flow_items(source_items, ["trade_date", "indicator", "code"], STOCK_FUND_FLOW_NUMERIC_FIELDS)
+        else:
+            try:
+                items = fetch_stock_fund_flow_source(ak, trade_date, indicator, limit, source, akshare_error)
+                source_items = list(items)
+            except Exception as exc:
+                items = []
+                source_errors.append(f"{source}: {exc}")
+        payload: dict[str, Any] = {
+            "items": items,
+            "count": len(items),
+            "date": trade_date,
+            "indicator": indicator,
+            "source": source,
+            "source_errors": source_errors,
+            "elapsed_sec": round(time.time() - started, 3),
+            "fetched_at": utc_now_iso(),
+        }
+        if source == "all":
+            payload["source_items"] = source_items
+            payload["source_count"] = len(set(text_value(item.get("source_type")) for item in source_items if text_value(item.get("source_type"))))
+        if not items:
+            payload["warning"] = "; ".join(source_errors) or "stock fund flow endpoint returned no rows"
+            payload["_http_status"] = 502
+        elif source_errors:
+            payload["warning"] = "; ".join(source_errors)
         return payload
 
     def fetch_holdings(self, query: dict[str, list[str]]) -> dict[str, Any]:
@@ -1503,6 +2128,14 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/a-stock/sector-fund-flow":
                 payload = self.service.fetch_sector_fund_flow(query)
+                status = int(payload.get("_http_status", 200))
+                if "_http_status" in payload:
+                    payload = dict(payload)
+                    payload.pop("_http_status", None)
+                self.write_json(status, payload)
+                return
+            if parsed.path == "/api/a-stock/stock-fund-flow":
+                payload = self.service.fetch_stock_fund_flow(query)
                 status = int(payload.get("_http_status", 200))
                 if "_http_status" in payload:
                     payload = dict(payload)
@@ -1603,6 +2236,11 @@ def run_self_test() -> None:
         "2026-06-18",
         0,
     )
+    assert normalize_fund_flow_source("同花顺") == "ths"
+    assert parse_amount_to_yuan("1.23亿") == 123000000
+    assert parse_amount_to_yuan("456万") == 4560000
+    assert parse_amount_to_yuan("1.5", "亿") == 150000000
+    assert round(parse_percent_value("0.0123", True), 4) == 1.23
     sector_items = eastmoney_sector_fund_flow_rows_to_items(
         [
             {"f14": "航空机场", "f3": -0.6, "f62": -100, "f184": -1.2, "f66": -60, "f69": -0.7, "f72": -40, "f75": -0.5, "f78": 20, "f81": 0.2, "f84": 80, "f87": 1.0, "f204": "春秋航空"},
@@ -1619,7 +2257,61 @@ def run_self_test() -> None:
     assert sector_items[0]["main_net_inflow"] == 500
     assert sector_items[0]["main_net_inflow_pct"] == 4.8
     assert sector_items[0]["top_stock"] == "N华润"
-    assert sector_items[0]["source_type"] == "akshare_sector_fund_flow"
+    assert sector_items[0]["source_type"] == "eastmoney"
+    ths_sector = ths_sector_fund_flow_frame_to_items(
+        type(
+            "FakeTHSFrame",
+            (),
+            {"iterrows": lambda self: iter([(0, {"序号": 1, "行业": "电机", "行业-涨跌幅": "3.30", "净额": "4.00", "领涨股": "大洋电机"})])},
+        )(),
+        "2026-07-02",
+        "行业资金流",
+        "今日",
+        0,
+    )
+    assert ths_sector[0]["main_net_inflow"] == 400000000
+    assert parse_fund_flow_field_counts(ths_sector[0]["field_counts_json"])["main_net_inflow"] == 1
+    sina_sector = sina_sector_fund_flow_rows_to_items(
+        [{"name": "机械行业", "avg_changeratio": "0.00706961", "netamount": "3976086740.8500", "ratioamount": "0.106499", "ts_name": "宝塔实业"}],
+        "2026-07-02",
+        "行业资金流",
+        "今日",
+        0,
+    )
+    assert round(sina_sector[0]["change_pct"], 4) == 0.707
+    assert round(sina_sector[0]["main_net_inflow_pct"], 4) == 10.6499
+    averaged_sector = average_fund_flow_items(
+        [
+            {"trade_date": "2026-07-02", "sector_type": "行业资金流", "indicator": "今日", "name": "电机", "main_net_inflow": 100, "large_net_inflow": 50, "source_type": "eastmoney", "field_counts_json": '{"main_net_inflow":1,"large_net_inflow":1}'},
+            {"trade_date": "2026-07-02", "sector_type": "行业资金流", "indicator": "今日", "name": "电机", "main_net_inflow": 200, "large_net_inflow": 0, "source_type": "ths", "field_counts_json": '{"main_net_inflow":1}'},
+        ],
+        ["trade_date", "sector_type", "indicator", "name"],
+        FUND_FLOW_NUMERIC_FIELDS,
+    )
+    assert averaged_sector[0]["main_net_inflow"] == 150
+    assert averaged_sector[0]["large_net_inflow"] == 50
+    assert averaged_sector[0]["source_count"] == 2
+    stock_items = eastmoney_stock_fund_flow_frame_to_items(
+        type(
+            "FakeStockFrame",
+            (),
+            {"iterrows": lambda self: iter([(0, {"序号": 1, "代码": "300502", "名称": "新易盛", "最新价": "529.04", "今日涨跌幅": "3.94", "今日主力净流入-净额": "810968272", "今日主力净流入-净占比": "8.95"})])},
+        )(),
+        "2026-07-02",
+        "今日",
+        0,
+    )
+    assert stock_items[0]["code"] == "300502"
+    assert stock_items[0]["source_type"] == "eastmoney"
+    sina_stock = sina_stock_fund_flow_rows_to_items(
+        [{"symbol": "sz300308", "name": "中际旭创", "trade": "123.45", "changeratio": "0.00613", "turnover": "12.7552", "amount": "1000", "inamount": "700", "outamount": "300", "netamount": "400", "ratioamount": "0.93803"}],
+        "2026-07-02",
+        "今日",
+        0,
+    )
+    assert sina_stock[0]["code"] == "300308"
+    assert round(sina_stock[0]["change_pct"], 4) == 0.613
+    assert round(sina_stock[0]["main_net_inflow_pct"], 4) == 93.803
 
     class FakeFrame:
         def iterrows(self) -> Any:

@@ -429,7 +429,7 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 		withJobMeta(jobDefinition{
 			Name:        "a-stock-sector-fund-flow-crawl",
 			Group:       "a-stock",
-			Description: "A股版块资金：交易时段每 5 分钟抓取行业/概念今日、5日、10日资金流",
+			Description: "A股版块/个股资金：交易时段每 5 分钟按东方财富、同花顺、新浪抓取资金流并聚合",
 			Interval:    5 * time.Minute,
 			Enabled:     strings.TrimSpace(w.cfg.AStockAuctionURL) != "",
 			Run: func(ctx context.Context) error {

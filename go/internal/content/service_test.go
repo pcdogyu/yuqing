@@ -507,6 +507,54 @@ func TestAStockSectorFundFlowAPIUpsertsAndLists(t *testing.T) {
 	if envelope.Data.SectorType != "行业资金流" || envelope.Data.Indicator != "今日" || envelope.Data.Items[0].SourceType != "akshare_sector_fund_flow" {
 		t.Fatalf("unexpected normalized sector fund flow fields: %+v", envelope.Data)
 	}
+
+	sourcePayload := `{"date":"2026-07-02","sector_type":"行业资金流","indicator":"今日","source_type":"eastmoney","replace":true,"items":[{"rank":1,"name":"电机","main_net_inflow":100,"field_counts_json":"{\"main_net_inflow\":1}"}]}`
+	sourcePostReq := httptest.NewRequest(http.MethodPost, "/api/v1/internal/a-stock/sector-fund-flow-sources", strings.NewReader(sourcePayload))
+	sourcePostReq.Header.Set("Content-Type", "application/json")
+	sourcePostRR := httptest.NewRecorder()
+	router.ServeHTTP(sourcePostRR, sourcePostReq)
+	if sourcePostRR.Code != http.StatusOK {
+		t.Fatalf("expected sector fund flow source upsert 200, got %d body=%s", sourcePostRR.Code, sourcePostRR.Body.String())
+	}
+	sourceListReq := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/sector-fund-flows?date=2026-07-02&sector_type=行业资金流&indicator=今日&source=eastmoney", nil)
+	sourceListRR := httptest.NewRecorder()
+	router.ServeHTTP(sourceListRR, sourceListReq)
+	if sourceListRR.Code != http.StatusOK {
+		t.Fatalf("expected sector source list 200, got %d body=%s", sourceListRR.Code, sourceListRR.Body.String())
+	}
+	var sourceEnvelope struct {
+		Data model.AStockSectorFundFlowListResult `json:"data"`
+	}
+	if err := json.Unmarshal(sourceListRR.Body.Bytes(), &sourceEnvelope); err != nil {
+		t.Fatalf("decode sector source list: %v", err)
+	}
+	if sourceEnvelope.Data.Total != 1 || sourceEnvelope.Data.Items[0].SourceType != "eastmoney" || sourceEnvelope.Data.Items[0].Name != "电机" {
+		t.Fatalf("unexpected sector source list: %+v", sourceEnvelope.Data)
+	}
+
+	stockPayload := `{"date":"2026-07-02","indicator":"今日","source_type":"sina","replace":true,"items":[{"rank":1,"code":"sz300502","name":"新易盛","price":520,"main_net_inflow":200,"field_counts_json":"{\"price\":1,\"main_net_inflow\":1}"}]}`
+	stockPostReq := httptest.NewRequest(http.MethodPost, "/api/v1/internal/a-stock/stock-fund-flow-sources", strings.NewReader(stockPayload))
+	stockPostReq.Header.Set("Content-Type", "application/json")
+	stockPostRR := httptest.NewRecorder()
+	router.ServeHTTP(stockPostRR, stockPostReq)
+	if stockPostRR.Code != http.StatusOK {
+		t.Fatalf("expected stock fund flow source upsert 200, got %d body=%s", stockPostRR.Code, stockPostRR.Body.String())
+	}
+	stockListReq := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/stock-fund-flows?date=2026-07-02&indicator=今日&keyword=300502&page=1&page_size=10", nil)
+	stockListRR := httptest.NewRecorder()
+	router.ServeHTTP(stockListRR, stockListReq)
+	if stockListRR.Code != http.StatusOK {
+		t.Fatalf("expected stock fund flow list 200, got %d body=%s", stockListRR.Code, stockListRR.Body.String())
+	}
+	var stockEnvelope struct {
+		Data model.AStockStockFundFlowListResult `json:"data"`
+	}
+	if err := json.Unmarshal(stockListRR.Body.Bytes(), &stockEnvelope); err != nil {
+		t.Fatalf("decode stock fund flow list: %v", err)
+	}
+	if stockEnvelope.Data.Total != 1 || stockEnvelope.Data.Items[0].Code != "300502" || stockEnvelope.Data.Items[0].SourceCount != 1 {
+		t.Fatalf("unexpected stock fund flow list: %+v", stockEnvelope.Data)
+	}
 }
 
 func TestStockInstitutionHoldingSignalsAPI(t *testing.T) {

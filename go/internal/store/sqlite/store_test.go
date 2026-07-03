@@ -924,6 +924,80 @@ func TestAStockSectorFundFlowsUpsertReplaceAndList(t *testing.T) {
 	}
 }
 
+func TestAStockSectorFundFlowSourceRowsAverageAndSourceFilter(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	fetchedAt := time.Date(2026, 7, 2, 2, 30, 0, 0, time.UTC)
+
+	if _, err := store.UpsertAStockSectorFundFlowSourceRows(ctx, "2026-07-02", []model.AStockSectorFundFlow{
+		{TradeDate: "2026-07-02", SectorType: "行业资金流", Indicator: "今日", SourceType: "eastmoney", Rank: 1, Name: "电机", MainNetInflow: 100, LargeNetInflow: 50, FieldCountsJSON: `{"main_net_inflow":1,"large_net_inflow":1}`, FetchedAt: fetchedAt},
+		{TradeDate: "2026-07-02", SectorType: "行业资金流", Indicator: "今日", SourceType: "ths", Rank: 2, Name: "电机", MainNetInflow: 200, LargeNetInflow: 0, FieldCountsJSON: `{"main_net_inflow":1}`, FetchedAt: fetchedAt.Add(time.Minute)},
+	}, true); err != nil {
+		t.Fatalf("UpsertAStockSectorFundFlowSourceRows error: %v", err)
+	}
+
+	average, err := store.ListAStockSectorFundFlows(ctx, model.AStockSectorFundFlowFilter{Date: "2026-07-02", SectorType: "行业资金流", Indicator: "今日", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListAStockSectorFundFlows average error: %v", err)
+	}
+	if average.Total != 1 || len(average.Items) != 1 {
+		t.Fatalf("unexpected average sector list: %+v", average)
+	}
+	item := average.Items[0]
+	if item.MainNetInflow != 150 || item.LargeNetInflow != 50 || item.SourceCount != 2 || item.SourceTypes != "eastmoney,ths" {
+		t.Fatalf("unexpected averaged sector item: %+v", item)
+	}
+	counts := parseAStockFundFlowFieldCounts(item.FieldCountsJSON)
+	if counts["main_net_inflow"] != 2 || counts["large_net_inflow"] != 1 {
+		t.Fatalf("unexpected averaged sector field counts: %s", item.FieldCountsJSON)
+	}
+
+	sourceRows, err := store.ListAStockSectorFundFlows(ctx, model.AStockSectorFundFlowFilter{Date: "2026-07-02", SectorType: "行业资金流", Indicator: "今日", SourceType: "ths", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListAStockSectorFundFlows source error: %v", err)
+	}
+	if sourceRows.Total != 1 || sourceRows.Items[0].SourceType != "ths" || sourceRows.Items[0].MainNetInflow != 200 {
+		t.Fatalf("unexpected source sector rows: %+v", sourceRows)
+	}
+}
+
+func TestAStockStockFundFlowSourceRowsAverageAndList(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	fetchedAt := time.Date(2026, 7, 2, 2, 35, 0, 0, time.UTC)
+
+	if _, err := store.UpsertAStockStockFundFlowSourceRows(ctx, "2026-07-02", []model.AStockStockFundFlow{
+		{TradeDate: "2026-07-02", Indicator: "今日", SourceType: "eastmoney", Rank: 1, Code: "sz300502", Name: "新易盛", Price: 500, MainNetInflow: 100, SuperLargeNetInflow: 40, FieldCountsJSON: `{"price":1,"main_net_inflow":1,"super_large_net_inflow":1}`, FetchedAt: fetchedAt},
+		{TradeDate: "2026-07-02", Indicator: "今日", SourceType: "sina", Rank: 2, Code: "300502", Name: "新易盛", Price: 520, MainNetInflow: 200, SuperLargeNetInflow: 0, FieldCountsJSON: `{"price":1,"main_net_inflow":1}`, FetchedAt: fetchedAt.Add(time.Minute)},
+	}, true); err != nil {
+		t.Fatalf("UpsertAStockStockFundFlowSourceRows error: %v", err)
+	}
+
+	average, err := store.ListAStockStockFundFlows(ctx, model.AStockStockFundFlowFilter{Date: "2026-07-02", Indicator: "今日", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListAStockStockFundFlows average error: %v", err)
+	}
+	if average.Total != 1 || len(average.Items) != 1 {
+		t.Fatalf("unexpected stock fund flow list: %+v", average)
+	}
+	item := average.Items[0]
+	if item.Code != "300502" || item.Price != 510 || item.MainNetInflow != 150 || item.SuperLargeNetInflow != 40 || item.SourceCount != 2 || item.SourceTypes != "eastmoney,sina" {
+		t.Fatalf("unexpected averaged stock item: %+v", item)
+	}
+	counts := parseAStockFundFlowFieldCounts(item.FieldCountsJSON)
+	if counts["price"] != 2 || counts["main_net_inflow"] != 2 || counts["super_large_net_inflow"] != 1 {
+		t.Fatalf("unexpected averaged stock field counts: %s", item.FieldCountsJSON)
+	}
+
+	sourceRows, err := store.ListAStockStockFundFlows(ctx, model.AStockStockFundFlowFilter{Date: "2026-07-02", Indicator: "今日", SourceType: "sina", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListAStockStockFundFlows source error: %v", err)
+	}
+	if sourceRows.Total != 1 || sourceRows.Items[0].Code != "300502" || sourceRows.Items[0].SourceType != "sina" {
+		t.Fatalf("unexpected source stock rows: %+v", sourceRows)
+	}
+}
+
 func TestStockInstitutionHoldingSignalsComparePeriods(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()

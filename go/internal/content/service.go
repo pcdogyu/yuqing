@@ -17,6 +17,7 @@ import (
 	"github.com/go-resty/resty/v2"
 
 	"github.com/pcdogyu/yuqing/go/internal/apiutil"
+	"github.com/pcdogyu/yuqing/go/internal/astockcode"
 	"github.com/pcdogyu/yuqing/go/internal/config"
 	"github.com/pcdogyu/yuqing/go/internal/model"
 	sqlitestore "github.com/pcdogyu/yuqing/go/internal/store/sqlite"
@@ -104,7 +105,11 @@ type Store interface {
 	ListAStockRecommendationSelections(rctx context.Context, strategyDate string, period string) (model.AStockRecommendationSelectionListResult, error)
 	ListAStockRecommendationLatestDates(rctx context.Context, strategyDate string, period string, codes []string) (model.AStockRecommendationLatestDateListResult, error)
 	UpsertAStockSectorFundFlows(rctx context.Context, tradeDate string, items []model.AStockSectorFundFlow, replace bool) (model.AStockSectorFundFlowUpsertResult, error)
+	UpsertAStockSectorFundFlowSourceRows(rctx context.Context, tradeDate string, items []model.AStockSectorFundFlow, replace bool) (model.AStockSectorFundFlowUpsertResult, error)
 	ListAStockSectorFundFlows(rctx context.Context, filter model.AStockSectorFundFlowFilter) (model.AStockSectorFundFlowListResult, error)
+	UpsertAStockStockFundFlows(rctx context.Context, tradeDate string, items []model.AStockStockFundFlow, replace bool) (model.AStockStockFundFlowUpsertResult, error)
+	UpsertAStockStockFundFlowSourceRows(rctx context.Context, tradeDate string, items []model.AStockStockFundFlow, replace bool) (model.AStockStockFundFlowUpsertResult, error)
+	ListAStockStockFundFlows(rctx context.Context, filter model.AStockStockFundFlowFilter) (model.AStockStockFundFlowListResult, error)
 	UpsertStockResearchSurveys(rctx context.Context, items []model.StockResearchSurvey) (model.StockResearchUpsertResult, error)
 	ListStockResearchSurveys(rctx context.Context, filter model.StockResearchFilter) (model.StockResearchListResult, error)
 	GetStockResearchSurvey(rctx context.Context, id int64) (model.StockResearchSurvey, error)
@@ -185,6 +190,10 @@ func (s *Service) Routes(r chi.Router) {
 	r.Get("/api/v1/a-stock/recommendation-latest-dates", s.handleListAStockRecommendationLatestDates)
 	r.Get("/api/v1/a-stock/sector-fund-flows", s.handleListAStockSectorFundFlows)
 	r.Post("/api/v1/internal/a-stock/sector-fund-flows", s.handleUpsertAStockSectorFundFlows)
+	r.Post("/api/v1/internal/a-stock/sector-fund-flow-sources", s.handleUpsertAStockSectorFundFlowSourceRows)
+	r.Get("/api/v1/a-stock/stock-fund-flows", s.handleListAStockStockFundFlows)
+	r.Post("/api/v1/internal/a-stock/stock-fund-flows", s.handleUpsertAStockStockFundFlows)
+	r.Post("/api/v1/internal/a-stock/stock-fund-flow-sources", s.handleUpsertAStockStockFundFlowSourceRows)
 	r.Get("/api/v1/stock-research", s.handleListStockResearchSurveys)
 	r.Get("/api/v1/stock-research/{id}", s.handleGetStockResearchSurvey)
 	r.Get("/api/v1/stock-research/{id}/pdf", s.handleGetStockResearchPDF)
@@ -766,10 +775,60 @@ func (s *Service) handleListAStockSectorFundFlows(w http.ResponseWriter, r *http
 		SectorType: strings.TrimSpace(r.URL.Query().Get("sector_type")),
 		Indicator:  strings.TrimSpace(r.URL.Query().Get("indicator")),
 		Keyword:    strings.TrimSpace(nonEmpty(r.URL.Query().Get("keyword"), r.URL.Query().Get("q"))),
+		SourceType: strings.TrimSpace(nonEmpty(r.URL.Query().Get("source_type"), r.URL.Query().Get("source"))),
 		Page:       apiutil.IntQuery(r, "page", 1),
 		PageSize:   apiutil.IntQuery(r, "page_size", 100),
 	}
 	result, err := s.store.ListAStockSectorFundFlows(r.Context(), filter)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleUpsertAStockSectorFundFlowSourceRows(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		Date       string                       `json:"date"`
+		SectorType string                       `json:"sector_type"`
+		Indicator  string                       `json:"indicator"`
+		SourceType string                       `json:"source_type"`
+		Items      []model.AStockSectorFundFlow `json:"items"`
+		Replace    bool                         `json:"replace"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid json", nil)
+		return
+	}
+	payload.Date = strings.TrimSpace(payload.Date)
+	payload.SectorType = normalizeAStockSectorFundFlowSectorType(payload.SectorType)
+	payload.Indicator = normalizeAStockSectorFundFlowIndicator(payload.Indicator)
+	payload.SourceType = normalizeAStockFundFlowSourceType(payload.SourceType)
+	if payload.Date == "" {
+		for _, item := range payload.Items {
+			if date := strings.TrimSpace(item.TradeDate); date != "" {
+				payload.Date = date
+				break
+			}
+		}
+	}
+	if payload.SourceType == "" {
+		for _, item := range payload.Items {
+			if sourceType := normalizeAStockFundFlowSourceType(item.SourceType); sourceType != "" {
+				payload.SourceType = sourceType
+				break
+			}
+		}
+	}
+	if payload.Date == "" || payload.SourceType == "" {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "date and source_type required", nil)
+		return
+	}
+	now := time.Now().UTC()
+	for i := range payload.Items {
+		payload.Items[i] = normalizeAStockSectorFundFlow(payload.Items[i], payload.Date, payload.SectorType, payload.Indicator, payload.SourceType, now)
+	}
+	result, err := s.store.UpsertAStockSectorFundFlowSourceRows(r.Context(), payload.Date, payload.Items, payload.Replace)
 	if err != nil {
 		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
 		return
@@ -806,7 +865,7 @@ func (s *Service) handleUpsertAStockSectorFundFlows(w http.ResponseWriter, r *ht
 	}
 	now := time.Now().UTC()
 	for i := range payload.Items {
-		payload.Items[i] = normalizeAStockSectorFundFlow(payload.Items[i], payload.Date, payload.SectorType, payload.Indicator, now)
+		payload.Items[i] = normalizeAStockSectorFundFlow(payload.Items[i], payload.Date, payload.SectorType, payload.Indicator, "", now)
 	}
 	result, err := s.store.UpsertAStockSectorFundFlows(r.Context(), payload.Date, payload.Items, payload.Replace)
 	if err != nil {
@@ -816,13 +875,15 @@ func (s *Service) handleUpsertAStockSectorFundFlows(w http.ResponseWriter, r *ht
 	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
 }
 
-func normalizeAStockSectorFundFlow(item model.AStockSectorFundFlow, date string, sectorType string, indicator string, now time.Time) model.AStockSectorFundFlow {
+func normalizeAStockSectorFundFlow(item model.AStockSectorFundFlow, date string, sectorType string, indicator string, sourceType string, now time.Time) model.AStockSectorFundFlow {
 	item.TradeDate = nonEmpty(strings.TrimSpace(item.TradeDate), strings.TrimSpace(date))
 	item.SectorType = normalizeAStockSectorFundFlowSectorType(nonEmpty(strings.TrimSpace(item.SectorType), sectorType))
 	item.Indicator = normalizeAStockSectorFundFlowIndicator(nonEmpty(strings.TrimSpace(item.Indicator), indicator))
 	item.Name = strings.TrimSpace(item.Name)
 	item.TopStock = strings.TrimSpace(item.TopStock)
-	item.SourceType = nonEmpty(strings.TrimSpace(item.SourceType), "akshare_sector_fund_flow")
+	item.SourceType = nonEmpty(normalizeAStockFundFlowSourceType(item.SourceType), sourceType, "akshare_sector_fund_flow")
+	item.SourceTypes = nonEmpty(strings.TrimSpace(item.SourceTypes), item.SourceType)
+	item.FieldCountsJSON = nonEmpty(strings.TrimSpace(item.FieldCountsJSON), "{}")
 	item.RawPayload = nonEmpty(strings.TrimSpace(item.RawPayload), "{}")
 	if item.FetchedAt.IsZero() {
 		item.FetchedAt = now
@@ -834,6 +895,143 @@ func normalizeAStockSectorFundFlow(item model.AStockSectorFundFlow, date string,
 		item.UpdatedAt = now
 	}
 	return item
+}
+
+func (s *Service) handleListAStockStockFundFlows(w http.ResponseWriter, r *http.Request) {
+	filter := model.AStockStockFundFlowFilter{
+		Date:       strings.TrimSpace(r.URL.Query().Get("date")),
+		Indicator:  strings.TrimSpace(r.URL.Query().Get("indicator")),
+		Keyword:    strings.TrimSpace(nonEmpty(r.URL.Query().Get("keyword"), r.URL.Query().Get("q"))),
+		SourceType: strings.TrimSpace(nonEmpty(r.URL.Query().Get("source_type"), r.URL.Query().Get("source"))),
+		Page:       apiutil.IntQuery(r, "page", 1),
+		PageSize:   apiutil.IntQuery(r, "page_size", 100),
+	}
+	result, err := s.store.ListAStockStockFundFlows(r.Context(), filter)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleUpsertAStockStockFundFlows(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		Date      string                      `json:"date"`
+		Indicator string                      `json:"indicator"`
+		Items     []model.AStockStockFundFlow `json:"items"`
+		Replace   bool                        `json:"replace"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid json", nil)
+		return
+	}
+	payload.Date = strings.TrimSpace(payload.Date)
+	payload.Indicator = normalizeAStockSectorFundFlowIndicator(payload.Indicator)
+	if payload.Date == "" {
+		for _, item := range payload.Items {
+			if date := strings.TrimSpace(item.TradeDate); date != "" {
+				payload.Date = date
+				break
+			}
+		}
+	}
+	if payload.Date == "" {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "date required", nil)
+		return
+	}
+	now := time.Now().UTC()
+	for i := range payload.Items {
+		payload.Items[i] = normalizeAStockStockFundFlow(payload.Items[i], payload.Date, payload.Indicator, "", now)
+	}
+	result, err := s.store.UpsertAStockStockFundFlows(r.Context(), payload.Date, payload.Items, payload.Replace)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleUpsertAStockStockFundFlowSourceRows(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		Date       string                      `json:"date"`
+		Indicator  string                      `json:"indicator"`
+		SourceType string                      `json:"source_type"`
+		Items      []model.AStockStockFundFlow `json:"items"`
+		Replace    bool                        `json:"replace"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid json", nil)
+		return
+	}
+	payload.Date = strings.TrimSpace(payload.Date)
+	payload.Indicator = normalizeAStockSectorFundFlowIndicator(payload.Indicator)
+	payload.SourceType = normalizeAStockFundFlowSourceType(payload.SourceType)
+	if payload.Date == "" {
+		for _, item := range payload.Items {
+			if date := strings.TrimSpace(item.TradeDate); date != "" {
+				payload.Date = date
+				break
+			}
+		}
+	}
+	if payload.SourceType == "" {
+		for _, item := range payload.Items {
+			if sourceType := normalizeAStockFundFlowSourceType(item.SourceType); sourceType != "" {
+				payload.SourceType = sourceType
+				break
+			}
+		}
+	}
+	if payload.Date == "" || payload.SourceType == "" {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "date and source_type required", nil)
+		return
+	}
+	now := time.Now().UTC()
+	for i := range payload.Items {
+		payload.Items[i] = normalizeAStockStockFundFlow(payload.Items[i], payload.Date, payload.Indicator, payload.SourceType, now)
+	}
+	result, err := s.store.UpsertAStockStockFundFlowSourceRows(r.Context(), payload.Date, payload.Items, payload.Replace)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func normalizeAStockStockFundFlow(item model.AStockStockFundFlow, date string, indicator string, sourceType string, now time.Time) model.AStockStockFundFlow {
+	item.TradeDate = nonEmpty(strings.TrimSpace(item.TradeDate), strings.TrimSpace(date))
+	item.Indicator = normalizeAStockSectorFundFlowIndicator(nonEmpty(strings.TrimSpace(item.Indicator), indicator))
+	item.Code = astockcode.Normalize(item.Code)
+	item.Name = strings.TrimSpace(item.Name)
+	item.SourceType = nonEmpty(normalizeAStockFundFlowSourceType(item.SourceType), sourceType, "average")
+	item.SourceTypes = nonEmpty(strings.TrimSpace(item.SourceTypes), item.SourceType)
+	item.FieldCountsJSON = nonEmpty(strings.TrimSpace(item.FieldCountsJSON), "{}")
+	item.RawPayload = nonEmpty(strings.TrimSpace(item.RawPayload), "{}")
+	if item.FetchedAt.IsZero() {
+		item.FetchedAt = now
+	}
+	if item.CreatedAt.IsZero() {
+		item.CreatedAt = now
+	}
+	if item.UpdatedAt.IsZero() {
+		item.UpdatedAt = now
+	}
+	return item
+}
+
+func normalizeAStockFundFlowSourceType(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "eastmoney", "em", "东方财富", "akshare_sector_fund_flow":
+		return "eastmoney"
+	case "ths", "同花顺", "10jqka":
+		return "ths"
+	case "sina", "新浪", "sinafinance", "sina_finance":
+		return "sina"
+	case "all", "average", "aggregate":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return strings.TrimSpace(value)
+	}
 }
 
 func normalizeAStockSectorFundFlowSectorType(value string) string {

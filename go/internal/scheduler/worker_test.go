@@ -1455,18 +1455,39 @@ func TestRunAStockSectorFundFlowLatestFetchesAllGroupsAndWritesContent(t *testin
 		case "/api/a-stock/sector-fund-flow":
 			sectorType := r.URL.Query().Get("sector_type")
 			indicator := r.URL.Query().Get("indicator")
-			requested[sectorType+"/"+indicator] = true
+			source := r.URL.Query().Get("source")
+			requested["sector/"+sectorType+"/"+indicator+"/"+source] = true
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"date":        "2026-07-01",
 				"sector_type": sectorType,
 				"indicator":   indicator,
+				"source":      source,
 				"items": []model.AStockSectorFundFlow{{
 					TradeDate:     "2026-07-01",
 					SectorType:    sectorType,
 					Indicator:     indicator,
 					Rank:          1,
-					Name:          sectorType + indicator,
+					Name:          sectorType + indicator + source,
 					MainNetInflow: 100000000,
+					SourceType:    source,
+				}},
+			})
+		case "/api/a-stock/stock-fund-flow":
+			indicator := r.URL.Query().Get("indicator")
+			source := r.URL.Query().Get("source")
+			requested["stock/"+indicator+"/"+source] = true
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"date":      "2026-07-01",
+				"indicator": indicator,
+				"source":    source,
+				"items": []model.AStockStockFundFlow{{
+					TradeDate:     "2026-07-01",
+					Indicator:     indicator,
+					Rank:          1,
+					Code:          "300502",
+					Name:          "新易盛" + source,
+					MainNetInflow: 200000000,
+					SourceType:    source,
 				}},
 			})
 		default:
@@ -1475,26 +1496,49 @@ func TestRunAStockSectorFundFlowLatestFetchesAllGroupsAndWritesContent(t *testin
 	}))
 	defer akshare.Close()
 
-	var writes int
+	var sectorWrites int
+	var stockWrites int
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/internal/a-stock/sector-fund-flows" {
+		if r.Method != http.MethodPost {
 			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.Path)
 		}
-		var payload struct {
-			Date       string                       `json:"date"`
-			SectorType string                       `json:"sector_type"`
-			Indicator  string                       `json:"indicator"`
-			Items      []model.AStockSectorFundFlow `json:"items"`
-			Replace    bool                         `json:"replace"`
+		switch r.URL.Path {
+		case "/api/v1/internal/a-stock/sector-fund-flow-sources":
+			var payload struct {
+				Date       string                       `json:"date"`
+				SectorType string                       `json:"sector_type"`
+				Indicator  string                       `json:"indicator"`
+				SourceType string                       `json:"source_type"`
+				Items      []model.AStockSectorFundFlow `json:"items"`
+				Replace    bool                         `json:"replace"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode content sector payload: %v", err)
+			}
+			if payload.Date != "2026-07-01" || !payload.Replace || payload.SourceType == "" || len(payload.Items) != 1 || payload.Items[0].Name == "" {
+				t.Fatalf("unexpected content sector payload: %+v", payload)
+			}
+			sectorWrites++
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusOK, "message": "ok", "data": map[string]any{"inserted": len(payload.Items), "total": len(payload.Items)}})
+		case "/api/v1/internal/a-stock/stock-fund-flow-sources":
+			var payload struct {
+				Date       string                      `json:"date"`
+				Indicator  string                      `json:"indicator"`
+				SourceType string                      `json:"source_type"`
+				Items      []model.AStockStockFundFlow `json:"items"`
+				Replace    bool                        `json:"replace"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode content stock payload: %v", err)
+			}
+			if payload.Date != "2026-07-01" || !payload.Replace || payload.SourceType == "" || len(payload.Items) != 1 || payload.Items[0].Code == "" {
+				t.Fatalf("unexpected content stock payload: %+v", payload)
+			}
+			stockWrites++
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusOK, "message": "ok", "data": map[string]any{"inserted": len(payload.Items), "total": len(payload.Items)}})
+		default:
+			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.Path)
 		}
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-			t.Fatalf("decode content sector payload: %v", err)
-		}
-		if payload.Date != "2026-07-01" || !payload.Replace || len(payload.Items) != 1 || payload.Items[0].Name == "" {
-			t.Fatalf("unexpected content sector payload: %+v", payload)
-		}
-		writes++
-		_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusOK, "message": "ok", "data": map[string]any{"inserted": len(payload.Items), "total": len(payload.Items)}})
 	}))
 	defer content.Close()
 
@@ -1503,10 +1547,20 @@ func TestRunAStockSectorFundFlowLatestFetchesAllGroupsAndWritesContent(t *testin
 	if err != nil {
 		t.Fatalf("runAStockSectorFundFlowLatest error: %v", err)
 	}
-	if result.Date != "2026-07-01" || result.Groups != 6 || result.Items != 6 || writes != 6 {
-		t.Fatalf("unexpected sector fund flow result=%+v writes=%d", result, writes)
+	if result.Date != "2026-07-01" || result.Groups != 25 || result.Items != 25 || result.SectorGroups != 18 || result.StockGroups != 7 || sectorWrites != 18 || stockWrites != 7 {
+		t.Fatalf("unexpected sector fund flow result=%+v sectorWrites=%d stockWrites=%d", result, sectorWrites, stockWrites)
 	}
-	for _, key := range []string{"行业资金流/今日", "行业资金流/5日", "行业资金流/10日", "概念资金流/今日", "概念资金流/5日", "概念资金流/10日"} {
+	for _, sectorType := range []string{"行业资金流", "概念资金流"} {
+		for _, indicator := range []string{"今日", "5日", "10日"} {
+			for _, source := range []string{"eastmoney", "ths", "sina"} {
+				key := "sector/" + sectorType + "/" + indicator + "/" + source
+				if !requested[key] {
+					t.Fatalf("expected akshare request for %s, got %+v", key, requested)
+				}
+			}
+		}
+	}
+	for _, key := range []string{"stock/今日/eastmoney", "stock/今日/ths", "stock/今日/sina", "stock/5日/eastmoney", "stock/5日/ths", "stock/10日/eastmoney", "stock/10日/ths"} {
 		if !requested[key] {
 			t.Fatalf("expected akshare request for %s, got %+v", key, requested)
 		}
