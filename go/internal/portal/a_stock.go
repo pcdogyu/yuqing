@@ -402,23 +402,27 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		body[data-page='a-stock'] main{max-width:none;width:100%;box-sizing:border-box}
 		body[data-page='a-stock'] .site-footer{max-width:none;width:100%;box-sizing:border-box}
 		body[data-page='a-stock'] section{width:100%;box-sizing:border-box}
-		body[data-page='a-stock'] table{width:100%;min-width:100%}
+		body[data-page='a-stock'] table{width:100%;min-width:100%;font-size:13px}
 		.astock-card{padding:18px;border:1px solid #ece7dc;border-radius:14px;background:#fff}
-		.astock-overview-table{width:100%;min-width:100%;table-layout:fixed;font-size:13px}
+		.astock-overview-table{width:100%;min-width:100%;table-layout:fixed;font-size:12px}
 		.astock-overview-table th,.astock-overview-table td{vertical-align:top}
-		.astock-overview-table .astock-muted{display:block;margin-bottom:7px;font-size:13px}
+		.astock-overview-table .astock-muted{display:block;margin-bottom:7px;font-size:12px}
 		.astock-overview-table .astock-overview-sub-label{margin-top:16px}
 		.astock-overview-strategy{width:9.5%;min-width:150px}
 		.astock-overview-strategy strong{white-space:nowrap}
-		.astock-overview-period{width:5.4%;min-width:76px}
+		.astock-overview-period{width:5.94%;min-width:84px}
 		.astock-overview-period strong{white-space:nowrap}
+		.astock-overview-metric{width:6.1%;min-width:82px}
+		.astock-overview-metric .astock-muted,.astock-overview-metric strong{white-space:nowrap}
+		.astock-overview-recent-filter{width:6.6%;min-width:90px}
+		.astock-overview-recent-filter .astock-muted,.astock-overview-recent-filter strong{white-space:nowrap}
 		.astock-overview-window{width:10.9%}
 		.astock-overview-window strong{white-space:nowrap}
-		.astock-overview-table strong{display:block;font-size:20px;line-height:1.25}
+		.astock-overview-table strong{display:block;font-size:18px;line-height:1.25}
 		.astock-overview-status{width:24%}
 		.astock-overview-status strong{white-space:normal;word-break:break-word}
 		.astock-filter-toggle-form{margin:0}
-		.astock-filter-toggle{display:inline-flex;align-items:center;justify-content:center;max-width:100%;box-sizing:border-box;margin-top:8px;padding:6px 10px;border:1px solid #d6ccbb;border-radius:8px;color:#214e34;text-align:center;text-decoration:none;background:#fff;font-size:13px;font-weight:600;font-family:inherit;line-height:1.2;white-space:normal;cursor:pointer}
+		.astock-filter-toggle{display:inline-flex;align-items:center;justify-content:center;max-width:100%;box-sizing:border-box;margin-top:8px;padding:6px 10px;border:1px solid #d6ccbb;border-radius:8px;color:#214e34;text-align:center;text-decoration:none;background:#fff;font-size:12px;font-weight:600;font-family:inherit;line-height:1.2;white-space:normal;cursor:pointer}
 		.astock-actions{width:100%}
 		.astock-action-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;align-items:stretch}
 		.astock-actions form{margin:0}
@@ -810,8 +814,8 @@ func writeAStockOverviewPeriodCells(b *strings.Builder, ctx aStockContext) {
 	writeAStockOverviewCell(b, "推荐生成窗口", nonEmpty(ctx.RecommendationWindowLabel, ctx.WindowLabel), ` class="astock-overview-window"`)
 	writeAStockOverviewCell(b, "新闻统计窗口", ctx.WindowLabel, ` class="astock-overview-window"`)
 	writeAStockOverviewNewsCountCell(b, ctx)
-	writeAStockOverviewCell(b, "候选热点数", fmt.Sprintf("%d", len(ctx.Hotspots)), "")
-	writeAStockOverviewCell(b, "推荐股票数", fmt.Sprintf("%d", len(ctx.Recommendations)), "")
+	writeAStockOverviewCell(b, "候选热点数", fmt.Sprintf("%d", len(ctx.Hotspots)), ` class="astock-overview-metric"`)
+	writeAStockOverviewCell(b, "推荐股票数", fmt.Sprintf("%d", len(ctx.Recommendations)), ` class="astock-overview-metric"`)
 	writeAStockOverviewFilterCell(b, ctx)
 	writeAStockOverviewLimitUpFilterCell(b, ctx)
 	writeAStockOverviewTodayMarketFilterCell(b, ctx)
@@ -820,7 +824,7 @@ func writeAStockOverviewPeriodCells(b *strings.Builder, ctx aStockContext) {
 }
 
 func writeAStockOverviewNewsCountCell(b *strings.Builder, ctx aStockContext) {
-	writeAStockOverviewCell(b, "财经新闻数", fmt.Sprintf("%d", aStockNewsCount(ctx)), "")
+	writeAStockOverviewCell(b, "财经新闻数", fmt.Sprintf("%d", aStockNewsCount(ctx)), ` class="astock-overview-metric"`)
 }
 
 func writeAStockOverviewFilterCell(b *strings.Builder, ctx aStockContext) {
@@ -828,7 +832,7 @@ func writeAStockOverviewFilterCell(b *strings.Builder, ctx aStockContext) {
 	if ctx.IgnoreRecent {
 		filterStatus = "已关闭"
 	}
-	b.WriteString(`<td><span class="astock-muted">`)
+	b.WriteString(`<td class="astock-overview-recent-filter"><span class="astock-muted">`)
 	b.WriteString(html.EscapeString(aStockRecentLookbackLabel() + "内过滤"))
 	b.WriteString(`</span><strong>`)
 	b.WriteString(html.EscapeString(filterStatus))
