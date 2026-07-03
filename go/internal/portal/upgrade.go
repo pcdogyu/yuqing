@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -348,111 +347,6 @@ func runPortalUpgradeCommand(ctx context.Context, log *bytes.Buffer, dir string,
 		return err
 	}
 	return nil
-}
-
-func runPortalUpgradeCommandStreaming(ctx context.Context, log *bytes.Buffer, dir string, allowFailure bool, progress portalUpgradeProgress, stageName string, name string, args ...string) error {
-	appendUpgradeLog(log, "$ "+shellQuoteCommand(name, args))
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Dir = dir
-	cmd.Env = portalUpgradeCommandEnv(name, dir)
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return err
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return err
-	}
-	startedAt := time.Now()
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	lines := make(chan string, 64)
-	done := make(chan struct{}, 2)
-	readOutput := func(reader io.Reader) {
-		defer func() { done <- struct{}{} }()
-		buf := make([]byte, 4096)
-		var pending strings.Builder
-		for {
-			n, readErr := reader.Read(buf)
-			if n > 0 {
-				chunk := string(buf[:n])
-				for {
-					index := strings.IndexByte(chunk, '\n')
-					if index < 0 {
-						pending.WriteString(chunk)
-						break
-					}
-					pending.WriteString(chunk[:index])
-					lines <- strings.TrimRight(pending.String(), "\r")
-					pending.Reset()
-					chunk = chunk[index+1:]
-				}
-			}
-			if readErr != nil {
-				if pending.Len() > 0 {
-					lines <- strings.TrimRight(pending.String(), "\r")
-				}
-				return
-			}
-		}
-	}
-	go readOutput(stdout)
-	go readOutput(stderr)
-
-	waitDone := make(chan error, 1)
-	go func() {
-		<-done
-		<-done
-		waitDone <- cmd.Wait()
-	}()
-
-	ticker := time.NewTicker(15 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case line := <-lines:
-			if strings.TrimSpace(line) != "" {
-				log.WriteString(line)
-				log.WriteByte('\n')
-				publishUpgradeProgress(progress, stageName, log)
-			}
-		case <-ticker.C:
-			appendUpgradeLog(log, fmt.Sprintf("%s仍在运行，已耗时 %s", stageName, time.Since(startedAt).Round(time.Second)))
-			publishUpgradeProgress(progress, stageName, log)
-		case err := <-waitDone:
-			for {
-				select {
-				case line := <-lines:
-					if strings.TrimSpace(line) != "" {
-						log.WriteString(line)
-						log.WriteByte('\n')
-					}
-				default:
-					appendUpgradeLog(log, fmt.Sprintf("%s完成，耗时 %s", stageName, time.Since(startedAt).Round(time.Second)))
-					publishUpgradeProgress(progress, stageName, log)
-					if ctx.Err() != nil {
-						return ctx.Err()
-					}
-					if err != nil {
-						if allowFailure {
-							appendUpgradeLog(log, "忽略非关键命令失败: "+err.Error())
-							return nil
-						}
-						return err
-					}
-					return nil
-				}
-			}
-		}
-	}
-}
-
-func publishUpgradeProgress(progress portalUpgradeProgress, stageName string, log *bytes.Buffer) {
-	if progress == nil {
-		return
-	}
-	progress("阶段: "+stageName, strings.TrimRight(log.String(), "\r\n"))
 }
 
 func portalUpgradeCommandOutput(ctx context.Context, dir string, name string, args ...string) string {

@@ -1,7 +1,6 @@
 package portal
 
 import (
-	"bytes"
 	"context"
 	"os"
 	"os/exec"
@@ -105,29 +104,6 @@ func TestPortalUpgradeCommandEnvLeavesGitCacheUntouched(t *testing.T) {
 		if strings.HasPrefix(value, "GOCACHE=") {
 			t.Fatalf("expected git command env to avoid upgrade GOCACHE, got %+v", env)
 		}
-	}
-}
-
-func TestRunPortalUpgradeCommandStreamingPublishesOutput(t *testing.T) {
-	if _, err := exec.LookPath("go"); err != nil {
-		t.Skip("go is required for streaming command test")
-	}
-	var log bytes.Buffer
-	var snapshots []string
-	err := runPortalUpgradeCommandStreaming(context.Background(), &log, t.TempDir(), false, func(_ string, logText string) {
-		snapshots = append(snapshots, logText)
-	}, "测试", "go", "version")
-	if err != nil {
-		t.Fatalf("streaming command failed: %v\n%s", err, log.String())
-	}
-	text := log.String()
-	for _, want := range []string{"$ go version", "go version", "测试完成，耗时"} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("expected streaming log to include %q, got %s", want, text)
-		}
-	}
-	if len(snapshots) == 0 || !strings.Contains(snapshots[len(snapshots)-1], "测试完成，耗时") {
-		t.Fatalf("expected progress snapshots to include final streaming log, got %+v", snapshots)
 	}
 }
 
