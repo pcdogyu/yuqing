@@ -409,25 +409,30 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-overview-summary{display:flex;justify-content:flex-start;gap:24px;flex-wrap:wrap;text-align:left;font-size:12px}
 		.astock-overview-summary .astock-muted{display:block;margin-bottom:4px;white-space:nowrap;word-break:keep-all}
 		.astock-overview-summary strong{display:block;font-size:18px;line-height:1.25;white-space:nowrap}
-		.astock-overview-table{width:100%;min-width:1560px;table-layout:fixed;font-size:12px}
+		.astock-overview-table{width:100%;min-width:1780px;table-layout:fixed;font-size:12px}
 		.astock-overview-table th,.astock-overview-table td{vertical-align:top}
 		.astock-overview-table .astock-muted{display:block;margin-bottom:7px;font-size:12px;white-space:nowrap;word-break:keep-all}
 		.astock-overview-table .astock-overview-sub-label{margin-top:16px}
-		.astock-overview-period{width:5.94%;min-width:84px}
+		.astock-overview-period{width:6.4%;min-width:110px}
 		.astock-overview-period strong{white-space:nowrap}
 		.astock-overview-metric{width:6.1%;min-width:82px}
 		.astock-overview-metric .astock-muted,.astock-overview-metric strong{white-space:nowrap}
-		.astock-overview-recent-filter{width:6.6%;min-width:90px}
+		.astock-overview-recent-filter{width:7.2%;min-width:128px}
 		.astock-overview-recent-filter .astock-muted,.astock-overview-recent-filter strong{white-space:nowrap}
-		.astock-overview-recalculate{width:7.3%;min-width:100px}
+		.astock-overview-limit-filter{width:6.6%;min-width:116px}
+		.astock-overview-limit-filter .astock-muted,.astock-overview-limit-filter strong{white-space:nowrap}
+		.astock-overview-market-filter{width:7.8%;min-width:138px}
+		.astock-overview-market-filter .astock-muted,.astock-overview-market-filter strong{white-space:nowrap}
+		.astock-overview-recalculate{width:8.2%;min-width:146px}
 		.astock-overview-recalculate .astock-muted,.astock-overview-recalculate strong{white-space:nowrap}
-		.astock-overview-window{width:10.9%}
+		.astock-overview-window{width:11.2%;min-width:196px}
 		.astock-overview-window strong{white-space:nowrap}
 		.astock-overview-table strong{display:block;font-size:18px;line-height:1.25}
-		.astock-overview-status{width:24%}
+		.astock-overview-status{width:23.1%;min-width:380px}
 		.astock-overview-status strong{white-space:normal;word-break:break-word}
 		.astock-filter-toggle-form{margin:0}
 		.astock-filter-toggle{display:inline-flex;align-items:center;justify-content:center;max-width:100%;box-sizing:border-box;margin-top:8px;padding:6px 10px;border:1px solid #d6ccbb;border-radius:8px;color:#214e34;text-align:center;text-decoration:none;background:#fff;font-size:12px;font-weight:600;font-family:inherit;line-height:1.2;white-space:normal;cursor:pointer}
+		.astock-overview-table .astock-filter-toggle{width:100%;min-height:28px;white-space:nowrap}
 		.astock-actions{width:100%}
 		.astock-action-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;align-items:stretch}
 		.astock-actions form{margin:0}
@@ -861,7 +866,7 @@ func writeAStockOverviewTodayMarketFilterCell(b *strings.Builder, ctx aStockCont
 	} else if ctx.NoTodayMarketCount > 0 {
 		status = fmt.Sprintf("允许缺失 %d", ctx.NoTodayMarketCount)
 	}
-	b.WriteString(`<td><span class="astock-muted">当日行情</span><strong>`)
+	b.WriteString(`<td class="astock-overview-market-filter"><span class="astock-muted">当日行情</span><strong>`)
 	b.WriteString(html.EscapeString(status))
 	b.WriteString(`</strong><form class="astock-filter-toggle-form" method="get" action="/a-stock"><input type="hidden" name="date" value="`)
 	b.WriteString(html.EscapeString(ctx.Date))
@@ -915,7 +920,7 @@ func writeAStockOverviewLimitUpFilterCell(b *strings.Builder, ctx aStockContext)
 			status = fmt.Sprintf("已过滤 %d", ctx.LimitUpFiltered)
 		}
 	}
-	b.WriteString(`<td><span class="astock-muted">涨停过滤</span><strong>`)
+	b.WriteString(`<td class="astock-overview-limit-filter"><span class="astock-muted">涨停过滤</span><strong>`)
 	b.WriteString(html.EscapeString(status))
 	b.WriteString(`</strong>`)
 	if ctx.Period == "afternoon" {
