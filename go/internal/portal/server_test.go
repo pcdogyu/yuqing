@@ -7169,6 +7169,49 @@ func TestAStockContextFallsBackToLatestAuctionDictionary(t *testing.T) {
 	}
 }
 
+func TestAStockMarketCandidateResultUsesServerCache(t *testing.T) {
+	auctionHits := 0
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/a-stock/auction" {
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+		auctionHits++
+		writeEnvelope(w, http.StatusOK, "ok", model.AStockAuctionListResult{
+			Date:     r.URL.Query().Get("date"),
+			Page:     1,
+			PageSize: 5000,
+			Total:    1,
+			Items: []model.AStockAuctionAmount{
+				{TradeDate: r.URL.Query().Get("date"), Code: "600030", Name: "中信证券", AuctionAmount: 1500000, AuctionVolume: 100000, Status: "ok"},
+			},
+		})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	first, ok := srv.loadAStockMarketCandidateResult("2026-07-02")
+	if !ok || len(first.Items) != 1 {
+		t.Fatalf("expected first auction result, got ok=%v result=%+v", ok, first)
+	}
+	second, ok := srv.loadAStockMarketCandidateResult("2026-07-02")
+	if !ok || len(second.Items) != 1 {
+		t.Fatalf("expected cached auction result, got ok=%v result=%+v", ok, second)
+	}
+	if auctionHits != 1 {
+		t.Fatalf("expected second date lookup to use server cache, got %d hits", auctionHits)
+	}
+
+	srv.clearAStockAuctionCandidateCache("2026-07-02")
+	third, ok := srv.loadAStockMarketCandidateResult("2026-07-02")
+	if !ok || len(third.Items) != 1 {
+		t.Fatalf("expected auction result after cache clear, got ok=%v result=%+v", ok, third)
+	}
+	if auctionHits != 2 {
+		t.Fatalf("expected cache clear to force reload, got %d hits", auctionHits)
+	}
+}
+
 func TestAStockRecommendationsApplyHoldingSummaryBonus(t *testing.T) {
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/a-stock/holdings/summary" || r.URL.Query().Get("code") != "002230" {

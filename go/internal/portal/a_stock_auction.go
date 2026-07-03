@@ -555,6 +555,7 @@ func (s *Server) triggerAStockAuctionCrawl() string {
 		return "最新交易日集合竞价获取失败：" + detail
 	}
 	result := decodeSchedulerAuctionLatestResult(resp.Body())
+	s.clearAStockAuctionCandidateCache()
 	if result.Date != "" {
 		return fmt.Sprintf("最新交易日集合竞价已写入：%s，明细 %d 条，有效 %d 条。", result.Date, result.Total, result.OK)
 	}
@@ -578,6 +579,7 @@ func (s *Server) triggerAStockAuctionBackfill(days int) string {
 		}
 		return "集合竞价回溯失败：" + detail
 	}
+	s.clearAStockAuctionCandidateCache()
 	return fmt.Sprintf("近%d天集合竞价回溯任务已触发，请稍后刷新查看资金趋势。", days)
 }
 
@@ -606,6 +608,7 @@ func (s *Server) triggerAStockAuctionBackfillDate(date string) string {
 		}
 		return "集合竞价补录失败：" + detail
 	}
+	s.clearAStockAuctionCandidateCache(date)
 	result := decodeSchedulerAuctionBackfillResult(resp.Body())
 	if result.Succeeded > 0 {
 		return fmt.Sprintf("已补录 %s 集合竞价：成功 %d 天，跳过 %d 天，失败 %d 天。请重新生成推荐。", date, result.Succeeded, result.Skipped, result.Failed)

@@ -215,6 +215,12 @@ type aStockAuctionResultCacheEntry struct {
 	found  bool
 }
 
+type aStockServerAuctionCacheEntry struct {
+	result    model.AStockAuctionListResult
+	found     bool
+	expiresAt time.Time
+}
+
 type aStockPeriod struct {
 	Key         string
 	Label       string
@@ -286,6 +292,7 @@ const (
 	aStockArticleFetchPageSize        = 1000
 	aStockArticleFetchMaxPages        = 100
 	aStockRecentLookbackDays          = 14
+	aStockAuctionCandidateCacheTTL    = 5 * time.Minute
 	aStockMarketCandidateLimit        = 5000
 	aStockRecommendationLimit         = 12
 	aStockReplacementPoolLimit        = 36
@@ -3371,19 +3378,85 @@ func (s *Server) loadAStockMarketCandidateResult(strategyDate string) (model.ASt
 }
 
 func (s *Server) loadAStockMarketCandidateResultWithCache(strategyDate string, cache *aStockRequestCache) (model.AStockAuctionListResult, bool) {
+	cacheKey := aStockAuctionCandidateCacheKey(strategyDate)
 	if cache != nil && cache.auctionResults != nil {
-		cacheKey := normalizeAStockStrategyDate(strategyDate)
-		if strings.TrimSpace(strategyDate) == "" {
-			cacheKey = "__latest__"
-		}
 		if cached, ok := cache.auctionResults[cacheKey]; ok {
 			return cached.result, cached.found
 		}
+		if result, found, ok := s.loadCachedAStockAuctionCandidateResult(cacheKey); ok {
+			cache.auctionResults[cacheKey] = aStockAuctionResultCacheEntry{result: result, found: found}
+			return result, found
+		}
 		result, found := s.fetchAStockMarketCandidateResult(strategyDate)
+		s.storeCachedAStockAuctionCandidateResult(cacheKey, result, found)
 		cache.auctionResults[cacheKey] = aStockAuctionResultCacheEntry{result: result, found: found}
 		return result, found
 	}
-	return s.fetchAStockMarketCandidateResult(strategyDate)
+	if result, found, ok := s.loadCachedAStockAuctionCandidateResult(cacheKey); ok {
+		return result, found
+	}
+	result, found := s.fetchAStockMarketCandidateResult(strategyDate)
+	s.storeCachedAStockAuctionCandidateResult(cacheKey, result, found)
+	return result, found
+}
+
+func aStockAuctionCandidateCacheKey(strategyDate string) string {
+	if strings.TrimSpace(strategyDate) == "" {
+		return "__latest__"
+	}
+	return normalizeAStockStrategyDate(strategyDate)
+}
+
+func (s *Server) loadCachedAStockAuctionCandidateResult(cacheKey string) (model.AStockAuctionListResult, bool, bool) {
+	if strings.TrimSpace(cacheKey) == "" || s == nil {
+		return model.AStockAuctionListResult{}, false, false
+	}
+	s.aStockCacheMu.Lock()
+	defer s.aStockCacheMu.Unlock()
+	if len(s.aStockAuctions) == 0 {
+		return model.AStockAuctionListResult{}, false, false
+	}
+	entry, ok := s.aStockAuctions[cacheKey]
+	if !ok {
+		return model.AStockAuctionListResult{}, false, false
+	}
+	if time.Now().After(entry.expiresAt) {
+		delete(s.aStockAuctions, cacheKey)
+		return model.AStockAuctionListResult{}, false, false
+	}
+	return entry.result, entry.found, true
+}
+
+func (s *Server) storeCachedAStockAuctionCandidateResult(cacheKey string, result model.AStockAuctionListResult, found bool) {
+	if strings.TrimSpace(cacheKey) == "" || s == nil || !found {
+		return
+	}
+	s.aStockCacheMu.Lock()
+	defer s.aStockCacheMu.Unlock()
+	if s.aStockAuctions == nil {
+		s.aStockAuctions = make(map[string]aStockServerAuctionCacheEntry)
+	}
+	s.aStockAuctions[cacheKey] = aStockServerAuctionCacheEntry{
+		result:    result,
+		found:     found,
+		expiresAt: time.Now().Add(aStockAuctionCandidateCacheTTL),
+	}
+}
+
+func (s *Server) clearAStockAuctionCandidateCache(strategyDates ...string) {
+	if s == nil {
+		return
+	}
+	s.aStockCacheMu.Lock()
+	defer s.aStockCacheMu.Unlock()
+	if len(strategyDates) == 0 {
+		s.aStockAuctions = make(map[string]aStockServerAuctionCacheEntry)
+		return
+	}
+	for _, date := range strategyDates {
+		delete(s.aStockAuctions, aStockAuctionCandidateCacheKey(date))
+	}
+	delete(s.aStockAuctions, "__latest__")
 }
 
 func (s *Server) fetchAStockMarketCandidateResult(strategyDate string) (model.AStockAuctionListResult, bool) {
