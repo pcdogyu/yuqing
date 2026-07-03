@@ -5700,15 +5700,32 @@ func addAStockRecommendationResolvedName(names map[string]string, code string, n
 func resolveAStockRecommendationName(code string, name string, names map[string]string) string {
 	code = normalizeAStockCode(code)
 	name = astockcode.DisplayName(code, name)
+	if names != nil {
+		if resolved := astockcode.DisplayName(code, names[code]); hasResolvedAStockRecommendationName(code, resolved) {
+			if shouldUseResolvedAStockRecommendationName(code, name, resolved) {
+				return resolved
+			}
+		}
+	}
 	if hasResolvedAStockRecommendationName(code, name) {
 		return name
 	}
-	if names != nil {
-		if resolved := astockcode.DisplayName(code, names[code]); hasResolvedAStockRecommendationName(code, resolved) {
-			return resolved
-		}
-	}
 	return ""
+}
+
+func shouldUseResolvedAStockRecommendationName(code string, name string, resolved string) bool {
+	name = astockcode.DisplayName(code, name)
+	resolved = astockcode.DisplayName(code, resolved)
+	if !hasResolvedAStockRecommendationName(code, resolved) {
+		return false
+	}
+	if !hasResolvedAStockRecommendationName(code, name) {
+		return true
+	}
+	if name == resolved {
+		return true
+	}
+	return strings.Contains(resolved, name) || strings.Contains(name, resolved)
 }
 
 func hasResolvedAStockRecommendationName(code string, name string) bool {
@@ -6165,6 +6182,12 @@ func needsAStockMarketNameResolver(recommendations []aStockRecommendation, resol
 		if !astockcode.IsShanghaiShenzhen(code) {
 			continue
 		}
+		if resolver == nil {
+			return true
+		}
+		if _, ok := resolver[code]; !ok {
+			return true
+		}
 		if resolveAStockRecommendationName(code, rec.Name, resolver) == "" {
 			return true
 		}
@@ -6181,10 +6204,7 @@ func (s *Server) addEastmoneyAStockNamesToResolver(resolver map[string]string, r
 		if !astockcode.IsShanghaiShenzhen(code) {
 			continue
 		}
-		if resolveAStockRecommendationName(code, rec.Name, resolver) != "" {
-			continue
-		}
-		if _, exists := resolver[code]; exists {
+		if resolved := astockcode.DisplayName(code, resolver[code]); hasResolvedAStockRecommendationName(code, resolved) {
 			continue
 		}
 		name := s.fetchEastmoneyAStockName(code)

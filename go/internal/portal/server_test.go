@@ -6624,10 +6624,16 @@ func TestAStockSnapshotSaveRepairsNamesFromEastmoneyQuote(t *testing.T) {
 	defer content.Close()
 
 	quote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("secid") != "0.301696" {
+		payloads := map[string]string{
+			"0.301696": `{"data":{"f57":"301696","f58":"三瑞智能"}}`,
+			"0.000034": `{"data":{"f57":"000034","f58":"神州数码"}}`,
+			"1.601995": `{"data":{"f57":"601995","f58":"中金公司"}}`,
+		}
+		payload, ok := payloads[r.URL.Query().Get("secid")]
+		if !ok {
 			t.Fatalf("unexpected quote secid: %s", r.URL.RawQuery)
 		}
-		_, _ = w.Write([]byte(`{"data":{"f57":"301696","f58":"三瑞智能"}}`))
+		_, _ = w.Write([]byte(payload))
 	}))
 	defer quote.Close()
 	setAStockEastmoneyQuoteURLForTest(t, quote.URL)
@@ -6636,10 +6642,16 @@ func TestAStockSnapshotSaveRepairsNamesFromEastmoneyQuote(t *testing.T) {
 	err := srv.saveAStockRecommendationSnapshot(aStockContext{
 		Date:   "2026-07-02",
 		Period: "afternoon",
-		Recommendations: []aStockRecommendation{{
-			Rank: 1, Code: "301696", Name: "金十数据整理", Hotspot: "金融券商", HotspotScore: 978, MarketScore: 1111,
-		}},
-		Backtests: []aStockBacktestRow{{Stock: "301696 金十数据整理", Status: "等待T+1行情"}},
+		Recommendations: []aStockRecommendation{
+			{Rank: 1, Code: "301696", Name: "金十数据整理", Hotspot: "金融券商", HotspotScore: 978, MarketScore: 1111},
+			{Rank: 2, Code: "000034", Name: "金十数据整理", Hotspot: "人工智能", HotspotScore: 900, MarketScore: 1000},
+			{Rank: 3, Code: "601995", Name: "中金", Hotspot: "金融券商", HotspotScore: 850, MarketScore: 950},
+		},
+		Backtests: []aStockBacktestRow{
+			{Stock: "301696 金十数据整理", Status: "等待T+1行情"},
+			{Stock: "000034 金十数据整理", Status: "等待T+1行情"},
+			{Stock: "601995 中金", Status: "等待T+1行情"},
+		},
 	})
 	if err != nil {
 		t.Fatalf("save snapshot: %v", err)
@@ -6649,14 +6661,32 @@ func TestAStockSnapshotSaveRepairsNamesFromEastmoneyQuote(t *testing.T) {
 	if err := json.Unmarshal([]byte(captured.RecommendationsJSON), &recommendations); err != nil {
 		t.Fatalf("decode recommendations: %v", err)
 	}
-	if len(recommendations) != 1 || recommendations[0].Code != "301696" || recommendations[0].Name != "三瑞智能" {
+	gotNames := map[string]string{}
+	for _, rec := range recommendations {
+		gotNames[rec.Code] = rec.Name
+	}
+	for code, wantName := range map[string]string{"301696": "三瑞智能", "000034": "神州数码", "601995": "中金公司"} {
+		if gotNames[code] != wantName {
+			t.Fatalf("expected snapshot recommendation %s to repair name to %s, got %+v", code, wantName, recommendations)
+		}
+	}
+	if len(recommendations) != 3 {
 		t.Fatalf("expected snapshot recommendations to repair stock name, got %+v", recommendations)
 	}
 	var backtests []aStockBacktestRow
 	if err := json.Unmarshal([]byte(captured.BacktestsJSON), &backtests); err != nil {
 		t.Fatalf("decode backtests: %v", err)
 	}
-	if len(backtests) != 1 || backtests[0].Stock != "301696 三瑞智能" {
+	gotStocks := map[string]struct{}{}
+	for _, row := range backtests {
+		gotStocks[row.Stock] = struct{}{}
+	}
+	for _, wantStock := range []string{"301696 三瑞智能", "000034 神州数码", "601995 中金公司"} {
+		if _, ok := gotStocks[wantStock]; !ok {
+			t.Fatalf("expected snapshot backtests to include repaired stock %q, got %+v", wantStock, backtests)
+		}
+	}
+	if len(backtests) != 3 {
 		t.Fatalf("expected snapshot backtests to use repaired stock name, got %+v", backtests)
 	}
 }
