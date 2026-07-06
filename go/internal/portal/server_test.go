@@ -276,12 +276,14 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 	}
 	body := rr.Body.String()
 	aStockIndex := strings.Index(body, `href="/a-stock"`)
+	backtestIndex := strings.Index(body, `href="/a-stock/backtest"`)
+	sectorIndex := strings.Index(body, `href="/sector-fund-flow"`)
 	auctionIndex := strings.Index(body, `href="/a-stock/auction"`)
 	researchIndex := strings.Index(body, `href="/stock-research"`)
 	investorIndex := strings.Index(body, `href="/investor-relations"`)
 	cryptoIndex := strings.Index(body, `href="/crypto"`)
-	if aStockIndex < 0 || auctionIndex < 0 || researchIndex < 0 || investorIndex < 0 || cryptoIndex < 0 || aStockIndex > researchIndex || researchIndex > investorIndex || investorIndex > auctionIndex || auctionIndex > cryptoIndex {
-		t.Fatalf("expected A股, 研报调研, 集合竞价 nav links before Crypto, got %s", body)
+	if aStockIndex < 0 || backtestIndex < 0 || sectorIndex < 0 || auctionIndex < 0 || researchIndex < 0 || investorIndex < 0 || cryptoIndex < 0 || aStockIndex > backtestIndex || backtestIndex > sectorIndex || sectorIndex > researchIndex || researchIndex > investorIndex || investorIndex > auctionIndex || auctionIndex > cryptoIndex {
+		t.Fatalf("expected A股, 回测, 版块资金, 研报调研, 集合竞价 nav links before Crypto, got %s", body)
 	}
 	for _, want := range []string{
 		`class="astock-overview-header"`,
@@ -340,15 +342,7 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		".astock-table th{white-space:nowrap}",
 		".astock-recommendation-table th:nth-child(2),.astock-recommendation-table td:nth-child(2){width:7.5%;white-space:nowrap}",
 		".astock-recommendation-table th:last-child,.astock-recommendation-table td:last-child{width:36%}",
-		"上午开盘价",
-		"下午开盘价",
 		"推荐窗口",
-		"T+0 收益",
-		"T+1 收益",
-		"T+2 收益",
-		"T+3 收益",
-		"T+4 收益",
-		"T+5 收益",
 		`colspan="13"`,
 		"抓取全部财经信息",
 		"重新生成上午推荐",
@@ -374,9 +368,9 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}
 	}
-	for _, notWant := range []string{"T+2 收盘价", "T+3 收盘价", "T+4 收盘价", "T+5 收盘价", "astock-overview-meta", "财经新闻来源统计", "08:00-09:30 财经新闻", "09:30-13:00 财经新闻"} {
+	for _, notWant := range []string{"消息回测", "推荐历史", "T+0 收益", "T+1 收益", "T+2 收盘价", "T+3 收盘价", "T+4 收盘价", "T+5 收盘价", "astock-overview-meta", "财经新闻来源统计", "08:00-09:30 财经新闻", "09:30-13:00 财经新闻"} {
 		if strings.Contains(body, notWant) {
-			t.Fatalf("expected A股 page not to contain removed backtest column %q, got %s", notWant, body)
+			t.Fatalf("expected A股 page not to contain moved backtest content %q, got %s", notWant, body)
 		}
 	}
 	for _, notWant := range []string{"A股策略工作台", "回到今天", "每日 09:30", "12:50 自动抓取"} {
@@ -730,7 +724,7 @@ func TestStockResearchPageLoadsFiltersAndRows(t *testing.T) {
 		t.Fatalf("expected stock research page 200, got %d body=%s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"研报调研", "深度研究", "中金公司", "张三", "新浪财经", "东方财富", "搜狐财经", "回补近一年", "解析当前筛选研报PDF", "下载PDF", "查看文本", "已解析", "无PDF", "重新解析", `value="科大"`, `href="/a-stock">A股</a><a href="/sector-fund-flow">版块资金</a><a href="/stock-research">研报调研</a><a href="/investor-relations">投资者关系</a><a href="/a-stock/holdings">机构持仓</a>`, "body[data-page='stock-research'] main,body[data-page='stock-research'] .site-footer{max-width:none;width:100%;box-sizing:border-box}", "body[data-page='stock-research'] main{font-size:14px;line-height:1.45}", "body[data-page='stock-research'] section{width:100%;box-sizing:border-box}", ".research-scroll{width:100%;overflow:auto}", ".research-table{width:100%;min-width:0;table-layout:fixed}", ".research-col-title{width:32.6%}", ".research-col-pdf{width:8.4%}", ".research-col-status{width:14%}", ".research-col-date{width:7.5%}", ".research-col-stock{width:8.5%}", ".research-col-source{width:6%}", ".research-col-link{width:5%}", ".research-status-actions{display:flex;align-items:center;gap:8px;white-space:nowrap}", ".research-status-actions .research-action-form{flex:1 1 auto;min-width:0}", ".research-status-actions button{width:90%;height:90%;min-height:32px;margin:0;padding:7px 10px}", "<th>日期</th><th>股票</th><th>标题</th>", "投资者关系管理信息20260617"} {
+	for _, want := range []string{"研报调研", "深度研究", "中金公司", "张三", "新浪财经", "东方财富", "搜狐财经", "回补近一年", "解析当前筛选研报PDF", "下载PDF", "查看文本", "已解析", "无PDF", "重新解析", `value="科大"`, `href="/a-stock">A股</a><a href="/a-stock/backtest">回测</a><a href="/sector-fund-flow">版块资金</a><a href="/stock-research">研报调研</a><a href="/investor-relations">投资者关系</a><a href="/a-stock/holdings">机构持仓</a>`, "body[data-page='stock-research'] main,body[data-page='stock-research'] .site-footer{max-width:none;width:100%;box-sizing:border-box}", "body[data-page='stock-research'] main{font-size:14px;line-height:1.45}", "body[data-page='stock-research'] section{width:100%;box-sizing:border-box}", ".research-scroll{width:100%;overflow:auto}", ".research-table{width:100%;min-width:0;table-layout:fixed}", ".research-col-title{width:32.6%}", ".research-col-pdf{width:8.4%}", ".research-col-status{width:14%}", ".research-col-date{width:7.5%}", ".research-col-stock{width:8.5%}", ".research-col-source{width:6%}", ".research-col-link{width:5%}", ".research-status-actions{display:flex;align-items:center;gap:8px;white-space:nowrap}", ".research-status-actions .research-action-form{flex:1 1 auto;min-width:0}", ".research-status-actions button{width:90%;height:90%;min-height:32px;margin:0;padding:7px 10px}", "<th>日期</th><th>股票</th><th>标题</th>", "投资者关系管理信息20260617"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected stock research page to contain %q, got %s", want, body)
 		}
@@ -876,7 +870,7 @@ func TestSectorFundFlowPageLoadsFiltersRowsAndRefreshAction(t *testing.T) {
 		t.Fatalf("expected sector fund flow page 200, got %d body=%s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"版块资金", "人工智能", "中科曙光", "刷新版块资金", "行业资金流", "概念资金流", "今日", "5日", "10日", "+2.30亿", "+5.60%", "-3000.00万", "人工智能 个股资金流", "成分股 2 只，本地资金流命中 1 只", "300502", "新易盛", "+8.11亿", "sector_name", `href="/a-stock">A股</a><a href="/sector-fund-flow">版块资金</a><a href="/stock-research">研报调研</a>`, `body[data-page='sector-fund-flow'] main,body[data-page='sector-fund-flow'] .site-footer{max-width:none;width:100%;box-sizing:border-box}`, `.sector-table th:nth-child(1),.sector-table td:nth-child(1){width:54px;text-align:center}`, `.sector-table th:nth-child(3),.sector-table th:nth-child(4),.sector-table th:nth-child(5)`, `.sector-name-link`} {
+	for _, want := range []string{"版块资金", "人工智能", "中科曙光", "刷新版块资金", "行业资金流", "概念资金流", "今日", "5日", "10日", "+2.30亿", "+5.60%", "-3000.00万", "人工智能 个股资金流", "成分股 2 只，本地资金流命中 1 只", "300502", "新易盛", "+8.11亿", "sector_name", `href="/a-stock">A股</a><a href="/a-stock/backtest">回测</a><a href="/sector-fund-flow">版块资金</a><a href="/stock-research">研报调研</a>`, `body[data-page='sector-fund-flow'] main,body[data-page='sector-fund-flow'] .site-footer{max-width:none;width:100%;box-sizing:border-box}`, `.sector-table th:nth-child(1),.sector-table td:nth-child(1){width:54px;text-align:center}`, `.sector-table th:nth-child(3),.sector-table th:nth-child(4),.sector-table th:nth-child(5)`, `.sector-name-link`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected sector fund flow page to contain %q, got %s", want, body)
 		}
@@ -1312,6 +1306,70 @@ func TestAStockStockGenerateActionsSelectPeriod(t *testing.T) {
 				t.Fatalf("expected generation message %q, got %q", tc.wantMsg, decoded)
 			}
 		})
+	}
+}
+
+func TestAStockBacktestPageRendersStandaloneBacktestAndNavigation(t *testing.T) {
+	setAStockNowForTest(t, time.Date(2026, 6, 18, 9, 30, 0, 0, time.FixedZone("CST", 8*3600)))
+	srv := NewServer(config.Config{})
+
+	req := httptest.NewRequest(http.MethodGet, "/a-stock/backtest?date=2026-06-16&period=afternoon&ignore_recent=1&filter_today_market=1", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAStockBacktestPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		"<title>A股回测</title>",
+		"body data-page='a-stock-backtest'",
+		`href="/a-stock">A股</a><a href="/a-stock/backtest">回测</a><a href="/sector-fund-flow">版块资金</a>`,
+		"消息回测",
+		"推荐历史",
+		"上午推荐",
+		"下午推荐",
+		"T+0 收益",
+		"五日内最高收益",
+		`/a-stock/backtest?date=2026-06-16&period=afternoon&ignore_recent=1&filter_today_market=1`,
+		`/a-stock/backtest?date=2026-06-15&period=afternoon&ignore_recent=1&filter_today_market=1`,
+		`/a-stock/backtest?date=2026-06-16&period=morning&ignore_recent=1&filter_today_market=1`,
+		`href="/a-stock/backtest?date=2026-06-16&amp;period=afternoon&amp;filter_today_market=1"`,
+		`action="/a-stock/backtest"`,
+		`name="action" value="repair_stock_names"`,
+		`name="action" value="refresh_current_backtest"`,
+		`name="action" value="refresh_backtest"`,
+		"补股票名称",
+		"补行情收益",
+		"刷新全部回测",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected A股回测 page to contain %q, got %s", want, body)
+		}
+	}
+	if strings.Contains(body, `href="/a-stock?date=2026-06-16&period=afternoon`) {
+		t.Fatalf("expected backtest page date and period links to stay on /a-stock/backtest, got %s", body)
+	}
+}
+
+func TestAStockBacktestPagePostRedirectsBackToBacktest(t *testing.T) {
+	srv := NewServer(config.Config{})
+	form := url.Values{"date": {"2026-06-16"}, "period": {"afternoon"}, "action": {"refresh_backtest"}}
+	req := httptest.NewRequest(http.MethodPost, "/a-stock/backtest", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	srv.handleAStockBacktestPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d", rr.Code)
+	}
+	loc := rr.Header().Get("Location")
+	if !strings.HasPrefix(loc, "/a-stock/backtest?") || !strings.Contains(loc, "date=2026-06-16") || !strings.Contains(loc, "period=afternoon") {
+		t.Fatalf("expected redirect back to /a-stock/backtest with state, got %q", loc)
+	}
+	decoded, _ := url.QueryUnescape(loc)
+	if !strings.Contains(decoded, "上午和下午消息回测已按当前推荐股票、13:01价格和行情收益重新刷新。") {
+		t.Fatalf("expected refresh backtest message, got %q", decoded)
 	}
 }
 
@@ -2896,14 +2954,24 @@ func TestAStockPageUsesValidSnapshotsBeforeSelections(t *testing.T) {
 	for _, want := range []string{
 		"快照上午",
 		"快照下午",
-		"10.00",
-		"20.00",
 		`<span class="astock-muted">财经新闻数</span><strong>2</strong>`,
 		`<span class="astock-muted">财经新闻数</span><strong>1</strong>`,
 		`<span class="astock-muted">候选热点数</span><strong>1</strong>`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected snapshot response to contain %q, got %s", want, body)
+		}
+	}
+	backtestReq := httptest.NewRequest(http.MethodGet, "/a-stock/backtest?date=2026-06-24&period=morning", nil)
+	backtestRR := httptest.NewRecorder()
+	srv.handleAStockBacktestPage(backtestRR, backtestReq, map[string]any{"id": 1})
+	if backtestRR.Code != http.StatusOK {
+		t.Fatalf("expected backtest 200, got %d body=%s", backtestRR.Code, backtestRR.Body.String())
+	}
+	backtestBody := backtestRR.Body.String()
+	for _, want := range []string{"快照上午", "快照下午", "10.00", "20.00"} {
+		if !strings.Contains(backtestBody, want) {
+			t.Fatalf("expected snapshot backtest response to contain %q, got %s", want, backtestBody)
 		}
 	}
 	if marketHits != 0 || selectionHits != 0 || holdingHits != 0 || saveHits != 0 {
@@ -5093,7 +5161,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"金十快讯", "金十资讯", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "14日内过滤", "涨停过滤", "当日行情", "不过滤", "重新计算", "关闭14日过滤", "关闭涨停过滤", "启用当日行情过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "推荐历史", "上午推荐", "下午推荐", "推荐窗口", "08:00-09:30", "上午开盘价", "下午开盘价", "补抓上午新闻", "重新生成上午推荐", "补抓下午新闻", "重新生成下午推荐", "补股票名称", "补行情收益", "刷新全部回测", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="repair_stock_names"`, `name="action" value="refresh_current_backtest"`, `name="action" value="refresh_backtest"`, `name="action" value="recalculate"`, "2026-06-12 周五", "2026-06-15 周一", "今日", "T+0 收益", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "推荐排名前9股票", "002230 科大讯飞", `002230 科大讯飞<span class="astock-hotspot-date">（2026-06-12）</span>`, "688981 中芯国际", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "+7.55%", "已回测", "已回测T+1"} {
+	for _, want := range []string{"金十快讯", "金十资讯", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "14日内过滤", "涨停过滤", "当日行情", "不过滤", "重新计算", "关闭14日过滤", "关闭涨停过滤", "启用当日行情过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "上午推荐", "下午推荐", "推荐窗口", "08:00-09:30", "重新生成上午推荐", "重新生成下午推荐", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="refresh_backtest"`, `name="action" value="recalculate"`, "2026-06-12 周五", "2026-06-15 周一", "今日", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "推荐排名前9股票", "002230 科大讯飞", `002230 科大讯飞<span class="astock-hotspot-date">（2026-06-12）</span>`, "688981 中芯国际", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "已回测"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}
@@ -5119,16 +5187,16 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 	if strings.Index(body, `<section><h2>推荐股票</h2>`) < strings.Index(body, "顶部概览") || strings.Index(body, `<section><h2>推荐股票</h2>`) > strings.Index(body, "操作区") {
 		t.Fatalf("expected recommendation section between overview and actions, got %s", body)
 	}
-	for _, notWant := range []string{"T+1 收盘价", "T+2 收盘价", "T+3 收盘价", "T+4 收盘价", "T+5 收盘价"} {
+	for _, notWant := range []string{"消息回测", "推荐历史", "T+0 收益", "T+1 收益", "T+1 收盘价", "T+2 收盘价", "T+3 收盘价", "T+4 收盘价", "T+5 收盘价", "补股票名称", "补行情收益", "刷新全部回测", "已回测T+1"} {
 		if strings.Contains(body, notWant) {
-			t.Fatalf("expected A股 page not to contain removed backtest column %q, got %s", notWant, body)
+			t.Fatalf("expected A股 page not to contain moved backtest content %q, got %s", notWant, body)
 		}
 	}
 	if strings.Contains(body, "astock-history-card") || strings.Contains(body, "astock-history-stocks") {
 		t.Fatalf("expected old recommendation history stock card to be removed, got %s", body)
 	}
 	if !strings.Contains(body, `/a-stock?date=2026-06-15&period=morning`) {
-		t.Fatalf("expected recommendation history tab to link previous day, got %s", body)
+		t.Fatalf("expected top date tab to link previous day, got %s", body)
 	}
 	if !strings.Contains(body, `class="astock-up"`) || !strings.Contains(body, `class="astock-down"`) {
 		t.Fatalf("expected A股 page to color上涨/下跌 percentages, got %s", body)
@@ -5371,6 +5439,38 @@ func TestAStockRecommendationHistoryActionsUseSelectedPeriod(t *testing.T) {
 	}
 	if strings.Index(body, "补股票名称") < 0 || strings.Index(body, "补行情收益") < 0 || strings.Index(body, "补股票名称") > strings.Index(body, "补行情收益") {
 		t.Fatalf("expected 补股票名称 button before 补行情收益, got %s", body)
+	}
+}
+
+func TestAStockRecommendationHistoryHelpersCanUseBacktestPath(t *testing.T) {
+	setAStockNowForTest(t, time.Date(2026, 6, 18, 9, 30, 0, 0, time.FixedZone("CST", 8*3600)))
+	var tabs strings.Builder
+	renderAStockRecommendationHistoryTabsForPath(&tabs, "/a-stock/backtest", "2026-06-16", "afternoon", true, false, true)
+	tabsBody := tabs.String()
+	for _, want := range []string{
+		`/a-stock/backtest?date=2026-06-16&period=afternoon&ignore_recent=1&filter_today_market=1`,
+		`/a-stock/backtest?date=2026-06-17&period=afternoon&ignore_recent=1&filter_today_market=1`,
+	} {
+		if !strings.Contains(tabsBody, want) {
+			t.Fatalf("expected backtest history tabs to contain %q, got %s", want, tabsBody)
+		}
+	}
+	if strings.Contains(tabsBody, `/a-stock?date=`) {
+		t.Fatalf("expected backtest history tabs to avoid default A股 path, got %s", tabsBody)
+	}
+
+	var actions strings.Builder
+	renderAStockRecommendationHistoryActionsForPath(&actions, "/a-stock/backtest", "2026-06-16", "afternoon", true, false, true)
+	actionsBody := actions.String()
+	for _, want := range []string{
+		`action="/a-stock/backtest"`,
+		`href="/a-stock/backtest?date=2026-06-16&amp;period=afternoon&amp;filter_today_market=1"`,
+		`name="ignore_recent" value="1"`,
+		`name="filter_today_market" value="1"`,
+	} {
+		if !strings.Contains(actionsBody, want) {
+			t.Fatalf("expected backtest history actions to contain %q, got %s", want, actionsBody)
+		}
 	}
 }
 

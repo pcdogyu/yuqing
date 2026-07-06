@@ -363,7 +363,7 @@ var aStockBlockedRecommendationBankCodes = map[string]struct{}{
 
 func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user any) {
 	if r.Method == http.MethodPost {
-		s.handleAStockPageAction(w, r)
+		s.handleAStockPageAction(w, r, "/a-stock")
 		return
 	}
 	if r.Method != http.MethodGet {
@@ -539,16 +539,84 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 	}
 	b.WriteString(`</div></div><p class="astock-muted">已接入已有新闻抓取链路：抓取按钮会触发金十快讯、金十资讯、金十全站信息、东方财富网、华尔街见闻、财联社和新浪财经，页面按策略日期和推荐窗口聚合财经新闻。行情接口读取 `)
 	b.WriteString(aStockMarketConfigHint())
-	b.WriteString(`，用于展示昨日收盘价、现价、涨跌幅和消息回测。</p><div class="astock-source-list"><span class="astock-badge">jin10_kuaixun: https://www.jin10.com/</span><span class="astock-badge">jin10_资讯: https://xnews.jin10.com/</span><span class="astock-badge">jin10_full: 金十全站</span><span class="astock-badge">eastmoney_kuaixun: 东方财富网</span><span class="astock-badge">wallstreetcn_a_stock: 华尔街见闻</span><span class="astock-badge">cls_telegraph: 财联社</span><span class="astock-badge">sina_finance_7x24: 新浪财经</span></div></section>`)
+	b.WriteString(`，用于展示昨日收盘价、现价、涨跌幅和行情收益。</p><div class="astock-source-list"><span class="astock-badge">jin10_kuaixun: https://www.jin10.com/</span><span class="astock-badge">jin10_资讯: https://xnews.jin10.com/</span><span class="astock-badge">jin10_full: 金十全站</span><span class="astock-badge">eastmoney_kuaixun: 东方财富网</span><span class="astock-badge">wallstreetcn_a_stock: 华尔街见闻</span><span class="astock-badge">cls_telegraph: 财联社</span><span class="astock-badge">sina_finance_7x24: 新浪财经</span></div></section>`)
 
 	renderAStockHotspotSection(&b, ctx.Hotspots)
-	renderAStockBacktestSection(&b, ctx.Date, ctx.Period, ctx.IgnoreRecent, ctx.IgnoreLimitUp, ctx.TodayMarketFilterEnabled, morningCtx, afternoonCtx)
 
 	_ = s.writeSimplePage(w, "a-stock", "A股", b.String())
 }
 
-func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleAStockBacktestPage(w http.ResponseWriter, r *http.Request, user any) {
+	if r.Method == http.MethodPost {
+		s.handleAStockPageAction(w, r, "/a-stock/backtest")
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	strategyDate := normalizeAStockStrategyDate(r.URL.Query().Get("date"))
+	period := normalizeAStockPeriod(r.URL.Query().Get("period"))
+	newsPage := normalizeAStockNewsPage(r.URL.Query().Get("news_page"))
+	ignoreRecent := normalizeAStockIgnoreRecent(r.URL.Query())
+	ignoreLimitUp := normalizeAStockIgnoreLimitUp(r.URL.Query())
+	filterTodayMarket := normalizeAStockFilterTodayMarket(r.URL.Query())
+	forceRecommendationRefresh := normalizeAStockBool(r.URL.Query().Get("refresh_recommendations"))
+	refreshAllBacktests := normalizeAStockBool(r.URL.Query().Get("refresh_all_backtests"))
+	if refreshAllBacktests {
+		forceRecommendationRefresh = true
+	}
+	requestCache := newAStockRequestCache()
+	ctx := s.loadAStockContextReadOnlyWithCache(strategyDate, period.Key, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, requestCache)
+	morningCtx := ctx
+	if ctx.Period != "morning" {
+		morningCtx = s.loadAStockCompanionContextReadOnlyWithCache(strategyDate, "morning", 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, requestCache)
+	}
+	afternoonCtx := ctx
+	if ctx.Period != "afternoon" {
+		afternoonCtx = s.loadAStockCompanionContextReadOnlyWithCache(strategyDate, "afternoon", 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, requestCache)
+	}
+	message := strings.TrimSpace(r.URL.Query().Get("msg"))
+	if message == "" {
+		message = ctx.LoadMessage
+	}
+
+	var b strings.Builder
+	b.WriteString(`<style>
+		body[data-page='a-stock-backtest'] main{max-width:none;width:100%;box-sizing:border-box}
+		body[data-page='a-stock-backtest'] .site-footer{max-width:none;width:100%;box-sizing:border-box}
+		body[data-page='a-stock-backtest'] section{width:100%;box-sizing:border-box}
+		body[data-page='a-stock-backtest'] table{width:100%;min-width:100%;font-size:13px}
+		.astock-muted{color:#6a6257}
+		.astock-empty{padding:18px;border:1px dashed #d0c8b8;border-radius:12px;background:#fff;color:#6a6257}
+		.astock-scroll{width:100%;overflow:auto}
+		.astock-table{min-width:960px}
+		.astock-table th{white-space:nowrap}
+		.astock-date-tabs{display:flex;gap:8px;flex-wrap:nowrap;margin:14px 0 18px;overflow-x:auto;padding-bottom:6px;scrollbar-width:thin}
+		.astock-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 18px}
+		.astock-tab{display:inline-flex;align-items:center;flex:0 0 auto;padding:8px 12px;border:1px solid #d6ccbb;border-radius:8px;color:#214e34;text-decoration:none;background:#fff}
+		.astock-tab.active{background:#214e34;color:#fff;border-color:#214e34}
+		.astock-history-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:stretch;margin:0 0 18px}
+		.astock-history-actions form{display:flex;margin:0}
+		.astock-history-actions button,.astock-history-actions .astock-filter-toggle{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;min-height:38px;margin:0;padding:8px 12px;border:1px solid #214e34;border-radius:8px;background:#214e34;color:#fff;font-weight:700;line-height:1.2;text-decoration:none}
+		.astock-up{color:#b3261e;font-weight:700}
+		.astock-down{color:#1b7f3a;font-weight:700}
+		.astock-flat{color:#6a6257}
+	</style>`)
+	if message != "" {
+		b.WriteString(`<section><p style="color:#214e34">`)
+		b.WriteString(html.EscapeString(message))
+		b.WriteString(`</p></section>`)
+	}
+	renderAStockBacktestSectionForPath(&b, "/a-stock/backtest", ctx.Date, ctx.Period, ctx.IgnoreRecent, ctx.IgnoreLimitUp, ctx.TodayMarketFilterEnabled, morningCtx, afternoonCtx)
+
+	_ = s.writeSimplePage(w, "a-stock-backtest", "A股回测", b.String())
+}
+
+func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request, redirectPath string) {
 	_ = r.ParseForm()
+	redirectPath = aStockPagePath(redirectPath)
 	query := url.Values{}
 	strategyDate := normalizeAStockStrategyDate(r.FormValue("date"))
 	if strategyDate != "" {
@@ -572,7 +640,7 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request) 
 	if aStockActionRequiresTradingDay(action) {
 		if blocked, message := s.aStockRecommendationBlockedMessage(strategyDate); blocked {
 			query.Set("msg", message)
-			http.Redirect(w, r, "/a-stock?"+query.Encode(), http.StatusSeeOther)
+			http.Redirect(w, r, redirectPath+"?"+query.Encode(), http.StatusSeeOther)
 			return
 		}
 	}
@@ -646,7 +714,7 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 	}
-	http.Redirect(w, r, "/a-stock?"+query.Encode(), http.StatusSeeOther)
+	http.Redirect(w, r, redirectPath+"?"+query.Encode(), http.StatusSeeOther)
 }
 
 func (s *Server) persistAStockActionRecommendation(strategyDate string, periodKey string, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, allPeriods bool, refreshMode aStockRecommendationRefreshMode) string {
@@ -1289,12 +1357,17 @@ func renderAStockRecommendationSubsection(b *strings.Builder, ctx aStockContext)
 }
 
 func renderAStockBacktestSection(b *strings.Builder, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, morningCtx aStockContext, afternoonCtx aStockContext) {
+	renderAStockBacktestSectionForPath(b, "/a-stock", strategyDate, period, ignoreRecent, ignoreLimitUp, filterTodayMarket, morningCtx, afternoonCtx)
+}
+
+func renderAStockBacktestSectionForPath(b *strings.Builder, targetPath string, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, morningCtx aStockContext, afternoonCtx aStockContext) {
 	if strings.TrimSpace(strategyDate) == "" {
 		strategyDate = nonEmpty(morningCtx.Date, afternoonCtx.Date)
 	}
 	b.WriteString(`<section><h2>消息回测</h2><p class="astock-muted">上午推荐按上午开盘价计算，下午推荐按下午开盘价计算；T+0 到 T+5 及五日内最高收益均按对应推荐窗口的基准价回测。</p>`)
-	renderAStockRecommendationHistoryTabs(b, strategyDate, period, ignoreRecent, ignoreLimitUp, filterTodayMarket)
-	renderAStockRecommendationHistoryActions(b, strategyDate, period, ignoreRecent, ignoreLimitUp, filterTodayMarket)
+	renderAStockRecommendationHistoryTabsForPath(b, targetPath, strategyDate, period, ignoreRecent, ignoreLimitUp, filterTodayMarket)
+	renderAStockPeriodSwitchTabsForPath(b, targetPath, strategyDate, period, ignoreRecent, ignoreLimitUp, filterTodayMarket)
+	renderAStockRecommendationHistoryActionsForPath(b, targetPath, strategyDate, period, ignoreRecent, ignoreLimitUp, filterTodayMarket)
 	mergedRows := combineAStockBacktestRows(morningCtx, afternoonCtx)
 	b.WriteString(`<div class="astock-scroll"><table class="astock-table"><tr><th>推荐窗口</th><th>股票</th><th>上午开盘价</th><th>下午开盘价</th><th>T+0 收益</th><th>T+1 收益</th><th>T+2 收益</th><th>T+3 收益</th><th>T+4 收益</th><th>T+5 收益</th><th>五日内最高收益</th><th>命中状态</th></tr>`)
 	if len(mergedRows) == 0 {
@@ -1341,14 +1414,22 @@ func renderAStockBacktestSection(b *strings.Builder, strategyDate string, period
 }
 
 func renderAStockRecommendationHistoryTabs(b *strings.Builder, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool) {
-	renderAStockDateTabs(b, strategyDate, period, ignoreRecent, ignoreLimitUp, filterTodayMarket, true)
+	renderAStockRecommendationHistoryTabsForPath(b, "/a-stock", strategyDate, period, ignoreRecent, ignoreLimitUp, filterTodayMarket)
+}
+
+func renderAStockRecommendationHistoryTabsForPath(b *strings.Builder, targetPath string, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool) {
+	renderAStockDateTabsForPath(b, targetPath, strategyDate, period, ignoreRecent, ignoreLimitUp, filterTodayMarket, true)
 }
 
 func renderAStockDatePeriodTabs(b *strings.Builder, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, withHeading bool) {
-	renderAStockDateTabs(b, strategyDate, period, ignoreRecent, ignoreLimitUp, filterTodayMarket, withHeading)
+	renderAStockDateTabsForPath(b, "/a-stock", strategyDate, period, ignoreRecent, ignoreLimitUp, filterTodayMarket, withHeading)
 }
 
 func renderAStockDateTabs(b *strings.Builder, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, withHeading bool) {
+	renderAStockDateTabsForPath(b, "/a-stock", strategyDate, period, ignoreRecent, ignoreLimitUp, filterTodayMarket, withHeading)
+}
+
+func renderAStockDateTabsForPath(b *strings.Builder, targetPath string, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, withHeading bool) {
 	if withHeading {
 		b.WriteString(`<h3>推荐历史</h3>`)
 	}
@@ -1357,7 +1438,7 @@ func renderAStockDateTabs(b *strings.Builder, strategyDate string, period string
 	tabs := aStockDateTabs(strategyDate)
 	today := aStockTodayDate()
 	if len(tabs) == 0 {
-		writeAStockDateTab(b, "今日", today, normalizedPeriod, strategyDate == today, ignoreRecent, ignoreLimitUp, filterTodayMarket)
+		writeAStockDateTab(b, targetPath, "今日", today, normalizedPeriod, strategyDate == today, ignoreRecent, ignoreLimitUp, filterTodayMarket)
 		b.WriteString(`</div>`)
 		return
 	}
@@ -1367,18 +1448,40 @@ func renderAStockDateTabs(b *strings.Builder, strategyDate string, period string
 			hasToday = true
 		}
 		active := strategyDate == tab.Date
-		writeAStockDateTab(b, tab.Label, tab.Date, normalizedPeriod, active, ignoreRecent, ignoreLimitUp, filterTodayMarket)
+		writeAStockDateTab(b, targetPath, tab.Label, tab.Date, normalizedPeriod, active, ignoreRecent, ignoreLimitUp, filterTodayMarket)
 	}
 	if !hasToday {
-		writeAStockDateTab(b, "今日", today, normalizedPeriod, strategyDate == today, ignoreRecent, ignoreLimitUp, filterTodayMarket)
+		writeAStockDateTab(b, targetPath, "今日", today, normalizedPeriod, strategyDate == today, ignoreRecent, ignoreLimitUp, filterTodayMarket)
 	}
 	b.WriteString(`</div>`)
 }
 
 func renderAStockRecommendationHistoryActions(b *strings.Builder, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool) {
+	renderAStockRecommendationHistoryActionsForPath(b, "/a-stock", strategyDate, period, ignoreRecent, ignoreLimitUp, filterTodayMarket)
+}
+
+func renderAStockPeriodSwitchTabsForPath(b *strings.Builder, targetPath string, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool) {
+	current := normalizeAStockPeriod(period).Key
+	b.WriteString(`<div class="astock-tabs">`)
+	for _, option := range aStockPeriods() {
+		b.WriteString(`<a class="astock-tab`)
+		if option.Key == current {
+			b.WriteString(` active`)
+		}
+		b.WriteString(`" data-preserve-scroll="1" href="`)
+		b.WriteString(aStockPageHrefForPath(targetPath, strategyDate, option.Key, 1, ignoreRecent, ignoreLimitUp, filterTodayMarket))
+		b.WriteString(`">`)
+		b.WriteString(html.EscapeString(option.Label))
+		b.WriteString(`</a>`)
+	}
+	b.WriteString(`</div>`)
+}
+
+func renderAStockRecommendationHistoryActionsForPath(b *strings.Builder, targetPath string, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool) {
+	targetPath = aStockPagePath(targetPath)
 	b.WriteString(`<div class="astock-history-actions">`)
 	b.WriteString(`<a class="astock-filter-toggle" data-preserve-scroll="1" href="`)
-	b.WriteString(html.EscapeString(aStockFilterToggleHref(strategyDate, period, 1, ignoreRecent, ignoreLimitUp, filterTodayMarket)))
+	b.WriteString(html.EscapeString(aStockFilterToggleHrefForPath(targetPath, strategyDate, period, 1, ignoreRecent, ignoreLimitUp, filterTodayMarket)))
 	b.WriteString(`">`)
 	b.WriteString(html.EscapeString(aStockFilterToggleLabel(ignoreRecent)))
 	b.WriteString(`</a>`)
@@ -1396,7 +1499,9 @@ func renderAStockRecommendationHistoryActions(b *strings.Builder, strategyDate s
 		{Period: normalizeAStockPeriod(period).Key, Name: "refresh_current_backtest", Label: "补行情收益"},
 		{Period: "morning", Name: "refresh_backtest", Label: "刷新全部回测"},
 	} {
-		b.WriteString(`<form method="post"><input type="hidden" name="date" value="`)
+		b.WriteString(`<form method="post" action="`)
+		b.WriteString(html.EscapeString(targetPath))
+		b.WriteString(`"><input type="hidden" name="date" value="`)
 		b.WriteString(html.EscapeString(strategyDate))
 		b.WriteString(`"><input type="hidden" name="period" value="`)
 		b.WriteString(html.EscapeString(action.Period))
@@ -1419,24 +1524,13 @@ func renderAStockRecommendationHistoryActions(b *strings.Builder, strategyDate s
 	b.WriteString(`</div>`)
 }
 
-func writeAStockDateTab(b *strings.Builder, label string, date string, period string, active bool, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool) {
+func writeAStockDateTab(b *strings.Builder, targetPath string, label string, date string, period string, active bool, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool) {
 	b.WriteString(`<a class="astock-tab`)
 	if active {
 		b.WriteString(` active`)
 	}
-	b.WriteString(`" data-preserve-scroll="1" href="/a-stock?date=`)
-	b.WriteString(url.QueryEscape(date))
-	b.WriteString(`&period=`)
-	b.WriteString(url.QueryEscape(period))
-	if ignoreRecent {
-		b.WriteString(`&ignore_recent=1`)
-	}
-	if ignoreLimitUp {
-		b.WriteString(`&ignore_limit_up=1`)
-	}
-	if filterTodayMarket {
-		b.WriteString(`&filter_today_market=1`)
-	}
+	b.WriteString(`" data-preserve-scroll="1" href="`)
+	b.WriteString(aStockPageHrefForPath(targetPath, date, period, 1, ignoreRecent, ignoreLimitUp, filterTodayMarket))
 	b.WriteString(`">`)
 	b.WriteString(html.EscapeString(label))
 	b.WriteString(`</a>`)
@@ -7499,7 +7593,11 @@ func normalizeAStockNewsPage(raw string) int {
 }
 
 func aStockPageHref(strategyDate string, period string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool) string {
-	href := "/a-stock?date=" + url.QueryEscape(normalizeAStockStrategyDate(strategyDate)) + "&period=" + url.QueryEscape(normalizeAStockPeriod(period).Key)
+	return aStockPageHrefForPath("/a-stock", strategyDate, period, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket)
+}
+
+func aStockPageHrefForPath(targetPath string, strategyDate string, period string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool) string {
+	href := aStockPagePath(targetPath) + "?date=" + url.QueryEscape(normalizeAStockStrategyDate(strategyDate)) + "&period=" + url.QueryEscape(normalizeAStockPeriod(period).Key)
 	if newsPage > 1 {
 		href += "&news_page=" + url.QueryEscape(fmt.Sprintf("%d", newsPage))
 	}
@@ -7516,7 +7614,19 @@ func aStockPageHref(strategyDate string, period string, newsPage int, ignoreRece
 }
 
 func aStockFilterToggleHref(strategyDate string, period string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool) string {
-	return aStockPageHref(strategyDate, period, newsPage, !ignoreRecent, ignoreLimitUp, filterTodayMarket)
+	return aStockFilterToggleHrefForPath("/a-stock", strategyDate, period, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket)
+}
+
+func aStockFilterToggleHrefForPath(targetPath string, strategyDate string, period string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool) string {
+	return aStockPageHrefForPath(targetPath, strategyDate, period, newsPage, !ignoreRecent, ignoreLimitUp, filterTodayMarket)
+}
+
+func aStockPagePath(targetPath string) string {
+	targetPath = strings.TrimSpace(targetPath)
+	if targetPath == "" || !strings.HasPrefix(targetPath, "/") || strings.ContainsAny(targetPath, "?#") {
+		return "/a-stock"
+	}
+	return targetPath
 }
 
 func aStockFilterToggleLabel(ignoreRecent bool) string {
