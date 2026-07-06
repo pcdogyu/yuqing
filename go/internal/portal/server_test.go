@@ -8892,6 +8892,7 @@ func TestPortalNavPlacesLogoutAfterUpgrade(t *testing.T) {
 	for _, expected := range []string{
 		`nav .portal-upgrade-button{display:inline-flex`,
 		`.portal-upgrade-mask{position:fixed`,
+		`.portal-upgrade-console-bar{display:flex`,
 		`.portal-upgrade-log{margin:0`,
 	} {
 		if !strings.Contains(baseStyles, expected) {
@@ -8900,6 +8901,7 @@ func TestPortalNavPlacesLogoutAfterUpgrade(t *testing.T) {
 	}
 	for _, expected := range []string{
 		`id="portal-upgrade-mask"`,
+		`id="portal-upgrade-console-state"`,
 		`fetch("/system/upgrade"`,
 		`fetch("/system/upgrade/status"`,
 		`data.message||data.msg||data.error`,
@@ -8907,11 +8909,17 @@ func TestPortalNavPlacesLogoutAfterUpgrade(t *testing.T) {
 		`upgradeLog(data)`,
 		`data.status==="running"`,
 		`finalMessage=upgradeMessage(data)`,
-		`setTimeout(hide,30000)`,
+		`setTimeout(hide,120000)`,
+		`setConsoleMeta("运行中"`,
+		`setLog(data.log||runningMessage,true)`,
+		`log.scrollTop=log.scrollHeight`,
 	} {
 		if !strings.Contains(portalUpgradeShellHTML, expected) {
 			t.Fatalf("expected upgrade shell to include %q", expected)
 		}
+	}
+	if strings.Contains(portalUpgradeShellHTML, `状态检查`) {
+		t.Fatalf("expected upgrade shell to keep polling status out of console log")
 	}
 }
 

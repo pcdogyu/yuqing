@@ -138,6 +138,11 @@ func TestRunPortalUpgradeCommandWithProgressPublishesHeartbeat(t *testing.T) {
 	if !strings.Contains(log.String(), "debug: 工作目录:") || !strings.Contains(log.String(), "debug: 命令结束") {
 		t.Fatalf("expected debug command metadata, got %s", log.String())
 	}
+	for _, line := range strings.Split(log.String(), "\n") {
+		if strings.Contains(line, "debug: 命令仍在运行") && strings.Contains(line, "-test.run=TestPortalUpgradeSleepHelper") {
+			t.Fatalf("expected heartbeat to avoid repeating full command, got %q", line)
+		}
+	}
 	foundHeartbeat := false
 	snapshotsMu.Lock()
 	for _, snapshot := range snapshots {

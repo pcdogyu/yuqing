@@ -255,7 +255,7 @@ func runPortalUpgrade(parent context.Context, _ config.Config, progress portalUp
 	stage("完成")
 	appendUpgradeLog(&log, "升级构建完成。新二进制已写入 "+binDir+"；如需让当前服务加载新代码，请重启对应服务。")
 	publish("阶段: 完成")
-	return finishPortalUpgrade(true, startedAt, log.String(), nil)
+	return finishPortalUpgradeWithMessage(true, startedAt, log.String(), nil, "升级打包完成，请重启服务加载新版本")
 }
 
 func runPortalUpgradeBuildPackages(ctx context.Context, log *bytes.Buffer, progress portalUpgradeProgress, goDir string, binDir string, baseArgs []string, packages []string) error {
@@ -269,13 +269,14 @@ func runPortalUpgradeBuildPackages(ctx context.Context, log *bytes.Buffer, progr
 	}
 	for i, pkg := range packages {
 		startedAt := time.Now()
+		packageMessage := fmt.Sprintf("阶段: 打包构建 %d/%d %s", i+1, len(packages), pkg)
 		appendUpgradeLog(log, fmt.Sprintf("debug: 开始构建包 %d/%d: %s", i+1, len(packages), pkg))
 		if progress != nil {
-			progress(stageMessage, strings.TrimRight(log.String(), "\r\n"))
+			progress(packageMessage, strings.TrimRight(log.String(), "\r\n"))
 		}
 		args := append([]string{}, baseArgs...)
 		args = append(args, pkg)
-		if err := runPortalUpgradeCommandWithProgress(ctx, log, goDir, false, progress, stageMessage, portalUpgradeCommandHeartbeat, "go", args...); err != nil {
+		if err := runPortalUpgradeCommandWithProgress(ctx, log, goDir, false, progress, packageMessage, portalUpgradeCommandHeartbeat, "go", args...); err != nil {
 			return err
 		}
 		appendUpgradeLog(log, fmt.Sprintf("debug: 完成构建包 %d/%d: %s，耗时 %s", i+1, len(packages), pkg, time.Since(startedAt).Round(time.Second)))
@@ -409,7 +410,7 @@ func runPortalUpgradeCommandWithProgress(ctx context.Context, log *bytes.Buffer,
 			for {
 				select {
 				case <-ticker.C:
-					appendLine(fmt.Sprintf("debug: 命令仍在运行，已耗时 %s: %s", time.Since(startedAt).Round(time.Second), shellQuoteCommand(name, args)))
+					appendLine(fmt.Sprintf("debug: 命令仍在运行，已耗时 %s", time.Since(startedAt).Round(time.Second)))
 					publishSnapshot()
 				case <-done:
 					return
@@ -420,7 +421,7 @@ func runPortalUpgradeCommandWithProgress(ctx context.Context, log *bytes.Buffer,
 	output, err := cmd.CombinedOutput()
 	close(done)
 	appendBytes(output)
-	appendLine(fmt.Sprintf("debug: 命令结束，耗时 %s: %s", time.Since(startedAt).Round(time.Second), shellQuoteCommand(name, args)))
+	appendLine(fmt.Sprintf("debug: 命令结束，耗时 %s", time.Since(startedAt).Round(time.Second)))
 	publishSnapshot()
 	if ctx.Err() != nil {
 		return ctx.Err()
