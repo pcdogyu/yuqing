@@ -577,6 +577,18 @@ CREATE TABLE IF NOT EXISTS a_stock_sector_fund_flow_source_rows (
 	PRIMARY KEY (trade_date, sector_type, indicator, source_type, name)
 );
 
+CREATE TABLE IF NOT EXISTS a_stock_sector_constituents (
+	sector_type TEXT NOT NULL,
+	sector_name TEXT NOT NULL,
+	code TEXT NOT NULL,
+	name TEXT NOT NULL DEFAULT '',
+	source TEXT NOT NULL DEFAULT '',
+	fetched_at TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	PRIMARY KEY (sector_type, sector_name, code)
+);
+
 CREATE TABLE IF NOT EXISTS a_stock_stock_fund_flows (
 	trade_date TEXT NOT NULL,
 	indicator TEXT NOT NULL,
@@ -725,6 +737,8 @@ CREATE INDEX IF NOT EXISTS idx_a_stock_recommendation_selections_lookup ON a_sto
 CREATE INDEX IF NOT EXISTS idx_a_stock_sector_fund_flow_lookup ON a_stock_sector_fund_flows(trade_date DESC, sector_type, indicator, rank);
 CREATE INDEX IF NOT EXISTS idx_a_stock_sector_fund_flow_name ON a_stock_sector_fund_flows(name);
 CREATE INDEX IF NOT EXISTS idx_a_stock_sector_fund_flow_source_lookup ON a_stock_sector_fund_flow_source_rows(trade_date DESC, sector_type, indicator, source_type, rank);
+CREATE INDEX IF NOT EXISTS idx_a_stock_sector_constituents_lookup ON a_stock_sector_constituents(sector_type, sector_name, code);
+CREATE INDEX IF NOT EXISTS idx_a_stock_sector_constituents_name ON a_stock_sector_constituents(name);
 CREATE INDEX IF NOT EXISTS idx_a_stock_stock_fund_flow_lookup ON a_stock_stock_fund_flows(trade_date DESC, indicator, rank);
 CREATE INDEX IF NOT EXISTS idx_a_stock_stock_fund_flow_code ON a_stock_stock_fund_flows(code);
 CREATE INDEX IF NOT EXISTS idx_a_stock_stock_fund_flow_source_lookup ON a_stock_stock_fund_flow_source_rows(trade_date DESC, indicator, source_type, rank);

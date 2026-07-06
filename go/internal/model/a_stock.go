@@ -280,3 +280,68 @@ type AStockStockFundFlowUpsertResult struct {
 	Updated  int    `json:"updated"`
 	Total    int    `json:"total"`
 }
+
+type AStockSectorConstituent struct {
+	SectorType string    `json:"sector_type"`
+	SectorName string    `json:"sector_name"`
+	Code       string    `json:"code"`
+	Name       string    `json:"name"`
+	Source     string    `json:"source"`
+	FetchedAt  time.Time `json:"fetched_at"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+type AStockSectorConstituentFilter struct {
+	SectorType string `json:"sector_type"`
+	SectorName string `json:"sector_name"`
+	Keyword    string `json:"keyword"`
+	Limit      int    `json:"limit"`
+}
+
+type AStockSectorConstituentListResult struct {
+	Items      []AStockSectorConstituent `json:"items"`
+	Total      int                       `json:"total"`
+	SectorType string                    `json:"sector_type"`
+	SectorName string                    `json:"sector_name"`
+	Keyword    string                    `json:"keyword"`
+	FetchedAt  *time.Time                `json:"fetched_at,omitempty"`
+}
+
+type AStockSectorConstituentUpsertResult struct {
+	SectorType string `json:"sector_type"`
+	SectorName string `json:"sector_name"`
+	Inserted   int    `json:"inserted"`
+	Updated    int    `json:"updated"`
+	Total      int    `json:"total"`
+}
+
+type AStockFundFlowTrendFilter struct {
+	EndDate    string `json:"end_date"`
+	SectorType string `json:"sector_type"`
+	SectorName string `json:"sector_name"`
+	Indicator  string `json:"indicator"`
+	Code       string `json:"code"`
+	Keyword    string `json:"keyword"`
+	Days       int    `json:"days"`
+}
+
+type AStockSectorFundFlowTrendResult struct {
+	Items      []AStockSectorFundFlow `json:"items"`
+	Total      int                    `json:"total"`
+	EndDate    string                 `json:"end_date"`
+	SectorType string                 `json:"sector_type"`
+	SectorName string                 `json:"sector_name"`
+	Indicator  string                 `json:"indicator"`
+	Days       int                    `json:"days"`
+}
+
+type AStockStockFundFlowTrendResult struct {
+	Items     []AStockStockFundFlow `json:"items"`
+	Total     int                   `json:"total"`
+	EndDate   string                `json:"end_date"`
+	Indicator string                `json:"indicator"`
+	Code      string                `json:"code"`
+	Keyword   string                `json:"keyword"`
+	Days      int                   `json:"days"`
+}

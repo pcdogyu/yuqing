@@ -555,6 +555,79 @@ func TestAStockSectorFundFlowAPIUpsertsAndLists(t *testing.T) {
 	if stockEnvelope.Data.Total != 1 || stockEnvelope.Data.Items[0].Code != "300502" || stockEnvelope.Data.Items[0].SourceCount != 1 {
 		t.Fatalf("unexpected stock fund flow list: %+v", stockEnvelope.Data)
 	}
+
+	constituentPayload := `{"sector_type":"行业资金流","sector_name":"石油石化","replace":true,"items":[{"code":"sh600028","name":"中国石化","source":"eastmoney"},{"code":"601857","name":"中国石油","source":"eastmoney"}]}`
+	constituentPostReq := httptest.NewRequest(http.MethodPost, "/api/v1/internal/a-stock/sector-constituents", strings.NewReader(constituentPayload))
+	constituentPostReq.Header.Set("Content-Type", "application/json")
+	constituentPostRR := httptest.NewRecorder()
+	router.ServeHTTP(constituentPostRR, constituentPostReq)
+	if constituentPostRR.Code != http.StatusOK {
+		t.Fatalf("expected sector constituent upsert 200, got %d body=%s", constituentPostRR.Code, constituentPostRR.Body.String())
+	}
+	constituentListReq := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/sector-constituents?sector_type=行业资金流&sector_name=石油石化&keyword=中国&limit=1", nil)
+	constituentListRR := httptest.NewRecorder()
+	router.ServeHTTP(constituentListRR, constituentListReq)
+	if constituentListRR.Code != http.StatusOK {
+		t.Fatalf("expected sector constituent list 200, got %d body=%s", constituentListRR.Code, constituentListRR.Body.String())
+	}
+	var constituentEnvelope struct {
+		Data model.AStockSectorConstituentListResult `json:"data"`
+	}
+	if err := json.Unmarshal(constituentListRR.Body.Bytes(), &constituentEnvelope); err != nil {
+		t.Fatalf("decode sector constituent list: %v", err)
+	}
+	if constituentEnvelope.Data.Total != 2 || len(constituentEnvelope.Data.Items) != 1 || constituentEnvelope.Data.Items[0].Code != "600028" {
+		t.Fatalf("unexpected constituent list: %+v", constituentEnvelope.Data)
+	}
+
+	for _, date := range []string{"2026-07-03", "2026-07-04"} {
+		sectorPayload := fmt.Sprintf(`{"date":"%s","sector_type":"行业资金流","indicator":"今日","replace":true,"items":[{"rank":1,"name":"石油石化","main_net_inflow":300}]}`, date)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/internal/a-stock/sector-fund-flows", strings.NewReader(sectorPayload))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected sector trend seed 200, got %d body=%s", rr.Code, rr.Body.String())
+		}
+		stockPayload := fmt.Sprintf(`{"date":"%s","indicator":"今日","replace":false,"items":[{"rank":1,"code":"600028","name":"中国石化","main_net_inflow":400}]}`, date)
+		stockReq := httptest.NewRequest(http.MethodPost, "/api/v1/internal/a-stock/stock-fund-flows", strings.NewReader(stockPayload))
+		stockReq.Header.Set("Content-Type", "application/json")
+		stockRR := httptest.NewRecorder()
+		router.ServeHTTP(stockRR, stockReq)
+		if stockRR.Code != http.StatusOK {
+			t.Fatalf("expected stock trend seed 200, got %d body=%s", stockRR.Code, stockRR.Body.String())
+		}
+	}
+	sectorTrendReq := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/sector-fund-flow-trend?end_date=2026-07-04&sector_type=行业资金流&sector_name=石油石化&indicator=今日&days=5", nil)
+	sectorTrendRR := httptest.NewRecorder()
+	router.ServeHTTP(sectorTrendRR, sectorTrendReq)
+	if sectorTrendRR.Code != http.StatusOK {
+		t.Fatalf("expected sector trend 200, got %d body=%s", sectorTrendRR.Code, sectorTrendRR.Body.String())
+	}
+	var sectorTrendEnvelope struct {
+		Data model.AStockSectorFundFlowTrendResult `json:"data"`
+	}
+	if err := json.Unmarshal(sectorTrendRR.Body.Bytes(), &sectorTrendEnvelope); err != nil {
+		t.Fatalf("decode sector trend: %v", err)
+	}
+	if sectorTrendEnvelope.Data.Total != 2 || sectorTrendEnvelope.Data.Items[0].TradeDate != "2026-07-04" {
+		t.Fatalf("unexpected sector trend: %+v", sectorTrendEnvelope.Data)
+	}
+	stockTrendReq := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/stock-fund-flow-trend?end_date=2026-07-04&code=sh600028&indicator=今日&days=5", nil)
+	stockTrendRR := httptest.NewRecorder()
+	router.ServeHTTP(stockTrendRR, stockTrendReq)
+	if stockTrendRR.Code != http.StatusOK {
+		t.Fatalf("expected stock trend 200, got %d body=%s", stockTrendRR.Code, stockTrendRR.Body.String())
+	}
+	var stockTrendEnvelope struct {
+		Data model.AStockStockFundFlowTrendResult `json:"data"`
+	}
+	if err := json.Unmarshal(stockTrendRR.Body.Bytes(), &stockTrendEnvelope); err != nil {
+		t.Fatalf("decode stock trend: %v", err)
+	}
+	if stockTrendEnvelope.Data.Total != 2 || stockTrendEnvelope.Data.Code != "600028" || stockTrendEnvelope.Data.Items[0].TradeDate != "2026-07-04" {
+		t.Fatalf("unexpected stock trend: %+v", stockTrendEnvelope.Data)
+	}
 }
 
 func TestStockInstitutionHoldingSignalsAPI(t *testing.T) {

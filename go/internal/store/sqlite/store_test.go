@@ -1075,6 +1075,64 @@ func TestAStockStockFundFlowSourceRowsAverageAndList(t *testing.T) {
 	}
 }
 
+func TestAStockSectorConstituentsAndFundFlowTrends(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	fetchedAt := time.Date(2026, 7, 1, 2, 35, 0, 0, time.UTC)
+
+	first, err := store.UpsertAStockSectorConstituents(ctx, "行业资金流", "石油石化", []model.AStockSectorConstituent{
+		{SectorType: "行业资金流", SectorName: "石油石化", Code: "600028", Name: "中国石化", Source: "eastmoney", FetchedAt: fetchedAt},
+		{SectorType: "行业资金流", SectorName: "石油石化", Code: "601857", Name: "中国石油", Source: "eastmoney", FetchedAt: fetchedAt},
+	}, true)
+	if err != nil {
+		t.Fatalf("UpsertAStockSectorConstituents insert error: %v", err)
+	}
+	if first.Inserted != 2 || first.Total != 2 {
+		t.Fatalf("unexpected constituent insert result: %+v", first)
+	}
+	if _, err := store.UpsertAStockSectorConstituents(ctx, "行业资金流", "石油石化", []model.AStockSectorConstituent{
+		{SectorType: "行业资金流", SectorName: "石油石化", Code: "600028", Name: "中国石化", Source: "cached", FetchedAt: fetchedAt.Add(time.Minute)},
+	}, false); err != nil {
+		t.Fatalf("UpsertAStockSectorConstituents update error: %v", err)
+	}
+	list, err := store.ListAStockSectorConstituents(ctx, model.AStockSectorConstituentFilter{SectorType: "行业资金流", SectorName: "石油石化", Keyword: "中国", Limit: 1})
+	if err != nil {
+		t.Fatalf("ListAStockSectorConstituents error: %v", err)
+	}
+	if list.Total != 2 || len(list.Items) != 1 || list.Items[0].Code != "600028" || list.Items[0].Source != "cached" {
+		t.Fatalf("unexpected constituent list: %+v", list)
+	}
+
+	for idx, date := range []string{"2026-07-01", "2026-07-02", "2026-07-03"} {
+		if _, err := store.UpsertAStockSectorFundFlows(ctx, date, []model.AStockSectorFundFlow{
+			{TradeDate: date, SectorType: "行业资金流", Indicator: "今日", Rank: idx + 1, Name: "石油石化", MainNetInflow: float64(100 + idx), FetchedAt: fetchedAt.Add(time.Duration(idx) * time.Hour)},
+			{TradeDate: date, SectorType: "概念资金流", Indicator: "今日", Rank: 1, Name: "石油概念", MainNetInflow: 999, FetchedAt: fetchedAt},
+		}, true); err != nil {
+			t.Fatalf("UpsertAStockSectorFundFlows %s error: %v", date, err)
+		}
+		if _, err := store.UpsertAStockStockFundFlows(ctx, date, []model.AStockStockFundFlow{
+			{TradeDate: date, Indicator: "今日", Rank: idx + 1, Code: "600028", Name: "中国石化", MainNetInflow: float64(200 + idx), FetchedAt: fetchedAt.Add(time.Duration(idx) * time.Hour)},
+			{TradeDate: date, Indicator: "今日", Rank: 2, Code: "601857", Name: "中国石油", MainNetInflow: 50, FetchedAt: fetchedAt},
+		}, true); err != nil {
+			t.Fatalf("UpsertAStockStockFundFlows %s error: %v", date, err)
+		}
+	}
+	sectorTrend, err := store.ListAStockSectorFundFlowTrend(ctx, model.AStockFundFlowTrendFilter{EndDate: "2026-07-03", SectorType: "行业资金流", SectorName: "石油石化", Indicator: "今日", Days: 5})
+	if err != nil {
+		t.Fatalf("ListAStockSectorFundFlowTrend error: %v", err)
+	}
+	if sectorTrend.Total != 3 || sectorTrend.Items[0].TradeDate != "2026-07-03" || sectorTrend.Items[1].TradeDate != "2026-07-02" || sectorTrend.Items[0].MainNetInflow != 102 {
+		t.Fatalf("unexpected sector trend: %+v", sectorTrend)
+	}
+	stockTrend, err := store.ListAStockStockFundFlowTrend(ctx, model.AStockFundFlowTrendFilter{EndDate: "2026-07-03", Code: "sh600028", Indicator: "今日", Days: 5})
+	if err != nil {
+		t.Fatalf("ListAStockStockFundFlowTrend error: %v", err)
+	}
+	if stockTrend.Total != 3 || stockTrend.Code != "600028" || stockTrend.Items[0].TradeDate != "2026-07-03" || stockTrend.Items[0].MainNetInflow != 202 {
+		t.Fatalf("unexpected stock trend: %+v", stockTrend)
+	}
+}
+
 func TestStockInstitutionHoldingSignalsComparePeriods(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()

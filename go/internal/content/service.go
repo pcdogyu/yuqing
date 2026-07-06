@@ -110,9 +110,13 @@ type Store interface {
 	UpsertAStockSectorFundFlows(rctx context.Context, tradeDate string, items []model.AStockSectorFundFlow, replace bool) (model.AStockSectorFundFlowUpsertResult, error)
 	UpsertAStockSectorFundFlowSourceRows(rctx context.Context, tradeDate string, items []model.AStockSectorFundFlow, replace bool) (model.AStockSectorFundFlowUpsertResult, error)
 	ListAStockSectorFundFlows(rctx context.Context, filter model.AStockSectorFundFlowFilter) (model.AStockSectorFundFlowListResult, error)
+	UpsertAStockSectorConstituents(rctx context.Context, sectorType string, sectorName string, items []model.AStockSectorConstituent, replace bool) (model.AStockSectorConstituentUpsertResult, error)
+	ListAStockSectorConstituents(rctx context.Context, filter model.AStockSectorConstituentFilter) (model.AStockSectorConstituentListResult, error)
+	ListAStockSectorFundFlowTrend(rctx context.Context, filter model.AStockFundFlowTrendFilter) (model.AStockSectorFundFlowTrendResult, error)
 	UpsertAStockStockFundFlows(rctx context.Context, tradeDate string, items []model.AStockStockFundFlow, replace bool) (model.AStockStockFundFlowUpsertResult, error)
 	UpsertAStockStockFundFlowSourceRows(rctx context.Context, tradeDate string, items []model.AStockStockFundFlow, replace bool) (model.AStockStockFundFlowUpsertResult, error)
 	ListAStockStockFundFlows(rctx context.Context, filter model.AStockStockFundFlowFilter) (model.AStockStockFundFlowListResult, error)
+	ListAStockStockFundFlowTrend(rctx context.Context, filter model.AStockFundFlowTrendFilter) (model.AStockStockFundFlowTrendResult, error)
 	UpsertStockResearchSurveys(rctx context.Context, items []model.StockResearchSurvey) (model.StockResearchUpsertResult, error)
 	ListStockResearchSurveys(rctx context.Context, filter model.StockResearchFilter) (model.StockResearchListResult, error)
 	GetStockResearchSurvey(rctx context.Context, id int64) (model.StockResearchSurvey, error)
@@ -195,7 +199,11 @@ func (s *Service) Routes(r chi.Router) {
 	r.Get("/api/v1/a-stock/sector-fund-flows", s.handleListAStockSectorFundFlows)
 	r.Post("/api/v1/internal/a-stock/sector-fund-flows", s.handleUpsertAStockSectorFundFlows)
 	r.Post("/api/v1/internal/a-stock/sector-fund-flow-sources", s.handleUpsertAStockSectorFundFlowSourceRows)
+	r.Get("/api/v1/a-stock/sector-constituents", s.handleListAStockSectorConstituents)
+	r.Post("/api/v1/internal/a-stock/sector-constituents", s.handleUpsertAStockSectorConstituents)
+	r.Get("/api/v1/a-stock/sector-fund-flow-trend", s.handleListAStockSectorFundFlowTrend)
 	r.Get("/api/v1/a-stock/stock-fund-flows", s.handleListAStockStockFundFlows)
+	r.Get("/api/v1/a-stock/stock-fund-flow-trend", s.handleListAStockStockFundFlowTrend)
 	r.Post("/api/v1/internal/a-stock/stock-fund-flows", s.handleUpsertAStockStockFundFlows)
 	r.Post("/api/v1/internal/a-stock/stock-fund-flow-sources", s.handleUpsertAStockStockFundFlowSourceRows)
 	r.Get("/api/v1/stock-research", s.handleListStockResearchSurveys)
@@ -899,6 +907,87 @@ func (s *Service) handleUpsertAStockSectorFundFlows(w http.ResponseWriter, r *ht
 	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
 }
 
+func (s *Service) handleListAStockSectorConstituents(w http.ResponseWriter, r *http.Request) {
+	filter := model.AStockSectorConstituentFilter{
+		SectorType: strings.TrimSpace(r.URL.Query().Get("sector_type")),
+		SectorName: strings.TrimSpace(nonEmpty(r.URL.Query().Get("sector_name"), r.URL.Query().Get("name"), r.URL.Query().Get("symbol"))),
+		Keyword:    strings.TrimSpace(nonEmpty(r.URL.Query().Get("keyword"), r.URL.Query().Get("q"))),
+		Limit:      apiutil.IntQuery(r, "limit", 500),
+	}
+	result, err := s.store.ListAStockSectorConstituents(r.Context(), filter)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleUpsertAStockSectorConstituents(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		SectorType string                          `json:"sector_type"`
+		SectorName string                          `json:"sector_name"`
+		Items      []model.AStockSectorConstituent `json:"items"`
+		Replace    bool                            `json:"replace"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid json", nil)
+		return
+	}
+	payload.SectorType = normalizeAStockSectorFundFlowSectorType(payload.SectorType)
+	payload.SectorName = strings.TrimSpace(payload.SectorName)
+	if payload.SectorName == "" {
+		for _, item := range payload.Items {
+			if sectorName := strings.TrimSpace(item.SectorName); sectorName != "" {
+				payload.SectorName = sectorName
+				break
+			}
+		}
+	}
+	if payload.SectorName == "" {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "sector_name required", nil)
+		return
+	}
+	now := time.Now().UTC()
+	for i := range payload.Items {
+		payload.Items[i].SectorType = normalizeAStockSectorFundFlowSectorType(nonEmpty(payload.Items[i].SectorType, payload.SectorType))
+		payload.Items[i].SectorName = strings.TrimSpace(nonEmpty(payload.Items[i].SectorName, payload.SectorName))
+		payload.Items[i].Code = astockcode.Normalize(payload.Items[i].Code)
+		payload.Items[i].Name = strings.TrimSpace(payload.Items[i].Name)
+		payload.Items[i].Source = strings.TrimSpace(payload.Items[i].Source)
+		if payload.Items[i].FetchedAt.IsZero() {
+			payload.Items[i].FetchedAt = now
+		}
+		if payload.Items[i].CreatedAt.IsZero() {
+			payload.Items[i].CreatedAt = now
+		}
+		if payload.Items[i].UpdatedAt.IsZero() {
+			payload.Items[i].UpdatedAt = now
+		}
+	}
+	result, err := s.store.UpsertAStockSectorConstituents(r.Context(), payload.SectorType, payload.SectorName, payload.Items, payload.Replace)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleListAStockSectorFundFlowTrend(w http.ResponseWriter, r *http.Request) {
+	filter := model.AStockFundFlowTrendFilter{
+		EndDate:    strings.TrimSpace(nonEmpty(r.URL.Query().Get("end_date"), r.URL.Query().Get("date"))),
+		SectorType: strings.TrimSpace(r.URL.Query().Get("sector_type")),
+		SectorName: strings.TrimSpace(nonEmpty(r.URL.Query().Get("sector_name"), r.URL.Query().Get("name"), r.URL.Query().Get("symbol"))),
+		Indicator:  strings.TrimSpace(r.URL.Query().Get("indicator")),
+		Days:       apiutil.IntQuery(r, "days", 5),
+	}
+	result, err := s.store.ListAStockSectorFundFlowTrend(r.Context(), filter)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
 func normalizeAStockSectorFundFlow(item model.AStockSectorFundFlow, date string, sectorType string, indicator string, sourceType string, now time.Time) model.AStockSectorFundFlow {
 	item.TradeDate = nonEmpty(strings.TrimSpace(item.TradeDate), strings.TrimSpace(date))
 	item.SectorType = normalizeAStockSectorFundFlowSectorType(nonEmpty(strings.TrimSpace(item.SectorType), sectorType))
@@ -932,6 +1021,22 @@ func (s *Service) handleListAStockStockFundFlows(w http.ResponseWriter, r *http.
 		PageSize:   apiutil.IntQuery(r, "page_size", 100),
 	}
 	result, err := s.store.ListAStockStockFundFlows(r.Context(), filter)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleListAStockStockFundFlowTrend(w http.ResponseWriter, r *http.Request) {
+	filter := model.AStockFundFlowTrendFilter{
+		EndDate:   strings.TrimSpace(nonEmpty(r.URL.Query().Get("end_date"), r.URL.Query().Get("date"))),
+		Indicator: strings.TrimSpace(r.URL.Query().Get("indicator")),
+		Code:      strings.TrimSpace(nonEmpty(r.URL.Query().Get("code"), r.URL.Query().Get("codes"))),
+		Keyword:   strings.TrimSpace(nonEmpty(r.URL.Query().Get("keyword"), r.URL.Query().Get("q"))),
+		Days:      apiutil.IntQuery(r, "days", 5),
+	}
+	result, err := s.store.ListAStockStockFundFlowTrend(r.Context(), filter)
 	if err != nil {
 		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
 		return

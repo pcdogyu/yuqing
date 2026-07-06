@@ -1,6 +1,7 @@
 package portal
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -8,16 +9,19 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
+	"github.com/pcdogyu/yuqing/go/internal/astockcode"
 	"github.com/pcdogyu/yuqing/go/internal/model"
 )
 
 const sectorFundFlowPageSize = 200
 const sectorFundFlowStockPageSize = 500
+const sectorFundFlowConstituentTimeout = 1500 * time.Millisecond
 
 type sectorFundFlowStockContext struct {
 	SectorName      string
-	Constituents    []model.AStockCodeName
+	Constituents    []model.AStockSectorConstituent
 	ConstituentWarn string
 	Stocks          model.AStockStockFundFlowListResult
 	Error           string
@@ -28,6 +32,25 @@ type sectorFundFlowConstituentPayload struct {
 	Count      int                    `json:"count"`
 	Warning    string                 `json:"warning"`
 	SourceErrs []string               `json:"source_errors"`
+}
+
+type sectorFundFlowTrendContext struct {
+	Mode        string
+	Title       string
+	Days        int
+	SectorName  string
+	StockCode   string
+	StockName   string
+	SectorTrend model.AStockSectorFundFlowTrendResult
+	StockTrend  model.AStockStockFundFlowTrendResult
+	Error       string
+}
+
+type sectorFundFlowStockSearchContext struct {
+	Keyword string
+	Stocks  model.AStockStockFundFlowListResult
+	Trend   model.AStockStockFundFlowTrendResult
+	Error   string
 }
 
 func (s *Server) handleSectorFundFlowPage(w http.ResponseWriter, r *http.Request, user any) {
@@ -47,6 +70,14 @@ func (s *Server) handleSectorFundFlowPage(w http.ResponseWriter, r *http.Request
 	if err == nil && selectedSector != "" {
 		stockCtx = s.loadSectorFundFlowStocks(ctx, selectedSector)
 	}
+	var trendCtx sectorFundFlowTrendContext
+	if err == nil {
+		trendCtx = s.loadSectorFundFlowTrendContext(r, ctx)
+	}
+	var stockSearchCtx sectorFundFlowStockSearchContext
+	if err == nil && strings.TrimSpace(ctx.Keyword) != "" {
+		stockSearchCtx = s.loadSectorFundFlowStockSearchContext(ctx)
+	}
 
 	var b strings.Builder
 	b.WriteString(`<style>
@@ -60,8 +91,8 @@ body[data-page='sector-fund-flow'] section{width:100%;box-sizing:border-box}
 .sector-toolbar{display:grid;grid-template-columns:minmax(160px,.25fr) minmax(180px,.35fr) 110px;gap:10px;align-items:end;margin-top:10px}.sector-toolbar button{margin:0}
 .sector-date-list{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.sector-date{display:inline-flex;align-items:center;padding:7px 11px;border:1px solid #d6ccbb;border-radius:8px;background:#fff;color:#214e34;text-decoration:none}.sector-date.active{background:#214e34;color:#fff;border-color:#214e34}
 .sector-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}.sector-card{padding:16px;border:1px solid #ece7dc;border-radius:8px;background:#fff}.sector-card strong{display:block;font-size:20px;margin-top:6px}
-.sector-scroll{overflow:auto}.sector-table{min-width:1380px;width:100%;table-layout:fixed}.sector-table th,.sector-table td{vertical-align:middle;white-space:nowrap}.sector-table th{font-weight:700;text-align:left}.sector-table th:nth-child(1),.sector-table td:nth-child(1){width:54px;text-align:center}.sector-table th:nth-child(2),.sector-table td:nth-child(2){width:140px;text-align:left}.sector-table th:nth-child(3),.sector-table td:nth-child(3){width:90px}.sector-table th:nth-child(3),.sector-table th:nth-child(4),.sector-table th:nth-child(5),.sector-table th:nth-child(6),.sector-table th:nth-child(7),.sector-table th:nth-child(8),.sector-table th:nth-child(9),.sector-table th:nth-child(10),.sector-table th:nth-child(11){text-align:right}.sector-table th:nth-child(12),.sector-table td:nth-child(12){width:150px;text-align:left}.sector-table th:nth-child(13),.sector-table td:nth-child(13){width:150px;text-align:left}.sector-num{text-align:right;white-space:nowrap}.sector-positive{color:#d93025;font-weight:700}.sector-negative{color:#087333;font-weight:700}.sector-empty{padding:18px;border:1px dashed #d0c8b8;border-radius:8px;background:#fff;color:#6a6257}
-.sector-name-link{color:#214e34;font-weight:700;text-decoration:none}.sector-name-link:hover{text-decoration:underline}.sector-name-link.active{color:#0b5cab}.sector-detail-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px}.sector-detail-head h3{margin:0}.sector-stock-table{min-width:1460px}.sector-stock-table th:nth-child(2),.sector-stock-table td:nth-child(2){width:90px}.sector-stock-table th:nth-child(3),.sector-stock-table td:nth-child(3){width:120px;text-align:left}.sector-stock-table td.sector-num{text-align:right}.sector-stock-note{margin-top:6px}
+.sector-scroll{overflow:auto}.sector-table{min-width:1440px;width:100%;table-layout:fixed}.sector-table th,.sector-table td{vertical-align:middle;white-space:nowrap}.sector-table th{font-weight:700;text-align:left}.sector-table th:nth-child(1),.sector-table td:nth-child(1){width:54px;text-align:center}.sector-table th:nth-child(2),.sector-table td:nth-child(2){width:140px;text-align:left}.sector-table th:nth-child(3),.sector-table td:nth-child(3){width:70px;text-align:center}.sector-table th:nth-child(4),.sector-table th:nth-child(5),.sector-table th:nth-child(6),.sector-table th:nth-child(7),.sector-table th:nth-child(8),.sector-table th:nth-child(9),.sector-table th:nth-child(10),.sector-table th:nth-child(11),.sector-table th:nth-child(12){text-align:right}.sector-table th:nth-child(13),.sector-table td:nth-child(13){width:150px;text-align:left}.sector-table th:nth-child(14),.sector-table td:nth-child(14){width:150px;text-align:left}.sector-num{text-align:right;white-space:nowrap}.sector-positive{color:#d93025;font-weight:700}.sector-negative{color:#087333;font-weight:700}.sector-empty{padding:18px;border:1px dashed #d0c8b8;border-radius:8px;background:#fff;color:#6a6257}
+.sector-name-link,.sector-trend-link{color:#214e34;font-weight:700;text-decoration:none}.sector-name-link:hover,.sector-trend-link:hover{text-decoration:underline}.sector-name-link.active{color:#0b5cab}.sector-detail-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px}.sector-detail-head h3{margin:0}.sector-stock-table{min-width:1460px}.sector-stock-table th:nth-child(2),.sector-stock-table td:nth-child(2){width:90px}.sector-stock-table th:nth-child(3),.sector-stock-table td:nth-child(3){width:120px;text-align:left}.sector-stock-table td.sector-num{text-align:right}.sector-stock-note{margin-top:6px}.sector-trend-tabs{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0}
 @media (max-width:760px){.sector-toolbar{grid-template-columns:1fr}.sector-head{display:block}}
 </style>`)
 	b.WriteString(`<section><div class="sector-head"><div><h2>版块资金</h2><p class="sector-muted">展示 AKShare 行业/概念版块资金流入流出，支持今日、5日、10日切换。</p></div>`)
@@ -82,7 +113,9 @@ body[data-page='sector-fund-flow'] section{width:100%;box-sizing:border-box}
 	renderSectorFundFlowSummary(&b, ctx)
 	renderSectorFundFlowFilters(&b, ctx)
 	renderSectorFundFlowTable(&b, ctx, selectedSector)
+	renderSectorFundFlowTrend(&b, ctx, trendCtx)
 	renderSectorFundFlowStockTable(&b, ctx, stockCtx)
+	renderSectorFundFlowStockSearch(&b, ctx, stockSearchCtx)
 	_ = s.writeSimplePage(w, "sector-fund-flow", "版块资金", b.String())
 }
 
@@ -128,30 +161,22 @@ func (s *Server) loadSectorFundFlowStocks(ctx model.AStockSectorFundFlowListResu
 	if stockCtx.SectorName == "" {
 		return stockCtx
 	}
-	baseURL := strings.TrimRight(strings.TrimSpace(s.cfg.AStockAuctionURL), "/")
-	if baseURL == "" {
-		stockCtx.Error = "AKShare 成分股服务未配置：请配置 YUQING_ASTOCK_AUCTION_URL。"
-		return stockCtx
-	}
-	query := url.Values{}
-	query.Set("sector_type", normalizeSectorFundFlowSectorType(ctx.SectorType))
-	query.Set("sector_name", stockCtx.SectorName)
-	query.Set("indicator", normalizeSectorFundFlowIndicator(ctx.Indicator))
-	query.Set("limit", fmt.Sprintf("%d", sectorFundFlowStockPageSize))
-	var payload sectorFundFlowConstituentPayload
-	resp, err := s.client.R().SetResult(&payload).Get(baseURL + "/api/a-stock/sector-constituents?" + query.Encode())
+	constituents, warn, err := s.loadSectorFundFlowCachedConstituents(ctx, stockCtx.SectorName)
 	if err != nil {
-		stockCtx.Error = "板块成分股读取失败：" + err.Error()
+		stockCtx.Error = "板块成分股缓存读取失败：" + err.Error()
 		return stockCtx
 	}
-	if !resp.IsSuccess() {
-		stockCtx.Error = "板块成分股读取失败：" + stockResearchSchedulerError(resp.Body(), resp.String())
-		return stockCtx
+	if len(constituents) == 0 {
+		constituents, warn, err = s.refreshSectorFundFlowConstituents(ctx, stockCtx.SectorName)
+		if err != nil {
+			stockCtx.Error = "暂无成分股缓存，实时刷新失败。请稍后重试或先刷新版块资金。"
+			return stockCtx
+		}
 	}
-	stockCtx.Constituents = payload.Items
-	stockCtx.ConstituentWarn = strings.TrimSpace(payload.Warning)
-	codes := make([]string, 0, len(payload.Items))
-	for _, item := range payload.Items {
+	stockCtx.Constituents = constituents
+	stockCtx.ConstituentWarn = strings.TrimSpace(warn)
+	codes := make([]string, 0, len(constituents))
+	for _, item := range constituents {
 		code := strings.TrimSpace(item.Code)
 		if code != "" {
 			codes = append(codes, code)
@@ -179,6 +204,77 @@ func (s *Server) loadSectorFundFlowStocks(ctx model.AStockSectorFundFlowListResu
 	}
 	stockCtx.Stocks = stocks
 	return stockCtx
+}
+
+func (s *Server) loadSectorFundFlowCachedConstituents(ctx model.AStockSectorFundFlowListResult, sectorName string) ([]model.AStockSectorConstituent, string, error) {
+	query := url.Values{}
+	query.Set("sector_type", normalizeSectorFundFlowSectorType(ctx.SectorType))
+	query.Set("sector_name", strings.TrimSpace(sectorName))
+	query.Set("limit", fmt.Sprintf("%d", sectorFundFlowStockPageSize))
+	var result model.AStockSectorConstituentListResult
+	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/a-stock/sector-constituents?"+query.Encode(), &result); err != nil {
+		return nil, "", err
+	}
+	return result.Items, "", nil
+}
+
+func (s *Server) refreshSectorFundFlowConstituents(ctx model.AStockSectorFundFlowListResult, sectorName string) ([]model.AStockSectorConstituent, string, error) {
+	baseURL := strings.TrimRight(strings.TrimSpace(s.cfg.AStockAuctionURL), "/")
+	if baseURL == "" {
+		return nil, "", fmt.Errorf("akshare constituent service not configured")
+	}
+	query := url.Values{}
+	query.Set("sector_type", normalizeSectorFundFlowSectorType(ctx.SectorType))
+	query.Set("sector_name", strings.TrimSpace(sectorName))
+	query.Set("indicator", normalizeSectorFundFlowIndicator(ctx.Indicator))
+	query.Set("limit", fmt.Sprintf("%d", sectorFundFlowStockPageSize))
+	var payload sectorFundFlowConstituentPayload
+	reqCtx, cancel := context.WithTimeout(context.Background(), sectorFundFlowConstituentTimeout)
+	defer cancel()
+	resp, err := s.client.R().SetContext(reqCtx).SetResult(&payload).Get(baseURL + "/api/a-stock/sector-constituents?" + query.Encode())
+	if err != nil {
+		return nil, "", err
+	}
+	if !resp.IsSuccess() {
+		return nil, "", fmt.Errorf("akshare constituent status %s", resp.Status())
+	}
+	constituents := make([]model.AStockSectorConstituent, 0, len(payload.Items))
+	for _, item := range payload.Items {
+		code := astockcode.Normalize(item.Code)
+		name := astockcode.DisplayName(code, item.Name)
+		if !astockcode.IsShanghaiShenzhen(code) || !astockcode.HasResolvedName(code, name) {
+			continue
+		}
+		constituents = append(constituents, model.AStockSectorConstituent{
+			SectorType: normalizeSectorFundFlowSectorType(ctx.SectorType),
+			SectorName: strings.TrimSpace(sectorName),
+			Code:       code,
+			Name:       name,
+			Source:     strings.TrimSpace(item.Source),
+			FetchedAt:  time.Now().UTC(),
+		})
+	}
+	if len(constituents) == 0 {
+		return nil, strings.TrimSpace(payload.Warning), fmt.Errorf("akshare constituent rows empty")
+	}
+	s.saveSectorFundFlowConstituents(ctx, sectorName, constituents)
+	return constituents, strings.TrimSpace(payload.Warning), nil
+}
+
+func (s *Server) saveSectorFundFlowConstituents(ctx model.AStockSectorFundFlowListResult, sectorName string, items []model.AStockSectorConstituent) {
+	if len(items) == 0 {
+		return
+	}
+	body := map[string]any{
+		"sector_type": normalizeSectorFundFlowSectorType(ctx.SectorType),
+		"sector_name": strings.TrimSpace(sectorName),
+		"items":       items,
+		"replace":     true,
+	}
+	_, _ = s.client.R().
+		SetHeader("X-Service-Token", s.cfg.ServiceToken).
+		SetBody(body).
+		Post(s.cfg.ContentURL + "/api/v1/internal/a-stock/sector-constituents")
 }
 
 func sectorFundFlowQuery(filter model.AStockSectorFundFlowFilter) url.Values {
@@ -300,7 +396,7 @@ func renderSectorFundFlowTable(b *strings.Builder, ctx model.AStockSectorFundFlo
 		b.WriteString(`<div class="sector-empty">暂无版块资金数据，请点击“刷新版块资金”，或等待交易时段自动抓取。</div></div></section>`)
 		return
 	}
-	b.WriteString(`<table class="sector-table"><tr><th>排名</th><th>版块名称</th><th>涨跌幅</th><th>主力净流入</th><th>主力净占比</th><th>超大单</th><th>大单</th><th>中单</th><th>小单</th><th>超大单占比</th><th>大单占比</th><th>主力净流入最大股</th><th>更新时间</th></tr>`)
+	b.WriteString(`<table class="sector-table"><tr><th>排名</th><th>版块名称</th><th>趋势</th><th>涨跌幅</th><th>主力净流入</th><th>主力净占比</th><th>超大单</th><th>大单</th><th>中单</th><th>小单</th><th>超大单占比</th><th>大单占比</th><th>主力净流入最大股</th><th>更新时间</th></tr>`)
 	for _, item := range ctx.Items {
 		b.WriteString(`<tr><td>`)
 		b.WriteString(fmt.Sprintf("%d", item.Rank))
@@ -319,6 +415,13 @@ func renderSectorFundFlowTable(b *strings.Builder, ctx model.AStockSectorFundFlo
 		b.WriteString(`">`)
 		b.WriteString(html.EscapeString(item.Name))
 		b.WriteString(`</a>`)
+		trendQuery := sectorFundFlowQuery(linkFilter)
+		trendQuery.Set("trend", "sector")
+		trendQuery.Set("sector_name", item.Name)
+		trendQuery.Set("trend_days", "5")
+		b.WriteString(`</td><td><a class="sector-trend-link" href="/sector-fund-flow?`)
+		b.WriteString(html.EscapeString(trendQuery.Encode()))
+		b.WriteString(`">趋势</a>`)
 		b.WriteString(`</td><td class="sector-num `)
 		b.WriteString(sectorFundFlowValueClass(item.ChangePct))
 		b.WriteString(`">`)
@@ -339,6 +442,218 @@ func renderSectorFundFlowTable(b *strings.Builder, ctx model.AStockSectorFundFlo
 		b.WriteString(`</td></tr>`)
 	}
 	b.WriteString(`</table></div></section>`)
+}
+
+func (s *Server) loadSectorFundFlowTrendContext(r *http.Request, ctx model.AStockSectorFundFlowListResult) sectorFundFlowTrendContext {
+	mode := strings.TrimSpace(r.URL.Query().Get("trend"))
+	days := normalizeSectorFundFlowTrendDays(r.URL.Query().Get("trend_days"))
+	trendCtx := sectorFundFlowTrendContext{Mode: mode, Days: days}
+	switch mode {
+	case "sector":
+		sectorName := strings.TrimSpace(nonEmpty(r.URL.Query().Get("sector_name"), r.URL.Query().Get("sector")))
+		if sectorName == "" {
+			return trendCtx
+		}
+		query := url.Values{}
+		query.Set("end_date", ctx.Date)
+		query.Set("sector_type", normalizeSectorFundFlowSectorType(ctx.SectorType))
+		query.Set("sector_name", sectorName)
+		query.Set("indicator", "今日")
+		query.Set("days", fmt.Sprintf("%d", days))
+		var result model.AStockSectorFundFlowTrendResult
+		if err := s.getJSON(s.cfg.ContentURL+"/api/v1/a-stock/sector-fund-flow-trend?"+query.Encode(), &result); err != nil {
+			trendCtx.Error = "版块趋势读取失败：" + err.Error()
+			return trendCtx
+		}
+		trendCtx.SectorName = sectorName
+		trendCtx.Title = sectorName + " 版块主力资金趋势"
+		trendCtx.SectorTrend = result
+	case "stock":
+		code := astockcode.Normalize(r.URL.Query().Get("code"))
+		keyword := strings.TrimSpace(r.URL.Query().Get("keyword"))
+		if code == "" && keyword == "" {
+			return trendCtx
+		}
+		query := url.Values{}
+		query.Set("end_date", ctx.Date)
+		query.Set("indicator", "今日")
+		query.Set("days", fmt.Sprintf("%d", days))
+		if code != "" {
+			query.Set("code", code)
+		} else {
+			query.Set("keyword", keyword)
+		}
+		var result model.AStockStockFundFlowTrendResult
+		if err := s.getJSON(s.cfg.ContentURL+"/api/v1/a-stock/stock-fund-flow-trend?"+query.Encode(), &result); err != nil {
+			trendCtx.Error = "个股趋势读取失败：" + err.Error()
+			return trendCtx
+		}
+		trendCtx.StockCode = result.Code
+		trendCtx.StockName = firstStockFundFlowName(result.Items)
+		trendCtx.Title = strings.TrimSpace(result.Code + " " + firstStockFundFlowName(result.Items) + " 个股主力资金趋势")
+		if trendCtx.Title == "" {
+			trendCtx.Title = nonEmpty(keyword, code) + " 个股主力资金趋势"
+		}
+		trendCtx.StockTrend = result
+	}
+	return trendCtx
+}
+
+func (s *Server) loadSectorFundFlowStockSearchContext(ctx model.AStockSectorFundFlowListResult) sectorFundFlowStockSearchContext {
+	stockCtx := sectorFundFlowStockSearchContext{Keyword: strings.TrimSpace(ctx.Keyword)}
+	if stockCtx.Keyword == "" {
+		return stockCtx
+	}
+	query := url.Values{}
+	query.Set("date", ctx.Date)
+	query.Set("indicator", normalizeSectorFundFlowIndicator(ctx.Indicator))
+	query.Set("keyword", stockCtx.Keyword)
+	query.Set("page", "1")
+	query.Set("page_size", "50")
+	var stocks model.AStockStockFundFlowListResult
+	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/a-stock/stock-fund-flows?"+query.Encode(), &stocks); err != nil {
+		stockCtx.Error = "个股资金流读取失败：" + err.Error()
+		return stockCtx
+	}
+	stockCtx.Stocks = stocks
+	if len(stocks.Items) > 0 {
+		trendQuery := url.Values{}
+		trendQuery.Set("end_date", ctx.Date)
+		trendQuery.Set("indicator", "今日")
+		trendQuery.Set("code", stocks.Items[0].Code)
+		trendQuery.Set("days", "5")
+		var trend model.AStockStockFundFlowTrendResult
+		if err := s.getJSON(s.cfg.ContentURL+"/api/v1/a-stock/stock-fund-flow-trend?"+trendQuery.Encode(), &trend); err == nil {
+			stockCtx.Trend = trend
+		}
+	}
+	return stockCtx
+}
+
+func renderSectorFundFlowTrend(b *strings.Builder, ctx model.AStockSectorFundFlowListResult, trendCtx sectorFundFlowTrendContext) {
+	if trendCtx.Mode == "" {
+		return
+	}
+	title := nonEmptyText(trendCtx.Title, "主力资金趋势")
+	b.WriteString(`<section><div class="sector-detail-head"><div><h3>`)
+	b.WriteString(html.EscapeString(title))
+	b.WriteString(`</h3><p class="sector-muted sector-stock-note">按最近已落库交易日的“今日”资金流展示。</p></div>`)
+	backQuery := sectorFundFlowQuery(model.AStockSectorFundFlowFilter{Date: ctx.Date, SectorType: ctx.SectorType, Indicator: ctx.Indicator, Keyword: ctx.Keyword})
+	b.WriteString(`<a class="sector-tab" href="/sector-fund-flow?`)
+	b.WriteString(html.EscapeString(backQuery.Encode()))
+	b.WriteString(`">关闭趋势</a></div>`)
+	renderSectorFundFlowTrendTabs(b, ctx, trendCtx)
+	if trendCtx.Error != "" {
+		b.WriteString(`<div class="sector-empty">`)
+		b.WriteString(html.EscapeString(trendCtx.Error))
+		b.WriteString(`</div></section>`)
+		return
+	}
+	if trendCtx.Mode == "sector" {
+		renderSectorFundFlowSectorTrendTable(b, trendCtx)
+	} else {
+		renderSectorFundFlowStockTrendTable(b, trendCtx)
+	}
+	b.WriteString(`</section>`)
+}
+
+func renderSectorFundFlowTrendTabs(b *strings.Builder, ctx model.AStockSectorFundFlowListResult, trendCtx sectorFundFlowTrendContext) {
+	b.WriteString(`<div class="sector-trend-tabs">`)
+	for _, days := range []int{5, 10, 30} {
+		query := sectorFundFlowQuery(model.AStockSectorFundFlowFilter{Date: ctx.Date, SectorType: ctx.SectorType, Indicator: ctx.Indicator, Keyword: ctx.Keyword})
+		query.Set("trend", trendCtx.Mode)
+		query.Set("trend_days", fmt.Sprintf("%d", days))
+		if trendCtx.Mode == "sector" {
+			query.Set("sector_name", trendCtx.SectorName)
+		} else if trendCtx.StockCode != "" {
+			query.Set("code", trendCtx.StockCode)
+		} else {
+			query.Set("keyword", ctx.Keyword)
+		}
+		className := "sector-tab"
+		if days == trendCtx.Days {
+			className += " active"
+		}
+		b.WriteString(`<a class="`)
+		b.WriteString(className)
+		b.WriteString(`" href="/sector-fund-flow?`)
+		b.WriteString(html.EscapeString(query.Encode()))
+		b.WriteString(`">`)
+		b.WriteString(fmt.Sprintf("%d日", days))
+		b.WriteString(`</a>`)
+	}
+	b.WriteString(`</div>`)
+}
+
+func renderSectorFundFlowSectorTrendTable(b *strings.Builder, trendCtx sectorFundFlowTrendContext) {
+	items := trendCtx.SectorTrend.Items
+	if len(items) == 0 {
+		b.WriteString(`<div class="sector-empty">暂无版块趋势数据。</div>`)
+		return
+	}
+	if len(items) < trendCtx.Days {
+		b.WriteString(`<div class="sector-empty">当前仅有 `)
+		b.WriteString(fmt.Sprintf("%d", len(items)))
+		b.WriteString(` 个交易日数据。</div>`)
+	}
+	b.WriteString(`<div class="sector-scroll"><table class="sector-table"><tr><th>日期</th><th>排名</th><th>版块名称</th><th>涨跌幅</th><th>主力净流入</th><th>主力净占比</th><th>超大单</th><th>大单</th><th>中单</th><th>小单</th><th>更新时间</th></tr>`)
+	for _, item := range items {
+		b.WriteString(`<tr><td>`)
+		b.WriteString(html.EscapeString(item.TradeDate))
+		b.WriteString(`</td><td>`)
+		b.WriteString(fmt.Sprintf("%d", item.Rank))
+		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(item.Name))
+		b.WriteString(`</td>`)
+		writeSectorFundFlowPctCell(b, item.ChangePct)
+		writeSectorFundFlowMoneyCell(b, item.MainNetInflow)
+		writeSectorFundFlowPctCell(b, item.MainNetInflowPct)
+		writeSectorFundFlowMoneyCell(b, item.SuperLargeNetInflow)
+		writeSectorFundFlowMoneyCell(b, item.LargeNetInflow)
+		writeSectorFundFlowMoneyCell(b, item.MediumNetInflow)
+		writeSectorFundFlowMoneyCell(b, item.SmallNetInflow)
+		b.WriteString(`<td>`)
+		b.WriteString(html.EscapeString(item.FetchedAt.In(aStockLocation()).Format("2006-01-02 15:04:05")))
+		b.WriteString(`</td></tr>`)
+	}
+	b.WriteString(`</table></div>`)
+}
+
+func renderSectorFundFlowStockTrendTable(b *strings.Builder, trendCtx sectorFundFlowTrendContext) {
+	items := trendCtx.StockTrend.Items
+	if len(items) == 0 {
+		b.WriteString(`<div class="sector-empty">暂无个股趋势数据。</div>`)
+		return
+	}
+	if len(items) < trendCtx.Days {
+		b.WriteString(`<div class="sector-empty">当前仅有 `)
+		b.WriteString(fmt.Sprintf("%d", len(items)))
+		b.WriteString(` 个交易日数据。</div>`)
+	}
+	b.WriteString(`<div class="sector-scroll"><table class="sector-table sector-stock-table"><tr><th>日期</th><th>排名</th><th>代码</th><th>名称</th><th>最新价</th><th>涨跌幅</th><th>主力净流入</th><th>主力净占比</th><th>超大单</th><th>大单</th><th>中单</th><th>小单</th><th>更新时间</th></tr>`)
+	for _, item := range items {
+		b.WriteString(`<tr><td>`)
+		b.WriteString(html.EscapeString(item.TradeDate))
+		b.WriteString(`</td><td>`)
+		b.WriteString(fmt.Sprintf("%d", item.Rank))
+		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(item.Code))
+		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(item.Name))
+		b.WriteString(`</td>`)
+		writeSectorFundFlowNumberCell(b, item.Price, "%.2f")
+		writeSectorFundFlowPctCell(b, item.ChangePct)
+		writeSectorFundFlowMoneyCell(b, item.MainNetInflow)
+		writeSectorFundFlowPctCell(b, item.MainNetInflowPct)
+		writeSectorFundFlowMoneyCell(b, item.SuperLargeNetInflow)
+		writeSectorFundFlowMoneyCell(b, item.LargeNetInflow)
+		writeSectorFundFlowMoneyCell(b, item.MediumNetInflow)
+		writeSectorFundFlowMoneyCell(b, item.SmallNetInflow)
+		b.WriteString(`<td>`)
+		b.WriteString(html.EscapeString(item.FetchedAt.In(aStockLocation()).Format("2006-01-02 15:04:05")))
+		b.WriteString(`</td></tr>`)
+	}
+	b.WriteString(`</table></div>`)
 }
 
 func renderSectorFundFlowStockTable(b *strings.Builder, ctx model.AStockSectorFundFlowListResult, stockCtx sectorFundFlowStockContext) {
@@ -393,6 +708,95 @@ func renderSectorFundFlowStockTable(b *strings.Builder, ctx model.AStockSectorFu
 		b.WriteString(`</td></tr>`)
 	}
 	b.WriteString(`</table></div></section>`)
+}
+
+func renderSectorFundFlowStockSearch(b *strings.Builder, ctx model.AStockSectorFundFlowListResult, stockCtx sectorFundFlowStockSearchContext) {
+	if strings.TrimSpace(stockCtx.Keyword) == "" {
+		return
+	}
+	if stockCtx.Error != "" {
+		b.WriteString(`<section><h3>个股资金流搜索</h3><div class="sector-empty">`)
+		b.WriteString(html.EscapeString(stockCtx.Error))
+		b.WriteString(`</div></section>`)
+		return
+	}
+	if len(stockCtx.Stocks.Items) == 0 {
+		return
+	}
+	b.WriteString(`<section><div class="sector-detail-head"><div><h3>个股资金流搜索</h3><p class="sector-muted sector-stock-note">`)
+	b.WriteString(html.EscapeString(fmt.Sprintf("关键词 %s，命中 %d 只。", stockCtx.Keyword, stockCtx.Stocks.Total)))
+	b.WriteString(`</p></div></div><div class="sector-scroll">`)
+	b.WriteString(`<table class="sector-table sector-stock-table"><tr><th>排名</th><th>代码</th><th>名称</th><th>趋势</th><th>最新价</th><th>涨跌幅</th><th>主力净流入</th><th>主力净占比</th><th>超大单</th><th>大单</th><th>中单</th><th>小单</th><th>更新时间</th></tr>`)
+	for _, item := range stockCtx.Stocks.Items {
+		trendQuery := sectorFundFlowQuery(model.AStockSectorFundFlowFilter{Date: ctx.Date, SectorType: ctx.SectorType, Indicator: ctx.Indicator, Keyword: ctx.Keyword})
+		trendQuery.Set("trend", "stock")
+		trendQuery.Set("code", item.Code)
+		trendQuery.Set("trend_days", "5")
+		b.WriteString(`<tr><td>`)
+		b.WriteString(fmt.Sprintf("%d", item.Rank))
+		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(item.Code))
+		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(nonEmptyText(item.Name, "--")))
+		b.WriteString(`</td><td><a class="sector-trend-link" href="/sector-fund-flow?`)
+		b.WriteString(html.EscapeString(trendQuery.Encode()))
+		b.WriteString(`">趋势</a></td>`)
+		writeSectorFundFlowNumberCell(b, item.Price, "%.2f")
+		writeSectorFundFlowPctCell(b, item.ChangePct)
+		writeSectorFundFlowMoneyCell(b, item.MainNetInflow)
+		writeSectorFundFlowPctCell(b, item.MainNetInflowPct)
+		writeSectorFundFlowMoneyCell(b, item.SuperLargeNetInflow)
+		writeSectorFundFlowMoneyCell(b, item.LargeNetInflow)
+		writeSectorFundFlowMoneyCell(b, item.MediumNetInflow)
+		writeSectorFundFlowMoneyCell(b, item.SmallNetInflow)
+		b.WriteString(`<td>`)
+		b.WriteString(html.EscapeString(item.FetchedAt.In(aStockLocation()).Format("2006-01-02 15:04:05")))
+		b.WriteString(`</td></tr>`)
+	}
+	b.WriteString(`</table></div>`)
+	if len(stockCtx.Trend.Items) > 0 {
+		nestedTrend := sectorFundFlowTrendContext{
+			Mode:       "stock",
+			Title:      firstStockFundFlowTitle(stockCtx.Trend.Items),
+			Days:       5,
+			StockCode:  stockCtx.Trend.Code,
+			StockName:  firstStockFundFlowName(stockCtx.Trend.Items),
+			StockTrend: stockCtx.Trend,
+		}
+		b.WriteString(`<h3>`)
+		b.WriteString(html.EscapeString(firstStockFundFlowTitle(stockCtx.Trend.Items)))
+		b.WriteString(`</h3>`)
+		renderSectorFundFlowStockTrendTable(b, nestedTrend)
+	}
+	b.WriteString(`</section>`)
+}
+
+func firstStockFundFlowName(items []model.AStockStockFundFlow) string {
+	for _, item := range items {
+		if strings.TrimSpace(item.Name) != "" {
+			return strings.TrimSpace(item.Name)
+		}
+	}
+	return ""
+}
+
+func firstStockFundFlowTitle(items []model.AStockStockFundFlow) string {
+	if len(items) == 0 {
+		return "个股主力资金趋势"
+	}
+	title := strings.TrimSpace(items[0].Code + " " + items[0].Name)
+	return nonEmptyText(title, "个股主力资金趋势")
+}
+
+func normalizeSectorFundFlowTrendDays(value string) int {
+	switch strings.TrimSpace(value) {
+	case "10":
+		return 10
+	case "30":
+		return 30
+	default:
+		return 5
+	}
 }
 
 func writeSectorFundFlowMoneyCell(b *strings.Builder, value float64) {
