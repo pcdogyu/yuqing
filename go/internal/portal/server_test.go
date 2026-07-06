@@ -1352,6 +1352,114 @@ func TestAStockBacktestPageRendersStandaloneBacktestAndNavigation(t *testing.T) 
 	}
 }
 
+func TestAStockBacktestPageGetUsesSnapshotOnly(t *testing.T) {
+	morningSnapshot := model.AStockRecommendationSnapshot{
+		Found:               true,
+		StrategyDate:        "2026-06-30",
+		Period:              "morning",
+		RecommendationsJSON: mustAStockTestJSON(t, []aStockRecommendation{{Rank: 1, Hotspot: "快照热点", Code: "603986", Name: "兆易创新", Reason: "snapshot morning"}}),
+		BacktestsJSON:       mustAStockTestJSON(t, []aStockBacktestRow{{Stock: "603986 兆易创新", EntryOpen: "721.00", T0Return: "-3.63%", T0Close: "694.80", T0ReturnClass: "astock-down", BestReturn: "-3.63%", BestReturnClass: "astock-down", Status: "已回测T+1"}}),
+		BacktestStatus:      "已读取上午快照",
+		GeneratedCount:      1,
+	}
+	afternoonSnapshot := model.AStockRecommendationSnapshot{
+		Found:                true,
+		StrategyDate:         "2026-06-30",
+		Period:               "afternoon",
+		RecommendationsJSON:  mustAStockTestJSON(t, []aStockRecommendation{{Rank: 1, Hotspot: "快照热点", Code: "600519", Name: "贵州茅台", Reason: "snapshot afternoon"}}),
+		BacktestsJSON:        mustAStockTestJSON(t, []aStockBacktestRow{{Stock: "600519 贵州茅台", AfternoonOpen: "1418.00", T0Return: "+1.25%", T0Close: "1435.73", T0ReturnClass: "astock-up", BestReturn: "+1.25%", BestReturnClass: "astock-up", Status: "已回测T+1"}}),
+		BacktestStatus:       "已读取下午快照",
+		GeneratedCount:       1,
+		LimitUpFilterEnabled: true,
+	}
+	var mu sync.Mutex
+	requests := []string{}
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requests = append(requests, r.URL.String())
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/a-stock/recommendations" {
+			http.Error(w, "unexpected endpoint", http.StatusInternalServerError)
+			return
+		}
+		if got := r.URL.Query().Get("date"); got != "2026-06-30" {
+			http.Error(w, "unexpected date", http.StatusBadRequest)
+			return
+		}
+		switch r.URL.Query().Get("period") {
+		case "morning":
+			writeEnvelope(w, http.StatusOK, "ok", morningSnapshot)
+		case "afternoon":
+			writeEnvelope(w, http.StatusOK, "ok", afternoonSnapshot)
+		default:
+			http.Error(w, "unexpected period", http.StatusBadRequest)
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	req := httptest.NewRequest(http.MethodGet, "/a-stock/backtest?date=2026-06-30&period=morning&refresh_recommendations=1&refresh_all_backtests=1", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAStockBacktestPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"消息回测", "上午推荐", "下午推荐", "603986 兆易创新", "600519 贵州茅台", "721.00", "1418.00"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected snapshot-only backtest page to contain %q, got %s", want, body)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(requests) != 2 {
+		t.Fatalf("expected only morning and afternoon snapshot requests, got %d: %v", len(requests), requests)
+	}
+	periodHits := map[string]int{}
+	for _, raw := range requests {
+		u, err := url.Parse(raw)
+		if err != nil {
+			t.Fatalf("parse request URL %q: %v", raw, err)
+		}
+		if u.Path != "/api/v1/a-stock/recommendations" {
+			t.Fatalf("expected snapshot-only endpoint, got %q in %v", u.Path, requests)
+		}
+		periodHits[u.Query().Get("period")]++
+	}
+	if periodHits["morning"] != 1 || periodHits["afternoon"] != 1 {
+		t.Fatalf("expected one morning and one afternoon snapshot request, got %v from %v", periodHits, requests)
+	}
+}
+
+func TestAStockBacktestSnapshotMissingDoesNotFallback(t *testing.T) {
+	requests := 0
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/a-stock/recommendations" {
+			http.Error(w, "unexpected endpoint", http.StatusInternalServerError)
+			return
+		}
+		writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	ctx := srv.loadAStockBacktestSnapshotContextWithCache("2026-06-30", "afternoon", 1, false, false, false, newAStockRequestCache())
+
+	if ctx.BacktestStatus != "无推荐快照" || !strings.Contains(ctx.EmptyReason, "下午推荐暂无历史快照") {
+		t.Fatalf("expected missing snapshot empty state, got status=%q reason=%q", ctx.BacktestStatus, ctx.EmptyReason)
+	}
+	if len(ctx.Recommendations) != 0 || len(ctx.Backtests) != 0 {
+		t.Fatalf("expected missing snapshot to stay empty, got recommendations=%+v backtests=%+v", ctx.Recommendations, ctx.Backtests)
+	}
+	if requests != 1 {
+		t.Fatalf("expected only one snapshot request, got %d", requests)
+	}
+}
+
 func TestAStockBacktestPagePostRedirectsBackToBacktest(t *testing.T) {
 	srv := NewServer(config.Config{})
 	form := url.Values{"date": {"2026-06-16"}, "period": {"afternoon"}, "action": {"refresh_backtest"}}

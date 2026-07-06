@@ -562,20 +562,15 @@ func (s *Server) handleAStockBacktestPage(w http.ResponseWriter, r *http.Request
 	ignoreRecent := normalizeAStockIgnoreRecent(r.URL.Query())
 	ignoreLimitUp := normalizeAStockIgnoreLimitUp(r.URL.Query())
 	filterTodayMarket := normalizeAStockFilterTodayMarket(r.URL.Query())
-	forceRecommendationRefresh := normalizeAStockBool(r.URL.Query().Get("refresh_recommendations"))
-	refreshAllBacktests := normalizeAStockBool(r.URL.Query().Get("refresh_all_backtests"))
-	if refreshAllBacktests {
-		forceRecommendationRefresh = true
-	}
 	requestCache := newAStockRequestCache()
-	ctx := s.loadAStockContextReadOnlyWithCache(strategyDate, period.Key, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, requestCache)
+	ctx := s.loadAStockBacktestSnapshotContextWithCache(strategyDate, period.Key, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, requestCache)
 	morningCtx := ctx
 	if ctx.Period != "morning" {
-		morningCtx = s.loadAStockCompanionContextReadOnlyWithCache(strategyDate, "morning", 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, requestCache)
+		morningCtx = s.loadAStockBacktestSnapshotContextWithCache(strategyDate, "morning", 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, requestCache)
 	}
 	afternoonCtx := ctx
 	if ctx.Period != "afternoon" {
-		afternoonCtx = s.loadAStockCompanionContextReadOnlyWithCache(strategyDate, "afternoon", 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, requestCache)
+		afternoonCtx = s.loadAStockBacktestSnapshotContextWithCache(strategyDate, "afternoon", 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, requestCache)
 	}
 	message := strings.TrimSpace(r.URL.Query().Get("msg"))
 	if message == "" {
@@ -1775,6 +1770,84 @@ func (s *Server) loadAStockReadOnlySnapshotContextWithCache(strategyDate string,
 		return ctx, true
 	}
 	return ctx, false
+}
+
+func (s *Server) loadAStockBacktestSnapshotContextWithCache(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, cache *aStockRequestCache) aStockContext {
+	ctx := newAStockBaseContext(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, aStockRecommendationPhaseFinal)
+	if s.applyAStockBacktestSnapshotOnlyWithCache(&ctx, cache) {
+		return ctx
+	}
+	ctx.BacktestStatus = "无推荐快照"
+	ctx.EmptyReason = fmt.Sprintf("暂无推荐股票：%s暂无历史快照。", ctx.PeriodLabel)
+	return ctx
+}
+
+func (s *Server) applyAStockBacktestSnapshotOnlyWithCache(ctx *aStockContext, cache *aStockRequestCache) bool {
+	if ctx == nil || strings.TrimSpace(s.cfg.ContentURL) == "" {
+		return false
+	}
+	snapshot, ok := s.loadAStockRecommendationSnapshotWithCache(ctx.Date, ctx.Period, ctx.IgnoreRecent, cache)
+	if !ok {
+		return false
+	}
+	if ctx.Period == "afternoon" && snapshot.LimitUpFilterEnabled != ctx.LimitUpFilterEnabled {
+		return false
+	}
+	if snapshot.TodayMarketFilterEnabled != ctx.TodayMarketFilterEnabled {
+		return false
+	}
+	if !ctx.TodayMarketFilterEnabled && strings.Contains(snapshot.BacktestStatus, "过滤无当日行情") {
+		return false
+	}
+	recommendationsJSON := nonEmpty(snapshot.RecommendationsJSON, "[]")
+	backtestsJSON := nonEmpty(snapshot.BacktestsJSON, "[]")
+	var recommendations []aStockRecommendation
+	if err := json.Unmarshal([]byte(recommendationsJSON), &recommendations); err != nil {
+		return false
+	}
+	var backtests []aStockBacktestRow
+	if err := json.Unmarshal([]byte(backtestsJSON), &backtests); err != nil {
+		return false
+	}
+	if strings.TrimSpace(recommendationsJSON) == "[]" && strings.TrimSpace(backtestsJSON) == "[]" && len(recommendations) == 0 && len(backtests) == 0 {
+		ctx.Recommendations = nil
+		ctx.Backtests = nil
+		ctx.BacktestStatus = nonEmpty(snapshot.BacktestStatus, "无推荐股票")
+		applyAStockSnapshotMetadata(ctx, snapshot)
+		ctx.EmptyReason = nonEmpty(snapshot.EmptyReason, aStockRecommendationEmptyReason(*ctx))
+		return true
+	}
+	if len(recommendations) == 0 {
+		return false
+	}
+	ctx.Recommendations = rerankAStockRecommendations(recommendations)
+	ctx.Backtests = filterAStockBacktestsForSnapshotRecommendations(backtests, ctx.Recommendations)
+	ctx.BacktestStatus = nonEmpty(snapshot.BacktestStatus, "已读取推荐快照")
+	applyAStockSnapshotMetadata(ctx, snapshot)
+	ctx.EmptyReason = snapshot.EmptyReason
+	if ctx.EmptyReason == "" {
+		ctx.EmptyReason = aStockRecommendationEmptyReason(*ctx)
+	}
+	return true
+}
+
+func applyAStockSnapshotMetadata(ctx *aStockContext, snapshot model.AStockRecommendationSnapshot) {
+	if ctx == nil {
+		return
+	}
+	ctx.GeneratedRecommendationCount = snapshot.GeneratedCount
+	ctx.RecentFiltered = snapshot.RecentFiltered
+	ctx.SameDayMorningFiltered = snapshot.SameDayMorningFiltered
+	ctx.LimitUpFilterEnabled = snapshot.LimitUpFilterEnabled
+	ctx.LimitUpFiltered = snapshot.LimitUpFiltered
+	ctx.TodayMarketFilterEnabled = snapshot.TodayMarketFilterEnabled
+	ctx.NoTodayMarketCount = snapshot.NoTodayMarketCount
+	ctx.MarketCandidateStatus = snapshot.MarketCandidateStatus
+	ctx.MarketCandidateCount = snapshot.MarketCandidateCount
+	if auctionLabel := normalizeAStockAuctionSummaryLabel(snapshot.AuctionAmountLabel); auctionLabel != "" {
+		ctx.AuctionAmountLabel = auctionLabel
+	}
+	ctx.SnapshotUpdatedAt = snapshot.UpdatedAt
 }
 
 func (s *Server) loadAStockContextWithRecommendationPhase(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, recommendationPhase string, cache *aStockRequestCache) aStockContext {
@@ -7000,6 +7073,29 @@ func filterBlockedAStockBacktests(rows []aStockBacktestRow) []aStockBacktestRow 
 			continue
 		}
 		filtered = append(filtered, row)
+	}
+	return filtered
+}
+
+func filterAStockBacktestsForSnapshotRecommendations(rows []aStockBacktestRow, recommendations []aStockRecommendation) []aStockBacktestRow {
+	if len(rows) == 0 {
+		return rows
+	}
+	if len(recommendations) == 0 {
+		return []aStockBacktestRow{}
+	}
+	codes := make(map[string]struct{}, len(recommendations))
+	for _, rec := range recommendations {
+		code := normalizeAStockCode(rec.Code)
+		if astockcode.IsShanghaiShenzhen(code) {
+			codes[code] = struct{}{}
+		}
+	}
+	filtered := make([]aStockBacktestRow, 0, len(rows))
+	for _, row := range rows {
+		if _, ok := codes[aStockBacktestRowCode(row)]; ok {
+			filtered = append(filtered, row)
+		}
 	}
 	return filtered
 }
