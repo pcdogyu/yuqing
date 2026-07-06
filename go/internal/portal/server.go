@@ -4915,7 +4915,7 @@ function upgradeLog(data){data=data||{};return data.log||upgradeMessage(data)||"
 function parseJSON(resp){return resp.json().catch(function(){return {ok:false,message:"升级接口返回非 JSON"}}).then(function(data){data=data||{};data.__httpOK=resp.ok;data.__httpStatus=resp.status;data.__httpStatusText=resp.statusText||"";return data})}
 function renderUpgrade(data){
 data=data||{};
-if(data.running||data.status==="running"){var runningMessage=upgradeMessage(data)||"升级执行中";status.textContent=runningMessage;setConsoleMeta("运行中","最后刷新 "+now());button.disabled=true;setLog(data.log||runningMessage,true);schedulePoll();return}
+if(data.running||data.status==="running"||data.status==="restarting"){var runningMessage=upgradeMessage(data)||"升级执行中";status.textContent=runningMessage;setConsoleMeta(data.status==="restarting"?"重启中":"运行中","最后刷新 "+now());button.disabled=true;setLog(data.log||runningMessage,true);schedulePoll();return}
 stopPoll();
 button.disabled=false;
 var idle=data.status==="idle";

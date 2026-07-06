@@ -111,6 +111,57 @@ func TestPortalUpgradeCommandEnvLeavesGitCacheUntouched(t *testing.T) {
 	}
 }
 
+func TestPortalUpgradeStatusPersistsAndLoads(t *testing.T) {
+	statusPath := filepath.Join(t.TempDir(), "portal-upgrade-status.json")
+	t.Setenv(portalUpgradeStatusFileEnv, statusPath)
+	startedAt := time.Date(2026, 7, 6, 17, 50, 0, 0, time.UTC)
+	finishedAt := startedAt.Add(time.Minute)
+	result := portalUpgradeResult{
+		OK:         true,
+		Status:     "success",
+		Message:    "升级已生效版本: abc12345",
+		Log:        "restart ok",
+		StartedAt:  startedAt,
+		FinishedAt: finishedAt,
+	}
+
+	persistPortalUpgradeStatus(result)
+
+	loaded, ok := loadPortalUpgradeStatus()
+	if !ok {
+		t.Fatal("expected persisted upgrade status to load")
+	}
+	if loaded.Status != "success" || loaded.Message != result.Message || loaded.Log != "restart ok" || !loaded.FinishedAt.Equal(finishedAt) {
+		t.Fatalf("unexpected loaded upgrade status: %+v", loaded)
+	}
+}
+
+func TestSchedulePortalUpgradeServiceRestartCanBeDisabledForTests(t *testing.T) {
+	t.Setenv(portalUpgradeRestartDisabledEnv, "true")
+	var log bytes.Buffer
+
+	if err := schedulePortalUpgradeServiceRestart(t.TempDir(), t.TempDir(), time.Now(), &log); err != nil {
+		t.Fatalf("expected disabled restart scheduling to succeed, got %v", err)
+	}
+	if !strings.Contains(log.String(), "已跳过服务重启调度") {
+		t.Fatalf("expected disabled restart to be logged, got %s", log.String())
+	}
+}
+
+func TestPortalUpgradeRestartScriptRunsRunBatAndWritesEffectiveVersion(t *testing.T) {
+	script := portalUpgradeRestartScript(`C:\yuqing\go`, `C:\yuqing`, `C:\yuqing\go\run.bat`, `C:\yuqing\go\runtime-logs\portal-upgrade-status.json`, `C:\yuqing\go\runtime-logs\portal-upgrade-restart.log`, time.Date(2026, 7, 6, 17, 50, 0, 0, time.UTC))
+
+	for _, want := range []string{
+		`& $RunBat --skip-pull`,
+		`Write-UpgradeStatus 'restarting' '正在重启服务，页面会自动重新连接...' $true $true`,
+		`Write-UpgradeStatus 'success' ('升级已生效版本: ' + $commit) $true $false`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("expected restart script to include %q, got %s", want, script)
+		}
+	}
+}
+
 func TestRunPortalUpgradeCommandWithProgressPublishesHeartbeat(t *testing.T) {
 	t.Setenv("PORTAL_UPGRADE_SLEEP_HELPER", "1")
 	var log bytes.Buffer

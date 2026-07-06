@@ -3,6 +3,7 @@ package portal
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -13,11 +14,17 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pcdogyu/yuqing/go/internal/app"
 	"github.com/pcdogyu/yuqing/go/internal/config"
 )
 
 const portalUpgradeTimeout = 10 * time.Minute
 const portalUpgradeCommandHeartbeat = 15 * time.Second
+const portalUpgradeStatusFileEnv = "YUQING_PORTAL_UPGRADE_STATUS_FILE"
+const portalUpgradeRestartDisabledEnv = "YUQING_PORTAL_UPGRADE_RESTART_DISABLED"
+const portalUpgradeStatusFileName = "portal-upgrade-status.json"
+const portalUpgradeRestartScriptName = "portal-upgrade-restart.ps1"
+const portalUpgradeRestartLogName = "portal-upgrade-restart.log"
 
 var portalUpgradeBuildPackages = []string{
 	"./cmd/auth-service",
@@ -117,13 +124,15 @@ func (s *Server) startPortalUpgrade() portalUpgradeResult {
 		StartedAt: startedAt,
 		Running:   true,
 	}
+	persistPortalUpgradeStatus(s.upgradeState)
 	result := s.upgradeState
 	s.upgradeMu.Unlock()
 
 	progress := func(message string, logText string) {
+		var snapshot portalUpgradeResult
 		s.upgradeMu.Lock()
-		defer s.upgradeMu.Unlock()
 		if !s.upgradeState.Running || !s.upgradeState.StartedAt.Equal(startedAt) {
+			s.upgradeMu.Unlock()
 			return
 		}
 		if strings.TrimSpace(message) != "" {
@@ -132,10 +141,16 @@ func (s *Server) startPortalUpgrade() portalUpgradeResult {
 		if strings.TrimSpace(logText) != "" {
 			s.upgradeState.Log = strings.TrimRight(logText, "\r\n")
 		}
+		snapshot = s.upgradeState
+		s.upgradeMu.Unlock()
+		persistPortalUpgradeStatus(snapshot)
 	}
 	go func() {
 		completed := runner.Run(context.Background(), cfg, progress)
-		completed.Running = false
+		if completed.Status != "restarting" {
+			completed.Running = false
+		}
+		persistPortalUpgradeStatus(completed)
 		s.upgradeMu.Lock()
 		s.upgradeState = completed
 		s.upgradeMu.Unlock()
@@ -148,6 +163,9 @@ func (s *Server) portalUpgradeSnapshot() portalUpgradeResult {
 	s.upgradeMu.Lock()
 	defer s.upgradeMu.Unlock()
 	if s.upgradeState.StartedAt.IsZero() {
+		if disk, ok := loadPortalUpgradeStatus(); ok {
+			return withPortalUpgradeElapsed(disk)
+		}
 		return portalUpgradeResult{
 			Status:  "idle",
 			Message: "等待执行",
@@ -155,18 +173,10 @@ func (s *Server) portalUpgradeSnapshot() portalUpgradeResult {
 		}
 	}
 	result := s.upgradeState
-	if result.Running && !result.StartedAt.IsZero() {
-		elapsed := time.Since(result.StartedAt).Round(time.Second)
-		if elapsed < 0 {
-			elapsed = 0
-		}
-		if result.Message == "" || result.Message == "升级执行中" {
-			result.Message = fmt.Sprintf("升级执行中，已运行 %s", elapsed)
-		} else {
-			result.Message = fmt.Sprintf("%s，已运行 %s", result.Message, elapsed)
-		}
+	if disk, ok := loadPortalUpgradeStatus(); ok && (disk.StartedAt.After(result.StartedAt) || disk.FinishedAt.After(result.FinishedAt)) {
+		result = disk
 	}
-	return result
+	return withPortalUpgradeElapsed(result)
 }
 
 func runPortalUpgrade(parent context.Context, _ config.Config, progress portalUpgradeProgress) portalUpgradeResult {
@@ -224,6 +234,12 @@ func runPortalUpgrade(parent context.Context, _ config.Config, progress portalUp
 	appendUpgradeLog(&log, "最新版本: "+shortGitCommit(latestCommit))
 	if currentCommit == latestCommit {
 		appendUpgradeLog(&log, "已经是最新版本了")
+		runningCommit := shortGitCommit(app.GitCommit)
+		targetCommit := shortGitCommit(currentCommit)
+		if runningCommit != "" && !strings.EqualFold(runningCommit, "unknown") && !strings.EqualFold(runningCommit, targetCommit) {
+			appendUpgradeLog(&log, "运行中版本: "+runningCommit+"；仓库版本: "+targetCommit+"；将重启服务加载已构建版本。")
+			return restartPortalUpgradeServices(goDir, repoRoot, startedAt, &log, progress)
+		}
 		publish("已经是最新版本了")
 		return finishPortalUpgradeWithMessage(true, startedAt, log.String(), nil, "已经是最新版本了")
 	}
@@ -252,10 +268,28 @@ func runPortalUpgrade(parent context.Context, _ config.Config, progress portalUp
 	if err := runPortalUpgradeBuildPackages(ctx, &log, progress, goDir, binDir, args, portalUpgradeBuildPackages); err != nil {
 		return finishPortalUpgrade(false, startedAt, log.String(), err)
 	}
-	stage("完成")
-	appendUpgradeLog(&log, "升级构建完成。新二进制已写入 "+binDir+"；如需让当前服务加载新代码，请重启对应服务。")
-	publish("阶段: 完成")
-	return finishPortalUpgradeWithMessage(true, startedAt, log.String(), nil, "升级打包完成，请重启服务加载新版本")
+	appendUpgradeLog(&log, "升级构建完成。新二进制已写入 "+binDir)
+	return restartPortalUpgradeServices(goDir, repoRoot, startedAt, &log, progress)
+}
+
+func restartPortalUpgradeServices(goDir string, repoRoot string, startedAt time.Time, log *bytes.Buffer, progress portalUpgradeProgress) portalUpgradeResult {
+	appendUpgradeLog(log, "阶段: 重启服务")
+	if err := schedulePortalUpgradeServiceRestart(goDir, repoRoot, startedAt, log); err != nil {
+		return finishPortalUpgrade(false, startedAt, log.String(), err)
+	}
+	appendUpgradeLog(log, "正在重启服务，页面会自动重新连接并显示已生效版本。")
+	if progress != nil {
+		progress("正在重启服务", strings.TrimRight(log.String(), "\r\n"))
+	}
+	return portalUpgradeResult{
+		OK:         true,
+		Status:     "restarting",
+		Message:    "正在重启服务，页面会自动重新连接并显示已生效版本",
+		Log:        strings.TrimRight(log.String(), "\r\n"),
+		StartedAt:  startedAt,
+		FinishedAt: time.Now(),
+		Running:    true,
+	}
 }
 
 func runPortalUpgradeBuildPackages(ctx context.Context, log *bytes.Buffer, progress portalUpgradeProgress, goDir string, binDir string, baseArgs []string, packages []string) error {
@@ -308,6 +342,201 @@ func finishPortalUpgradeWithMessage(ok bool, startedAt time.Time, logText string
 		StartedAt:  startedAt,
 		FinishedAt: finishedAt,
 	}
+}
+
+func withPortalUpgradeElapsed(result portalUpgradeResult) portalUpgradeResult {
+	if result.Running && !result.StartedAt.IsZero() {
+		elapsed := time.Since(result.StartedAt).Round(time.Second)
+		if elapsed < 0 {
+			elapsed = 0
+		}
+		if result.Message == "" || result.Message == "升级执行中" {
+			result.Message = fmt.Sprintf("升级执行中，已运行 %s", elapsed)
+		} else if !strings.Contains(result.Message, "已运行") {
+			result.Message = fmt.Sprintf("%s，已运行 %s", result.Message, elapsed)
+		}
+	}
+	return result
+}
+
+func persistPortalUpgradeStatus(result portalUpgradeResult) {
+	path := portalUpgradeStatusPath("")
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	_ = writePortalUpgradeStatusFile(path, result)
+}
+
+func loadPortalUpgradeStatus() (portalUpgradeResult, bool) {
+	path := portalUpgradeStatusPath("")
+	if strings.TrimSpace(path) == "" {
+		return portalUpgradeResult{}, false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) == 0 {
+		return portalUpgradeResult{}, false
+	}
+	var result portalUpgradeResult
+	if err := json.Unmarshal(data, &result); err != nil {
+		return portalUpgradeResult{}, false
+	}
+	if result.StartedAt.IsZero() {
+		return portalUpgradeResult{}, false
+	}
+	return result, true
+}
+
+func writePortalUpgradeStatusFile(path string, result portalUpgradeResult) error {
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+	if result.FinishedAt.IsZero() && !result.Running {
+		result.FinishedAt = time.Now()
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return err
+	}
+	_ = os.Remove(path)
+	return os.Rename(tmp, path)
+}
+
+func portalUpgradeStatusPath(goDir string) string {
+	if override := strings.TrimSpace(os.Getenv(portalUpgradeStatusFileEnv)); override != "" {
+		return override
+	}
+	goDir = strings.TrimSpace(goDir)
+	if goDir == "" {
+		if resolved, err := resolvePortalGoDir(); err == nil {
+			goDir = resolved
+		}
+	}
+	if goDir == "" {
+		return ""
+	}
+	return filepath.Join(goDir, "runtime-logs", portalUpgradeStatusFileName)
+}
+
+func schedulePortalUpgradeServiceRestart(goDir string, repoRoot string, startedAt time.Time, log *bytes.Buffer) error {
+	if strings.EqualFold(strings.TrimSpace(os.Getenv(portalUpgradeRestartDisabledEnv)), "1") ||
+		strings.EqualFold(strings.TrimSpace(os.Getenv(portalUpgradeRestartDisabledEnv)), "true") {
+		appendUpgradeLog(log, "debug: 已跳过服务重启调度（测试环境）")
+		return nil
+	}
+	if runtime.GOOS != "windows" {
+		return fmt.Errorf("网页升级自动重启目前仅支持 Windows 服务器")
+	}
+	runBat := filepath.Join(goDir, "run.bat")
+	if _, err := os.Stat(runBat); err != nil {
+		return fmt.Errorf("无法找到重启脚本 %s: %w", runBat, err)
+	}
+	logDir := filepath.Join(goDir, "runtime-logs")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		return err
+	}
+	statusPath := portalUpgradeStatusPath(goDir)
+	restartLogPath := filepath.Join(logDir, portalUpgradeRestartLogName)
+	scriptPath := filepath.Join(logDir, portalUpgradeRestartScriptName)
+	script := portalUpgradeRestartScript(goDir, repoRoot, runBat, statusPath, restartLogPath, startedAt)
+	if err := os.WriteFile(scriptPath, []byte(script), 0o644); err != nil {
+		return err
+	}
+	appendUpgradeLog(log, "debug: 服务重启脚本: "+scriptPath)
+	appendUpgradeLog(log, "debug: 服务重启日志: "+restartLogPath)
+	cmd := exec.Command("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
+	cmd.Dir = goDir
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("启动服务重启脚本失败: %w", err)
+	}
+	return nil
+}
+
+func portalUpgradeRestartScript(goDir string, repoRoot string, runBat string, statusPath string, restartLogPath string, startedAt time.Time) string {
+	return `$ErrorActionPreference = 'Continue'
+$GoDir = ` + psSingleQuoted(goDir) + `
+$RepoRoot = ` + psSingleQuoted(repoRoot) + `
+$RunBat = ` + psSingleQuoted(runBat) + `
+$StatusPath = ` + psSingleQuoted(statusPath) + `
+$RestartLogPath = ` + psSingleQuoted(restartLogPath) + `
+$StartedAt = ` + psSingleQuoted(startedAt.Format(time.RFC3339Nano)) + `
+
+function Get-UpgradeCommit {
+    $commit = ''
+    try { $commit = (& git -C $RepoRoot rev-parse --short HEAD 2>$null) } catch { $commit = '' }
+    if ([string]::IsNullOrWhiteSpace($commit)) { return 'unknown' }
+    return ($commit | Select-Object -First 1).Trim()
+}
+
+function Get-RestartLogTail {
+    $lines = @()
+    if (Test-Path $RestartLogPath) {
+        try { $lines += Get-Content -Path $RestartLogPath -Tail 160 -ErrorAction SilentlyContinue } catch {}
+    }
+    $errPath = $RestartLogPath + '.err'
+    if (Test-Path $errPath) {
+        try {
+            $errLines = Get-Content -Path $errPath -Tail 80 -ErrorAction SilentlyContinue
+            if ($errLines.Count -gt 0) {
+                $lines += ''
+                $lines += '[stderr]'
+                $lines += $errLines
+            }
+        } catch {}
+    }
+    return ($lines -join [Environment]::NewLine)
+}
+
+function Write-UpgradeStatus([string]$Status, [string]$Message, [bool]$Ok, [bool]$Running) {
+    $logText = Get-RestartLogTail
+    if (-not [string]::IsNullOrWhiteSpace($logText)) {
+        $logText += [Environment]::NewLine
+    }
+    $logText += ((Get-Date).ToString('HH:mm:ss') + ' ' + $Message)
+    $obj = [ordered]@{
+        ok = $Ok
+        status = $Status
+        message = $Message
+        log = $logText
+        started_at = $StartedAt
+        finished_at = (Get-Date).ToString('o')
+        running = $Running
+    }
+    $dir = Split-Path -Parent $StatusPath
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    $tmp = $StatusPath + '.tmp'
+    $obj | ConvertTo-Json -Depth 5 | Set-Content -Path $tmp -Encoding UTF8
+    Move-Item -Path $tmp -Destination $StatusPath -Force
+}
+
+Start-Sleep -Seconds 2
+Write-UpgradeStatus 'restarting' '正在重启服务，页面会自动重新连接...' $true $true
+try {
+    Push-Location $GoDir
+    & $RunBat --skip-pull *> $RestartLogPath
+    $exitCode = $LASTEXITCODE
+    Pop-Location
+} catch {
+    $exitCode = 1
+    try { $_ | Out-File -FilePath ($RestartLogPath + '.err') -Encoding UTF8 -Append } catch {}
+}
+if ($exitCode -eq 0) {
+    $commit = Get-UpgradeCommit
+    Write-UpgradeStatus 'success' ('升级已生效版本: ' + $commit) $true $false
+} else {
+    Write-UpgradeStatus 'failed' ('服务重启失败，run.bat 退出码: ' + $exitCode) $false $false
+}
+`
+}
+
+func psSingleQuoted(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
 func portalUpgradeRemoteRef(branch string) string {

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -8908,9 +8909,10 @@ func TestPortalNavPlacesLogoutAfterUpgrade(t *testing.T) {
 		`data.__httpStatus=resp.status`,
 		`upgradeLog(data)`,
 		`data.status==="running"`,
+		`data.status==="restarting"`,
 		`finalMessage=upgradeMessage(data)`,
 		`setTimeout(hide,120000)`,
-		`setConsoleMeta("运行中"`,
+		`?"重启中":"运行中"`,
 		`setLog(data.log||runningMessage,true)`,
 		`log.scrollTop=log.scrollHeight`,
 	} {
@@ -8961,6 +8963,7 @@ func (f *fakePortalUpgradeRunner) Run(_ context.Context, _ config.Config, _ port
 }
 
 func TestSystemUpgradeEndpointStartsBackgroundRunnerAndStatusReturnsLog(t *testing.T) {
+	t.Setenv(portalUpgradeStatusFileEnv, filepath.Join(t.TempDir(), "status.json"))
 	srv, cleanup := newPortalCompatServer(t)
 	defer cleanup()
 	release := make(chan struct{})
