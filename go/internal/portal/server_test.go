@@ -3120,6 +3120,15 @@ func writeAStockSnapshotOverviewArticleFixture(w http.ResponseWriter, r *http.Re
 	writeEnvelope(w, http.StatusOK, "ok", model.ItemListResult{Items: items, Page: 1, PageSize: 200, Total: len(items)})
 }
 
+func mustAStockSnapshotNewsSummaryJSON(t *testing.T, articles []model.Item, newsArticles []model.Item, hotspots []aStockHotspot) string {
+	t.Helper()
+	return mustAStockTestJSON(t, aStockSnapshotNewsSummary{
+		Articles:     articles,
+		NewsArticles: newsArticles,
+		Hotspots:     hotspots,
+	})
+}
+
 func newAStockRefreshBacktestPostRequest(strategyDate string, period string) *http.Request {
 	form := url.Values{}
 	form.Set("date", strategyDate)
@@ -3150,6 +3159,15 @@ func TestAStockPageUsesValidSnapshotsBeforeSelections(t *testing.T) {
 	defer market.Close()
 	t.Setenv("YUQING_ASTOCK_MARKET_URL", market.URL)
 
+	morningArticles := []model.Item{
+		{ID: 1, SourceType: "jin10_kuaixun", Title: "人工智能产业链活跃", Summary: "AI 算力需求增长", PublishTime: "2026-06-24 09:05:00"},
+		{ID: 2, SourceType: "eastmoney_kuaixun", Title: "算力板块继续走强", Summary: "人工智能投资升温", PublishTime: "2026-06-24 09:12:00"},
+	}
+	afternoonArticles := []model.Item{
+		{ID: 3, SourceType: "cls_telegraph", Title: "人工智能应用端活跃", Summary: "AI 终端放量", PublishTime: "2026-06-24 10:30:00"},
+	}
+	morningHotspots := []aStockHotspot{{Name: "人工智能", Keywords: []string{"人工智能"}, Score: 26, Evidence: 2, MatchedItems: morningArticles, TopStocks: []aStockHotspotStock{{Rank: 1, Code: "600001", Name: "快照上午"}}}}
+	afternoonHotspots := []aStockHotspot{{Name: "人工智能", Keywords: []string{"人工智能"}, Score: 13, Evidence: 1, MatchedItems: afternoonArticles, TopStocks: []aStockHotspotStock{{Rank: 1, Code: "600002", Name: "快照下午"}}}}
 	morningSnapshot := model.AStockRecommendationSnapshot{
 		Found:               true,
 		StrategyDate:        "2026-06-24",
@@ -3167,8 +3185,9 @@ func TestAStockPageUsesValidSnapshotsBeforeSelections(t *testing.T) {
 			BestReturnClass: "astock-up",
 			Status:          "已回测T+1",
 		}}),
-		BacktestStatus: "已读取上午快照",
-		GeneratedCount: 1,
+		NewsSummaryJSON: mustAStockSnapshotNewsSummaryJSON(t, morningArticles, morningArticles, morningHotspots),
+		BacktestStatus:  "已读取上午快照",
+		GeneratedCount:  1,
 	}
 	afternoonSnapshot := model.AStockRecommendationSnapshot{
 		Found:                true,
@@ -3176,6 +3195,7 @@ func TestAStockPageUsesValidSnapshotsBeforeSelections(t *testing.T) {
 		Period:               "afternoon",
 		RecommendationsJSON:  mustAStockTestJSON(t, []aStockRecommendation{{Rank: 1, Hotspot: "快照热点", Code: "600002", Name: "快照下午", Reason: "snapshot afternoon"}}),
 		BacktestsJSON:        mustAStockTestJSON(t, []aStockBacktestRow{{Stock: "600002 快照下午", EntryOpen: "--", AfternoonOpen: "20.00", T0Return: "+1.00%", T0Close: "20.20", T0ReturnClass: "astock-up", Days: []aStockBacktestCell{{Close: "20.60", Return: "+3.00%", ReturnClass: "astock-up"}}, BestReturn: "+3.00%", BestReturnClass: "astock-up", Status: "已回测T+1"}}),
+		NewsSummaryJSON:      mustAStockSnapshotNewsSummaryJSON(t, afternoonArticles, afternoonArticles, afternoonHotspots),
 		BacktestStatus:       "已读取下午快照",
 		GeneratedCount:       1,
 		LimitUpFilterEnabled: true,
@@ -3255,8 +3275,8 @@ func TestAStockPageUsesValidSnapshotsBeforeSelections(t *testing.T) {
 	if marketHits != 0 || selectionHits != 0 || holdingHits != 0 || saveHits != 0 {
 		t.Fatalf("expected snapshot fast path to avoid market/selection/holdings/save, got market=%d selection=%d holdings=%d save=%d", marketHits, selectionHits, holdingHits, saveHits)
 	}
-	if articleHits == 0 {
-		t.Fatalf("expected snapshot fast path to load article stats")
+	if articleHits != 0 {
+		t.Fatalf("expected snapshot fast path to use snapshot news summary, got article requests=%d", articleHits)
 	}
 }
 
@@ -3269,12 +3289,14 @@ func TestAStockPageCompanionSnapshotMissingDoesNotRecompute(t *testing.T) {
 	defer market.Close()
 	t.Setenv("YUQING_ASTOCK_MARKET_URL", market.URL)
 
+	morningArticles := []model.Item{{ID: 1, SourceType: "jin10_kuaixun", Title: "人工智能产业链活跃", Summary: "AI 算力需求增长", PublishTime: "2026-06-24 09:05:00"}}
 	morningSnapshot := model.AStockRecommendationSnapshot{
 		Found:               true,
 		StrategyDate:        "2026-06-24",
 		Period:              "morning",
 		RecommendationsJSON: mustAStockTestJSON(t, []aStockRecommendation{{Rank: 1, Hotspot: "快照热点", Code: "600001", Name: "上午快照", Reason: "snapshot morning"}}),
 		BacktestsJSON:       mustAStockTestJSON(t, []aStockBacktestRow{{Stock: "600001 上午快照", EntryOpen: "10.00", T0Return: "+1.00%", T0Close: "10.10", Status: "已读取快照"}}),
+		NewsSummaryJSON:     mustAStockSnapshotNewsSummaryJSON(t, morningArticles, morningArticles, []aStockHotspot{{Name: "人工智能", Keywords: []string{"人工智能"}, Score: 13, Evidence: 1, MatchedItems: morningArticles}}),
 		BacktestStatus:      "已读取上午快照",
 		GeneratedCount:      1,
 	}
@@ -3330,8 +3352,8 @@ func TestAStockPageCompanionSnapshotMissingDoesNotRecompute(t *testing.T) {
 	if strings.Contains(body, "下午已选") {
 		t.Fatalf("expected missing companion snapshot not to load selections, got %s", body)
 	}
-	if articleHits == 0 {
-		t.Fatalf("expected current snapshot to load article stats")
+	if articleHits != 0 {
+		t.Fatalf("expected current snapshot to use snapshot news summary, got article requests=%d", articleHits)
 	}
 	if marketHits != 0 || selectionHits != 0 || holdingHits != 0 || saveHits != 0 {
 		t.Fatalf("expected missing companion snapshot to avoid recompute, got market=%d selection=%d holdings=%d save=%d", marketHits, selectionHits, holdingHits, saveHits)

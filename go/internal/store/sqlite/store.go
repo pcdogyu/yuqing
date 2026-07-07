@@ -582,6 +582,7 @@ CREATE TABLE IF NOT EXISTS a_stock_recommendation_snapshots (
 	ignore_recent INTEGER NOT NULL DEFAULT 0,
 	recommendations_json TEXT NOT NULL DEFAULT '[]',
 	backtests_json TEXT NOT NULL DEFAULT '[]',
+	news_summary_json TEXT NOT NULL DEFAULT '',
 	backtest_status TEXT NOT NULL DEFAULT '',
 	generated_count INTEGER NOT NULL DEFAULT 0,
 	recent_filtered INTEGER NOT NULL DEFAULT 0,
@@ -872,6 +873,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_action_created_at ON audit_logs(action
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN limit_up_filtered INTEGER NOT NULL DEFAULT 0`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN today_market_filter_enabled INTEGER NOT NULL DEFAULT 0`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN no_today_market_count INTEGER NOT NULL DEFAULT 0`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN news_summary_json TEXT NOT NULL DEFAULT ''`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_selections ADD COLUMN entry_time TEXT NOT NULL DEFAULT ''`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_sector_fund_flows ADD COLUMN source_count INTEGER NOT NULL DEFAULT 1`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_sector_fund_flows ADD COLUMN source_types TEXT NOT NULL DEFAULT ''`)
@@ -913,6 +915,9 @@ func (s *Store) migratePostgres(ctx context.Context) error {
 		return err
 	}
 	if _, err := s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN IF NOT EXISTS no_today_market_count INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN IF NOT EXISTS news_summary_json TEXT NOT NULL DEFAULT ''`); err != nil {
 		return err
 	}
 	if _, err := s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_selections ADD COLUMN IF NOT EXISTS entry_time TEXT NOT NULL DEFAULT ''`); err != nil {

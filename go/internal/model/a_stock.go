@@ -87,6 +87,7 @@ type AStockRecommendationSnapshot struct {
 	IgnoreRecent             bool      `json:"ignore_recent"`
 	RecommendationsJSON      string    `json:"recommendations_json"`
 	BacktestsJSON            string    `json:"backtests_json"`
+	NewsSummaryJSON          string    `json:"news_summary_json"`
 	BacktestStatus           string    `json:"backtest_status"`
 	GeneratedCount           int       `json:"generated_count"`
 	RecentFiltered           int       `json:"recent_filtered"`

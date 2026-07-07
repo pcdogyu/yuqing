@@ -20,6 +20,7 @@ func TestSystemTemplateIncludesAStockRepairSection(t *testing.T) {
 		`{{if eq .SectionKey "stockrepair"}}<section class="section-block"><h2>推荐股票修复</h2>`,
 		`name="form_type" value="astock_repair_selections_save"`,
 		`name="form_type" value="astock_repair_snapshot_save"`,
+		`name="snapshot_news_summary_json"`,
 	} {
 		if !strings.Contains(systemTemplate, snippet) {
 			t.Fatalf("expected system template to contain %q", snippet)
@@ -45,6 +46,7 @@ func TestSystemAStockRepairSectionRendersLayers(t *testing.T) {
 		"603083",
 		"测试已选股票",
 		"测试快照推荐",
+		"测试新闻摘要",
 		"已回测 1/1",
 	} {
 		if !strings.Contains(body, snippet) {
@@ -111,6 +113,7 @@ func TestSystemAStockRepairSnapshotSaveRedirectsWithSuccess(t *testing.T) {
 	form.Set("snapshot_empty_reason", "人工补录快照说明")
 	form.Set("snapshot_recommendations_json", `[{"Code":"600000","Name":"浦发银行"}]`)
 	form.Set("snapshot_backtests_json", `[{"Stock":"600000 浦发银行","T0Return":"+2.10%","T0Close":"12.34"}]`)
+	form.Set("snapshot_news_summary_json", `{"articles":[{"title":"人工修复新闻摘要"}],"news_articles":[{"title":"人工修复新闻摘要"}],"hotspots":[{"Name":"人工修复热点"}]}`)
 	req := httptest.NewRequest(http.MethodPost, "/system?section=stockrepair&strategy_date=2026-06-24&period=morning&ignore_recent=1", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rr := httptest.NewRecorder()
@@ -129,7 +132,7 @@ func TestSystemAStockRepairSnapshotSaveRedirectsWithSuccess(t *testing.T) {
 	viewRR := httptest.NewRecorder()
 	srv.handleSystem(viewRR, viewReq, map[string]any{"id": int64(1), "username": "admin"})
 	body := viewRR.Body.String()
-	for _, snippet := range []string{"600000", "浦发银行", "已人工修复快照", "人工修复候选", "88.88亿", "人工补录快照说明"} {
+	for _, snippet := range []string{"600000", "浦发银行", "已人工修复快照", "人工修复候选", "88.88亿", "人工补录快照说明", "人工修复新闻摘要", "人工修复热点"} {
 		if !strings.Contains(body, snippet) {
 			t.Fatalf("expected saved snapshot snippet %q in body %s", snippet, body)
 		}
@@ -178,6 +181,7 @@ func newAStockRepairPortalTestServer(t *testing.T) (*Server, func()) {
 				IgnoreRecent:          false,
 				RecommendationsJSON:   `[{"Rank":1,"Hotspot":"机器人","Code":"603083","Name":"剑桥科技","HotspotScore":88,"MarketScore":66,"Reason":"测试快照推荐"}]`,
 				BacktestsJSON:         `[{"Stock":"603083 剑桥科技","EntryOpen":"240.00","T0Return":"+1.70%","T0Close":"244.08","Status":"已回测"}]`,
+				NewsSummaryJSON:       `{"articles":[{"title":"测试新闻摘要"}],"news_articles":[{"title":"测试新闻摘要"}],"hotspots":[{"Name":"机器人"}]}`,
 				BacktestStatus:        "已回测 1/1",
 				GeneratedCount:        1,
 				MarketCandidateStatus: "已读取集合竞价 5500",

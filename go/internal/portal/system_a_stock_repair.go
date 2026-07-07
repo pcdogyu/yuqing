@@ -21,6 +21,7 @@ type aStockRepairView struct {
 	Snapshot                    model.AStockRecommendationSnapshot
 	SnapshotRecommendationsJSON string
 	SnapshotBacktestsJSON       string
+	SnapshotNewsSummaryJSON     string
 	SnapshotCreatedAtText       string
 	SnapshotUpdatedAtText       string
 	Error                       string
@@ -32,6 +33,7 @@ type aStockRepairSnapshotInput struct {
 	IgnoreRecent             bool
 	RecommendationsJSON      string
 	BacktestsJSON            string
+	NewsSummaryJSON          string
 	BacktestStatus           string
 	GeneratedCount           int
 	RecentFiltered           int
@@ -56,6 +58,7 @@ func (s *Server) loadAStockRepairView(strategyDate string, period string, ignore
 		SelectionsUpdatedAtText:     "--",
 		SnapshotRecommendationsJSON: "[]",
 		SnapshotBacktestsJSON:       "[]",
+		SnapshotNewsSummaryJSON:     "",
 		SnapshotCreatedAtText:       "--",
 		SnapshotUpdatedAtText:       "--",
 	}
@@ -84,6 +87,7 @@ func (s *Server) loadAStockRepairView(strategyDate string, period string, ignore
 	} else {
 		view.SnapshotRecommendationsJSON = formatAStockRepairJSONText(view.Snapshot.RecommendationsJSON, "[]")
 		view.SnapshotBacktestsJSON = formatAStockRepairJSONText(view.Snapshot.BacktestsJSON, "[]")
+		view.SnapshotNewsSummaryJSON = formatAStockRepairJSONText(view.Snapshot.NewsSummaryJSON, "")
 		view.SnapshotCreatedAtText = formatAStockRepairTime(view.Snapshot.CreatedAt)
 		view.SnapshotUpdatedAtText = formatAStockRepairTime(view.Snapshot.UpdatedAt)
 	}
@@ -147,12 +151,17 @@ func (s *Server) saveAStockRepairSnapshot(input aStockRepairSnapshotInput) error
 	if err != nil {
 		return fmt.Errorf("backtests_json 解析失败: %w", err)
 	}
+	newsSummaryJSON, err := normalizeAStockRepairOptionalJSON(input.NewsSummaryJSON)
+	if err != nil {
+		return fmt.Errorf("news_summary_json 解析失败: %w", err)
+	}
 	snapshot := model.AStockRecommendationSnapshot{
 		StrategyDate:             normalizeAStockStrategyDate(input.StrategyDate),
 		Period:                   normalizeAStockPeriod(input.Period).Key,
 		IgnoreRecent:             input.IgnoreRecent,
 		RecommendationsJSON:      recommendationsJSON,
 		BacktestsJSON:            backtestsJSON,
+		NewsSummaryJSON:          newsSummaryJSON,
 		BacktestStatus:           strings.TrimSpace(input.BacktestStatus),
 		GeneratedCount:           input.GeneratedCount,
 		RecentFiltered:           input.RecentFiltered,
@@ -204,6 +213,22 @@ func normalizeAStockRepairJSONArray(raw string, fallback string) (string, error)
 		return "", fmt.Errorf("必须是 JSON 数组")
 	}
 	return normalized, nil
+}
+
+func normalizeAStockRepairOptionalJSON(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	var payload any
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return "", err
+	}
+	normalized, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	return string(normalized), nil
 }
 
 func formatAStockRepairJSON(payload any, fallback string) string {

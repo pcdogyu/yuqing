@@ -564,6 +564,7 @@ func TestAStockRecommendationSnapshotUpsertAndGet(t *testing.T) {
 		Period:              "afternoon",
 		RecommendationsJSON: `[{"Code":"600000"}]`,
 		BacktestsJSON:       `[]`,
+		NewsSummaryJSON:     `{"articles":[],"news_articles":[],"hotspots":[]}`,
 		BacktestStatus:      "已回测 1/1",
 		GeneratedCount:      1,
 	})
@@ -579,6 +580,7 @@ func TestAStockRecommendationSnapshotUpsertAndGet(t *testing.T) {
 		Period:                   "afternoon",
 		RecommendationsJSON:      `[{"Code":"000001"}]`,
 		BacktestsJSON:            `[]`,
+		NewsSummaryJSON:          `{"articles":[{"id":1}],"news_articles":[{"id":1}],"hotspots":[{"Name":"人工智能"}]}`,
 		BacktestStatus:           "已回测 1/1",
 		GeneratedCount:           1,
 		LimitUpFilterEnabled:     true,
@@ -597,7 +599,7 @@ func TestAStockRecommendationSnapshotUpsertAndGet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAStockRecommendationSnapshot error: %v", err)
 	}
-	if !found || snapshot.RecommendationsJSON != `[{"Code":"000001"}]` || snapshot.GeneratedCount != 1 || !snapshot.LimitUpFilterEnabled || snapshot.LimitUpFiltered != 2 || !snapshot.TodayMarketFilterEnabled || snapshot.NoTodayMarketCount != 4 {
+	if !found || snapshot.RecommendationsJSON != `[{"Code":"000001"}]` || !strings.Contains(snapshot.NewsSummaryJSON, `"人工智能"`) || snapshot.GeneratedCount != 1 || !snapshot.LimitUpFilterEnabled || snapshot.LimitUpFiltered != 2 || !snapshot.TodayMarketFilterEnabled || snapshot.NoTodayMarketCount != 4 {
 		t.Fatalf("unexpected snapshot: found=%v %+v", found, snapshot)
 	}
 }

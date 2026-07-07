@@ -54,14 +54,15 @@ func (s *Store) UpsertAStockRecommendationSnapshot(ctx context.Context, snapshot
 	}
 	_, err := s.db.ExecContext(ctx, `
 INSERT INTO a_stock_recommendation_snapshots (
-	strategy_date, period, ignore_recent, recommendations_json, backtests_json, backtest_status,
+	strategy_date, period, ignore_recent, recommendations_json, backtests_json, news_summary_json, backtest_status,
 	generated_count, recent_filtered, same_day_morning_filtered, limit_up_filter_enabled,
 	limit_up_filtered, today_market_filter_enabled, no_today_market_count, market_candidate_status,
 	market_candidate_count, auction_amount_label, empty_reason, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(strategy_date, period, ignore_recent) DO UPDATE SET
 	recommendations_json = excluded.recommendations_json,
 	backtests_json = excluded.backtests_json,
+	news_summary_json = excluded.news_summary_json,
 	backtest_status = excluded.backtest_status,
 	generated_count = excluded.generated_count,
 	recent_filtered = excluded.recent_filtered,
@@ -80,6 +81,7 @@ ON CONFLICT(strategy_date, period, ignore_recent) DO UPDATE SET
 		ignoreRecent,
 		recommendationsJSON,
 		backtestsJSON,
+		strings.TrimSpace(snapshot.NewsSummaryJSON),
 		strings.TrimSpace(snapshot.BacktestStatus),
 		snapshot.GeneratedCount,
 		snapshot.RecentFiltered,
@@ -113,7 +115,7 @@ func (s *Store) GetAStockRecommendationSnapshot(ctx context.Context, strategyDat
 	}
 	row := s.db.QueryRowContext(ctx, `
 SELECT strategy_date, period, ignore_recent, recommendations_json, backtests_json, backtest_status,
-	generated_count, recent_filtered, same_day_morning_filtered, limit_up_filter_enabled,
+	news_summary_json, generated_count, recent_filtered, same_day_morning_filtered, limit_up_filter_enabled,
 	limit_up_filtered, today_market_filter_enabled, no_today_market_count, market_candidate_status,
 	market_candidate_count, auction_amount_label, empty_reason, created_at, updated_at
 FROM a_stock_recommendation_snapshots
@@ -146,6 +148,7 @@ func scanAStockRecommendationSnapshot(scanner scanner) (model.AStockRecommendati
 		&snapshot.RecommendationsJSON,
 		&snapshot.BacktestsJSON,
 		&snapshot.BacktestStatus,
+		&snapshot.NewsSummaryJSON,
 		&snapshot.GeneratedCount,
 		&snapshot.RecentFiltered,
 		&snapshot.SameDayMorningFiltered,

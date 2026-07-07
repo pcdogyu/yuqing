@@ -488,6 +488,7 @@ CREATE TABLE IF NOT EXISTS a_stock_recommendation_snapshots (
 	ignore_recent INTEGER NOT NULL DEFAULT 0,
 	recommendations_json TEXT NOT NULL DEFAULT '[]',
 	backtests_json TEXT NOT NULL DEFAULT '[]',
+	news_summary_json TEXT NOT NULL DEFAULT '',
 	backtest_status TEXT NOT NULL DEFAULT '',
 	generated_count INTEGER NOT NULL DEFAULT 0,
 	recent_filtered INTEGER NOT NULL DEFAULT 0,

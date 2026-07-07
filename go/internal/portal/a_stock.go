@@ -64,6 +64,12 @@ type aStockContext struct {
 	SourceRuns                   []aStockSourceRun
 }
 
+type aStockSnapshotNewsSummary struct {
+	Articles     []model.Item    `json:"articles"`
+	NewsArticles []model.Item    `json:"news_articles"`
+	Hotspots     []aStockHotspot `json:"hotspots"`
+}
+
 type aStockHotspot struct {
 	Name         string
 	Keywords     []string
@@ -1764,12 +1770,59 @@ func (s *Server) loadAStockCompanionContextReadOnlyWithCache(strategyDate string
 func (s *Server) loadAStockReadOnlySnapshotContextWithCache(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, cache *aStockRequestCache) (aStockContext, bool) {
 	ctx := newAStockBaseContext(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, aStockRecommendationPhaseFinal)
 	if s.applyAStockRecommendationSnapshotReadOnlyWithCache(&ctx, cache) {
-		if err := s.populateAStockContextArticleStatsWithCache(&ctx, newsPage, cache); err != nil && ctx.LoadMessage == "" {
-			ctx.LoadMessage = err.Error()
+		if !applyAStockSnapshotNewsSummary(&ctx, newsPage, s.currentAStockSnapshotNewsSummary(ctx, cache)) {
+			if err := s.populateAStockContextArticleStatsWithCache(&ctx, newsPage, cache); err != nil && ctx.LoadMessage == "" {
+				ctx.LoadMessage = err.Error()
+			}
 		}
 		return ctx, true
 	}
 	return ctx, false
+}
+
+func (s *Server) currentAStockSnapshotNewsSummary(ctx aStockContext, cache *aStockRequestCache) string {
+	snapshot, ok := s.loadAStockRecommendationSnapshotWithCache(ctx.Date, ctx.Period, ctx.IgnoreRecent, cache)
+	if !ok {
+		return ""
+	}
+	return snapshot.NewsSummaryJSON
+}
+
+func applyAStockSnapshotNewsSummary(ctx *aStockContext, newsPage int, raw string) bool {
+	if ctx == nil {
+		return false
+	}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return false
+	}
+	var summary aStockSnapshotNewsSummary
+	if err := json.Unmarshal([]byte(raw), &summary); err != nil {
+		return false
+	}
+	ctx.Articles = summary.Articles
+	ctx.NewsArticles = summary.NewsArticles
+	ctx.NewsTotal = len(ctx.NewsArticles)
+	ctx.RecommendationNewsTotal = len(ctx.Articles)
+	ctx.PagedArticles, ctx.NewsPage, ctx.NewsTotalPages = paginateAStockNews(ctx.NewsArticles, newsPage, aStockNewsPageSize)
+	ctx.Hotspots = summary.Hotspots
+	if ctx.Hotspots == nil {
+		ctx.Hotspots = buildAStockHotspots(ctx.Articles)
+	}
+	return true
+}
+
+func buildAStockSnapshotNewsSummaryJSON(ctx aStockContext) (string, error) {
+	summary := aStockSnapshotNewsSummary{
+		Articles:     ctx.Articles,
+		NewsArticles: ctx.NewsArticles,
+		Hotspots:     ctx.Hotspots,
+	}
+	raw, err := json.Marshal(summary)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
 }
 
 func (s *Server) loadAStockBacktestSnapshotContextWithCache(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, cache *aStockRequestCache) aStockContext {
@@ -2541,12 +2594,17 @@ func (s *Server) saveAStockRecommendationSnapshot(ctx aStockContext) error {
 	if err != nil {
 		return err
 	}
+	newsSummaryJSON, err := buildAStockSnapshotNewsSummaryJSON(ctx)
+	if err != nil {
+		return err
+	}
 	snapshot := model.AStockRecommendationSnapshot{
 		StrategyDate:             ctx.Date,
 		Period:                   ctx.Period,
 		IgnoreRecent:             ctx.IgnoreRecent,
 		RecommendationsJSON:      string(recommendationsJSON),
 		BacktestsJSON:            string(backtestsJSON),
+		NewsSummaryJSON:          newsSummaryJSON,
 		BacktestStatus:           ctx.BacktestStatus,
 		GeneratedCount:           ctx.GeneratedRecommendationCount,
 		RecentFiltered:           ctx.RecentFiltered,
