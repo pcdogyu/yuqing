@@ -7617,6 +7617,55 @@ func TestAStockRecommendationsUseFixedPoolWhenAuctionCandidatesEmpty(t *testing.
 	}
 }
 
+func TestAStockRecommendationsRequireSectorMatchForNewsDerivedCandidates(t *testing.T) {
+	hotspot := aStockHotspot{
+		Name:     "黄金有色",
+		Keywords: []string{"有色", "稀土", "贵金属", "铜", "黄金"},
+		Score:    448,
+		Evidence: 43,
+		MatchedItems: []model.Item{{
+			SourceType: "jin10_kuaixun",
+			Title:      "A股盘前市场要闻速递：钨矿、铜、国际金价和黄金板块受关注",
+			Summary:    "海南海药公告进展，铜陵有色获市场关注。",
+			Content:    "钨矿、铜、黄金、贵金属等有色方向活跃，海南海药和铜陵有色同时出现在综合稿。",
+			RawPayload: `{"stock_list":[{"StockID":"000566.SZ","name":"海南海药"},{"StockID":"000630.SZ","name":"铜陵有色"}]}`,
+		}},
+	}
+	candidates := []aStockMarketCandidate{
+		{Code: "000566", Name: "海南海药", Rank: 1, AuctionAmount: 9000000},
+		{Code: "000630", Name: "铜陵有色", Rank: 2, AuctionAmount: 8000000},
+	}
+
+	withoutGate := buildAStockRecommendationsWithLimitAndSectorGate([]aStockHotspot{hotspot}, candidates, aStockReplacementPoolLimit, aStockReplacementPerHotspot, nil)
+	if _, ok := aStockTestRecommendationsByCode(withoutGate)["000566"]; !ok {
+		t.Fatalf("expected ungated news-derived recommendation to reproduce 000566, got %+v", withoutGate)
+	}
+
+	sectorGate := newAStockHotspotSectorGate()
+	sectorGate.addCodes("黄金有色", map[string]struct{}{
+		"600547": {},
+		"601899": {},
+		"600111": {},
+		"000630": {},
+	})
+	withGate := buildAStockRecommendationsWithLimitAndSectorGate([]aStockHotspot{hotspot}, candidates, aStockReplacementPoolLimit, aStockReplacementPerHotspot, sectorGate)
+	got := aStockTestRecommendationsByCode(withGate)
+	if _, ok := got["000566"]; ok {
+		t.Fatalf("expected sector gate to filter 000566 海南海药 from 黄金有色, got %+v", withGate)
+	}
+	if rec, ok := got["000630"]; !ok || rec.Name != "铜陵有色" {
+		t.Fatalf("expected matched nonferrous candidate 000630 铜陵有色 to remain, got %+v", withGate)
+	}
+}
+
+func aStockTestRecommendationsByCode(recommendations []aStockRecommendation) map[string]aStockRecommendation {
+	result := make(map[string]aStockRecommendation, len(recommendations))
+	for _, rec := range recommendations {
+		result[normalizeAStockCode(rec.Code)] = rec
+	}
+	return result
+}
+
 func TestAStockRecommendationsBlockEastmoneyAndBankStocks(t *testing.T) {
 	recommendations := buildAStockRecommendations([]aStockHotspot{
 		{

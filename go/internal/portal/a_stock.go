@@ -165,6 +165,15 @@ type aStockMarketCandidate struct {
 	FixedPool     bool
 }
 
+type aStockHotspotSectorGate struct {
+	codesByHotspot map[string]map[string]struct{}
+}
+
+type aStockHotspotSectorAlias struct {
+	SectorType string
+	SectorName string
+}
+
 type aStockHotspotTopStockCandidateSet struct {
 	scored   []aStockMarketCandidate
 	fallback []aStockMarketCandidate
@@ -190,6 +199,7 @@ type aStockRequestCache struct {
 	selections                map[string]aStockRecommendationSelectionCacheEntry
 	holdingSummaries          map[string]aStockHoldingSummaryCacheEntry
 	auctionResults            map[string]aStockAuctionResultCacheEntry
+	sectorConstituents        map[string]aStockSectorConstituentCodesCacheEntry
 	codeNames                 map[string]map[string]string
 	sourceRuns                []aStockSourceRun
 }
@@ -222,6 +232,11 @@ type aStockHoldingSummaryCacheEntry struct {
 type aStockAuctionResultCacheEntry struct {
 	result model.AStockAuctionListResult
 	found  bool
+}
+
+type aStockSectorConstituentCodesCacheEntry struct {
+	codes map[string]struct{}
+	found bool
 }
 
 type aStockServerAuctionCacheEntry struct {
@@ -1973,6 +1988,7 @@ func newAStockRequestCache() *aStockRequestCache {
 		selections:                make(map[string]aStockRecommendationSelectionCacheEntry),
 		holdingSummaries:          make(map[string]aStockHoldingSummaryCacheEntry),
 		auctionResults:            make(map[string]aStockAuctionResultCacheEntry),
+		sectorConstituents:        make(map[string]aStockSectorConstituentCodesCacheEntry),
 		codeNames:                 make(map[string]map[string]string),
 	}
 }
@@ -2353,15 +2369,16 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 			}
 		}
 		candidates := marketCandidates
-		baseRecommendations := buildAStockSnapshotRecommendationsWithPhase(strategyDate, period.Key, phase, ctx.Articles, candidates)
+		sectorGate := s.loadAStockHotspotSectorGateWithCache(ctx.Hotspots, cache)
+		baseRecommendations := buildAStockSnapshotRecommendationsWithPhaseAndSectorGate(strategyDate, period.Key, phase, ctx.Articles, candidates, sectorGate)
 		recommendationTarget = len(baseRecommendations)
 		ctx.GeneratedRecommendationCount = recommendationTarget
 		ctx.Recommendations = baseRecommendations
 		if period.Key == "morning" && !ctx.IgnoreRecent && recommendationTarget > 0 {
-			recentReplacementPool = buildAStockSnapshotReplacementRecommendations(strategyDate, period.Key, phase, ctx.Articles, candidates)
+			recentReplacementPool = buildAStockSnapshotReplacementRecommendationsWithSectorGate(strategyDate, period.Key, phase, ctx.Articles, candidates, sectorGate)
 		}
 		if ctx.LimitUpFilterEnabled && recommendationTarget > 0 {
-			replacementPool := buildAStockSnapshotRecommendationsWithPhaseAndLimit(strategyDate, period.Key, phase, ctx.Articles, candidates, aStockReplacementPoolLimit, aStockReplacementPerHotspot)
+			replacementPool := buildAStockSnapshotRecommendationsWithPhaseAndLimitAndSectorGate(strategyDate, period.Key, phase, ctx.Articles, candidates, aStockReplacementPoolLimit, aStockReplacementPerHotspot, sectorGate)
 			ctx.Recommendations = mergeAStockLimitUpReplacementPool(ctx.Recommendations, replacementPool)
 		}
 		if period.Key == "afternoon" && len(ctx.Recommendations) > 0 {
@@ -6559,6 +6576,10 @@ func buildAStockRecommendations(hotspots []aStockHotspot, candidates []aStockMar
 }
 
 func buildAStockRecommendationsWithLimit(hotspots []aStockHotspot, candidates []aStockMarketCandidate, maxRecommendations int, maxPerHotspot int) []aStockRecommendation {
+	return buildAStockRecommendationsWithLimitAndSectorGate(hotspots, candidates, maxRecommendations, maxPerHotspot, nil)
+}
+
+func buildAStockRecommendationsWithLimitAndSectorGate(hotspots []aStockHotspot, candidates []aStockMarketCandidate, maxRecommendations int, maxPerHotspot int, sectorGate *aStockHotspotSectorGate) []aStockRecommendation {
 	if len(hotspots) > aStockHotspotLimit {
 		hotspots = hotspots[:aStockHotspotLimit]
 	}
@@ -6575,7 +6596,7 @@ func buildAStockRecommendationsWithLimit(hotspots []aStockHotspot, candidates []
 	recommendations := make([]aStockRecommendation, 0)
 	seen := make(map[string]struct{})
 	for _, hotspot := range hotspots {
-		stocks := scoreAStockMarketCandidates(hotspot, candidates)
+		stocks := scoreAStockMarketCandidatesWithSectorGate(hotspot, candidates, sectorGate)
 		picked := 0
 		for _, stock := range stocks {
 			if _, exists := seen[stock.Code]; exists {
@@ -6852,9 +6873,21 @@ func buildAStockSnapshotReplacementRecommendations(strategyDate string, periodKe
 }
 
 func buildAStockSnapshotRecommendationsWithPhaseAndLimit(strategyDate string, periodKey string, phase string, articles []model.Item, candidates []aStockMarketCandidate, maxRecommendations int, maxPerHotspot int) []aStockRecommendation {
+	return buildAStockSnapshotRecommendationsWithPhaseAndLimitAndSectorGate(strategyDate, periodKey, phase, articles, candidates, maxRecommendations, maxPerHotspot, nil)
+}
+
+func buildAStockSnapshotRecommendationsWithPhaseAndSectorGate(strategyDate string, periodKey string, phase string, articles []model.Item, candidates []aStockMarketCandidate, sectorGate *aStockHotspotSectorGate) []aStockRecommendation {
+	return buildAStockSnapshotRecommendationsWithPhaseAndLimitAndSectorGate(strategyDate, periodKey, phase, articles, candidates, aStockRecommendationLimit, aStockStocksPerHotspot, sectorGate)
+}
+
+func buildAStockSnapshotReplacementRecommendationsWithSectorGate(strategyDate string, periodKey string, phase string, articles []model.Item, candidates []aStockMarketCandidate, sectorGate *aStockHotspotSectorGate) []aStockRecommendation {
+	return buildAStockSnapshotRecommendationsWithPhaseAndLimitAndSectorGate(strategyDate, periodKey, phase, articles, candidates, aStockReplacementPoolLimit, aStockReplacementPerHotspot, sectorGate)
+}
+
+func buildAStockSnapshotRecommendationsWithPhaseAndLimitAndSectorGate(strategyDate string, periodKey string, phase string, articles []model.Item, candidates []aStockMarketCandidate, maxRecommendations int, maxPerHotspot int, sectorGate *aStockHotspotSectorGate) []aStockRecommendation {
 	snapshots := aStockRecommendationSnapshots(strategyDate, periodKey, phase)
 	if len(snapshots) == 0 {
-		return withAStockRecommendationEntryTimes(buildAStockRecommendationsWithLimit(buildAStockHotspots(articles), candidates, maxRecommendations, maxPerHotspot), periodKey, "")
+		return withAStockRecommendationEntryTimes(buildAStockRecommendationsWithLimitAndSectorGate(buildAStockHotspots(articles), candidates, maxRecommendations, maxPerHotspot, sectorGate), periodKey, "")
 	}
 	if maxRecommendations <= 0 {
 		maxRecommendations = aStockRecommendationLimit
@@ -6870,7 +6903,7 @@ func buildAStockSnapshotRecommendationsWithPhaseAndLimit(strategyDate string, pe
 		if len(snapshotArticles) == 0 {
 			continue
 		}
-		for _, rec := range buildAStockRecommendationsWithLimit(buildAStockHotspots(snapshotArticles), candidates, maxRecommendations, maxPerHotspot) {
+		for _, rec := range buildAStockRecommendationsWithLimitAndSectorGate(buildAStockHotspots(snapshotArticles), candidates, maxRecommendations, maxPerHotspot, sectorGate) {
 			code := normalizeAStockCode(rec.Code)
 			if code == "" {
 				continue
@@ -6904,7 +6937,7 @@ func buildAStockSnapshotRecommendationsWithPhaseAndLimit(strategyDate string, pe
 		}
 	}
 	if len(combined) == 0 && len(articles) > 0 {
-		return withAStockRecommendationEntryTimes(buildAStockRecommendationsWithLimit(buildAStockHotspots(articles), candidates, maxRecommendations, maxPerHotspot), periodKey, "")
+		return withAStockRecommendationEntryTimes(buildAStockRecommendationsWithLimitAndSectorGate(buildAStockHotspots(articles), candidates, maxRecommendations, maxPerHotspot, sectorGate), periodKey, "")
 	}
 	return combined
 }
@@ -6923,6 +6956,232 @@ func withAStockRecommendationEntryTimes(recommendations []aStockRecommendation, 
 
 func normalizeAStockRecommendationHotspot(value string) string {
 	return strings.TrimSpace(value)
+}
+
+func newAStockHotspotSectorGate() *aStockHotspotSectorGate {
+	return &aStockHotspotSectorGate{codesByHotspot: make(map[string]map[string]struct{})}
+}
+
+func (g *aStockHotspotSectorGate) addCodes(hotspot string, codes map[string]struct{}) {
+	if g == nil || len(codes) == 0 {
+		return
+	}
+	hotspot = normalizeAStockRecommendationHotspot(hotspot)
+	if hotspot == "" {
+		return
+	}
+	if g.codesByHotspot == nil {
+		g.codesByHotspot = make(map[string]map[string]struct{})
+	}
+	target := g.codesByHotspot[hotspot]
+	if target == nil {
+		target = make(map[string]struct{}, len(codes))
+		g.codesByHotspot[hotspot] = target
+	}
+	for code := range codes {
+		code = normalizeAStockCode(code)
+		if astockcode.IsShanghaiShenzhen(code) {
+			target[code] = struct{}{}
+		}
+	}
+	if len(target) == 0 {
+		delete(g.codesByHotspot, hotspot)
+	}
+}
+
+func (g *aStockHotspotSectorGate) empty() bool {
+	return g == nil || len(g.codesByHotspot) == 0
+}
+
+func (g *aStockHotspotSectorGate) Allows(hotspot string, candidate aStockMarketCandidate) bool {
+	if g == nil || candidate.FixedPool || !candidate.Fallback {
+		return true
+	}
+	codes := g.codesByHotspot[normalizeAStockRecommendationHotspot(hotspot)]
+	if len(codes) == 0 {
+		return true
+	}
+	_, ok := codes[normalizeAStockCode(candidate.Code)]
+	return ok
+}
+
+func aStockHotspotSectorAliases(hotspot string) []aStockHotspotSectorAlias {
+	switch normalizeAStockRecommendationHotspot(hotspot) {
+	case "人工智能":
+		return []aStockHotspotSectorAlias{
+			{SectorType: "概念资金流", SectorName: "人工智能"},
+			{SectorType: "概念资金流", SectorName: "机器人概念"},
+			{SectorType: "概念资金流", SectorName: "人形机器人"},
+			{SectorType: "概念资金流", SectorName: "机器人执行器"},
+			{SectorType: "行业资金流", SectorName: "机器人"},
+		}
+	case "半导体":
+		return []aStockHotspotSectorAlias{
+			{SectorType: "行业资金流", SectorName: "半导体"},
+			{SectorType: "概念资金流", SectorName: "芯片概念"},
+			{SectorType: "概念资金流", SectorName: "存储芯片"},
+			{SectorType: "概念资金流", SectorName: "光刻机"},
+			{SectorType: "概念资金流", SectorName: "先进封装"},
+		}
+	case "新能源":
+		return []aStockHotspotSectorAlias{
+			{SectorType: "行业资金流", SectorName: "光伏设备"},
+			{SectorType: "行业资金流", SectorName: "电池"},
+			{SectorType: "行业资金流", SectorName: "风电设备"},
+			{SectorType: "行业资金流", SectorName: "能源金属"},
+			{SectorType: "概念资金流", SectorName: "储能"},
+			{SectorType: "概念资金流", SectorName: "锂电池"},
+			{SectorType: "概念资金流", SectorName: "光伏概念"},
+			{SectorType: "概念资金流", SectorName: "风能"},
+		}
+	case "低空经济":
+		return []aStockHotspotSectorAlias{
+			{SectorType: "概念资金流", SectorName: "低空经济"},
+			{SectorType: "概念资金流", SectorName: "飞行汽车(eVTOL)"},
+			{SectorType: "概念资金流", SectorName: "无人机"},
+		}
+	case "金融券商":
+		return []aStockHotspotSectorAlias{
+			{SectorType: "行业资金流", SectorName: "证券"},
+			{SectorType: "行业资金流", SectorName: "证券Ⅱ"},
+			{SectorType: "行业资金流", SectorName: "证券Ⅲ"},
+			{SectorType: "行业资金流", SectorName: "银行"},
+			{SectorType: "行业资金流", SectorName: "保险"},
+			{SectorType: "概念资金流", SectorName: "券商概念"},
+		}
+	case "黄金有色":
+		return []aStockHotspotSectorAlias{
+			{SectorType: "行业资金流", SectorName: "黄金"},
+			{SectorType: "行业资金流", SectorName: "有色金属"},
+			{SectorType: "行业资金流", SectorName: "贵金属"},
+			{SectorType: "行业资金流", SectorName: "稀土"},
+			{SectorType: "概念资金流", SectorName: "黄金概念"},
+			{SectorType: "概念资金流", SectorName: "稀土永磁"},
+		}
+	case "医药生物":
+		return []aStockHotspotSectorAlias{
+			{SectorType: "行业资金流", SectorName: "医药生物"},
+			{SectorType: "行业资金流", SectorName: "医药商业"},
+			{SectorType: "行业资金流", SectorName: "医药流通"},
+			{SectorType: "行业资金流", SectorName: "化学制剂"},
+			{SectorType: "行业资金流", SectorName: "中药"},
+			{SectorType: "行业资金流", SectorName: "医疗器械"},
+			{SectorType: "概念资金流", SectorName: "创新药"},
+			{SectorType: "概念资金流", SectorName: "单抗概念"},
+			{SectorType: "概念资金流", SectorName: "医药医疗风格"},
+		}
+	case "消费电子":
+		return []aStockHotspotSectorAlias{
+			{SectorType: "行业资金流", SectorName: "消费电子"},
+			{SectorType: "概念资金流", SectorName: "苹果概念"},
+			{SectorType: "概念资金流", SectorName: "华为概念"},
+			{SectorType: "概念资金流", SectorName: "MR"},
+			{SectorType: "概念资金流", SectorName: "AR"},
+			{SectorType: "概念资金流", SectorName: "VR"},
+		}
+	case "房地产":
+		return []aStockHotspotSectorAlias{
+			{SectorType: "行业资金流", SectorName: "房地产"},
+			{SectorType: "行业资金流", SectorName: "房地产开发"},
+			{SectorType: "行业资金流", SectorName: "房地产服务"},
+			{SectorType: "概念资金流", SectorName: "物业管理"},
+			{SectorType: "概念资金流", SectorName: "租售同权"},
+		}
+	case "军工航天":
+		return []aStockHotspotSectorAlias{
+			{SectorType: "行业资金流", SectorName: "航天航空"},
+			{SectorType: "行业资金流", SectorName: "航空装备"},
+			{SectorType: "行业资金流", SectorName: "军工"},
+			{SectorType: "概念资金流", SectorName: "军工"},
+			{SectorType: "概念资金流", SectorName: "商业航天"},
+			{SectorType: "概念资金流", SectorName: "卫星导航"},
+		}
+	default:
+		return nil
+	}
+}
+
+func (s *Server) loadAStockHotspotSectorGateWithCache(hotspots []aStockHotspot, cache *aStockRequestCache) *aStockHotspotSectorGate {
+	if len(hotspots) == 0 || strings.TrimSpace(s.cfg.AStockAuctionURL) == "" {
+		return nil
+	}
+	gate := newAStockHotspotSectorGate()
+	for _, hotspot := range hotspots {
+		aliases := aStockHotspotSectorAliases(hotspot.Name)
+		if len(aliases) == 0 {
+			continue
+		}
+		for _, alias := range aliases {
+			gate.addCodes(hotspot.Name, s.loadAStockSectorConstituentCodesWithCache(alias, cache))
+		}
+	}
+	if gate.empty() {
+		return nil
+	}
+	return gate
+}
+
+func (s *Server) loadAStockSectorConstituentCodesWithCache(alias aStockHotspotSectorAlias, cache *aStockRequestCache) map[string]struct{} {
+	sectorType := normalizeSectorFundFlowSectorType(alias.SectorType)
+	sectorName := strings.TrimSpace(alias.SectorName)
+	if sectorName == "" {
+		return nil
+	}
+	key := sectorType + "|" + sectorName
+	if cache != nil {
+		if cache.sectorConstituents == nil {
+			cache.sectorConstituents = make(map[string]aStockSectorConstituentCodesCacheEntry)
+		}
+		if entry, ok := cache.sectorConstituents[key]; ok && entry.found {
+			return entry.codes
+		}
+	}
+	codes := s.loadAStockCachedSectorConstituentCodes(sectorType, sectorName)
+	if len(codes) == 0 {
+		items, _, err := s.refreshSectorFundFlowConstituents(model.AStockSectorFundFlowListResult{
+			SectorType: sectorType,
+			Indicator:  "今日",
+		}, sectorName)
+		if err == nil {
+			codes = aStockSectorConstituentCodes(items)
+		}
+	}
+	if cache != nil {
+		cache.sectorConstituents[key] = aStockSectorConstituentCodesCacheEntry{codes: codes, found: true}
+	}
+	return codes
+}
+
+func (s *Server) loadAStockCachedSectorConstituentCodes(sectorType string, sectorName string) map[string]struct{} {
+	if strings.TrimSpace(s.cfg.ContentURL) == "" {
+		return nil
+	}
+	query := url.Values{}
+	query.Set("sector_type", normalizeSectorFundFlowSectorType(sectorType))
+	query.Set("sector_name", strings.TrimSpace(sectorName))
+	query.Set("limit", fmt.Sprintf("%d", sectorFundFlowStockPageSize))
+	var result model.AStockSectorConstituentListResult
+	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/a-stock/sector-constituents?"+query.Encode(), &result); err != nil {
+		return nil
+	}
+	return aStockSectorConstituentCodes(result.Items)
+}
+
+func aStockSectorConstituentCodes(items []model.AStockSectorConstituent) map[string]struct{} {
+	if len(items) == 0 {
+		return nil
+	}
+	codes := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		code := normalizeAStockCode(item.Code)
+		if astockcode.IsShanghaiShenzhen(code) {
+			codes[code] = struct{}{}
+		}
+	}
+	if len(codes) == 0 {
+		return nil
+	}
+	return codes
 }
 
 func aStockRecommendationSnapshots(strategyDate string, periodKey string, phase string) []aStockRecommendationSnapshot {
@@ -7706,6 +7965,10 @@ func validAStockMentionName(name string) bool {
 }
 
 func scoreAStockMarketCandidates(hotspot aStockHotspot, candidates []aStockMarketCandidate) []aStockMarketCandidate {
+	return scoreAStockMarketCandidatesWithSectorGate(hotspot, candidates, nil)
+}
+
+func scoreAStockMarketCandidatesWithSectorGate(hotspot aStockHotspot, candidates []aStockMarketCandidate, sectorGate *aStockHotspotSectorGate) []aStockMarketCandidate {
 	scored := make([]aStockMarketCandidate, 0, len(candidates))
 	evidenceIndex := newAStockStockEvidenceIndex(hotspot.MatchedItems)
 	for _, candidate := range candidates {
@@ -7723,6 +7986,9 @@ func scoreAStockMarketCandidates(hotspot aStockHotspot, candidates []aStockMarke
 			keywords = intersectAStockKeywords(candidate.Keywords, hotspot.Keywords)
 		}
 		if evidence == 0 && len(keywords) == 0 {
+			continue
+		}
+		if !sectorGate.Allows(hotspot.Name, candidate) {
 			continue
 		}
 		candidate.Evidence = evidence
