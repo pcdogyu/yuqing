@@ -9,6 +9,12 @@ var shenzhenShanghaiPrefixes = []string{
 	"688", "689",
 }
 
+var canonicalNameAliases = map[string]map[string]string{
+	"601881": {
+		"银河证券": "中国银河",
+	},
+}
+
 func Normalize(raw string) string {
 	raw = strings.TrimSpace(strings.ToUpper(raw))
 	raw = strings.TrimPrefix(raw, "SH.")
@@ -60,6 +66,11 @@ func DisplayName(code string, name string) string {
 	code = Normalize(code)
 	if code != "" && strings.HasPrefix(name, code) {
 		name = strings.TrimSpace(strings.TrimPrefix(name, code))
+	}
+	if aliases := canonicalNameAliases[code]; aliases != nil {
+		if canonical := aliases[name]; canonical != "" {
+			return canonical
+		}
 	}
 	return name
 }
