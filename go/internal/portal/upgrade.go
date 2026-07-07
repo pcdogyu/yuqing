@@ -19,6 +19,8 @@ import (
 )
 
 const portalUpgradeTimeout = 10 * time.Minute
+const portalUpgradeRestartTimeout = 10 * time.Minute
+const portalUpgradeRestartWatchdog = portalUpgradeRestartTimeout + 2*time.Minute
 const portalUpgradeCommandHeartbeat = 15 * time.Second
 const portalUpgradeStatusFileEnv = "YUQING_PORTAL_UPGRADE_STATUS_FILE"
 const portalUpgradeRestartDisabledEnv = "YUQING_PORTAL_UPGRADE_RESTART_DISABLED"
@@ -197,22 +199,64 @@ func (s *Server) startPortalUpgrade() portalUpgradeResult {
 
 func (s *Server) portalUpgradeSnapshot() portalUpgradeResult {
 	s.upgradeMu.Lock()
-	defer s.upgradeMu.Unlock()
+	var result portalUpgradeResult
 	if s.upgradeState.StartedAt.IsZero() {
 		if disk, ok := loadPortalUpgradeStatus(); ok {
-			return withPortalUpgradeElapsed(disk)
+			result = disk
+		} else {
+			result = portalUpgradeResult{
+				Status:  "idle",
+				Message: "等待执行",
+				Log:     "等待升级日志",
+			}
 		}
-		return portalUpgradeResult{
-			Status:  "idle",
-			Message: "等待执行",
-			Log:     "等待升级日志",
+	} else {
+		result = s.upgradeState
+		if disk, ok := loadPortalUpgradeStatus(); ok && (disk.StartedAt.After(result.StartedAt) || disk.FinishedAt.After(result.FinishedAt)) {
+			result = disk
+			if !disk.Running {
+				s.upgradeState = disk
+			}
 		}
 	}
-	result := s.upgradeState
-	if disk, ok := loadPortalUpgradeStatus(); ok && (disk.StartedAt.After(result.StartedAt) || disk.FinishedAt.After(result.FinishedAt)) {
-		result = disk
+	staleRestart := false
+	if stale, ok := stalePortalUpgradeRestartResult(result, time.Now()); ok {
+		result = stale
+		s.upgradeState = stale
+		staleRestart = true
+	}
+	s.upgradeMu.Unlock()
+	if staleRestart {
+		persistPortalUpgradeStatus(result)
 	}
 	return withPortalUpgradeElapsed(result)
+}
+
+func stalePortalUpgradeRestartResult(result portalUpgradeResult, now time.Time) (portalUpgradeResult, bool) {
+	if !result.Running || !strings.EqualFold(result.Status, "restarting") {
+		return result, false
+	}
+	reference := result.FinishedAt
+	if reference.IsZero() {
+		reference = result.StartedAt
+	}
+	if reference.IsZero() || now.Sub(reference) <= portalUpgradeRestartWatchdog {
+		return result, false
+	}
+	waited := now.Sub(reference).Round(time.Second)
+	message := fmt.Sprintf("服务重启超时（已等待 %s），请在服务器检查 runtime-logs/%s 并手动执行 run.bat --skip-pull", waited, portalUpgradeRestartLogName)
+	logText := strings.TrimRight(result.Log, "\r\n")
+	if logText != "" {
+		logText += "\n"
+	}
+	logText += timestampedUpgradeLine(message)
+	result.OK = false
+	result.Status = "failed"
+	result.Message = message
+	result.Log = logText
+	result.FinishedAt = now
+	result.Running = false
+	return result, true
 }
 
 func runPortalUpgrade(parent context.Context, _ config.Config, progress portalUpgradeProgress) portalUpgradeResult {
@@ -502,6 +546,7 @@ $RunBat = ` + psSingleQuoted(runBat) + `
 $StatusPath = ` + psSingleQuoted(statusPath) + `
 $RestartLogPath = ` + psSingleQuoted(restartLogPath) + `
 $StartedAt = ` + psSingleQuoted(startedAt.Format(time.RFC3339Nano)) + `
+$RestartTimeoutSeconds = ` + fmt.Sprintf("%d", int(portalUpgradeRestartTimeout.Seconds())) + `
 
 function Get-UpgradeCommit {
     $commit = ''
@@ -552,12 +597,13 @@ function Write-UpgradeStatus([string]$Status, [string]$Message, [bool]$Ok, [bool
 }
 
 function Test-GatewayWebHealthy {
-    try {
-        $resp = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1/healthy' -TimeoutSec 3 -ErrorAction Stop
-        return ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 500)
-    } catch {
-        return $false
+    foreach ($url in @('http://127.0.0.1/healthz', 'http://127.0.0.1:8079/healthz', 'http://127.0.0.1/healthy', 'http://127.0.0.1:8079/healthy')) {
+        try {
+            $resp = Invoke-WebRequest -UseBasicParsing -Uri $url -TimeoutSec 3 -ErrorAction Stop
+            if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 500) { return $true }
+        } catch {}
     }
+    return $false
 }
 
 function Ensure-GatewayWeb {
@@ -585,12 +631,34 @@ function Ensure-GatewayWeb {
     return $false
 }
 
+function Invoke-RunBatRestart {
+    $errPath = $RestartLogPath + '.err'
+    try { Remove-Item -Path $RestartLogPath -Force -ErrorAction SilentlyContinue } catch {}
+    try { Remove-Item -Path $errPath -Force -ErrorAction SilentlyContinue } catch {}
+    $cmdExe = if ($env:ComSpec) { $env:ComSpec } else { 'cmd.exe' }
+    $cmdArgs = '/d /c "' + $RunBat + '" --skip-pull'
+    try {
+        $proc = Start-Process -FilePath $cmdExe -ArgumentList $cmdArgs -WorkingDirectory $GoDir -RedirectStandardOutput $RestartLogPath -RedirectStandardError $errPath -PassThru -WindowStyle Hidden
+    } catch {
+        try { $_ | Out-File -FilePath $errPath -Encoding UTF8 -Append } catch {}
+        return 1
+    }
+    if ($null -eq $proc) { return 1 }
+    if (-not $proc.WaitForExit($RestartTimeoutSeconds * 1000)) {
+        try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+        try { ('run.bat restart timed out after ' + $RestartTimeoutSeconds + ' seconds') | Out-File -FilePath $errPath -Encoding UTF8 -Append } catch {}
+        return 124
+    }
+    try { $proc.Refresh() } catch {}
+    if ($null -eq $proc.ExitCode) { return 1 }
+    return $proc.ExitCode
+}
+
 Start-Sleep -Seconds 2
 Write-UpgradeStatus 'restarting' '正在重启服务，页面会自动重新连接...' $true $true
 try {
     Push-Location $GoDir
-    & $RunBat --skip-pull *> $RestartLogPath
-    $exitCode = $LASTEXITCODE
+    $exitCode = Invoke-RunBatRestart
     Pop-Location
 } catch {
     $exitCode = 1

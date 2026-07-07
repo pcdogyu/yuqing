@@ -136,6 +136,39 @@ func TestPortalUpgradeStatusPersistsAndLoads(t *testing.T) {
 	}
 }
 
+func TestPortalUpgradeSnapshotMarksStaleRestartingFailed(t *testing.T) {
+	statusPath := filepath.Join(t.TempDir(), "portal-upgrade-status.json")
+	t.Setenv(portalUpgradeStatusFileEnv, statusPath)
+	srv := NewServer(config.Config{})
+	startedAt := time.Now().Add(-(portalUpgradeRestartWatchdog + 5*time.Minute))
+	finishedAt := time.Now().Add(-(portalUpgradeRestartWatchdog + time.Minute))
+	srv.upgradeState = portalUpgradeResult{
+		OK:         true,
+		Status:     "restarting",
+		Message:    "正在重启服务",
+		Log:        "restart scheduled",
+		StartedAt:  startedAt,
+		FinishedAt: finishedAt,
+		Running:    true,
+	}
+
+	result := srv.portalUpgradeSnapshot()
+
+	if result.OK || result.Status != "failed" || result.Running || !strings.Contains(result.Message, "服务重启超时") {
+		t.Fatalf("expected stale restarting status to fail, got %+v", result)
+	}
+	if !strings.Contains(result.Log, "run.bat --skip-pull") {
+		t.Fatalf("expected manual restart guidance in log, got %s", result.Log)
+	}
+	loaded, ok := loadPortalUpgradeStatus()
+	if !ok {
+		t.Fatal("expected stale failure status to persist")
+	}
+	if loaded.Status != "failed" || loaded.Running {
+		t.Fatalf("unexpected persisted stale status: %+v", loaded)
+	}
+}
+
 func TestSchedulePortalUpgradeServiceRestartCanBeDisabledForTests(t *testing.T) {
 	t.Setenv(portalUpgradeRestartDisabledEnv, "true")
 	var log bytes.Buffer
@@ -152,7 +185,11 @@ func TestPortalUpgradeRestartScriptRunsRunBatAndWritesEffectiveVersion(t *testin
 	script := portalUpgradeRestartScript(`C:\yuqing\go`, `C:\yuqing`, `C:\yuqing\go\run.bat`, `C:\yuqing\go\runtime-logs\portal-upgrade-status.json`, `C:\yuqing\go\runtime-logs\portal-upgrade-restart.log`, time.Date(2026, 7, 6, 17, 50, 0, 0, time.UTC))
 
 	for _, want := range []string{
-		`& $RunBat --skip-pull`,
+		`$RestartTimeoutSeconds = 600`,
+		`function Invoke-RunBatRestart`,
+		`$cmdArgs = '/d /c "' + $RunBat + '" --skip-pull'`,
+		`run.bat restart timed out after `,
+		`http://127.0.0.1/healthz`,
 		`function Ensure-GatewayWeb`,
 		`$env:YUQING_GATEWAY_HTTP_ADDRS = ':8079,:80'`,
 		`$gatewayReady = Ensure-GatewayWeb`,
