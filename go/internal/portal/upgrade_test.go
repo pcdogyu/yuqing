@@ -153,8 +153,12 @@ func TestPortalUpgradeRestartScriptRunsRunBatAndWritesEffectiveVersion(t *testin
 
 	for _, want := range []string{
 		`& $RunBat --skip-pull`,
+		`function Ensure-GatewayWeb`,
+		`$env:YUQING_GATEWAY_HTTP_ADDRS = ':8079,:80'`,
+		`$gatewayReady = Ensure-GatewayWeb`,
 		`Write-UpgradeStatus 'restarting' '正在重启服务，页面会自动重新连接...' $true $true`,
 		`Write-UpgradeStatus 'success' ('升级已生效版本: ' + $commit) $true $false`,
+		`Write-UpgradeStatus 'failed' '服务重启完成但 gateway-web 未恢复监听' $false $false`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("expected restart script to include %q, got %s", want, script)

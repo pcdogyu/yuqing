@@ -551,6 +551,40 @@ function Write-UpgradeStatus([string]$Status, [string]$Message, [bool]$Ok, [bool
     Move-Item -Path $tmp -Destination $StatusPath -Force
 }
 
+function Test-GatewayWebHealthy {
+    try {
+        $resp = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1/healthy' -TimeoutSec 3 -ErrorAction Stop
+        return ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 500)
+    } catch {
+        return $false
+    }
+}
+
+function Ensure-GatewayWeb {
+    if (Test-GatewayWebHealthy) { return $true }
+    $exe = Join-Path (Join-Path $GoDir 'bin') 'gateway-web.exe'
+    if (-not (Test-Path $exe)) {
+        try { ('gateway fallback missing exe: ' + $exe) | Out-File -FilePath ($RestartLogPath + '.err') -Encoding UTF8 -Append } catch {}
+        return $false
+    }
+    $outLog = Join-Path (Join-Path $GoDir 'runtime-logs') 'gateway-web.out.log'
+    $errLog = Join-Path (Join-Path $GoDir 'runtime-logs') 'gateway-web.err.log'
+    $env:YUQING_GATEWAY_HTTP_ADDRS = ':8079,:80'
+    $env:YUQING_GATEWAY_ADDR = ':8079'
+    $env:YUQING_LOG_LEVEL = 'debug'
+    try {
+        Start-Process -FilePath $exe -WorkingDirectory $GoDir -RedirectStandardOutput $outLog -RedirectStandardError $errLog -WindowStyle Hidden | Out-Null
+    } catch {
+        try { $_ | Out-File -FilePath ($RestartLogPath + '.err') -Encoding UTF8 -Append } catch {}
+        return $false
+    }
+    for ($i = 0; $i -lt 20; $i++) {
+        Start-Sleep -Seconds 1
+        if (Test-GatewayWebHealthy) { return $true }
+    }
+    return $false
+}
+
 Start-Sleep -Seconds 2
 Write-UpgradeStatus 'restarting' '正在重启服务，页面会自动重新连接...' $true $true
 try {
@@ -562,9 +596,12 @@ try {
     $exitCode = 1
     try { $_ | Out-File -FilePath ($RestartLogPath + '.err') -Encoding UTF8 -Append } catch {}
 }
-if ($exitCode -eq 0) {
+$gatewayReady = Ensure-GatewayWeb
+if (($exitCode -eq 0) -and $gatewayReady) {
     $commit = Get-UpgradeCommit
     Write-UpgradeStatus 'success' ('升级已生效版本: ' + $commit) $true $false
+} elseif ($exitCode -eq 0) {
+    Write-UpgradeStatus 'failed' '服务重启完成但 gateway-web 未恢复监听' $false $false
 } else {
     Write-UpgradeStatus 'failed' ('服务重启失败，run.bat 退出码: ' + $exitCode) $false $false
 }
