@@ -9238,6 +9238,10 @@ func TestPortalNavPlacesLogoutAfterUpgrade(t *testing.T) {
 		`setTimeout(hide,120000)`,
 		`?"重启中":"运行中"`,
 		`setLog(data.log||runningMessage,true)`,
+		`sessionStorage.setItem(upgradeActiveKey,"1")`,
+		`failedPolls>=6&&hasRememberedUpgrade()`,
+		`window.location.reload()`,
+		`正在重新连接升级状态`,
 		`log.scrollTop=log.scrollHeight`,
 	} {
 		if !strings.Contains(portalUpgradeShellHTML, expected) {

@@ -4906,6 +4906,8 @@ var consoleState=byId("portal-upgrade-console-state");
 var consoleClock=byId("portal-upgrade-console-clock");
 var hideTimer=0;
 var pollTimer=0;
+var failedPolls=0;
+var upgradeActiveKey="portal-upgrade-active";
 function show(){if(mask){mask.hidden=false}}
 function hide(){if(mask){mask.hidden=true}}
 function scheduleHide(){clearTimeout(hideTimer);hideTimer=setTimeout(hide,120000)}
@@ -4915,13 +4917,17 @@ function shouldStickToBottom(){return !log||log.scrollTop+log.clientHeight>=log.
 function setConsoleMeta(state,clock){if(consoleState){consoleState.textContent=state||"等待"}if(consoleClock){consoleClock.textContent=clock||"--"}}
 function setLog(text,forceScroll){if(log){var stick=shouldStickToBottom();log.textContent=text||"无升级日志";if(forceScroll||stick){log.scrollTop=log.scrollHeight}}}
 function appendConsoleLine(line){var current=log?(log.textContent||""):"";setLog(current.replace(/\s*$/,"")+"\n"+line+"\n",true)}
+function rememberUpgrade(active){try{if(active){sessionStorage.setItem(upgradeActiveKey,"1")}else{sessionStorage.removeItem(upgradeActiveKey)}}catch(e){}}
+function hasRememberedUpgrade(){try{return sessionStorage.getItem(upgradeActiveKey)==="1"}catch(e){return false}}
 function upgradeMessage(data){data=data||{};var text=data.message||data.msg||data.error||"";if(text){return String(text)}if(data.__httpOK===false){return "升级请求失败：HTTP "+(data.__httpStatus||"")+(data.__httpStatusText?(" "+data.__httpStatusText):"")}return ""}
 function upgradeLog(data){data=data||{};return data.log||upgradeMessage(data)||"无升级日志"}
 function parseJSON(resp){return resp.json().catch(function(){return {ok:false,message:"升级接口返回非 JSON"}}).then(function(data){data=data||{};data.__httpOK=resp.ok;data.__httpStatus=resp.status;data.__httpStatusText=resp.statusText||"";return data})}
 function renderUpgrade(data){
 data=data||{};
-if(data.running||data.status==="running"||data.status==="restarting"){var runningMessage=upgradeMessage(data)||"升级执行中";status.textContent=runningMessage;setConsoleMeta(data.status==="restarting"?"重启中":"运行中","最后刷新 "+now());button.disabled=true;setLog(data.log||runningMessage,true);schedulePoll();return}
+failedPolls=0;
+if(data.running||data.status==="running"||data.status==="restarting"){rememberUpgrade(true);var runningMessage=upgradeMessage(data)||"升级执行中";status.textContent=runningMessage;setConsoleMeta(data.status==="restarting"?"重启中":"运行中","最后刷新 "+now());button.disabled=true;setLog(data.log||runningMessage,true);schedulePoll();return}
 stopPoll();
+rememberUpgrade(false);
 button.disabled=false;
 var idle=data.status==="idle";
 var ok=!!data.ok&&data.__httpOK!==false&&!idle;
@@ -4931,19 +4937,22 @@ setConsoleMeta(idle?"等待":(ok?"完成":"失败"),idle?"--":("完成于 "+now(
 setLog(upgradeLog(data),true);
 if(!idle){scheduleHide()}
 }
-function pollStatus(){fetch("/system/upgrade/status",{method:"GET",credentials:"same-origin",headers:{"Accept":"application/json"}}).then(parseJSON).then(renderUpgrade).catch(function(err){status.textContent="升级执行中";setConsoleMeta("查询失败","最后刷新 "+now());appendConsoleLine(now()+" 状态查询失败: "+err.message);schedulePoll()})}
+function pollStatus(){fetch("/system/upgrade/status",{method:"GET",credentials:"same-origin",headers:{"Accept":"application/json"}}).then(parseJSON).then(renderUpgrade).catch(function(err){failedPolls++;status.textContent="升级执行中";setConsoleMeta("查询失败","最后刷新 "+now());appendConsoleLine(now()+" 状态查询失败: "+err.message);if(failedPolls>=6&&hasRememberedUpgrade()){appendConsoleLine(now()+" 正在重新载入页面以连接重启后的服务...");setTimeout(function(){window.location.reload()},600);return}schedulePoll()})}
 if(close){close.addEventListener("click",function(){clearTimeout(hideTimer);hide()})}
 if(button&&mask&&status&&log){button.addEventListener("click",function(){
 if(button.disabled){return}
 clearTimeout(hideTimer);
 stopPoll();
 show();
+rememberUpgrade(true);
+failedPolls=0;
 button.disabled=true;
 status.textContent="升级执行中";
 setConsoleMeta("启动中","最后刷新 "+now());
 setLog(now()+" 正在启动后台升级，请等待...\n",true);
-fetch("/system/upgrade",{method:"POST",credentials:"same-origin",headers:{"Accept":"application/json"}}).then(parseJSON).then(renderUpgrade).catch(function(err){stopPoll();status.textContent="升级失败";setConsoleMeta("失败","完成于 "+now());button.disabled=false;appendConsoleLine(now()+" 请求失败: "+err.message);scheduleHide()})
+fetch("/system/upgrade",{method:"POST",credentials:"same-origin",headers:{"Accept":"application/json"}}).then(parseJSON).then(renderUpgrade).catch(function(err){stopPoll();rememberUpgrade(false);status.textContent="升级失败";setConsoleMeta("失败","完成于 "+now());button.disabled=false;appendConsoleLine(now()+" 请求失败: "+err.message);scheduleHide()})
 })}
+if(button&&mask&&status&&log&&hasRememberedUpgrade()){show();button.disabled=true;status.textContent="升级执行中";setConsoleMeta("重连中","最后刷新 "+now());setLog(now()+" 正在重新连接升级状态...\n",true);pollStatus()}
 })();
 </script>`
 const portalFooterHTML = `<footer class="site-footer"><div>Code By Yuhao@jiansutech.com - {{.FooterBuildTime}} - {{.FooterCommit}} - {{.FooterBranch}} - <a class="footer-feedback-link" href="/system?section=feedback">反馈建议</a></div></footer>` + portalRulesFormEnhancementScript + portalSystemServiceLogsScript
