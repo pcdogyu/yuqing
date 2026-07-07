@@ -295,7 +295,7 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		`.astock-overview-header{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;margin-bottom:14px}`,
 		`.astock-overview-summary{display:flex;justify-content:flex-start;gap:24px;flex-wrap:wrap;text-align:left;font-size:12px}`,
 		`.astock-overview-summary strong{display:block;font-size:18px;line-height:1.25;white-space:nowrap}`,
-		`.astock-overview-table{width:100%;min-width:1780px;table-layout:fixed;font-size:12px}`,
+		`.astock-overview-table{width:100%;min-width:1920px;table-layout:fixed;font-size:12px}`,
 		`.astock-overview-table .astock-muted{display:block;margin-bottom:7px;font-size:12px;white-space:nowrap;word-break:keep-all}`,
 		`.astock-overview-period{width:6.4%;min-width:110px}`,
 		`.astock-overview-period strong{white-space:nowrap}`,
@@ -305,6 +305,7 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		`.astock-overview-recent-filter .astock-muted,.astock-overview-recent-filter strong{white-space:nowrap}`,
 		`.astock-overview-limit-filter{width:6.6%;min-width:116px}`,
 		`.astock-overview-market-filter{width:7.8%;min-width:138px}`,
+		`.astock-overview-fund-filter{width:7.8%;min-width:138px}`,
 		`.astock-overview-recalculate{width:8.2%;min-width:146px}`,
 		`.astock-overview-recalculate .astock-muted,.astock-overview-recalculate strong{white-space:nowrap}`,
 		`.astock-overview-window{width:11.2%;min-width:196px}`,
@@ -342,6 +343,8 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		"现价",
 		"今日涨跌幅",
 		"5日资金动向",
+		"资金过滤",
+		"关闭资金过滤",
 		".astock-table th{white-space:nowrap}",
 		".astock-recommendation-table th:nth-child(2),.astock-recommendation-table td:nth-child(2){width:7.5%;white-space:nowrap}",
 		".astock-recommendation-table th:last-child,.astock-recommendation-table td:last-child{width:36%}",
@@ -432,7 +435,7 @@ func TestAStockPagePartialReturnsFragmentJSON(t *testing.T) {
 
 func TestAStockPageFragmentCacheKeysAndBypass(t *testing.T) {
 	srv := NewServer(config.Config{})
-	key := aStockPageFragmentCacheKey("2026-06-15", "morning", 1, false, false, false)
+	key := aStockPageFragmentCacheKey("2026-06-15", "morning", 1, false, false, false, false)
 	srv.storeCachedAStockPageFragment(key, aStockPartialPayload{
 		HTML:         `<div id="astock-page-content">cached morning</div>`,
 		CanonicalURL: "/a-stock?date=2026-06-15&period=morning",
@@ -479,14 +482,15 @@ func TestAStockPageFragmentCacheKeysAndBypass(t *testing.T) {
 		}
 	}
 
-	baseKey := aStockPageFragmentCacheKey("2026-06-15", "morning", 1, false, false, false)
+	baseKey := aStockPageFragmentCacheKey("2026-06-15", "morning", 1, false, false, false, false)
 	for name, otherKey := range map[string]string{
-		"date":                aStockPageFragmentCacheKey("2026-06-16", "morning", 1, false, false, false),
-		"period":              aStockPageFragmentCacheKey("2026-06-15", "afternoon", 1, false, false, false),
-		"news_page":           aStockPageFragmentCacheKey("2026-06-15", "morning", 2, false, false, false),
-		"ignore_recent":       aStockPageFragmentCacheKey("2026-06-15", "morning", 1, true, false, false),
-		"ignore_limit_up":     aStockPageFragmentCacheKey("2026-06-15", "morning", 1, false, true, false),
-		"filter_today_market": aStockPageFragmentCacheKey("2026-06-15", "morning", 1, false, false, true),
+		"date":                aStockPageFragmentCacheKey("2026-06-16", "morning", 1, false, false, false, false),
+		"period":              aStockPageFragmentCacheKey("2026-06-15", "afternoon", 1, false, false, false, false),
+		"news_page":           aStockPageFragmentCacheKey("2026-06-15", "morning", 2, false, false, false, false),
+		"ignore_recent":       aStockPageFragmentCacheKey("2026-06-15", "morning", 1, true, false, false, false),
+		"ignore_limit_up":     aStockPageFragmentCacheKey("2026-06-15", "morning", 1, false, true, false, false),
+		"ignore_fund_flow":    aStockPageFragmentCacheKey("2026-06-15", "morning", 1, false, false, true, false),
+		"filter_today_market": aStockPageFragmentCacheKey("2026-06-15", "morning", 1, false, false, false, true),
 	} {
 		if otherKey == baseKey {
 			t.Fatalf("expected %s to be part of fragment cache key %q", name, baseKey)
@@ -496,7 +500,7 @@ func TestAStockPageFragmentCacheKeysAndBypass(t *testing.T) {
 
 func TestAStockPagePostClearsSameDateCaches(t *testing.T) {
 	srv := NewServer(config.Config{})
-	fragmentKey := aStockPageFragmentCacheKey("2026-06-15", "morning", 1, false, false, false)
+	fragmentKey := aStockPageFragmentCacheKey("2026-06-15", "morning", 1, false, false, false, false)
 	articleStart := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
 	articleEnd := articleStart.Add(time.Hour)
 	articleKey := aStockArticlePagesCacheKey("publish_time", articleStart, articleEnd)
@@ -1668,23 +1672,25 @@ func TestAStockBacktestPageRendersStandaloneBacktestAndNavigation(t *testing.T) 
 
 func TestAStockBacktestPageGetUsesSnapshotOnly(t *testing.T) {
 	morningSnapshot := model.AStockRecommendationSnapshot{
-		Found:               true,
-		StrategyDate:        "2026-06-30",
-		Period:              "morning",
-		RecommendationsJSON: mustAStockTestJSON(t, []aStockRecommendation{{Rank: 1, Hotspot: "快照热点", Code: "603986", Name: "兆易创新", Reason: "snapshot morning"}}),
-		BacktestsJSON:       mustAStockTestJSON(t, []aStockBacktestRow{{Stock: "603986 兆易创新", EntryOpen: "721.00", T0Return: "-3.63%", T0Close: "694.80", T0ReturnClass: "astock-down", BestReturn: "-3.63%", BestReturnClass: "astock-down", Status: "已回测T+1"}}),
-		BacktestStatus:      "已读取上午快照",
-		GeneratedCount:      1,
+		Found:                 true,
+		StrategyDate:          "2026-06-30",
+		Period:                "morning",
+		RecommendationsJSON:   mustAStockTestJSON(t, []aStockRecommendation{{Rank: 1, Hotspot: "快照热点", Code: "603986", Name: "兆易创新", Reason: "snapshot morning"}}),
+		BacktestsJSON:         mustAStockTestJSON(t, []aStockBacktestRow{{Stock: "603986 兆易创新", EntryOpen: "721.00", T0Return: "-3.63%", T0Close: "694.80", T0ReturnClass: "astock-down", BestReturn: "-3.63%", BestReturnClass: "astock-down", Status: "已回测T+1"}}),
+		BacktestStatus:        "已读取上午快照",
+		GeneratedCount:        1,
+		FundFlowFilterEnabled: true,
 	}
 	afternoonSnapshot := model.AStockRecommendationSnapshot{
-		Found:                true,
-		StrategyDate:         "2026-06-30",
-		Period:               "afternoon",
-		RecommendationsJSON:  mustAStockTestJSON(t, []aStockRecommendation{{Rank: 1, Hotspot: "快照热点", Code: "600519", Name: "贵州茅台", Reason: "snapshot afternoon"}}),
-		BacktestsJSON:        mustAStockTestJSON(t, []aStockBacktestRow{{Stock: "600519 贵州茅台", AfternoonOpen: "1418.00", T0Return: "+1.25%", T0Close: "1435.73", T0ReturnClass: "astock-up", BestReturn: "+1.25%", BestReturnClass: "astock-up", Status: "已回测T+1"}}),
-		BacktestStatus:       "已读取下午快照",
-		GeneratedCount:       1,
-		LimitUpFilterEnabled: true,
+		Found:                 true,
+		StrategyDate:          "2026-06-30",
+		Period:                "afternoon",
+		RecommendationsJSON:   mustAStockTestJSON(t, []aStockRecommendation{{Rank: 1, Hotspot: "快照热点", Code: "600519", Name: "贵州茅台", Reason: "snapshot afternoon"}}),
+		BacktestsJSON:         mustAStockTestJSON(t, []aStockBacktestRow{{Stock: "600519 贵州茅台", AfternoonOpen: "1418.00", T0Return: "+1.25%", T0Close: "1435.73", T0ReturnClass: "astock-up", BestReturn: "+1.25%", BestReturnClass: "astock-up", Status: "已回测T+1"}}),
+		BacktestStatus:        "已读取下午快照",
+		GeneratedCount:        1,
+		LimitUpFilterEnabled:  true,
+		FundFlowFilterEnabled: true,
 	}
 	var mu sync.Mutex
 	requests := []string{}
@@ -1761,7 +1767,7 @@ func TestAStockBacktestSnapshotMissingDoesNotFallback(t *testing.T) {
 	defer content.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
-	ctx := srv.loadAStockBacktestSnapshotContextWithCache("2026-06-30", "afternoon", 1, false, false, false, newAStockRequestCache())
+	ctx := srv.loadAStockBacktestSnapshotContextWithCache("2026-06-30", "afternoon", 1, false, false, false, false, newAStockRequestCache())
 
 	if ctx.BacktestStatus != "无推荐快照" || !strings.Contains(ctx.EmptyReason, "下午推荐暂无历史快照") {
 		t.Fatalf("expected missing snapshot empty state, got status=%q reason=%q", ctx.BacktestStatus, ctx.EmptyReason)
@@ -2528,19 +2534,20 @@ func TestAStockReadOnlySnapshotWithNewsSummarySkipsArticleAPI(t *testing.T) {
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
 		writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{
-			Found:               true,
-			StrategyDate:        "2026-06-15",
-			Period:              r.URL.Query().Get("period"),
-			RecommendationsJSON: "[]",
-			BacktestsJSON:       "[]",
-			NewsSummaryJSON:     string(summaryJSON),
-			BacktestStatus:      "无推荐股票",
+			Found:                 true,
+			StrategyDate:          "2026-06-15",
+			Period:                r.URL.Query().Get("period"),
+			RecommendationsJSON:   "[]",
+			BacktestsJSON:         "[]",
+			NewsSummaryJSON:       string(summaryJSON),
+			BacktestStatus:        "无推荐股票",
+			FundFlowFilterEnabled: true,
 		})
 	}))
 	defer content.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
-	ctx, ok := srv.loadAStockReadOnlySnapshotContextWithCache("2026-06-15", "morning", 1, false, false, false, newAStockRequestCache())
+	ctx, ok := srv.loadAStockReadOnlySnapshotContextWithCache("2026-06-15", "morning", 1, false, false, false, false, newAStockRequestCache())
 	if !ok {
 		t.Fatal("expected snapshot context")
 	}
@@ -2557,12 +2564,13 @@ func TestAStockOldSnapshotMissingNewsSummaryUsesArticleWindowCache(t *testing.T)
 		switch r.URL.Path {
 		case "/api/v1/a-stock/recommendations":
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{
-				Found:               true,
-				StrategyDate:        "2026-06-15",
-				Period:              r.URL.Query().Get("period"),
-				RecommendationsJSON: "[]",
-				BacktestsJSON:       "[]",
-				BacktestStatus:      "无推荐股票",
+				Found:                 true,
+				StrategyDate:          "2026-06-15",
+				Period:                r.URL.Query().Get("period"),
+				RecommendationsJSON:   "[]",
+				BacktestsJSON:         "[]",
+				BacktestStatus:        "无推荐股票",
+				FundFlowFilterEnabled: true,
 			})
 		case "/api/v1/articles":
 			mu.Lock()
@@ -2588,7 +2596,7 @@ func TestAStockOldSnapshotMissingNewsSummaryUsesArticleWindowCache(t *testing.T)
 	defer content.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
-	ctx, ok := srv.loadAStockReadOnlySnapshotContextWithCache("2026-06-15", "morning", 1, false, false, false, newAStockRequestCache())
+	ctx, ok := srv.loadAStockReadOnlySnapshotContextWithCache("2026-06-15", "morning", 1, false, false, false, false, newAStockRequestCache())
 	if !ok || ctx.NewsTotal == 0 {
 		t.Fatalf("expected old snapshot to populate articles, ok=%t ctx=%+v", ok, ctx)
 	}
@@ -2599,7 +2607,7 @@ func TestAStockOldSnapshotMissingNewsSummaryUsesArticleWindowCache(t *testing.T)
 		t.Fatal("expected first old snapshot request to hit articles API")
 	}
 
-	ctx, ok = srv.loadAStockReadOnlySnapshotContextWithCache("2026-06-15", "morning", 1, false, false, false, newAStockRequestCache())
+	ctx, ok = srv.loadAStockReadOnlySnapshotContextWithCache("2026-06-15", "morning", 1, false, false, false, false, newAStockRequestCache())
 	if !ok || ctx.NewsTotal == 0 {
 		t.Fatalf("expected second old snapshot to use cached articles, ok=%t ctx=%+v", ok, ctx)
 	}
@@ -3011,7 +3019,7 @@ func TestAStockContextUsesLiteralNewsWindowForSourceStats(t *testing.T) {
 	defer content.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
-	ctx := srv.loadAStockContextWithRecommendationPhase("2026-06-26", "morning", 1, false, false, false, true, aStockRecommendationPhaseFinal, newAStockRequestCache())
+	ctx := srv.loadAStockContextWithRecommendationPhase("2026-06-26", "morning", 1, false, false, false, false, true, aStockRecommendationPhaseFinal, newAStockRequestCache())
 	if seenRecommendationWindow || !seenStatsWindow {
 		t.Fatalf("expected stats window to cover recommendation window without duplicate query, recommendation=%v stats=%v", seenRecommendationWindow, seenStatsWindow)
 	}
@@ -3317,12 +3325,25 @@ func handleAStockRecommendationSnapshotTestEndpoint(w http.ResponseWriter, r *ht
 }
 
 func handleEmptyAStockAuctionTestEndpoint(w http.ResponseWriter, r *http.Request) bool {
+	if r.URL.Path == "/api/v1/a-stock/recommendation-latest-dates" {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    http.StatusOK,
+			"message": "ok",
+			"data":    model.AStockRecommendationLatestDateListResult{Items: []model.AStockRecommendationLatestDate{}},
+		})
+		return true
+	}
 	if r.URL.Path == "/api/v1/a-stock/stock-fund-flow-trend" {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"code":    http.StatusOK,
 			"message": "ok",
 			"data": model.AStockStockFundFlowTrendResult{
-				Items:     []model.AStockStockFundFlow{},
+				Items: []model.AStockStockFundFlow{{
+					Code:          r.URL.Query().Get("code"),
+					TradeDate:     r.URL.Query().Get("end_date"),
+					Indicator:     r.URL.Query().Get("indicator"),
+					MainNetInflow: 0,
+				}},
 				Total:     0,
 				EndDate:   r.URL.Query().Get("end_date"),
 				Indicator: r.URL.Query().Get("indicator"),
@@ -3458,20 +3479,22 @@ func TestAStockPageUsesValidSnapshotsBeforeSelections(t *testing.T) {
 			BestReturnClass: "astock-up",
 			Status:          "已回测T+1",
 		}}),
-		NewsSummaryJSON: mustAStockSnapshotNewsSummaryJSON(t, morningArticles, morningArticles, morningHotspots),
-		BacktestStatus:  "已读取上午快照",
-		GeneratedCount:  1,
+		NewsSummaryJSON:       mustAStockSnapshotNewsSummaryJSON(t, morningArticles, morningArticles, morningHotspots),
+		BacktestStatus:        "已读取上午快照",
+		GeneratedCount:        1,
+		FundFlowFilterEnabled: true,
 	}
 	afternoonSnapshot := model.AStockRecommendationSnapshot{
-		Found:                true,
-		StrategyDate:         "2026-06-24",
-		Period:               "afternoon",
-		RecommendationsJSON:  mustAStockTestJSON(t, []aStockRecommendation{{Rank: 1, Hotspot: "快照热点", Code: "600002", Name: "快照下午", Reason: "snapshot afternoon"}}),
-		BacktestsJSON:        mustAStockTestJSON(t, []aStockBacktestRow{{Stock: "600002 快照下午", EntryOpen: "--", AfternoonOpen: "20.00", T0Return: "+1.00%", T0Close: "20.20", T0ReturnClass: "astock-up", Days: []aStockBacktestCell{{Close: "20.60", Return: "+3.00%", ReturnClass: "astock-up"}}, BestReturn: "+3.00%", BestReturnClass: "astock-up", Status: "已回测T+1"}}),
-		NewsSummaryJSON:      mustAStockSnapshotNewsSummaryJSON(t, afternoonArticles, afternoonArticles, afternoonHotspots),
-		BacktestStatus:       "已读取下午快照",
-		GeneratedCount:       1,
-		LimitUpFilterEnabled: true,
+		Found:                 true,
+		StrategyDate:          "2026-06-24",
+		Period:                "afternoon",
+		RecommendationsJSON:   mustAStockTestJSON(t, []aStockRecommendation{{Rank: 1, Hotspot: "快照热点", Code: "600002", Name: "快照下午", Reason: "snapshot afternoon"}}),
+		BacktestsJSON:         mustAStockTestJSON(t, []aStockBacktestRow{{Stock: "600002 快照下午", EntryOpen: "--", AfternoonOpen: "20.00", T0Return: "+1.00%", T0Close: "20.20", T0ReturnClass: "astock-up", Days: []aStockBacktestCell{{Close: "20.60", Return: "+3.00%", ReturnClass: "astock-up"}}, BestReturn: "+3.00%", BestReturnClass: "astock-up", Status: "已回测T+1"}}),
+		NewsSummaryJSON:       mustAStockSnapshotNewsSummaryJSON(t, afternoonArticles, afternoonArticles, afternoonHotspots),
+		BacktestStatus:        "已读取下午快照",
+		GeneratedCount:        1,
+		LimitUpFilterEnabled:  true,
+		FundFlowFilterEnabled: true,
 	}
 	selectionHits := 0
 	holdingHits := 0
@@ -3564,14 +3587,15 @@ func TestAStockPageCompanionSnapshotMissingDoesNotRecompute(t *testing.T) {
 
 	morningArticles := []model.Item{{ID: 1, SourceType: "jin10_kuaixun", Title: "人工智能产业链活跃", Summary: "AI 算力需求增长", PublishTime: "2026-06-24 09:05:00"}}
 	morningSnapshot := model.AStockRecommendationSnapshot{
-		Found:               true,
-		StrategyDate:        "2026-06-24",
-		Period:              "morning",
-		RecommendationsJSON: mustAStockTestJSON(t, []aStockRecommendation{{Rank: 1, Hotspot: "快照热点", Code: "600001", Name: "上午快照", Reason: "snapshot morning"}}),
-		BacktestsJSON:       mustAStockTestJSON(t, []aStockBacktestRow{{Stock: "600001 上午快照", EntryOpen: "10.00", T0Return: "+1.00%", T0Close: "10.10", Status: "已读取快照"}}),
-		NewsSummaryJSON:     mustAStockSnapshotNewsSummaryJSON(t, morningArticles, morningArticles, []aStockHotspot{{Name: "人工智能", Keywords: []string{"人工智能"}, Score: 13, Evidence: 1, MatchedItems: morningArticles}}),
-		BacktestStatus:      "已读取上午快照",
-		GeneratedCount:      1,
+		Found:                 true,
+		StrategyDate:          "2026-06-24",
+		Period:                "morning",
+		RecommendationsJSON:   mustAStockTestJSON(t, []aStockRecommendation{{Rank: 1, Hotspot: "快照热点", Code: "600001", Name: "上午快照", Reason: "snapshot morning"}}),
+		BacktestsJSON:         mustAStockTestJSON(t, []aStockBacktestRow{{Stock: "600001 上午快照", EntryOpen: "10.00", T0Return: "+1.00%", T0Close: "10.10", Status: "已读取快照"}}),
+		NewsSummaryJSON:       mustAStockSnapshotNewsSummaryJSON(t, morningArticles, morningArticles, []aStockHotspot{{Name: "人工智能", Keywords: []string{"人工智能"}, Score: 13, Evidence: 1, MatchedItems: morningArticles}}),
+		BacktestStatus:        "已读取上午快照",
+		GeneratedCount:        1,
+		FundFlowFilterEnabled: true,
 	}
 	articleHits := 0
 	selectionHits := 0
@@ -3819,7 +3843,7 @@ func TestAStockContextRefreshAllBacktestsBypassesValidSnapshot(t *testing.T) {
 	defer content.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
-	ctx := srv.loadAStockContextWithCache("2026-06-23", "morning", 1, false, false, false, true, newAStockRequestCache())
+	ctx := srv.loadAStockContextWithCache("2026-06-23", "morning", 1, false, false, false, false, true, newAStockRequestCache())
 	if len(ctx.Recommendations) != 1 || ctx.Recommendations[0].Code != "600010" {
 		t.Fatalf("expected refresh path to use selection, got %+v", ctx.Recommendations)
 	}
@@ -3873,7 +3897,7 @@ func TestAStockContextFallsBackWhenSnapshotMissing(t *testing.T) {
 	defer content.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
-	ctx := srv.loadAStockContextWithCache("2026-06-23", "morning", 1, false, false, false, false, newAStockRequestCache())
+	ctx := srv.loadAStockContextWithCache("2026-06-23", "morning", 1, false, false, false, false, false, newAStockRequestCache())
 	if len(ctx.Recommendations) != 1 || ctx.Recommendations[0].Code != "600011" {
 		t.Fatalf("expected selection fallback recommendation, got %+v", ctx.Recommendations)
 	}
@@ -3944,7 +3968,7 @@ func TestAStockContextFallsBackWhenSnapshotStale(t *testing.T) {
 	defer content.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
-	ctx := srv.loadAStockContextWithCache("2026-06-23", "afternoon", 1, false, false, false, false, newAStockRequestCache())
+	ctx := srv.loadAStockContextWithCache("2026-06-23", "afternoon", 1, false, false, false, false, false, newAStockRequestCache())
 	if len(ctx.Backtests) != 1 || ctx.Backtests[0].AfternoonOpen != "20.00" || ctx.Backtests[0].T0Return != "+5.00%" {
 		t.Fatalf("expected stale snapshot to recompute afternoon backtest, got %+v", ctx.Backtests)
 	}
@@ -3969,14 +3993,15 @@ func TestAStockContextLoadsPersistedRecommendationSnapshot(t *testing.T) {
 		case "/api/v1/a-stock/recommendations":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"data": model.AStockRecommendationSnapshot{
-					Found:                true,
-					StrategyDate:         "2026-06-22",
-					Period:               "afternoon",
-					RecommendationsJSON:  `[{"Rank":1,"Hotspot":"人工智能","Code":"002230","Name":"科大讯飞","Reason":"snapshot"}]`,
-					BacktestsJSON:        `[]`,
-					BacktestStatus:       "已读取推荐快照",
-					GeneratedCount:       1,
-					LimitUpFilterEnabled: true,
+					Found:                 true,
+					StrategyDate:          "2026-06-22",
+					Period:                "afternoon",
+					RecommendationsJSON:   `[{"Rank":1,"Hotspot":"人工智能","Code":"002230","Name":"科大讯飞","Reason":"snapshot"}]`,
+					BacktestsJSON:         `[]`,
+					BacktestStatus:        "已读取推荐快照",
+					GeneratedCount:        1,
+					LimitUpFilterEnabled:  true,
+					FundFlowFilterEnabled: true,
 				},
 			})
 		case "/api/v1/internal/a-stock/recommendation-selections":
@@ -4070,7 +4095,7 @@ func TestAStockContextRefreshKeepsPersistedRecommendationSelections(t *testing.T
 	defer content.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
-	ctx := srv.loadAStockContextWithCache("2026-06-23", "afternoon", 1, false, false, false, true, newAStockRequestCache())
+	ctx := srv.loadAStockContextWithCache("2026-06-23", "afternoon", 1, false, false, false, false, true, newAStockRequestCache())
 	if len(ctx.Recommendations) != 2 || ctx.Recommendations[0].Code != "002008" || ctx.Recommendations[1].Code != "688367" {
 		t.Fatalf("expected locked afternoon selections to stay unchanged, got %+v", ctx.Recommendations)
 	}
@@ -4223,7 +4248,7 @@ func TestAStockContextRefreshDoesNotRefilterLockedAfternoonSelectionsByMorningQu
 	defer content.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
-	ctx := srv.loadAStockContextWithCache("2026-06-23", "afternoon", 1, false, false, false, true, newAStockRequestCache())
+	ctx := srv.loadAStockContextWithCache("2026-06-23", "afternoon", 1, false, false, false, false, true, newAStockRequestCache())
 	if len(ctx.Recommendations) != 2 || ctx.SameDayMorningFiltered != 0 {
 		t.Fatalf("expected locked afternoon selections to avoid morning quota refilter, got filtered=%d recommendations=%+v", ctx.SameDayMorningFiltered, ctx.Recommendations)
 	}
@@ -4283,6 +4308,8 @@ func TestAStockRebuildRefiltersLockedMorningSelectionsAndClearsPersistedRows(t *
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{Found: false})
 		case "/api/v1/a-stock/recommendations":
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
+		case "/api/v1/a-stock/stock-fund-flow-trend":
+			handleEmptyAStockAuctionTestEndpoint(w, r)
 		case "/api/v1/internal/a-stock/recommendation-selections":
 			if err := json.NewDecoder(r.Body).Decode(&savedSelections); err != nil {
 				t.Fatalf("decode saved selections: %v", err)
@@ -4302,7 +4329,7 @@ func TestAStockRebuildRefiltersLockedMorningSelectionsAndClearsPersistedRows(t *
 	defer content.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
-	ctx := srv.loadAStockContextWithRecommendationPhasePersistenceMode("2026-06-16", "morning", 1, false, false, false, true, aStockRecommendationPhaseFinal, newAStockRequestCache(), false, true, aStockRecommendationRebuild)
+	ctx := srv.loadAStockContextWithRecommendationPhasePersistenceMode("2026-06-16", "morning", 1, false, false, false, false, true, aStockRecommendationPhaseFinal, newAStockRequestCache(), false, true, aStockRecommendationRebuild)
 	if currentSelectionGets != 0 {
 		t.Fatalf("expected rebuild to skip current locked selections, got %d current selection reads", currentSelectionGets)
 	}
@@ -4377,6 +4404,8 @@ func TestAStockMorningRebuildReplenishesAfterRecentFilter(t *testing.T) {
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{Found: false})
 		case "/api/v1/a-stock/recommendations":
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
+		case "/api/v1/a-stock/stock-fund-flow-trend":
+			handleEmptyAStockAuctionTestEndpoint(w, r)
 		case "/api/v1/internal/a-stock/recommendation-selections":
 			if err := json.NewDecoder(r.Body).Decode(&savedSelections); err != nil {
 				t.Fatalf("decode saved selections: %v", err)
@@ -4396,7 +4425,7 @@ func TestAStockMorningRebuildReplenishesAfterRecentFilter(t *testing.T) {
 	defer content.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
-	ctx := srv.loadAStockContextWithRecommendationPhasePersistenceMode("2026-06-16", "morning", 1, false, false, false, true, aStockRecommendationPhaseFinal, newAStockRequestCache(), false, true, aStockRecommendationRebuild)
+	ctx := srv.loadAStockContextWithRecommendationPhasePersistenceMode("2026-06-16", "morning", 1, false, false, false, false, true, aStockRecommendationPhaseFinal, newAStockRequestCache(), false, true, aStockRecommendationRebuild)
 	if ctx.RecentFiltered != 3 || ctx.RecentReplenished != 3 || ctx.RecentReplenishShortfall {
 		t.Fatalf("expected three recent stocks to be replenished, got filtered=%d replenished=%d shortfall=%v recs=%+v", ctx.RecentFiltered, ctx.RecentReplenished, ctx.RecentReplenishShortfall, ctx.Recommendations)
 	}
@@ -4459,14 +4488,15 @@ func TestAStockContextEmptySnapshotIsAuthoritative(t *testing.T) {
 			})
 		case "/api/v1/a-stock/recommendations":
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{
-				Found:                true,
-				StrategyDate:         "2026-06-23",
-				Period:               "afternoon",
-				RecommendationsJSON:  "[]",
-				BacktestsJSON:        "[]",
-				BacktestStatus:       "无推荐股票",
-				EmptyReason:          "空快照",
-				LimitUpFilterEnabled: true,
+				Found:                 true,
+				StrategyDate:          "2026-06-23",
+				Period:                "afternoon",
+				RecommendationsJSON:   "[]",
+				BacktestsJSON:         "[]",
+				BacktestStatus:        "无推荐股票",
+				EmptyReason:           "空快照",
+				LimitUpFilterEnabled:  true,
+				FundFlowFilterEnabled: true,
 			})
 		case "/api/v1/internal/a-stock/recommendations":
 			saveHits++
@@ -4484,7 +4514,7 @@ func TestAStockContextEmptySnapshotIsAuthoritative(t *testing.T) {
 	defer content.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
-	ctx := srv.loadAStockContextWithCache("2026-06-23", "afternoon", 1, false, false, false, false, newAStockRequestCache())
+	ctx := srv.loadAStockContextWithCache("2026-06-23", "afternoon", 1, false, false, false, false, false, newAStockRequestCache())
 	if len(ctx.Recommendations) != 0 || len(ctx.Backtests) != 0 {
 		t.Fatalf("expected empty snapshot to remain empty, got recommendations=%+v backtests=%+v", ctx.Recommendations, ctx.Backtests)
 	}
@@ -5212,13 +5242,14 @@ func TestAStockContextRefreshSeedsSelectionsFromExistingSnapshot(t *testing.T) {
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{Found: false})
 		case "/api/v1/a-stock/recommendations":
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{
-				Found:               true,
-				StrategyDate:        "2026-06-23",
-				Period:              "morning",
-				RecommendationsJSON: `[{"Rank":1,"Hotspot":"人工智能","Code":"603083","Name":"剑桥科技","Reason":"snapshot"}]`,
-				BacktestsJSON:       `[]`,
-				BacktestStatus:      "旧快照",
-				GeneratedCount:      1,
+				Found:                 true,
+				StrategyDate:          "2026-06-23",
+				Period:                "morning",
+				RecommendationsJSON:   `[{"Rank":1,"Hotspot":"人工智能","Code":"603083","Name":"剑桥科技","Reason":"snapshot"}]`,
+				BacktestsJSON:         `[]`,
+				BacktestStatus:        "旧快照",
+				GeneratedCount:        1,
+				FundFlowFilterEnabled: true,
 			})
 		case "/api/v1/internal/a-stock/recommendation-selections":
 			if err := json.NewDecoder(r.Body).Decode(&savedSelections); err != nil {
@@ -5239,7 +5270,7 @@ func TestAStockContextRefreshSeedsSelectionsFromExistingSnapshot(t *testing.T) {
 	defer content.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
-	ctx := srv.loadAStockContextWithCache("2026-06-23", "morning", 1, false, false, false, true, newAStockRequestCache())
+	ctx := srv.loadAStockContextWithCache("2026-06-23", "morning", 1, false, false, false, false, true, newAStockRequestCache())
 
 	if len(ctx.Recommendations) != 1 || ctx.Recommendations[0].Code != "603083" {
 		t.Fatalf("expected refresh to keep snapshot recommendation code, got %+v", ctx.Recommendations)
@@ -5817,6 +5848,100 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 	}
 }
 
+func TestAStockRecommendationFundFlowFilterScoresAndReplenishes(t *testing.T) {
+	trends := map[string][]float64{
+		"300001": {70000000, 50000000},
+		"300002": {40000000},
+		"300003": {-7000000, 2000000},
+		"300004": {-15000000, -10000000, -8000000},
+		"300006": {0},
+	}
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/a-stock/stock-fund-flow-trend" {
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+		if r.URL.Query().Get("end_date") != "2026-06-16" || r.URL.Query().Get("indicator") != "今日" || r.URL.Query().Get("days") != "5" {
+			t.Fatalf("unexpected fund flow query: %s", r.URL.RawQuery)
+		}
+		code := normalizeAStockCode(r.URL.Query().Get("code"))
+		values := trends[code]
+		items := make([]model.AStockStockFundFlow, 0, len(values))
+		for i, value := range values {
+			items = append(items, model.AStockStockFundFlow{
+				TradeDate:     fmt.Sprintf("2026-06-%02d", 16-i),
+				Indicator:     "今日",
+				Code:          code,
+				MainNetInflow: value,
+			})
+		}
+		writeEnvelope(w, http.StatusOK, "ok", model.AStockStockFundFlowTrendResult{
+			Items:     items,
+			Total:     len(items),
+			EndDate:   "2026-06-16",
+			Indicator: "今日",
+			Code:      code,
+			Days:      5,
+		})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	base := []aStockRecommendation{
+		{Rank: 1, Hotspot: "人工智能", Code: "300001", Name: "强流入", HotspotScore: 100, MarketScore: 100, Reason: "base"},
+		{Rank: 2, Hotspot: "人工智能", Code: "300002", Name: "流入", HotspotScore: 90, MarketScore: 90, Reason: "base"},
+		{Rank: 3, Hotspot: "半导体", Code: "300003", Name: "轻流出", HotspotScore: 80, MarketScore: 80, Reason: "base"},
+		{Rank: 4, Hotspot: "半导体", Code: "300004", Name: "持续流出", HotspotScore: 70, MarketScore: 70, Reason: "base"},
+		{Rank: 5, Hotspot: "新能源", Code: "300005", Name: "缺失", HotspotScore: 60, MarketScore: 60, Reason: "base"},
+	}
+	replacementPool := []aStockRecommendation{
+		{Rank: 1, Hotspot: "半导体", Code: "300006", Name: "递补", HotspotScore: 50, MarketScore: 50, Reason: "replacement"},
+	}
+
+	result := srv.applyAStockRecommendationFundFlowFilterWithCache("2026-06-16", base, replacementPool, nil, len(base), newAStockRequestCache())
+	if result.Filtered != 1 || result.Replenished != 1 || result.Missing != 1 || result.Shortfall {
+		t.Fatalf("unexpected fund-flow filter result: %+v", result)
+	}
+	if len(result.Recommendations) != len(base) {
+		t.Fatalf("expected recommendations to be replenished to %d, got %+v", len(base), result.Recommendations)
+	}
+	if _, ok := aStockRecommendationCodeSet(result.Recommendations)["300004"]; ok {
+		t.Fatalf("expected sustained outflow stock to be filtered, got %+v", result.Recommendations)
+	}
+	if _, ok := aStockRecommendationCodeSet(result.Recommendations)["300006"]; !ok {
+		t.Fatalf("expected replacement stock to be used, got %+v", result.Recommendations)
+	}
+
+	strong := mustAStockRecommendationForTest(t, result.Recommendations, "300001")
+	if strong.MarketScore != 110 || !strings.Contains(strong.Reason, "资金加分 10") {
+		t.Fatalf("expected strong inflow bonus, got %+v", strong)
+	}
+	inflow := mustAStockRecommendationForTest(t, result.Recommendations, "300002")
+	if inflow.MarketScore != 95 || !strings.Contains(inflow.Reason, "资金加分 5") {
+		t.Fatalf("expected inflow bonus, got %+v", inflow)
+	}
+	outflow := mustAStockRecommendationForTest(t, result.Recommendations, "300003")
+	if outflow.MarketScore != 75 || !strings.Contains(outflow.Reason, "资金减分 5") {
+		t.Fatalf("expected light outflow penalty without filtering, got %+v", outflow)
+	}
+	missing := mustAStockRecommendationForTest(t, result.Recommendations, "300005")
+	if missing.FundFlow5D != "--" || missing.MarketScore != 60 {
+		t.Fatalf("expected missing fund flow data to keep stock without score change, got %+v", missing)
+	}
+}
+
+func mustAStockRecommendationForTest(t *testing.T, recommendations []aStockRecommendation, code string) aStockRecommendation {
+	t.Helper()
+	code = normalizeAStockCode(code)
+	for _, rec := range recommendations {
+		if normalizeAStockCode(rec.Code) == code {
+			return rec
+		}
+	}
+	t.Fatalf("expected recommendation code %s in %+v", code, recommendations)
+	return aStockRecommendation{}
+}
+
 func TestAStockPageBlocksRecommendationsOnNonTradingDay(t *testing.T) {
 	scheduler := newAStockTradingDayServer(t, false)
 	defer scheduler.Close()
@@ -5929,7 +6054,7 @@ func TestAStockRecommendationActionBlockedOnNonTradingDay(t *testing.T) {
 func TestAStockRecommendationHistoryRendersDateTabs(t *testing.T) {
 	setAStockNowForTest(t, time.Date(2026, 6, 18, 9, 30, 0, 0, time.FixedZone("CST", 8*3600)))
 	var b strings.Builder
-	renderAStockRecommendationHistoryTabs(&b, "2026-06-16", "afternoon", false, false, false)
+	renderAStockRecommendationHistoryTabs(&b, "2026-06-16", "afternoon", false, false, false, false)
 
 	body := b.String()
 	for _, want := range []string{
@@ -5960,7 +6085,7 @@ func TestAStockRecommendationHistoryRendersDateTabs(t *testing.T) {
 func TestAStockRecommendationHistoryAppendsTodayForPastDate(t *testing.T) {
 	setAStockNowForTest(t, time.Date(2026, 6, 30, 9, 30, 0, 0, time.FixedZone("CST", 8*3600)))
 	var b strings.Builder
-	renderAStockRecommendationHistoryTabs(&b, "2026-06-17", "morning", true, false, true)
+	renderAStockRecommendationHistoryTabs(&b, "2026-06-17", "morning", true, false, false, true)
 
 	body := b.String()
 	for _, want := range []string{
@@ -5983,7 +6108,7 @@ func TestAStockRecommendationHistoryAppendsTodayForPastDate(t *testing.T) {
 func TestAStockDatePeriodTabsCanRenderWithoutHeading(t *testing.T) {
 	setAStockNowForTest(t, time.Date(2026, 6, 18, 9, 30, 0, 0, time.FixedZone("CST", 8*3600)))
 	var b strings.Builder
-	renderAStockDatePeriodTabs(&b, "2026-06-18", "morning", true, false, false, false)
+	renderAStockDatePeriodTabs(&b, "2026-06-18", "morning", true, false, false, false, false)
 
 	body := b.String()
 	for _, want := range []string{
@@ -6019,7 +6144,7 @@ func TestAStockDateTabLabelUsesTodayAndWeekday(t *testing.T) {
 
 func TestAStockRecommendationHistoryActionsUseSelectedPeriod(t *testing.T) {
 	var b strings.Builder
-	renderAStockRecommendationHistoryActions(&b, "2026-06-16", "afternoon", false, false, false)
+	renderAStockRecommendationHistoryActions(&b, "2026-06-16", "afternoon", false, false, false, false)
 	body := b.String()
 	for _, want := range []string{
 		`name="date" value="2026-06-16"`,
@@ -6059,7 +6184,7 @@ func TestAStockRecommendationHistoryActionsUseSelectedPeriod(t *testing.T) {
 func TestAStockRecommendationHistoryHelpersCanUseBacktestPath(t *testing.T) {
 	setAStockNowForTest(t, time.Date(2026, 6, 18, 9, 30, 0, 0, time.FixedZone("CST", 8*3600)))
 	var tabs strings.Builder
-	renderAStockRecommendationHistoryTabsForPath(&tabs, "/a-stock/backtest", "2026-06-16", "afternoon", true, false, true)
+	renderAStockRecommendationHistoryTabsForPath(&tabs, "/a-stock/backtest", "2026-06-16", "afternoon", true, false, false, true)
 	tabsBody := tabs.String()
 	for _, want := range []string{
 		`/a-stock/backtest?date=2026-06-16&period=afternoon&ignore_recent=1&filter_today_market=1`,
@@ -6074,7 +6199,7 @@ func TestAStockRecommendationHistoryHelpersCanUseBacktestPath(t *testing.T) {
 	}
 
 	var actions strings.Builder
-	renderAStockRecommendationHistoryActionsForPath(&actions, "/a-stock/backtest", "2026-06-16", "afternoon", true, false, true)
+	renderAStockRecommendationHistoryActionsForPath(&actions, "/a-stock/backtest", "2026-06-16", "afternoon", true, false, false, true)
 	actionsBody := actions.String()
 	for _, want := range []string{
 		`action="/a-stock/backtest"`,
@@ -6091,7 +6216,7 @@ func TestAStockRecommendationHistoryHelpersCanUseBacktestPath(t *testing.T) {
 func TestAStockIgnoreRecentStatePersistsInHistoryNavigation(t *testing.T) {
 	setAStockNowForTest(t, time.Date(2026, 6, 18, 9, 30, 0, 0, time.FixedZone("CST", 8*3600)))
 	var tabs strings.Builder
-	renderAStockRecommendationHistoryTabs(&tabs, "2026-06-16", "morning", true, false, false)
+	renderAStockRecommendationHistoryTabs(&tabs, "2026-06-16", "morning", true, false, false, false)
 	tabsBody := tabs.String()
 	for _, want := range []string{
 		`/a-stock?date=2026-06-16&period=morning&ignore_recent=1`,
@@ -6103,7 +6228,7 @@ func TestAStockIgnoreRecentStatePersistsInHistoryNavigation(t *testing.T) {
 	}
 
 	var actions strings.Builder
-	renderAStockRecommendationHistoryActions(&actions, "2026-06-16", "morning", true, false, false)
+	renderAStockRecommendationHistoryActions(&actions, "2026-06-16", "morning", true, false, false, false)
 	actionsBody := actions.String()
 	if !strings.Contains(actionsBody, `name="ignore_recent" value="1"`) {
 		t.Fatalf("expected history actions to preserve ignore_recent, got %s", actionsBody)
@@ -6116,7 +6241,7 @@ func TestAStockIgnoreRecentStatePersistsInHistoryNavigation(t *testing.T) {
 func TestAStockIgnoreLimitUpStatePersistsInNavigationAndActions(t *testing.T) {
 	setAStockNowForTest(t, time.Date(2026, 6, 18, 9, 30, 0, 0, time.FixedZone("CST", 8*3600)))
 	var tabs strings.Builder
-	renderAStockRecommendationHistoryTabs(&tabs, "2026-06-16", "afternoon", false, true, false)
+	renderAStockRecommendationHistoryTabs(&tabs, "2026-06-16", "afternoon", false, true, false, false)
 	tabsBody := tabs.String()
 	for _, want := range []string{
 		`/a-stock?date=2026-06-16&period=afternoon&ignore_limit_up=1`,
@@ -6128,7 +6253,7 @@ func TestAStockIgnoreLimitUpStatePersistsInNavigationAndActions(t *testing.T) {
 	}
 
 	var actions strings.Builder
-	renderAStockRecommendationHistoryActions(&actions, "2026-06-16", "afternoon", false, true, false)
+	renderAStockRecommendationHistoryActions(&actions, "2026-06-16", "afternoon", false, true, false, false)
 	actionsBody := actions.String()
 	if !strings.Contains(actionsBody, `name="ignore_limit_up" value="1"`) {
 		t.Fatalf("expected history actions to preserve ignore_limit_up, got %s", actionsBody)
@@ -6141,7 +6266,7 @@ func TestAStockIgnoreLimitUpStatePersistsInNavigationAndActions(t *testing.T) {
 func TestAStockTodayMarketFilterStatePersistsInNavigationAndActions(t *testing.T) {
 	setAStockNowForTest(t, time.Date(2026, 6, 18, 9, 30, 0, 0, time.FixedZone("CST", 8*3600)))
 	var tabs strings.Builder
-	renderAStockRecommendationHistoryTabs(&tabs, "2026-06-16", "morning", false, false, true)
+	renderAStockRecommendationHistoryTabs(&tabs, "2026-06-16", "morning", false, false, false, true)
 	tabsBody := tabs.String()
 	for _, want := range []string{
 		`/a-stock?date=2026-06-16&period=morning&filter_today_market=1`,
@@ -6153,7 +6278,7 @@ func TestAStockTodayMarketFilterStatePersistsInNavigationAndActions(t *testing.T
 	}
 
 	var actions strings.Builder
-	renderAStockRecommendationHistoryActions(&actions, "2026-06-16", "morning", false, false, true)
+	renderAStockRecommendationHistoryActions(&actions, "2026-06-16", "morning", false, false, false, true)
 	actionsBody := actions.String()
 	if !strings.Contains(actionsBody, `name="filter_today_market" value="1"`) {
 		t.Fatalf("expected history actions to preserve filter_today_market, got %s", actionsBody)

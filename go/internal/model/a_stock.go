@@ -96,6 +96,9 @@ type AStockRecommendationSnapshot struct {
 	LimitUpFiltered          int       `json:"limit_up_filtered"`
 	TodayMarketFilterEnabled bool      `json:"today_market_filter_enabled"`
 	NoTodayMarketCount       int       `json:"no_today_market_count"`
+	FundFlowFilterEnabled    bool      `json:"fund_flow_filter_enabled"`
+	FundFlowFiltered         int       `json:"fund_flow_filtered"`
+	FundFlowMissingCount     int       `json:"fund_flow_missing_count"`
 	MarketCandidateStatus    string    `json:"market_candidate_status"`
 	MarketCandidateCount     int       `json:"market_candidate_count"`
 	AuctionAmountLabel       string    `json:"auction_amount_label"`

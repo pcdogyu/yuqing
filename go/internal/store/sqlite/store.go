@@ -591,6 +591,9 @@ CREATE TABLE IF NOT EXISTS a_stock_recommendation_snapshots (
 	limit_up_filtered INTEGER NOT NULL DEFAULT 0,
 	today_market_filter_enabled INTEGER NOT NULL DEFAULT 0,
 	no_today_market_count INTEGER NOT NULL DEFAULT 0,
+	fund_flow_filter_enabled INTEGER NOT NULL DEFAULT 0,
+	fund_flow_filtered INTEGER NOT NULL DEFAULT 0,
+	fund_flow_missing_count INTEGER NOT NULL DEFAULT 0,
 	market_candidate_status TEXT NOT NULL DEFAULT '',
 	market_candidate_count INTEGER NOT NULL DEFAULT 0,
 	auction_amount_label TEXT NOT NULL DEFAULT '',
@@ -873,6 +876,9 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_action_created_at ON audit_logs(action
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN limit_up_filtered INTEGER NOT NULL DEFAULT 0`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN today_market_filter_enabled INTEGER NOT NULL DEFAULT 0`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN no_today_market_count INTEGER NOT NULL DEFAULT 0`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN fund_flow_filter_enabled INTEGER NOT NULL DEFAULT 0`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN fund_flow_filtered INTEGER NOT NULL DEFAULT 0`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN fund_flow_missing_count INTEGER NOT NULL DEFAULT 0`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN news_summary_json TEXT NOT NULL DEFAULT ''`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_selections ADD COLUMN entry_time TEXT NOT NULL DEFAULT ''`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_sector_fund_flows ADD COLUMN source_count INTEGER NOT NULL DEFAULT 1`)
@@ -915,6 +921,15 @@ func (s *Store) migratePostgres(ctx context.Context) error {
 		return err
 	}
 	if _, err := s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN IF NOT EXISTS no_today_market_count INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN IF NOT EXISTS fund_flow_filter_enabled INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN IF NOT EXISTS fund_flow_filtered INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN IF NOT EXISTS fund_flow_missing_count INTEGER NOT NULL DEFAULT 0`); err != nil {
 		return err
 	}
 	if _, err := s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN IF NOT EXISTS news_summary_json TEXT NOT NULL DEFAULT ''`); err != nil {

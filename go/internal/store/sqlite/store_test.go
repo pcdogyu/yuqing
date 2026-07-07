@@ -587,6 +587,9 @@ func TestAStockRecommendationSnapshotUpsertAndGet(t *testing.T) {
 		LimitUpFiltered:          2,
 		TodayMarketFilterEnabled: true,
 		NoTodayMarketCount:       4,
+		FundFlowFilterEnabled:    true,
+		FundFlowFiltered:         3,
+		FundFlowMissingCount:     1,
 	})
 	if err != nil {
 		t.Fatalf("UpsertAStockRecommendationSnapshot update error: %v", err)
@@ -599,7 +602,7 @@ func TestAStockRecommendationSnapshotUpsertAndGet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAStockRecommendationSnapshot error: %v", err)
 	}
-	if !found || snapshot.RecommendationsJSON != `[{"Code":"000001"}]` || !strings.Contains(snapshot.NewsSummaryJSON, `"人工智能"`) || snapshot.GeneratedCount != 1 || !snapshot.LimitUpFilterEnabled || snapshot.LimitUpFiltered != 2 || !snapshot.TodayMarketFilterEnabled || snapshot.NoTodayMarketCount != 4 {
+	if !found || snapshot.RecommendationsJSON != `[{"Code":"000001"}]` || !strings.Contains(snapshot.NewsSummaryJSON, `"人工智能"`) || snapshot.GeneratedCount != 1 || !snapshot.LimitUpFilterEnabled || snapshot.LimitUpFiltered != 2 || !snapshot.TodayMarketFilterEnabled || snapshot.NoTodayMarketCount != 4 || !snapshot.FundFlowFilterEnabled || snapshot.FundFlowFiltered != 3 || snapshot.FundFlowMissingCount != 1 {
 		t.Fatalf("unexpected snapshot: found=%v %+v", found, snapshot)
 	}
 }

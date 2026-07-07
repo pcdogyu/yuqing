@@ -50,6 +50,10 @@ type aStockContext struct {
 	IgnoreLimitUp                bool
 	LimitUpFilterEnabled         bool
 	LimitUpFiltered              int
+	IgnoreFundFlow               bool
+	FundFlowFilterEnabled        bool
+	FundFlowFiltered             int
+	FundFlowMissingCount         int
 	TodayMarketFilterEnabled     bool
 	NoTodayMarketCount           int
 	MarketCandidateStatus        string
@@ -310,6 +314,9 @@ type aStockRecommendationGenerateResult struct {
 	LimitUpFiltered          int    `json:"limit_up_filtered"`
 	TodayMarketFilterEnabled bool   `json:"today_market_filter_enabled"`
 	NoTodayMarketCount       int    `json:"no_today_market_count"`
+	FundFlowFilterEnabled    bool   `json:"fund_flow_filter_enabled"`
+	FundFlowFiltered         int    `json:"fund_flow_filtered"`
+	FundFlowMissingCount     int    `json:"fund_flow_missing_count"`
 	LoadMessage              string `json:"load_message"`
 }
 
@@ -340,24 +347,28 @@ type aStockPopupPayload struct {
 }
 
 const (
-	aStockDrawdownFilterThreshold     = -15.0
-	aStockSectorDrawdownPenalty       = 15
-	aStockNewsPageSize                = 10
-	aStockArticleFetchPageSize        = 1000
-	aStockArticleFetchMaxPages        = 100
-	aStockRecentLookbackDays          = 31
-	aStockAuctionCandidateCacheTTL    = 5 * time.Minute
-	aStockMarketCandidateLimit        = 5000
-	aStockRecommendationLimit         = 12
-	aStockReplacementPoolLimit        = 36
-	aStockReplacementPerHotspot       = 12
-	aStockHotspotTopStockLimit        = 9
-	aStockHotspotScoredCandidateLimit = 240
-	aStockHotspotLimit                = 3
-	aStockMarketRankScoreBase         = 200
-	aStockStocksPerHotspot            = 3
-	aStockRecommendationPhasePreopen  = "preopen"
-	aStockRecommendationPhaseFinal    = "final"
+	aStockDrawdownFilterThreshold      = -15.0
+	aStockSectorDrawdownPenalty        = 15
+	aStockFundFlowBonusThreshold       = 30000000.0
+	aStockFundFlowStrongBonusThreshold = 100000000.0
+	aStockFundFlowHardFilterThreshold  = -30000000.0
+	aStockFundFlowHardFilterDays       = 3
+	aStockNewsPageSize                 = 10
+	aStockArticleFetchPageSize         = 1000
+	aStockArticleFetchMaxPages         = 100
+	aStockRecentLookbackDays           = 31
+	aStockAuctionCandidateCacheTTL     = 5 * time.Minute
+	aStockMarketCandidateLimit         = 5000
+	aStockRecommendationLimit          = 12
+	aStockReplacementPoolLimit         = 36
+	aStockReplacementPerHotspot        = 12
+	aStockHotspotTopStockLimit         = 9
+	aStockHotspotScoredCandidateLimit  = 240
+	aStockHotspotLimit                 = 3
+	aStockMarketRankScoreBase          = 200
+	aStockStocksPerHotspot             = 3
+	aStockRecommendationPhasePreopen   = "preopen"
+	aStockRecommendationPhaseFinal     = "final"
 )
 
 var (
@@ -427,6 +438,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 	newsPage := normalizeAStockNewsPage(r.URL.Query().Get("news_page"))
 	ignoreRecent := normalizeAStockIgnoreRecent(r.URL.Query())
 	ignoreLimitUp := normalizeAStockIgnoreLimitUp(r.URL.Query())
+	ignoreFundFlow := normalizeAStockIgnoreFundFlow(r.URL.Query())
 	filterTodayMarket := normalizeAStockFilterTodayMarket(r.URL.Query())
 	forceRecommendationRefresh := normalizeAStockBool(r.URL.Query().Get("refresh_recommendations"))
 	refreshAllBacktests := normalizeAStockBool(r.URL.Query().Get("refresh_all_backtests"))
@@ -435,7 +447,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 	}
 	partial := normalizeAStockBool(r.URL.Query().Get("partial"))
 	cacheable := isAStockPageFragmentCacheable(r.URL.Query(), forceRecommendationRefresh)
-	fragmentKey := aStockPageFragmentCacheKey(strategyDate, period.Key, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket)
+	fragmentKey := aStockPageFragmentCacheKey(strategyDate, period.Key, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket)
 	var payload aStockPartialPayload
 	if cacheable {
 		if cached, ok := s.loadCachedAStockPageFragment(fragmentKey); ok {
@@ -443,7 +455,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		}
 	}
 	if payload.HTML == "" {
-		payload = s.buildAStockPageFragment(strategyDate, period.Key, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, strings.TrimSpace(r.URL.Query().Get("msg")))
+		payload = s.buildAStockPageFragment(strategyDate, period.Key, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, forceRecommendationRefresh, strings.TrimSpace(r.URL.Query().Get("msg")))
 		if cacheable && strings.TrimSpace(payload.Message) == "" {
 			s.storeCachedAStockPageFragment(fragmentKey, payload)
 		}
@@ -465,7 +477,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-overview-summary{display:flex;justify-content:flex-start;gap:24px;flex-wrap:wrap;text-align:left;font-size:12px}
 		.astock-overview-summary .astock-muted{display:block;margin-bottom:4px;white-space:nowrap;word-break:keep-all}
 		.astock-overview-summary strong{display:block;font-size:18px;line-height:1.25;white-space:nowrap}
-		.astock-overview-table{width:100%;min-width:1780px;table-layout:fixed;font-size:12px}
+		.astock-overview-table{width:100%;min-width:1920px;table-layout:fixed;font-size:12px}
 		.astock-overview-table th,.astock-overview-table td{vertical-align:top}
 		.astock-overview-table .astock-muted{display:block;margin-bottom:7px;font-size:12px;white-space:nowrap;word-break:keep-all}
 		.astock-overview-table .astock-overview-sub-label{margin-top:16px}
@@ -479,6 +491,8 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-overview-limit-filter .astock-muted,.astock-overview-limit-filter strong{white-space:nowrap}
 		.astock-overview-market-filter{width:7.8%;min-width:138px}
 		.astock-overview-market-filter .astock-muted,.astock-overview-market-filter strong{white-space:nowrap}
+		.astock-overview-fund-filter{width:7.8%;min-width:138px}
+		.astock-overview-fund-filter .astock-muted,.astock-overview-fund-filter strong{white-space:nowrap}
 		.astock-overview-recalculate{width:8.2%;min-width:146px}
 		.astock-overview-recalculate .astock-muted,.astock-overview-recalculate strong{white-space:nowrap}
 		.astock-overview-window{width:11.2%;min-width:196px}
@@ -552,16 +566,16 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 	_ = s.writeSimplePage(w, "a-stock", "A股", b.String())
 }
 
-func (s *Server) buildAStockPageFragment(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, message string) aStockPartialPayload {
+func (s *Server) buildAStockPageFragment(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool, forceRecommendationRefresh bool, message string) aStockPartialPayload {
 	requestCache := newAStockRequestCache()
-	ctx := s.loadAStockContextReadOnlyWithCache(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, requestCache)
+	ctx := s.loadAStockContextReadOnlyWithCache(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, forceRecommendationRefresh, requestCache)
 	morningCtx := ctx
 	if ctx.Period != "morning" {
-		morningCtx = s.loadAStockCompanionContextReadOnlyWithCache(strategyDate, "morning", 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, requestCache)
+		morningCtx = s.loadAStockCompanionContextReadOnlyWithCache(strategyDate, "morning", 1, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, forceRecommendationRefresh, requestCache)
 	}
 	afternoonCtx := ctx
 	if ctx.Period != "afternoon" {
-		afternoonCtx = s.loadAStockCompanionContextReadOnlyWithCache(strategyDate, "afternoon", 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, requestCache)
+		afternoonCtx = s.loadAStockCompanionContextReadOnlyWithCache(strategyDate, "afternoon", 1, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, forceRecommendationRefresh, requestCache)
 	}
 	s.applyAStockRecommendationFundFlow5DToContext(&morningCtx, requestCache)
 	s.applyAStockRecommendationFundFlow5DToContext(&afternoonCtx, requestCache)
@@ -580,7 +594,7 @@ func (s *Server) buildAStockPageFragment(strategyDate string, periodKey string, 
 		b.WriteString(html.EscapeString(message))
 		b.WriteString(`</p></section>`)
 	}
-	renderAStockDateTabs(&b, ctx.Date, ctx.Period, ctx.IgnoreRecent, ctx.IgnoreLimitUp, ctx.TodayMarketFilterEnabled, false)
+	renderAStockDateTabs(&b, ctx.Date, ctx.Period, ctx.IgnoreRecent, ctx.IgnoreLimitUp, ctx.IgnoreFundFlow, ctx.TodayMarketFilterEnabled, false)
 	renderAStockOverviewSection(&b, morningCtx, afternoonCtx)
 	renderAStockRecommendationSection(&b, morningCtx, afternoonCtx)
 	renderAStockActionSection(&b, ctx)
@@ -589,7 +603,7 @@ func (s *Server) buildAStockPageFragment(strategyDate string, periodKey string, 
 
 	return aStockPartialPayload{
 		HTML:         b.String(),
-		CanonicalURL: aStockCanonicalPageURL(ctx.Date, ctx.Period, ctx.NewsPage, ctx.IgnoreRecent, ctx.IgnoreLimitUp, ctx.TodayMarketFilterEnabled),
+		CanonicalURL: aStockCanonicalPageURL(ctx.Date, ctx.Period, ctx.NewsPage, ctx.IgnoreRecent, ctx.IgnoreLimitUp, ctx.IgnoreFundFlow, ctx.TodayMarketFilterEnabled),
 		Date:         ctx.Date,
 		Period:       ctx.Period,
 		Message:      strings.TrimSpace(message),
@@ -627,6 +641,9 @@ func renderAStockActionSection(b *strings.Builder, ctx aStockContext) {
 		if ctx.IgnoreLimitUp {
 			b.WriteString(`<input type="hidden" name="ignore_limit_up" value="1">`)
 		}
+		if ctx.IgnoreFundFlow {
+			b.WriteString(`<input type="hidden" name="ignore_fund_flow" value="1">`)
+		}
 		if ctx.TodayMarketFilterEnabled {
 			b.WriteString(`<input type="hidden" name="filter_today_market" value="1">`)
 		}
@@ -639,7 +656,7 @@ func renderAStockActionSection(b *strings.Builder, ctx aStockContext) {
 	b.WriteString(`，用于展示昨日收盘价、现价、涨跌幅和行情收益。</p><div class="astock-source-list"><span class="astock-badge">jin10_kuaixun: https://www.jin10.com/</span><span class="astock-badge">jin10_资讯: https://xnews.jin10.com/</span><span class="astock-badge">jin10_full: 金十全站</span><span class="astock-badge">eastmoney_kuaixun: 东方财富网</span><span class="astock-badge">wallstreetcn_a_stock: 华尔街见闻</span><span class="astock-badge">cls_telegraph: 财联社</span><span class="astock-badge">sina_finance_7x24: 新浪财经</span></div></section>`)
 }
 
-func aStockCanonicalPageURL(strategyDate string, period string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool) string {
+func aStockCanonicalPageURL(strategyDate string, period string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool) string {
 	query := url.Values{}
 	query.Set("date", normalizeAStockStrategyDate(strategyDate))
 	query.Set("period", normalizeAStockPeriod(period).Key)
@@ -651,6 +668,9 @@ func aStockCanonicalPageURL(strategyDate string, period string, newsPage int, ig
 	}
 	if ignoreLimitUp {
 		query.Set("ignore_limit_up", "1")
+	}
+	if ignoreFundFlow {
+		query.Set("ignore_fund_flow", "1")
 	}
 	if filterTodayMarket {
 		query.Set("filter_today_market", "1")
@@ -671,13 +691,14 @@ func isAStockPageFragmentCacheable(query url.Values, forceRecommendationRefresh 
 	return true
 }
 
-func aStockPageFragmentCacheKey(strategyDate string, period string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool) string {
+func aStockPageFragmentCacheKey(strategyDate string, period string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool) string {
 	return strings.Join([]string{
 		normalizeAStockStrategyDate(strategyDate),
 		normalizeAStockPeriod(period).Key,
 		fmt.Sprint(maxInt(newsPage, 1)),
 		fmt.Sprint(ignoreRecent),
 		fmt.Sprint(ignoreLimitUp),
+		fmt.Sprint(ignoreFundFlow),
 		fmt.Sprint(filterTodayMarket),
 	}, "|")
 }
@@ -822,16 +843,17 @@ func (s *Server) handleAStockBacktestPage(w http.ResponseWriter, r *http.Request
 	newsPage := normalizeAStockNewsPage(r.URL.Query().Get("news_page"))
 	ignoreRecent := normalizeAStockIgnoreRecent(r.URL.Query())
 	ignoreLimitUp := normalizeAStockIgnoreLimitUp(r.URL.Query())
+	ignoreFundFlow := normalizeAStockIgnoreFundFlow(r.URL.Query())
 	filterTodayMarket := normalizeAStockFilterTodayMarket(r.URL.Query())
 	requestCache := newAStockRequestCache()
-	ctx := s.loadAStockBacktestSnapshotContextWithCache(strategyDate, period.Key, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, requestCache)
+	ctx := s.loadAStockBacktestSnapshotContextWithCache(strategyDate, period.Key, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, requestCache)
 	morningCtx := ctx
 	if ctx.Period != "morning" {
-		morningCtx = s.loadAStockBacktestSnapshotContextWithCache(strategyDate, "morning", 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, requestCache)
+		morningCtx = s.loadAStockBacktestSnapshotContextWithCache(strategyDate, "morning", 1, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, requestCache)
 	}
 	afternoonCtx := ctx
 	if ctx.Period != "afternoon" {
-		afternoonCtx = s.loadAStockBacktestSnapshotContextWithCache(strategyDate, "afternoon", 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, requestCache)
+		afternoonCtx = s.loadAStockBacktestSnapshotContextWithCache(strategyDate, "afternoon", 1, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, requestCache)
 	}
 	message := strings.TrimSpace(r.URL.Query().Get("msg"))
 	if message == "" {
@@ -865,7 +887,7 @@ func (s *Server) handleAStockBacktestPage(w http.ResponseWriter, r *http.Request
 		b.WriteString(html.EscapeString(message))
 		b.WriteString(`</p></section>`)
 	}
-	renderAStockBacktestSectionForPath(&b, "/a-stock/backtest", ctx.Date, ctx.Period, ctx.IgnoreRecent, ctx.IgnoreLimitUp, ctx.TodayMarketFilterEnabled, morningCtx, afternoonCtx)
+	renderAStockBacktestSectionForPath(&b, "/a-stock/backtest", ctx.Date, ctx.Period, ctx.IgnoreRecent, ctx.IgnoreLimitUp, ctx.IgnoreFundFlow, ctx.TodayMarketFilterEnabled, morningCtx, afternoonCtx)
 
 	_ = s.writeSimplePage(w, "a-stock-backtest", "A股回测", b.String())
 }
@@ -882,12 +904,16 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request, 
 	query.Set("period", period.Key)
 	ignoreRecent := normalizeAStockBool(r.FormValue("ignore_recent"))
 	ignoreLimitUp := normalizeAStockBool(r.FormValue("ignore_limit_up"))
+	ignoreFundFlow := normalizeAStockBool(r.FormValue("ignore_fund_flow"))
 	filterTodayMarket := normalizeAStockBool(r.FormValue("filter_today_market"))
 	if ignoreRecent {
 		query.Set("ignore_recent", "1")
 	}
 	if ignoreLimitUp {
 		query.Set("ignore_limit_up", "1")
+	}
+	if ignoreFundFlow {
+		query.Set("ignore_fund_flow", "1")
 	}
 	if filterTodayMarket {
 		query.Set("filter_today_market", "1")
@@ -945,7 +971,7 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request, 
 		query.Set("msg", period.Label+"行情收益已按当前推荐股票重新补齐。")
 		persistRecommendation = true
 	case "repair_stock_names":
-		query.Set("msg", s.repairAStockActionRecommendationNames(strategyDate, period.Key, ignoreRecent, ignoreLimitUp, filterTodayMarket))
+		query.Set("msg", s.repairAStockActionRecommendationNames(strategyDate, period.Key, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket))
 	case "backfill_auction":
 		query.Set("msg", s.triggerAStockAuctionBackfillDate(strategyDate))
 		persistRecommendation = true
@@ -961,7 +987,7 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request, 
 		query.Set("msg", "未知操作")
 	}
 	if persistRecommendation {
-		if loadMessage := s.persistAStockActionRecommendation(strategyDate, period.Key, ignoreRecent, ignoreLimitUp, filterTodayMarket, persistAllBacktests, recommendationRefreshMode); loadMessage != "" {
+		if loadMessage := s.persistAStockActionRecommendation(strategyDate, period.Key, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, persistAllBacktests, recommendationRefreshMode); loadMessage != "" {
 			existing := strings.TrimSpace(query.Get("msg"))
 			if existing != "" {
 				query.Set("msg", existing+" "+loadMessage)
@@ -974,7 +1000,7 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request, 
 	http.Redirect(w, r, redirectPath+"?"+query.Encode(), http.StatusSeeOther)
 }
 
-func (s *Server) persistAStockActionRecommendation(strategyDate string, periodKey string, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, allPeriods bool, refreshMode aStockRecommendationRefreshMode) string {
+func (s *Server) persistAStockActionRecommendation(strategyDate string, periodKey string, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool, allPeriods bool, refreshMode aStockRecommendationRefreshMode) string {
 	cache := newAStockRequestCache()
 	periods := []string{normalizeAStockPeriod(periodKey).Key}
 	if allPeriods {
@@ -983,7 +1009,7 @@ func (s *Server) persistAStockActionRecommendation(strategyDate string, periodKe
 	messages := make([]string, 0, len(periods))
 	for _, period := range periods {
 		entryTimeOverride := aStockManualRecommendationEntryTime(strategyDate, period, refreshMode)
-		ctx := s.loadAStockContextWithRecommendationPhasePersistenceModeEntryTime(strategyDate, period, 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, true, aStockRecommendationPhaseFinal, cache, true, true, refreshMode, entryTimeOverride)
+		ctx := s.loadAStockContextWithRecommendationPhasePersistenceModeEntryTime(strategyDate, period, 1, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, true, aStockRecommendationPhaseFinal, cache, true, true, refreshMode, entryTimeOverride)
 		if message := strings.TrimSpace(ctx.LoadMessage); message != "" {
 			messages = append(messages, fmt.Sprintf("%s：%s", ctx.PeriodLabel, message))
 		}
@@ -1004,12 +1030,12 @@ func aStockManualRecommendationEntryTime(strategyDate string, period string, ref
 	return normalizeAStockGeneratedEntryTime("afternoon", fmt.Sprintf("%02d:%02d", now.Hour(), now.Minute()))
 }
 
-func (s *Server) repairAStockActionRecommendationNames(strategyDate string, periodKey string, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool) string {
+func (s *Server) repairAStockActionRecommendationNames(strategyDate string, periodKey string, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool) string {
 	if strings.TrimSpace(s.cfg.ContentURL) == "" {
 		return "内容服务未配置，无法补股票名称。"
 	}
 	cache := newAStockRequestCache()
-	ctx, ok, loadMessage := s.loadAStockRecommendationNameRepairContext(strategyDate, periodKey, ignoreRecent, ignoreLimitUp, filterTodayMarket, cache)
+	ctx, ok, loadMessage := s.loadAStockRecommendationNameRepairContext(strategyDate, periodKey, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, cache)
 	if loadMessage != "" {
 		return loadMessage
 	}
@@ -1029,7 +1055,7 @@ func (s *Server) repairAStockActionRecommendationNames(strategyDate string, peri
 	if ctx.BacktestStatus == "" {
 		ctx.BacktestStatus = "已补齐股票名称"
 	}
-	if isAStockOfficialSelectionContext(ignoreRecent, ignoreLimitUp, filterTodayMarket) {
+	if isAStockOfficialSelectionContext(ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket) {
 		if err := s.saveAStockRecommendationSelections(ctx); err != nil {
 			return ctx.PeriodLabel + "股票名称补齐失败：" + err.Error()
 		}
@@ -1045,7 +1071,7 @@ func (s *Server) repairAStockActionRecommendationNames(strategyDate string, peri
 	return message + "。"
 }
 
-func (s *Server) loadAStockRecommendationNameRepairContext(strategyDate string, periodKey string, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, cache *aStockRequestCache) (aStockContext, bool, string) {
+func (s *Server) loadAStockRecommendationNameRepairContext(strategyDate string, periodKey string, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool, cache *aStockRequestCache) (aStockContext, bool, string) {
 	period := normalizeAStockPeriod(periodKey)
 	ctx := aStockContext{
 		Date:                         normalizeAStockStrategyDate(strategyDate),
@@ -1054,6 +1080,8 @@ func (s *Server) loadAStockRecommendationNameRepairContext(strategyDate string, 
 		WindowLabel:                  period.WindowLabel,
 		IgnoreRecent:                 ignoreRecent,
 		IgnoreLimitUp:                ignoreLimitUp,
+		IgnoreFundFlow:               ignoreFundFlow,
+		FundFlowFilterEnabled:        !ignoreFundFlow,
 		TodayMarketFilterEnabled:     filterTodayMarket,
 		LimitUpFilterEnabled:         period.Key == "afternoon" && !ignoreLimitUp,
 		BacktestStatus:               "已补齐股票名称",
@@ -1076,6 +1104,10 @@ func (s *Server) loadAStockRecommendationNameRepairContext(strategyDate string, 
 		ctx.SameDayMorningFiltered = snapshot.SameDayMorningFiltered
 		ctx.LimitUpFilterEnabled = snapshot.LimitUpFilterEnabled
 		ctx.LimitUpFiltered = snapshot.LimitUpFiltered
+		ctx.FundFlowFilterEnabled = snapshot.FundFlowFilterEnabled
+		ctx.IgnoreFundFlow = !snapshot.FundFlowFilterEnabled
+		ctx.FundFlowFiltered = snapshot.FundFlowFiltered
+		ctx.FundFlowMissingCount = snapshot.FundFlowMissingCount
 		ctx.TodayMarketFilterEnabled = snapshot.TodayMarketFilterEnabled
 		ctx.NoTodayMarketCount = snapshot.NoTodayMarketCount
 		ctx.MarketCandidateStatus = snapshot.MarketCandidateStatus
@@ -1168,6 +1200,7 @@ func writeAStockOverviewPeriodCells(b *strings.Builder, ctx aStockContext) {
 	writeAStockOverviewFilterCell(b, ctx)
 	writeAStockOverviewLimitUpFilterCell(b, ctx)
 	writeAStockOverviewTodayMarketFilterCell(b, ctx)
+	writeAStockOverviewFundFlowFilterCell(b, ctx)
 	writeAStockOverviewRecalculateCell(b, ctx)
 	writeAStockOverviewCell(b, "回测状态", aStockOverviewBacktestStatus(ctx), ` class="astock-overview-status"`)
 }
@@ -1186,7 +1219,7 @@ func writeAStockOverviewFilterCell(b *strings.Builder, ctx aStockContext) {
 	b.WriteString(`</span><strong>`)
 	b.WriteString(html.EscapeString(filterStatus))
 	b.WriteString(`</strong><a class="astock-filter-toggle" data-preserve-scroll="1" href="`)
-	b.WriteString(html.EscapeString(aStockFilterToggleHref(ctx.Date, ctx.Period, ctx.NewsPage, ctx.IgnoreRecent, ctx.IgnoreLimitUp, ctx.TodayMarketFilterEnabled)))
+	b.WriteString(html.EscapeString(aStockFilterToggleHref(ctx.Date, ctx.Period, ctx.NewsPage, ctx.IgnoreRecent, ctx.IgnoreLimitUp, ctx.IgnoreFundFlow, ctx.TodayMarketFilterEnabled)))
 	b.WriteString(`">`)
 	b.WriteString(html.EscapeString(aStockFilterToggleLabel(ctx.IgnoreRecent)))
 	b.WriteString(`</a></td>`)
@@ -1220,6 +1253,9 @@ func writeAStockOverviewTodayMarketFilterCell(b *strings.Builder, ctx aStockCont
 	if ctx.IgnoreLimitUp {
 		b.WriteString(`<input type="hidden" name="ignore_limit_up" value="1">`)
 	}
+	if ctx.IgnoreFundFlow {
+		b.WriteString(`<input type="hidden" name="ignore_fund_flow" value="1">`)
+	}
 	if !ctx.TodayMarketFilterEnabled {
 		b.WriteString(`<input type="hidden" name="filter_today_market" value="1">`)
 	}
@@ -1240,10 +1276,53 @@ func writeAStockOverviewRecalculateCell(b *strings.Builder, ctx aStockContext) {
 	if ctx.IgnoreLimitUp {
 		b.WriteString(`<input type="hidden" name="ignore_limit_up" value="1">`)
 	}
+	if ctx.IgnoreFundFlow {
+		b.WriteString(`<input type="hidden" name="ignore_fund_flow" value="1">`)
+	}
 	if ctx.TodayMarketFilterEnabled {
 		b.WriteString(`<input type="hidden" name="filter_today_market" value="1">`)
 	}
 	b.WriteString(`<button class="astock-filter-toggle" type="submit" data-preserve-scroll="1">重新计算</button></form></td>`)
+}
+
+func writeAStockOverviewFundFlowFilterCell(b *strings.Builder, ctx aStockContext) {
+	status := "已启用"
+	if ctx.IgnoreFundFlow {
+		status = "已关闭"
+	} else if ctx.FundFlowFiltered > 0 && ctx.FundFlowMissingCount > 0 {
+		status = fmt.Sprintf("过滤 %d / 缺失 %d", ctx.FundFlowFiltered, ctx.FundFlowMissingCount)
+	} else if ctx.FundFlowFiltered > 0 {
+		status = fmt.Sprintf("已过滤 %d", ctx.FundFlowFiltered)
+	} else if ctx.FundFlowMissingCount > 0 {
+		status = fmt.Sprintf("缺失 %d", ctx.FundFlowMissingCount)
+	}
+	b.WriteString(`<td class="astock-overview-fund-filter"><span class="astock-muted">资金过滤</span><strong>`)
+	b.WriteString(html.EscapeString(status))
+	b.WriteString(`</strong><form class="astock-filter-toggle-form" method="get" action="/a-stock"><input type="hidden" name="date" value="`)
+	b.WriteString(html.EscapeString(ctx.Date))
+	b.WriteString(`"><input type="hidden" name="period" value="`)
+	b.WriteString(html.EscapeString(ctx.Period))
+	b.WriteString(`">`)
+	if ctx.NewsPage > 1 {
+		b.WriteString(`<input type="hidden" name="news_page" value="`)
+		b.WriteString(html.EscapeString(fmt.Sprintf("%d", ctx.NewsPage)))
+		b.WriteString(`">`)
+	}
+	if ctx.IgnoreRecent {
+		b.WriteString(`<input type="hidden" name="ignore_recent" value="1">`)
+	}
+	if ctx.IgnoreLimitUp {
+		b.WriteString(`<input type="hidden" name="ignore_limit_up" value="1">`)
+	}
+	if !ctx.IgnoreFundFlow {
+		b.WriteString(`<input type="hidden" name="ignore_fund_flow" value="1">`)
+	}
+	if ctx.TodayMarketFilterEnabled {
+		b.WriteString(`<input type="hidden" name="filter_today_market" value="1">`)
+	}
+	b.WriteString(`<button class="astock-filter-toggle" type="submit" data-preserve-scroll="1">`)
+	b.WriteString(html.EscapeString(aStockFundFlowFilterToggleLabel(ctx.IgnoreFundFlow)))
+	b.WriteString(`</button></form></td>`)
 }
 
 func writeAStockOverviewLimitUpFilterCell(b *strings.Builder, ctx aStockContext) {
@@ -1270,6 +1349,9 @@ func writeAStockOverviewLimitUpFilterCell(b *strings.Builder, ctx aStockContext)
 		}
 		if ctx.IgnoreRecent {
 			b.WriteString(`<input type="hidden" name="ignore_recent" value="1">`)
+		}
+		if ctx.IgnoreFundFlow {
+			b.WriteString(`<input type="hidden" name="ignore_fund_flow" value="1">`)
 		}
 		if ctx.TodayMarketFilterEnabled {
 			b.WriteString(`<input type="hidden" name="filter_today_market" value="1">`)
@@ -1298,6 +1380,12 @@ func aStockOverviewBacktestStatus(ctx aStockContext) string {
 	}
 	if ctx.LimitUpFiltered > 0 {
 		reasons = append(reasons, fmt.Sprintf("涨停过滤股票 %d", ctx.LimitUpFiltered))
+	}
+	if ctx.FundFlowFiltered > 0 && !strings.Contains(status, "资金过滤") {
+		reasons = append(reasons, fmt.Sprintf("资金过滤股票 %d", ctx.FundFlowFiltered))
+	}
+	if ctx.FundFlowMissingCount > 0 && !strings.Contains(status, "资金数据缺失") {
+		reasons = append(reasons, fmt.Sprintf("资金数据缺失 %d", ctx.FundFlowMissingCount))
 	}
 	if ctx.NoTodayMarketCount > 0 && !strings.Contains(status, "当日行情") {
 		if ctx.TodayMarketFilterEnabled {
@@ -1503,7 +1591,7 @@ func renderAStockNewsPageLink(b *strings.Builder, ctx aStockContext, page int, l
 	if disabled {
 		b.WriteString(`#`)
 	} else {
-		b.WriteString(aStockPageHref(ctx.Date, ctx.Period, page, ctx.IgnoreRecent, ctx.IgnoreLimitUp, ctx.TodayMarketFilterEnabled))
+		b.WriteString(aStockPageHref(ctx.Date, ctx.Period, page, ctx.IgnoreRecent, ctx.IgnoreLimitUp, ctx.IgnoreFundFlow, ctx.TodayMarketFilterEnabled))
 	}
 	b.WriteString(`">`)
 	b.WriteString(html.EscapeString(label))
@@ -1624,18 +1712,18 @@ func renderAStockRecommendationSubsection(b *strings.Builder, ctx aStockContext)
 	b.WriteString(`</table></div>`)
 }
 
-func renderAStockBacktestSection(b *strings.Builder, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, morningCtx aStockContext, afternoonCtx aStockContext) {
-	renderAStockBacktestSectionForPath(b, "/a-stock", strategyDate, period, ignoreRecent, ignoreLimitUp, filterTodayMarket, morningCtx, afternoonCtx)
+func renderAStockBacktestSection(b *strings.Builder, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool, morningCtx aStockContext, afternoonCtx aStockContext) {
+	renderAStockBacktestSectionForPath(b, "/a-stock", strategyDate, period, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, morningCtx, afternoonCtx)
 }
 
-func renderAStockBacktestSectionForPath(b *strings.Builder, targetPath string, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, morningCtx aStockContext, afternoonCtx aStockContext) {
+func renderAStockBacktestSectionForPath(b *strings.Builder, targetPath string, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool, morningCtx aStockContext, afternoonCtx aStockContext) {
 	if strings.TrimSpace(strategyDate) == "" {
 		strategyDate = nonEmpty(morningCtx.Date, afternoonCtx.Date)
 	}
 	b.WriteString(`<section><h2>消息回测</h2><p class="astock-muted">上午推荐按上午开盘价计算，下午推荐按下午开盘价计算；T+0 到 T+5 及五日内最高收益均按对应推荐窗口的基准价回测。</p>`)
-	renderAStockRecommendationHistoryTabsForPath(b, targetPath, strategyDate, period, ignoreRecent, ignoreLimitUp, filterTodayMarket)
-	renderAStockPeriodSwitchTabsForPath(b, targetPath, strategyDate, period, ignoreRecent, ignoreLimitUp, filterTodayMarket)
-	renderAStockRecommendationHistoryActionsForPath(b, targetPath, strategyDate, period, ignoreRecent, ignoreLimitUp, filterTodayMarket)
+	renderAStockRecommendationHistoryTabsForPath(b, targetPath, strategyDate, period, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket)
+	renderAStockPeriodSwitchTabsForPath(b, targetPath, strategyDate, period, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket)
+	renderAStockRecommendationHistoryActionsForPath(b, targetPath, strategyDate, period, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket)
 	mergedRows := combineAStockBacktestRows(morningCtx, afternoonCtx)
 	b.WriteString(`<div class="astock-scroll"><table class="astock-table"><tr><th>推荐窗口</th><th>股票</th><th>上午开盘价</th><th>下午开盘价</th><th>T+0 收益</th><th>T+1 收益</th><th>T+2 收益</th><th>T+3 收益</th><th>T+4 收益</th><th>T+5 收益</th><th>五日内最高收益</th><th>命中状态</th></tr>`)
 	if len(mergedRows) == 0 {
@@ -1681,23 +1769,23 @@ func renderAStockBacktestSectionForPath(b *strings.Builder, targetPath string, s
 	b.WriteString(`</table></div></section>`)
 }
 
-func renderAStockRecommendationHistoryTabs(b *strings.Builder, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool) {
-	renderAStockRecommendationHistoryTabsForPath(b, "/a-stock", strategyDate, period, ignoreRecent, ignoreLimitUp, filterTodayMarket)
+func renderAStockRecommendationHistoryTabs(b *strings.Builder, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool) {
+	renderAStockRecommendationHistoryTabsForPath(b, "/a-stock", strategyDate, period, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket)
 }
 
-func renderAStockRecommendationHistoryTabsForPath(b *strings.Builder, targetPath string, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool) {
-	renderAStockDateTabsForPath(b, targetPath, strategyDate, period, ignoreRecent, ignoreLimitUp, filterTodayMarket, true)
+func renderAStockRecommendationHistoryTabsForPath(b *strings.Builder, targetPath string, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool) {
+	renderAStockDateTabsForPath(b, targetPath, strategyDate, period, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, true)
 }
 
-func renderAStockDatePeriodTabs(b *strings.Builder, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, withHeading bool) {
-	renderAStockDateTabsForPath(b, "/a-stock", strategyDate, period, ignoreRecent, ignoreLimitUp, filterTodayMarket, withHeading)
+func renderAStockDatePeriodTabs(b *strings.Builder, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool, withHeading bool) {
+	renderAStockDateTabsForPath(b, "/a-stock", strategyDate, period, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, withHeading)
 }
 
-func renderAStockDateTabs(b *strings.Builder, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, withHeading bool) {
-	renderAStockDateTabsForPath(b, "/a-stock", strategyDate, period, ignoreRecent, ignoreLimitUp, filterTodayMarket, withHeading)
+func renderAStockDateTabs(b *strings.Builder, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool, withHeading bool) {
+	renderAStockDateTabsForPath(b, "/a-stock", strategyDate, period, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, withHeading)
 }
 
-func renderAStockDateTabsForPath(b *strings.Builder, targetPath string, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, withHeading bool) {
+func renderAStockDateTabsForPath(b *strings.Builder, targetPath string, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool, withHeading bool) {
 	if withHeading {
 		b.WriteString(`<h3>推荐历史</h3>`)
 	}
@@ -1706,7 +1794,7 @@ func renderAStockDateTabsForPath(b *strings.Builder, targetPath string, strategy
 	tabs := aStockDateTabs(strategyDate)
 	today := aStockTodayDate()
 	if len(tabs) == 0 {
-		writeAStockDateTab(b, targetPath, "今日", today, normalizedPeriod, strategyDate == today, ignoreRecent, ignoreLimitUp, filterTodayMarket)
+		writeAStockDateTab(b, targetPath, "今日", today, normalizedPeriod, strategyDate == today, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket)
 		b.WriteString(`</div>`)
 		return
 	}
@@ -1716,19 +1804,19 @@ func renderAStockDateTabsForPath(b *strings.Builder, targetPath string, strategy
 			hasToday = true
 		}
 		active := strategyDate == tab.Date
-		writeAStockDateTab(b, targetPath, tab.Label, tab.Date, normalizedPeriod, active, ignoreRecent, ignoreLimitUp, filterTodayMarket)
+		writeAStockDateTab(b, targetPath, tab.Label, tab.Date, normalizedPeriod, active, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket)
 	}
 	if !hasToday {
-		writeAStockDateTab(b, targetPath, "今日", today, normalizedPeriod, strategyDate == today, ignoreRecent, ignoreLimitUp, filterTodayMarket)
+		writeAStockDateTab(b, targetPath, "今日", today, normalizedPeriod, strategyDate == today, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket)
 	}
 	b.WriteString(`</div>`)
 }
 
-func renderAStockRecommendationHistoryActions(b *strings.Builder, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool) {
-	renderAStockRecommendationHistoryActionsForPath(b, "/a-stock", strategyDate, period, ignoreRecent, ignoreLimitUp, filterTodayMarket)
+func renderAStockRecommendationHistoryActions(b *strings.Builder, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool) {
+	renderAStockRecommendationHistoryActionsForPath(b, "/a-stock", strategyDate, period, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket)
 }
 
-func renderAStockPeriodSwitchTabsForPath(b *strings.Builder, targetPath string, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool) {
+func renderAStockPeriodSwitchTabsForPath(b *strings.Builder, targetPath string, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool) {
 	current := normalizeAStockPeriod(period).Key
 	b.WriteString(`<div class="astock-tabs">`)
 	for _, option := range aStockPeriods() {
@@ -1737,7 +1825,7 @@ func renderAStockPeriodSwitchTabsForPath(b *strings.Builder, targetPath string, 
 			b.WriteString(` active`)
 		}
 		b.WriteString(`" data-preserve-scroll="1" href="`)
-		b.WriteString(aStockPageHrefForPath(targetPath, strategyDate, option.Key, 1, ignoreRecent, ignoreLimitUp, filterTodayMarket))
+		b.WriteString(aStockPageHrefForPath(targetPath, strategyDate, option.Key, 1, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket))
 		b.WriteString(`">`)
 		b.WriteString(html.EscapeString(option.Label))
 		b.WriteString(`</a>`)
@@ -1745,11 +1833,11 @@ func renderAStockPeriodSwitchTabsForPath(b *strings.Builder, targetPath string, 
 	b.WriteString(`</div>`)
 }
 
-func renderAStockRecommendationHistoryActionsForPath(b *strings.Builder, targetPath string, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool) {
+func renderAStockRecommendationHistoryActionsForPath(b *strings.Builder, targetPath string, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool) {
 	targetPath = aStockPagePath(targetPath)
 	b.WriteString(`<div class="astock-history-actions">`)
 	b.WriteString(`<a class="astock-filter-toggle" data-preserve-scroll="1" href="`)
-	b.WriteString(html.EscapeString(aStockFilterToggleHrefForPath(targetPath, strategyDate, period, 1, ignoreRecent, ignoreLimitUp, filterTodayMarket)))
+	b.WriteString(html.EscapeString(aStockFilterToggleHrefForPath(targetPath, strategyDate, period, 1, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket)))
 	b.WriteString(`">`)
 	b.WriteString(html.EscapeString(aStockFilterToggleLabel(ignoreRecent)))
 	b.WriteString(`</a>`)
@@ -1780,6 +1868,9 @@ func renderAStockRecommendationHistoryActionsForPath(b *strings.Builder, targetP
 		if ignoreLimitUp {
 			b.WriteString(`<input type="hidden" name="ignore_limit_up" value="1">`)
 		}
+		if ignoreFundFlow {
+			b.WriteString(`<input type="hidden" name="ignore_fund_flow" value="1">`)
+		}
 		if filterTodayMarket {
 			b.WriteString(`<input type="hidden" name="filter_today_market" value="1">`)
 		}
@@ -1792,13 +1883,13 @@ func renderAStockRecommendationHistoryActionsForPath(b *strings.Builder, targetP
 	b.WriteString(`</div>`)
 }
 
-func writeAStockDateTab(b *strings.Builder, targetPath string, label string, date string, period string, active bool, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool) {
+func writeAStockDateTab(b *strings.Builder, targetPath string, label string, date string, period string, active bool, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool) {
 	b.WriteString(`<a class="astock-tab`)
 	if active {
 		b.WriteString(` active`)
 	}
 	b.WriteString(`" data-preserve-scroll="1" href="`)
-	b.WriteString(aStockPageHrefForPath(targetPath, date, period, 1, ignoreRecent, ignoreLimitUp, filterTodayMarket))
+	b.WriteString(aStockPageHrefForPath(targetPath, date, period, 1, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket))
 	b.WriteString(`">`)
 	b.WriteString(html.EscapeString(label))
 	b.WriteString(`</a>`)
@@ -1899,7 +1990,7 @@ func aStockBacktestDisplayOpenPrices(period string, row aStockBacktestRow) (stri
 }
 
 func (s *Server) loadAStockContext(strategyDate string, periodKey string, newsPage int, ignoreRecent bool) aStockContext {
-	return s.loadAStockContextWithCache(strategyDate, periodKey, newsPage, ignoreRecent, false, false, false, newAStockRequestCache())
+	return s.loadAStockContextWithCache(strategyDate, periodKey, newsPage, ignoreRecent, false, false, false, false, newAStockRequestCache())
 }
 
 func (s *Server) handleAStockRecommendationGenerate(w http.ResponseWriter, r *http.Request) {
@@ -1912,12 +2003,13 @@ func (s *Server) handleAStockRecommendationGenerate(w http.ResponseWriter, r *ht
 	phase := normalizeAStockRecommendationPhase(r.URL.Query().Get("phase"))
 	ignoreRecent := normalizeAStockBool(r.URL.Query().Get("ignore_recent"))
 	ignoreLimitUp := normalizeAStockBool(r.URL.Query().Get("ignore_limit_up"))
+	ignoreFundFlow := normalizeAStockBool(r.URL.Query().Get("ignore_fund_flow"))
 	filterTodayMarket := normalizeAStockBool(r.URL.Query().Get("filter_today_market"))
 	refreshMode := aStockRecommendationRebuild
 	if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("refresh_mode")), string(aStockRecommendationPreserveLocked)) {
 		refreshMode = aStockRecommendationPreserveLocked
 	}
-	ctx := s.loadAStockContextWithRecommendationPhasePersistenceMode(strategyDate, period.Key, 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, true, phase, newAStockRequestCache(), true, true, refreshMode)
+	ctx := s.loadAStockContextWithRecommendationPhasePersistenceMode(strategyDate, period.Key, 1, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, true, phase, newAStockRequestCache(), true, true, refreshMode)
 	writeRawJSON(w, http.StatusOK, map[string]any{
 		"code":    http.StatusOK,
 		"message": "ok",
@@ -1934,6 +2026,9 @@ func (s *Server) handleAStockRecommendationGenerate(w http.ResponseWriter, r *ht
 			LimitUpFiltered:          ctx.LimitUpFiltered,
 			TodayMarketFilterEnabled: ctx.TodayMarketFilterEnabled,
 			NoTodayMarketCount:       ctx.NoTodayMarketCount,
+			FundFlowFilterEnabled:    ctx.FundFlowFilterEnabled,
+			FundFlowFiltered:         ctx.FundFlowFiltered,
+			FundFlowMissingCount:     ctx.FundFlowMissingCount,
 			LoadMessage:              ctx.LoadMessage,
 		},
 	})
@@ -2007,26 +2102,26 @@ func newAStockRequestCache() *aStockRequestCache {
 	}
 }
 
-func (s *Server) loadAStockContextWithCache(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, cache *aStockRequestCache) aStockContext {
-	return s.loadAStockContextWithRecommendationPhasePersistence(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, aStockRecommendationPhaseFinal, cache, true, true)
+func (s *Server) loadAStockContextWithCache(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool, forceRecommendationRefresh bool, cache *aStockRequestCache) aStockContext {
+	return s.loadAStockContextWithRecommendationPhasePersistence(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, forceRecommendationRefresh, aStockRecommendationPhaseFinal, cache, true, true)
 }
 
-func (s *Server) loadAStockContextReadOnlyWithCache(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, cache *aStockRequestCache) aStockContext {
+func (s *Server) loadAStockContextReadOnlyWithCache(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool, forceRecommendationRefresh bool, cache *aStockRequestCache) aStockContext {
 	if !forceRecommendationRefresh {
-		if ctx, ok := s.loadAStockReadOnlySnapshotContextWithCache(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, cache); ok {
+		if ctx, ok := s.loadAStockReadOnlySnapshotContextWithCache(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, cache); ok {
 			return ctx
 		}
 	}
-	return s.loadAStockContextWithRecommendationPhasePersistence(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, aStockRecommendationPhaseFinal, cache, true, false)
+	return s.loadAStockContextWithRecommendationPhasePersistence(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, forceRecommendationRefresh, aStockRecommendationPhaseFinal, cache, true, false)
 }
 
-func (s *Server) loadAStockCompanionContextWithCache(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, cache *aStockRequestCache) aStockContext {
-	return s.loadAStockContextWithRecommendationPhasePersistence(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, aStockRecommendationPhaseFinal, cache, false, true)
+func (s *Server) loadAStockCompanionContextWithCache(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool, forceRecommendationRefresh bool, cache *aStockRequestCache) aStockContext {
+	return s.loadAStockContextWithRecommendationPhasePersistence(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, forceRecommendationRefresh, aStockRecommendationPhaseFinal, cache, false, true)
 }
 
-func (s *Server) loadAStockCompanionContextReadOnlyWithCache(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, cache *aStockRequestCache) aStockContext {
+func (s *Server) loadAStockCompanionContextReadOnlyWithCache(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool, forceRecommendationRefresh bool, cache *aStockRequestCache) aStockContext {
 	if !forceRecommendationRefresh {
-		ctx, ok := s.loadAStockReadOnlySnapshotContextWithCache(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, cache)
+		ctx, ok := s.loadAStockReadOnlySnapshotContextWithCache(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, cache)
 		if ok {
 			return ctx
 		}
@@ -2034,11 +2129,11 @@ func (s *Server) loadAStockCompanionContextReadOnlyWithCache(strategyDate string
 		ctx.EmptyReason = fmt.Sprintf("暂无推荐股票：%s暂无历史快照。", ctx.PeriodLabel)
 		return ctx
 	}
-	return s.loadAStockContextWithRecommendationPhasePersistence(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, aStockRecommendationPhaseFinal, cache, false, false)
+	return s.loadAStockContextWithRecommendationPhasePersistence(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, forceRecommendationRefresh, aStockRecommendationPhaseFinal, cache, false, false)
 }
 
-func (s *Server) loadAStockReadOnlySnapshotContextWithCache(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, cache *aStockRequestCache) (aStockContext, bool) {
-	ctx := newAStockBaseContext(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, aStockRecommendationPhaseFinal)
+func (s *Server) loadAStockReadOnlySnapshotContextWithCache(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool, cache *aStockRequestCache) (aStockContext, bool) {
+	ctx := newAStockBaseContext(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, aStockRecommendationPhaseFinal)
 	if s.applyAStockRecommendationSnapshotReadOnlyWithCache(&ctx, cache) {
 		if !applyAStockSnapshotNewsSummary(&ctx, newsPage, s.currentAStockSnapshotNewsSummary(ctx, cache)) {
 			if err := s.populateAStockContextArticleStatsWithCache(&ctx, newsPage, cache); err != nil && ctx.LoadMessage == "" {
@@ -2095,8 +2190,8 @@ func buildAStockSnapshotNewsSummaryJSON(ctx aStockContext) (string, error) {
 	return string(raw), nil
 }
 
-func (s *Server) loadAStockBacktestSnapshotContextWithCache(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, cache *aStockRequestCache) aStockContext {
-	ctx := newAStockBaseContext(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, aStockRecommendationPhaseFinal)
+func (s *Server) loadAStockBacktestSnapshotContextWithCache(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool, cache *aStockRequestCache) aStockContext {
+	ctx := newAStockBaseContext(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, aStockRecommendationPhaseFinal)
 	if s.applyAStockBacktestSnapshotOnlyWithCache(&ctx, cache) {
 		return ctx
 	}
@@ -2117,6 +2212,9 @@ func (s *Server) applyAStockBacktestSnapshotOnlyWithCache(ctx *aStockContext, ca
 		return false
 	}
 	if snapshot.TodayMarketFilterEnabled != ctx.TodayMarketFilterEnabled {
+		return false
+	}
+	if snapshot.FundFlowFilterEnabled != ctx.FundFlowFilterEnabled {
 		return false
 	}
 	if !ctx.TodayMarketFilterEnabled && strings.Contains(snapshot.BacktestStatus, "过滤无当日行情") {
@@ -2163,6 +2261,10 @@ func applyAStockSnapshotMetadata(ctx *aStockContext, snapshot model.AStockRecomm
 	ctx.SameDayMorningFiltered = snapshot.SameDayMorningFiltered
 	ctx.LimitUpFilterEnabled = snapshot.LimitUpFilterEnabled
 	ctx.LimitUpFiltered = snapshot.LimitUpFiltered
+	ctx.FundFlowFilterEnabled = snapshot.FundFlowFilterEnabled
+	ctx.IgnoreFundFlow = !snapshot.FundFlowFilterEnabled
+	ctx.FundFlowFiltered = snapshot.FundFlowFiltered
+	ctx.FundFlowMissingCount = snapshot.FundFlowMissingCount
 	ctx.TodayMarketFilterEnabled = snapshot.TodayMarketFilterEnabled
 	ctx.NoTodayMarketCount = snapshot.NoTodayMarketCount
 	ctx.MarketCandidateStatus = snapshot.MarketCandidateStatus
@@ -2173,23 +2275,23 @@ func applyAStockSnapshotMetadata(ctx *aStockContext, snapshot model.AStockRecomm
 	ctx.SnapshotUpdatedAt = snapshot.UpdatedAt
 }
 
-func (s *Server) loadAStockContextWithRecommendationPhase(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, recommendationPhase string, cache *aStockRequestCache) aStockContext {
-	return s.loadAStockContextWithRecommendationPhasePersistence(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, recommendationPhase, cache, true, true)
+func (s *Server) loadAStockContextWithRecommendationPhase(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool, forceRecommendationRefresh bool, recommendationPhase string, cache *aStockRequestCache) aStockContext {
+	return s.loadAStockContextWithRecommendationPhasePersistence(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, forceRecommendationRefresh, recommendationPhase, cache, true, true)
 }
 
-func (s *Server) loadAStockContextWithRecommendationPhaseOptions(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, recommendationPhase string, cache *aStockRequestCache, includeHotspotTopStocks bool) aStockContext {
-	return s.loadAStockContextWithRecommendationPhasePersistence(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, recommendationPhase, cache, includeHotspotTopStocks, true)
+func (s *Server) loadAStockContextWithRecommendationPhaseOptions(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool, forceRecommendationRefresh bool, recommendationPhase string, cache *aStockRequestCache, includeHotspotTopStocks bool) aStockContext {
+	return s.loadAStockContextWithRecommendationPhasePersistence(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, forceRecommendationRefresh, recommendationPhase, cache, includeHotspotTopStocks, true)
 }
 
-func (s *Server) loadAStockContextWithRecommendationPhasePersistence(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, recommendationPhase string, cache *aStockRequestCache, includeHotspotTopStocks bool, persist bool) aStockContext {
-	return s.loadAStockContextWithRecommendationPhasePersistenceMode(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, recommendationPhase, cache, includeHotspotTopStocks, persist, aStockRecommendationPreserveLocked)
+func (s *Server) loadAStockContextWithRecommendationPhasePersistence(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool, forceRecommendationRefresh bool, recommendationPhase string, cache *aStockRequestCache, includeHotspotTopStocks bool, persist bool) aStockContext {
+	return s.loadAStockContextWithRecommendationPhasePersistenceMode(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, forceRecommendationRefresh, recommendationPhase, cache, includeHotspotTopStocks, persist, aStockRecommendationPreserveLocked)
 }
 
-func (s *Server) loadAStockContextWithRecommendationPhasePersistenceMode(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, recommendationPhase string, cache *aStockRequestCache, includeHotspotTopStocks bool, persist bool, refreshMode aStockRecommendationRefreshMode) aStockContext {
-	return s.loadAStockContextWithRecommendationPhasePersistenceModeEntryTime(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, recommendationPhase, cache, includeHotspotTopStocks, persist, refreshMode, "")
+func (s *Server) loadAStockContextWithRecommendationPhasePersistenceMode(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool, forceRecommendationRefresh bool, recommendationPhase string, cache *aStockRequestCache, includeHotspotTopStocks bool, persist bool, refreshMode aStockRecommendationRefreshMode) aStockContext {
+	return s.loadAStockContextWithRecommendationPhasePersistenceModeEntryTime(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, forceRecommendationRefresh, recommendationPhase, cache, includeHotspotTopStocks, persist, refreshMode, "")
 }
 
-func newAStockBaseContext(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, recommendationPhase string) aStockContext {
+func newAStockBaseContext(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool, recommendationPhase string) aStockContext {
 	strategyDate = normalizeAStockStrategyDate(strategyDate)
 	period := normalizeAStockPeriod(periodKey)
 	phase := normalizeAStockRecommendationPhase(recommendationPhase)
@@ -2213,6 +2315,8 @@ func newAStockBaseContext(strategyDate string, periodKey string, newsPage int, i
 		BacktestStatus:            "等待行情接口",
 		IgnoreRecent:              ignoreRecent,
 		IgnoreLimitUp:             ignoreLimitUp,
+		IgnoreFundFlow:            ignoreFundFlow,
+		FundFlowFilterEnabled:     !ignoreFundFlow,
 		TodayMarketFilterEnabled:  filterTodayMarket,
 	}
 	ctx.LimitUpFilterEnabled = period.Key == "afternoon" && !ignoreLimitUp
@@ -2262,7 +2366,7 @@ func (s *Server) populateAStockContextArticleStatsWithCache(ctx *aStockContext, 
 func (s *Server) loadAStockNewsStatsContextWithCache(strategyDate string, periodKey string, cache *aStockRequestCache) aStockContext {
 	period := normalizeAStockPeriod(periodKey)
 	strategyDate = normalizeAStockStrategyDate(strategyDate)
-	ctx := newAStockBaseContext(strategyDate, period.Key, 1, false, false, false, aStockRecommendationPhaseFinal)
+	ctx := newAStockBaseContext(strategyDate, period.Key, 1, false, false, false, false, aStockRecommendationPhaseFinal)
 	ctx.SourceRuns = s.loadAStockSourceRunsWithCache(cache)
 	if err := s.populateAStockContextArticleStatsWithCache(&ctx, 1, cache); err != nil {
 		ctx.LoadMessage = err.Error()
@@ -2289,11 +2393,11 @@ func (s *Server) renderAStockNewsStatsHTML(strategyDate string) string {
 	return b.String()
 }
 
-func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTime(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, recommendationPhase string, cache *aStockRequestCache, includeHotspotTopStocks bool, persist bool, refreshMode aStockRecommendationRefreshMode, entryTimeOverride string) aStockContext {
+func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTime(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool, forceRecommendationRefresh bool, recommendationPhase string, cache *aStockRequestCache, includeHotspotTopStocks bool, persist bool, refreshMode aStockRecommendationRefreshMode, entryTimeOverride string) aStockContext {
 	period := normalizeAStockPeriod(periodKey)
 	phase := normalizeAStockRecommendationPhase(recommendationPhase)
 	strategyDate = normalizeAStockStrategyDate(strategyDate)
-	ctx := newAStockBaseContext(strategyDate, period.Key, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, phase)
+	ctx := newAStockBaseContext(strategyDate, period.Key, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, phase)
 	ctx.SourceRuns = s.loadAStockSourceRunsWithCache(cache)
 	if err := s.populateAStockContextArticleStatsWithCache(&ctx, newsPage, cache); err != nil {
 		ctx.LoadMessage = err.Error()
@@ -2320,16 +2424,27 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 		ctx.EmptyReason = aStockRecommendationEmptyReason(ctx)
 		return ctx
 	}
-	allowPersistedRecommendations := phase == aStockRecommendationPhaseFinal && isAStockOfficialSelectionContext(ignoreRecent, ignoreLimitUp, filterTodayMarket)
+	allowPersistedRecommendations := phase == aStockRecommendationPhaseFinal && isAStockOfficialSelectionContext(ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket)
 	rebuildRecommendations := refreshMode == aStockRecommendationRebuild
 	if allowPersistedRecommendations && !forceRecommendationRefresh && s.applyAStockRecommendationSnapshotWithCache(&ctx, cache) {
 		return ctx
 	}
 	if allowPersistedRecommendations && !rebuildRecommendations && s.applyAStockRecommendationSelectionsWithCache(&ctx, cache) {
 		ctx.Recommendations = s.applyAStockHoldingSummariesWithCache(ctx.Recommendations, cache)
+		fundFlowStatus := ""
+		if ctx.FundFlowFilterEnabled && len(ctx.Recommendations) > 0 {
+			result := s.applyAStockRecommendationFundFlowFilterWithCache(strategyDate, ctx.Recommendations, nil, nil, len(ctx.Recommendations), cache)
+			ctx.Recommendations = result.Recommendations
+			ctx.FundFlowFiltered = result.Filtered
+			ctx.FundFlowMissingCount = result.Missing
+			fundFlowStatus = formatAStockFundFlowFilterStatus(result.Filtered, result.Replenished, result.Missing, result.Shortfall)
+		}
 		ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus, ctx.LimitUpFiltered = s.loadAStockLockedMarketView(strategyDate, ctx.Period, ctx.Recommendations)
 		if forceRecommendationRefresh {
 			s.restoreAStockBacktestsFromSnapshotWithCache(&ctx, cache)
+		}
+		if fundFlowStatus != "" {
+			ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, fundFlowStatus)
 		}
 		ctx.EmptyReason = aStockRecommendationEmptyReason(ctx)
 		if persist && ctx.LoadMessage == "" {
@@ -2371,7 +2486,10 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 	}
 	recommendationTarget := 0
 	var recentReplacementPool []aStockRecommendation
+	var fundFlowReplacementPool []aStockRecommendation
+	var recentCodes map[string]struct{}
 	recentReplacementStatus := ""
+	fundFlowStatus := ""
 	if len(ctx.Hotspots) > 0 {
 		if marketCandidates == nil {
 			candidates, candidateStatus, auctionResult := s.loadAStockMarketCandidatesWithStatusWithCache(strategyDate, cache)
@@ -2391,6 +2509,9 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 		if period.Key == "morning" && !ctx.IgnoreRecent && recommendationTarget > 0 {
 			recentReplacementPool = buildAStockSnapshotReplacementRecommendationsWithSectorGate(strategyDate, period.Key, phase, ctx.Articles, candidates, sectorGate)
 		}
+		if ctx.FundFlowFilterEnabled && recommendationTarget > 0 {
+			fundFlowReplacementPool = buildAStockSnapshotReplacementRecommendationsWithSectorGate(strategyDate, period.Key, phase, ctx.Articles, candidates, sectorGate)
+		}
 		if ctx.LimitUpFilterEnabled && recommendationTarget > 0 {
 			replacementPool := buildAStockSnapshotRecommendationsWithPhaseAndLimitAndSectorGate(strategyDate, period.Key, phase, ctx.Articles, candidates, aStockReplacementPoolLimit, aStockReplacementPerHotspot, sectorGate)
 			ctx.Recommendations = mergeAStockLimitUpReplacementPool(ctx.Recommendations, replacementPool)
@@ -2400,7 +2521,7 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 		}
 	}
 	if len(ctx.Recommendations) > 0 && !ctx.IgnoreRecent {
-		recentCodes := s.loadRecentAStockRecommendationCodesForPeriodWithCache(strategyDate, period.Key, aStockRecentLookbackDays, cache)
+		recentCodes = s.loadRecentAStockRecommendationCodesForPeriodWithCache(strategyDate, period.Key, aStockRecentLookbackDays, cache)
 		if period.Key == "morning" && len(recentReplacementPool) > 0 && recommendationTarget > 0 {
 			result := filterRecentAStockRecommendationsWithReplenishment(ctx.Recommendations, recentReplacementPool, recentCodes, recommendationTarget)
 			ctx.Recommendations = result.Recommendations
@@ -2414,6 +2535,17 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 	}
 	ctx.Recommendations = withAStockRecommendationEntryTimes(ctx.Recommendations, period.Key, entryTimeOverride)
 	ctx.Recommendations = s.applyAStockHoldingSummariesWithCache(ctx.Recommendations, cache)
+	if ctx.FundFlowFilterEnabled && len(ctx.Recommendations) > 0 {
+		if len(fundFlowReplacementPool) > 0 {
+			fundFlowReplacementPool = withAStockRecommendationEntryTimes(fundFlowReplacementPool, period.Key, entryTimeOverride)
+			fundFlowReplacementPool = s.applyAStockHoldingSummariesWithCache(fundFlowReplacementPool, cache)
+		}
+		result := s.applyAStockRecommendationFundFlowFilterWithCache(strategyDate, ctx.Recommendations, fundFlowReplacementPool, recentCodes, recommendationTarget, cache)
+		ctx.Recommendations = result.Recommendations
+		ctx.FundFlowFiltered = result.Filtered
+		ctx.FundFlowMissingCount = result.Missing
+		fundFlowStatus = formatAStockFundFlowFilterStatus(result.Filtered, result.Replenished, result.Missing, result.Shortfall)
+	}
 	ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus, ctx.LimitUpFiltered, ctx.NoTodayMarketCount = s.loadAStockMarketView(strategyDate, ctx.Period, ctx.Recommendations, ctx.LimitUpFilterEnabled, ctx.TodayMarketFilterEnabled, recommendationTarget)
 	if forceRecommendationRefresh {
 		s.restoreAStockBacktestsFromSnapshotWithCache(&ctx, cache)
@@ -2421,7 +2553,10 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 	if recentReplacementStatus != "" {
 		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, recentReplacementStatus)
 	}
-	if persist && shouldPersistAStockRecommendationSelections(ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh) && (len(ctx.Recommendations) > 0 || rebuildRecommendations) {
+	if fundFlowStatus != "" {
+		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, fundFlowStatus)
+	}
+	if persist && shouldPersistAStockRecommendationSelections(ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, forceRecommendationRefresh) && (len(ctx.Recommendations) > 0 || rebuildRecommendations) {
 		if err := s.saveAStockRecommendationSelections(ctx); err != nil && ctx.LoadMessage == "" {
 			ctx.LoadMessage = "A股已选股票保存失败：" + err.Error()
 		}
@@ -2437,12 +2572,12 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 	return ctx
 }
 
-func isAStockOfficialSelectionContext(ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool) bool {
-	return !ignoreRecent && !ignoreLimitUp && !filterTodayMarket
+func isAStockOfficialSelectionContext(ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool) bool {
+	return !ignoreRecent && !ignoreLimitUp && !ignoreFundFlow && !filterTodayMarket
 }
 
-func shouldPersistAStockRecommendationSelections(ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool) bool {
-	return forceRecommendationRefresh && isAStockOfficialSelectionContext(ignoreRecent, ignoreLimitUp, filterTodayMarket)
+func shouldPersistAStockRecommendationSelections(ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool, forceRecommendationRefresh bool) bool {
+	return forceRecommendationRefresh && isAStockOfficialSelectionContext(ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket)
 }
 
 func (s *Server) loadRecentAStockRecommendationCodesForPeriodWithCache(strategyDate string, period string, lookbackDays int, cache *aStockRequestCache) map[string]struct{} {
@@ -2467,7 +2602,7 @@ func (s *Server) applyAStockRecommendationSelections(ctx *aStockContext) bool {
 }
 
 func (s *Server) applyAStockRecommendationSelectionsWithCache(ctx *aStockContext, cache *aStockRequestCache) bool {
-	if ctx == nil || !isAStockOfficialSelectionContext(ctx.IgnoreRecent, ctx.IgnoreLimitUp, ctx.TodayMarketFilterEnabled) {
+	if ctx == nil || !isAStockOfficialSelectionContext(ctx.IgnoreRecent, ctx.IgnoreLimitUp, ctx.IgnoreFundFlow, ctx.TodayMarketFilterEnabled) {
 		return false
 	}
 	result, ok := s.loadAStockRecommendationSelectionsWithCache(ctx.Date, ctx.Period, cache)
@@ -2492,7 +2627,7 @@ func (s *Server) applyAStockRecommendationSnapshotRecommendations(ctx *aStockCon
 }
 
 func (s *Server) applyAStockRecommendationSnapshotRecommendationsWithCache(ctx *aStockContext, cache *aStockRequestCache) bool {
-	if ctx == nil || strings.TrimSpace(s.cfg.ContentURL) == "" || !isAStockOfficialSelectionContext(ctx.IgnoreRecent, ctx.IgnoreLimitUp, ctx.TodayMarketFilterEnabled) {
+	if ctx == nil || strings.TrimSpace(s.cfg.ContentURL) == "" || !isAStockOfficialSelectionContext(ctx.IgnoreRecent, ctx.IgnoreLimitUp, ctx.IgnoreFundFlow, ctx.TodayMarketFilterEnabled) {
 		return false
 	}
 	snapshot, ok := s.loadAStockRecommendationSnapshotWithCache(ctx.Date, ctx.Period, false, cache)
@@ -2503,6 +2638,9 @@ func (s *Server) applyAStockRecommendationSnapshotRecommendationsWithCache(ctx *
 		return false
 	}
 	if snapshot.TodayMarketFilterEnabled != ctx.TodayMarketFilterEnabled {
+		return false
+	}
+	if snapshot.FundFlowFilterEnabled != ctx.FundFlowFilterEnabled {
 		return false
 	}
 	if !ctx.TodayMarketFilterEnabled && strings.Contains(snapshot.BacktestStatus, "过滤无当日行情") {
@@ -2524,6 +2662,10 @@ func (s *Server) applyAStockRecommendationSnapshotRecommendationsWithCache(ctx *
 	ctx.SameDayMorningFiltered = snapshot.SameDayMorningFiltered
 	ctx.LimitUpFilterEnabled = snapshot.LimitUpFilterEnabled
 	ctx.LimitUpFiltered = snapshot.LimitUpFiltered
+	ctx.FundFlowFilterEnabled = snapshot.FundFlowFilterEnabled
+	ctx.IgnoreFundFlow = !snapshot.FundFlowFilterEnabled
+	ctx.FundFlowFiltered = snapshot.FundFlowFiltered
+	ctx.FundFlowMissingCount = snapshot.FundFlowMissingCount
 	ctx.TodayMarketFilterEnabled = snapshot.TodayMarketFilterEnabled
 	ctx.NoTodayMarketCount = snapshot.NoTodayMarketCount
 	ctx.MarketCandidateStatus = snapshot.MarketCandidateStatus
@@ -2562,6 +2704,9 @@ func (s *Server) applyAStockRecommendationSnapshotWithFreshnessCache(ctx *aStock
 	if snapshot.TodayMarketFilterEnabled != ctx.TodayMarketFilterEnabled {
 		return false
 	}
+	if snapshot.FundFlowFilterEnabled != ctx.FundFlowFilterEnabled {
+		return false
+	}
 	if !ctx.TodayMarketFilterEnabled && strings.Contains(snapshot.BacktestStatus, "过滤无当日行情") {
 		return false
 	}
@@ -2584,6 +2729,10 @@ func (s *Server) applyAStockRecommendationSnapshotWithFreshnessCache(ctx *aStock
 		ctx.SameDayMorningFiltered = snapshot.SameDayMorningFiltered
 		ctx.LimitUpFilterEnabled = snapshot.LimitUpFilterEnabled
 		ctx.LimitUpFiltered = snapshot.LimitUpFiltered
+		ctx.FundFlowFilterEnabled = snapshot.FundFlowFilterEnabled
+		ctx.IgnoreFundFlow = !snapshot.FundFlowFilterEnabled
+		ctx.FundFlowFiltered = snapshot.FundFlowFiltered
+		ctx.FundFlowMissingCount = snapshot.FundFlowMissingCount
 		ctx.TodayMarketFilterEnabled = snapshot.TodayMarketFilterEnabled
 		ctx.NoTodayMarketCount = snapshot.NoTodayMarketCount
 		ctx.MarketCandidateStatus = snapshot.MarketCandidateStatus
@@ -2614,6 +2763,10 @@ func (s *Server) applyAStockRecommendationSnapshotWithFreshnessCache(ctx *aStock
 	ctx.SameDayMorningFiltered = snapshot.SameDayMorningFiltered
 	ctx.LimitUpFilterEnabled = snapshot.LimitUpFilterEnabled
 	ctx.LimitUpFiltered = snapshot.LimitUpFiltered
+	ctx.FundFlowFilterEnabled = snapshot.FundFlowFilterEnabled
+	ctx.IgnoreFundFlow = !snapshot.FundFlowFilterEnabled
+	ctx.FundFlowFiltered = snapshot.FundFlowFiltered
+	ctx.FundFlowMissingCount = snapshot.FundFlowMissingCount
 	ctx.TodayMarketFilterEnabled = snapshot.TodayMarketFilterEnabled
 	ctx.NoTodayMarketCount = snapshot.NoTodayMarketCount
 	ctx.MarketCandidateStatus = snapshot.MarketCandidateStatus
@@ -2884,6 +3037,9 @@ func (s *Server) saveAStockRecommendationSnapshot(ctx aStockContext) error {
 		LimitUpFiltered:          ctx.LimitUpFiltered,
 		TodayMarketFilterEnabled: ctx.TodayMarketFilterEnabled,
 		NoTodayMarketCount:       ctx.NoTodayMarketCount,
+		FundFlowFilterEnabled:    ctx.FundFlowFilterEnabled,
+		FundFlowFiltered:         ctx.FundFlowFiltered,
+		FundFlowMissingCount:     ctx.FundFlowMissingCount,
 		MarketCandidateStatus:    ctx.MarketCandidateStatus,
 		MarketCandidateCount:     ctx.MarketCandidateCount,
 		AuctionAmountLabel:       ctx.AuctionAmountLabel,
@@ -3523,6 +3679,9 @@ func aStockRecommendationEmptyReason(ctx aStockContext) string {
 	if ctx.LimitUpFiltered > 0 {
 		return fmt.Sprintf("暂无推荐股票：%s %s 已生成候选，但涨停过滤 %d 只。", ctx.PeriodLabel, windowLabel, ctx.LimitUpFiltered)
 	}
+	if ctx.FundFlowFiltered > 0 {
+		return fmt.Sprintf("暂无推荐股票：%s %s 已生成候选，但资金过滤 %d 只。可关闭资金过滤后重新生成。", ctx.PeriodLabel, windowLabel, ctx.FundFlowFiltered)
+	}
 	if ctx.TodayMarketFilterEnabled && (strings.Contains(ctx.BacktestStatus, "无当日行情") || strings.Contains(ctx.BacktestStatus, "过滤无当日行情")) {
 		return fmt.Sprintf("暂无推荐股票：%s %s 已生成 %d 只候选，但没有当日行情或开盘价。请点击“同步行情”后重试。", ctx.PeriodLabel, windowLabel, ctx.GeneratedRecommendationCount)
 	}
@@ -3557,6 +3716,16 @@ func normalizeAStockIgnoreLimitUp(query url.Values) bool {
 	}
 	if _, ok := query["ignore_limit_up"]; ok {
 		return normalizeAStockBool(query.Get("ignore_limit_up"))
+	}
+	return false
+}
+
+func normalizeAStockIgnoreFundFlow(query url.Values) bool {
+	if normalizeAStockBool(query.Get("filter_fund_flow")) {
+		return false
+	}
+	if _, ok := query["ignore_fund_flow"]; ok {
+		return normalizeAStockBool(query.Get("ignore_fund_flow"))
 	}
 	return false
 }
@@ -3770,24 +3939,218 @@ func (s *Server) applyAStockRecommendationFundFlow5DWithCache(strategyDate strin
 		return recommendations
 	}
 	for i := range recommendations {
-		recommendations[i].FundFlow5D = "--"
-		recommendations[i].FundFlow5DClass = "astock-flat"
 		code := normalizeAStockCode(recommendations[i].Code)
 		if code == "" {
+			recommendations[i] = applyAStockFundFlow5DAssessmentToRecommendation(recommendations[i], aStockFundFlow5DAssessment{Missing: true}, false)
 			continue
 		}
-		result, err := s.loadAStockStockFundFlowTrendWithCache(strategyDate, code, 5, cache)
-		if err != nil || len(result.Items) == 0 {
-			continue
-		}
-		total := 0.0
-		for _, item := range result.Items {
-			total += item.MainNetInflow
-		}
-		recommendations[i].FundFlow5D = formatSectorFundFlowMoney(total)
-		recommendations[i].FundFlow5DClass = aStockPctClass(total)
+		assessment := s.assessAStockRecommendationFundFlow5DWithCache(strategyDate, code, cache)
+		recommendations[i] = applyAStockFundFlow5DAssessmentToRecommendation(recommendations[i], assessment, false)
 	}
 	return recommendations
+}
+
+type aStockFundFlow5DAssessment struct {
+	Total        float64
+	NegativeDays int
+	Missing      bool
+}
+
+type aStockFundFlowRecommendationFilterResult struct {
+	Recommendations []aStockRecommendation
+	Filtered        int
+	Missing         int
+	Replenished     int
+	Shortfall       bool
+}
+
+func (s *Server) assessAStockRecommendationFundFlow5DWithCache(strategyDate string, code string, cache *aStockRequestCache) aStockFundFlow5DAssessment {
+	code = normalizeAStockCode(code)
+	if code == "" {
+		return aStockFundFlow5DAssessment{Missing: true}
+	}
+	result, err := s.loadAStockStockFundFlowTrendWithCache(strategyDate, code, 5, cache)
+	if err != nil || len(result.Items) == 0 {
+		return aStockFundFlow5DAssessment{Missing: true}
+	}
+	assessment := aStockFundFlow5DAssessment{}
+	for _, item := range result.Items {
+		assessment.Total += item.MainNetInflow
+		if item.MainNetInflow < 0 {
+			assessment.NegativeDays++
+		}
+	}
+	return assessment
+}
+
+func (s *Server) applyAStockRecommendationFundFlowFilterWithCache(strategyDate string, base []aStockRecommendation, replacementPool []aStockRecommendation, recentCodes map[string]struct{}, target int, cache *aStockRequestCache) aStockFundFlowRecommendationFilterResult {
+	if target <= 0 {
+		target = len(base)
+	}
+	result := aStockFundFlowRecommendationFilterResult{}
+	if len(base) == 0 || target <= 0 {
+		result.Recommendations = rerankAStockRecommendations(base)
+		return result
+	}
+	seen := make(map[string]struct{}, len(base))
+	baseHotspotCounts := make(map[string]int)
+	keptHotspotCounts := make(map[string]int)
+	kept := make([]aStockRecommendation, 0, minInt(len(base), target))
+	isRecent := func(code string) bool {
+		if len(recentCodes) == 0 {
+			return false
+		}
+		_, ok := recentCodes[normalizeAStockCode(code)]
+		return ok
+	}
+	appendRecommendation := func(rec aStockRecommendation, countFiltered bool, replenished bool) bool {
+		if len(kept) >= target {
+			return false
+		}
+		code := normalizeAStockCode(rec.Code)
+		if code == "" {
+			return false
+		}
+		rec.Code = code
+		if _, exists := seen[code]; exists {
+			return false
+		}
+		if isBlockedAStockRecommendationStock(rec.Code, rec.Name) || isRecent(code) {
+			return false
+		}
+		assessment := s.assessAStockRecommendationFundFlow5DWithCache(strategyDate, code, cache)
+		if !assessment.Missing && isAStockFundFlowHardFiltered(assessment) {
+			if countFiltered {
+				result.Filtered++
+			}
+			return false
+		}
+		rec = applyAStockFundFlow5DAssessmentToRecommendation(rec, assessment, true)
+		seen[code] = struct{}{}
+		kept = append(kept, rec)
+		if assessment.Missing {
+			result.Missing++
+		}
+		if replenished {
+			result.Replenished++
+		}
+		if hotspot := normalizeAStockRecommendationHotspot(rec.Hotspot); hotspot != "" {
+			keptHotspotCounts[hotspot]++
+		}
+		return true
+	}
+	for _, rec := range base {
+		if hotspot := normalizeAStockRecommendationHotspot(rec.Hotspot); hotspot != "" {
+			baseHotspotCounts[hotspot]++
+		}
+		appendRecommendation(rec, true, false)
+	}
+	if len(kept) < target && len(replacementPool) > 0 {
+		hotspotDeficits := make(map[string]int, len(baseHotspotCounts))
+		for hotspot, baseCount := range baseHotspotCounts {
+			if deficit := baseCount - keptHotspotCounts[hotspot]; deficit > 0 {
+				hotspotDeficits[hotspot] = deficit
+			}
+		}
+		candidates := sortedAStockReplacementRecommendations(replacementPool)
+		for _, rec := range candidates {
+			hotspot := normalizeAStockRecommendationHotspot(rec.Hotspot)
+			if hotspot == "" || hotspotDeficits[hotspot] <= 0 {
+				continue
+			}
+			if appendRecommendation(rec, false, true) {
+				hotspotDeficits[hotspot]--
+			}
+			if len(kept) >= target {
+				break
+			}
+		}
+		if len(kept) < target {
+			for _, rec := range candidates {
+				if appendRecommendation(rec, false, true) && len(kept) >= target {
+					break
+				}
+			}
+		}
+	}
+	result.Shortfall = len(kept) < target
+	result.Recommendations = sortAStockRecommendationsByScore(kept)
+	return result
+}
+
+func applyAStockFundFlow5DAssessmentToRecommendation(rec aStockRecommendation, assessment aStockFundFlow5DAssessment, applyScore bool) aStockRecommendation {
+	if assessment.Missing {
+		rec.FundFlow5D = "--"
+		rec.FundFlow5DClass = "astock-flat"
+		return rec
+	}
+	rec.FundFlow5D = formatSectorFundFlowMoney(assessment.Total)
+	rec.FundFlow5DClass = aStockPctClass(assessment.Total)
+	if !applyScore {
+		return rec
+	}
+	scoreDelta := aStockFundFlowScoreAdjustment(assessment.Total)
+	if scoreDelta == 0 {
+		return rec
+	}
+	baseScore := rec.MarketScore
+	if baseScore == 0 {
+		baseScore = rec.HotspotScore
+	}
+	rec.MarketScore = baseScore + scoreDelta
+	rec.Reason = appendAStockReason(rec.Reason, formatAStockFundFlowScoreReason(assessment.Total, scoreDelta))
+	return rec
+}
+
+func aStockFundFlowScoreAdjustment(total float64) int {
+	switch {
+	case total >= aStockFundFlowStrongBonusThreshold:
+		return 10
+	case total >= aStockFundFlowBonusThreshold:
+		return 5
+	case total < 0:
+		return -5
+	default:
+		return 0
+	}
+}
+
+func isAStockFundFlowHardFiltered(assessment aStockFundFlow5DAssessment) bool {
+	return assessment.Total <= aStockFundFlowHardFilterThreshold && assessment.NegativeDays >= aStockFundFlowHardFilterDays
+}
+
+func formatAStockFundFlowScoreReason(total float64, scoreDelta int) string {
+	direction := "净流入"
+	if total < 0 {
+		direction = "净流出"
+	}
+	action := "加分"
+	points := scoreDelta
+	if scoreDelta < 0 {
+		action = "减分"
+		points = -scoreDelta
+	}
+	return fmt.Sprintf("5日主力资金%s %s，资金%s %d", direction, formatSectorFundFlowMoney(total), action, points)
+}
+
+func formatAStockFundFlowFilterStatus(filtered int, replenished int, missing int, shortfall bool) string {
+	if filtered <= 0 && missing <= 0 {
+		return ""
+	}
+	parts := make([]string, 0, 4)
+	if filtered > 0 {
+		parts = append(parts, fmt.Sprintf("资金过滤 %d 只", filtered))
+	}
+	if replenished > 0 {
+		parts = append(parts, fmt.Sprintf("递补 %d 只", replenished))
+	}
+	if missing > 0 {
+		parts = append(parts, fmt.Sprintf("资金数据缺失 %d 只", missing))
+	}
+	if shortfall {
+		parts = append(parts, "候选不足未补满")
+	}
+	return strings.Join(parts, "，")
 }
 
 func (s *Server) loadAStockStockFundFlowTrendWithCache(endDate string, code string, days int, cache *aStockRequestCache) (model.AStockStockFundFlowTrendResult, error) {
@@ -4336,6 +4699,28 @@ func sortedAStockReplacementRecommendations(recommendations []aStockRecommendati
 		return result[i].MarketScore > result[j].MarketScore
 	})
 	return result
+}
+
+func sortAStockRecommendationsByScore(recommendations []aStockRecommendation) []aStockRecommendation {
+	result := append([]aStockRecommendation(nil), recommendations...)
+	sort.SliceStable(result, func(i, j int) bool {
+		leftScore := result[i].MarketScore
+		if leftScore == 0 {
+			leftScore = result[i].HotspotScore
+		}
+		rightScore := result[j].MarketScore
+		if rightScore == 0 {
+			rightScore = result[j].HotspotScore
+		}
+		if leftScore == rightScore {
+			if result[i].Hotspot == result[j].Hotspot {
+				return normalizeAStockCode(result[i].Code) < normalizeAStockCode(result[j].Code)
+			}
+			return result[i].Hotspot < result[j].Hotspot
+		}
+		return leftScore > rightScore
+	})
+	return rerankAStockRecommendations(result)
 }
 
 func formatAStockRecentReplenishmentStatus(filtered int, replenished int, shortfall bool) string {
@@ -8337,11 +8722,11 @@ func normalizeAStockNewsPage(raw string) int {
 	return page
 }
 
-func aStockPageHref(strategyDate string, period string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool) string {
-	return aStockPageHrefForPath("/a-stock", strategyDate, period, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket)
+func aStockPageHref(strategyDate string, period string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool) string {
+	return aStockPageHrefForPath("/a-stock", strategyDate, period, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket)
 }
 
-func aStockPageHrefForPath(targetPath string, strategyDate string, period string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool) string {
+func aStockPageHrefForPath(targetPath string, strategyDate string, period string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool) string {
 	href := aStockPagePath(targetPath) + "?date=" + url.QueryEscape(normalizeAStockStrategyDate(strategyDate)) + "&period=" + url.QueryEscape(normalizeAStockPeriod(period).Key)
 	if newsPage > 1 {
 		href += "&news_page=" + url.QueryEscape(fmt.Sprintf("%d", newsPage))
@@ -8352,18 +8737,21 @@ func aStockPageHrefForPath(targetPath string, strategyDate string, period string
 	if ignoreLimitUp {
 		href += "&ignore_limit_up=1"
 	}
+	if ignoreFundFlow {
+		href += "&ignore_fund_flow=1"
+	}
 	if filterTodayMarket {
 		href += "&filter_today_market=1"
 	}
 	return href
 }
 
-func aStockFilterToggleHref(strategyDate string, period string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool) string {
-	return aStockFilterToggleHrefForPath("/a-stock", strategyDate, period, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket)
+func aStockFilterToggleHref(strategyDate string, period string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool) string {
+	return aStockFilterToggleHrefForPath("/a-stock", strategyDate, period, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket)
 }
 
-func aStockFilterToggleHrefForPath(targetPath string, strategyDate string, period string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool) string {
-	return aStockPageHrefForPath(targetPath, strategyDate, period, newsPage, !ignoreRecent, ignoreLimitUp, filterTodayMarket)
+func aStockFilterToggleHrefForPath(targetPath string, strategyDate string, period string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool) string {
+	return aStockPageHrefForPath(targetPath, strategyDate, period, newsPage, !ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket)
 }
 
 func aStockPagePath(targetPath string) string {
@@ -8389,8 +8777,8 @@ func aStockRecentLookbackStatusPrefix() string {
 	return aStockRecentLookbackLabel() + "内重复"
 }
 
-func aStockLimitUpFilterToggleHref(strategyDate string, period string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool) string {
-	return aStockPageHref(strategyDate, period, newsPage, ignoreRecent, !ignoreLimitUp, filterTodayMarket)
+func aStockLimitUpFilterToggleHref(strategyDate string, period string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool) string {
+	return aStockPageHref(strategyDate, period, newsPage, ignoreRecent, !ignoreLimitUp, ignoreFundFlow, filterTodayMarket)
 }
 
 func aStockLimitUpFilterToggleLabel(ignoreLimitUp bool) string {
@@ -8405,6 +8793,13 @@ func aStockTodayMarketFilterToggleLabel(filterTodayMarket bool) string {
 		return "关闭当日行情过滤"
 	}
 	return "启用当日行情过滤"
+}
+
+func aStockFundFlowFilterToggleLabel(ignoreFundFlow bool) string {
+	if ignoreFundFlow {
+		return "启用资金过滤"
+	}
+	return "关闭资金过滤"
 }
 
 func aStockPeriods() []aStockPeriod {
