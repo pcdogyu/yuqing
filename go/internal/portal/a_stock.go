@@ -7015,17 +7015,17 @@ func (g *aStockHotspotSectorGate) empty() bool {
 	return g == nil || len(g.gatedHotspots) == 0
 }
 
-func (g *aStockHotspotSectorGate) Allows(hotspot string, candidate aStockMarketCandidate) bool {
+func (g *aStockHotspotSectorGate) Allows(hotspot aStockHotspot, candidate aStockMarketCandidate) bool {
 	if g == nil || candidate.FixedPool || !candidate.Fallback {
 		return true
 	}
-	hotspot = normalizeAStockRecommendationHotspot(hotspot)
-	if _, gated := g.gatedHotspots[hotspot]; !gated {
+	hotspotName := normalizeAStockRecommendationHotspot(hotspot.Name)
+	if _, gated := g.gatedHotspots[hotspotName]; !gated {
 		return true
 	}
-	codes := g.codesByHotspot[hotspot]
+	codes := g.codesByHotspot[hotspotName]
 	if len(codes) == 0 {
-		return false
+		return len(aStockCandidateKeywordMatches(candidate.Name, hotspot.Keywords)) > 0
 	}
 	_, ok := codes[normalizeAStockCode(candidate.Code)]
 	return ok
@@ -8015,7 +8015,7 @@ func scoreAStockMarketCandidatesWithSectorGate(hotspot aStockHotspot, candidates
 		if evidence == 0 && len(keywords) == 0 {
 			continue
 		}
-		if !sectorGate.Allows(hotspot.Name, candidate) {
+		if !sectorGate.Allows(hotspot, candidate) {
 			continue
 		}
 		candidate.Evidence = evidence
