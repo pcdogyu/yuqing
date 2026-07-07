@@ -7656,6 +7656,13 @@ func TestAStockRecommendationsRequireSectorMatchForNewsDerivedCandidates(t *test
 	if rec, ok := got["000630"]; !ok || rec.Name != "铜陵有色" {
 		t.Fatalf("expected matched nonferrous candidate 000630 铜陵有色 to remain, got %+v", withGate)
 	}
+
+	emptySectorGate := newAStockHotspotSectorGate()
+	emptySectorGate.addHotspot("黄金有色")
+	withEmptyGate := buildAStockRecommendationsWithLimitAndSectorGate([]aStockHotspot{hotspot}, candidates, aStockReplacementPoolLimit, aStockReplacementPerHotspot, emptySectorGate)
+	if _, ok := aStockTestRecommendationsByCode(withEmptyGate)["000566"]; ok {
+		t.Fatalf("expected empty sector data to block news-derived 000566 instead of fail-open, got %+v", withEmptyGate)
+	}
 }
 
 func aStockTestRecommendationsByCode(recommendations []aStockRecommendation) map[string]aStockRecommendation {

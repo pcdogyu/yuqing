@@ -167,6 +167,7 @@ type aStockMarketCandidate struct {
 
 type aStockHotspotSectorGate struct {
 	codesByHotspot map[string]map[string]struct{}
+	gatedHotspots  map[string]struct{}
 }
 
 type aStockHotspotSectorAlias struct {
@@ -6959,15 +6960,36 @@ func normalizeAStockRecommendationHotspot(value string) string {
 }
 
 func newAStockHotspotSectorGate() *aStockHotspotSectorGate {
-	return &aStockHotspotSectorGate{codesByHotspot: make(map[string]map[string]struct{})}
+	return &aStockHotspotSectorGate{
+		codesByHotspot: make(map[string]map[string]struct{}),
+		gatedHotspots:  make(map[string]struct{}),
+	}
 }
 
-func (g *aStockHotspotSectorGate) addCodes(hotspot string, codes map[string]struct{}) {
-	if g == nil || len(codes) == 0 {
+func (g *aStockHotspotSectorGate) addHotspot(hotspot string) {
+	if g == nil {
 		return
 	}
 	hotspot = normalizeAStockRecommendationHotspot(hotspot)
 	if hotspot == "" {
+		return
+	}
+	if g.gatedHotspots == nil {
+		g.gatedHotspots = make(map[string]struct{})
+	}
+	g.gatedHotspots[hotspot] = struct{}{}
+}
+
+func (g *aStockHotspotSectorGate) addCodes(hotspot string, codes map[string]struct{}) {
+	if g == nil {
+		return
+	}
+	hotspot = normalizeAStockRecommendationHotspot(hotspot)
+	if hotspot == "" {
+		return
+	}
+	g.addHotspot(hotspot)
+	if len(codes) == 0 {
 		return
 	}
 	if g.codesByHotspot == nil {
@@ -6990,16 +7012,20 @@ func (g *aStockHotspotSectorGate) addCodes(hotspot string, codes map[string]stru
 }
 
 func (g *aStockHotspotSectorGate) empty() bool {
-	return g == nil || len(g.codesByHotspot) == 0
+	return g == nil || len(g.gatedHotspots) == 0
 }
 
 func (g *aStockHotspotSectorGate) Allows(hotspot string, candidate aStockMarketCandidate) bool {
 	if g == nil || candidate.FixedPool || !candidate.Fallback {
 		return true
 	}
-	codes := g.codesByHotspot[normalizeAStockRecommendationHotspot(hotspot)]
-	if len(codes) == 0 {
+	hotspot = normalizeAStockRecommendationHotspot(hotspot)
+	if _, gated := g.gatedHotspots[hotspot]; !gated {
 		return true
+	}
+	codes := g.codesByHotspot[hotspot]
+	if len(codes) == 0 {
+		return false
 	}
 	_, ok := codes[normalizeAStockCode(candidate.Code)]
 	return ok
@@ -7111,6 +7137,7 @@ func (s *Server) loadAStockHotspotSectorGateWithCache(hotspots []aStockHotspot, 
 		if len(aliases) == 0 {
 			continue
 		}
+		gate.addHotspot(hotspot.Name)
 		for _, alias := range aliases {
 			gate.addCodes(hotspot.Name, s.loadAStockSectorConstituentCodesWithCache(alias, cache))
 		}
