@@ -297,6 +297,7 @@ type aStockRecommendationGenerateResult struct {
 	GeneratedCount           int    `json:"generated_count"`
 	BacktestStatus           string `json:"backtest_status"`
 	RecentFiltered           int    `json:"recent_filtered"`
+	RecentLookbackDays       int    `json:"recent_lookback_days"`
 	SameDayMorningFiltered   int    `json:"same_day_morning_filtered"`
 	LimitUpFiltered          int    `json:"limit_up_filtered"`
 	TodayMarketFilterEnabled bool   `json:"today_market_filter_enabled"`
@@ -336,7 +337,7 @@ const (
 	aStockNewsPageSize                = 10
 	aStockArticleFetchPageSize        = 1000
 	aStockArticleFetchMaxPages        = 100
-	aStockRecentLookbackDays          = 14
+	aStockRecentLookbackDays          = 31
 	aStockAuctionCandidateCacheTTL    = 5 * time.Minute
 	aStockMarketCandidateLimit        = 5000
 	aStockRecommendationLimit         = 12
@@ -1918,6 +1919,7 @@ func (s *Server) handleAStockRecommendationGenerate(w http.ResponseWriter, r *ht
 			GeneratedCount:           ctx.GeneratedRecommendationCount,
 			BacktestStatus:           ctx.BacktestStatus,
 			RecentFiltered:           ctx.RecentFiltered,
+			RecentLookbackDays:       aStockRecentLookbackDays,
 			SameDayMorningFiltered:   ctx.SameDayMorningFiltered,
 			LimitUpFiltered:          ctx.LimitUpFiltered,
 			TodayMarketFilterEnabled: ctx.TodayMarketFilterEnabled,
@@ -3590,16 +3592,13 @@ func (s *Server) loadRecentAStockRecommendationCodesWithCache(strategyDate strin
 		return nil
 	}
 	dateKey := normalizeAStockStrategyDate(strategyDate)
-	cacheKey := dateKey + "|" + fmt.Sprint(lookbackDays) + "|trading"
+	cacheKey := dateKey + "|" + fmt.Sprint(lookbackDays) + "|calendar"
 	if cache != nil {
 		if cached, ok := cache.recentCodes[cacheKey]; ok {
 			return cached
 		}
 	}
-	dates := s.loadRecentAStockRecommendationTradingDatesWithCache(dateKey, lookbackDays, cache)
-	if len(dates) == 0 {
-		dates = recentAStockCalendarDates(dateKey, lookbackDays)
-	}
+	dates := recentAStockCalendarDates(dateKey, lookbackDays)
 	result := make(map[string]struct{})
 	for _, date := range dates {
 		for _, period := range aStockPeriods() {
@@ -3612,33 +3611,6 @@ func (s *Server) loadRecentAStockRecommendationCodesWithCache(strategyDate strin
 		cache.recentCodes[cacheKey] = result
 	}
 	return result
-}
-
-func (s *Server) loadRecentAStockRecommendationTradingDatesWithCache(strategyDate string, lookbackDays int, cache *aStockRequestCache) []string {
-	dateKey := normalizeAStockStrategyDate(strategyDate)
-	day, err := time.ParseInLocation("2006-01-02", dateKey, aStockLocation())
-	if err != nil {
-		return nil
-	}
-	dates := make([]string, 0, lookbackDays)
-	for offset := 1; offset <= lookbackDays*6 && len(dates) < lookbackDays; offset++ {
-		date := day.AddDate(0, 0, -offset).Format("2006-01-02")
-		if s.isAStockRecommendationLookbackTradingDayWithCache(date, cache) {
-			dates = append(dates, date)
-		}
-	}
-	return dates
-}
-
-func (s *Server) isAStockRecommendationLookbackTradingDayWithCache(date string, cache *aStockRequestCache) bool {
-	if strings.TrimSpace(s.cfg.SchedulerURL) == "" {
-		return isLocalAStockTradingDay(date)
-	}
-	status, err := s.loadAStockTradingDayStatusWithCache(date, cache)
-	if err != nil {
-		return isLocalAStockTradingDay(date)
-	}
-	return status.IsTradingDay
 }
 
 func recentAStockCalendarDates(strategyDate string, lookbackDays int) []string {

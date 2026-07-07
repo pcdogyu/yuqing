@@ -1574,7 +1574,7 @@ func TestAStockStockGenerateActionsSelectPeriod(t *testing.T) {
 			fromPeriod: "morning",
 			action:     "generate_ignore_recent_stock",
 			wantPeriod: "morning",
-			wantMsg:    "上午推荐已忽略14日内重复推荐过滤，按当前新闻窗口重新计算推荐。",
+			wantMsg:    "上午推荐已忽略31日内重复推荐过滤，按当前新闻窗口重新计算推荐。",
 			wantIgnore: true,
 		},
 		{
@@ -4117,6 +4117,15 @@ func TestAStockRecommendationGeneratePreserveLockedRefreshModeKeepsSelections(t 
 	if selectionPosts != 0 {
 		t.Fatalf("expected preserve_locked mode not to rewrite selections, got %d posts", selectionPosts)
 	}
+	var response struct {
+		Data aStockRecommendationGenerateResult `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode generate response: %v", err)
+	}
+	if response.Data.RecentLookbackDays != 31 {
+		t.Fatalf("expected generate response recent_lookback_days=31, got %+v", response.Data)
+	}
 	var recommendations []aStockRecommendation
 	if err := json.Unmarshal([]byte(savedSnapshot.RecommendationsJSON), &recommendations); err != nil {
 		t.Fatalf("decode saved recommendations: %v", err)
@@ -4385,7 +4394,7 @@ func TestAStockMorningRebuildReplenishesAfterRecentFilter(t *testing.T) {
 			t.Fatalf("expected recent fixed-pool code %s to stay filtered, got %+v", code, ctx.Recommendations)
 		}
 	}
-	if !strings.Contains(ctx.BacktestStatus, "14日内重复过滤 3 只，递补 3 只") {
+	if !strings.Contains(ctx.BacktestStatus, "31日内重复过滤 3 只，递补 3 只") {
 		t.Fatalf("expected backtest status to mention replenishment, got %q", ctx.BacktestStatus)
 	}
 	if savedSnapshot.RecentFiltered != 3 || !strings.Contains(savedSnapshot.BacktestStatus, "递补 3 只") {
@@ -5714,7 +5723,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"金十快讯", "金十资讯", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "14日内过滤", "涨停过滤", "当日行情", "不过滤", "重新计算", "关闭14日过滤", "关闭涨停过滤", "启用当日行情过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "上午推荐", "下午推荐", "推荐窗口", "08:00-09:30", "重新生成上午推荐", "重新生成下午推荐", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="refresh_backtest"`, `name="action" value="recalculate"`, "2026-06-12 周五", "2026-06-15 周一", "今日", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "推荐排名前9股票", "002230 科大讯飞", `002230 科大讯飞<span class="astock-hotspot-date">（2026-06-12）</span>`, "688981 中芯国际", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "已回测"} {
+	for _, want := range []string{"金十快讯", "金十资讯", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "31日内过滤", "涨停过滤", "当日行情", "不过滤", "重新计算", "关闭31日过滤", "关闭涨停过滤", "启用当日行情过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "上午推荐", "下午推荐", "推荐窗口", "08:00-09:30", "重新生成上午推荐", "重新生成下午推荐", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="refresh_backtest"`, `name="action" value="recalculate"`, "2026-06-12 周五", "2026-06-15 周一", "今日", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "推荐排名前9股票", "002230 科大讯飞", `002230 科大讯飞<span class="astock-hotspot-date">（2026-06-12）</span>`, "688981 中芯国际", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "已回测"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}
@@ -5977,7 +5986,7 @@ func TestAStockRecommendationHistoryActionsUseSelectedPeriod(t *testing.T) {
 		"重新生成上午推荐",
 		"补抓下午新闻",
 		"重新生成下午推荐",
-		"关闭14日过滤",
+		"关闭31日过滤",
 		"补录集合竞价",
 		"补股票名称",
 		"补行情收益",
@@ -6047,8 +6056,8 @@ func TestAStockIgnoreRecentStatePersistsInHistoryNavigation(t *testing.T) {
 	if !strings.Contains(actionsBody, `name="ignore_recent" value="1"`) {
 		t.Fatalf("expected history actions to preserve ignore_recent, got %s", actionsBody)
 	}
-	if !strings.Contains(actionsBody, "启用14日过滤") || !strings.Contains(actionsBody, `href="/a-stock?date=2026-06-16&amp;period=morning"`) {
-		t.Fatalf("expected history actions to offer enabling 5-day filter, got %s", actionsBody)
+	if !strings.Contains(actionsBody, "启用31日过滤") || !strings.Contains(actionsBody, `href="/a-stock?date=2026-06-16&amp;period=morning"`) {
+		t.Fatalf("expected history actions to offer enabling 31-day filter, got %s", actionsBody)
 	}
 }
 
@@ -6073,7 +6082,7 @@ func TestAStockIgnoreLimitUpStatePersistsInNavigationAndActions(t *testing.T) {
 		t.Fatalf("expected history actions to preserve ignore_limit_up, got %s", actionsBody)
 	}
 	if !strings.Contains(actionsBody, `href="/a-stock?date=2026-06-16&amp;period=afternoon&amp;ignore_recent=1&amp;ignore_limit_up=1"`) {
-		t.Fatalf("expected 5-day filter toggle to preserve ignore_limit_up, got %s", actionsBody)
+		t.Fatalf("expected 31-day filter toggle to preserve ignore_limit_up, got %s", actionsBody)
 	}
 }
 
@@ -6098,7 +6107,7 @@ func TestAStockTodayMarketFilterStatePersistsInNavigationAndActions(t *testing.T
 		t.Fatalf("expected history actions to preserve filter_today_market, got %s", actionsBody)
 	}
 	if !strings.Contains(actionsBody, `href="/a-stock?date=2026-06-16&amp;period=morning&amp;ignore_recent=1&amp;filter_today_market=1"`) {
-		t.Fatalf("expected 5-day filter toggle to preserve filter_today_market, got %s", actionsBody)
+		t.Fatalf("expected 31-day filter toggle to preserve filter_today_market, got %s", actionsBody)
 	}
 }
 
@@ -6109,7 +6118,7 @@ func TestAStockOverviewBacktestStatusIncludesFilterReasons(t *testing.T) {
 		SameDayMorningFiltered: 1,
 		LimitUpFiltered:        3,
 	})
-	for _, want := range []string{"已回测 3/3", "14日内重复过滤股票 2", "过滤上午同股票/热点名额 1", "涨停过滤股票 3"} {
+	for _, want := range []string{"已回测 3/3", "31日内重复过滤股票 2", "过滤上午同股票/热点名额 1", "涨停过滤股票 3"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected overview status to contain %q, got %q", want, got)
 		}
@@ -6421,7 +6430,7 @@ func TestAStockContextCanIgnoreRecentRecommendationFilter(t *testing.T) {
 	}
 }
 
-func TestAStockRecentRecommendationFilterUsesTradingDays(t *testing.T) {
+func TestAStockRecentRecommendationFilterUsesCalendarDays(t *testing.T) {
 	queriedSelectionDates := map[string]struct{}{}
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -6429,10 +6438,17 @@ func TestAStockRecentRecommendationFilterUsesTradingDays(t *testing.T) {
 		case "/api/v1/a-stock/recommendation-selections":
 			date := r.URL.Query().Get("date")
 			queriedSelectionDates[date] = struct{}{}
-			if date == "2026-06-25" && r.URL.Query().Get("period") == "morning" {
+			switch {
+			case date == "2026-06-25" && r.URL.Query().Get("period") == "morning":
 				writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{
 					Found: true,
 					Items: []model.AStockRecommendationSelection{{Rank: 1, Code: "600030", Name: "中信证券", Hotspot: "金融券商", Reason: "recent"}},
+				})
+				return
+			case date == "2026-06-14" && r.URL.Query().Get("period") == "morning":
+				writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{
+					Found: true,
+					Items: []model.AStockRecommendationSelection{{Rank: 1, Code: "600031", Name: "三一重工", Hotspot: "工程机械", Reason: "recent"}},
 				})
 				return
 			}
@@ -6448,12 +6464,16 @@ func TestAStockRecentRecommendationFilterUsesTradingDays(t *testing.T) {
 	srv := NewServer(config.Config{ContentURL: content.URL})
 	recentCodes := srv.loadRecentAStockRecommendationCodes("2026-07-15", aStockRecentLookbackDays)
 	if _, ok := recentCodes["600030"]; !ok {
-		t.Fatalf("expected 2026-06-25 recommendation in fourteen-trading-day lookback, got %+v", recentCodes)
+		t.Fatalf("expected 2026-06-25 recommendation in thirty-one-calendar-day lookback, got %+v", recentCodes)
 	}
-	for _, weekend := range []string{"2026-06-28", "2026-06-27"} {
-		if _, ok := queriedSelectionDates[weekend]; ok {
-			t.Fatalf("expected weekend %s to be skipped in trading-day lookback, queried dates=%+v", weekend, queriedSelectionDates)
-		}
+	if _, ok := recentCodes["600031"]; !ok {
+		t.Fatalf("expected 2026-06-14 recommendation at 31-calendar-day boundary, got %+v", recentCodes)
+	}
+	if _, ok := queriedSelectionDates["2026-06-14"]; !ok {
+		t.Fatalf("expected 31-calendar-day boundary date to be queried, queried dates=%+v", queriedSelectionDates)
+	}
+	if _, ok := queriedSelectionDates["2026-06-13"]; ok {
+		t.Fatalf("expected date outside 31-calendar-day lookback to be skipped, queried dates=%+v", queriedSelectionDates)
 	}
 }
 
