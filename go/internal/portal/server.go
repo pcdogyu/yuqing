@@ -120,17 +120,19 @@ func (l *legacyStringList) UnmarshalJSON(data []byte) error {
 }
 
 type Server struct {
-	cfg            config.Config
-	client         *resty.Client
-	templates      *template.Template
-	upgradeRunner  portalUpgradeRunner
-	upgradeMu      sync.Mutex
-	upgradeState   portalUpgradeResult
-	mu             sync.Mutex
-	captchas       map[string]string
-	mobileQRs      map[string]mobileQRCodeState
-	aStockCacheMu  sync.Mutex
-	aStockAuctions map[string]aStockServerAuctionCacheEntry
+	cfg             config.Config
+	client          *resty.Client
+	templates       *template.Template
+	upgradeRunner   portalUpgradeRunner
+	upgradeMu       sync.Mutex
+	upgradeState    portalUpgradeResult
+	mu              sync.Mutex
+	captchas        map[string]string
+	mobileQRs       map[string]mobileQRCodeState
+	aStockCacheMu   sync.Mutex
+	aStockAuctions  map[string]aStockServerAuctionCacheEntry
+	aStockArticles  map[string]aStockServerArticlesCacheEntry
+	aStockFragments map[string]aStockServerFragmentCacheEntry
 }
 
 type mobileQRCodeState struct {
@@ -341,11 +343,13 @@ func NewServer(cfg config.Config) *Server {
 		client: resty.New().
 			SetTimeout(cfg.HTTPTimeout).
 			SetHeader("X-Service-Token", cfg.ServiceToken),
-		templates:      tpl,
-		upgradeRunner:  defaultPortalUpgradeRunner{},
-		captchas:       map[string]string{},
-		mobileQRs:      map[string]mobileQRCodeState{},
-		aStockAuctions: map[string]aStockServerAuctionCacheEntry{},
+		templates:       tpl,
+		upgradeRunner:   defaultPortalUpgradeRunner{},
+		captchas:        map[string]string{},
+		mobileQRs:       map[string]mobileQRCodeState{},
+		aStockAuctions:  map[string]aStockServerAuctionCacheEntry{},
+		aStockArticles:  map[string]aStockServerArticlesCacheEntry{},
+		aStockFragments: map[string]aStockServerFragmentCacheEntry{},
 	}
 }
 

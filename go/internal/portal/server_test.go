@@ -288,6 +288,7 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 	}
 	for _, want := range []string{
 		`class="astock-overview-header"`,
+		`id="astock-page-content"`,
 		`class="astock-overview-summary"`,
 		`class="astock-overview-table"`,
 		`body[data-page='a-stock'] table{width:100%;min-width:100%;font-size:13px}`,
@@ -353,6 +354,12 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		"astock-action-running",
 		`aria-busy`,
 		`button.disabled=true`,
+		`u.searchParams.set("partial","1")`,
+		`fetch(partialURL(raw)`,
+		`fallback(raw)`,
+		`form[method='get']`,
+		`history.pushState`,
+		`window.addEventListener("popstate"`,
 		"金十全站信息",
 		"jin10_full",
 		"东方财富网",
@@ -384,6 +391,142 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 	}
 	if strings.Contains(body, `<th>说明</th>`) {
 		t.Fatalf("expected explanation column to move into tooltip, got %s", body)
+	}
+}
+
+func TestAStockPagePartialReturnsFragmentJSON(t *testing.T) {
+	srv := NewServer(config.Config{})
+
+	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-15&period=morning&partial=1", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if ct := rr.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Fatalf("expected JSON content type, got %q body=%s", ct, rr.Body.String())
+	}
+	var payload aStockPartialPayload
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode partial payload: %v body=%s", err, rr.Body.String())
+	}
+	if payload.Date != "2026-06-15" || payload.Period != "morning" {
+		t.Fatalf("expected normalized date/period, got %+v", payload)
+	}
+	if payload.CanonicalURL != "/a-stock?date=2026-06-15&period=morning" {
+		t.Fatalf("expected canonical URL, got %q", payload.CanonicalURL)
+	}
+	for _, want := range []string{`id="astock-page-content"`, `data-astock-date="2026-06-15"`, "上午推荐"} {
+		if !strings.Contains(payload.HTML, want) {
+			t.Fatalf("expected partial HTML to contain %q, got %s", want, payload.HTML)
+		}
+	}
+	for _, notWant := range []string{"<style>", "<script>", "<title>", "body data-page='a-stock'"} {
+		if strings.Contains(payload.HTML, notWant) {
+			t.Fatalf("expected partial HTML not to contain full-page marker %q, got %s", notWant, payload.HTML)
+		}
+	}
+}
+
+func TestAStockPageFragmentCacheKeysAndBypass(t *testing.T) {
+	srv := NewServer(config.Config{})
+	key := aStockPageFragmentCacheKey("2026-06-15", "morning", 1, false, false, false)
+	srv.storeCachedAStockPageFragment(key, aStockPartialPayload{
+		HTML:         `<div id="astock-page-content">cached morning</div>`,
+		CanonicalURL: "/a-stock?date=2026-06-15&period=morning",
+		Date:         "2026-06-15",
+		Period:       "morning",
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-15&period=morning&partial=1", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
+	var cached aStockPartialPayload
+	if err := json.Unmarshal(rr.Body.Bytes(), &cached); err != nil {
+		t.Fatalf("decode cached partial: %v", err)
+	}
+	if !strings.Contains(cached.HTML, "cached morning") {
+		t.Fatalf("expected fragment cache hit, got %+v", cached)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-15&period=afternoon&partial=1", nil)
+	rr = httptest.NewRecorder()
+	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
+	var afternoon aStockPartialPayload
+	if err := json.Unmarshal(rr.Body.Bytes(), &afternoon); err != nil {
+		t.Fatalf("decode afternoon partial: %v", err)
+	}
+	if afternoon.Period != "afternoon" || strings.Contains(afternoon.HTML, "cached morning") {
+		t.Fatalf("expected period-specific cache key, got %+v", afternoon)
+	}
+
+	for _, rawURL := range []string{
+		"/a-stock?date=2026-06-15&period=morning&partial=1&msg=fresh",
+		"/a-stock?date=2026-06-15&period=morning&partial=1&refresh_recommendations=1",
+		"/a-stock?date=2026-06-15&period=morning&partial=1&refresh_all_backtests=1",
+	} {
+		req = httptest.NewRequest(http.MethodGet, rawURL, nil)
+		rr = httptest.NewRecorder()
+		srv.handleAStockPage(rr, req, map[string]any{"id": 1})
+		var payload aStockPartialPayload
+		if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("decode bypass partial %s: %v", rawURL, err)
+		}
+		if strings.Contains(payload.HTML, "cached morning") {
+			t.Fatalf("expected %s to bypass fragment cache, got %+v", rawURL, payload)
+		}
+	}
+
+	baseKey := aStockPageFragmentCacheKey("2026-06-15", "morning", 1, false, false, false)
+	for name, otherKey := range map[string]string{
+		"date":                aStockPageFragmentCacheKey("2026-06-16", "morning", 1, false, false, false),
+		"period":              aStockPageFragmentCacheKey("2026-06-15", "afternoon", 1, false, false, false),
+		"news_page":           aStockPageFragmentCacheKey("2026-06-15", "morning", 2, false, false, false),
+		"ignore_recent":       aStockPageFragmentCacheKey("2026-06-15", "morning", 1, true, false, false),
+		"ignore_limit_up":     aStockPageFragmentCacheKey("2026-06-15", "morning", 1, false, true, false),
+		"filter_today_market": aStockPageFragmentCacheKey("2026-06-15", "morning", 1, false, false, true),
+	} {
+		if otherKey == baseKey {
+			t.Fatalf("expected %s to be part of fragment cache key %q", name, baseKey)
+		}
+	}
+}
+
+func TestAStockPagePostClearsSameDateCaches(t *testing.T) {
+	srv := NewServer(config.Config{})
+	fragmentKey := aStockPageFragmentCacheKey("2026-06-15", "morning", 1, false, false, false)
+	articleStart := time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)
+	articleEnd := articleStart.Add(time.Hour)
+	articleKey := aStockArticlePagesCacheKey("publish_time", articleStart, articleEnd)
+	srv.storeCachedAStockPageFragment(fragmentKey, aStockPartialPayload{HTML: `<div>cached</div>`, Date: "2026-06-15", Period: "morning"})
+	srv.storeCachedAStockArticlePages(articleKey, "2026-06-15", []model.Item{{ID: 1, Title: "cached"}})
+	srv.aStockCacheMu.Lock()
+	srv.aStockAuctions[aStockAuctionCandidateCacheKey("2026-06-15")] = aStockServerAuctionCacheEntry{expiresAt: time.Now().Add(time.Hour)}
+	srv.aStockAuctions["__latest__"] = aStockServerAuctionCacheEntry{expiresAt: time.Now().Add(time.Hour)}
+	srv.aStockCacheMu.Unlock()
+
+	form := url.Values{"date": {"2026-06-15"}, "period": {"morning"}, "action": {"unknown"}}
+	req := httptest.NewRequest(http.MethodPost, "/a-stock", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d", rr.Code)
+	}
+	if _, ok := srv.loadCachedAStockPageFragment(fragmentKey); ok {
+		t.Fatal("expected same-date fragment cache to be cleared")
+	}
+	if _, _, ok := srv.loadCachedAStockArticlePages(articleKey); ok {
+		t.Fatal("expected same-date article cache to be cleared")
+	}
+	srv.aStockCacheMu.Lock()
+	_, dateAuctionOK := srv.aStockAuctions[aStockAuctionCandidateCacheKey("2026-06-15")]
+	_, latestAuctionOK := srv.aStockAuctions["__latest__"]
+	srv.aStockCacheMu.Unlock()
+	if dateAuctionOK || latestAuctionOK {
+		t.Fatalf("expected auction caches to be cleared, date=%t latest=%t", dateAuctionOK, latestAuctionOK)
 	}
 }
 
@@ -2351,6 +2494,116 @@ func writeEnvelope(w http.ResponseWriter, status int, message string, data any) 
 		"message": message,
 		"data":    data,
 	})
+}
+
+func TestAStockReadOnlySnapshotWithNewsSummarySkipsArticleAPI(t *testing.T) {
+	summaryJSON, err := json.Marshal(aStockSnapshotNewsSummary{
+		Articles: []model.Item{{
+			ID:          1,
+			SourceType:  "flash",
+			Title:       "AI 算力新闻",
+			PublishTime: "2026-06-15 08:30:00",
+		}},
+		NewsArticles: []model.Item{{
+			ID:          1,
+			SourceType:  "flash",
+			Title:       "AI 算力新闻",
+			PublishTime: "2026-06-15 08:30:00",
+		}},
+		Hotspots: []aStockHotspot{{Name: "人工智能", Score: 1, Evidence: 1}},
+	})
+	if err != nil {
+		t.Fatalf("marshal summary: %v", err)
+	}
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/articles" {
+			t.Fatalf("expected snapshot news_summary_json to avoid articles API, got %s", r.URL.String())
+		}
+		if r.URL.Path != "/api/v1/a-stock/recommendations" {
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+		writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{
+			Found:               true,
+			StrategyDate:        "2026-06-15",
+			Period:              r.URL.Query().Get("period"),
+			RecommendationsJSON: "[]",
+			BacktestsJSON:       "[]",
+			NewsSummaryJSON:     string(summaryJSON),
+			BacktestStatus:      "无推荐股票",
+		})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	ctx, ok := srv.loadAStockReadOnlySnapshotContextWithCache("2026-06-15", "morning", 1, false, false, false, newAStockRequestCache())
+	if !ok {
+		t.Fatal("expected snapshot context")
+	}
+	if ctx.NewsTotal != 1 || len(ctx.Hotspots) != 1 || ctx.Hotspots[0].Name != "人工智能" {
+		t.Fatalf("expected snapshot summary to populate article stats, got %+v", ctx)
+	}
+}
+
+func TestAStockOldSnapshotMissingNewsSummaryUsesArticleWindowCache(t *testing.T) {
+	var mu sync.Mutex
+	articleHits := 0
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/a-stock/recommendations":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{
+				Found:               true,
+				StrategyDate:        "2026-06-15",
+				Period:              r.URL.Query().Get("period"),
+				RecommendationsJSON: "[]",
+				BacktestsJSON:       "[]",
+				BacktestStatus:      "无推荐股票",
+			})
+		case "/api/v1/articles":
+			mu.Lock()
+			articleHits++
+			mu.Unlock()
+			writeEnvelope(w, http.StatusOK, "ok", model.ItemListResult{
+				Items: []model.Item{{
+					ID:          int64(articleHits),
+					SourceType:  "flash",
+					Title:       "AI 算力产业链活跃",
+					Summary:     "人工智能热点",
+					PublishTime: "2026-06-15 08:30:00",
+					CapturedAt:  time.Date(2026, 6, 15, 0, 30, 0, 0, time.UTC),
+				}},
+				Page:     1,
+				PageSize: 200,
+				Total:    1,
+			})
+		default:
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	ctx, ok := srv.loadAStockReadOnlySnapshotContextWithCache("2026-06-15", "morning", 1, false, false, false, newAStockRequestCache())
+	if !ok || ctx.NewsTotal == 0 {
+		t.Fatalf("expected old snapshot to populate articles, ok=%t ctx=%+v", ok, ctx)
+	}
+	mu.Lock()
+	firstHits := articleHits
+	mu.Unlock()
+	if firstHits == 0 {
+		t.Fatal("expected first old snapshot request to hit articles API")
+	}
+
+	ctx, ok = srv.loadAStockReadOnlySnapshotContextWithCache("2026-06-15", "morning", 1, false, false, false, newAStockRequestCache())
+	if !ok || ctx.NewsTotal == 0 {
+		t.Fatalf("expected second old snapshot to use cached articles, ok=%t ctx=%+v", ok, ctx)
+	}
+	mu.Lock()
+	secondHits := articleHits
+	mu.Unlock()
+	if secondHits != firstHits {
+		t.Fatalf("expected second same-window request to hit service article cache, hits %d -> %d", firstHits, secondHits)
+	}
 }
 
 func newAStockTradingDayServer(t *testing.T, isTradingDay bool) *httptest.Server {

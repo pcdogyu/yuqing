@@ -230,6 +230,26 @@ type aStockServerAuctionCacheEntry struct {
 	expiresAt time.Time
 }
 
+type aStockServerArticlesCacheEntry struct {
+	items     []model.Item
+	err       error
+	date      string
+	expiresAt time.Time
+}
+
+type aStockServerFragmentCacheEntry struct {
+	payload   aStockPartialPayload
+	expiresAt time.Time
+}
+
+type aStockPartialPayload struct {
+	HTML         string `json:"html"`
+	CanonicalURL string `json:"canonical_url"`
+	Date         string `json:"date"`
+	Period       string `json:"period"`
+	Message      string `json:"message"`
+}
+
 type aStockPeriod struct {
 	Key         string
 	Label       string
@@ -388,19 +408,24 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 	if refreshAllBacktests {
 		forceRecommendationRefresh = true
 	}
-	requestCache := newAStockRequestCache()
-	ctx := s.loadAStockContextReadOnlyWithCache(strategyDate, period.Key, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, requestCache)
-	morningCtx := ctx
-	if ctx.Period != "morning" {
-		morningCtx = s.loadAStockCompanionContextReadOnlyWithCache(strategyDate, "morning", 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, requestCache)
+	partial := normalizeAStockBool(r.URL.Query().Get("partial"))
+	cacheable := isAStockPageFragmentCacheable(r.URL.Query(), forceRecommendationRefresh)
+	fragmentKey := aStockPageFragmentCacheKey(strategyDate, period.Key, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket)
+	var payload aStockPartialPayload
+	if cacheable {
+		if cached, ok := s.loadCachedAStockPageFragment(fragmentKey); ok {
+			payload = cached
+		}
 	}
-	afternoonCtx := ctx
-	if ctx.Period != "afternoon" {
-		afternoonCtx = s.loadAStockCompanionContextReadOnlyWithCache(strategyDate, "afternoon", 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, requestCache)
+	if payload.HTML == "" {
+		payload = s.buildAStockPageFragment(strategyDate, period.Key, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, strings.TrimSpace(r.URL.Query().Get("msg")))
+		if cacheable && strings.TrimSpace(payload.Message) == "" {
+			s.storeCachedAStockPageFragment(fragmentKey, payload)
+		}
 	}
-	message := strings.TrimSpace(r.URL.Query().Get("msg"))
-	if message == "" {
-		message = ctx.LoadMessage
+	if partial {
+		writeRawJSON(w, http.StatusOK, payload)
+		return
 	}
 
 	var b strings.Builder
@@ -492,20 +517,59 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-popup-body{padding:0 24px 24px}
 		.astock-popup-scroll{overflow:auto;max-height:60vh}
 		.astock-popup-table{min-width:760px}
+		.astock-page-content.astock-loading{opacity:.62;pointer-events:none}
 		@media (max-width:1100px){.astock-news-grid{grid-template-columns:1fr}.astock-news-table{min-width:720px}}
 	</style>`)
 	renderAStockPopupShell(&b)
-	writeAStockPageScript(&b, ctx.Date)
+	writeAStockPageScript(&b, payload.Date)
+	b.WriteString(payload.HTML)
+
+	_ = s.writeSimplePage(w, "a-stock", "A股", b.String())
+}
+
+func (s *Server) buildAStockPageFragment(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool, forceRecommendationRefresh bool, message string) aStockPartialPayload {
+	requestCache := newAStockRequestCache()
+	ctx := s.loadAStockContextReadOnlyWithCache(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, requestCache)
+	morningCtx := ctx
+	if ctx.Period != "morning" {
+		morningCtx = s.loadAStockCompanionContextReadOnlyWithCache(strategyDate, "morning", 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, requestCache)
+	}
+	afternoonCtx := ctx
+	if ctx.Period != "afternoon" {
+		afternoonCtx = s.loadAStockCompanionContextReadOnlyWithCache(strategyDate, "afternoon", 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, requestCache)
+	}
+	if strings.TrimSpace(message) == "" {
+		message = ctx.LoadMessage
+	}
+
+	var b strings.Builder
+	b.WriteString(`<div id="astock-page-content" class="astock-page-content" data-astock-date="`)
+	b.WriteString(html.EscapeString(ctx.Date))
+	b.WriteString(`" data-astock-period="`)
+	b.WriteString(html.EscapeString(ctx.Period))
+	b.WriteString(`">`)
 	if message != "" {
 		b.WriteString(`<section><p style="color:#214e34">`)
 		b.WriteString(html.EscapeString(message))
 		b.WriteString(`</p></section>`)
 	}
-
 	renderAStockDateTabs(&b, ctx.Date, ctx.Period, ctx.IgnoreRecent, ctx.IgnoreLimitUp, ctx.TodayMarketFilterEnabled, false)
 	renderAStockOverviewSection(&b, morningCtx, afternoonCtx)
 	renderAStockRecommendationSection(&b, morningCtx, afternoonCtx)
+	renderAStockActionSection(&b, ctx)
+	renderAStockHotspotSection(&b, ctx.Hotspots)
+	b.WriteString(`</div>`)
 
+	return aStockPartialPayload{
+		HTML:         b.String(),
+		CanonicalURL: aStockCanonicalPageURL(ctx.Date, ctx.Period, ctx.NewsPage, ctx.IgnoreRecent, ctx.IgnoreLimitUp, ctx.TodayMarketFilterEnabled),
+		Date:         ctx.Date,
+		Period:       ctx.Period,
+		Message:      strings.TrimSpace(message),
+	}
+}
+
+func renderAStockActionSection(b *strings.Builder, ctx aStockContext) {
 	b.WriteString(`<section><h2>操作区</h2><div class="astock-actions"><div class="astock-action-grid">`)
 	actions := []struct {
 		Name   string
@@ -546,10 +610,174 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 	b.WriteString(`</div></div><p class="astock-muted">已接入已有新闻抓取链路：抓取按钮会触发金十快讯、金十资讯、金十全站信息、东方财富网、华尔街见闻、财联社和新浪财经，页面按策略日期和推荐窗口聚合财经新闻。行情接口读取 `)
 	b.WriteString(aStockMarketConfigHint())
 	b.WriteString(`，用于展示昨日收盘价、现价、涨跌幅和行情收益。</p><div class="astock-source-list"><span class="astock-badge">jin10_kuaixun: https://www.jin10.com/</span><span class="astock-badge">jin10_资讯: https://xnews.jin10.com/</span><span class="astock-badge">jin10_full: 金十全站</span><span class="astock-badge">eastmoney_kuaixun: 东方财富网</span><span class="astock-badge">wallstreetcn_a_stock: 华尔街见闻</span><span class="astock-badge">cls_telegraph: 财联社</span><span class="astock-badge">sina_finance_7x24: 新浪财经</span></div></section>`)
+}
 
-	renderAStockHotspotSection(&b, ctx.Hotspots)
+func aStockCanonicalPageURL(strategyDate string, period string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool) string {
+	query := url.Values{}
+	query.Set("date", normalizeAStockStrategyDate(strategyDate))
+	query.Set("period", normalizeAStockPeriod(period).Key)
+	if newsPage > 1 {
+		query.Set("news_page", fmt.Sprint(newsPage))
+	}
+	if ignoreRecent {
+		query.Set("ignore_recent", "1")
+	}
+	if ignoreLimitUp {
+		query.Set("ignore_limit_up", "1")
+	}
+	if filterTodayMarket {
+		query.Set("filter_today_market", "1")
+	}
+	return "/a-stock?" + query.Encode()
+}
 
-	_ = s.writeSimplePage(w, "a-stock", "A股", b.String())
+func isAStockPageFragmentCacheable(query url.Values, forceRecommendationRefresh bool) bool {
+	if forceRecommendationRefresh {
+		return false
+	}
+	if strings.TrimSpace(query.Get("msg")) != "" {
+		return false
+	}
+	if normalizeAStockBool(query.Get("refresh_recommendations")) || normalizeAStockBool(query.Get("refresh_all_backtests")) {
+		return false
+	}
+	return true
+}
+
+func aStockPageFragmentCacheKey(strategyDate string, period string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, filterTodayMarket bool) string {
+	return strings.Join([]string{
+		normalizeAStockStrategyDate(strategyDate),
+		normalizeAStockPeriod(period).Key,
+		fmt.Sprint(maxInt(newsPage, 1)),
+		fmt.Sprint(ignoreRecent),
+		fmt.Sprint(ignoreLimitUp),
+		fmt.Sprint(filterTodayMarket),
+	}, "|")
+}
+
+func (s *Server) loadCachedAStockPageFragment(cacheKey string) (aStockPartialPayload, bool) {
+	if s == nil || strings.TrimSpace(cacheKey) == "" {
+		return aStockPartialPayload{}, false
+	}
+	s.aStockCacheMu.Lock()
+	defer s.aStockCacheMu.Unlock()
+	entry, ok := s.aStockFragments[cacheKey]
+	if !ok {
+		return aStockPartialPayload{}, false
+	}
+	if time.Now().After(entry.expiresAt) {
+		delete(s.aStockFragments, cacheKey)
+		return aStockPartialPayload{}, false
+	}
+	return entry.payload, true
+}
+
+func (s *Server) storeCachedAStockPageFragment(cacheKey string, payload aStockPartialPayload) {
+	if s == nil || strings.TrimSpace(cacheKey) == "" || strings.TrimSpace(payload.HTML) == "" {
+		return
+	}
+	s.aStockCacheMu.Lock()
+	defer s.aStockCacheMu.Unlock()
+	if s.aStockFragments == nil {
+		s.aStockFragments = make(map[string]aStockServerFragmentCacheEntry)
+	}
+	s.aStockFragments[cacheKey] = aStockServerFragmentCacheEntry{
+		payload:   payload,
+		expiresAt: time.Now().Add(aStockPageFragmentCacheTTL(payload.Date)),
+	}
+}
+
+func aStockPageFragmentCacheTTL(strategyDate string) time.Duration {
+	if normalizeAStockStrategyDate(strategyDate) == aStockTodayDate() {
+		return 15 * time.Second
+	}
+	return 10 * time.Minute
+}
+
+func aStockArticleWindowCacheTTL(strategyDate string) time.Duration {
+	if normalizeAStockStrategyDate(strategyDate) == aStockTodayDate() {
+		return 15 * time.Second
+	}
+	return 6 * time.Hour
+}
+
+func aStockWindowCacheDate(start time.Time) string {
+	if start.IsZero() {
+		return ""
+	}
+	return start.In(aStockLocation()).Format("2006-01-02")
+}
+
+func aStockArticlePagesCacheKey(timeField string, start time.Time, end time.Time) string {
+	return strings.TrimSpace(timeField) + "|" + start.UTC().Format(time.RFC3339Nano) + "|" + end.UTC().Format(time.RFC3339Nano)
+}
+
+func (s *Server) loadCachedAStockArticlePages(cacheKey string) ([]model.Item, error, bool) {
+	if s == nil || strings.TrimSpace(cacheKey) == "" {
+		return nil, nil, false
+	}
+	s.aStockCacheMu.Lock()
+	defer s.aStockCacheMu.Unlock()
+	entry, ok := s.aStockArticles[cacheKey]
+	if !ok {
+		return nil, nil, false
+	}
+	if time.Now().After(entry.expiresAt) {
+		delete(s.aStockArticles, cacheKey)
+		return nil, nil, false
+	}
+	return append([]model.Item(nil), entry.items...), entry.err, true
+}
+
+func (s *Server) storeCachedAStockArticlePages(cacheKey string, strategyDate string, items []model.Item) {
+	if s == nil || strings.TrimSpace(cacheKey) == "" {
+		return
+	}
+	s.aStockCacheMu.Lock()
+	defer s.aStockCacheMu.Unlock()
+	if s.aStockArticles == nil {
+		s.aStockArticles = make(map[string]aStockServerArticlesCacheEntry)
+	}
+	s.aStockArticles[cacheKey] = aStockServerArticlesCacheEntry{
+		items:     append([]model.Item(nil), items...),
+		date:      normalizeAStockStrategyDate(strategyDate),
+		expiresAt: time.Now().Add(aStockArticleWindowCacheTTL(strategyDate)),
+	}
+}
+
+func (s *Server) clearAStockPageCaches(strategyDates ...string) {
+	if s == nil {
+		return
+	}
+	s.aStockCacheMu.Lock()
+	defer s.aStockCacheMu.Unlock()
+	if len(strategyDates) == 0 {
+		s.aStockFragments = make(map[string]aStockServerFragmentCacheEntry)
+		s.aStockArticles = make(map[string]aStockServerArticlesCacheEntry)
+		s.aStockAuctions = make(map[string]aStockServerAuctionCacheEntry)
+		return
+	}
+	dates := make(map[string]struct{}, len(strategyDates))
+	for _, raw := range strategyDates {
+		date := normalizeAStockStrategyDate(raw)
+		if date != "" {
+			dates[date] = struct{}{}
+		}
+	}
+	for key, entry := range s.aStockFragments {
+		if _, ok := dates[normalizeAStockStrategyDate(entry.payload.Date)]; ok {
+			delete(s.aStockFragments, key)
+		}
+	}
+	for key, entry := range s.aStockArticles {
+		if _, ok := dates[normalizeAStockStrategyDate(entry.date)]; ok {
+			delete(s.aStockArticles, key)
+		}
+	}
+	for date := range dates {
+		delete(s.aStockAuctions, aStockAuctionCandidateCacheKey(date))
+	}
+	delete(s.aStockAuctions, "__latest__")
 }
 
 func (s *Server) handleAStockBacktestPage(w http.ResponseWriter, r *http.Request, user any) {
@@ -715,6 +943,7 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request, 
 			}
 		}
 	}
+	s.clearAStockPageCaches(strategyDate)
 	http.Redirect(w, r, redirectPath+"?"+query.Encode(), http.StatusSeeOther)
 }
 
@@ -849,18 +1078,29 @@ func writeAStockPageScript(b *strings.Builder, strategyDate string) {
 	popupEligible := normalizeAStockStrategyDate(strategyDate) == aStockTodayDate()
 	b.WriteString(`<script>(function(){`)
 	fmt.Fprintf(b, `var scrollKey=%q;`, "astock-scroll-y")
+	fmt.Fprintf(b, `var todayDate=%q;`, aStockTodayDate())
 	fmt.Fprintf(b, `var popupDate=%q;`, normalizeAStockStrategyDate(strategyDate))
 	fmt.Fprintf(b, `var popupEligible=%t;`, popupEligible)
-	b.WriteString(`var popupKey="";var popupVisible=false;var popupTimer=0;var popupExactTimers=[];`)
+	b.WriteString(`var popupKey="";var popupVisible=false;var popupTimer=0;var popupExactTimers=[];var partialLoading=false;`)
 	b.WriteString(`function popupMask(){return document.getElementById("astock-popup-mask");}`)
 	b.WriteString(`function popupBody(){return document.getElementById("astock-popup-body");}`)
 	b.WriteString(`function hidePopup(){var mask=popupMask();if(mask){mask.hidden=true;}popupVisible=false;}`)
 	b.WriteString(`function renderPopupRows(items){var body=popupBody();if(!body){return;}body.innerHTML="";(items||[]).forEach(function(item){var row=document.createElement("tr");["rank","code","name","hotspot","reason"].forEach(function(field){var cell=document.createElement("td");cell.textContent=item&&item[field]!==undefined&&item[field]!==null?String(item[field]):"";row.appendChild(cell);});body.appendChild(row);});}`)
 	b.WriteString(`function showPopup(data){var mask=popupMask();if(!mask||!data||!data.show){return;}if(popupVisible&&popupKey===data.key){return;}var title=document.getElementById("astock-popup-title");var meta=document.getElementById("astock-popup-meta");if(title){title.textContent=data.title||"盘前推荐股票";}if(meta){meta.textContent=data.meta||"";}renderPopupRows(data.recommendations||[]);popupKey=data.key||"";mask.hidden=false;popupVisible=true;}`)
 	b.WriteString(`function fetchPopup(){if(!popupEligible||!popupDate){return;}fetch("/a-stock/popup?date="+encodeURIComponent(popupDate),{credentials:"same-origin"}).then(function(resp){if(!resp.ok){return null;}return resp.json();}).then(function(data){if(!data){return;}if(data.show){showPopup(data);return;}if(!data.show&&popupVisible){hidePopup();}}).catch(function(){});}`)
-	b.WriteString(`function schedulePopupChecks(){fetchPopup();if(!popupEligible){return;}if(popupTimer){window.clearInterval(popupTimer);}popupTimer=window.setInterval(fetchPopup,5000);popupExactTimers.forEach(function(timer){window.clearTimeout(timer);});popupExactTimers=[];var now=new Date();[[9,15],[9,27],[12,45],[12,57]].forEach(function(parts){var target=new Date();target.setHours(parts[0],parts[1],0,0);if(now<target){popupExactTimers.push(window.setTimeout(fetchPopup,Math.max(0,target.getTime()-now.getTime()+100)));}});}`)
-	b.WriteString(`window.addEventListener("DOMContentLoaded",function(){var y=sessionStorage.getItem(scrollKey);if(y!==null){sessionStorage.removeItem(scrollKey);var n=parseInt(y,10);if(!isNaN(n)){window.scrollTo(0,n);}}document.querySelectorAll("[data-preserve-scroll='1']").forEach(function(el){el.addEventListener("click",function(){sessionStorage.setItem(scrollKey,String(window.scrollY||0));});});document.querySelectorAll(".astock-action-form").forEach(function(form){form.addEventListener("submit",function(event){if(form.dataset.submitting==="1"){event.preventDefault();return;}form.dataset.submitting="1";var current=form.querySelector("button[type='submit']");document.querySelectorAll(".astock-action-form button[type='submit']").forEach(function(button){button.disabled=true;button.setAttribute("aria-disabled","true");});if(current){current.classList.add("astock-action-running");current.setAttribute("aria-busy","true");}});});var dismiss=document.getElementById("astock-popup-dismiss");if(dismiss){dismiss.addEventListener("click",function(){if(!popupKey){hidePopup();return;}fetch("/a-stock/popup/dismiss",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:popupKey})}).catch(function(){}).finally(function(){hidePopup();});});}schedulePopupChecks();});`)
-	b.WriteString(`window.addEventListener("pageshow",function(){document.querySelectorAll(".astock-action-form").forEach(function(form){form.dataset.submitting="";});document.querySelectorAll(".astock-action-form button[type='submit']").forEach(function(button){button.disabled=false;button.removeAttribute("aria-disabled");button.removeAttribute("aria-busy");button.classList.remove("astock-action-running");});schedulePopupChecks();});`)
+	b.WriteString(`function clearPopupTimers(){if(popupTimer){window.clearInterval(popupTimer);popupTimer=0;}popupExactTimers.forEach(function(timer){window.clearTimeout(timer);});popupExactTimers=[];}`)
+	b.WriteString(`function schedulePopupChecks(){clearPopupTimers();fetchPopup();if(!popupEligible){return;}popupTimer=window.setInterval(fetchPopup,5000);var now=new Date();[[9,15],[9,27],[12,45],[12,57]].forEach(function(parts){var target=new Date();target.setHours(parts[0],parts[1],0,0);if(now<target){popupExactTimers.push(window.setTimeout(fetchPopup,Math.max(0,target.getTime()-now.getTime()+100)));}});}`)
+	b.WriteString(`function content(){return document.getElementById("astock-page-content");}`)
+	b.WriteString(`function partialURL(raw){var u=new URL(raw,window.location.origin);u.searchParams.set("partial","1");return u.toString();}`)
+	b.WriteString(`function isPartialLink(anchor){if(!anchor||!anchor.href){return false;}if(anchor.target&&anchor.target!=="_self"){return false;}var u;try{u=new URL(anchor.href,window.location.origin);}catch(e){return false;}if(u.origin!==window.location.origin||u.pathname!=="/a-stock"){return false;}if(u.searchParams.get("refresh_recommendations")||u.searchParams.get("refresh_all_backtests")){return false;}return true;}`)
+	b.WriteString(`function fallback(raw){window.location.href=raw;}`)
+	b.WriteString(`function setLoading(on,el){var c=content();if(c){c.classList.toggle("astock-loading",!!on);}if(el){if(on){el.setAttribute("aria-busy","true");el.setAttribute("aria-disabled","true");}else{el.removeAttribute("aria-busy");el.removeAttribute("aria-disabled");}}}`)
+	b.WriteString(`function applyPartial(data,push){if(!data||!data.html){throw new Error("empty partial");}var c=content();if(!c){throw new Error("missing content");}c.outerHTML=data.html;popupDate=data.date||popupDate;popupEligible=popupDate===todayDate;if(push&&data.canonical_url){history.pushState({astock:true},"",data.canonical_url);}bindAStockPage();schedulePopupChecks();}`)
+	b.WriteString(`function loadPartial(raw,push,el){if(partialLoading){return;}partialLoading=true;setLoading(true,el);fetch(partialURL(raw),{credentials:"same-origin",headers:{"Accept":"application/json"}}).then(function(resp){var ct=resp.headers.get("Content-Type")||"";if(!resp.ok||ct.indexOf("application/json")<0){throw new Error("bad partial response");}return resp.json();}).then(function(data){applyPartial(data,push);}).catch(function(){fallback(raw);}).finally(function(){partialLoading=false;setLoading(false,el);});}`)
+	b.WriteString(`function bindAStockPage(){document.querySelectorAll("[data-preserve-scroll='1']").forEach(function(el){el.addEventListener("click",function(){sessionStorage.setItem(scrollKey,String(window.scrollY||0));});});document.querySelectorAll("#astock-page-content a").forEach(function(anchor){if(anchor.dataset.astockPartialBound==="1"){return;}anchor.dataset.astockPartialBound="1";if(!isPartialLink(anchor)){return;}anchor.addEventListener("click",function(event){if(event.defaultPrevented||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey){return;}event.preventDefault();loadPartial(anchor.href,true,anchor);});});document.querySelectorAll("#astock-page-content form[method='get']").forEach(function(form){if(form.dataset.astockPartialFormBound==="1"){return;}form.dataset.astockPartialFormBound="1";form.addEventListener("submit",function(event){var action=form.getAttribute("action")||window.location.pathname;var target=new URL(action,window.location.origin);if(target.origin!==window.location.origin||target.pathname!=="/a-stock"){return;}event.preventDefault();var data=new FormData(form);data.forEach(function(value,key){target.searchParams.set(key,String(value));});loadPartial(target.toString(),true,form.querySelector("button[type='submit']"));});});document.querySelectorAll(".astock-action-form").forEach(function(form){if(form.dataset.astockSubmitBound==="1"){return;}form.dataset.astockSubmitBound="1";form.addEventListener("submit",function(event){if(form.dataset.submitting==="1"){event.preventDefault();return;}form.dataset.submitting="1";var current=form.querySelector("button[type='submit']");document.querySelectorAll(".astock-action-form button[type='submit']").forEach(function(button){button.disabled=true;button.setAttribute("aria-disabled","true");});if(current){current.classList.add("astock-action-running");current.setAttribute("aria-busy","true");}});});}`)
+	b.WriteString(`window.addEventListener("DOMContentLoaded",function(){var y=sessionStorage.getItem(scrollKey);if(y!==null){sessionStorage.removeItem(scrollKey);var n=parseInt(y,10);if(!isNaN(n)){window.scrollTo(0,n);}}bindAStockPage();var dismiss=document.getElementById("astock-popup-dismiss");if(dismiss){dismiss.addEventListener("click",function(){if(!popupKey){hidePopup();return;}fetch("/a-stock/popup/dismiss",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:popupKey})}).catch(function(){}).finally(function(){hidePopup();});});}schedulePopupChecks();});`)
+	b.WriteString(`window.addEventListener("popstate",function(){loadPartial(window.location.href,false,null);});`)
+	b.WriteString(`window.addEventListener("pageshow",function(){document.querySelectorAll(".astock-action-form").forEach(function(form){form.dataset.submitting="";});document.querySelectorAll(".astock-action-form button[type='submit']").forEach(function(button){button.disabled=false;button.removeAttribute("aria-disabled");button.removeAttribute("aria-busy");button.classList.remove("astock-action-running");});bindAStockPage();schedulePopupChecks();});`)
 	b.WriteString(`window.addEventListener("beforeunload",function(){if(popupTimer){window.clearInterval(popupTimer);popupTimer=0;}popupExactTimers.forEach(function(timer){window.clearTimeout(timer);});popupExactTimers=[];});`)
 	b.WriteString(`})();</script>`)
 }
@@ -3649,6 +3889,10 @@ func (s *Server) loadAStockWindowArticlesByPublishTimeWithCache(start time.Time,
 }
 
 func (s *Server) loadAStockWindowArticlePages(timeField string, start time.Time, end time.Time) ([]model.Item, error) {
+	cacheKey := aStockArticlePagesCacheKey(timeField, start, end)
+	if items, err, ok := s.loadCachedAStockArticlePages(cacheKey); ok {
+		return items, err
+	}
 	all := make([]model.Item, 0, aStockArticleFetchPageSize)
 	for page := 1; page <= aStockArticleFetchMaxPages; page++ {
 		result := model.ItemListResult{}
@@ -3667,7 +3911,9 @@ func (s *Server) loadAStockWindowArticlePages(timeField string, start time.Time,
 			break
 		}
 	}
-	return filterAStockNews(all), nil
+	items := filterAStockNews(all)
+	s.storeCachedAStockArticlePages(cacheKey, aStockWindowCacheDate(start), items)
+	return items, nil
 }
 
 func aStockWindowArticlesQuery(timeField string, start time.Time, end time.Time, page int, pageSize int) string {
