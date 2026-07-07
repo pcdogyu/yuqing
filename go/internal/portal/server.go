@@ -4937,7 +4937,7 @@ setConsoleMeta(idle?"等待":(ok?"完成":"失败"),idle?"--":("完成于 "+now(
 setLog(upgradeLog(data),true);
 if(!idle){scheduleHide()}
 }
-function pollStatus(){fetch("/system/upgrade/status",{method:"GET",credentials:"same-origin",headers:{"Accept":"application/json"}}).then(parseJSON).then(renderUpgrade).catch(function(err){failedPolls++;status.textContent="升级执行中";setConsoleMeta("查询失败","最后刷新 "+now());appendConsoleLine(now()+" 状态查询失败: "+err.message);if(failedPolls>=6&&hasRememberedUpgrade()){appendConsoleLine(now()+" 正在重新载入页面以连接重启后的服务...");setTimeout(function(){window.location.reload()},600);return}schedulePoll()})}
+function pollStatus(){fetch("/system/upgrade/status",{method:"GET",credentials:"same-origin",headers:{"Accept":"application/json"}}).then(parseJSON).then(renderUpgrade).catch(function(err){failedPolls++;status.textContent="升级执行中";setConsoleMeta("查询失败","最后刷新 "+now());appendConsoleLine(now()+" 状态查询失败: "+err.message);if(failedPolls>=6&&hasRememberedUpgrade()){if(failedPolls===6){appendConsoleLine(now()+" 服务重启中，仍在等待恢复连接...")}stopPoll();pollTimer=setTimeout(pollStatus,5000);return}schedulePoll()})}
 if(close){close.addEventListener("click",function(){clearTimeout(hideTimer);hide()})}
 if(button&&mask&&status&&log){button.addEventListener("click",function(){
 if(button.disabled){return}

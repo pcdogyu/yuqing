@@ -9247,13 +9247,16 @@ func TestPortalNavPlacesLogoutAfterUpgrade(t *testing.T) {
 		`setLog(data.log||runningMessage,true)`,
 		`sessionStorage.setItem(upgradeActiveKey,"1")`,
 		`failedPolls>=6&&hasRememberedUpgrade()`,
-		`window.location.reload()`,
+		`服务重启中，仍在等待恢复连接`,
 		`正在重新连接升级状态`,
 		`log.scrollTop=log.scrollHeight`,
 	} {
 		if !strings.Contains(portalUpgradeShellHTML, expected) {
 			t.Fatalf("expected upgrade shell to include %q", expected)
 		}
+	}
+	if strings.Contains(portalUpgradeShellHTML, `window.location.reload()`) {
+		t.Fatalf("expected upgrade shell not to navigate away during service restart")
 	}
 	if strings.Contains(portalUpgradeShellHTML, `状态检查`) {
 		t.Fatalf("expected upgrade shell to keep polling status out of console log")
