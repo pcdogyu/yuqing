@@ -88,26 +88,28 @@ type aStockHotspotStock struct {
 }
 
 type aStockRecommendation struct {
-	Rank           int
-	Hotspot        string
-	Code           string
-	Name           string
-	HotspotScore   int
-	MarketScore    int
-	PrevClose      string
-	PrevPct        string
-	PrevPctClass   string
-	Change30       string
-	Change30Class  string
-	Change60       string
-	Change60Class  string
-	CurrentPrice   string
-	TodayPct       string
-	TodayPctClass  string
-	HoldingSummary string
-	HoldingRatio   string
-	Reason         string
-	EntryTime      string
+	Rank            int
+	Hotspot         string
+	Code            string
+	Name            string
+	HotspotScore    int
+	MarketScore     int
+	PrevClose       string
+	PrevPct         string
+	PrevPctClass    string
+	Change30        string
+	Change30Class   string
+	Change60        string
+	Change60Class   string
+	CurrentPrice    string
+	TodayPct        string
+	TodayPctClass   string
+	FundFlow5D      string
+	FundFlow5DClass string
+	HoldingSummary  string
+	HoldingRatio    string
+	Reason          string
+	EntryTime       string
 }
 
 type aStockMarketBar struct {
@@ -199,6 +201,7 @@ type aStockRequestCache struct {
 	snapshots                 map[string]aStockRecommendationSnapshotCacheEntry
 	selections                map[string]aStockRecommendationSelectionCacheEntry
 	holdingSummaries          map[string]aStockHoldingSummaryCacheEntry
+	stockFundFlowTrends       map[string]aStockStockFundFlowTrendCacheEntry
 	auctionResults            map[string]aStockAuctionResultCacheEntry
 	sectorConstituents        map[string]aStockSectorConstituentCodesCacheEntry
 	codeNames                 map[string]map[string]string
@@ -228,6 +231,11 @@ type aStockRecommendationSelectionCacheEntry struct {
 type aStockHoldingSummaryCacheEntry struct {
 	summary model.StockInstitutionHoldingSummary
 	err     error
+}
+
+type aStockStockFundFlowTrendCacheEntry struct {
+	result model.AStockStockFundFlowTrendResult
+	err    error
 }
 
 type aStockAuctionResultCacheEntry struct {
@@ -555,6 +563,8 @@ func (s *Server) buildAStockPageFragment(strategyDate string, periodKey string, 
 	if ctx.Period != "afternoon" {
 		afternoonCtx = s.loadAStockCompanionContextReadOnlyWithCache(strategyDate, "afternoon", 1, ignoreRecent, ignoreLimitUp, filterTodayMarket, forceRecommendationRefresh, requestCache)
 	}
+	s.applyAStockRecommendationFundFlow5DToContext(&morningCtx, requestCache)
+	s.applyAStockRecommendationFundFlow5DToContext(&afternoonCtx, requestCache)
 	if strings.TrimSpace(message) == "" {
 		message = ctx.LoadMessage
 	}
@@ -1566,10 +1576,10 @@ func renderAStockRecommendationSubsection(b *strings.Builder, ctx aStockContext)
 		}
 		b.WriteString(`<div class="astock-empty">`)
 		b.WriteString(html.EscapeString(reason))
-		b.WriteString(`</div><div class="astock-scroll"><table class="astock-table astock-recommendation-table"><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>昨日收盘价</th><th>昨日涨跌幅</th><th>30天涨跌幅</th><th>60天涨跌幅</th><th>现价</th><th>今日涨跌幅</th><th>机构共持</th><th>持仓占比</th><th>推荐理由</th></tr><tr><td colspan="13">暂无推荐股票</td></tr></table></div>`)
+		b.WriteString(`</div><div class="astock-scroll"><table class="astock-table astock-recommendation-table"><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>昨日收盘价</th><th>昨日涨跌幅</th><th>30天涨跌幅</th><th>60天涨跌幅</th><th>现价</th><th>今日涨跌幅</th><th>5日资金动向</th><th>推荐理由</th></tr><tr><td colspan="12">暂无推荐股票</td></tr></table></div>`)
 		return
 	}
-	b.WriteString(`<div class="astock-scroll"><table class="astock-table astock-recommendation-table"><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>昨日收盘价</th><th>昨日涨跌幅</th><th>30天涨跌幅</th><th>60天涨跌幅</th><th>现价</th><th>今日涨跌幅</th><th>机构共持</th><th>持仓占比</th><th>推荐理由</th></tr>`)
+	b.WriteString(`<div class="astock-scroll"><table class="astock-table astock-recommendation-table"><tr><th>排名</th><th>热点</th><th>股票代码</th><th>股票名称</th><th>昨日收盘价</th><th>昨日涨跌幅</th><th>30天涨跌幅</th><th>60天涨跌幅</th><th>现价</th><th>今日涨跌幅</th><th>5日资金动向</th><th>推荐理由</th></tr>`)
 	for _, rec := range recommendations {
 		b.WriteString(`<tr><td>`)
 		b.WriteString(fmt.Sprintf("%d", rec.Rank))
@@ -1603,11 +1613,11 @@ func renderAStockRecommendationSubsection(b *strings.Builder, ctx aStockContext)
 		b.WriteString(`">`)
 		b.WriteString(html.EscapeString(rec.TodayPct))
 		b.WriteString(`</span>`)
-		b.WriteString(`</td><td>`)
-		b.WriteString(html.EscapeString(rec.HoldingSummary))
-		b.WriteString(`</td><td>`)
-		b.WriteString(html.EscapeString(rec.HoldingRatio))
-		b.WriteString(`</td><td>`)
+		b.WriteString(`</td><td><span class="`)
+		b.WriteString(html.EscapeString(rec.FundFlow5DClass))
+		b.WriteString(`">`)
+		b.WriteString(html.EscapeString(rec.FundFlow5D))
+		b.WriteString(`</span></td><td>`)
 		b.WriteString(html.EscapeString(rec.Reason))
 		b.WriteString(`</td></tr>`)
 	}
@@ -1990,6 +2000,7 @@ func newAStockRequestCache() *aStockRequestCache {
 		snapshots:                 make(map[string]aStockRecommendationSnapshotCacheEntry),
 		selections:                make(map[string]aStockRecommendationSelectionCacheEntry),
 		holdingSummaries:          make(map[string]aStockHoldingSummaryCacheEntry),
+		stockFundFlowTrends:       make(map[string]aStockStockFundFlowTrendCacheEntry),
 		auctionResults:            make(map[string]aStockAuctionResultCacheEntry),
 		sectorConstituents:        make(map[string]aStockSectorConstituentCodesCacheEntry),
 		codeNames:                 make(map[string]map[string]string),
@@ -3747,6 +3758,69 @@ func (s *Server) loadAStockHoldingSummaryWithCache(code string, cache *aStockReq
 	return summary, err
 }
 
+func (s *Server) applyAStockRecommendationFundFlow5DToContext(ctx *aStockContext, cache *aStockRequestCache) {
+	if ctx == nil || len(ctx.Recommendations) == 0 {
+		return
+	}
+	ctx.Recommendations = s.applyAStockRecommendationFundFlow5DWithCache(ctx.Date, ctx.Recommendations, cache)
+}
+
+func (s *Server) applyAStockRecommendationFundFlow5DWithCache(strategyDate string, recommendations []aStockRecommendation, cache *aStockRequestCache) []aStockRecommendation {
+	if len(recommendations) == 0 {
+		return recommendations
+	}
+	for i := range recommendations {
+		recommendations[i].FundFlow5D = "--"
+		recommendations[i].FundFlow5DClass = "astock-flat"
+		code := normalizeAStockCode(recommendations[i].Code)
+		if code == "" {
+			continue
+		}
+		result, err := s.loadAStockStockFundFlowTrendWithCache(strategyDate, code, 5, cache)
+		if err != nil || len(result.Items) == 0 {
+			continue
+		}
+		total := 0.0
+		for _, item := range result.Items {
+			total += item.MainNetInflow
+		}
+		recommendations[i].FundFlow5D = formatSectorFundFlowMoney(total)
+		recommendations[i].FundFlow5DClass = aStockPctClass(total)
+	}
+	return recommendations
+}
+
+func (s *Server) loadAStockStockFundFlowTrendWithCache(endDate string, code string, days int, cache *aStockRequestCache) (model.AStockStockFundFlowTrendResult, error) {
+	if strings.TrimSpace(s.cfg.ContentURL) == "" {
+		return model.AStockStockFundFlowTrendResult{}, fmt.Errorf("content service url is empty")
+	}
+	endDate = normalizeAStockStrategyDate(endDate)
+	code = normalizeAStockCode(code)
+	if code == "" {
+		return model.AStockStockFundFlowTrendResult{}, fmt.Errorf("empty stock code")
+	}
+	if days <= 0 {
+		days = 5
+	}
+	cacheKey := strings.Join([]string{endDate, code, fmt.Sprint(days)}, "|")
+	if cache != nil {
+		if entry, ok := cache.stockFundFlowTrends[cacheKey]; ok {
+			return entry.result, entry.err
+		}
+	}
+	query := url.Values{}
+	query.Set("end_date", endDate)
+	query.Set("code", code)
+	query.Set("indicator", "今日")
+	query.Set("days", fmt.Sprint(days))
+	result := model.AStockStockFundFlowTrendResult{}
+	err := s.getJSON(s.cfg.ContentURL+"/api/v1/a-stock/stock-fund-flow-trend?"+query.Encode(), &result)
+	if cache != nil {
+		cache.stockFundFlowTrends[cacheKey] = aStockStockFundFlowTrendCacheEntry{result: result, err: err}
+	}
+	return result, err
+}
+
 func aStockHoldingScore(summary model.StockInstitutionHoldingSummary) int {
 	score := summary.HolderCount*2 + summary.HolderTypeCount*3 + int(summary.TotalFloatRatio)
 	if score < 0 {
@@ -5062,6 +5136,12 @@ func initializeAStockRecommendationMarket(recommendations []aStockRecommendation
 		recommendations[i].CurrentPrice = "--"
 		recommendations[i].TodayPct = "--"
 		recommendations[i].TodayPctClass = "astock-flat"
+		if strings.TrimSpace(recommendations[i].FundFlow5D) == "" {
+			recommendations[i].FundFlow5D = "--"
+		}
+		if strings.TrimSpace(recommendations[i].FundFlow5DClass) == "" {
+			recommendations[i].FundFlow5DClass = "astock-flat"
+		}
 		if strings.TrimSpace(recommendations[i].HoldingSummary) == "" {
 			recommendations[i].HoldingSummary = "--"
 		}

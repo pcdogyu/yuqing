@@ -341,11 +341,12 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		"60天涨跌幅",
 		"现价",
 		"今日涨跌幅",
+		"5日资金动向",
 		".astock-table th{white-space:nowrap}",
 		".astock-recommendation-table th:nth-child(2),.astock-recommendation-table td:nth-child(2){width:7.5%;white-space:nowrap}",
 		".astock-recommendation-table th:last-child,.astock-recommendation-table td:last-child{width:36%}",
 		"推荐窗口",
-		`colspan="13"`,
+		`colspan="12"`,
 		"抓取全部财经信息",
 		"重新生成上午推荐",
 		"重新生成下午推荐",
@@ -376,7 +377,7 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}
 	}
-	for _, notWant := range []string{"消息回测", "推荐历史", "T+0 收益", "T+1 收益", "T+2 收盘价", "T+3 收盘价", "T+4 收盘价", "T+5 收盘价", "astock-overview-meta", "财经新闻来源统计", "08:00-09:30 财经新闻", "09:30-13:00 财经新闻"} {
+	for _, notWant := range []string{"机构共持</th>", "持仓占比</th>", "消息回测", "推荐历史", "T+0 收益", "T+1 收益", "T+2 收盘价", "T+3 收盘价", "T+4 收盘价", "T+5 收盘价", "astock-overview-meta", "财经新闻来源统计", "08:00-09:30 财经新闻", "09:30-13:00 财经新闻"} {
 		if strings.Contains(body, notWant) {
 			t.Fatalf("expected A股 page not to contain moved backtest content %q, got %s", notWant, body)
 		}
@@ -2325,6 +2326,10 @@ func TestAStockPageLoadsAfternoonWindow(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "message": "ok", "data": model.StockInstitutionHoldingSummary{}})
 			return
 		}
+		if r.URL.Path == "/api/v1/a-stock/stock-fund-flow-trend" {
+			handleEmptyAStockAuctionTestEndpoint(w, r)
+			return
+		}
 		if r.URL.Path == "/api/v1/a-stock/auction" {
 			if r.URL.Query().Get("date") != "2026-06-16" {
 				t.Fatalf("unexpected auction date: %s", r.URL.RawQuery)
@@ -3312,6 +3317,21 @@ func handleAStockRecommendationSnapshotTestEndpoint(w http.ResponseWriter, r *ht
 }
 
 func handleEmptyAStockAuctionTestEndpoint(w http.ResponseWriter, r *http.Request) bool {
+	if r.URL.Path == "/api/v1/a-stock/stock-fund-flow-trend" {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    http.StatusOK,
+			"message": "ok",
+			"data": model.AStockStockFundFlowTrendResult{
+				Items:     []model.AStockStockFundFlow{},
+				Total:     0,
+				EndDate:   r.URL.Query().Get("end_date"),
+				Indicator: r.URL.Query().Get("indicator"),
+				Code:      r.URL.Query().Get("code"),
+				Days:      5,
+			},
+		})
+		return true
+	}
 	if r.URL.Path != "/api/v1/a-stock/auction" {
 		return false
 	}
@@ -5653,6 +5673,38 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "message": "ok", "data": model.StockInstitutionHoldingSummary{}})
 			return
 		}
+		if r.URL.Path == "/api/v1/a-stock/stock-fund-flow-trend" {
+			if r.URL.Query().Get("end_date") != "2026-06-16" || r.URL.Query().Get("indicator") != "今日" || r.URL.Query().Get("days") != "5" {
+				t.Fatalf("unexpected stock fund flow trend query: %s", r.URL.RawQuery)
+			}
+			code := r.URL.Query().Get("code")
+			items := []model.AStockStockFundFlow{}
+			switch code {
+			case "002230":
+				items = []model.AStockStockFundFlow{
+					{TradeDate: "2026-06-16", Indicator: "今日", Code: "002230", Name: "科大讯飞", MainNetInflow: 8000000},
+					{TradeDate: "2026-06-15", Indicator: "今日", Code: "002230", Name: "科大讯飞", MainNetInflow: 4000000},
+				}
+			case "688981":
+				items = []model.AStockStockFundFlow{
+					{TradeDate: "2026-06-16", Indicator: "今日", Code: "688981", Name: "中芯国际", MainNetInflow: -3000000},
+					{TradeDate: "2026-06-15", Indicator: "今日", Code: "688981", Name: "中芯国际", MainNetInflow: -2000000},
+				}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    200,
+				"message": "ok",
+				"data": model.AStockStockFundFlowTrendResult{
+					Items:     items,
+					Total:     len(items),
+					EndDate:   "2026-06-16",
+					Indicator: "今日",
+					Code:      code,
+					Days:      5,
+				},
+			})
+			return
+		}
 		if r.URL.Path == "/api/v1/a-stock/auction" {
 			if r.URL.Query().Get("date") != "2026-06-16" {
 				t.Fatalf("unexpected auction date: %s", r.URL.RawQuery)
@@ -5723,7 +5775,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"金十快讯", "金十资讯", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "31日内过滤", "涨停过滤", "当日行情", "不过滤", "重新计算", "关闭31日过滤", "关闭涨停过滤", "启用当日行情过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "上午推荐", "下午推荐", "推荐窗口", "08:00-09:30", "重新生成上午推荐", "重新生成下午推荐", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="refresh_backtest"`, `name="action" value="recalculate"`, "2026-06-12 周五", "2026-06-15 周一", "今日", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "推荐排名前9股票", "002230 科大讯飞", `002230 科大讯飞<span class="astock-hotspot-date">（2026-06-12）</span>`, "688981 中芯国际", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "已回测"} {
+	for _, want := range []string{"金十快讯", "金十资讯", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "31日内过滤", "涨停过滤", "当日行情", "不过滤", "重新计算", "关闭31日过滤", "关闭涨停过滤", "启用当日行情过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "5日资金动向", "+1200.00万", "-500.00万", "上午推荐", "下午推荐", "推荐窗口", "08:00-09:30", "重新生成上午推荐", "重新生成下午推荐", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="refresh_backtest"`, `name="action" value="recalculate"`, "2026-06-12 周五", "2026-06-15 周一", "今日", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "推荐排名前9股票", "002230 科大讯飞", `002230 科大讯飞<span class="astock-hotspot-date">（2026-06-12）</span>`, "688981 中芯国际", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "已回测"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}
