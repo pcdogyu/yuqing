@@ -418,7 +418,7 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/system/warningmsg", s.requireSession(s.handleSystemWarningMessage))
 	mux.HandleFunc("/system/feedback", s.requireSession(s.handleSystemSectionRedirect("feedback")))
 	mux.HandleFunc("/system/warningedit", s.requireSession(s.handleSystemWarningEdit))
-	mux.HandleFunc("/system/upgrade/status", s.requirePortalUpgradeSession(s.handleSystemUpgradeStatus))
+	mux.HandleFunc("/system/upgrade/status", s.requirePortalUpgradeStatusSession(s.handleSystemUpgradeStatus))
 	mux.HandleFunc("/system/upgrade", s.requirePortalUpgradeSession(s.handleSystemUpgrade))
 	mux.HandleFunc("/wechat/getQrCode", s.handleWechatGetQrCode)
 	mux.HandleFunc("/wechat/getBindQrCode", s.handleWechatGetBindQRCode)

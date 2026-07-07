@@ -9047,6 +9047,37 @@ func TestSystemUpgradeEndpointStartsBackgroundRunnerAndStatusReturnsLog(t *testi
 	}
 }
 
+func TestSystemUpgradeStatusReturnsRunningSnapshotWhenSessionInvalidDuringUpgrade(t *testing.T) {
+	t.Setenv(portalUpgradeStatusFileEnv, filepath.Join(t.TempDir(), "status.json"))
+	startedAt := time.Now().UTC().Add(-2 * time.Minute)
+	persistPortalUpgradeStatus(portalUpgradeResult{
+		OK:        true,
+		Status:    "running",
+		Message:   "阶段: 打包构建",
+		Log:       "debug: 命令仍在运行，已耗时 2m0s",
+		StartedAt: startedAt,
+		Running:   true,
+	})
+	srv, cleanup := newPortalCompatServer(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodGet, "/system/upgrade/status", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "stale-session"})
+	rr := httptest.NewRecorder()
+	srv.Router().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected upgrade status to survive invalid session during running upgrade, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	var result portalUpgradeResult
+	if err := json.Unmarshal(rr.Body.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal upgrade status response: %v", err)
+	}
+	if !result.OK || result.Status != "running" || !result.Running || !strings.Contains(result.Log, "命令仍在运行") {
+		t.Fatalf("expected running upgrade snapshot, got %+v", result)
+	}
+}
+
 func TestSystemUpgradeEndpointReturnsReadableAuthFailure(t *testing.T) {
 	srv, cleanup := newPortalCompatServer(t)
 	defer cleanup()

@@ -77,6 +77,42 @@ func (s *Server) requirePortalUpgradeSession(next func(http.ResponseWriter, *htt
 	}
 }
 
+func (s *Server) requirePortalUpgradeStatusSession(next func(http.ResponseWriter, *http.Request, any)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		cookie, err := r.Cookie(sessionCookieName)
+		if err != nil || strings.TrimSpace(cookie.Value) == "" {
+			writePortalUpgradeFailureJSON(w, http.StatusForbidden, "未登录")
+			return
+		}
+		user, err := s.getSessionUser(cookie.Value)
+		if err == nil {
+			next(w, r, user)
+			return
+		}
+		if snapshot := s.portalUpgradeSnapshot(); !isPortalUpgradeStatusReadableWithoutValidSession(snapshot, time.Now()) {
+			writePortalUpgradeFailureJSON(w, http.StatusForbidden, "会话无效")
+			return
+		}
+		next(w, r, map[string]any{"upgrade_status_only": true})
+	}
+}
+
+func isPortalUpgradeStatusReadableWithoutValidSession(snapshot portalUpgradeResult, now time.Time) bool {
+	if snapshot.StartedAt.IsZero() {
+		return false
+	}
+	if snapshot.Running || strings.EqualFold(snapshot.Status, "restarting") {
+		return true
+	}
+	if snapshot.FinishedAt.IsZero() {
+		return false
+	}
+	if now.Before(snapshot.FinishedAt) {
+		return true
+	}
+	return now.Sub(snapshot.FinishedAt) <= 30*time.Minute
+}
+
 func writePortalUpgradeFailureJSON(w http.ResponseWriter, status int, message string) {
 	writeRawJSON(w, status, portalUpgradeResult{
 		OK:      false,
