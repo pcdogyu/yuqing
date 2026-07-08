@@ -2475,13 +2475,7 @@ func (s *Server) loadTodayAStockBacktestFallbackContextWithCache(ctx aStockConte
 			return fast, true
 		}
 	}
-	fallback := s.loadAStockContextReadOnlyWithCache(ctx.Date, ctx.Period, ctx.NewsPage, ctx.IgnoreRecent, ctx.IgnoreLimitUp, ctx.IgnoreFundFlow, ctx.TodayMarketFilterEnabled, true, cache)
-	if !hasAStockBacktestDisplayData(fallback) {
-		return aStockContext{}, false
-	}
-	fallback.LoadMessage = appendAStockLoadMessage(fallback.LoadMessage, "今日回测使用只读实时推荐结果，未写入推荐快照。")
-	s.storeCachedAStockReadOnlyContext(cacheKey, fallback)
-	return fallback, true
+	return aStockContext{}, false
 }
 
 func (s *Server) applyAStockBacktestSnapshotOnlyWithCache(ctx *aStockContext, cache *aStockRequestCache) bool {
