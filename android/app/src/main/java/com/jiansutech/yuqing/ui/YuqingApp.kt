@@ -397,7 +397,7 @@ private fun ModuleContent(
         "analysis" -> AnalysisModule(dashboard)
         "reports" -> ReportsModule(dashboard.reports, viewModel)
         "a_stock" -> AStockModule(state, viewModel, onOpenAStockBacktest)
-        "stock_research" -> StockResearchModule(state, viewModel)
+        "stock_research" -> StockResearchModule(state)
         "holdings" -> HoldingsModule(dashboard.holdings.items)
         "system" -> SystemModule(dashboard, state, viewModel, versionUpgradeState, onCheckUpgrade)
         else -> GenericModule(key, dashboard)
@@ -713,15 +713,9 @@ private fun AStockAuctionModule(result: AStockAuctionListResult, viewModel: Yuqi
 }
 
 @Composable
-private fun StockResearchModule(state: YuqingUiState, viewModel: YuqingViewModel) {
+private fun StockResearchModule(state: YuqingUiState) {
     val items = state.stockResearch.items
     LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { viewModel.requestAction("stock_research_backfill", "回补研报调研") }) { Text("回补") }
-                Button(onClick = { viewModel.requestAction("stock_research_pdf_parse", "解析研报 PDF") }) { Text("解析PDF") }
-            }
-        }
         if (state.stockResearchLoading) {
             item {
                 Row(
