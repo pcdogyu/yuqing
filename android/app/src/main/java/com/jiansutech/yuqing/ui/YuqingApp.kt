@@ -65,8 +65,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
@@ -1727,7 +1730,76 @@ private fun moduleIcon(key: String): ImageVector = when (key) {
     "reports" -> Icons.Default.Description
     "a_stock" -> Icons.Default.ShowChart
     "auction" -> Icons.Default.Assessment
-    "stock_research" -> Icons.Default.ShowChart
+    "stock_research" -> StockResearchIcon
     "holdings" -> Icons.Default.Groups
     else -> Icons.Default.Settings
+}
+
+private val StockResearchIcon: ImageVector by lazy {
+    ImageVector.Builder(
+        name = "StockResearchIcon",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f,
+    ).apply {
+        path(
+            fill = null,
+            stroke = SolidColor(Color.Black),
+            strokeLineWidth = 1.7f,
+            strokeLineCap = StrokeCap.Round,
+            strokeLineJoin = StrokeJoin.Round,
+        ) {
+            moveTo(4.2f,3.2f)
+            lineTo(14.1f,3.2f)
+            lineTo(14.1f,5.4f)
+            moveTo(4.2f,3.2f)
+            lineTo(4.2f,17.4f)
+            lineTo(6.4f,17.4f)
+
+            moveTo(6.4f,5.5f)
+            lineTo(15.0f,5.5f)
+            lineTo(18.8f,9.3f)
+            lineTo(18.8f,18.8f)
+            lineTo(6.4f,18.8f)
+            close()
+
+            moveTo(15.0f,5.5f)
+            lineTo(15.0f,9.3f)
+            lineTo(18.8f,9.3f)
+        }
+        path(
+            fill = null,
+            stroke = SolidColor(Color.Black),
+            strokeLineWidth = 1.45f,
+            strokeLineCap = StrokeCap.Round,
+            strokeLineJoin = StrokeJoin.Round,
+        ) {
+            moveTo(8.4f,10.1f)
+            lineTo(12.9f,10.1f)
+            moveTo(8.4f,12.4f)
+            lineTo(11.0f,12.4f)
+            moveTo(8.4f,14.7f)
+            lineTo(11.0f,14.7f)
+            moveTo(8.4f,17.0f)
+            lineTo(13.6f,17.0f)
+        }
+        path(
+            fill = null,
+            stroke = SolidColor(Color.Black),
+            strokeLineWidth = 1.95f,
+            strokeLineCap = StrokeCap.Round,
+            strokeLineJoin = StrokeJoin.Round,
+        ) {
+            moveTo(19.2f,13.5f)
+            curveTo(19.2f,15.5f,17.6f,17.1f,15.6f,17.1f)
+            curveTo(13.6f,17.1f,12.0f,15.5f,12.0f,13.5f)
+            curveTo(12.0f,11.5f,13.6f,9.9f,15.6f,9.9f)
+            curveTo(17.6f,9.9f,19.2f,11.5f,19.2f,13.5f)
+            close()
+
+            moveTo(18.1f,16.0f)
+            lineTo(21.4f,19.3f)
+        }
+    }.build()
 }
