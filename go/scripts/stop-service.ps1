@@ -10,7 +10,8 @@ if ([string]::IsNullOrWhiteSpace($processName)) {
     exit 1
 }
 
-$targets = @(Get-Process -Name $processName -ErrorAction SilentlyContinue)
+$processImageName = "$processName.exe"
+$targets = @(Get-CimInstance Win32_Process -Filter "Name = '$processImageName'" -ErrorAction SilentlyContinue)
 if ($targets.Count -eq 0) {
     Write-Host "Service $processName is not running."
     exit 0
@@ -22,16 +23,33 @@ if (-not (Test-Path $taskkill)) {
     $taskkill = "taskkill.exe"
 }
 
+function Get-SameProcess($target) {
+    $current = Get-CimInstance Win32_Process -Filter ("ProcessId=" + $target.ProcessId) -ErrorAction SilentlyContinue
+    if ($null -eq $current) {
+        return $null
+    }
+    if ($current.Name -ine $target.Name) {
+        return $null
+    }
+    if ([string]$current.CreationDate -ne [string]$target.CreationDate) {
+        return $null
+    }
+    return $current
+}
+
 foreach ($proc in $targets) {
+    if ($null -eq (Get-SameProcess $proc)) {
+        continue
+    }
     try {
-        & $taskkill /F /T /PID $proc.Id *> $null
+        & $taskkill /F /T /PID $proc.ProcessId *> $null
     } catch {
         # A process can disappear between enumeration and kill; final verification below decides.
     }
     Start-Sleep -Milliseconds 200
-    if (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue) {
+    if ($null -ne (Get-SameProcess $proc)) {
         try {
-            Stop-Process -Id $proc.Id -Force -ErrorAction Stop
+            Stop-Process -Id $proc.ProcessId -Force -ErrorAction Stop
         } catch {
             # Keep going and report any PID that is still alive after the wait.
         }
@@ -41,8 +59,8 @@ foreach ($proc in $targets) {
 Start-Sleep -Milliseconds $WaitMilliseconds
 $remaining = @()
 foreach ($proc in $targets) {
-    if (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue) {
-        $remaining += $proc.Id
+    if ($null -ne (Get-SameProcess $proc)) {
+        $remaining += $proc.ProcessId
     }
 }
 
