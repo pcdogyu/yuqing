@@ -27,6 +27,7 @@ import com.jiansutech.yuqing.data.NetworkEnvironmentSelector
 import com.jiansutech.yuqing.data.SearchResult
 import com.jiansutech.yuqing.data.SessionState
 import com.jiansutech.yuqing.data.SessionStore
+import com.jiansutech.yuqing.data.StockResearch
 import com.jiansutech.yuqing.data.StockResearchListResult
 import com.jiansutech.yuqing.data.YuqingApi
 import kotlinx.coroutines.delay
@@ -96,6 +97,9 @@ data class YuqingUiState(
     val aStockRecommendationWindow: AStockRecommendationWindow = currentAStockRecommendationWindow(),
     val stockResearch: StockResearchListResult = StockResearchListResult(),
     val stockResearchLoading: Boolean = false,
+    val stockResearchDetail: StockResearch? = null,
+    val stockResearchDetailLoading: Boolean = false,
+    val stockResearchDetailError: String = "",
     val searchKeyword: String = "",
     val searchResult: SearchResult? = null,
     val connectionTests: Map<String, ConnectionTestResult> = emptyMap(),
@@ -801,6 +805,59 @@ class YuqingViewModel(
                 _uiState.update { it.copy(error = throwable.message ?: "研报信息加载失败") }
             }
             _uiState.update { it.copy(stockResearchLoading = false) }
+        }
+    }
+
+    fun openStockResearchDetail(item: StockResearch) {
+        if (item.id <= 0) {
+            _uiState.update {
+                it.copy(
+                    stockResearchDetail = item,
+                    stockResearchDetailLoading = false,
+                    stockResearchDetailError = "研报ID无效，无法获取详情",
+                )
+            }
+            return
+        }
+        _uiState.update {
+            it.copy(
+                stockResearchDetail = item,
+                stockResearchDetailLoading = true,
+                stockResearchDetailError = "",
+            )
+        }
+        viewModelScope.launch {
+            val session = sessionStore.state.first()
+            runCatching {
+                currentYuqingApi(session)
+                    .stockResearchDetail(item.id)
+                    .data ?: error("研报详情为空")
+            }.onSuccess { detail ->
+                _uiState.update {
+                    it.copy(
+                        stockResearchDetail = detail,
+                        stockResearchDetailLoading = false,
+                        stockResearchDetailError = "",
+                    )
+                }
+            }.onFailure { throwable ->
+                _uiState.update {
+                    it.copy(
+                        stockResearchDetailLoading = false,
+                        stockResearchDetailError = throwable.message ?: "研报详情加载失败",
+                    )
+                }
+            }
+        }
+    }
+
+    fun closeStockResearchDetail() {
+        _uiState.update {
+            it.copy(
+                stockResearchDetail = null,
+                stockResearchDetailLoading = false,
+                stockResearchDetailError = "",
+            )
         }
     }
 

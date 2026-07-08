@@ -65,6 +65,11 @@ interface YuqingApi {
         @Query("page_size") pageSize: Int = 20,
     ): ApiEnvelope<StockResearchListResult>
 
+    @GET("api/v1/stock-research/{id}")
+    suspend fun stockResearchDetail(
+        @Path("id") id: Long,
+    ): ApiEnvelope<StockResearch>
+
     @GET("api/v1/search/full")
     suspend fun searchFull(
         @Query("keyword") keyword: String,

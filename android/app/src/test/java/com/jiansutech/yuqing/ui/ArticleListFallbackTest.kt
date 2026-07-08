@@ -3,6 +3,7 @@ package com.jiansutech.yuqing.ui
 import com.jiansutech.yuqing.data.AndroidDashboard
 import com.jiansutech.yuqing.data.ArticleItem
 import com.jiansutech.yuqing.data.ItemListResult
+import com.jiansutech.yuqing.data.StockResearch
 import androidx.compose.material3.SwipeToDismissBoxValue
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -69,6 +70,41 @@ class ArticleListFallbackTest {
         val expiredWindow = nextBottomNavSecretTapState(changedMenu.state, "auction", now = 8_001L)
         assertEquals(false, expiredWindow.unlocked)
         assertEquals(BottomNavSecretTapState(key = "auction", count = 1, lastClickAt = 8_001L), expiredWindow.state)
+    }
+
+    @Test
+    fun stockResearchDisplayDatePrefersResearchDateThenPublishDate() {
+        assertEquals(
+            "2026-07-08",
+            stockResearchDisplayDate(
+                StockResearch(researchDate = "2026-07-08", publishTime = "2026-07-07T11:00:00Z"),
+            ),
+        )
+        assertEquals(
+            "2026-07-07",
+            stockResearchDisplayDate(StockResearch(publishTime = "2026-07-07T11:00:00Z")),
+        )
+    }
+
+    @Test
+    fun stockResearchDetailBodyPrefersPdfTextThenSummary() {
+        assertEquals(
+            "PDF正文",
+            stockResearchDetailBody(StockResearch(pdfText = " PDF正文 ", summary = "摘要")),
+        )
+        assertEquals(
+            "摘要",
+            stockResearchDetailBody(StockResearch(summary = " 摘要 ")),
+        )
+    }
+
+    @Test
+    fun stockResearchSourceLabelMarksInvestorRelations() {
+        assertEquals(
+            "投资者关系",
+            stockResearchSourceLabel(StockResearch(sourceType = "cninfo_investor_relation", kind = "survey")),
+        )
+        assertEquals("调研", stockResearchSourceLabel(StockResearch(kind = "survey")))
     }
 
     @Test

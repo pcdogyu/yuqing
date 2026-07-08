@@ -97,6 +97,7 @@ import com.jiansutech.yuqing.data.Report
 import com.jiansutech.yuqing.data.SchedulerJob
 import com.jiansutech.yuqing.data.ServiceStatus
 import com.jiansutech.yuqing.data.StockHolding
+import com.jiansutech.yuqing.data.StockResearch
 import com.jiansutech.yuqing.data.TaskRun
 import kotlinx.serialization.decodeFromString
 import java.time.DayOfWeek
@@ -133,11 +134,14 @@ private fun PortalScreen(
     var bottomNavSecretTapState by remember { mutableStateOf(BottomNavSecretTapState()) }
     val detail = backtestDetail
     val articleDetail = state.articleDetail
-    BackHandler(enabled = detail != null || articleDetail != null) {
+    val stockResearchDetail = state.stockResearchDetail
+    BackHandler(enabled = detail != null || articleDetail != null || stockResearchDetail != null) {
         if (detail != null) {
             backtestDetail = null
-        } else {
+        } else if (articleDetail != null) {
             viewModel.closeArticleDetail()
+        } else {
+            viewModel.closeStockResearchDetail()
         }
     }
     val hideTopBar = selected.key == "dashboard" ||
@@ -171,6 +175,17 @@ private fun PortalScreen(
                     },
                 )
             }
+        } else if (stockResearchDetail != null) {
+            {
+                TopAppBar(
+                    title = { Text("${stockResearchSourceLabel(stockResearchDetail)}详情", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    navigationIcon = {
+                        IconButton(onClick = viewModel::closeStockResearchDetail) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        }
+                    },
+                )
+            }
         } else if (hideTopBar) {
             {}
         } else {
@@ -189,7 +204,7 @@ private fun PortalScreen(
             }
         },
         bottomBar = {
-            if (detail == null && articleDetail == null) {
+            if (detail == null && articleDetail == null && stockResearchDetail == null) {
                 NavigationBar {
                     bottomNavigationKeys.forEach { key ->
                         val module = modules.firstOrNull { it.key == key }
@@ -223,7 +238,7 @@ private fun PortalScreen(
             }
         },
     ) { padding ->
-        val contentModifier = if (detail != null || articleDetail != null) {
+        val contentModifier = if (detail != null || articleDetail != null || stockResearchDetail != null) {
             Modifier.padding(padding).fillMaxSize()
         } else if (hideTopBar) {
             Modifier.padding(padding).fillMaxSize().statusBarsPadding()
@@ -260,6 +275,12 @@ private fun PortalScreen(
                     onSwipeLeft = viewModel::closeArticleDetail,
                     onSwipeDown = viewModel::openNextArticleDetail,
                     onSwipeUp = viewModel::openPreviousArticleDetail,
+                )
+            } else if (stockResearchDetail != null) {
+                StockResearchDetailScreen(
+                    item = stockResearchDetail,
+                    loading = state.stockResearchDetailLoading,
+                    error = state.stockResearchDetailError,
                 )
             } else {
                 ModuleContent(
@@ -397,7 +418,7 @@ private fun ModuleContent(
         "analysis" -> AnalysisModule(dashboard)
         "reports" -> ReportsModule(dashboard.reports, viewModel)
         "a_stock" -> AStockModule(state, viewModel, onOpenAStockBacktest)
-        "stock_research" -> StockResearchModule(state)
+        "stock_research" -> StockResearchModule(state, viewModel)
         "holdings" -> HoldingsModule(dashboard.holdings.items)
         "system" -> SystemModule(dashboard, state, viewModel, versionUpgradeState, onCheckUpgrade)
         else -> GenericModule(key, dashboard)
@@ -713,7 +734,7 @@ private fun AStockAuctionModule(result: AStockAuctionListResult, viewModel: Yuqi
 }
 
 @Composable
-private fun StockResearchModule(state: YuqingUiState) {
+private fun StockResearchModule(state: YuqingUiState, viewModel: YuqingViewModel) {
     val items = state.stockResearch.items
     LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (state.stockResearchLoading) {
@@ -732,7 +753,138 @@ private fun StockResearchModule(state: YuqingUiState) {
         if (!state.stockResearchLoading && items.isEmpty()) {
             item { EmptyState("暂无研报信息") }
         }
-        items(items) { SimpleRow("${it.code} ${it.name}", "${it.title} ${it.institution} ${it.pdfStatus}") }
+        items(items) { item ->
+            StockResearchRow(item, onOpenDetail = { viewModel.openStockResearchDetail(item) })
+        }
+    }
+}
+
+@Composable
+private fun StockResearchRow(item: StockResearch, onOpenDetail: () -> Unit) {
+    val date = stockResearchDisplayDate(item)
+    Card {
+        Column(Modifier.fillMaxWidth().padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    stockResearchStockLabel(item),
+                    modifier = Modifier.weight(1f).clickable(onClick = onOpenDetail),
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (date.isNotBlank()) {
+                    Text(
+                        date,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                    )
+                }
+            }
+            val subtitle = stockResearchListSubtitle(item)
+            if (subtitle.isNotBlank()) {
+                Spacer(Modifier.height(4.dp))
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+}
+
+@Composable
+private fun StockResearchDetailScreen(item: StockResearch, loading: Boolean, error: String) {
+    val uriHandler = LocalUriHandler.current
+    val body = stockResearchDetailBody(item)
+    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    item.title.trim().ifBlank { stockResearchStockLabel(item) },
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    stockResearchStockLabel(item),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(stockResearchSourceLabel(item), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                    val date = stockResearchDisplayDate(item)
+                    if (date.isNotBlank()) {
+                        Text(date, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
+        if (loading) {
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Text("正在加载详情", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+        if (error.isNotBlank()) {
+            item { Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+        }
+        val meta = stockResearchDetailMeta(item)
+        if (meta.isNotBlank()) {
+            item { Text(meta, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        }
+        if (item.nlpScoredAt.isNotBlank() || item.nlpRating.isNotBlank() || item.nlpReason.isNotBlank()) {
+            item {
+                Card {
+                    Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("NLP 评分", fontWeight = FontWeight.SemiBold)
+                        val scoreText = if (item.nlpScoredAt.isNotBlank() || item.nlpScore != 0.0) {
+                            String.format("%.2f", item.nlpScore)
+                        } else {
+                            ""
+                        }
+                        Text(
+                            listOf(scoreText, item.nlpRating.trim()).filter { it.isNotBlank() }.joinToString(" "),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        if (item.nlpReason.isNotBlank()) {
+                            Text(item.nlpReason.trim(), style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+        }
+        item {
+            if (body.isBlank()) {
+                EmptyState("暂无详情内容")
+            } else {
+                Text(body, style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+        if (item.sourceUrl.isNotBlank() || item.pdfUrl.isNotBlank()) {
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (item.sourceUrl.isNotBlank()) {
+                        TextButton(onClick = { runCatching { uriHandler.openUri(item.sourceUrl) } }) {
+                            Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("打开原文")
+                        }
+                    }
+                    if (item.pdfUrl.isNotBlank()) {
+                        TextButton(onClick = { runCatching { uriHandler.openUri(item.pdfUrl) } }) {
+                            Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("打开PDF")
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1575,6 +1727,55 @@ private fun formatAuctionAmount(value: Double): String {
         value > 0 -> String.format("%.0f", value)
         else -> "0"
     }
+}
+
+internal fun stockResearchDisplayDate(item: StockResearch): String {
+    val researchDate = item.researchDate.trim()
+    if (researchDate.isNotBlank()) {
+        return researchDate
+    }
+    val publishTime = item.publishTime.trim()
+    if (publishTime.length >= 10) {
+        return publishTime.take(10)
+    }
+    return publishTime
+}
+
+internal fun stockResearchDetailBody(item: StockResearch): String =
+    item.pdfText.trim().ifBlank { item.summary.trim() }
+
+internal fun stockResearchSourceLabel(item: StockResearch): String {
+    val sourceType = item.sourceType.trim()
+    if (sourceType.equals("cninfo_investor_relation", ignoreCase = true)) {
+        return "投资者关系"
+    }
+    return when (item.kind.trim().lowercase()) {
+        "survey", "调研" -> "调研"
+        "report", "研报" -> "研报"
+        else -> {
+            if (sourceType.contains("investor", ignoreCase = true)) {
+                "投资者关系"
+            } else {
+                "研报调研"
+            }
+        }
+    }
+}
+
+private fun stockResearchStockLabel(item: StockResearch): String =
+    listOf(item.code.trim(), item.name.trim()).filter { it.isNotBlank() }.joinToString(" ").ifBlank { "--" }
+
+private fun stockResearchListSubtitle(item: StockResearch): String =
+    listOf(item.title.trim(), item.institution.trim()).filter { it.isNotBlank() }.joinToString(" ")
+
+private fun stockResearchDetailMeta(item: StockResearch): String {
+    val meta = mutableListOf<String>()
+    item.institution.trim().takeIf { it.isNotBlank() }?.let { meta += "机构：$it" }
+    item.analyst.trim().takeIf { it.isNotBlank() }?.let { meta += "分析师：$it" }
+    item.rating.trim().takeIf { it.isNotBlank() }?.let { meta += "评级：$it" }
+    item.targetPrice.trim().takeIf { it.isNotBlank() }?.let { meta += "目标价：$it" }
+    item.pdfStatus.trim().takeIf { it.isNotBlank() }?.let { meta += "PDF：$it" }
+    return meta.joinToString("  ")
 }
 
 @Composable
