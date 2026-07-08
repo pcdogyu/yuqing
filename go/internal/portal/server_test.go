@@ -281,10 +281,12 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 	sectorIndex := strings.Index(body, `href="/sector-fund-flow"`)
 	auctionIndex := strings.Index(body, `href="/a-stock/auction"`)
 	researchIndex := strings.Index(body, `href="/stock-research"`)
-	investorIndex := strings.Index(body, `href="/investor-relations"`)
 	cryptoIndex := strings.Index(body, `href="/crypto"`)
-	if aStockIndex < 0 || backtestIndex < 0 || sectorIndex < 0 || auctionIndex < 0 || researchIndex < 0 || investorIndex < 0 || cryptoIndex < 0 || aStockIndex > backtestIndex || backtestIndex > sectorIndex || sectorIndex > researchIndex || researchIndex > investorIndex || investorIndex > auctionIndex || auctionIndex > cryptoIndex {
+	if aStockIndex < 0 || backtestIndex < 0 || sectorIndex < 0 || auctionIndex < 0 || researchIndex < 0 || cryptoIndex < 0 || aStockIndex > backtestIndex || backtestIndex > sectorIndex || sectorIndex > researchIndex || researchIndex > auctionIndex || auctionIndex > cryptoIndex {
 		t.Fatalf("expected A股, 回测, 版块资金, 研报调研, 集合竞价 nav links before Crypto, got %s", body)
+	}
+	if strings.Contains(body, `href="/investor-relations"`) {
+		t.Fatalf("expected investor relations to be removed from shared nav, got %s", body)
 	}
 	for _, want := range []string{
 		`class="astock-overview-header"`,
@@ -805,6 +807,26 @@ func TestStockResearchPageLoadsFiltersAndRows(t *testing.T) {
 		if r.URL.Path != "/api/v1/stock-research" {
 			t.Fatalf("unexpected stock research content path: %s", r.URL.String())
 		}
+		if r.URL.Query().Get("source") == investorRelationsSourceType {
+			if r.URL.Query().Get("kind") != "survey" || r.URL.Query().Get("page") != "1" || r.URL.Query().Get("page_size") != "20" {
+				t.Fatalf("unexpected investor relations query: %s", r.URL.RawQuery)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockResearchListResult{
+				Page: 1, PageSize: 20, Total: 1, Kind: "survey", Source: investorRelationsSourceType,
+				Items: []model.StockResearchSurvey{{
+					ID:           9,
+					Code:         "300123",
+					Name:         "测试公司",
+					Kind:         "survey",
+					Title:        "投资者关系管理信息20260617",
+					Institution:  "--",
+					Analyst:      "--",
+					ResearchDate: "2026-06-14",
+					SourceType:   investorRelationsSourceType,
+				}},
+			}})
+			return
+		}
 		if r.URL.Query().Get("company") != "科大" || r.URL.Query().Get("institution") != "中金" || r.URL.Query().Get("source") != "sina_finance_report" {
 			t.Fatalf("unexpected stock research query: %s", r.URL.RawQuery)
 		}
@@ -836,17 +858,6 @@ func TestStockResearchPageLoadsFiltersAndRows(t *testing.T) {
 						PDFText:      "科大讯飞研报正文",
 					},
 					{
-						ID:           9,
-						Code:         "300123",
-						Name:         "测试公司",
-						Kind:         "survey",
-						Title:        "投资者关系管理信息20260617",
-						Institution:  "--",
-						Analyst:      "--",
-						ResearchDate: "2026-06-14",
-						SourceType:   investorRelationsSourceType,
-					},
-					{
 						ID:           8,
 						Code:         "000001",
 						Name:         "平安银行",
@@ -873,12 +884,12 @@ func TestStockResearchPageLoadsFiltersAndRows(t *testing.T) {
 		t.Fatalf("expected stock research page 200, got %d body=%s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"研报调研", "深度研究", "中金公司", "张三", "新浪财经", "东方财富", "搜狐财经", "回补近一年", "解析当前筛选研报PDF", "下载PDF", "查看文本", "已解析", "无PDF", "重新解析", `value="科大"`, `href="/a-stock">A股</a><a href="/a-stock/backtest">回测</a><a href="/sector-fund-flow">版块资金</a><a href="/stock-research">研报调研</a><a href="/investor-relations">投资者关系</a><a href="/a-stock/holdings">机构持仓</a>`, "body[data-page='stock-research'] main,body[data-page='stock-research'] .site-footer{max-width:none;width:100%;box-sizing:border-box}", "body[data-page='stock-research'] main{font-size:14px;line-height:1.45}", "body[data-page='stock-research'] section{width:100%;box-sizing:border-box}", ".research-scroll{width:100%;overflow:auto}", ".research-table{width:100%;min-width:0;table-layout:fixed}", ".research-col-title{width:32.6%}", ".research-col-pdf{width:8.4%}", ".research-col-status{width:14%}", ".research-col-date{width:7.5%}", ".research-col-stock{width:8.5%}", ".research-col-source{width:6%}", ".research-col-link{width:5%}", ".research-status-actions{display:flex;align-items:center;gap:8px;white-space:nowrap}", ".research-status-actions .research-action-form{flex:1 1 auto;min-width:0}", ".research-status-actions button{width:90%;height:90%;min-height:32px;margin:0;padding:7px 10px}", "<th>日期</th><th>股票</th><th>标题</th>", "投资者关系管理信息20260617"} {
+	for _, want := range []string{"研报调研", "深度研究", "中金公司", "张三", "新浪财经", "东方财富", "搜狐财经", "回补近一年", "解析当前筛选研报PDF", "下载PDF", "查看文本", "已解析", "无PDF", "重新解析", `value="科大"`, `href="/a-stock">A股</a><a href="/a-stock/backtest">回测</a><a href="/sector-fund-flow">版块资金</a><a href="/stock-research">研报调研</a><a href="/a-stock/holdings">机构持仓</a>`, "body[data-page='stock-research'] main,body[data-page='stock-research'] .site-footer{max-width:none;width:100%;box-sizing:border-box}", "body[data-page='stock-research'] main{font-size:14px;line-height:1.45}", "body[data-page='stock-research'] section{width:100%;box-sizing:border-box}", ".research-scroll{width:100%;overflow:auto}", ".research-table{width:100%;min-width:0;table-layout:fixed}", ".research-col-title{width:32.6%}", ".research-col-pdf{width:8.4%}", ".research-col-status{width:14%}", ".research-col-date{width:7.5%}", ".research-col-stock{width:8.5%}", ".research-col-source{width:6%}", ".research-col-link{width:5%}", ".research-status-actions{display:flex;align-items:center;gap:8px;white-space:nowrap}", ".research-status-actions .research-action-form{flex:1 1 auto;min-width:0}", ".research-status-actions button{width:90%;height:90%;min-height:32px;margin:0;padding:7px 10px}", "<th>日期</th><th>股票</th><th>标题</th>", `id="investor-relations"`, "投资者关系筛选", `name="ir_code"`, "互动易投资者关系", "投资者关系管理信息20260617"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected stock research page to contain %q, got %s", want, body)
 		}
 	}
-	for _, notWant := range []string{">互动易投资者关系<", `<option value="cninfo_investor_relation"`} {
+	for _, notWant := range []string{`href="/investor-relations"`, `<option value="cninfo_investor_relation"`} {
 		if strings.Contains(body, notWant) {
 			t.Fatalf("expected stock research page not to contain %q, got %s", notWant, body)
 		}
@@ -1321,37 +1332,18 @@ func TestStockResearchPagePostTriggersPDFParse(t *testing.T) {
 	}
 }
 
-func TestInvestorRelationsPageLoadsRowsAndUsesSourceFilter(t *testing.T) {
-	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path != "/api/v1/stock-research" {
-			t.Fatalf("unexpected investor relations content path: %s", r.URL.String())
-		}
-		if r.URL.Query().Get("source") != "cninfo_investor_relation" || r.URL.Query().Get("kind") != "survey" || r.URL.Query().Get("code") != "300250" {
-			t.Fatalf("unexpected investor relations query: %s", r.URL.RawQuery)
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockResearchListResult{
-			Page: 1, PageSize: 20, Total: 1, Code: "300250", Kind: "survey", Source: "cninfo_investor_relation",
-			Items: []model.StockResearchSurvey{{
-				ID: 11, Code: "300250", Name: "初灵信息", Kind: "survey", Title: "初灵信息投资者关系管理信息20260617",
-				SourceType: "cninfo_investor_relation", PDFURL: "http://static.cninfo.com.cn/finalpage/2026-06-18/1225377390.PDF",
-				PDFStatus: "parsed", PDFText: "# 初灵信息", NLPScore: 76, NLPRating: "积极", NLPReason: "AI订单增长", NLPScoredAt: "2026-06-18T12:00:00Z",
-			}},
-		}})
-	}))
-	defer content.Close()
-
-	srv := NewServer(config.Config{ContentURL: content.URL})
-	req := httptest.NewRequest(http.MethodGet, "/investor-relations?code=300250", nil)
+func TestInvestorRelationsPageRedirectsToMergedStockResearchPage(t *testing.T) {
+	srv := NewServer(config.Config{})
+	req := httptest.NewRequest(http.MethodGet, "/investor-relations?code=300250&company=%E5%88%9D%E7%81%B5&page=2", nil)
 	rr := httptest.NewRecorder()
 	srv.handleInvestorRelationsPage(rr, req, map[string]any{"id": 1})
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected investor relations page 200, got %d body=%s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusFound {
+		t.Fatalf("expected investor relations page redirect, got %d body=%s", rr.Code, rr.Body.String())
 	}
-	body := rr.Body.String()
-	for _, want := range []string{"投资者关系", "投资者关系管理信息20260617", "互动易投资者关系", "抓取近一年并解析PDF", "NLP 76.00 积极", "AI订单增长", `href="/stock-research/11/pdf/text"`, "body[data-page='investor-relations'] main,body[data-page='investor-relations'] .site-footer{max-width:none;width:100%;box-sizing:border-box}", "body[data-page='investor-relations'] section{width:100%;box-sizing:border-box}", "body[data-page='investor-relations'] table{width:100%;min-width:100%}", ".research-scroll{width:100%;overflow:auto}"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("expected investor relations page to contain %q, got %s", want, body)
+	loc, _ := url.QueryUnescape(rr.Header().Get("Location"))
+	for _, want := range []string{"/stock-research?", "ir_code=300250", "ir_company=初灵", "ir_page=2", "#investor-relations"} {
+		if !strings.Contains(loc, want) {
+			t.Fatalf("expected investor relations redirect to contain %q, got %q", want, loc)
 		}
 	}
 }
@@ -1382,9 +1374,84 @@ func TestInvestorRelationsPagePostTriggersBackfill(t *testing.T) {
 		t.Fatalf("expected redirect after investor relations backfill, got %d", rr.Code)
 	}
 	loc, _ := url.QueryUnescape(rr.Header().Get("Location"))
-	for _, want := range []string{"/investor-relations?", "code=300250", "source=cninfo_investor_relation", "抓取和 PDF 解析任务已触发"} {
+	for _, want := range []string{"/stock-research?", "ir_code=300250", "ir_page=1", "#investor-relations", "抓取和 PDF 解析任务已触发"} {
 		if !strings.Contains(loc, want) {
 			t.Fatalf("expected redirect to keep filters and message %q, got %q", want, loc)
+		}
+	}
+}
+
+func TestStockResearchPageKeepsInvestorRelationsPaginationSeparate(t *testing.T) {
+	var sawResearch bool
+	var sawInvestor bool
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/stock-research" {
+			t.Fatalf("unexpected stock research content path: %s", r.URL.String())
+		}
+		if r.URL.Query().Get("source") == investorRelationsSourceType {
+			sawInvestor = true
+			if r.URL.Query().Get("page") != "4" || r.URL.Query().Get("kind") != "survey" || r.URL.Query().Get("code") != "300250" {
+				t.Fatalf("unexpected investor relations query: %s", r.URL.RawQuery)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockResearchListResult{Page: 4, PageSize: 20, Total: 100}})
+			return
+		}
+		sawResearch = true
+		if r.URL.Query().Get("page") != "3" || r.URL.Query().Get("company") != "科大" || r.URL.Query().Get("code") != "" {
+			t.Fatalf("unexpected stock research query: %s", r.URL.RawQuery)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockResearchListResult{Page: 3, PageSize: 20, Total: 80}})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	req := httptest.NewRequest(http.MethodGet, "/stock-research?page=3&company=%E7%A7%91%E5%A4%A7&ir_page=4&ir_code=300250", nil)
+	rr := httptest.NewRecorder()
+	srv.handleStockResearchPage(rr, req, map[string]any{"id": 1})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected stock research page 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !sawResearch || !sawInvestor {
+		t.Fatalf("expected both stock research and investor relations queries, sawResearch=%v sawInvestor=%v", sawResearch, sawInvestor)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{`page=2`, `page=4`, `ir_page=3`, `ir_page=5`, `#investor-relations`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected merged page pagination to contain %q, got %s", want, body)
+		}
+	}
+}
+
+func TestStockResearchPagePostTriggersInvestorRelationsBackfill(t *testing.T) {
+	var schedulerCalled bool
+	scheduler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		schedulerCalled = true
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/scheduler/investor-relations/backfill" {
+			t.Fatalf("unexpected scheduler request: %s %s", r.Method, r.URL.String())
+		}
+		if r.URL.Query().Get("code") != "300250" || r.URL.Query().Get("start") == "" || r.URL.Query().Get("end") == "" {
+			t.Fatalf("unexpected investor relations scheduler query: %s", r.URL.RawQuery)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{"status": "triggered"}})
+	}))
+	defer scheduler.Close()
+
+	srv := NewServer(config.Config{SchedulerURL: scheduler.URL, ServiceToken: "secret-token"})
+	req := httptest.NewRequest(http.MethodPost, "/stock-research", strings.NewReader("scope=investor_relations&action=backfill_year&ir_code=300250"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	srv.handleStockResearchPage(rr, req, map[string]any{"id": 1})
+	if !schedulerCalled {
+		t.Fatal("expected investor relations scheduler backfill to be called")
+	}
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect after investor relations backfill, got %d", rr.Code)
+	}
+	loc, _ := url.QueryUnescape(rr.Header().Get("Location"))
+	for _, want := range []string{"/stock-research?", "ir_code=300250", "ir_page=1", "#investor-relations", "抓取和 PDF 解析任务已触发"} {
+		if !strings.Contains(loc, want) {
+			t.Fatalf("expected redirect to keep investor relations filters and message %q, got %q", want, loc)
 		}
 	}
 }

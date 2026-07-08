@@ -38,6 +38,14 @@ func TestStockResearchPageRequestsTwentyItemsPerPage(t *testing.T) {
 		if r.URL.Path != "/api/v1/stock-research" {
 			t.Fatalf("unexpected stock research content path: %s", r.URL.String())
 		}
+		if r.URL.Query().Get("source") == investorRelationsSourceType {
+			if r.URL.Query().Get("kind") != "survey" || r.URL.Query().Get("page") != "1" || r.URL.Query().Get("page_size") != "20" {
+				t.Fatalf("unexpected investor relations query: %s", r.URL.RawQuery)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockResearchListResult{Page: 1, PageSize: stockResearchPageSize}})
+			return
+		}
 		if r.URL.Query().Get("page") != "3" || r.URL.Query().Get("page_size") != "20" {
 			t.Fatalf("expected portal to request page 3 with page_size=20, got %s", r.URL.RawQuery)
 		}
@@ -74,6 +82,11 @@ func TestStockResearchPageUsesPortalPDFLinks(t *testing.T) {
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/stock-research" {
 			t.Fatalf("unexpected stock research content path: %s", r.URL.String())
+		}
+		if r.URL.Query().Get("source") == investorRelationsSourceType {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockResearchListResult{Page: 1, PageSize: stockResearchPageSize}})
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
