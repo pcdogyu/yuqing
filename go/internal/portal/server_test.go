@@ -7995,7 +7995,7 @@ func aStockTestRecommendationsByCode(recommendations []aStockRecommendation) map
 	return result
 }
 
-func TestAStockRecommendationsBlockEastmoneyAndBankStocks(t *testing.T) {
+func TestAStockRecommendationsAllowBankStocksButBlockEastmoney(t *testing.T) {
 	recommendations := buildAStockRecommendations([]aStockHotspot{
 		{
 			Name:     "金融券商",
@@ -8013,16 +8013,40 @@ func TestAStockRecommendationsBlockEastmoneyAndBankStocks(t *testing.T) {
 		{Code: "000001", Name: "平安银行", Rank: 4, AuctionAmount: 6000000},
 	})
 
-	if len(recommendations) != 1 {
-		t.Fatalf("expected only non-bank non-Eastmoney finance recommendation, got %+v", recommendations)
+	if len(recommendations) != 2 {
+		t.Fatalf("expected bank stocks to be allowed and 东方财富 to be blocked, got %+v", recommendations)
 	}
-	if recommendations[0].Code != "600030" || recommendations[0].Rank != 1 {
-		t.Fatalf("expected 中信证券 to remain reranked first, got %+v", recommendations)
+	got := aStockTestRecommendationsByCode(recommendations)
+	for _, wantCode := range []string{"600036", "600030"} {
+		if _, ok := got[wantCode]; !ok {
+			t.Fatalf("expected allowed finance recommendation %s, got %+v", wantCode, recommendations)
+		}
 	}
 	for _, rec := range recommendations {
-		if rec.Code == "300059" || strings.Contains(rec.Name, "银行") {
-			t.Fatalf("expected 东方财富 and bank stocks to be blocked, got %+v", recommendations)
+		if rec.Code == "300059" {
+			t.Fatalf("expected 东方财富 to remain blocked, got %+v", recommendations)
 		}
+		if rec.Rank < 1 || rec.Rank > len(recommendations) {
+			t.Fatalf("expected recommendations to be reranked, got %+v", recommendations)
+		}
+	}
+
+	newsDerived := buildAStockRecommendationsWithLimit([]aStockHotspot{
+		{
+			Name:     "金融券商",
+			Keywords: []string{"证券", "银行", "资本市场"},
+			Score:    245,
+			Evidence: 2,
+			MatchedItems: []model.Item{
+				{SourceType: "flash", Title: "平安银行资本市场业务获关注", Summary: "银行与证券板块活跃", RawPayload: `{"stock_list":[{"StockID":"000001","name":"平安银行"}]}`},
+			},
+		},
+	}, []aStockMarketCandidate{
+		{Code: "000001", Name: "平安银行", Rank: 4, AuctionAmount: 6000000},
+	}, aStockReplacementPoolLimit, aStockReplacementPerHotspot)
+	newsGot := aStockTestRecommendationsByCode(newsDerived)
+	if _, ok := newsGot["000001"]; !ok {
+		t.Fatalf("expected news-derived bank stock 平安银行 to be allowed, got %+v", newsDerived)
 	}
 }
 
@@ -8060,7 +8084,7 @@ func TestAStockRecommendationsFilterInvalidCodesAndUnresolvedNames(t *testing.T)
 	}
 }
 
-func TestAStockPersistedRecommendationsBlockEastmoneyAndBankStocks(t *testing.T) {
+func TestAStockPersistedRecommendationsAllowBankStocksButBlockEastmoney(t *testing.T) {
 	recommendations := aStockRecommendationSelectionsToRecommendations([]model.AStockRecommendationSelection{
 		{Rank: 1, Code: "300059", Name: "东方财富", Hotspot: "金融券商"},
 		{Rank: 2, Code: "600036", Name: "招商银行", Hotspot: "金融券商"},
@@ -8072,7 +8096,7 @@ func TestAStockPersistedRecommendationsBlockEastmoneyAndBankStocks(t *testing.T)
 		t.Fatalf("expected persisted selections to convert before filtering, got %+v", recommendations)
 	}
 	filtered, skipped := filterBlockedAStockRecommendations(recommendations)
-	if skipped != 3 || len(filtered) != 1 || filtered[0].Code != "600030" || filtered[0].Rank != 1 {
+	if skipped != 1 || len(filtered) != 3 || filtered[0].Code != "600036" || filtered[0].Rank != 1 || filtered[2].Code != "000001" || filtered[2].Rank != 3 {
 		t.Fatalf("expected filtered persisted recommendation to rerank, skipped=%d filtered=%+v", skipped, filtered)
 	}
 	backtests := filterBlockedAStockBacktests([]aStockBacktestRow{
@@ -8080,8 +8104,8 @@ func TestAStockPersistedRecommendationsBlockEastmoneyAndBankStocks(t *testing.T)
 		{Stock: "600036 招商银行"},
 		{Stock: "600030 中信证券"},
 	})
-	if len(backtests) != 1 || !strings.Contains(backtests[0].Stock, "600030") {
-		t.Fatalf("expected persisted backtests to drop blocked stocks, got %+v", backtests)
+	if len(backtests) != 2 || !strings.Contains(backtests[0].Stock, "600036") || !strings.Contains(backtests[1].Stock, "600030") {
+		t.Fatalf("expected persisted backtests to drop only blocked stocks, got %+v", backtests)
 	}
 }
 
@@ -8307,7 +8331,7 @@ func TestAStockSnapshotSaveRepairsNamesFromEastmoneyQuote(t *testing.T) {
 	}
 }
 
-func TestAStockHotspotTopStocksBlockEastmoneyAndBankStocks(t *testing.T) {
+func TestAStockHotspotTopStocksAllowBankStocksButBlockEastmoney(t *testing.T) {
 	hotspot := aStockHotspot{Name: "金融券商", Keywords: []string{"证券", "银行"}, Score: 100, Evidence: 1}
 
 	stocks := buildAStockHotspotTopStocks(hotspot, []aStockMarketCandidate{
@@ -8317,8 +8341,8 @@ func TestAStockHotspotTopStocksBlockEastmoneyAndBankStocks(t *testing.T) {
 		{Code: "000001", Name: "平安银行", Rank: 4, AuctionAmount: 6000000},
 	}, 3)
 
-	if len(stocks) != 1 || stocks[0].Code != "600030" || stocks[0].Rank != 1 {
-		t.Fatalf("expected hotspot top stocks to block 东方财富 and banks, got %+v", stocks)
+	if len(stocks) != 3 || stocks[0].Code != "600036" || stocks[1].Code != "600030" || stocks[2].Code != "000001" {
+		t.Fatalf("expected hotspot top stocks to allow banks and block 东方财富, got %+v", stocks)
 	}
 }
 
@@ -8517,8 +8541,8 @@ func TestAStockRecommendationsExcludeFullMarketCandidateOutsideFixedPool(t *test
 		{Code: "601688", Name: "华泰证券", Rank: 320, AuctionAmount: 1200000, AuctionVolume: 50000},
 	})
 
-	if len(recommendations) != 1 {
-		t.Fatalf("expected fixed finance stock pool to exclude 东方财富 and banks, got %+v", recommendations)
+	if len(recommendations) != 2 {
+		t.Fatalf("expected fixed finance stock pool to exclude 东方财富 and allow banks, got %+v", recommendations)
 	}
 	got := map[string]string{}
 	for _, rec := range recommendations {
@@ -8530,10 +8554,11 @@ func TestAStockRecommendationsExcludeFullMarketCandidateOutsideFixedPool(t *test
 	if got["600030"] != "中信证券" {
 		t.Fatalf("expected non-bank fixed finance stock 中信证券, got %+v", recommendations)
 	}
-	for _, blockedCode := range []string{"300059", "600036"} {
-		if _, ok := got[blockedCode]; ok {
-			t.Fatalf("expected blocked fixed finance stock %s to be excluded, got %+v", blockedCode, recommendations)
-		}
+	if got["600036"] != "招商银行" {
+		t.Fatalf("expected bank fixed finance stock 招商银行, got %+v", recommendations)
+	}
+	if _, ok := got["300059"]; ok {
+		t.Fatalf("expected 东方财富 to remain excluded, got %+v", recommendations)
 	}
 }
 
@@ -8591,11 +8616,12 @@ func TestAStockContextFallsBackToLatestAuctionDictionary(t *testing.T) {
 	srv := NewServer(config.Config{ContentURL: content.URL, SchedulerURL: scheduler.URL})
 	ctx := srv.loadAStockContext("2026-06-17", "morning", 1, true)
 
-	if len(ctx.Recommendations) != 1 {
+	if len(ctx.Recommendations) != 2 {
 		t.Fatalf("expected latest auction dictionary to produce recommendation, got %+v empty=%q", ctx.Recommendations, ctx.EmptyReason)
 	}
-	if ctx.Recommendations[0].Code != "600030" || ctx.Recommendations[0].Name != "中信证券" {
-		t.Fatalf("unexpected latest dictionary recommendation: %+v", ctx.Recommendations[0])
+	got := aStockTestRecommendationsByCode(ctx.Recommendations)
+	if got["600036"].Name != "招商银行" || got["600030"].Name != "中信证券" {
+		t.Fatalf("unexpected latest dictionary recommendations: %+v", ctx.Recommendations)
 	}
 	if len(auctionQueries) < 2 || !strings.Contains(auctionQueries[0], "date=2026-06-17") || strings.Contains(auctionQueries[1], "date=") {
 		t.Fatalf("expected date-specific auction lookup then latest fallback, got %v", auctionQueries)

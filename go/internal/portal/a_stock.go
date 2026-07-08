@@ -415,14 +415,6 @@ var (
 	}
 )
 
-var aStockBlockedRecommendationBankCodes = map[string]struct{}{
-	"000001": {}, "001227": {}, "002142": {}, "002807": {}, "002839": {}, "002936": {}, "002948": {}, "002958": {}, "002966": {},
-	"600000": {}, "600015": {}, "600016": {}, "600036": {}, "600908": {}, "600919": {}, "600926": {}, "600928": {},
-	"601009": {}, "601077": {}, "601128": {}, "601166": {}, "601169": {}, "601187": {}, "601229": {}, "601288": {}, "601328": {},
-	"601398": {}, "601528": {}, "601577": {}, "601658": {}, "601665": {}, "601818": {}, "601825": {}, "601838": {}, "601860": {},
-	"601916": {}, "601939": {}, "601963": {}, "601988": {}, "601997": {}, "601998": {}, "603323": {},
-}
-
 func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user any) {
 	if r.Method == http.MethodPost {
 		s.handleAStockPageAction(w, r, "/a-stock")
@@ -8217,10 +8209,7 @@ func isBlockedAStockRecommendationStock(code string, name string) bool {
 	if code == "300059" {
 		return true
 	}
-	if _, ok := aStockBlockedRecommendationBankCodes[code]; ok {
-		return true
-	}
-	return strings.Contains(name, "银行")
+	return false
 }
 
 func newsDerivedAStockMarketCandidates(hotspots []aStockHotspot) []aStockMarketCandidate {
