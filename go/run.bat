@@ -160,8 +160,8 @@ if "%SKIP_PULL%"=="1" (
         if not "!YUQING_HEAD_BEFORE!"=="!YUQING_HEAD_AFTER!" (
             echo Repository updated. Restarting run.bat with the refreshed worktree...
         ) else (
-            echo Already up to date. Upgrade finished without rebuilding or restarting services.
-            exit /b 0
+            call :ensure_services_after_up_to_date
+            exit /b !ERRORLEVEL!
         )
     )
     cmd /c ""%GO_DIR%\run.bat" --skip-pull"
@@ -267,6 +267,41 @@ exit /b 0
 :print_service_status
 powershell -NoProfile -ExecutionPolicy Bypass -File "%GO_DIR%\scripts\service-status.ps1" -LogDir "%LOG_DIR%"
 exit /b %ERRORLEVEL%
+
+:ensure_services_after_up_to_date
+cd /d "%GO_DIR%"
+if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
+echo Already up to date. Checking service status before finishing...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%GO_DIR%\scripts\service-status.ps1" -LogDir "%LOG_DIR%" -FailOnMissing
+set "SERVICE_CHECK_EXIT=%ERRORLEVEL%"
+if "%SERVICE_CHECK_EXIT%"=="0" (
+    echo All services are already listening. Upgrade finished without rebuilding or restarting services.
+    exit /b 0
+)
+if not "%SERVICE_CHECK_EXIT%"=="2" (
+    echo Service status check failed with exit code %SERVICE_CHECK_EXIT%.
+    exit /b %SERVICE_CHECK_EXIT%
+)
+echo One or more services are not listening. Calling scripts\start-all.ps1...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%GO_DIR%\scripts\start-all.ps1" -Root "%GO_DIR%"
+if errorlevel 1 (
+    echo start-all.ps1 failed with exit code %ERRORLEVEL%.
+    exit /b %ERRORLEVEL%
+)
+for /L %%I in (1,1,15) do (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%GO_DIR%\scripts\service-status.ps1" -LogDir "%LOG_DIR%" -FailOnMissing >nul
+    if not errorlevel 1 (
+        echo All services are listening after start-all.ps1.
+        echo Service status after start-all.ps1:
+        call :print_service_status
+        exit /b !ERRORLEVEL!
+    )
+    timeout /t 2 /nobreak >nul
+)
+echo Service status after start-all.ps1:
+call :print_service_status
+echo One or more services are still not listening after start-all.ps1.
+exit /b 1
 
 :restart_services_only
 cd /d "%GO_DIR%"

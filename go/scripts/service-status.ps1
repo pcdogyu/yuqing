@@ -1,5 +1,6 @@
 param(
-    [string]$LogDir = ""
+    [string]$LogDir = "",
+    [switch]$FailOnMissing
 )
 
 $ErrorActionPreference = "Stop"
@@ -100,4 +101,9 @@ $rows = foreach ($service in $services) {
     }
 }
 
-$rows | Sort-Object Port | Format-Table -AutoSize
+$sortedRows = @($rows | Sort-Object Port)
+$sortedRows | Format-Table -AutoSize
+
+if ($FailOnMissing -and @($sortedRows | Where-Object { $_.Listening -ne "YES" }).Count -gt 0) {
+    exit 2
+}

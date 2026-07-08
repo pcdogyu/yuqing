@@ -36,21 +36,35 @@ if (-not $env:YUQING_GATEWAY_HTTP_ADDRS) {
 }
 
 $services = @(
-    @{ Name = "auth-service"; Path = ".\cmd\auth-service" },
-    @{ Name = "wechat-service"; Path = ".\cmd\wechat-service" },
-    @{ Name = "content-service"; Path = ".\cmd\content-service" },
-    @{ Name = "crawler-service"; Path = ".\cmd\crawler-service" },
-    @{ Name = "analysis-service"; Path = ".\cmd\analysis-service" },
-    @{ Name = "nlp-service"; Path = ".\cmd\nlp-service" },
-    @{ Name = "scheduler-service"; Path = ".\cmd\scheduler-service" },
-    @{ Name = "release-service"; Path = ".\cmd\release-service" },
-    @{ Name = "gateway-web"; Path = ".\cmd\gateway-web" }
+    @{ Name = "auth-service"; Path = ".\cmd\auth-service"; Ports = @(8081) },
+    @{ Name = "wechat-service"; Path = ".\cmd\wechat-service"; Ports = @(8088) },
+    @{ Name = "content-service"; Path = ".\cmd\content-service"; Ports = @(8082) },
+    @{ Name = "crawler-service"; Path = ".\cmd\crawler-service"; Ports = @(8083) },
+    @{ Name = "analysis-service"; Path = ".\cmd\analysis-service"; Ports = @(8084) },
+    @{ Name = "nlp-service"; Path = ".\cmd\nlp-service"; Ports = @(8085) },
+    @{ Name = "scheduler-service"; Path = ".\cmd\scheduler-service"; Ports = @(8086) },
+    @{ Name = "release-service"; Path = ".\cmd\release-service"; Ports = @(8099) },
+    @{ Name = "gateway-web"; Path = ".\cmd\gateway-web"; Ports = @(8079) }
 )
+
+function Test-ServiceListening($service) {
+    $listeners = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue)
+    foreach ($port in $service.Ports) {
+        if (@($listeners | Where-Object { $_.LocalPort -eq $port }).Count -gt 0) {
+            return $true
+        }
+    }
+    return $false
+}
 
 $pidDir = Join-Path $Root "runtime-pids"
 New-Item -ItemType Directory -Force -Path $pidDir | Out-Null
 
 foreach ($service in $services) {
+    if (Test-ServiceListening $service) {
+        Write-Host "$($service.Name) already listening"
+        continue
+    }
     $pidFile = Join-Path $pidDir ($service.Name + ".pid")
     if (Test-Path $pidFile) {
         $oldPid = Get-Content $pidFile -ErrorAction SilentlyContinue
