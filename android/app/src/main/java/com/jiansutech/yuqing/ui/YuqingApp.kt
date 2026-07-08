@@ -56,6 +56,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -63,6 +64,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -99,6 +101,7 @@ import com.jiansutech.yuqing.data.ServiceStatus
 import com.jiansutech.yuqing.data.StockHolding
 import com.jiansutech.yuqing.data.StockResearch
 import com.jiansutech.yuqing.data.TaskRun
+import kotlinx.coroutines.delay
 import kotlinx.serialization.decodeFromString
 import java.time.DayOfWeek
 import java.time.LocalDate
@@ -132,6 +135,14 @@ private fun PortalScreen(
     var backtestDetail by remember { mutableStateOf<AStockBacktestDetailState?>(null) }
     var lastArticleTabClickAt by remember { mutableStateOf(0L) }
     var bottomNavSecretTapState by remember { mutableStateOf(BottomNavSecretTapState()) }
+    var bottomNavLockedUntil by remember { mutableStateOf(0L) }
+    LaunchedEffect(bottomNavLockedUntil) {
+        val remaining = bottomNavLockedUntil - SystemClock.elapsedRealtime()
+        if (remaining > 0) {
+            delay(remaining)
+            bottomNavLockedUntil = 0L
+        }
+    }
     val detail = backtestDetail
     val articleDetail = state.articleDetail
     val stockResearchDetail = state.stockResearchDetail
@@ -205,7 +216,8 @@ private fun PortalScreen(
         },
         bottomBar = {
             if (detail == null && articleDetail == null && stockResearchDetail == null) {
-                NavigationBar {
+                val bottomNavLocked = isBottomNavLocked(bottomNavLockedUntil, SystemClock.elapsedRealtime())
+                NavigationBar(modifier = Modifier.alpha(bottomNavAlpha(bottomNavLocked))) {
                     bottomNavigationKeys.forEach { key ->
                         val module = modules.firstOrNull { it.key == key }
                             ?: fallback.firstOrNull { it.key == key }
@@ -213,20 +225,24 @@ private fun PortalScreen(
                         val navTitle = bottomNavigationTitle(key, module.title)
                         NavigationBarItem(
                             selected = selected.key == key,
+                            enabled = !bottomNavLocked,
                             onClick = {
                                 val now = SystemClock.elapsedRealtime()
-                                val secretTap = nextBottomNavSecretTapState(bottomNavSecretTapState, key, now)
-                                bottomNavSecretTapState = secretTap.state
-                                if (secretTap.unlocked) {
-                                    viewModel.selectModule("system")
-                                } else {
-                                    if (isArticleTabDoubleClick(key, selected.key, lastArticleTabClickAt, now)) {
-                                        viewModel.forceRefreshArticles()
+                                if (!isBottomNavLocked(bottomNavLockedUntil, now)) {
+                                    val secretTap = nextBottomNavSecretTapState(bottomNavSecretTapState, key, now)
+                                    bottomNavSecretTapState = secretTap.state
+                                    if (secretTap.unlocked) {
+                                        bottomNavLockedUntil = bottomNavLockUntilAfterSystemUnlock(now)
+                                        viewModel.selectModule("system")
                                     } else {
-                                        viewModel.selectModule(key)
-                                    }
-                                    if (key == "articles") {
-                                        lastArticleTabClickAt = now
+                                        if (isArticleTabDoubleClick(key, selected.key, lastArticleTabClickAt, now)) {
+                                            viewModel.forceRefreshArticles()
+                                        } else {
+                                            viewModel.selectModule(key)
+                                        }
+                                        if (key == "articles") {
+                                            lastArticleTabClickAt = now
+                                        }
                                     }
                                 }
                             },
@@ -309,6 +325,7 @@ private fun PortalScreen(
 internal const val ARTICLE_TAB_DOUBLE_CLICK_MS = 400L
 internal const val BOTTOM_NAV_SYSTEM_UNLOCK_TAPS = 10
 internal const val BOTTOM_NAV_SYSTEM_UNLOCK_WINDOW_MS = 5_000L
+internal const val BOTTOM_NAV_SYSTEM_LOCK_MS = 3_000L
 
 private val bottomNavigationKeys = listOf("dashboard", "articles", "a_stock", "stock_research", "auction")
 private val bottomNavigationTitles = mapOf(
@@ -367,6 +384,15 @@ internal fun nextBottomNavSecretTapState(
         false,
     )
 }
+
+internal fun bottomNavLockUntilAfterSystemUnlock(
+    now: Long,
+    lockMillis: Long = BOTTOM_NAV_SYSTEM_LOCK_MS,
+): Long = now + lockMillis
+
+internal fun isBottomNavLocked(lockedUntil: Long, now: Long): Boolean = now < lockedUntil
+
+internal fun bottomNavAlpha(locked: Boolean): Float = if (locked) 0.38f else 1f
 
 @Composable
 private fun StatusMessages(state: YuqingUiState) {

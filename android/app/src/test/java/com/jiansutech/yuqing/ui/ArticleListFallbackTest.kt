@@ -73,6 +73,17 @@ class ArticleListFallbackTest {
     }
 
     @Test
+    fun bottomNavSystemLockLastsThreeSeconds() {
+        val lockedUntil = bottomNavLockUntilAfterSystemUnlock(now = 1_000L)
+
+        assertEquals(4_000L, lockedUntil)
+        assertEquals(true, isBottomNavLocked(lockedUntil, now = 3_999L))
+        assertEquals(false, isBottomNavLocked(lockedUntil, now = 4_000L))
+        assertEquals(0.38f, bottomNavAlpha(locked = true), 0.001f)
+        assertEquals(1f, bottomNavAlpha(locked = false), 0.001f)
+    }
+
+    @Test
     fun stockResearchDisplayDatePrefersResearchDateThenPublishDate() {
         assertEquals(
             "2026-07-08",
