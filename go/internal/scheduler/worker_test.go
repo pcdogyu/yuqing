@@ -257,6 +257,7 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 		t.Fatalf("expected 41 scheduler jobs, got %d", len(listEnvelope.Data))
 	}
 	var heartbeatJob, hotJob, eastmoneyJob, jin10FullJob, wallStreetCNJob, clsJob, sinaJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningNewsCrawlJob, aStockMorningPreviewJob, aStockMorningJob, aStockAfternoonPreviewJob, aStockMiddayNewsCrawlJob, aStockAfternoonJob, aStockAfternoonOpenRefreshJob, aStockDailyBacktestRefreshJob, aStockAuctionJob, aStockSectorFundFlowJob, aStockHoldingsJob, stockResearchJob, investorRelationsJob Job
+	aStockSectorFundFlowJobCount := 0
 	for _, job := range listEnvelope.Data {
 		switch job.Name {
 		case "crawl-link-heartbeat":
@@ -304,6 +305,7 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 		case "a-stock-auction-crawl":
 			aStockAuctionJob = job
 		case "a-stock-sector-fund-flow-crawl":
+			aStockSectorFundFlowJobCount++
 			aStockSectorFundFlowJob = job
 		case "a-stock-holdings-crawl":
 			aStockHoldingsJob = job
@@ -373,8 +375,11 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	if aStockAuctionJob.Cron != "0 26 9 * * ?" || aStockAuctionJob.Enabled {
 		t.Fatalf("expected A股 auction crawl disabled by default with 09:26 cron, got %+v", aStockAuctionJob)
 	}
-	if aStockSectorFundFlowJob.Cron != "0 0/5 9-15 * * ?" || aStockSectorFundFlowJob.Enabled {
-		t.Fatalf("expected A股 sector fund flow crawl disabled by default with 5 minute trading cron, got %+v", aStockSectorFundFlowJob)
+	if aStockSectorFundFlowJobCount != 1 {
+		t.Fatalf("expected one A股 sector fund flow job, got %d", aStockSectorFundFlowJobCount)
+	}
+	if aStockSectorFundFlowJob.Cron != "0 31 9 * * ?; 0 1 10-15 * * ?" || aStockSectorFundFlowJob.IntervalSec != 3600 || aStockSectorFundFlowJob.Enabled {
+		t.Fatalf("expected A股 sector fund flow crawl disabled by default with reduced cron metadata, got %+v", aStockSectorFundFlowJob)
 	}
 	if aStockHoldingsJob.Cron != "0 35 2 * * ?" || aStockHoldingsJob.Enabled {
 		t.Fatalf("expected A股 holdings crawl disabled by default with 02:35 cron, got %+v", aStockHoldingsJob)
@@ -2556,6 +2561,32 @@ func TestSchedulerAStockAuctionJobEnabledWhenEndpointConfigured(t *testing.T) {
 	}
 }
 
+func TestSchedulerAStockSectorFundFlowJobEnabledWhenEndpointConfigured(t *testing.T) {
+	worker := NewWorker(config.Config{
+		HTTPTimeout:           time.Second,
+		AStockAuctionURL:      "http://127.0.0.1:8087",
+		FlashInterval:         time.Hour,
+		HeadlineInterval:      time.Hour,
+		AnalysisInterval:      time.Hour,
+		WechatCleanupInterval: time.Hour,
+		WechatPushInterval:    time.Hour,
+	})
+	var fundFlowJob Job
+	fundFlowJobCount := 0
+	for _, job := range worker.Jobs() {
+		if job.Name == "a-stock-sector-fund-flow-crawl" {
+			fundFlowJob = job
+			fundFlowJobCount++
+		}
+	}
+	if fundFlowJobCount != 1 {
+		t.Fatalf("expected one enabled A股 sector fund flow job, got %d", fundFlowJobCount)
+	}
+	if !fundFlowJob.Enabled || fundFlowJob.Cron != "0 31 9 * * ?; 0 1 10-15 * * ?" || fundFlowJob.IntervalSec != 3600 || fundFlowJob.NextRunAt == nil {
+		t.Fatalf("expected enabled A股 sector fund flow crawl with reduced cron metadata, got %+v", fundFlowJob)
+	}
+}
+
 func TestSchedulerAStockHoldingsJobEnabledWhenEndpointConfigured(t *testing.T) {
 	worker := NewWorker(config.Config{
 		HTTPTimeout:           time.Second,
@@ -2613,6 +2644,43 @@ func TestSchedulerCronNextRunAndEnvOverrides(t *testing.T) {
 	}
 	if analysis.Cron != "0 30 9 * * ?" || analysis.NextRunAt == nil {
 		t.Fatalf("expected analysis cron override and next run, got %+v", analysis)
+	}
+}
+
+func TestSchedulerCronNextRunUsesSoonestMultiCronSpec(t *testing.T) {
+	shanghai, _ := time.LoadLocation("Asia/Shanghai")
+	spec := "0 31 9 * * ?; 0 1 10-15 * * ?"
+	tests := []struct {
+		name string
+		from time.Time
+		want string
+	}{
+		{
+			name: "before first run",
+			from: time.Date(2026, 6, 12, 9, 30, 0, 0, shanghai),
+			want: "2026-06-12 09:31:00",
+		},
+		{
+			name: "after first run",
+			from: time.Date(2026, 6, 12, 9, 31, 0, 0, shanghai),
+			want: "2026-06-12 10:01:00",
+		},
+		{
+			name: "after final run",
+			from: time.Date(2026, 6, 12, 15, 2, 0, 0, shanghai),
+			want: "2026-06-13 09:31:00",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			next, err := nextCronRun(spec, tc.from)
+			if err != nil {
+				t.Fatalf("nextCronRun error: %v", err)
+			}
+			if got := next.In(shanghai).Format("2006-01-02 15:04:05"); got != tc.want {
+				t.Fatalf("expected next run %s Asia/Shanghai, got %s", tc.want, got)
+			}
+		})
 	}
 }
 

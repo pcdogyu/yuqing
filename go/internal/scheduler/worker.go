@@ -75,15 +75,23 @@ func (w *Worker) Run(ctx context.Context) {
 			continue
 		}
 		current := job
-		if _, err := runner.AddFunc(quartzCronSpec(current.Cron), func() {
-			if err := w.runJob(ctx, current); err != nil {
-				log.Error().Err(err).Str("task", current.Name).Msg("scheduler cron task failed")
+		registered := false
+		for _, cronSpec := range cronSpecParts(current.Cron) {
+			currentCron := cronSpec
+			if _, err := runner.AddFunc(quartzCronSpec(currentCron), func() {
+				if err := w.runJob(ctx, current); err != nil {
+					log.Error().Err(err).Str("task", current.Name).Str("cron", currentCron).Msg("scheduler cron task failed")
+				}
+			}); err != nil {
+				log.Error().Err(err).Str("service", "scheduler-service").Str("task", current.Name).Str("cron", currentCron).Msg("scheduler cron registration failed")
+				continue
 			}
-		}); err != nil {
-			log.Error().Err(err).Str("service", "scheduler-service").Str("task", current.Name).Str("cron", current.Cron).Msg("scheduler cron registration failed")
+			registered = true
+			log.Info().Str("service", "scheduler-service").Str("task", current.Name).Str("cron", currentCron).Msg("scheduler cron task registered")
+		}
+		if !registered {
 			continue
 		}
-		log.Info().Str("service", "scheduler-service").Str("task", current.Name).Str("cron", current.Cron).Msg("scheduler cron task registered")
 	}
 	runner.Start()
 	log.Info().Str("service", "scheduler-service").Msg("scheduler service ready")

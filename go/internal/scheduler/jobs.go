@@ -119,7 +119,7 @@ func withJobMeta(def jobDefinition, javaQuartzName, cron string) jobDefinition {
 	def.JavaQuartzName = javaQuartzName
 	def.Cron = cron
 	if override := schedulerEnv(def.Name, "CRON", ""); override != "" {
-		if _, err := parseCronSchedule(override); err != nil {
+		if _, err := parseCronSchedules(override); err != nil {
 			log.Warn().
 				Err(err).
 				Str("service", "scheduler-service").
@@ -185,15 +185,51 @@ func nextCronRun(spec string, from time.Time) (time.Time, error) {
 	if err != nil {
 		location = time.Local
 	}
-	schedule, err := parseCronSchedule(spec)
+	schedules, err := parseCronSchedules(spec)
 	if err != nil {
 		return time.Time{}, err
 	}
-	return schedule.Next(from.In(location)).UTC(), nil
+	localFrom := from.In(location)
+	var next time.Time
+	for _, schedule := range schedules {
+		candidate := schedule.Next(localFrom)
+		if next.IsZero() || candidate.Before(next) {
+			next = candidate
+		}
+	}
+	return next.UTC(), nil
 }
 
 func parseCronSchedule(spec string) (cron.Schedule, error) {
 	return cronParser().Parse(quartzCronSpec(spec))
+}
+
+func parseCronSchedules(spec string) ([]cron.Schedule, error) {
+	parts := cronSpecParts(spec)
+	if len(parts) == 0 {
+		return nil, errors.New("empty cron spec")
+	}
+	schedules := make([]cron.Schedule, 0, len(parts))
+	for _, part := range parts {
+		schedule, err := parseCronSchedule(part)
+		if err != nil {
+			return nil, err
+		}
+		schedules = append(schedules, schedule)
+	}
+	return schedules, nil
+}
+
+func cronSpecParts(spec string) []string {
+	rawParts := strings.Split(spec, ";")
+	parts := make([]string, 0, len(rawParts))
+	for _, raw := range rawParts {
+		part := strings.TrimSpace(raw)
+		if part != "" {
+			parts = append(parts, part)
+		}
+	}
+	return parts
 }
 
 func (w *Worker) jobDefinitions() []jobDefinition {
@@ -429,13 +465,13 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 		withJobMeta(jobDefinition{
 			Name:        "a-stock-sector-fund-flow-crawl",
 			Group:       "a-stock",
-			Description: "A股版块/个股资金：交易时段每 5 分钟按东方财富、同花顺、新浪抓取资金流并聚合",
-			Interval:    5 * time.Minute,
+			Description: "A股版块/个股资金：09:31、10:01、11:01、12:01、13:01、14:01、15:01 抓取资金流并聚合",
+			Interval:    time.Hour,
 			Enabled:     strings.TrimSpace(w.cfg.AStockAuctionURL) != "",
 			Run: func(ctx context.Context) error {
 				return w.runAStockSectorFundFlowCrawl(ctx)
 			},
-		}, "AStockSectorFundFlowCrawl", "0 0/5 9-15 * * ?"),
+		}, "AStockSectorFundFlowCrawl", "0 31 9 * * ?; 0 1 10-15 * * ?"),
 		withJobMeta(jobDefinition{
 			Name:        "stock-research-crawl",
 			Group:       "a-stock",
