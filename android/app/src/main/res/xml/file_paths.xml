@@ -3,4 +3,10 @@
     <cache-path
         name="updates"
         path="updates/" />
+    <external-files-path
+        name="stock_research_pdfs"
+        path="Documents/stock-research/" />
+    <files-path
+        name="stock_research_pdf_files"
+        path="stock-research/" />
 </paths>

@@ -1,10 +1,19 @@
 package com.jiansutech.yuqing.ui
 
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.pdf.PdfRenderer
+import android.net.Uri
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
@@ -64,6 +73,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -73,6 +83,8 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.SpanStyle
@@ -103,7 +115,10 @@ import com.jiansutech.yuqing.data.StockHolding
 import com.jiansutech.yuqing.data.StockResearch
 import com.jiansutech.yuqing.data.TaskRun
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.decodeFromString
+import java.io.File
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.ZoneId
@@ -298,6 +313,11 @@ private fun PortalScreen(
                     item = stockResearchDetail,
                     loading = state.stockResearchDetailLoading,
                     error = state.stockResearchDetailError,
+                    pdfState = state.stockResearchPdf,
+                    onDownloadPdf = { viewModel.downloadStockResearchPdf(force = false) },
+                    onRedownloadPdf = { viewModel.downloadStockResearchPdf(force = true) },
+                    onPdfPageSelected = viewModel::selectStockResearchPdfPage,
+                    onPdfError = viewModel::reportStockResearchPdfError,
                 )
             } else {
                 ModuleContent(
@@ -763,6 +783,9 @@ private fun AStockAuctionModule(result: AStockAuctionListResult, viewModel: Yuqi
 @Composable
 private fun StockResearchModule(state: YuqingUiState, viewModel: YuqingViewModel) {
     val items = state.stockResearch.items
+    val page = state.stockResearch.page.coerceAtLeast(1)
+    val pageSize = state.stockResearch.pageSize.takeIf { it > 0 } ?: STOCK_RESEARCH_PAGE_SIZE
+    val totalPages = stockResearchTotalPages(state.stockResearch.total, pageSize)
     LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (state.stockResearchLoading) {
             item {
@@ -783,13 +806,28 @@ private fun StockResearchModule(state: YuqingUiState, viewModel: YuqingViewModel
         items(items) { item ->
             StockResearchRow(item, onOpenDetail = { viewModel.openStockResearchDetail(item) })
         }
+        if (totalPages > 1 || state.stockResearch.total > 0) {
+            item {
+                StockResearchPagination(
+                    page = page,
+                    totalPages = totalPages,
+                    loading = state.stockResearchLoading,
+                    onPrevious = { viewModel.loadStockResearch(page - 1) },
+                    onNext = { viewModel.loadStockResearch(page + 1) },
+                )
+            }
+        }
     }
 }
 
 @Composable
 private fun StockResearchRow(item: StockResearch, onOpenDetail: () -> Unit) {
     val date = stockResearchDisplayDate(item)
-    Card {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onOpenDetail),
+    ) {
         Column(Modifier.fillMaxWidth().padding(12.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -798,7 +836,7 @@ private fun StockResearchRow(item: StockResearch, onOpenDetail: () -> Unit) {
             ) {
                 Text(
                     stockResearchStockLabel(item),
-                    modifier = Modifier.weight(1f).clickable(onClick = onOpenDetail),
+                    modifier = Modifier.weight(1f),
                     color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
@@ -823,8 +861,45 @@ private fun StockResearchRow(item: StockResearch, onOpenDetail: () -> Unit) {
 }
 
 @Composable
-private fun StockResearchDetailScreen(item: StockResearch, loading: Boolean, error: String) {
+private fun StockResearchPagination(
+    page: Int,
+    totalPages: Int,
+    loading: Boolean,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        TextButton(onClick = onPrevious, enabled = !loading && page > 1) {
+            Text("上一页")
+        }
+        Text(
+            "第 $page / ${totalPages.coerceAtLeast(1)} 页",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        TextButton(onClick = onNext, enabled = !loading && page < totalPages) {
+            Text("下一页")
+        }
+    }
+}
+
+@Composable
+private fun StockResearchDetailScreen(
+    item: StockResearch,
+    loading: Boolean,
+    error: String,
+    pdfState: StockResearchPdfState,
+    onDownloadPdf: () -> Unit,
+    onRedownloadPdf: () -> Unit,
+    onPdfPageSelected: (Int) -> Unit,
+    onPdfError: (String) -> Unit,
+) {
     val uriHandler = LocalUriHandler.current
+    val context = LocalContext.current
     val body = stockResearchDetailBody(item)
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
@@ -892,6 +967,22 @@ private fun StockResearchDetailScreen(item: StockResearch, loading: Boolean, err
                 Text(body, style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace)
             }
         }
+        item {
+            StockResearchPdfSection(
+                item = item,
+                pdfState = pdfState,
+                onDownloadPdf = onDownloadPdf,
+                onRedownloadPdf = onRedownloadPdf,
+                onOpenLocalPdf = {
+                    openLocalStockResearchPdf(
+                        context = context,
+                        localUri = pdfState.localUri,
+                        onError = onPdfError,
+                    )
+                },
+                onPdfPageSelected = onPdfPageSelected,
+            )
+        }
         if (item.sourceUrl.isNotBlank() || item.pdfUrl.isNotBlank()) {
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -906,12 +997,189 @@ private fun StockResearchDetailScreen(item: StockResearch, loading: Boolean, err
                         TextButton(onClick = { runCatching { uriHandler.openUri(item.pdfUrl) } }) {
                             Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null)
                             Spacer(Modifier.width(6.dp))
-                            Text("打开PDF")
+                            Text("在线打开PDF")
                         }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun StockResearchPdfSection(
+    item: StockResearch,
+    pdfState: StockResearchPdfState,
+    onDownloadPdf: () -> Unit,
+    onRedownloadPdf: () -> Unit,
+    onOpenLocalPdf: () -> Unit,
+    onPdfPageSelected: (Int) -> Unit,
+) {
+    Card {
+        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("PDF", fontWeight = FontWeight.SemiBold)
+            val status = listOf(
+                item.pdfStatus.trim(),
+                item.pdfFetchedAt.trim().takeIf { it.isNotBlank() }?.let { "抓取 $it" }.orEmpty(),
+            ).filter { it.isNotBlank() }.joinToString("  ")
+            if (status.isNotBlank()) {
+                Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (item.pdfError.isNotBlank()) {
+                Text(item.pdfError.trim(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
+            if (pdfState.message.isNotBlank()) {
+                Text(pdfState.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+            }
+            if (pdfState.error.isNotBlank()) {
+                Text(pdfState.error, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Button(
+                    onClick = onDownloadPdf,
+                    enabled = !pdfState.loading && !pdfState.hasLocalFile,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    if (pdfState.loading) {
+                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(6.dp))
+                    }
+                    Text(if (pdfState.hasLocalFile) "已下载" else "下载PDF")
+                }
+                if (pdfState.hasLocalFile) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        TextButton(onClick = onRedownloadPdf, enabled = !pdfState.loading) {
+                            Text("重新下载PDF")
+                        }
+                        TextButton(onClick = onOpenLocalPdf, enabled = !pdfState.loading) {
+                            Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("离线打开PDF")
+                        }
+                    }
+                }
+            }
+            if (pdfState.hasLocalFile) {
+                StockResearchPdfPreview(
+                    localPath = pdfState.localPath,
+                    pageIndex = pdfState.pageIndex,
+                    onPageSelected = onPdfPageSelected,
+                )
+            } else {
+                Text("下载后可在本页预览，并可离线打开。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun StockResearchPdfPreview(
+    localPath: String,
+    pageIndex: Int,
+    onPageSelected: (Int) -> Unit,
+) {
+    var renderState by remember(localPath, pageIndex) { mutableStateOf(PdfRenderState(loading = true)) }
+    LaunchedEffect(localPath, pageIndex) {
+        renderState = PdfRenderState(loading = true)
+        renderState = withContext(Dispatchers.IO) {
+            renderPdfPage(localPath, pageIndex)
+        }
+    }
+    if (renderState.loading) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+            Text("正在生成PDF预览", style = MaterialTheme.typography.bodySmall)
+        }
+        return
+    }
+    if (renderState.error.isNotBlank()) {
+        Text(renderState.error, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        return
+    }
+    val bitmap = renderState.bitmap ?: return
+    val pageCount = renderState.pageCount.coerceAtLeast(1)
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Image(
+            bitmap = bitmap.asImageBitmap(),
+            contentDescription = "PDF预览",
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(bitmap.width.toFloat() / bitmap.height.toFloat()),
+            contentScale = ContentScale.FillWidth,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TextButton(onClick = { onPageSelected((pageIndex - 1).coerceAtLeast(0)) }, enabled = pageIndex > 0) {
+                Text("上一页")
+            }
+            Text("第 ${pageIndex + 1} / $pageCount 页", style = MaterialTheme.typography.bodySmall)
+            TextButton(onClick = { onPageSelected(pageIndex + 1) }, enabled = pageIndex + 1 < pageCount) {
+                Text("下一页")
+            }
+        }
+    }
+}
+
+private data class PdfRenderState(
+    val loading: Boolean = false,
+    val bitmap: Bitmap? = null,
+    val pageCount: Int = 0,
+    val error: String = "",
+)
+
+private fun renderPdfPage(localPath: String, requestedPageIndex: Int): PdfRenderState {
+    val file = File(localPath)
+    if (!file.isFile || file.length() <= 0L) {
+        return PdfRenderState(error = "本地PDF文件不存在")
+    }
+    return runCatching {
+        ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
+            PdfRenderer(descriptor).use { renderer ->
+                if (renderer.pageCount <= 0) {
+                    return PdfRenderState(error = "PDF没有可预览页面")
+                }
+                val pageIndex = requestedPageIndex.coerceIn(0, renderer.pageCount - 1)
+                renderer.openPage(pageIndex).use { page ->
+                    val width = 1080
+                    val height = (width.toFloat() / page.width.toFloat() * page.height.toFloat()).toInt().coerceAtLeast(1)
+                    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                    bitmap.eraseColor(android.graphics.Color.WHITE)
+                    page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    PdfRenderState(bitmap = bitmap, pageCount = renderer.pageCount)
+                }
+            }
+        }
+    }.getOrElse { throwable ->
+        PdfRenderState(error = throwable.message ?: "PDF预览失败")
+    }
+}
+
+private fun openLocalStockResearchPdf(
+    context: Context,
+    localUri: String,
+    onError: (String) -> Unit,
+) {
+    if (localUri.isBlank()) {
+        onError("本地PDF不存在，请先下载")
+        return
+    }
+    val intent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(Uri.parse(localUri), "application/pdf")
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    try {
+        context.startActivity(Intent.createChooser(intent, "打开PDF"))
+    } catch (_: ActivityNotFoundException) {
+        onError("手机未安装PDF阅读器")
+    } catch (throwable: RuntimeException) {
+        onError(throwable.message ?: "无法打开本地PDF")
     }
 }
 
@@ -1770,6 +2038,14 @@ internal fun stockResearchDisplayDate(item: StockResearch): String {
 
 internal fun stockResearchDetailBody(item: StockResearch): String =
     item.sourceText.trim().ifBlank { item.pdfText.trim().ifBlank { item.summary.trim() } }
+
+internal fun stockResearchTotalPages(total: Int, pageSize: Int): Int {
+    if (total <= 0) {
+        return 1
+    }
+    val safePageSize = pageSize.coerceAtLeast(1)
+    return ((total + safePageSize - 1) / safePageSize).coerceAtLeast(1)
+}
 
 internal fun stockResearchSourceLabel(item: StockResearch): String {
     val sourceType = item.sourceType.trim()

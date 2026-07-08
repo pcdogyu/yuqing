@@ -21,6 +21,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.jiansutech.yuqing.data.AppInstallStore
 import com.jiansutech.yuqing.data.ReleaseUpdater
 import com.jiansutech.yuqing.data.ReleaseUpgradePolicy
+import com.jiansutech.yuqing.data.StockResearchPdfDownloader
 import com.jiansutech.yuqing.data.isInstallRecordExpired
 import com.jiansutech.yuqing.ui.VersionUpgradeStatus
 import com.jiansutech.yuqing.ui.VersionUpgradeUiState
@@ -59,6 +60,7 @@ class MainActivity : ComponentActivity() {
                     app.sessionStore,
                     app.database.dashboardCacheDao(),
                     app.database.articleUserActionDao(),
+                    StockResearchPdfDownloader(applicationContext),
                 ),
             )
             val versionUpgrade by versionUpgradeState.collectAsState()

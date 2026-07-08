@@ -28,6 +28,7 @@ import com.jiansutech.yuqing.data.SearchResult
 import com.jiansutech.yuqing.data.SessionState
 import com.jiansutech.yuqing.data.SessionStore
 import com.jiansutech.yuqing.data.StockResearch
+import com.jiansutech.yuqing.data.StockResearchPdfDownloader
 import com.jiansutech.yuqing.data.StockResearchListResult
 import com.jiansutech.yuqing.data.YuqingApi
 import kotlinx.coroutines.delay
@@ -65,6 +66,18 @@ data class AStockRecommendationWindow(
     val windowLabel: String,
 )
 
+data class StockResearchPdfState(
+    val itemId: Long = 0,
+    val loading: Boolean = false,
+    val error: String = "",
+    val message: String = "",
+    val localPath: String = "",
+    val localUri: String = "",
+    val pageIndex: Int = 0,
+) {
+    val hasLocalFile: Boolean get() = localPath.isNotBlank() && localUri.isNotBlank()
+}
+
 private data class ArticleActionState(
     val readArticleIds: Set<Long>,
     val inactiveArticleIds: Set<Long>,
@@ -100,6 +113,7 @@ data class YuqingUiState(
     val stockResearchDetail: StockResearch? = null,
     val stockResearchDetailLoading: Boolean = false,
     val stockResearchDetailError: String = "",
+    val stockResearchPdf: StockResearchPdfState = StockResearchPdfState(),
     val searchKeyword: String = "",
     val searchResult: SearchResult? = null,
     val connectionTests: Map<String, ConnectionTestResult> = emptyMap(),
@@ -113,6 +127,7 @@ class YuqingViewModel(
     private val sessionStore: SessionStore,
     private val dashboardCacheDao: DashboardCacheDao,
     private val articleUserActionDao: ArticleUserActionDao,
+    private val stockResearchPdfDownloader: StockResearchPdfDownloader,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(YuqingUiState())
     val uiState: StateFlow<YuqingUiState> = _uiState
@@ -792,7 +807,7 @@ class YuqingViewModel(
             val session = sessionStore.state.first()
             runCatching {
                 currentYuqingApi(session)
-                    .stockResearch(page = page.coerceAtLeast(1), pageSize = 20)
+                    .stockResearch(page = page.coerceAtLeast(1), pageSize = STOCK_RESEARCH_PAGE_SIZE)
                     .data ?: error("研报信息为空")
             }.onSuccess { result ->
                 _uiState.update {
@@ -824,6 +839,7 @@ class YuqingViewModel(
                 stockResearchDetail = item,
                 stockResearchDetailLoading = true,
                 stockResearchDetailError = "",
+                stockResearchPdf = StockResearchPdfState(itemId = item.id),
             )
         }
         viewModelScope.launch {
@@ -833,11 +849,20 @@ class YuqingViewModel(
                     .stockResearchDetail(item.id)
                     .data ?: error("研报详情为空")
             }.onSuccess { detail ->
+                val existingPdf = stockResearchPdfDownloader.existingPdf(detail)
                 _uiState.update {
                     it.copy(
                         stockResearchDetail = detail,
                         stockResearchDetailLoading = false,
                         stockResearchDetailError = "",
+                        stockResearchPdf = existingPdf?.let { pdf ->
+                            StockResearchPdfState(
+                                itemId = detail.id,
+                                localPath = pdf.file.absolutePath,
+                                localUri = pdf.uri.toString(),
+                                message = "已下载，可离线打开",
+                            )
+                        } ?: StockResearchPdfState(itemId = detail.id),
                     )
                 }
             }.onFailure { throwable ->
@@ -857,7 +882,72 @@ class YuqingViewModel(
                 stockResearchDetail = null,
                 stockResearchDetailLoading = false,
                 stockResearchDetailError = "",
+                stockResearchPdf = StockResearchPdfState(),
             )
+        }
+    }
+
+    fun downloadStockResearchPdf(force: Boolean = false) {
+        val item = _uiState.value.stockResearchDetail ?: return
+        if (item.id <= 0) {
+            _uiState.update {
+                it.copy(stockResearchPdf = it.stockResearchPdf.copy(error = "研报ID无效，无法下载PDF"))
+            }
+            return
+        }
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    stockResearchPdf = StockResearchPdfState(
+                        itemId = item.id,
+                        loading = true,
+                        message = if (force) "正在重新下载PDF" else "正在下载PDF",
+                    ),
+                )
+            }
+            val session = sessionStore.state.first()
+            runCatching {
+                stockResearchPdfDownloader.downloadPdf(
+                    item = item,
+                    contentBaseUrl = currentContentBaseUrl(),
+                    token = session.token,
+                    force = force,
+                )
+            }.onSuccess { pdf ->
+                _uiState.update {
+                    it.copy(
+                        stockResearchPdf = StockResearchPdfState(
+                            itemId = item.id,
+                            loading = false,
+                            message = "PDF已下载，可离线打开",
+                            localPath = pdf.file.absolutePath,
+                            localUri = pdf.uri.toString(),
+                        ),
+                    )
+                }
+            }.onFailure { throwable ->
+                _uiState.update {
+                    it.copy(
+                        stockResearchPdf = StockResearchPdfState(
+                            itemId = item.id,
+                            loading = false,
+                            error = throwable.message ?: "PDF下载失败",
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    fun selectStockResearchPdfPage(pageIndex: Int) {
+        _uiState.update {
+            it.copy(stockResearchPdf = it.stockResearchPdf.copy(pageIndex = pageIndex.coerceAtLeast(0)))
+        }
+    }
+
+    fun reportStockResearchPdfError(message: String) {
+        _uiState.update {
+            it.copy(stockResearchPdf = it.stockResearchPdf.copy(error = message))
         }
     }
 
@@ -889,6 +979,7 @@ class YuqingViewModel(
 
 private const val STARTUP_TAG = "YuqingStartup"
 internal const val ARTICLE_PAGE_SIZE = 25
+internal const val STOCK_RESEARCH_PAGE_SIZE = 25
 internal const val DASHBOARD_VISIBLE_ARTICLE_LIMIT = 5
 internal const val DASHBOARD_ARTICLE_CACHE_LIMIT = 10
 private const val DASHBOARD_REFILL_PAGE_SIZE = 50
@@ -1141,9 +1232,10 @@ class YuqingViewModelFactory(
     private val sessionStore: SessionStore,
     private val dashboardCacheDao: DashboardCacheDao,
     private val articleUserActionDao: ArticleUserActionDao,
+    private val stockResearchPdfDownloader: StockResearchPdfDownloader,
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        return YuqingViewModel(sessionStore, dashboardCacheDao, articleUserActionDao) as T
+        return YuqingViewModel(sessionStore, dashboardCacheDao, articleUserActionDao, stockResearchPdfDownloader) as T
     }
 }

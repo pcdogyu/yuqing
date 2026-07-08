@@ -123,6 +123,14 @@ class ArticleListFallbackTest {
     }
 
     @Test
+    fun stockResearchTotalPagesRoundsUpAndHandlesEmptyTotal() {
+        assertEquals(1, stockResearchTotalPages(total = 0, pageSize = 25))
+        assertEquals(1, stockResearchTotalPages(total = 25, pageSize = 25))
+        assertEquals(2, stockResearchTotalPages(total = 26, pageSize = 25))
+        assertEquals(26, stockResearchTotalPages(total = 26, pageSize = 0))
+    }
+
+    @Test
     fun filterHiddenArticlesDropsMatchingIds() {
         val result = ItemListResult(
             items = listOf(

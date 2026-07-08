@@ -193,6 +193,15 @@ class ApiModelsTest {
 	}
 
 	@Test
+	fun stockResearchPdfFileNameUsesIdAndSanitizesLabel() {
+		val fileName = stockResearchPdfFileName(
+			StockResearch(id = 7, code = "002497", name = "雅化/集团:*?"),
+		)
+
+		assertEquals("7-002497-雅化-集团.pdf", fileName)
+	}
+
+	@Test
 	fun releasePackageMetadataParsesLatestResponse() {
         val payload = """
             {
