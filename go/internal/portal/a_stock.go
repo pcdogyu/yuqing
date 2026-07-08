@@ -66,6 +66,7 @@ type aStockContext struct {
 	TradingDayReason             string
 	SnapshotUpdatedAt            time.Time
 	SourceRuns                   []aStockSourceRun
+	FastReadOnly                 bool
 }
 
 type aStockSnapshotNewsSummary struct {
@@ -574,8 +575,12 @@ func (s *Server) buildAStockPageFragment(strategyDate string, periodKey string, 
 	if ctx.Period != "afternoon" {
 		afternoonCtx = s.loadAStockCompanionContextReadOnlyWithCache(strategyDate, "afternoon", 1, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, forceRecommendationRefresh, requestCache)
 	}
-	s.applyAStockRecommendationFundFlow5DToContext(&morningCtx, requestCache)
-	s.applyAStockRecommendationFundFlow5DToContext(&afternoonCtx, requestCache)
+	if !morningCtx.FastReadOnly {
+		s.applyAStockRecommendationFundFlow5DToContext(&morningCtx, requestCache)
+	}
+	if !afternoonCtx.FastReadOnly {
+		s.applyAStockRecommendationFundFlow5DToContext(&afternoonCtx, requestCache)
+	}
 	if strings.TrimSpace(message) == "" {
 		message = ctx.LoadMessage
 	}
@@ -2204,6 +2209,77 @@ func (s *Server) loadAStockContextWithCache(strategyDate string, periodKey strin
 	return s.loadAStockContextWithRecommendationPhasePersistence(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, forceRecommendationRefresh, aStockRecommendationPhaseFinal, cache, true, true)
 }
 
+func (s *Server) loadAStockFastReadOnlyContextWithCache(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool, includeHotspotTopStocks bool, cache *aStockRequestCache) (aStockContext, bool) {
+	ctx := newAStockBaseContext(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, aStockRecommendationPhaseFinal)
+	ctx.FastReadOnly = true
+	ctx.SourceRuns = s.loadAStockSourceRunsWithCache(cache)
+	if err := s.populateAStockContextArticleStatsWithCache(&ctx, newsPage, cache); err != nil {
+		ctx.LoadMessage = err.Error()
+		return ctx, false
+	}
+	ctx.AuctionAmountLabel = s.loadAStockAuctionAmountLabelWithCache(ctx.Date, cache)
+	if blocked, message, reason := s.aStockRecommendationBlockedStatusWithCache(ctx.Date, cache); blocked {
+		ctx.TradingDayBlocked = true
+		ctx.TradingDayMessage = message
+		ctx.TradingDayReason = reason
+		ctx.BacktestStatus = message
+		ctx.EmptyReason = aStockRecommendationEmptyReason(ctx)
+		return ctx, false
+	}
+	if len(ctx.Hotspots) == 0 {
+		ctx.BacktestStatus = "无推荐股票"
+		ctx.EmptyReason = aStockRecommendationEmptyReason(ctx)
+		return ctx, false
+	}
+	candidates, candidateStatus, auctionResult := s.loadAStockMarketCandidatesWithStatusWithCache(ctx.Date, cache)
+	ctx.MarketCandidateStatus = candidateStatus
+	ctx.MarketCandidateCount = len(fixedPoolAStockMarketCandidates(aStockRecommendationHotspotSlice(ctx.Hotspots), candidates))
+	if auctionLabel := normalizeAStockAuctionSummaryLabel(formatAStockAuctionSummaryAmount(auctionResult)); auctionLabel != "" {
+		ctx.AuctionAmountLabel = auctionLabel
+	}
+	if includeHotspotTopStocks {
+		ctx.Hotspots = buildAStockHotspotsWithTopStocks(ctx.Hotspots, candidates, aStockHotspotTopStockLimit)
+		ctx.Hotspots = s.applyAStockHotspotRecommendationDatesWithCache(ctx.Hotspots, ctx.Date, ctx.Period, cache)
+	}
+	recommendationTarget := 0
+	var recentReplacementPool []aStockRecommendation
+	var recentCodes map[string]struct{}
+	recentReplacementStatus := ""
+	baseRecommendations := buildAStockSnapshotRecommendationsWithPhase(ctx.Date, ctx.Period, aStockRecommendationPhaseFinal, ctx.Articles, candidates)
+	recommendationTarget = len(baseRecommendations)
+	ctx.GeneratedRecommendationCount = recommendationTarget
+	ctx.Recommendations = baseRecommendations
+	if ctx.Period == "morning" && !ctx.IgnoreRecent && recommendationTarget > 0 {
+		recentReplacementPool = buildAStockSnapshotReplacementRecommendations(ctx.Date, ctx.Period, aStockRecommendationPhaseFinal, ctx.Articles, candidates)
+	}
+	if ctx.Period == "afternoon" && len(ctx.Recommendations) > 0 {
+		s.applyAStockAfternoonSameDayCapsWithCache(&ctx, candidates, cache)
+	}
+	if len(ctx.Recommendations) > 0 && !ctx.IgnoreRecent {
+		recentCodes = s.loadRecentAStockRecommendationCodesForPeriodWithCache(ctx.Date, ctx.Period, aStockRecentLookbackDays, cache)
+		if ctx.Period == "morning" && len(recentReplacementPool) > 0 && recommendationTarget > 0 {
+			result := filterRecentAStockRecommendationsWithReplenishment(ctx.Recommendations, recentReplacementPool, recentCodes, recommendationTarget)
+			ctx.Recommendations = result.Recommendations
+			ctx.RecentFiltered = result.Filtered
+			ctx.RecentReplenished = result.Replenished
+			ctx.RecentReplenishShortfall = result.Shortfall
+			recentReplacementStatus = formatAStockRecentReplenishmentStatus(result.Filtered, result.Replenished, result.Shortfall)
+		} else {
+			ctx.Recommendations, ctx.RecentFiltered = filterRecentAStockRecommendations(ctx.Recommendations, recentCodes)
+		}
+	}
+	ctx.Recommendations = withAStockRecommendationEntryTimes(ctx.Recommendations, ctx.Period, "")
+	ctx.Recommendations = initializeAStockRecommendationMarket(ctx.Recommendations)
+	ctx.Backtests = buildAStockBacktestRows(ctx.Date, ctx.Period, ctx.Recommendations, nil)
+	ctx.BacktestStatus = "只读快速推荐，等待行情同步"
+	if recentReplacementStatus != "" {
+		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, recentReplacementStatus)
+	}
+	ctx.EmptyReason = aStockRecommendationEmptyReason(ctx)
+	ctx.LoadMessage = appendAStockLoadMessage(ctx.LoadMessage, "今日推荐使用只读快速结果，未写入推荐快照。")
+	return ctx, hasAStockBacktestDisplayData(ctx)
+}
+
 func (s *Server) loadAStockContextReadOnlyWithCache(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool, forceRecommendationRefresh bool, cache *aStockRequestCache) aStockContext {
 	cacheKey := aStockReadOnlyContextCacheKey(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, forceRecommendationRefresh, true)
 	if !forceRecommendationRefresh {
@@ -2213,15 +2289,22 @@ func (s *Server) loadAStockContextReadOnlyWithCache(strategyDate string, periodK
 	}
 	if !forceRecommendationRefresh {
 		if ctx, ok := s.loadAStockReadOnlySnapshotContextWithCache(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, cache); ok {
-			if !hasAStockBacktestDisplayData(ctx) && normalizeAStockStrategyDate(ctx.Date) == aStockTodayDate() {
-				computed := s.loadAStockContextWithRecommendationPhasePersistence(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, true, aStockRecommendationPhaseFinal, cache, true, false)
-				if hasAStockBacktestDisplayData(computed) {
-					s.storeCachedAStockReadOnlyContext(cacheKey, computed)
-					return computed
+			if !hasAStockBacktestDisplayData(ctx) && shouldUseAStockFastReadOnlyFallback(ctx.Date) {
+				fast, fastOK := s.loadAStockFastReadOnlyContextWithCache(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, true, cache)
+				if fastOK {
+					s.storeCachedAStockReadOnlyContext(cacheKey, fast)
+					return fast
 				}
 			}
 			s.storeCachedAStockReadOnlyContext(cacheKey, ctx)
 			return ctx
+		}
+		if shouldUseAStockFastReadOnlyFallback(strategyDate) {
+			fast, fastOK := s.loadAStockFastReadOnlyContextWithCache(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, true, cache)
+			if fastOK {
+				s.storeCachedAStockReadOnlyContext(cacheKey, fast)
+				return fast
+			}
 		}
 	}
 	ctx := s.loadAStockContextWithRecommendationPhasePersistence(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, forceRecommendationRefresh, aStockRecommendationPhaseFinal, cache, true, false)
@@ -2243,15 +2326,22 @@ func (s *Server) loadAStockCompanionContextReadOnlyWithCache(strategyDate string
 	if !forceRecommendationRefresh {
 		ctx, ok := s.loadAStockReadOnlySnapshotContextWithCache(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, cache)
 		if ok {
-			if !hasAStockBacktestDisplayData(ctx) && normalizeAStockStrategyDate(ctx.Date) == aStockTodayDate() {
-				computed := s.loadAStockContextWithRecommendationPhasePersistence(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, true, aStockRecommendationPhaseFinal, cache, false, false)
-				if hasAStockBacktestDisplayData(computed) {
-					s.storeCachedAStockReadOnlyContext(cacheKey, computed)
-					return computed
+			if !hasAStockBacktestDisplayData(ctx) && shouldUseAStockFastReadOnlyFallback(ctx.Date) {
+				fast, fastOK := s.loadAStockFastReadOnlyContextWithCache(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, false, cache)
+				if fastOK {
+					s.storeCachedAStockReadOnlyContext(cacheKey, fast)
+					return fast
 				}
 			}
 			s.storeCachedAStockReadOnlyContext(cacheKey, ctx)
 			return ctx
+		}
+		if shouldUseAStockFastReadOnlyFallback(strategyDate) {
+			fast, fastOK := s.loadAStockFastReadOnlyContextWithCache(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, false, cache)
+			if fastOK {
+				s.storeCachedAStockReadOnlyContext(cacheKey, fast)
+				return fast
+			}
 		}
 		ctx.BacktestStatus = "无推荐快照"
 		ctx.EmptyReason = fmt.Sprintf("暂无推荐股票：%s暂无历史快照。", ctx.PeriodLabel)
@@ -2353,20 +2443,43 @@ func normalizeAStockSnapshotJSONArray(raw string) string {
 	return raw
 }
 
+func shouldUseAStockFastReadOnlyFallback(strategyDate string) bool {
+	return normalizeAStockStrategyDate(strategyDate) == aStockTodayDate()
+}
+
+func appendAStockLoadMessage(current string, addition string) string {
+	current = strings.TrimSpace(current)
+	addition = strings.TrimSpace(addition)
+	if addition == "" || strings.Contains(current, addition) {
+		return current
+	}
+	if current == "" {
+		return addition
+	}
+	return current + " " + addition
+}
+
 func (s *Server) loadTodayAStockBacktestFallbackContextWithCache(ctx aStockContext, cache *aStockRequestCache) (aStockContext, bool) {
 	if normalizeAStockStrategyDate(ctx.Date) != aStockTodayDate() {
 		return aStockContext{}, false
 	}
 	cacheKey := aStockReadOnlyContextCacheKey(ctx.Date, ctx.Period, ctx.NewsPage, ctx.IgnoreRecent, ctx.IgnoreLimitUp, ctx.IgnoreFundFlow, ctx.TodayMarketFilterEnabled, false, true)
 	if cached, ok := s.loadCachedAStockReadOnlyContext(cacheKey); ok && hasAStockBacktestDisplayData(cached) {
-		cached.LoadMessage = strings.TrimSpace(nonEmpty(cached.LoadMessage, "今日回测使用只读实时推荐结果，未写入推荐快照。"))
+		cached.LoadMessage = appendAStockLoadMessage(cached.LoadMessage, "今日回测使用只读实时推荐结果，未写入推荐快照。")
 		return cached, true
+	}
+	if shouldUseAStockFastReadOnlyFallback(ctx.Date) {
+		if fast, ok := s.loadAStockFastReadOnlyContextWithCache(ctx.Date, ctx.Period, ctx.NewsPage, ctx.IgnoreRecent, ctx.IgnoreLimitUp, ctx.IgnoreFundFlow, ctx.TodayMarketFilterEnabled, true, cache); ok {
+			fast.LoadMessage = appendAStockLoadMessage(fast.LoadMessage, "今日回测使用只读实时推荐结果，未写入推荐快照。")
+			s.storeCachedAStockReadOnlyContext(cacheKey, fast)
+			return fast, true
+		}
 	}
 	fallback := s.loadAStockContextReadOnlyWithCache(ctx.Date, ctx.Period, ctx.NewsPage, ctx.IgnoreRecent, ctx.IgnoreLimitUp, ctx.IgnoreFundFlow, ctx.TodayMarketFilterEnabled, true, cache)
 	if !hasAStockBacktestDisplayData(fallback) {
 		return aStockContext{}, false
 	}
-	fallback.LoadMessage = strings.TrimSpace(nonEmpty(fallback.LoadMessage, "今日回测使用只读实时推荐结果，未写入推荐快照。"))
+	fallback.LoadMessage = appendAStockLoadMessage(fallback.LoadMessage, "今日回测使用只读实时推荐结果，未写入推荐快照。")
 	s.storeCachedAStockReadOnlyContext(cacheKey, fallback)
 	return fallback, true
 }

@@ -6223,7 +6223,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 	defer scheduler.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL, SchedulerURL: scheduler.URL})
-	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-16", nil)
+	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-16&refresh_recommendations=1", nil)
 	rr := httptest.NewRecorder()
 	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
 
