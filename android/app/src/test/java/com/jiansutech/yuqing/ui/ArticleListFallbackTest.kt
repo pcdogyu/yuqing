@@ -131,6 +131,14 @@ class ArticleListFallbackTest {
     }
 
     @Test
+    fun stockResearchOpenableUrlNormalizesWebUrlsOnly() {
+        assertEquals("https://example.com/a", stockResearchOpenableUrl(" https://example.com/a "))
+        assertEquals("https://example.com/a", stockResearchOpenableUrl("//example.com/a"))
+        assertEquals("https://www.example.com/a", stockResearchOpenableUrl("www.example.com/a"))
+        assertEquals("", stockResearchOpenableUrl("javascript:alert(1)"))
+    }
+
+    @Test
     fun filterHiddenArticlesDropsMatchingIds() {
         val result = ItemListResult(
             items = listOf(

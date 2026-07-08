@@ -8,6 +8,8 @@ import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -95,6 +97,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import kotlin.math.abs
 import com.jiansutech.yuqing.BuildConfig
 import com.jiansutech.yuqing.astock.AStockTradingCalendar
@@ -901,6 +904,8 @@ private fun StockResearchDetailScreen(
     val uriHandler = LocalUriHandler.current
     val context = LocalContext.current
     val body = stockResearchDetailBody(item)
+    val sourceUrl = stockResearchOpenableUrl(item.sourceUrl)
+    var sourceDialogUrl by remember(item.id, item.sourceUrl) { mutableStateOf<String?>(null) }
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -983,11 +988,11 @@ private fun StockResearchDetailScreen(
                 onPdfPageSelected = onPdfPageSelected,
             )
         }
-        if (item.sourceUrl.isNotBlank() || item.pdfUrl.isNotBlank()) {
+        if (sourceUrl.isNotBlank() || item.pdfUrl.isNotBlank()) {
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (item.sourceUrl.isNotBlank()) {
-                        TextButton(onClick = { runCatching { uriHandler.openUri(item.sourceUrl) } }) {
+                    if (sourceUrl.isNotBlank()) {
+                        TextButton(onClick = { sourceDialogUrl = sourceUrl }) {
                             Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null)
                             Spacer(Modifier.width(6.dp))
                             Text("打开原文")
@@ -1004,6 +1009,49 @@ private fun StockResearchDetailScreen(
             }
         }
     }
+    val dialogUrl = sourceDialogUrl
+    if (dialogUrl != null) {
+        StockResearchSourceDialog(
+            url = dialogUrl,
+            onDismiss = { sourceDialogUrl = null },
+        )
+    }
+}
+
+@Composable
+private fun StockResearchSourceDialog(
+    url: String,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("原文") },
+        text = {
+            AndroidView(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(520.dp),
+                factory = { context ->
+                    WebView(context).apply {
+                        webViewClient = WebViewClient()
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        loadUrl(url)
+                    }
+                },
+                update = { webView ->
+                    if (webView.url != url) {
+                        webView.loadUrl(url)
+                    }
+                },
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("关闭")
+            }
+        },
+    )
 }
 
 @Composable
@@ -2045,6 +2093,20 @@ internal fun stockResearchTotalPages(total: Int, pageSize: Int): Int {
     }
     val safePageSize = pageSize.coerceAtLeast(1)
     return ((total + safePageSize - 1) / safePageSize).coerceAtLeast(1)
+}
+
+internal fun stockResearchOpenableUrl(value: String): String {
+    val trimmed = value.trim()
+    if (trimmed.isBlank()) {
+        return ""
+    }
+    return when {
+        trimmed.startsWith("http://", ignoreCase = true) -> trimmed
+        trimmed.startsWith("https://", ignoreCase = true) -> trimmed
+        trimmed.startsWith("//") -> "https:$trimmed"
+        trimmed.startsWith("www.", ignoreCase = true) -> "https://$trimmed"
+        else -> ""
+    }
 }
 
 internal fun stockResearchSourceLabel(item: StockResearch): String {
