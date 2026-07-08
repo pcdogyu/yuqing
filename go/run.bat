@@ -4,6 +4,9 @@ setlocal EnableExtensions EnableDelayedExpansion
 set "STATUS_ONLY=0"
 if /I "%~1"=="status" set "STATUS_ONLY=1"
 if /I "%~1"=="--status" set "STATUS_ONLY=1"
+set "RESTART_SERVICES=0"
+if /I "%~1"=="-restartservices" set "RESTART_SERVICES=1"
+if /I "%~1"=="--restartservices" set "RESTART_SERVICES=1"
 set "SKIP_PULL=0"
 if /I "%~1"=="--skip-pull" set "SKIP_PULL=1"
 set "AFTER_PULL=0"
@@ -95,6 +98,10 @@ set "GIT_ASK_YESNO_HELPER=%TEMP%\yuqing-git-ask-yesno-%RANDOM%-%RANDOM%.cmd"
 if "%STATUS_ONLY%"=="1" (
     call :print_service_status
     exit /b !ERRORLEVEL!
+)
+
+if "%RESTART_SERVICES%"=="1" (
+    goto :restart_services_only
 )
 
 if "%SKIP_PULL%"=="0" if "%AFTER_PULL%"=="0" (
@@ -260,6 +267,66 @@ exit /b 0
 :print_service_status
 powershell -NoProfile -ExecutionPolicy Bypass -File "%GO_DIR%\scripts\service-status.ps1" -LogDir "%LOG_DIR%"
 exit /b %ERRORLEVEL%
+
+:restart_services_only
+cd /d "%GO_DIR%"
+if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
+echo Restart services requested. Skipping git pull, build metadata, go test, and go build.
+echo [restartservices] Stop existing service processes...
+for %%S in (%SERVICE_NAMES%) do (
+    call :kill_service %%S
+    if errorlevel 1 goto :fail
+)
+call :ensure_release_port
+if errorlevel 1 goto :fail
+echo [restartservices] Start services with existing binaries...
+for %%S in (
+    auth-service
+    wechat-service
+    content-service
+    crawler-service
+    analysis-service
+    nlp-service
+    gateway-web
+    scheduler-service
+    release-service
+) do (
+    call :start_process_core %%S
+    if errorlevel 1 goto :fail
+)
+call :start_akshare_auction_service
+if errorlevel 1 goto :fail
+echo.
+echo Services restarted.
+echo Gateway: http://127.0.0.1:%GATEWAY_WEB_PORT%
+echo Gateway80: http://127.0.0.1/
+echo GatewayHTTPAddrs: %YUQING_GATEWAY_HTTP_ADDRS%
+echo Wechat: %YUQING_WECHAT_URL%
+echo Scheduler: %YUQING_SCHEDULER_URL%
+echo Release: %YUQING_RELEASE_URL%
+echo ReleaseDir: %YUQING_RELEASE_DIR%
+echo ReleasePort: %RELEASE_SERVICE_PORT%
+if defined YUQING_ASTOCK_AUCTION_URL (
+    echo AKShareAuction: %YUQING_ASTOCK_AUCTION_URL%
+) else (
+    echo AKShareAuction: disabled ^(Python/AKShare service not available^)
+)
+if defined YUQING_STOCK_RESEARCH_URL (
+    echo StockResearch: %YUQING_STOCK_RESEARCH_URL%
+) else (
+    echo StockResearch: public sources only ^(AKShare service not available^)
+)
+if defined YUQING_ASTOCK_HOLDING_URL (
+    echo AStockHolding: %YUQING_ASTOCK_HOLDING_URL%
+) else (
+    echo AStockHolding: disabled ^(Python/AKShare service not available^)
+)
+echo LogLevel: %YUQING_LOG_LEVEL%
+echo.
+echo Service status:
+call :print_service_status
+if errorlevel 1 echo WARNING: Failed to print service status.
+exit /b 0
 
 :ensure_gateway_http_port80
 if defined YUQING_GATEWAY_TLS_CERT_FILE exit /b 0
