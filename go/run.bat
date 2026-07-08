@@ -152,6 +152,9 @@ if "%SKIP_PULL%"=="1" (
         )
         if not "!YUQING_HEAD_BEFORE!"=="!YUQING_HEAD_AFTER!" (
             echo Repository updated. Restarting run.bat with the refreshed worktree...
+        ) else (
+            echo Already up to date. Upgrade finished without rebuilding or restarting services.
+            exit /b 0
         )
     )
     cmd /c ""%GO_DIR%\run.bat" --skip-pull"
