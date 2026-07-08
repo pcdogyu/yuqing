@@ -701,6 +701,7 @@ func (s *Service) handleGetAStockRecommendationSnapshot(w http.ResponseWriter, r
 		return
 	}
 	snapshot.Found = found
+	normalizeAStockRecommendationSnapshotJSON(&snapshot)
 	apiutil.WriteJSON(w, http.StatusOK, "ok", snapshot)
 }
 
@@ -716,12 +717,29 @@ func (s *Service) handleUpsertAStockRecommendationSnapshot(w http.ResponseWriter
 		apiutil.WriteJSON(w, http.StatusBadRequest, "strategy_date and period required", nil)
 		return
 	}
+	normalizeAStockRecommendationSnapshotJSON(&snapshot)
 	result, err := s.store.UpsertAStockRecommendationSnapshot(r.Context(), snapshot)
 	if err != nil {
 		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
 		return
 	}
 	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func normalizeAStockRecommendationSnapshotJSON(snapshot *model.AStockRecommendationSnapshot) {
+	if snapshot == nil {
+		return
+	}
+	snapshot.RecommendationsJSON = normalizeAStockRecommendationJSONArray(snapshot.RecommendationsJSON)
+	snapshot.BacktestsJSON = normalizeAStockRecommendationJSONArray(snapshot.BacktestsJSON)
+}
+
+func normalizeAStockRecommendationJSONArray(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || strings.EqualFold(raw, "null") {
+		return "[]"
+	}
+	return raw
 }
 
 func (s *Service) handleListAStockRecommendationSelections(w http.ResponseWriter, r *http.Request) {
