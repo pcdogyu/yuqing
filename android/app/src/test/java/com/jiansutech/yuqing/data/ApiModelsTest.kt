@@ -154,10 +154,10 @@ class ApiModelsTest {
     }
 
     @Test
-    fun aStockBacktestRowParsesT0Close() {
-        val payload = """
-            {
-              "Stock": "603083 剑桥科技",
+	fun aStockBacktestRowParsesT0Close() {
+		val payload = """
+			{
+			  "Stock": "603083 剑桥科技",
               "EntryOpen": "240.00",
               "T0Return": "+1.70%",
               "T0Close": "244.08",
@@ -169,12 +169,31 @@ class ApiModelsTest {
 
         val row = ApiFactory.json.decodeFromString(AStockBacktestRow.serializer(), payload)
 
-        assertEquals("244.08", row.t0Close)
-        assertEquals("+4.17%", row.days.first().returnPct)
-    }
+		assertEquals("244.08", row.t0Close)
+		assertEquals("+4.17%", row.days.first().returnPct)
+	}
 
-    @Test
-    fun releasePackageMetadataParsesLatestResponse() {
+	@Test
+	fun stockResearchParsesStoredSourceText() {
+		val payload = """
+			{
+			  "id": 7,
+			  "title": "研报标题",
+			  "source_text": "第一段\n\n第二段",
+			  "source_fetch_status": "parsed",
+			  "source_fetched_at": "2026-07-08T01:00:00Z"
+			}
+		""".trimIndent()
+
+		val item = ApiFactory.json.decodeFromString(StockResearch.serializer(), payload)
+
+		assertEquals("第一段\n\n第二段", item.sourceText)
+		assertEquals("parsed", item.sourceFetchStatus)
+		assertEquals("2026-07-08T01:00:00Z", item.sourceFetchedAt)
+	}
+
+	@Test
+	fun releasePackageMetadataParsesLatestResponse() {
         val payload = """
             {
               "version_name": "20260625-120000-abcdef12",

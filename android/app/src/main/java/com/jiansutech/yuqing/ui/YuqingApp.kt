@@ -77,6 +77,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -888,7 +889,7 @@ private fun StockResearchDetailScreen(item: StockResearch, loading: Boolean, err
             if (body.isBlank()) {
                 EmptyState("暂无详情内容")
             } else {
-                Text(body, style = MaterialTheme.typography.bodyMedium)
+                Text(body, style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace)
             }
         }
         if (item.sourceUrl.isNotBlank() || item.pdfUrl.isNotBlank()) {
@@ -1768,7 +1769,7 @@ internal fun stockResearchDisplayDate(item: StockResearch): String {
 }
 
 internal fun stockResearchDetailBody(item: StockResearch): String =
-    item.pdfText.trim().ifBlank { item.summary.trim() }
+    item.sourceText.trim().ifBlank { item.pdfText.trim().ifBlank { item.summary.trim() } }
 
 internal fun stockResearchSourceLabel(item: StockResearch): String {
     val sourceType = item.sourceType.trim()

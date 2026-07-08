@@ -98,7 +98,11 @@ class ArticleListFallbackTest {
     }
 
     @Test
-    fun stockResearchDetailBodyPrefersPdfTextThenSummary() {
+    fun stockResearchDetailBodyPrefersSourceTextThenPdfTextThenSummary() {
+        assertEquals(
+            "原文正文\n\n第二段",
+            stockResearchDetailBody(StockResearch(sourceText = " 原文正文\n\n第二段 ", pdfText = "PDF正文", summary = "摘要")),
+        )
         assertEquals(
             "PDF正文",
             stockResearchDetailBody(StockResearch(pdfText = " PDF正文 ", summary = "摘要")),
