@@ -1722,7 +1722,6 @@ func renderAStockBacktestSectionForPath(b *strings.Builder, targetPath string, s
 	}
 	b.WriteString(`<section><h2>消息回测</h2><p class="astock-muted">上午推荐按上午开盘价计算，下午推荐按下午开盘价计算；T+0 到 T+5 及五日内最高收益均按对应推荐窗口的基准价回测。</p>`)
 	renderAStockRecommendationHistoryTabsForPath(b, targetPath, strategyDate, period, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket)
-	renderAStockPeriodSwitchTabsForPath(b, targetPath, strategyDate, period, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket)
 	renderAStockRecommendationHistoryActionsForPath(b, targetPath, strategyDate, period, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket)
 	mergedRows := combineAStockBacktestRows(morningCtx, afternoonCtx)
 	b.WriteString(`<div class="astock-scroll"><table class="astock-table"><tr><th>推荐窗口</th><th>股票</th><th>上午开盘价</th><th>下午开盘价</th><th>T+0 收益</th><th>T+1 收益</th><th>T+2 收益</th><th>T+3 收益</th><th>T+4 收益</th><th>T+5 收益</th><th>五日内最高收益</th><th>命中状态</th></tr>`)
@@ -1956,15 +1955,17 @@ func aStockDateTabLabel(date string) string {
 }
 
 func combineAStockBacktestRows(morningCtx aStockContext, afternoonCtx aStockContext) []aStockBacktestDisplayRow {
-	rows := make([]aStockBacktestDisplayRow, 0, len(morningCtx.Backtests)+len(afternoonCtx.Backtests))
-	for _, row := range morningCtx.Backtests {
+	morningRows := aStockBacktestRowsForDisplay(morningCtx)
+	afternoonRows := aStockBacktestRowsForDisplay(afternoonCtx)
+	rows := make([]aStockBacktestDisplayRow, 0, len(morningRows)+len(afternoonRows))
+	for _, row := range morningRows {
 		rows = append(rows, aStockBacktestDisplayRow{
 			PeriodLabel: morningCtx.PeriodLabel,
 			PeriodKey:   morningCtx.Period,
 			Row:         row,
 		})
 	}
-	for _, row := range afternoonCtx.Backtests {
+	for _, row := range afternoonRows {
 		rows = append(rows, aStockBacktestDisplayRow{
 			PeriodLabel: afternoonCtx.PeriodLabel,
 			PeriodKey:   afternoonCtx.Period,
@@ -1972,6 +1973,54 @@ func combineAStockBacktestRows(morningCtx aStockContext, afternoonCtx aStockCont
 		})
 	}
 	return rows
+}
+
+func aStockBacktestRowsForDisplay(ctx aStockContext) []aStockBacktestRow {
+	if len(ctx.Recommendations) == 0 {
+		return ctx.Backtests
+	}
+	rowsByCode := make(map[string]aStockBacktestRow, len(ctx.Backtests))
+	for _, row := range ctx.Backtests {
+		if code := aStockBacktestRowCode(row); code != "" {
+			rowsByCode[code] = row
+		}
+	}
+	rows := make([]aStockBacktestRow, 0, len(ctx.Recommendations))
+	for _, rec := range ctx.Recommendations {
+		code := normalizeAStockCode(rec.Code)
+		if row, ok := rowsByCode[code]; ok {
+			rows = append(rows, row)
+			continue
+		}
+		rows = append(rows, aStockBacktestPlaceholderRow(rec))
+	}
+	return rows
+}
+
+func aStockBacktestPlaceholderRow(rec aStockRecommendation) aStockBacktestRow {
+	return aStockBacktestRow{
+		Stock:           aStockRecommendationStockLabel(rec),
+		EntryOpen:       "--",
+		AfternoonOpen:   "--",
+		T0Return:        "--",
+		T0Close:         "--",
+		T0ReturnClass:   "astock-flat",
+		BestReturn:      "--",
+		BestReturnClass: "astock-flat",
+		Status:          "等待行情同步",
+	}
+}
+
+func aStockRecommendationStockLabel(rec aStockRecommendation) string {
+	code := normalizeAStockCode(rec.Code)
+	name := astockcode.DisplayName(code, rec.Name)
+	if code != "" && name != "" && name != code {
+		return code + " " + name
+	}
+	if code != "" {
+		return code
+	}
+	return strings.TrimSpace(rec.Name)
 }
 
 func aStockBacktestDisplayOpenPrices(period string, row aStockBacktestRow) (string, string) {

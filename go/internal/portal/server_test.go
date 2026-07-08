@@ -1651,7 +1651,6 @@ func TestAStockBacktestPageRendersStandaloneBacktestAndNavigation(t *testing.T) 
 		"五日内最高收益",
 		`/a-stock/backtest?date=2026-06-16&period=afternoon&ignore_recent=1&filter_today_market=1`,
 		`/a-stock/backtest?date=2026-06-15&period=afternoon&ignore_recent=1&filter_today_market=1`,
-		`/a-stock/backtest?date=2026-06-16&period=morning&ignore_recent=1&filter_today_market=1`,
 		`href="/a-stock/backtest?date=2026-06-16&amp;period=afternoon&amp;filter_today_market=1"`,
 		`action="/a-stock/backtest"`,
 		`name="action" value="repair_stock_names"`,
@@ -1667,6 +1666,9 @@ func TestAStockBacktestPageRendersStandaloneBacktestAndNavigation(t *testing.T) 
 	}
 	if strings.Contains(body, `href="/a-stock?date=2026-06-16&period=afternoon`) {
 		t.Fatalf("expected backtest page date and period links to stay on /a-stock/backtest, got %s", body)
+	}
+	if strings.Contains(body, `href="/a-stock/backtest?date=2026-06-16&amp;period=morning`) {
+		t.Fatalf("expected backtest page to hide morning/afternoon period switch buttons, got %s", body)
 	}
 }
 
@@ -1750,6 +1752,58 @@ func TestAStockBacktestPageGetUsesSnapshotOnly(t *testing.T) {
 	}
 	if periodHits["morning"] != 1 || periodHits["afternoon"] != 1 {
 		t.Fatalf("expected one morning and one afternoon snapshot request, got %v from %v", periodHits, requests)
+	}
+}
+
+func TestAStockBacktestPageShowsRecommendationsWithoutBacktestRows(t *testing.T) {
+	snapshot := model.AStockRecommendationSnapshot{
+		Found:                 true,
+		StrategyDate:          "2026-07-08",
+		Period:                "afternoon",
+		RecommendationsJSON:   mustAStockTestJSON(t, []aStockRecommendation{{Rank: 1, Hotspot: "机器人", Code: "300024", Name: "机器人", Reason: "snapshot recommendation"}}),
+		BacktestsJSON:         "[]",
+		BacktestStatus:        "等待行情同步",
+		GeneratedCount:        1,
+		LimitUpFilterEnabled:  true,
+		FundFlowFilterEnabled: true,
+	}
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/a-stock/recommendations" {
+			http.Error(w, "unexpected endpoint", http.StatusInternalServerError)
+			return
+		}
+		if r.URL.Query().Get("period") == "afternoon" {
+			writeEnvelope(w, http.StatusOK, "ok", snapshot)
+			return
+		}
+		writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{
+			Found:                 true,
+			StrategyDate:          "2026-07-08",
+			Period:                "morning",
+			RecommendationsJSON:   "[]",
+			BacktestsJSON:         "[]",
+			BacktestStatus:        "无推荐股票",
+			FundFlowFilterEnabled: true,
+		})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	req := httptest.NewRequest(http.MethodGet, "/a-stock/backtest?date=2026-07-08&period=afternoon", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAStockBacktestPage(rr, req, map[string]any{"id": 1})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"下午推荐", "300024 机器人", "等待行情同步"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected backtest page to contain %q, got %s", want, body)
+		}
+	}
+	if strings.Contains(body, "暂无回测结果，等待行情同步。") {
+		t.Fatalf("expected recommendation placeholder row instead of empty backtest table, got %s", body)
 	}
 }
 
