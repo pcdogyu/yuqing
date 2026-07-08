@@ -454,7 +454,7 @@ if errorlevel 1 (
     echo Service %TARGET_SERVICE% is not running.
     exit /b 0
 )
-powershell -NoProfile -ExecutionPolicy Bypass -File "%GO_DIR%\scripts\stop-service.ps1" -Name "%TARGET_SERVICE%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%GO_DIR%\scripts\stop-service.ps1" -Name "%TARGET_SERVICE%" -ExpectedPath "%GO_DIR%\bin\%TARGET_SERVICE%.exe"
 if errorlevel 1 (
     echo Failed to stop %TARGET_SERVICE%.exe.
     exit /b 1
