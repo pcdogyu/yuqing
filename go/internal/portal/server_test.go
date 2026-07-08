@@ -2744,6 +2744,62 @@ func TestAStockOldSnapshotMissingNewsSummaryUsesArticleWindowCache(t *testing.T)
 	}
 }
 
+func TestAStockEmptySnapshotNewsSummaryFallsBackToArticleWindow(t *testing.T) {
+	emptySummary, err := json.Marshal(aStockSnapshotNewsSummary{
+		Articles:     []model.Item{},
+		NewsArticles: []model.Item{},
+		Hotspots:     []aStockHotspot{},
+	})
+	if err != nil {
+		t.Fatalf("marshal empty summary: %v", err)
+	}
+	articleHits := 0
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/a-stock/recommendations":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{
+				Found:                 true,
+				StrategyDate:          "2026-06-15",
+				Period:                r.URL.Query().Get("period"),
+				RecommendationsJSON:   "[]",
+				BacktestsJSON:         "[]",
+				NewsSummaryJSON:       string(emptySummary),
+				BacktestStatus:        "无推荐股票",
+				LimitUpFilterEnabled:  true,
+				FundFlowFilterEnabled: true,
+			})
+		case "/api/v1/articles":
+			articleHits++
+			writeEnvelope(w, http.StatusOK, "ok", model.ItemListResult{
+				Items: []model.Item{{
+					ID:          1,
+					SourceType:  "sina_finance_7x24",
+					Title:       "半导体板块活跃",
+					Summary:     "芯片产业链活跃",
+					PublishTime: "2026-06-15 09:35:00",
+					CapturedAt:  time.Date(2026, 6, 15, 1, 35, 0, 0, time.UTC),
+				}},
+				Page:     1,
+				PageSize: 200,
+				Total:    1,
+			})
+		default:
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	ctx, ok := srv.loadAStockReadOnlySnapshotContextWithCache("2026-06-15", "afternoon", 1, false, false, false, false, newAStockRequestCache())
+	if !ok {
+		t.Fatal("expected snapshot context")
+	}
+	if articleHits == 0 || ctx.NewsTotal != 1 || ctx.RecommendationNewsTotal != 1 || len(ctx.Hotspots) == 0 {
+		t.Fatalf("expected empty snapshot summary to fall back to article stats, hits=%d ctx=%+v", articleHits, ctx)
+	}
+}
+
 func newAStockTradingDayServer(t *testing.T, isTradingDay bool) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -2206,6 +2206,9 @@ func applyAStockSnapshotNewsSummary(ctx *aStockContext, newsPage int, raw string
 	if err := json.Unmarshal([]byte(raw), &summary); err != nil {
 		return false
 	}
+	if len(summary.Articles) == 0 && len(summary.NewsArticles) == 0 && len(summary.Hotspots) == 0 {
+		return false
+	}
 	ctx.Articles = summary.Articles
 	ctx.NewsArticles = summary.NewsArticles
 	ctx.NewsTotal = len(ctx.NewsArticles)
