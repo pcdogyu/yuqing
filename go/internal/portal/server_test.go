@@ -1698,6 +1698,79 @@ func TestAStockStockGenerateActionsSelectPeriod(t *testing.T) {
 	}
 }
 
+func TestAStockGenerateAfternoonActionRebuildsAndPersistsSnapshot(t *testing.T) {
+	currentSelectionGets := 0
+	var savedSnapshot model.AStockRecommendationSnapshot
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/articles":
+			writeEnvelope(w, http.StatusOK, "ok", model.ItemListResult{
+				Items: []model.Item{{
+					ID:          16,
+					SourceType:  "flash",
+					Title:       "下午AI算力活跃，科大讯飞走强",
+					Summary:     "人工智能产业链活跃",
+					PublishTime: "2026-06-16 10:05:00",
+					TagFlags:    "0.002230",
+					CapturedAt:  time.Date(2026, 6, 16, 2, 5, 0, 0, time.UTC),
+				}},
+				Page: 1, PageSize: 200, Total: 1,
+			})
+		case "/api/v1/a-stock/recommendation-selections":
+			if r.URL.Query().Get("date") == "2026-06-16" && r.URL.Query().Get("period") == "afternoon" {
+				currentSelectionGets++
+				writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{
+					Found: true,
+					Items: []model.AStockRecommendationSelection{{Rank: 1, Code: "999999", Name: "旧锁定", Hotspot: "旧热点", Reason: "locked"}},
+				})
+				return
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{Found: false})
+		case "/api/v1/a-stock/recommendations":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
+		case "/api/v1/internal/a-stock/recommendation-selections":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionUpsertResult{})
+		case "/api/v1/internal/a-stock/recommendations":
+			if err := json.NewDecoder(r.Body).Decode(&savedSnapshot); err != nil {
+				t.Fatalf("decode saved snapshot: %v", err)
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Updated: 1})
+		case "/api/v1/a-stock/holdings/summary":
+			writeEnvelope(w, http.StatusOK, "ok", model.StockInstitutionHoldingSummary{})
+		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
+			t.Fatalf("unexpected content request: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	form := url.Values{"date": {"2026-06-16"}, "period": {"morning"}, "action": {"generate_afternoon_stock"}}
+	req := httptest.NewRequest(http.MethodPost, "/a-stock", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d", rr.Code)
+	}
+	if currentSelectionGets != 0 {
+		t.Fatalf("expected rebuild action to skip current locked afternoon selections, got %d reads", currentSelectionGets)
+	}
+	if savedSnapshot.StrategyDate != "2026-06-16" || savedSnapshot.Period != "afternoon" || strings.TrimSpace(savedSnapshot.NewsSummaryJSON) == "" {
+		t.Fatalf("expected rebuilt afternoon snapshot with news summary to be persisted, got %+v", savedSnapshot)
+	}
+	loc, _ := url.QueryUnescape(rr.Header().Get("Location"))
+	for _, want := range []string{"date=2026-06-16", "period=afternoon", "已切换到下午窗口，按 09:30-13:00:59 推荐生成窗口重新计算推荐"} {
+		if !strings.Contains(loc, want) {
+			t.Fatalf("expected redirect message %q, got %q", want, loc)
+		}
+	}
+}
+
 func TestAStockBacktestPageRendersStandaloneBacktestAndNavigation(t *testing.T) {
 	setAStockNowForTest(t, time.Date(2026, 6, 18, 9, 30, 0, 0, time.FixedZone("CST", 8*3600)))
 	srv := NewServer(config.Config{})
@@ -2129,6 +2202,94 @@ func TestAStockBackfillWindowActionPassesMorningWindow(t *testing.T) {
 	}
 	loc, _ := url.QueryUnescape(rr.Header().Get("Location"))
 	for _, want := range []string{"date=2026-06-16", "period=morning", "已补抓 2026-06-16 上午 08:00-09:30", "当前窗口已有 1 条财经新闻"} {
+		if !strings.Contains(loc, want) {
+			t.Fatalf("expected redirect message %q, got %q", want, loc)
+		}
+	}
+}
+
+func TestAStockBackfillWindowActionPassesAfternoonWindowAndPersistsSnapshot(t *testing.T) {
+	var mu sync.Mutex
+	seen := map[string]bool{}
+	var savedSnapshot model.AStockRecommendationSnapshot
+	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/admin/tasks/crawl/runs" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "message": "ok", "data": []model.CrawlRun{}})
+			return
+		}
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/admin/tasks/crawl" {
+			t.Fatalf("unexpected crawler request: %s %s", r.Method, r.URL.String())
+		}
+		if r.URL.Query().Get("start") != "2026-06-16 09:30:00" || r.URL.Query().Get("end") != "2026-06-16 13:00:59" || r.URL.Query().Get("time_field") != "publish_time" {
+			t.Fatalf("unexpected afternoon backfill window query: %s", r.URL.RawQuery)
+		}
+		mu.Lock()
+		seen[r.URL.Query().Get("source_type")] = true
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "message": "ok"})
+	}))
+	defer crawler.Close()
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/articles":
+			items := []model.Item{}
+			if r.URL.Query().Get("start") == "2026-06-16 09:30:00" && r.URL.Query().Get("end") == "2026-06-16 13:00:59" {
+				items = []model.Item{{
+					ID:          16,
+					SourceType:  "flash",
+					Title:       "下午AI算力活跃",
+					Summary:     "人工智能产业链活跃",
+					PublishTime: "2026-06-16 10:05:00",
+					TagFlags:    "0.002230",
+					CapturedAt:  time.Date(2026, 6, 16, 2, 5, 0, 0, time.UTC),
+				}}
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.ItemListResult{Items: items, Page: 1, PageSize: 200, Total: len(items)})
+		case "/api/v1/a-stock/recommendation-selections":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{Found: false})
+		case "/api/v1/a-stock/recommendations":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
+		case "/api/v1/internal/a-stock/recommendation-selections":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionUpsertResult{})
+		case "/api/v1/internal/a-stock/recommendations":
+			if err := json.NewDecoder(r.Body).Decode(&savedSnapshot); err != nil {
+				t.Fatalf("decode saved snapshot: %v", err)
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Updated: 1})
+		case "/api/v1/a-stock/holdings/summary":
+			writeEnvelope(w, http.StatusOK, "ok", model.StockInstitutionHoldingSummary{})
+		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
+			t.Fatalf("unexpected content request: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{CrawlerURL: crawler.URL, ContentURL: content.URL})
+	form := url.Values{"date": {"2026-06-16"}, "period": {"afternoon"}, "action": {"backfill_window_news"}}
+	req := httptest.NewRequest(http.MethodPost, "/a-stock", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect, got %d", rr.Code)
+	}
+	for _, sourceType := range []string{provider.SourceTypeFlash, provider.SourceTypeHeadline, provider.SourceTypeJin10Full, provider.SourceTypeEastMoneyKuaixun, provider.SourceTypeWallStreetCNAStock, provider.SourceTypeCLSTelegraph, provider.SourceTypeSinaFinance7x24} {
+		if !seen[sourceType] {
+			t.Fatalf("expected source %s to be backfilled, got %+v", sourceType, seen)
+		}
+	}
+	if savedSnapshot.StrategyDate != "2026-06-16" || savedSnapshot.Period != "afternoon" || strings.TrimSpace(savedSnapshot.NewsSummaryJSON) == "" {
+		t.Fatalf("expected afternoon snapshot with news summary to be persisted, got %+v", savedSnapshot)
+	}
+	loc, _ := url.QueryUnescape(rr.Header().Get("Location"))
+	for _, want := range []string{"date=2026-06-16", "period=afternoon", "已补抓 2026-06-16 下午 09:30-13:00", "当前窗口已有 1 条财经新闻"} {
 		if !strings.Contains(loc, want) {
 			t.Fatalf("expected redirect message %q, got %q", want, loc)
 		}
