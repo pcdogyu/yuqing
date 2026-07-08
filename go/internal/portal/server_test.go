@@ -1905,7 +1905,7 @@ func TestAStockBacktestPageShowsRecommendationsWithoutBacktestRows(t *testing.T)
 		StrategyDate:          "2026-07-08",
 		Period:                "afternoon",
 		RecommendationsJSON:   mustAStockTestJSON(t, []aStockRecommendation{{Rank: 1, Hotspot: "机器人", Code: "300024", Name: "机器人", Reason: "snapshot recommendation"}}),
-		BacktestsJSON:         "[]",
+		BacktestsJSON:         "null",
 		BacktestStatus:        "等待行情同步",
 		GeneratedCount:        1,
 		LimitUpFilterEnabled:  true,
@@ -1948,6 +1948,89 @@ func TestAStockBacktestPageShowsRecommendationsWithoutBacktestRows(t *testing.T)
 	}
 	if strings.Contains(body, "暂无回测结果，等待行情同步。") {
 		t.Fatalf("expected recommendation placeholder row instead of empty backtest table, got %s", body)
+	}
+}
+
+func TestAStockBacktestPageFallsBackToTodayReadOnlyRecommendations(t *testing.T) {
+	setAStockNowForTest(t, time.Date(2026, 7, 8, 10, 0, 0, 0, time.FixedZone("CST", 8*3600)))
+	market := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		writeEnvelope(w, http.StatusOK, "ok", map[string]any{"items": []map[string]any{
+			{"code": "002230", "date": "2026-07-07", "open": 40.00, "close": 41.00, "pct": 1.10},
+			{"code": "002230", "date": "2026-07-08", "open": 42.00, "close": 43.00, "pct": 4.88, "entry_price": 42.00},
+		}})
+	}))
+	defer market.Close()
+	t.Setenv("YUQING_ASTOCK_MARKET_URL", market.URL)
+
+	internalWrites := 0
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/a-stock/recommendations":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
+		case "/api/v1/a-stock/recommendation-selections":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{Found: false})
+		case "/api/v1/articles":
+			writeEnvelope(w, http.StatusOK, "ok", model.ItemListResult{
+				Items: []model.Item{{
+					ID:          1,
+					SourceType:  "flash",
+					Title:       "人工智能产业链活跃 科大讯飞走强",
+					Summary:     "AI 算力需求增长",
+					PublishTime: "2026-07-08 09:05:00",
+					TagFlags:    "0.002230",
+					CapturedAt:  time.Date(2026, 7, 8, 1, 5, 0, 0, time.UTC),
+				}},
+				Page: 1, PageSize: 200, Total: 1,
+			})
+		case "/api/v1/a-stock/auction":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockAuctionListResult{
+				Date:       "2026-07-08",
+				LatestDate: "2026-07-08",
+				Page:       1,
+				PageSize:   5000,
+				Items: []model.AStockAuctionAmount{{
+					TradeDate:     "2026-07-08",
+					Code:          "002230",
+					Name:          "科大讯飞",
+					AuctionAmount: 100000000,
+				}},
+			})
+		case "/api/v1/a-stock/recommendation-latest-dates":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationLatestDateListResult{Items: []model.AStockRecommendationLatestDate{}})
+		case "/api/v1/a-stock/holdings/summary":
+			writeEnvelope(w, http.StatusOK, "ok", model.StockInstitutionHoldingSummary{})
+		case "/api/v1/internal/a-stock/recommendations", "/api/v1/internal/a-stock/recommendation-selections":
+			internalWrites++
+			http.Error(w, "GET backtest must not write", http.StatusInternalServerError)
+		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
+			t.Fatalf("unexpected content request: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	req := httptest.NewRequest(http.MethodGet, "/a-stock/backtest?date=2026-07-08&period=morning&ignore_fund_flow=1", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAStockBacktestPage(rr, req, map[string]any{"id": 1})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"上午推荐", "今日回测使用只读实时推荐结果"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected today fallback backtest page to contain %q, got %s", want, body)
+		}
+	}
+	if !strings.Contains(body, "<tr><td>上午推荐</td><td>") || strings.Contains(body, "暂无回测结果") {
+		t.Fatalf("expected today fallback backtest page to render recommendation rows, got %s", body)
+	}
+	if internalWrites != 0 {
+		t.Fatalf("expected GET fallback to avoid internal writes, got %d", internalWrites)
 	}
 }
 

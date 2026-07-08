@@ -49,13 +49,9 @@ func (s *Store) UpsertAStockRecommendationSnapshot(ctx context.Context, snapshot
 		updatedAt = now
 	}
 	recommendationsJSON := strings.TrimSpace(snapshot.RecommendationsJSON)
-	if recommendationsJSON == "" {
-		recommendationsJSON = "[]"
-	}
+	recommendationsJSON = normalizeAStockRecommendationJSONArray(recommendationsJSON)
 	backtestsJSON := strings.TrimSpace(snapshot.BacktestsJSON)
-	if backtestsJSON == "" {
-		backtestsJSON = "[]"
-	}
+	backtestsJSON = normalizeAStockRecommendationJSONArray(backtestsJSON)
 	_, err := s.db.ExecContext(ctx, `
 INSERT INTO a_stock_recommendation_snapshots (
 	strategy_date, period, ignore_recent, recommendations_json, backtests_json, news_summary_json, backtest_status,
@@ -182,12 +178,22 @@ func scanAStockRecommendationSnapshot(scanner scanner) (model.AStockRecommendati
 		return snapshot, err
 	}
 	snapshot.IgnoreRecent = ignoreRecent != 0
+	snapshot.RecommendationsJSON = normalizeAStockRecommendationJSONArray(snapshot.RecommendationsJSON)
+	snapshot.BacktestsJSON = normalizeAStockRecommendationJSONArray(snapshot.BacktestsJSON)
 	snapshot.LimitUpFilterEnabled = limitUpFilterEnabled != 0
 	snapshot.TodayMarketFilterEnabled = todayMarketFilterEnabled != 0
 	snapshot.FundFlowFilterEnabled = fundFlowFilterEnabled != 0
 	snapshot.CreatedAt = mustParseRFC3339(createdAt)
 	snapshot.UpdatedAt = mustParseRFC3339(updatedAt)
 	return snapshot, nil
+}
+
+func normalizeAStockRecommendationJSONArray(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || strings.EqualFold(raw, "null") {
+		return "[]"
+	}
+	return raw
 }
 
 func (s *Store) UpsertAStockRecommendationSelections(ctx context.Context, selectionSet model.AStockRecommendationSelectionSet) (model.AStockRecommendationSelectionUpsertResult, error) {
