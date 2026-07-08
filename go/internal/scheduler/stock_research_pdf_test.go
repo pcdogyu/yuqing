@@ -87,7 +87,7 @@ func TestRunStockResearchPDFParseFindsPDFDownloadsAndWritesContent(t *testing.T)
 	if result.Total != 1 || result.Parsed != 1 || result.Failed != 0 {
 		t.Fatalf("unexpected parse result: %+v", result)
 	}
-	if captured.PDFStatus != "parsed" || captured.PDFURL != external.URL+"/research.pdf" || captured.PDFText != "研报 PDF 文本" || !strings.HasSuffix(captured.PDFFilePath, "sina-pdf-1.pdf") {
+	if captured.PDFStatus != "parsed" || captured.PDFURL != external.URL+"/research.pdf" || captured.PDFText != "研报 PDF 文本" || captured.SourceText != "研报 PDF 文本" || captured.SourceFetchStatus != "parsed" || !strings.HasSuffix(captured.PDFFilePath, "sina-pdf-1.pdf") {
 		t.Fatalf("unexpected captured update: %+v", captured)
 	}
 }
@@ -211,7 +211,7 @@ func TestRunStockResearchPDFParseScoresInvestorRelations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runStockResearchPDFParse error: %v", err)
 	}
-	if result.Parsed != 1 || captured.NLPScore != 78.5 || captured.NLPRating != "积极" || !strings.HasPrefix(captured.PDFText, "# 初灵信息") {
+	if result.Parsed != 1 || captured.NLPScore != 78.5 || captured.NLPRating != "积极" || !strings.HasPrefix(captured.PDFText, "# 初灵信息") || captured.SourceText != captured.PDFText || captured.SourceFetchStatus != "parsed" {
 		t.Fatalf("unexpected investor relation pdf parse result=%+v update=%+v", result, captured)
 	}
 }

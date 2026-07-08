@@ -19,6 +19,7 @@ import (
 	pdf "github.com/dslipak/pdf"
 
 	"github.com/pcdogyu/yuqing/go/internal/model"
+	"github.com/pcdogyu/yuqing/go/internal/stockresearch"
 )
 
 const stockResearchPDFMaxBytes = 30 * 1024 * 1024
@@ -129,18 +130,30 @@ func (w *Worker) buildStockResearchPDFUpdate(ctx context.Context, item model.Sto
 	if err != nil {
 		return model.StockResearchPDFUpdate{PDFURL: pdfURL, PDFStatus: "failed", PDFError: err.Error(), PDFParsedAt: now}
 	}
-	text, err := stockResearchPDFTextExtractor(filePath)
+	rawText, err := stockResearchPDFTextExtractor(filePath)
 	if err != nil {
 		return model.StockResearchPDFUpdate{PDFURL: pdfURL, PDFFilePath: filePath, PDFStatus: "failed", PDFError: err.Error(), PDFFetchedAt: now, PDFParsedAt: now}
 	}
-	text = cleanStockResearchText(text)
+	text := cleanStockResearchText(rawText)
 	if text == "" {
 		return model.StockResearchPDFUpdate{PDFURL: pdfURL, PDFFilePath: filePath, PDFStatus: "no_text", PDFError: "PDF 可能为扫描版或图片型研报", PDFFetchedAt: now, PDFParsedAt: now}
 	}
 	if item.SourceType == "cninfo_investor_relation" {
 		text = stockResearchPDFMarkdown(item, text)
 	}
-	update := model.StockResearchPDFUpdate{PDFURL: pdfURL, PDFFilePath: filePath, PDFStatus: "parsed", PDFText: text, PDFFetchedAt: now, PDFParsedAt: now}
+	sourceUpdate := stockresearch.SourceUpdateFromPDFText(text, now)
+	update := model.StockResearchPDFUpdate{
+		PDFURL:            pdfURL,
+		PDFFilePath:       filePath,
+		PDFStatus:         "parsed",
+		PDFText:           text,
+		PDFFetchedAt:      now,
+		PDFParsedAt:       now,
+		SourceText:        sourceUpdate.SourceText,
+		SourceFetchStatus: sourceUpdate.SourceFetchStatus,
+		SourceFetchError:  sourceUpdate.SourceFetchError,
+		SourceFetchedAt:   sourceUpdate.SourceFetchedAt,
+	}
 	if score, ok := w.scoreStockResearchPDF(ctx, item, text); ok {
 		update.NLPScore = score.Score
 		update.NLPRating = score.Rating

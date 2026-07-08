@@ -1,6 +1,7 @@
 package portal
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/pcdogyu/yuqing/go/internal/model"
+	"github.com/pcdogyu/yuqing/go/internal/stockresearch"
 )
 
 const stockResearchPageSize = 20
@@ -65,14 +67,16 @@ body[data-page='stock-research'] input,body[data-page='stock-research'] select,b
 .research-toolbar{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;align-items:end}
 .research-toolbar button{margin:0}.research-actions{display:flex;gap:10px;flex-wrap:wrap}.research-scroll{width:100%;overflow:auto}
 .research-table{width:100%;min-width:0;table-layout:fixed}.research-table th,.research-table td{vertical-align:top}
-.research-col-date{width:7.5%}.research-col-stock{width:8.5%}.research-col-title{width:32.6%}.research-col-institution{width:10%}.research-col-analyst{width:8%}.research-col-source{width:6%}.research-col-link{width:5%}.research-col-pdf{width:8.4%}.research-col-status{width:14%}
+.research-col-date{width:7.5%}.research-col-stock{width:8.5%}.research-col-title{width:22.8%}.research-col-institution{width:12.8%}.research-col-analyst{width:10.8%}.research-col-source{width:6%}.research-col-link{width:5%}.research-col-pdf{width:8.4%}.research-col-status{width:18.2%}
 .research-table th:nth-child(1),.research-table td:nth-child(1),.research-table th:nth-child(2),.research-table td:nth-child(2),.research-table th:nth-child(6),.research-table td:nth-child(6),.research-table th:nth-child(7),.research-table td:nth-child(7),.research-table th:nth-child(8),.research-table td:nth-child(8){white-space:nowrap}
 .research-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 .research-tab{display:inline-flex;align-items:center;padding:8px 12px;border:1px solid #d6ccbb;border-radius:8px;color:#214e34;text-decoration:none;background:#fff}
 .research-source{font-size:12px;padding:3px 8px;border-radius:999px;background:#eff6f0;color:#214e34}
 .research-action-form{display:inline}.research-table form{display:inline}.research-status{font-size:12px;padding:3px 8px;border-radius:999px;background:#f4efe6;color:#5b4a32;white-space:nowrap}
-.research-status-actions{display:flex;align-items:center;gap:8px;white-space:nowrap}.research-status-actions .research-action-form{flex:1 1 auto;min-width:0}.research-status-actions button{width:90%;height:90%;min-height:32px;margin:0;padding:7px 10px}
-.research-status.parsed{background:#e7f4ea;color:#214e34}.research-status.failed{background:#fdecea;color:#8a1f11}.research-status.no_text,.research-status.no_pdf{background:#fff7df;color:#695000}
+.research-status-actions{display:flex;align-items:center;gap:8px;white-space:nowrap;flex-wrap:wrap}.research-status-actions .research-action-form{flex:1 1 auto;min-width:0}.research-status-actions button{width:90%;height:90%;min-height:32px;margin:0;padding:7px 10px}
+.research-status.parsed{background:#e7f4ea;color:#214e34}.research-status.failed{background:#fdecea;color:#8a1f11}.research-status.no_text,.research-status.no_pdf,.research-status.pending_pdf{background:#fff7df;color:#695000}
+.research-text-actions{display:flex;gap:12px;flex-wrap:wrap;margin:12px 0}.research-text-meta{color:#6a6257;margin:8px 0 14px}
+.research-source-text{white-space:pre-wrap;line-height:1.72;background:#fff;border:1px solid #ece7dc;border-radius:12px;padding:18px;overflow:auto}
 </style>`)
 }
 
@@ -101,6 +105,8 @@ func (s *Server) handleStockResearchAsset(w http.ResponseWriter, r *http.Request
 		return
 	}
 	switch action {
+	case "detail":
+		s.renderStockResearchDetail(w, r, id)
 	case "pdf":
 		s.proxyStockResearchPDF(w, r, id)
 	case "text":
@@ -117,6 +123,13 @@ func parseStockResearchAssetPath(path string) (int64, string, bool) {
 			continue
 		}
 		parts := strings.Split(strings.Trim(strings.TrimPrefix(path, prefix), "/"), "/")
+		if len(parts) == 1 {
+			id, err := strconv.ParseInt(parts[0], 10, 64)
+			if err != nil || id <= 0 {
+				return 0, "", false
+			}
+			return id, "detail", true
+		}
 		if len(parts) < 2 || len(parts) > 3 || parts[1] != "pdf" {
 			return 0, "", false
 		}
@@ -162,6 +175,84 @@ func (s *Server) proxyStockResearchPDF(w http.ResponseWriter, r *http.Request, i
 	}
 	w.WriteHeader(resp.StatusCode())
 	_, _ = w.Write(resp.Body())
+}
+
+func (s *Server) renderStockResearchDetail(w http.ResponseWriter, r *http.Request, id int64) {
+	contentURL := strings.TrimRight(strings.TrimSpace(s.cfg.ContentURL), "/")
+	if contentURL == "" {
+		http.Error(w, "content service is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	var item model.StockResearchSurvey
+	err := s.getJSONWithContext(r.Context(), fmt.Sprintf("%s/api/v1/stock-research/%d", contentURL, id), &item)
+	if err != nil {
+		http.Error(w, "研报详情读取失败："+err.Error(), http.StatusBadGateway)
+		return
+	}
+	returnTo := safeStockResearchReturnURL(r.URL.Query().Get("return_to"))
+	if returnTo == "" {
+		returnTo = "/stock-research"
+	}
+	var b strings.Builder
+	renderStockResearchStyle(&b)
+	if msg := strings.TrimSpace(r.URL.Query().Get("msg")); msg != "" {
+		b.WriteString(`<div class="research-message">`)
+		b.WriteString(html.EscapeString(msg))
+		b.WriteString(`</div>`)
+	}
+	b.WriteString(`<section><div class="research-text-actions"><a class="inline" href="`)
+	b.WriteString(html.EscapeString(returnTo))
+	b.WriteString(`">返回研报列表</a>`)
+	if strings.TrimSpace(item.SourceURL) != "" {
+		b.WriteString(`<a class="inline" href="`)
+		b.WriteString(html.EscapeString(item.SourceURL))
+		b.WriteString(`" target="_blank" rel="noreferrer">外部原文</a>`)
+	}
+	b.WriteString(`<form method="post" action="/stock-research" class="research-action-form"><input type="hidden" name="action" value="fetch_source_one"><input type="hidden" name="force" value="1"><input type="hidden" name="id" value="`)
+	b.WriteString(fmt.Sprintf("%d", item.ID))
+	b.WriteString(`"><input type="hidden" name="redirect_to" value="`)
+	b.WriteString(html.EscapeString(stockResearchDetailURL(item.ID, returnTo)))
+	b.WriteString(`"><button type="submit">重新抓取原文</button></form></div>`)
+	b.WriteString(`<h2>`)
+	b.WriteString(html.EscapeString(cleanStockResearchTitle(item)))
+	b.WriteString(`</h2><p class="research-text-meta">`)
+	b.WriteString(html.EscapeString(stockResearchDetailMeta(item)))
+	b.WriteString(`</p></section>`)
+	text := strings.TrimSpace(item.SourceText)
+	heading := "原文正文"
+	if text == "" {
+		text = strings.TrimSpace(item.PDFText)
+		heading = "PDF 文本"
+	}
+	if text == "" {
+		text = strings.TrimSpace(item.Summary)
+		heading = "摘要"
+	}
+	b.WriteString(`<section><h2>`)
+	b.WriteString(html.EscapeString(heading))
+	b.WriteString(`</h2>`)
+	if text != "" {
+		b.WriteString(`<pre class="research-source-text">`)
+		b.WriteString(html.EscapeString(text))
+		b.WriteString(`</pre>`)
+	} else {
+		b.WriteString(`<p class="research-muted">暂无入库正文，请点击“重新抓取原文”或查看外部原文。</p>`)
+	}
+	if strings.TrimSpace(item.SourceFetchStatus) != "" || strings.TrimSpace(item.SourceFetchError) != "" {
+		b.WriteString(`<p class="research-muted">原文状态：`)
+		b.WriteString(html.EscapeString(stockResearchSourceStatusLabel(item)))
+		if strings.TrimSpace(item.SourceFetchedAt) != "" {
+			b.WriteString(` ｜ 时间：`)
+			b.WriteString(html.EscapeString(item.SourceFetchedAt))
+		}
+		if strings.TrimSpace(item.SourceFetchError) != "" {
+			b.WriteString(` ｜ `)
+			b.WriteString(html.EscapeString(item.SourceFetchError))
+		}
+		b.WriteString(`</p>`)
+	}
+	b.WriteString(`</section>`)
+	_ = s.writeSimplePage(w, "stock-research", "研报详情", b.String())
 }
 
 func (s *Server) renderStockResearchPDFText(w http.ResponseWriter, r *http.Request, id int64) {
@@ -386,7 +477,12 @@ func renderStockResearchFilters(b *strings.Builder, ctx model.StockResearchListR
 	b.WriteString(`<button type="submit">解析当前筛选研报PDF</button></form>`)
 	b.WriteString(`<form method="post" class="research-action-form"><input type="hidden" name="scope" value="investor_relations"><input type="hidden" name="action" value="backfill_year">`)
 	stockResearchHiddenFields(b, ctx)
-	b.WriteString(`<button type="submit">抓取投资者关系近一年并解析PDF</button></form></div></section>`)
+	b.WriteString(`<button type="submit">抓取投资者关系近一年并解析PDF</button></form>`)
+	b.WriteString(`<form method="post" class="research-action-form"><input type="hidden" name="action" value="fetch_source_page">`)
+	stockResearchHiddenFields(b, ctx)
+	b.WriteString(`<input type="hidden" name="page" value="`)
+	b.WriteString(fmt.Sprintf("%d", max(ctx.Page, 1)))
+	b.WriteString(`"><button type="submit">补抓当前页原文入库</button></form></div></section>`)
 }
 
 type stockResearchTableOptions struct {
@@ -422,7 +518,11 @@ func renderStockResearchTableWithOptions(b *strings.Builder, ctx model.StockRese
 			b.WriteString(`</td><td>`)
 			b.WriteString(html.EscapeString(strings.TrimSpace(item.Code + " " + item.Name)))
 			b.WriteString(`</td><td>`)
+			b.WriteString(`<a class="inline" href="`)
+			b.WriteString(html.EscapeString(stockResearchDetailURL(item.ID, stockResearchListReturnURL(ctx))))
+			b.WriteString(`">`)
 			b.WriteString(html.EscapeString(cleanStockResearchTitle(item)))
+			b.WriteString(`</a>`)
 			b.WriteString(`</td><td>`)
 			b.WriteString(html.EscapeString(nonEmptyText(item.Institution, "--")))
 			b.WriteString(`</td><td>`)
@@ -470,7 +570,28 @@ func renderStockResearchTableWithOptions(b *strings.Builder, ctx model.StockRese
 			b.WriteString(fmt.Sprintf("%d", item.ID))
 			b.WriteString(`">`)
 			stockResearchHiddenFields(b, ctx)
-			b.WriteString(`<button type="submit">重新解析</button></form></div>`)
+			b.WriteString(`<button type="submit">重新解析</button></form>`)
+			b.WriteString(`<form method="post" class="research-action-form"><input type="hidden" name="action" value="fetch_source_one"><input type="hidden" name="id" value="`)
+			b.WriteString(fmt.Sprintf("%d", item.ID))
+			b.WriteString(`">`)
+			if strings.TrimSpace(item.SourceText) != "" {
+				b.WriteString(`<input type="hidden" name="force" value="1">`)
+			}
+			stockResearchHiddenFields(b, ctx)
+			b.WriteString(`<input type="hidden" name="page" value="`)
+			b.WriteString(fmt.Sprintf("%d", max(ctx.Page, 1)))
+			b.WriteString(`"><button type="submit">`)
+			if strings.TrimSpace(item.SourceText) != "" {
+				b.WriteString(`重新抓取`)
+			} else {
+				b.WriteString(`抓取原文`)
+			}
+			b.WriteString(`</button></form></div>`)
+			if strings.TrimSpace(item.SourceText) != "" || strings.TrimSpace(item.SourceFetchStatus) != "" {
+				b.WriteString(`<div class="research-muted">`)
+				b.WriteString(html.EscapeString(stockResearchSourceStatusLabel(item)))
+				b.WriteString(`</div>`)
+			}
 			if strings.TrimSpace(item.NLPScoredAt) != "" {
 				b.WriteString(`<div class="research-muted">NLP `)
 				b.WriteString(html.EscapeString(formatStockResearchTargetPrice(fmt.Sprintf("%.2f", item.NLPScore))))
@@ -532,8 +653,11 @@ func (s *Server) handleStockResearchAction(w http.ResponseWriter, r *http.Reques
 		Source:      strings.TrimSpace(r.FormValue("source")),
 		Start:       strings.TrimSpace(r.FormValue("start")),
 		End:         strings.TrimSpace(r.FormValue("end")),
+		Page:        normalizeAStockNewsPage(r.FormValue("page")),
+		PageSize:    stockResearchPageSize,
 	}
 	message := "未知操作"
+	preservePage := false
 	switch strings.TrimSpace(r.FormValue("action")) {
 	case "backfill_year":
 		message = s.triggerStockResearchBackfill(filter)
@@ -546,9 +670,27 @@ func (s *Server) handleStockResearchAction(w http.ResponseWriter, r *http.Reques
 		} else {
 			message = s.triggerStockResearchPDFParse(filter, id)
 		}
+	case "fetch_source_page":
+		preservePage = true
+		message = s.fetchStockResearchSourcePage(r.Context(), filter)
+	case "fetch_source_one":
+		preservePage = true
+		id, err := strconv.ParseInt(strings.TrimSpace(r.FormValue("id")), 10, 64)
+		if err != nil || id <= 0 {
+			message = "原文抓取失败：无效记录 ID"
+		} else {
+			force := strings.TrimSpace(r.FormValue("force")) == "1"
+			message = s.fetchStockResearchSourceOne(r.Context(), id, force)
+		}
 	}
-	filter.Page = 1
+	if !preservePage {
+		filter.Page = 1
+	}
 	filter.PageSize = stockResearchPageSize
+	if redirectTo := safeStockResearchReturnURL(r.FormValue("redirect_to")); redirectTo != "" {
+		http.Redirect(w, r, stockResearchURLWithMessage(redirectTo, message), http.StatusSeeOther)
+		return
+	}
 	query := stockResearchQuery(filter)
 	query.Set("msg", message)
 	http.Redirect(w, r, "/stock-research?"+query.Encode(), http.StatusSeeOther)
@@ -573,6 +715,101 @@ func (s *Server) handleInvestorRelationsAction(w http.ResponseWriter, r *http.Re
 	}
 	filter.Page = 1
 	http.Redirect(w, r, investorRelationsStockResearchURL(filter, message), http.StatusSeeOther)
+}
+
+func (s *Server) fetchStockResearchSourcePage(ctx context.Context, filter model.StockResearchFilter) string {
+	filter.Page = max(filter.Page, 1)
+	filter.PageSize = stockResearchPageSize
+	list, err := s.loadStockResearchContext(filter)
+	if err != nil {
+		return "当前页原文补抓失败：" + err.Error()
+	}
+	total, fetched, skipped, failed := len(list.Items), 0, 0, 0
+	for _, item := range list.Items {
+		if strings.TrimSpace(item.SourceText) != "" {
+			skipped++
+			continue
+		}
+		if err := s.fetchAndWriteStockResearchSource(ctx, item, false); err != nil {
+			failed++
+		} else {
+			fetched++
+		}
+	}
+	return fmt.Sprintf("当前页原文补抓完成：共 %d 条，抓取 %d 条，跳过已有正文 %d 条，失败 %d 条。", total, fetched, skipped, failed)
+}
+
+func (s *Server) fetchStockResearchSourceOne(ctx context.Context, id int64, force bool) string {
+	item, err := s.loadStockResearchItem(ctx, id)
+	if err != nil {
+		return "原文抓取失败：" + err.Error()
+	}
+	if strings.TrimSpace(item.SourceText) != "" && !force {
+		return "原文已入库，已跳过。"
+	}
+	if err := s.fetchAndWriteStockResearchSource(ctx, item, force); err != nil {
+		return "原文抓取失败：" + err.Error()
+	}
+	if force {
+		return "原文已重新抓取并入库。"
+	}
+	return "原文已抓取并入库。"
+}
+
+func (s *Server) fetchAndWriteStockResearchSource(ctx context.Context, item model.StockResearchSurvey, force bool) error {
+	update := stockResearchSourceUpdateFromItem(ctx, item, s.cfg.UserAgent, stockResearchHTTPTimeout(s.cfg.HTTPTimeout))
+	update.Force = force
+	contentURL := strings.TrimRight(strings.TrimSpace(s.cfg.ContentURL), "/")
+	if contentURL == "" {
+		return fmt.Errorf("content service is not configured")
+	}
+	resp, err := s.client.R().
+		SetContext(ctx).
+		SetBody(update).
+		Post(fmt.Sprintf("%s/api/v1/internal/stock-research/%d/source", contentURL, item.ID))
+	if err != nil {
+		return err
+	}
+	if !resp.IsSuccess() {
+		return fmt.Errorf("content source update failed: %s", resp.Status())
+	}
+	if update.SourceFetchStatus == stockresearch.SourceStatusFailed {
+		return fmt.Errorf("%s", update.SourceFetchError)
+	}
+	return nil
+}
+
+func (s *Server) loadStockResearchItem(ctx context.Context, id int64) (model.StockResearchSurvey, error) {
+	contentURL := strings.TrimRight(strings.TrimSpace(s.cfg.ContentURL), "/")
+	if contentURL == "" {
+		return model.StockResearchSurvey{}, fmt.Errorf("content service is not configured")
+	}
+	var item model.StockResearchSurvey
+	err := s.getJSONWithContext(ctx, fmt.Sprintf("%s/api/v1/stock-research/%d", contentURL, id), &item)
+	return item, err
+}
+
+func stockResearchSourceUpdateFromItem(ctx context.Context, item model.StockResearchSurvey, userAgent string, timeout time.Duration) model.StockResearchSourceUpdate {
+	if strings.TrimSpace(item.PDFText) != "" {
+		return stockresearch.SourceUpdateFromPDFText(item.PDFText, time.Now().UTC().Format(time.RFC3339))
+	}
+	if stockresearch.LooksLikePDFURL(nonEmptyText(item.PDFURL, item.SourceURL)) {
+		return model.StockResearchSourceUpdate{
+			SourceFetchStatus: stockresearch.SourceStatusPendingPDF,
+			SourceFetchedAt:   time.Now().UTC().Format(time.RFC3339),
+		}
+	}
+	return stockresearch.FetchSource(ctx, item.SourceURL, stockresearch.FetchOptions{
+		UserAgent: nonEmptyText(userAgent, "Mozilla/5.0"),
+		Timeout:   timeout,
+	})
+}
+
+func stockResearchHTTPTimeout(value time.Duration) time.Duration {
+	if value > 0 {
+		return value
+	}
+	return 15 * time.Second
 }
 
 func (s *Server) triggerStockResearchBackfill(filter model.StockResearchFilter) string {
@@ -685,6 +922,97 @@ func stockResearchHiddenFields(b *strings.Builder, ctx model.StockResearchListRe
 		b.WriteString(html.EscapeString(field.Value))
 		b.WriteString(`">`)
 	}
+}
+
+func stockResearchListReturnURL(ctx model.StockResearchListResult) string {
+	filter := model.StockResearchFilter{
+		Code:        ctx.Code,
+		Company:     ctx.Company,
+		Institution: ctx.Institution,
+		Kind:        ctx.Kind,
+		Source:      ctx.Source,
+		Start:       ctx.Start,
+		End:         ctx.End,
+		Page:        max(ctx.Page, 1),
+		PageSize:    stockResearchPageSize,
+	}
+	query := stockResearchQuery(filter)
+	if encoded := query.Encode(); encoded != "" {
+		return "/stock-research?" + encoded
+	}
+	return "/stock-research"
+}
+
+func stockResearchDetailURL(id int64, returnTo string) string {
+	query := url.Values{}
+	if safe := safeStockResearchReturnURL(returnTo); safe != "" {
+		query.Set("return_to", safe)
+	}
+	path := fmt.Sprintf("/stock-research/%d", id)
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	return path
+}
+
+func stockResearchURLWithMessage(rawURL string, message string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return "/stock-research?msg=" + url.QueryEscape(message)
+	}
+	query := parsed.Query()
+	query.Set("msg", message)
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
+}
+
+func safeStockResearchReturnURL(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if strings.HasPrefix(value, "/stock-research") && !strings.HasPrefix(value, "//") {
+		return value
+	}
+	return ""
+}
+
+func stockResearchSourceStatusLabel(item model.StockResearchSurvey) string {
+	switch strings.TrimSpace(item.SourceFetchStatus) {
+	case stockresearch.SourceStatusParsed:
+		return "原文已入库"
+	case stockresearch.SourceStatusPendingPDF:
+		return "原文等待PDF解析"
+	case stockresearch.SourceStatusNoSource:
+		return "无原文链接"
+	case stockresearch.SourceStatusFailed:
+		return "原文抓取失败"
+	default:
+		if strings.TrimSpace(item.SourceText) != "" {
+			return "原文已入库"
+		}
+		return "原文未入库"
+	}
+}
+
+func stockResearchDetailMeta(item model.StockResearchSurvey) string {
+	parts := []string{}
+	if stock := strings.TrimSpace(item.Code + " " + item.Name); stock != "" {
+		parts = append(parts, stock)
+	}
+	if date := strings.TrimSpace(nonEmptyText(item.ResearchDate, item.PublishTime)); date != "" {
+		parts = append(parts, "日期："+date)
+	}
+	if institution := strings.TrimSpace(item.Institution); institution != "" {
+		parts = append(parts, "机构："+institution)
+	}
+	if analyst := strings.TrimSpace(item.Analyst); analyst != "" {
+		parts = append(parts, "分析师："+analyst)
+	}
+	if source := stockResearchSourceLabel(item.SourceType); source != "" && source != "--" {
+		parts = append(parts, "来源："+source)
+	}
+	return strings.Join(parts, " ｜ ")
 }
 
 func stockResearchKindLabel(kind string) string {

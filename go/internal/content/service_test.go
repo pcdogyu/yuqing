@@ -321,7 +321,7 @@ func TestStockResearchAPIUpsertsAndLists(t *testing.T) {
 	svc := NewService(config.Config{}, store)
 	router := svc.Router()
 
-	payload := `{"items":[{"code":"002230","name":"科大讯飞","kind":"report","title":"科大讯飞深度研究","institution":"中金公司","analyst":"张三","rating":"买入","target_price":"50.00","research_date":"2026-06-16","source_type":"sina_finance_report","source_key":"sina-1","source_url":"https://sina.example.com/1"},{"code":"300059","name":"东方财富","kind":"survey","title":"东方财富机构调研","institution":"华泰证券","research_date":"2026-06-15","source_type":"sohu_finance_report","source_key":"sohu-1"}]}`
+	payload := `{"items":[{"code":"002230","name":"科大讯飞","kind":"report","title":"科大讯飞深度研究","institution":"中金公司","analyst":"张三","rating":"买入","target_price":"50.00","research_date":"2026-06-16","source_type":"sina_finance_report","source_key":"sina-1","source_url":"https://sina.example.com/1","source_text":"已入库原文","source_fetch_status":"parsed","source_fetched_at":"2026-06-16T01:00:00Z"},{"code":"300059","name":"东方财富","kind":"survey","title":"东方财富机构调研","institution":"华泰证券","research_date":"2026-06-15","source_type":"sohu_finance_report","source_key":"sohu-1"}]}`
 	postReq := httptest.NewRequest(http.MethodPost, "/api/v1/internal/stock-research/batch", strings.NewReader(payload))
 	postRR := httptest.NewRecorder()
 	router.ServeHTTP(postRR, postReq)
@@ -346,6 +346,39 @@ func TestStockResearchAPIUpsertsAndLists(t *testing.T) {
 	}
 	if envelope.Data.Items[0].Rating != "买入" || envelope.Data.Items[0].TargetPrice != "50.00" {
 		t.Fatalf("expected rating and target price, got %+v", envelope.Data.Items[0])
+	}
+	if envelope.Data.Items[0].SourceText != "已入库原文" || envelope.Data.Items[0].SourceFetchStatus != "parsed" {
+		t.Fatalf("expected source fields in list response, got %+v", envelope.Data.Items[0])
+	}
+	itemID := envelope.Data.Items[0].ID
+
+	skipReq := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/internal/stock-research/%d/source", itemID), strings.NewReader(`{"source_text":"新正文","source_fetch_status":"parsed","source_fetched_at":"2026-06-16T02:00:00Z"}`))
+	skipRR := httptest.NewRecorder()
+	router.ServeHTTP(skipRR, skipReq)
+	if skipRR.Code != http.StatusOK {
+		t.Fatalf("expected source skip update 200, got %d body=%s", skipRR.Code, skipRR.Body.String())
+	}
+	var sourceEnvelope struct {
+		Data model.StockResearchSurvey `json:"data"`
+	}
+	if err := json.Unmarshal(skipRR.Body.Bytes(), &sourceEnvelope); err != nil {
+		t.Fatalf("unmarshal source skip response: %v", err)
+	}
+	if sourceEnvelope.Data.SourceText != "已入库原文" {
+		t.Fatalf("expected default source update to skip existing text, got %+v", sourceEnvelope.Data)
+	}
+
+	forceReq := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/internal/stock-research/%d/source", itemID), strings.NewReader(`{"source_text":"新正文","source_fetch_status":"parsed","source_fetched_at":"2026-06-16T02:00:00Z","force":true}`))
+	forceRR := httptest.NewRecorder()
+	router.ServeHTTP(forceRR, forceReq)
+	if forceRR.Code != http.StatusOK {
+		t.Fatalf("expected source force update 200, got %d body=%s", forceRR.Code, forceRR.Body.String())
+	}
+	if err := json.Unmarshal(forceRR.Body.Bytes(), &sourceEnvelope); err != nil {
+		t.Fatalf("unmarshal source force response: %v", err)
+	}
+	if sourceEnvelope.Data.SourceText != "新正文" || sourceEnvelope.Data.SourceFetchedAt != "2026-06-16T02:00:00Z" {
+		t.Fatalf("expected force source update to overwrite existing text, got %+v", sourceEnvelope.Data)
 	}
 
 	defaultPageReq := httptest.NewRequest(http.MethodGet, "/api/v1/stock-research?company=科大&page=1", nil)
@@ -408,6 +441,15 @@ func TestStockResearchPDFAPIUpdatesDownloadsAndReadsText(t *testing.T) {
 	router.ServeHTTP(updateRR, updateReq)
 	if updateRR.Code != http.StatusOK {
 		t.Fatalf("expected pdf update 200, got %d body=%s", updateRR.Code, updateRR.Body.String())
+	}
+	var updateEnvelope struct {
+		Data model.StockResearchSurvey `json:"data"`
+	}
+	if err := json.Unmarshal(updateRR.Body.Bytes(), &updateEnvelope); err != nil {
+		t.Fatalf("unmarshal pdf update response: %v", err)
+	}
+	if updateEnvelope.Data.SourceText != "科大讯飞研报正文" || updateEnvelope.Data.SourceFetchStatus != "parsed" {
+		t.Fatalf("expected pdf update to sync source text, got %+v", updateEnvelope.Data)
 	}
 
 	textReq := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/stock-research/%d/pdf/text", itemID), nil)

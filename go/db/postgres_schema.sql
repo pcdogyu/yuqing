@@ -65,6 +65,10 @@ CREATE TABLE IF NOT EXISTS stock_research_surveys (
 	source_key TEXT NOT NULL DEFAULT '',
 	summary TEXT NOT NULL DEFAULT '',
 	raw_payload TEXT NOT NULL DEFAULT '{}',
+	source_text TEXT NOT NULL DEFAULT '',
+	source_fetch_status TEXT NOT NULL DEFAULT '',
+	source_fetch_error TEXT NOT NULL DEFAULT '',
+	source_fetched_at TEXT NOT NULL DEFAULT '',
 	pdf_url TEXT NOT NULL DEFAULT '',
 	pdf_file_path TEXT NOT NULL DEFAULT '',
 	pdf_status TEXT NOT NULL DEFAULT '',
@@ -80,6 +84,10 @@ CREATE TABLE IF NOT EXISTS stock_research_surveys (
 	updated_at TEXT NOT NULL,
 	UNIQUE (source_type, source_key)
 );
+ALTER TABLE stock_research_surveys ADD COLUMN IF NOT EXISTS source_text TEXT NOT NULL DEFAULT '';
+ALTER TABLE stock_research_surveys ADD COLUMN IF NOT EXISTS source_fetch_status TEXT NOT NULL DEFAULT '';
+ALTER TABLE stock_research_surveys ADD COLUMN IF NOT EXISTS source_fetch_error TEXT NOT NULL DEFAULT '';
+ALTER TABLE stock_research_surveys ADD COLUMN IF NOT EXISTS source_fetched_at TEXT NOT NULL DEFAULT '';
 ALTER TABLE stock_research_surveys ADD COLUMN IF NOT EXISTS pdf_url TEXT NOT NULL DEFAULT '';
 ALTER TABLE stock_research_surveys ADD COLUMN IF NOT EXISTS pdf_file_path TEXT NOT NULL DEFAULT '';
 ALTER TABLE stock_research_surveys ADD COLUMN IF NOT EXISTS pdf_status TEXT NOT NULL DEFAULT '';

@@ -10,6 +10,8 @@ import (
 	"github.com/pcdogyu/yuqing/go/internal/model"
 )
 
+const stockResearchSelectColumns = "id, code, name, kind, title, institution, analyst, rating, target_price, research_date, publish_time, source_url, source_type, source_key, summary, raw_payload, source_text, source_fetch_status, source_fetch_error, source_fetched_at, pdf_url, pdf_file_path, pdf_status, pdf_text, pdf_error, pdf_fetched_at, pdf_parsed_at, nlp_score, nlp_rating, nlp_reason, nlp_scored_at, created_at, updated_at"
+
 func (s *Store) UpsertStockResearchSurveys(ctx context.Context, items []model.StockResearchSurvey) (model.StockResearchUpsertResult, error) {
 	result := model.StockResearchUpsertResult{Total: len(items)}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -23,8 +25,8 @@ func (s *Store) UpsertStockResearchSurveys(ctx context.Context, items []model.St
 	}()
 
 	stmt, err := tx.PrepareContext(ctx, `
-INSERT INTO stock_research_surveys (code, name, kind, title, institution, analyst, rating, target_price, research_date, publish_time, source_url, source_type, source_key, summary, raw_payload, pdf_url, pdf_file_path, pdf_status, pdf_text, pdf_error, pdf_fetched_at, pdf_parsed_at, nlp_score, nlp_rating, nlp_reason, nlp_scored_at, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO stock_research_surveys (code, name, kind, title, institution, analyst, rating, target_price, research_date, publish_time, source_url, source_type, source_key, summary, raw_payload, source_text, source_fetch_status, source_fetch_error, source_fetched_at, pdf_url, pdf_file_path, pdf_status, pdf_text, pdf_error, pdf_fetched_at, pdf_parsed_at, nlp_score, nlp_rating, nlp_reason, nlp_scored_at, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(source_type, source_key) DO UPDATE SET
 	code = excluded.code,
 	name = excluded.name,
@@ -39,6 +41,10 @@ ON CONFLICT(source_type, source_key) DO UPDATE SET
 	source_url = excluded.source_url,
 	summary = excluded.summary,
 	raw_payload = excluded.raw_payload,
+	source_text = CASE WHEN stock_research_surveys.source_text = '' AND excluded.source_text <> '' THEN excluded.source_text ELSE stock_research_surveys.source_text END,
+	source_fetch_status = CASE WHEN stock_research_surveys.source_text = '' AND excluded.source_fetch_status <> '' THEN excluded.source_fetch_status ELSE stock_research_surveys.source_fetch_status END,
+	source_fetch_error = CASE WHEN stock_research_surveys.source_text = '' AND excluded.source_fetch_error <> '' THEN excluded.source_fetch_error ELSE stock_research_surveys.source_fetch_error END,
+	source_fetched_at = CASE WHEN stock_research_surveys.source_text = '' AND excluded.source_fetched_at <> '' THEN excluded.source_fetched_at ELSE stock_research_surveys.source_fetched_at END,
 	pdf_url = CASE WHEN excluded.pdf_url <> '' THEN excluded.pdf_url ELSE stock_research_surveys.pdf_url END,
 	pdf_file_path = CASE WHEN excluded.pdf_file_path <> '' THEN excluded.pdf_file_path ELSE stock_research_surveys.pdf_file_path END,
 	pdf_status = CASE WHEN excluded.pdf_status <> '' THEN excluded.pdf_status ELSE stock_research_surveys.pdf_status END,
@@ -73,6 +79,10 @@ ON CONFLICT(source_type, source_key) DO UPDATE SET
 		item.SourceKey = strings.TrimSpace(item.SourceKey)
 		item.Summary = strings.TrimSpace(item.Summary)
 		item.RawPayload = nonEmpty(strings.TrimSpace(item.RawPayload), "{}")
+		item.SourceText = strings.TrimSpace(item.SourceText)
+		item.SourceFetchStatus = stockResearchSourceStatus(item.SourceFetchStatus)
+		item.SourceFetchError = strings.TrimSpace(item.SourceFetchError)
+		item.SourceFetchedAt = strings.TrimSpace(item.SourceFetchedAt)
 		item.PDFURL = strings.TrimSpace(item.PDFURL)
 		item.PDFFilePath = strings.TrimSpace(item.PDFFilePath)
 		item.PDFStatus = stockResearchPDFStatus(item.PDFStatus)
@@ -138,6 +148,10 @@ ON CONFLICT(source_type, source_key) DO UPDATE SET
 			sourceKey,
 			item.Summary,
 			item.RawPayload,
+			item.SourceText,
+			item.SourceFetchStatus,
+			item.SourceFetchError,
+			item.SourceFetchedAt,
 			item.PDFURL,
 			item.PDFFilePath,
 			item.PDFStatus,
@@ -173,7 +187,7 @@ func (s *Store) findEquivalentStockResearchSurveyTx(ctx context.Context, tx *Tx,
 		return model.StockResearchSurvey{}, false, nil
 	}
 	rows, err := tx.QueryContext(ctx, `
-SELECT id, code, name, kind, title, institution, analyst, rating, target_price, research_date, publish_time, source_url, source_type, source_key, summary, raw_payload, pdf_url, pdf_file_path, pdf_status, pdf_text, pdf_error, pdf_fetched_at, pdf_parsed_at, nlp_score, nlp_rating, nlp_reason, nlp_scored_at, created_at, updated_at
+SELECT `+stockResearchSelectColumns+`
 FROM stock_research_surveys
 WHERE kind = ? AND code = ? AND COALESCE(NULLIF(research_date, ''), publish_time) >= ? AND COALESCE(NULLIF(research_date, ''), publish_time) <= ?`,
 		item.Kind, item.Code, stockResearchEquivalentDate(item), stockResearchEquivalentDate(item)+" 23:59:59")
@@ -211,6 +225,10 @@ func (s *Store) updateEquivalentStockResearchSurveyTx(ctx context.Context, tx *T
 	_, err := tx.ExecContext(ctx, `
 UPDATE stock_research_surveys
 SET code = ?, name = ?, kind = ?, title = ?, institution = ?, analyst = ?, rating = ?, target_price = ?, research_date = ?, publish_time = ?, source_url = ?, source_type = ?, source_key = ?, summary = ?, raw_payload = ?,
+	source_text = CASE WHEN source_text = '' AND ? <> '' THEN ? ELSE source_text END,
+	source_fetch_status = CASE WHEN source_text = '' AND ? <> '' THEN ? ELSE source_fetch_status END,
+	source_fetch_error = CASE WHEN source_text = '' AND ? <> '' THEN ? ELSE source_fetch_error END,
+	source_fetched_at = CASE WHEN source_text = '' AND ? <> '' THEN ? ELSE source_fetched_at END,
 	pdf_url = CASE WHEN ? <> '' THEN ? ELSE pdf_url END,
 	pdf_file_path = CASE WHEN ? <> '' THEN ? ELSE pdf_file_path END,
 	pdf_status = CASE WHEN ? <> '' THEN ? ELSE pdf_status END,
@@ -239,6 +257,10 @@ WHERE id = ?`,
 		preferred.SourceKey,
 		preferred.Summary,
 		preferred.RawPayload,
+		incoming.SourceText, incoming.SourceText,
+		incoming.SourceFetchStatus, incoming.SourceFetchStatus,
+		incoming.SourceFetchError, incoming.SourceFetchError,
+		incoming.SourceFetchedAt, incoming.SourceFetchedAt,
 		incoming.PDFURL, incoming.PDFURL,
 		incoming.PDFFilePath, incoming.PDFFilePath,
 		incoming.PDFStatus, incoming.PDFStatus,
@@ -262,7 +284,7 @@ func (s *Store) collapseEquivalentStockResearchSurveysTx(ctx context.Context, tx
 		return nil
 	}
 	rows, err := tx.QueryContext(ctx, `
-SELECT id, code, name, kind, title, institution, analyst, rating, target_price, research_date, publish_time, source_url, source_type, source_key, summary, raw_payload, pdf_url, pdf_file_path, pdf_status, pdf_text, pdf_error, pdf_fetched_at, pdf_parsed_at, nlp_score, nlp_rating, nlp_reason, nlp_scored_at, created_at, updated_at
+SELECT `+stockResearchSelectColumns+`
 FROM stock_research_surveys
 WHERE kind = ? AND code = ? AND COALESCE(NULLIF(research_date, ''), publish_time) >= ? AND COALESCE(NULLIF(research_date, ''), publish_time) <= ?`,
 		item.Kind, item.Code, stockResearchEquivalentDate(item), stockResearchEquivalentDate(item)+" 23:59:59")
@@ -311,7 +333,11 @@ WHERE kind = ? AND code = ? AND COALESCE(NULLIF(research_date, ''), publish_time
 func mergeStockResearchRowFieldsTx(ctx context.Context, tx *Tx, winnerID int64, loser model.StockResearchSurvey) error {
 	_, err := tx.ExecContext(ctx, `
 UPDATE stock_research_surveys
-SET pdf_url = CASE WHEN pdf_url = '' THEN ? ELSE pdf_url END,
+SET source_text = CASE WHEN source_text = '' THEN ? ELSE source_text END,
+	source_fetch_status = CASE WHEN source_fetch_status = '' THEN ? ELSE source_fetch_status END,
+	source_fetch_error = CASE WHEN source_fetch_error = '' THEN ? ELSE source_fetch_error END,
+	source_fetched_at = CASE WHEN source_fetched_at = '' THEN ? ELSE source_fetched_at END,
+	pdf_url = CASE WHEN pdf_url = '' THEN ? ELSE pdf_url END,
 	pdf_file_path = CASE WHEN pdf_file_path = '' THEN ? ELSE pdf_file_path END,
 	pdf_status = CASE WHEN pdf_status = '' THEN ? ELSE pdf_status END,
 	pdf_text = CASE WHEN pdf_text = '' THEN ? ELSE pdf_text END,
@@ -324,6 +350,10 @@ SET pdf_url = CASE WHEN pdf_url = '' THEN ? ELSE pdf_url END,
 	nlp_scored_at = CASE WHEN nlp_scored_at = '' THEN ? ELSE nlp_scored_at END,
 	updated_at = ?
 WHERE id = ?`,
+		loser.SourceText,
+		loser.SourceFetchStatus,
+		loser.SourceFetchError,
+		loser.SourceFetchedAt,
 		loser.PDFURL,
 		loser.PDFFilePath,
 		loser.PDFStatus,
@@ -370,7 +400,7 @@ func (s *Store) ListStockResearchSurveys(ctx context.Context, filter model.Stock
 	offset := (filter.Page - 1) * filter.PageSize
 	queryArgs := append(args, filter.PageSize, offset)
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, code, name, kind, title, institution, analyst, rating, target_price, research_date, publish_time, source_url, source_type, source_key, summary, raw_payload, pdf_url, pdf_file_path, pdf_status, pdf_text, pdf_error, pdf_fetched_at, pdf_parsed_at, nlp_score, nlp_rating, nlp_reason, nlp_scored_at, created_at, updated_at
+SELECT `+stockResearchSelectColumns+`
 FROM stock_research_surveys `+where+`
 ORDER BY COALESCE(NULLIF(research_date, ''), publish_time) DESC, id DESC
 LIMIT ? OFFSET ?`, queryArgs...)
@@ -395,16 +425,31 @@ LIMIT ? OFFSET ?`, queryArgs...)
 
 func (s *Store) GetStockResearchSurvey(ctx context.Context, id int64) (model.StockResearchSurvey, error) {
 	row := s.db.QueryRowContext(ctx, `
-SELECT id, code, name, kind, title, institution, analyst, rating, target_price, research_date, publish_time, source_url, source_type, source_key, summary, raw_payload, pdf_url, pdf_file_path, pdf_status, pdf_text, pdf_error, pdf_fetched_at, pdf_parsed_at, nlp_score, nlp_rating, nlp_reason, nlp_scored_at, created_at, updated_at
+SELECT `+stockResearchSelectColumns+`
 FROM stock_research_surveys
 WHERE id = ?`, id)
 	return scanStockResearchSurvey(row)
 }
 
 func (s *Store) UpdateStockResearchPDF(ctx context.Context, id int64, update model.StockResearchPDFUpdate) (model.StockResearchSurvey, error) {
+	sourceText := strings.TrimSpace(update.SourceText)
+	sourceStatus := stockResearchSourceStatus(update.SourceFetchStatus)
+	sourceError := strings.TrimSpace(update.SourceFetchError)
+	sourceFetchedAt := strings.TrimSpace(update.SourceFetchedAt)
+	if sourceText == "" && stockResearchPDFStatus(update.PDFStatus) == "parsed" && strings.TrimSpace(update.PDFText) != "" {
+		sourceText = strings.TrimSpace(update.PDFText)
+		sourceStatus = "parsed"
+		sourceError = ""
+		sourceFetchedAt = nonEmpty(sourceFetchedAt, strings.TrimSpace(update.PDFParsedAt), strings.TrimSpace(update.PDFFetchedAt))
+	}
 	res, err := s.db.ExecContext(ctx, `
 UPDATE stock_research_surveys
-SET pdf_url = ?, pdf_file_path = ?, pdf_status = ?, pdf_text = ?, pdf_error = ?, pdf_fetched_at = ?, pdf_parsed_at = ?, nlp_score = ?, nlp_rating = ?, nlp_reason = ?, nlp_scored_at = ?, updated_at = ?
+SET pdf_url = ?, pdf_file_path = ?, pdf_status = ?, pdf_text = ?, pdf_error = ?, pdf_fetched_at = ?, pdf_parsed_at = ?, nlp_score = ?, nlp_rating = ?, nlp_reason = ?, nlp_scored_at = ?,
+	source_text = CASE WHEN ? <> '' AND (source_text = '' OR source_fetch_status = 'pending_pdf') THEN ? ELSE source_text END,
+	source_fetch_status = CASE WHEN ? <> '' AND (source_text = '' OR source_fetch_status = 'pending_pdf') THEN ? ELSE source_fetch_status END,
+	source_fetch_error = CASE WHEN ? <> '' AND (source_text = '' OR source_fetch_status = 'pending_pdf') THEN ? ELSE source_fetch_error END,
+	source_fetched_at = CASE WHEN ? <> '' AND (source_text = '' OR source_fetch_status = 'pending_pdf') THEN ? ELSE source_fetched_at END,
+	updated_at = ?
 WHERE id = ?`,
 		strings.TrimSpace(update.PDFURL),
 		strings.TrimSpace(update.PDFFilePath),
@@ -417,6 +462,54 @@ WHERE id = ?`,
 		strings.TrimSpace(update.NLPRating),
 		strings.TrimSpace(update.NLPReason),
 		strings.TrimSpace(update.NLPScoredAt),
+		sourceText, sourceText,
+		sourceStatus, sourceStatus,
+		sourceError, sourceError,
+		sourceFetchedAt, sourceFetchedAt,
+		time.Now().UTC().Format(time.RFC3339),
+		id,
+	)
+	if err != nil {
+		return model.StockResearchSurvey{}, err
+	}
+	if rows, rowErr := res.RowsAffected(); rowErr == nil && rows == 0 {
+		return model.StockResearchSurvey{}, sql.ErrNoRows
+	}
+	return s.GetStockResearchSurvey(ctx, id)
+}
+
+func (s *Store) UpdateStockResearchSource(ctx context.Context, id int64, update model.StockResearchSourceUpdate) (model.StockResearchSurvey, error) {
+	existing, err := s.GetStockResearchSurvey(ctx, id)
+	if err != nil {
+		return model.StockResearchSurvey{}, err
+	}
+	if !update.Force && strings.TrimSpace(existing.SourceText) != "" {
+		return existing, nil
+	}
+	sourceText := strings.TrimSpace(update.SourceText)
+	if update.Force && sourceText == "" && strings.TrimSpace(existing.SourceText) != "" {
+		sourceText = strings.TrimSpace(existing.SourceText)
+	}
+	status := stockResearchSourceStatus(update.SourceFetchStatus)
+	if status == "" {
+		if sourceText != "" {
+			status = "parsed"
+		} else {
+			status = "failed"
+		}
+	}
+	fetchedAt := strings.TrimSpace(update.SourceFetchedAt)
+	if fetchedAt == "" {
+		fetchedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	res, err := s.db.ExecContext(ctx, `
+UPDATE stock_research_surveys
+SET source_text = ?, source_fetch_status = ?, source_fetch_error = ?, source_fetched_at = ?, updated_at = ?
+WHERE id = ?`,
+		sourceText,
+		status,
+		strings.TrimSpace(update.SourceFetchError),
+		fetchedAt,
 		time.Now().UTC().Format(time.RFC3339),
 		id,
 	)
@@ -502,6 +595,10 @@ func scanStockResearchSurvey(scanner scanner) (model.StockResearchSurvey, error)
 		&item.SourceKey,
 		&item.Summary,
 		&item.RawPayload,
+		&item.SourceText,
+		&item.SourceFetchStatus,
+		&item.SourceFetchError,
+		&item.SourceFetchedAt,
 		&item.PDFURL,
 		&item.PDFFilePath,
 		&item.PDFStatus,
@@ -535,6 +632,15 @@ func stockResearchKind(value string) string {
 func stockResearchPDFStatus(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "pending", "downloaded", "parsed", "no_pdf", "no_text", "failed":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return strings.TrimSpace(value)
+	}
+}
+
+func stockResearchSourceStatus(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "parsed", "no_source", "failed", "pending_pdf":
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return strings.TrimSpace(value)
@@ -585,6 +691,18 @@ func mergePreferredStockResearch(current, incoming model.StockResearchSurvey) mo
 	}
 	if strings.TrimSpace(preferred.RawPayload) == "" || strings.TrimSpace(preferred.RawPayload) == "{}" {
 		preferred.RawPayload = fallback.RawPayload
+	}
+	if strings.TrimSpace(preferred.SourceText) == "" {
+		preferred.SourceText = fallback.SourceText
+	}
+	if strings.TrimSpace(preferred.SourceFetchStatus) == "" {
+		preferred.SourceFetchStatus = fallback.SourceFetchStatus
+	}
+	if strings.TrimSpace(preferred.SourceFetchError) == "" {
+		preferred.SourceFetchError = fallback.SourceFetchError
+	}
+	if strings.TrimSpace(preferred.SourceFetchedAt) == "" {
+		preferred.SourceFetchedAt = fallback.SourceFetchedAt
 	}
 	if strings.TrimSpace(preferred.PDFURL) == "" {
 		preferred.PDFURL = fallback.PDFURL

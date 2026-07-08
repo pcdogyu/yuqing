@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -189,5 +190,161 @@ func TestStockResearchPDFAssetProxiesContentPDF(t *testing.T) {
 	}
 	if got := rr.Body.String(); got != "%PDF-1.7\nbody" {
 		t.Fatalf("expected proxied pdf bytes, got %q", got)
+	}
+}
+
+func TestStockResearchDetailRendersStoredSourceTextOnly(t *testing.T) {
+	var itemRequests int
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		itemRequests++
+		if r.URL.Path != "/api/v1/stock-research/7" {
+			t.Fatalf("unexpected stock research detail path: %s", r.URL.String())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": model.StockResearchSurvey{
+				ID:                7,
+				Code:              "002230",
+				Name:              "科大讯飞",
+				Title:             "科大讯飞深度研究",
+				SourceURL:         "https://example.com/report.html",
+				SourceText:        "第一段  保留空格\n\n第二段",
+				SourceFetchStatus: "parsed",
+				SourceFetchedAt:   "2026-07-08T01:02:03Z",
+			},
+		})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	req := httptest.NewRequest(http.MethodGet, "/stock-research/7?return_to=%2Fstock-research%3Fpage%3D6%26page_size%3D20", nil)
+	rr := httptest.NewRecorder()
+	srv.handleStockResearchAsset(rr, req, map[string]any{"id": 1})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected stock research detail 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if itemRequests != 1 {
+		t.Fatalf("expected detail to read content item once, got %d", itemRequests)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"原文正文", "第一段  保留空格\n\n第二段", "重新抓取原文", "返回研报列表", "page=6"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected detail page to contain %q, got %s", want, body)
+		}
+	}
+}
+
+func TestStockResearchPageFetchesCurrentPageSourceSkippingExistingText(t *testing.T) {
+	external := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/detail" {
+			t.Fatalf("unexpected external source request: %s", r.URL.String())
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(`<html><body><article><h1>标题</h1><p>第一段  保留空格</p><ul><li>列表项</li></ul></article></body></html>`))
+	}))
+	defer external.Close()
+
+	var sourceUpdates int
+	var captured model.StockResearchSourceUpdate
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/stock-research":
+			if r.URL.Query().Get("page") != "6" || r.URL.Query().Get("page_size") != "20" {
+				t.Fatalf("expected current page query, got %s", r.URL.RawQuery)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockResearchListResult{
+				Page: 6, PageSize: 20, Total: 2,
+				Items: []model.StockResearchSurvey{
+					{ID: 21, Title: "已有正文", SourceText: "旧正文", SourceURL: external.URL + "/skip"},
+					{ID: 22, Title: "待补抓", SourceURL: external.URL + "/detail"},
+				},
+			}})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/internal/stock-research/22/source":
+			sourceUpdates++
+			if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+				t.Fatalf("decode source update: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockResearchSurvey{ID: 22, SourceText: captured.SourceText, SourceFetchStatus: captured.SourceFetchStatus}})
+		default:
+			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	form := url.Values{"action": {"fetch_source_page"}, "page": {"6"}}
+	req := httptest.NewRequest(http.MethodPost, "/stock-research", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	srv.handleStockResearchPage(rr, req, map[string]any{"id": 1})
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect after source page fetch, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if sourceUpdates != 1 {
+		t.Fatalf("expected only missing source row to be updated, got %d", sourceUpdates)
+	}
+	if captured.Force || captured.SourceFetchStatus != "parsed" || !strings.Contains(captured.SourceText, "第一段  保留空格") || !strings.Contains(captured.SourceText, "列表项") {
+		t.Fatalf("unexpected captured source update: %+v", captured)
+	}
+	loc, _ := url.QueryUnescape(rr.Header().Get("Location"))
+	for _, want := range []string{"page=6", "page_size=20", "跳过已有正文 1"} {
+		if !strings.Contains(loc, want) {
+			t.Fatalf("expected redirect to preserve page/message %q, got %q", want, loc)
+		}
+	}
+}
+
+func TestStockResearchPageForceRefetchesSingleSource(t *testing.T) {
+	external := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(`<html><body><article><p>新版正文</p></article></body></html>`))
+	}))
+	defer external.Close()
+
+	var captured model.StockResearchSourceUpdate
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/stock-research/7":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockResearchSurvey{
+				ID:         7,
+				Title:      "已有正文",
+				SourceURL:  external.URL + "/detail",
+				SourceText: "旧版正文",
+			}})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/internal/stock-research/7/source":
+			if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+				t.Fatalf("decode source update: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockResearchSurvey{ID: 7, SourceText: captured.SourceText, SourceFetchStatus: captured.SourceFetchStatus}})
+		default:
+			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	form := url.Values{
+		"action":      {"fetch_source_one"},
+		"id":          {"7"},
+		"force":       {"1"},
+		"redirect_to": {"/stock-research/7?return_to=%2Fstock-research%3Fpage%3D6%26page_size%3D20"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/stock-research", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	srv.handleStockResearchPage(rr, req, map[string]any{"id": 1})
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect after single source fetch, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !captured.Force || captured.SourceFetchStatus != "parsed" || !strings.Contains(captured.SourceText, "新版正文") {
+		t.Fatalf("expected forced parsed source update, got %+v", captured)
+	}
+	loc, _ := url.QueryUnescape(rr.Header().Get("Location"))
+	for _, want := range []string{"/stock-research/7", "return_to=/stock-research?page=6&page_size=20", "原文已重新抓取并入库"} {
+		if !strings.Contains(loc, want) {
+			t.Fatalf("expected detail redirect to contain %q, got %q", want, loc)
+		}
 	}
 }

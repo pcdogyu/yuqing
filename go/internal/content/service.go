@@ -121,6 +121,7 @@ type Store interface {
 	ListStockResearchSurveys(rctx context.Context, filter model.StockResearchFilter) (model.StockResearchListResult, error)
 	GetStockResearchSurvey(rctx context.Context, id int64) (model.StockResearchSurvey, error)
 	UpdateStockResearchPDF(rctx context.Context, id int64, update model.StockResearchPDFUpdate) (model.StockResearchSurvey, error)
+	UpdateStockResearchSource(rctx context.Context, id int64, update model.StockResearchSourceUpdate) (model.StockResearchSurvey, error)
 	UpsertStockInstitutionHoldings(rctx context.Context, items []model.StockInstitutionHolding) (model.StockInstitutionHoldingUpsertResult, error)
 	ListStockInstitutionHoldings(rctx context.Context, filter model.StockInstitutionHoldingFilter) (model.StockInstitutionHoldingListResult, error)
 	GetStockInstitutionHoldingSummary(rctx context.Context, code string, period string) (model.StockInstitutionHoldingSummary, error)
@@ -212,6 +213,7 @@ func (s *Service) Routes(r chi.Router) {
 	r.Get("/api/v1/stock-research/{id}/pdf/text", s.handleGetStockResearchPDFText)
 	r.Post("/api/v1/internal/stock-research/batch", s.handleUpsertStockResearchSurveys)
 	r.Post("/api/v1/internal/stock-research/{id}/pdf", s.handleUpdateStockResearchPDF)
+	r.Post("/api/v1/internal/stock-research/{id}/source", s.handleUpdateStockResearchSource)
 	r.Get("/api/v1/a-stock/holdings", s.handleListStockInstitutionHoldings)
 	r.Get("/api/v1/a-stock/holdings/summary", s.handleGetStockInstitutionHoldingSummary)
 	r.Get("/api/v1/a-stock/holdings/signals", s.handleListStockInstitutionHoldingSignals)
@@ -1334,6 +1336,24 @@ func (s *Service) handleUpdateStockResearchPDF(w http.ResponseWriter, r *http.Re
 	apiutil.WriteJSON(w, http.StatusOK, "ok", item)
 }
 
+func (s *Service) handleUpdateStockResearchSource(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	var payload model.StockResearchSourceUpdate
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid json", nil)
+		return
+	}
+	item, err := s.store.UpdateStockResearchSource(r.Context(), int64(id), normalizeStockResearchSourceUpdate(payload))
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusNotFound, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", item)
+}
+
 func normalizeStockResearchSurvey(item model.StockResearchSurvey, now time.Time) model.StockResearchSurvey {
 	item.Code = strings.TrimSpace(item.Code)
 	item.Name = strings.TrimSpace(item.Name)
@@ -1350,6 +1370,10 @@ func normalizeStockResearchSurvey(item model.StockResearchSurvey, now time.Time)
 	item.SourceKey = strings.TrimSpace(item.SourceKey)
 	item.Summary = strings.TrimSpace(item.Summary)
 	item.RawPayload = strings.TrimSpace(item.RawPayload)
+	item.SourceText = strings.TrimSpace(item.SourceText)
+	item.SourceFetchStatus = normalizeStockResearchSourceStatus(item.SourceFetchStatus)
+	item.SourceFetchError = strings.TrimSpace(item.SourceFetchError)
+	item.SourceFetchedAt = strings.TrimSpace(item.SourceFetchedAt)
 	item.PDFURL = strings.TrimSpace(item.PDFURL)
 	item.PDFFilePath = strings.TrimSpace(item.PDFFilePath)
 	item.PDFStatus = normalizeStockResearchPDFStatus(item.PDFStatus)
@@ -1389,12 +1413,39 @@ func normalizeStockResearchPDFUpdate(update model.StockResearchPDFUpdate) model.
 	update.NLPRating = strings.TrimSpace(update.NLPRating)
 	update.NLPReason = strings.TrimSpace(update.NLPReason)
 	update.NLPScoredAt = strings.TrimSpace(update.NLPScoredAt)
+	update.SourceText = strings.TrimSpace(update.SourceText)
+	update.SourceFetchStatus = normalizeStockResearchSourceStatus(update.SourceFetchStatus)
+	update.SourceFetchError = strings.TrimSpace(update.SourceFetchError)
+	update.SourceFetchedAt = strings.TrimSpace(update.SourceFetchedAt)
+	if update.SourceText == "" && update.PDFStatus == "parsed" && update.PDFText != "" {
+		update.SourceText = update.PDFText
+		update.SourceFetchStatus = "parsed"
+		update.SourceFetchError = ""
+		update.SourceFetchedAt = nonEmpty(update.SourceFetchedAt, update.PDFParsedAt, update.PDFFetchedAt)
+	}
+	return update
+}
+
+func normalizeStockResearchSourceUpdate(update model.StockResearchSourceUpdate) model.StockResearchSourceUpdate {
+	update.SourceText = strings.TrimSpace(update.SourceText)
+	update.SourceFetchStatus = normalizeStockResearchSourceStatus(update.SourceFetchStatus)
+	update.SourceFetchError = strings.TrimSpace(update.SourceFetchError)
+	update.SourceFetchedAt = strings.TrimSpace(update.SourceFetchedAt)
 	return update
 }
 
 func normalizeStockResearchPDFStatus(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "pending", "downloaded", "parsed", "no_pdf", "no_text", "failed":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return strings.TrimSpace(value)
+	}
+}
+
+func normalizeStockResearchSourceStatus(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "parsed", "no_source", "failed", "pending_pdf":
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
 		return strings.TrimSpace(value)

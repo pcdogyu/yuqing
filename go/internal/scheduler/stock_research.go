@@ -20,6 +20,7 @@ import (
 	"golang.org/x/net/html/charset"
 
 	"github.com/pcdogyu/yuqing/go/internal/model"
+	"github.com/pcdogyu/yuqing/go/internal/stockresearch"
 )
 
 var (
@@ -88,6 +89,7 @@ func (w *Worker) runStockResearchCrawlForRange(ctx context.Context, opts stockRe
 		}
 	}
 	items = dedupeStockResearch(items)
+	items = w.enrichStockResearchSourceTexts(ctx, items, false)
 	if len(items) == 0 && len(errs) > 0 {
 		return errors.New(strings.Join(errs, "; "))
 	}
@@ -124,6 +126,36 @@ func (w *Worker) runStockResearchCrawlForRange(ctx context.Context, opts stockRe
 
 func shouldAutoParseStockResearchPDF(opts stockResearchCrawlOptions) bool {
 	return strings.TrimSpace(opts.Code) != "" || strings.TrimSpace(opts.Company) != ""
+}
+
+func (w *Worker) enrichStockResearchSourceTexts(ctx context.Context, items []model.StockResearchSurvey, force bool) []model.StockResearchSurvey {
+	for i := range items {
+		if !force && strings.TrimSpace(items[i].SourceText) != "" {
+			continue
+		}
+		update := w.buildStockResearchSourceUpdate(ctx, items[i])
+		items[i].SourceText = update.SourceText
+		items[i].SourceFetchStatus = update.SourceFetchStatus
+		items[i].SourceFetchError = update.SourceFetchError
+		items[i].SourceFetchedAt = update.SourceFetchedAt
+	}
+	return items
+}
+
+func (w *Worker) buildStockResearchSourceUpdate(ctx context.Context, item model.StockResearchSurvey) model.StockResearchSourceUpdate {
+	if strings.TrimSpace(item.PDFText) != "" {
+		return stockresearch.SourceUpdateFromPDFText(item.PDFText, time.Now().UTC().Format(time.RFC3339))
+	}
+	if stockresearch.LooksLikePDFURL(nonEmptyText(item.PDFURL, item.SourceURL)) {
+		return model.StockResearchSourceUpdate{
+			SourceFetchStatus: stockresearch.SourceStatusPendingPDF,
+			SourceFetchedAt:   time.Now().UTC().Format(time.RFC3339),
+		}
+	}
+	return stockresearch.FetchSource(ctx, item.SourceURL, stockresearch.FetchOptions{
+		UserAgent: nonEmptyText(w.cfg.UserAgent, "Mozilla/5.0"),
+		Timeout:   maxDuration(w.cfg.HTTPTimeout, 15*time.Second),
+	})
 }
 
 func (w *Worker) fetchExternalStockResearch(ctx context.Context, opts stockResearchCrawlOptions) ([]model.StockResearchSurvey, error) {

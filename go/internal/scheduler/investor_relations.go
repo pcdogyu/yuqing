@@ -43,6 +43,7 @@ func (w *Worker) runInvestorRelationsBackfill(ctx context.Context, opts stockRes
 	if err != nil {
 		return err
 	}
+	items = w.enrichStockResearchSourceTexts(ctx, items, false)
 	payload := map[string]any{"items": items}
 	resp, err := w.client.R().
 		SetContext(ctx).

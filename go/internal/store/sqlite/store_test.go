@@ -749,7 +749,7 @@ func TestStockResearchSurveysUpsertAndFilter(t *testing.T) {
 	ctx := context.Background()
 
 	first, err := store.UpsertStockResearchSurveys(ctx, []model.StockResearchSurvey{
-		{Code: "002230", Name: "科大讯飞", Kind: "report", Title: "科大讯飞深度研究", Institution: "中金公司", Analyst: "张三", Rating: "买入", TargetPrice: "50.00", ResearchDate: "2026-06-16", SourceType: "sina_finance_report", SourceKey: "sina-1", SourceURL: "https://sina.example.com/1", RawPayload: "{}"},
+		{Code: "002230", Name: "科大讯飞", Kind: "report", Title: "科大讯飞深度研究", Institution: "中金公司", Analyst: "张三", Rating: "买入", TargetPrice: "50.00", ResearchDate: "2026-06-16", SourceType: "sina_finance_report", SourceKey: "sina-1", SourceURL: "https://sina.example.com/1", SourceText: "已入库正文", SourceFetchStatus: "parsed", SourceFetchedAt: "2026-06-16T01:00:00Z", RawPayload: "{}"},
 		{Code: "300059", Name: "东方财富", Kind: "survey", Title: "东方财富机构调研", Institution: "华泰证券", ResearchDate: "2026-06-15", SourceType: "sohu_finance_report", SourceKey: "sohu-1", RawPayload: "{}"},
 	})
 	if err != nil {
@@ -774,6 +774,9 @@ func TestStockResearchSurveysUpsertAndFilter(t *testing.T) {
 	}
 	if list.Total != 1 || len(list.Items) != 1 || list.Items[0].Title != "科大讯飞深度研究更新" {
 		t.Fatalf("unexpected stock research list: %+v", list)
+	}
+	if list.Items[0].SourceText != "已入库正文" || list.Items[0].SourceFetchStatus != "parsed" {
+		t.Fatalf("expected source fields to be stored and listed, got %+v", list.Items[0])
 	}
 	if len(list.Sources) != 2 {
 		t.Fatalf("expected source options, got %+v", list.Sources)
@@ -803,6 +806,49 @@ func TestStockResearchSurveysUpsertAndFilter(t *testing.T) {
 	}
 	if loaded.Title != "科大讯飞深度研究再次更新" || loaded.PDFStatus != "parsed" || loaded.PDFText != "科大讯飞研报正文" {
 		t.Fatalf("expected normal upsert to preserve parsed PDF fields, got %+v", loaded)
+	}
+	if loaded.SourceText != "已入库正文" {
+		t.Fatalf("expected normal upsert to preserve source text, got %+v", loaded)
+	}
+	skippedSource, err := store.UpdateStockResearchSource(ctx, list.Items[0].ID, model.StockResearchSourceUpdate{
+		SourceText:        "新正文",
+		SourceFetchStatus: "parsed",
+		SourceFetchedAt:   "2026-06-16T02:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("UpdateStockResearchSource skip error: %v", err)
+	}
+	if skippedSource.SourceText != "已入库正文" {
+		t.Fatalf("expected source update without force to skip existing text, got %+v", skippedSource)
+	}
+	forcedSource, err := store.UpdateStockResearchSource(ctx, list.Items[0].ID, model.StockResearchSourceUpdate{
+		SourceText:        "新正文",
+		SourceFetchStatus: "parsed",
+		SourceFetchedAt:   "2026-06-16T02:00:00Z",
+		Force:             true,
+	})
+	if err != nil {
+		t.Fatalf("UpdateStockResearchSource force error: %v", err)
+	}
+	if forcedSource.SourceText != "新正文" || forcedSource.SourceFetchedAt != "2026-06-16T02:00:00Z" {
+		t.Fatalf("expected forced source update to overwrite text, got %+v", forcedSource)
+	}
+
+	sohuList, err := store.ListStockResearchSurveys(ctx, model.StockResearchFilter{Code: "300059", Page: 1, PageSize: 10})
+	if err != nil || len(sohuList.Items) != 1 {
+		t.Fatalf("list sohu stock research error=%v list=%+v", err, sohuList)
+	}
+	pdfSynced, err := store.UpdateStockResearchPDF(ctx, sohuList.Items[0].ID, model.StockResearchPDFUpdate{
+		PDFURL:      "https://sohu.example.com/1.pdf",
+		PDFStatus:   "parsed",
+		PDFText:     "PDF解析正文",
+		PDFParsedAt: "2026-06-16T03:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("UpdateStockResearchPDF source sync error: %v", err)
+	}
+	if pdfSynced.SourceText != "PDF解析正文" || pdfSynced.SourceFetchStatus != "parsed" || pdfSynced.SourceFetchedAt != "2026-06-16T03:00:00Z" {
+		t.Fatalf("expected pdf update to sync source text, got %+v", pdfSynced)
 	}
 }
 

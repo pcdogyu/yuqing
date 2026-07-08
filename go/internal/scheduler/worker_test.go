@@ -2051,19 +2051,28 @@ func TestRunStockResearchBackfillFetchesExternalAndWritesContent(t *testing.T) {
 	defer content.Close()
 
 	external := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/stock-research" || r.URL.Query().Get("code") != "002230" || r.URL.Query().Get("tushare_token") != "token" {
+		switch r.URL.Path {
+		case "/api/stock-research":
+			if r.URL.Query().Get("code") != "002230" || r.URL.Query().Get("tushare_token") != "token" {
+				t.Fatalf("unexpected external query: %s", r.URL.String())
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": []model.StockResearchSurvey{{
+				Code:         "002230",
+				Name:         "科大讯飞",
+				Kind:         "report",
+				Title:        "科大讯飞深度研究",
+				Institution:  "中金公司",
+				ResearchDate: "2026-06-16",
+				SourceType:   "akshare_stock_research",
+				SourceKey:    "ak-1",
+				SourceURL:    "http://" + r.Host + "/detail",
+			}}})
+		case "/detail":
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(`<html><body><article><h1>正文标题</h1><p>第一段  保留空格</p><ol><li>列表项</li></ol></article></body></html>`))
+		default:
 			t.Fatalf("unexpected external request: %s", r.URL.String())
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"items": []model.StockResearchSurvey{{
-			Code:         "002230",
-			Name:         "科大讯飞",
-			Kind:         "report",
-			Title:        "科大讯飞深度研究",
-			Institution:  "中金公司",
-			ResearchDate: "2026-06-16",
-			SourceType:   "akshare_stock_research",
-			SourceKey:    "ak-1",
-		}}})
 	}))
 	defer external.Close()
 
@@ -2085,6 +2094,9 @@ func TestRunStockResearchBackfillFetchesExternalAndWritesContent(t *testing.T) {
 	}
 	if len(captured) != 1 || captured[0].Code != "002230" || captured[0].SourceType != "akshare_stock_research" {
 		t.Fatalf("unexpected captured stock research payload: %+v", captured)
+	}
+	if captured[0].SourceFetchStatus != "parsed" || !strings.Contains(captured[0].SourceText, "第一段  保留空格") || !strings.Contains(captured[0].SourceText, "列表项") {
+		t.Fatalf("expected source text to be enriched before content upsert, got %+v", captured[0])
 	}
 }
 
@@ -2184,6 +2196,56 @@ func TestFetchCNInfoInvestorRelationsPaginatesAndBuildsPDFItems(t *testing.T) {
 	}
 	if len(items) != 2 || items[0].SourceType != investorRelationsSourceType || items[0].Kind != "survey" || !strings.HasPrefix(items[0].PDFURL, cninfoStaticBaseURL) || items[1].PDFURL == "" {
 		t.Fatalf("unexpected investor relation items: %+v", items)
+	}
+}
+
+func TestRunInvestorRelationsBackfillMarksPDFSourcePending(t *testing.T) {
+	cninfo := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"pageNo": 1, "pageSize": 50, "totalRecord": 1, "totalPage": 1,
+			"results": []map[string]any{{
+				"indexId": "ir-1", "mainContent": "初灵信息投资者关系管理信息20260617", "attachmentUrl": "finalpage/2026-06-18/1225377390.PDF", "stockCode": "300250", "companyShortName": "初灵信息", "pubDate": "1781768047000", "filetype": "PDF",
+			}},
+		})
+	}))
+	defer cninfo.Close()
+
+	var captured []model.StockResearchSurvey
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/internal/stock-research/batch":
+			var payload struct {
+				Items []model.StockResearchSurvey `json:"items"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode content payload: %v", err)
+			}
+			captured = payload.Items
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockResearchUpsertResult{Total: len(payload.Items)}})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/stock-research":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockResearchListResult{Page: 1, PageSize: 200, Total: 0}})
+		default:
+			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	worker := NewWorker(config.Config{
+		ContentURL:            content.URL,
+		InvestorRelationsURL:  cninfo.URL + "/newircs/index/search",
+		StockResearchPDFDir:   t.TempDir(),
+		HTTPTimeout:           time.Second,
+		ExternalRetryCount:    0,
+		ExternalRetryWait:     time.Millisecond,
+		SchedulerCrawlTimeout: time.Second,
+	})
+	if err := worker.runInvestorRelationsBackfill(context.Background(), stockResearchCrawlOptions{Code: "300250", Start: "2026-06-17", End: "2026-06-18"}); err != nil {
+		t.Fatalf("runInvestorRelationsBackfill error: %v", err)
+	}
+	if len(captured) != 1 || captured[0].SourceFetchStatus != "pending_pdf" || captured[0].SourceText != "" {
+		t.Fatalf("expected pdf source to be pending before pdf parse, got %+v", captured)
 	}
 }
 
