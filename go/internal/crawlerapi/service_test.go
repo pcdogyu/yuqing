@@ -54,6 +54,9 @@ func TestValidSourceType(t *testing.T) {
 	if got := validSourceType("eastmoney_kuaixun"); got != "eastmoney_kuaixun" {
 		t.Fatalf("expected eastmoney_kuaixun, got %q", got)
 	}
+	if got := validSourceType("eastmoney_full"); got != "eastmoney_full" {
+		t.Fatalf("expected eastmoney_full, got %q", got)
+	}
 	if got := validSourceType("wallstreetcn_a_stock"); got != "wallstreetcn_a_stock" {
 		t.Fatalf("expected wallstreetcn_a_stock, got %q", got)
 	}

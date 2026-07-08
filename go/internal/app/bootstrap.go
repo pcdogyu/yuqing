@@ -226,6 +226,7 @@ func NewCrawler(cfg config.Config, store *sqlitestore.Store) *service.Crawler {
 	}
 	if cfg.EastMoneyKuaixunURL != "" {
 		registry.EastMoneyKuaixun = eastmoneykuaixun.NewProvider(httpClient, cfg.EastMoneyKuaixunURL)
+		registry.EastMoneyFull = eastmoneykuaixun.NewFullProvider(httpClient, cfg.EastMoneyKuaixunURL)
 	}
 	if cfg.WallStreetCNAStockURL != "" {
 		registry.WallStreetCNAStock = publicfinance.NewWallStreetCNAStockProvider(httpClient, cfg.WallStreetCNAStockURL)

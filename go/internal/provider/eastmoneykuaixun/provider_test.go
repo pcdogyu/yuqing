@@ -175,11 +175,38 @@ func TestProviderFetchUsesEastMoneyListAPI(t *testing.T) {
 	if gotClient != "web" || gotBiz != "web_724" || gotPageSize != "50" {
 		t.Fatalf("unexpected query params: client=%q biz=%q pageSize=%q", gotClient, gotBiz, gotPageSize)
 	}
-	if searchCalls == 0 {
-		t.Fatal("expected search endpoint to be called")
+	if searchCalls != 0 {
+		t.Fatalf("expected kuaixun provider not to call search endpoint after source split, got %d calls", searchCalls)
 	}
-	if len(items) < 2 || items[0].Title != "东方财富快讯" {
+	if len(items) != 1 || items[0].Title != "东方财富快讯" || items[0].SourceType != provider.SourceTypeEastMoneyKuaixun {
 		t.Fatalf("unexpected items: %+v", items)
+	}
+}
+
+func TestFullProviderFetchUsesSearchSourceType(t *testing.T) {
+	searchCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/search/jsonp":
+			searchCalls++
+			_, _ = w.Write([]byte(`yuqing({"result":{"cmsArticleWebOld":[{"date":"2026-06-16 09:08:00","title":"东方财富搜索新闻","content":"A股新闻搜索补充","mediaName":"东方财富网","url":"http://finance.eastmoney.com/a/20260616002.html"}]}})`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	prov := NewFullProvider(resty.New().SetRetryCount(0), server.URL+"/comm/web/getFastNewsList")
+	prov.searchAPIURL = server.URL + "/search/jsonp"
+	items, err := prov.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch full error: %v", err)
+	}
+	if searchCalls == 0 {
+		t.Fatal("expected full provider to call search endpoint")
+	}
+	if len(items) != 1 || items[0].SourceType != provider.SourceTypeEastMoneyFull || items[0].Title != "东方财富搜索新闻" {
+		t.Fatalf("unexpected full provider items: %+v", items)
 	}
 }
 

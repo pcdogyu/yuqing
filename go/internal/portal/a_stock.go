@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/pcdogyu/yuqing/go/internal/astockcode"
+	"github.com/pcdogyu/yuqing/go/internal/astocknews"
 	"github.com/pcdogyu/yuqing/go/internal/model"
 	"github.com/pcdogyu/yuqing/go/internal/provider"
 )
@@ -291,10 +292,13 @@ type aStockPeriod struct {
 }
 
 type aStockNewsSourceCount struct {
-	SourceType string
-	Label      string
-	Count      int
-	Run        aStockSourceRun
+	SourceType            string
+	Label                 string
+	URL                   string
+	Count                 int
+	Run                   aStockSourceRun
+	CrawlEnabled          bool
+	RecommendationEnabled bool
 }
 
 type aStockSourceRun struct {
@@ -653,9 +657,9 @@ func renderAStockActionSection(b *strings.Builder, ctx aStockContext) {
 		b.WriteString(html.EscapeString(action.Label))
 		b.WriteString(`</button></form>`)
 	}
-	b.WriteString(`</div></div><p class="astock-muted">已接入已有新闻抓取链路：抓取按钮会触发金十快讯、金十资讯、金十全站信息、东方财富网、华尔街见闻、财联社和新浪财经，页面按策略日期和推荐窗口聚合财经新闻。行情接口读取 `)
+	b.WriteString(`</div></div><p class="astock-muted">已接入已有新闻抓取链路：抓取按钮会触发金十快讯、金十资讯、金十全站信息、东方财富快讯、东方财富全站、华尔街见闻、财联社和新浪财经，页面按策略日期和推荐窗口聚合财经新闻。行情接口读取 `)
 	b.WriteString(aStockMarketConfigHint())
-	b.WriteString(`，用于展示昨日收盘价、现价、涨跌幅和行情收益。</p><div class="astock-source-list"><span class="astock-badge">jin10_kuaixun: https://www.jin10.com/</span><span class="astock-badge">jin10_资讯: https://xnews.jin10.com/</span><span class="astock-badge">jin10_full: 金十全站</span><span class="astock-badge">eastmoney_kuaixun: 东方财富网</span><span class="astock-badge">wallstreetcn_a_stock: 华尔街见闻</span><span class="astock-badge">cls_telegraph: 财联社</span><span class="astock-badge">sina_finance_7x24: 新浪财经</span></div></section>`)
+	b.WriteString(`，用于展示昨日收盘价、现价、涨跌幅和行情收益。</p><div class="astock-source-list"><span class="astock-badge">jin10_kuaixun: https://www.jin10.com/</span><span class="astock-badge">jin10_资讯: https://xnews.jin10.com/</span><span class="astock-badge">jin10_full: 金十全站</span><span class="astock-badge">eastmoney_kuaixun: 东方财富快讯</span><span class="astock-badge">eastmoney_full: 东方财富全站</span><span class="astock-badge">wallstreetcn_a_stock: 华尔街见闻</span><span class="astock-badge">cls_telegraph: 财联社</span><span class="astock-badge">sina_finance_7x24: 新浪财经</span></div></section>`)
 }
 
 func aStockCanonicalPageURL(strategyDate string, period string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool) string {
@@ -1504,9 +1508,9 @@ func renderAStockNewsWindow(b *strings.Builder, ctx aStockContext) {
 		b.WriteString(html.EscapeString(ctx.WindowLabel))
 		b.WriteString(` 窗口内已有财经新闻源入库。</div>`)
 	}
-	b.WriteString(`<div class="astock-scroll"><table class="astock-news-table"><tr><th>来源</th><th>新闻条数</th><th>最近抓取</th><th>抓取/入库/更新 `)
+	b.WriteString(`<div class="astock-scroll"><table class="astock-news-table"><tr><th>来源</th><th>原始地址</th><th>新闻条数</th><th>最近抓取</th><th>抓取/入库/更新 `)
 	renderAStockTooltip(b, "源站抓取数 / 入库新增数 / 更新数")
-	b.WriteString(`</th></tr>`)
+	b.WriteString(`</th><th>开关</th><th>推荐</th></tr>`)
 	for _, source := range summarizeAStockNewsSources(newsArticles, ctx.SourceRuns) {
 		note := strings.TrimSpace(formatAStockCrawlRunNote(source.Run))
 		diagnostic := strings.TrimSpace(formatAStockNewsSourceDiagnostic(source, ctx))
@@ -1519,6 +1523,8 @@ func renderAStockNewsWindow(b *strings.Builder, ctx aStockContext) {
 		}
 		b.WriteString(`<tr><td>`)
 		b.WriteString(html.EscapeString(source.Label))
+		b.WriteString(`</td><td>`)
+		renderAStockNewsSourceURL(b, source)
 		b.WriteString(`</td><td>`)
 		b.WriteString(fmt.Sprintf("%d条", source.Count))
 		b.WriteString(`</td><td>`)
@@ -1535,9 +1541,48 @@ func renderAStockNewsWindow(b *strings.Builder, ctx aStockContext) {
 			b.WriteString(html.EscapeString(diagnostic))
 			b.WriteString(`</div>`)
 		}
+		b.WriteString(`</td><td>`)
+		renderAStockNewsSourceToggle(b, ctx.Date, source, "crawl", source.CrawlEnabled)
+		b.WriteString(`</td><td>`)
+		renderAStockNewsSourceToggle(b, ctx.Date, source, "recommendation", source.RecommendationEnabled)
 		b.WriteString(`</td></tr>`)
 	}
 	b.WriteString(`</table></div></div>`)
+}
+
+func renderAStockNewsSourceURL(b *strings.Builder, source aStockNewsSourceCount) {
+	urlText := strings.TrimSpace(source.URL)
+	if urlText == "" {
+		b.WriteString(`--`)
+		return
+	}
+	b.WriteString(`<a class="astock-source-link" href="`)
+	b.WriteString(html.EscapeString(urlText))
+	b.WriteString(`" target="_blank" rel="noreferrer">原始地址</a>`)
+}
+
+func renderAStockNewsSourceToggle(b *strings.Builder, strategyDate string, source aStockNewsSourceCount, field string, enabled bool) {
+	next := "1"
+	label := "关"
+	className := "astock-source-toggle off"
+	if enabled {
+		next = "0"
+		label = "开"
+		className = "astock-source-toggle on"
+	}
+	b.WriteString(`<form class="astock-source-toggle-form" method="post" action="/system"><input type="hidden" name="form_type" value="astock_news_source_setting"><input type="hidden" name="section" value="newsstats"><input type="hidden" name="strategy_date" value="`)
+	b.WriteString(html.EscapeString(normalizeAStockStrategyDate(strategyDate)))
+	b.WriteString(`"><input type="hidden" name="source_type" value="`)
+	b.WriteString(html.EscapeString(source.SourceType))
+	b.WriteString(`"><input type="hidden" name="setting" value="`)
+	b.WriteString(html.EscapeString(field))
+	b.WriteString(`"><input type="hidden" name="enabled" value="`)
+	b.WriteString(next)
+	b.WriteString(`"><button class="`)
+	b.WriteString(className)
+	b.WriteString(`" type="submit">`)
+	b.WriteString(label)
+	b.WriteString(`</button></form>`)
 }
 
 const aStockSourceCoverageStaleAfter = 30 * time.Minute
@@ -1605,14 +1650,20 @@ func summarizeAStockNewsSources(items []model.Item, runs []aStockSourceRun) []aS
 			runBySource[sourceType] = run
 		}
 	}
-	sources := aStockCrawlSources()
+	settings, _ := astocknews.LoadSettings("")
+	sources := astocknews.Sources()
 	summary := make([]aStockNewsSourceCount, 0, len(sources))
-	for _, sourceType := range sources {
+	for _, source := range sources {
+		sourceType := source.Type
+		setting := settings[sourceType]
 		summary = append(summary, aStockNewsSourceCount{
-			SourceType: sourceType,
-			Label:      aStockNewsSourceLabel(sourceType),
-			Count:      counts[sourceType],
-			Run:        runBySource[sourceType],
+			SourceType:            sourceType,
+			Label:                 source.Label,
+			URL:                   source.URL,
+			Count:                 counts[sourceType],
+			Run:                   runBySource[sourceType],
+			CrawlEnabled:          setting.CrawlEnabled,
+			RecommendationEnabled: setting.RecommendationEnabled,
 		})
 	}
 	return summary
@@ -2632,6 +2683,8 @@ func (s *Server) populateAStockContextArticleStatsWithCache(ctx *aStockContext, 
 			return fmt.Errorf("A股新闻统计读取失败：%w", err)
 		}
 	}
+	settings, _ := astocknews.LoadSettings("")
+	articles = astocknews.FilterRecommendationItems(articles, settings)
 	ctx.Articles = articles
 	ctx.NewsArticles = newsArticles
 	ctx.NewsTotal = len(ctx.NewsArticles)
@@ -4114,6 +4167,8 @@ func (s *Server) loadSameDayMorningAStockRecommendationsWithCache(strategyDate s
 	if err != nil || len(items) == 0 {
 		return nil
 	}
+	settings, _ := astocknews.LoadSettings("")
+	items = astocknews.FilterRecommendationItems(items, settings)
 	return buildAStockSnapshotRecommendations(strategyDate, "morning", items, candidates)
 }
 
@@ -6843,7 +6898,10 @@ func aStockLocation() *time.Location {
 }
 
 func (s *Server) triggerAStockCrawl() string {
-	sources := aStockCrawlSources()
+	sources := enabledAStockCrawlSources()
+	if len(sources) == 0 {
+		return "A股新闻抓取未触发：所有来源抓取开关均已关闭"
+	}
 	ok := 0
 	failures := make([]string, 0)
 	for _, sourceType := range sources {
@@ -6859,13 +6917,16 @@ func (s *Server) triggerAStockCrawl() string {
 	if len(failures) > 0 {
 		return fmt.Sprintf("A股新闻抓取部分触发：成功 %d 个，失败 %s", ok, strings.Join(failures, "、"))
 	}
-	return "A股新闻抓取已触发：金十快讯、金十资讯、金十全站信息、东方财富网、华尔街见闻、财联社、新浪财经"
+	return "A股新闻抓取已触发：" + strings.Join(aStockNewsSourceLabels(sources), "、")
 }
 
 func (s *Server) triggerAStockWindowCrawl(strategyDate string, periodKey string) string {
 	period := normalizeAStockPeriod(periodKey)
 	start, end := aStockWindow(strategyDate, period.Key)
-	sources := aStockCrawlSources()
+	sources := enabledAStockCrawlSources()
+	if len(sources) == 0 {
+		return fmt.Sprintf("%s 财经新闻补抓未触发：所有来源抓取开关均已关闭。", period.Label)
+	}
 	ok := 0
 	failures := make([]string, 0)
 	results := make([]aStockWindowCrawlResult, 0, len(sources))
@@ -6917,7 +6978,7 @@ func (s *Server) triggerAStockWindowCrawl(strategyDate string, periodKey string)
 	if len(failures) > 0 {
 		parts = append(parts, fmt.Sprintf("已补抓 %s：成功 %d 个来源，失败 %s。", windowText, ok, strings.Join(failures, "、")))
 	} else {
-		parts = append(parts, fmt.Sprintf("已补抓 %s：金十快讯、金十资讯、金十全站信息、东方财富网、华尔街见闻、财联社、新浪财经。", windowText))
+		parts = append(parts, fmt.Sprintf("已补抓 %s：金十快讯、金十资讯、金十全站信息、东方财富快讯、东方财富全站、华尔街见闻、财联社、新浪财经。", windowText))
 	}
 	if statsText != "" {
 		parts = append(parts, statsText)
@@ -6932,28 +6993,30 @@ func (s *Server) triggerAStockWindowCrawl(strategyDate string, periodKey string)
 }
 
 func aStockCrawlSources() []string {
-	return []string{provider.SourceTypeFlash, provider.SourceTypeHeadline, provider.SourceTypeJin10Full, provider.SourceTypeEastMoneyKuaixun, provider.SourceTypeWallStreetCNAStock, provider.SourceTypeCLSTelegraph, provider.SourceTypeSinaFinance7x24}
+	return astocknews.SourceTypes()
+}
+
+func enabledAStockCrawlSources() []string {
+	settings, _ := astocknews.LoadSettings("")
+	sources := make([]string, 0, len(astocknews.SourceTypes()))
+	for _, sourceType := range astocknews.SourceTypes() {
+		if astocknews.CrawlEnabled(settings, sourceType) {
+			sources = append(sources, sourceType)
+		}
+	}
+	return sources
+}
+
+func aStockNewsSourceLabels(sources []string) []string {
+	labels := make([]string, 0, len(sources))
+	for _, sourceType := range sources {
+		labels = append(labels, aStockNewsSourceLabel(sourceType))
+	}
+	return labels
 }
 
 func aStockNewsSourceLabel(sourceType string) string {
-	switch provider.CanonicalSourceType(sourceType) {
-	case provider.SourceTypeFlash:
-		return "金十快讯"
-	case provider.SourceTypeHeadline:
-		return "金十资讯"
-	case provider.SourceTypeJin10Full:
-		return "金十全站"
-	case provider.SourceTypeEastMoneyKuaixun:
-		return "东方财富网"
-	case provider.SourceTypeWallStreetCNAStock:
-		return "华尔街见闻"
-	case provider.SourceTypeCLSTelegraph:
-		return "财联社"
-	case provider.SourceTypeSinaFinance7x24:
-		return "新浪财经"
-	default:
-		return nonEmpty(strings.TrimSpace(sourceType), "未知来源")
-	}
+	return astocknews.Label(sourceType)
 }
 
 type aStockWindowCrawlResult struct {

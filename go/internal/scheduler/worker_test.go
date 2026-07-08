@@ -16,6 +16,7 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 
+	"github.com/pcdogyu/yuqing/go/internal/astocknews"
 	"github.com/pcdogyu/yuqing/go/internal/config"
 	"github.com/pcdogyu/yuqing/go/internal/model"
 	"github.com/pcdogyu/yuqing/go/internal/provider"
@@ -253,10 +254,10 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	if err := json.Unmarshal(listRR.Body.Bytes(), &listEnvelope); err != nil {
 		t.Fatalf("unmarshal jobs list: %v", err)
 	}
-	if len(listEnvelope.Data) != 41 {
-		t.Fatalf("expected 41 scheduler jobs, got %d", len(listEnvelope.Data))
+	if len(listEnvelope.Data) != 42 {
+		t.Fatalf("expected 42 scheduler jobs, got %d", len(listEnvelope.Data))
 	}
-	var heartbeatJob, hotJob, eastmoneyJob, jin10FullJob, wallStreetCNJob, clsJob, sinaJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningNewsCrawlJob, aStockMorningPreviewJob, aStockMorningJob, aStockAfternoonPreviewJob, aStockMiddayNewsCrawlJob, aStockAfternoonJob, aStockAfternoonOpenRefreshJob, aStockDailyBacktestRefreshJob, aStockAuctionJob, aStockSectorFundFlowJob, aStockHoldingsJob, stockResearchJob, investorRelationsJob Job
+	var heartbeatJob, hotJob, eastmoneyJob, eastmoneyFullJob, jin10FullJob, wallStreetCNJob, clsJob, sinaJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningNewsCrawlJob, aStockMorningPreviewJob, aStockMorningJob, aStockAfternoonPreviewJob, aStockMiddayNewsCrawlJob, aStockAfternoonJob, aStockAfternoonOpenRefreshJob, aStockDailyBacktestRefreshJob, aStockAuctionJob, aStockSectorFundFlowJob, aStockHoldingsJob, stockResearchJob, investorRelationsJob Job
 	aStockSectorFundFlowJobCount := 0
 	for _, job := range listEnvelope.Data {
 		switch job.Name {
@@ -266,6 +267,8 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 			hotJob = job
 		case "eastmoney-kuaixun-crawl":
 			eastmoneyJob = job
+		case "eastmoney-full-crawl":
+			eastmoneyFullJob = job
 		case "jin10-full-crawl":
 			jin10FullJob = job
 		case "wallstreetcn-a-stock-crawl":
@@ -323,6 +326,9 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	}
 	if eastmoneyJob.JavaQuartzName != "EastMoneyKuaixunCrawler" || eastmoneyJob.Cron != "0 0/5 * * * ?" || eastmoneyJob.IntervalSec != 300 || eastmoneyJob.Enabled {
 		t.Fatalf("expected eastmoney realtime crawl listed but disabled without URL, got %+v", eastmoneyJob)
+	}
+	if eastmoneyFullJob.JavaQuartzName != "EastMoneyFullCrawler" || eastmoneyFullJob.Cron != "0 1/5 * * * ?" || eastmoneyFullJob.IntervalSec != 300 || eastmoneyFullJob.Enabled {
+		t.Fatalf("expected eastmoney full crawl listed but disabled without URL, got %+v", eastmoneyFullJob)
 	}
 	if jin10FullJob.JavaQuartzName != "Jin10FullCrawler" || jin10FullJob.Cron != "0 0/5 * * * ?" || jin10FullJob.IntervalSec != 300 || jin10FullJob.Enabled {
 		t.Fatalf("expected jin10 full crawl listed but disabled by default, got %+v", jin10FullJob)
@@ -427,6 +433,7 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 }
 
 func TestRunAStockRecommendationCrawlsSourcesAndQueriesWindow(t *testing.T) {
+	t.Setenv("YUQING_A_STOCK_NEWS_SOURCE_CONFIG", filepath.Join(t.TempDir(), "sources.json"))
 	var sources []string
 	var generatedPeriods []string
 	var generatedPhases []string
@@ -499,7 +506,7 @@ func TestRunAStockRecommendationCrawlsSourcesAndQueriesWindow(t *testing.T) {
 		t.Fatalf("runAStockRecommendationForDate error: %v", err)
 	}
 	sort.Strings(sources)
-	if strings.Join(sources, ",") != "cls_telegraph,eastmoney_kuaixun,jin10_kuaixun,jin10_资讯,sina_finance_7x24,wallstreetcn_a_stock" {
+	if strings.Join(sources, ",") != "cls_telegraph,eastmoney_full,eastmoney_kuaixun,jin10_kuaixun,jin10_资讯,sina_finance_7x24,wallstreetcn_a_stock" {
 		t.Fatalf("expected all A股 sources to be crawled, got %v", sources)
 	}
 	if len(generatedPeriods) != 1 || generatedPeriods[0] != "afternoon" || len(generatedPhases) != 1 || generatedPhases[0] != "final" {
@@ -508,6 +515,7 @@ func TestRunAStockRecommendationCrawlsSourcesAndQueriesWindow(t *testing.T) {
 }
 
 func TestRunAStockRecommendationGeneratesMorningSnapshot(t *testing.T) {
+	t.Setenv("YUQING_A_STOCK_NEWS_SOURCE_CONFIG", filepath.Join(t.TempDir(), "sources.json"))
 	var generatedPeriods []string
 	var generatedPhases []string
 	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -570,6 +578,7 @@ func TestRunAStockRecommendationGeneratesMorningSnapshot(t *testing.T) {
 }
 
 func TestRunAStockWindowNewsCrawlForDateCrawlsMorningSourcesOnly(t *testing.T) {
+	t.Setenv("YUQING_A_STOCK_NEWS_SOURCE_CONFIG", filepath.Join(t.TempDir(), "sources.json"))
 	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/a-stock/trading-day" || r.URL.Query().Get("date") != "2026-06-16" {
 			t.Fatalf("unexpected trading-day request: %s", r.URL.String())
@@ -614,12 +623,13 @@ func TestRunAStockWindowNewsCrawlForDateCrawlsMorningSourcesOnly(t *testing.T) {
 		t.Fatalf("runAStockWindowNewsCrawlForDate error: %v", err)
 	}
 	sort.Strings(sources)
-	if strings.Join(sources, ",") != "cls_telegraph,eastmoney_kuaixun,jin10_kuaixun,jin10_资讯,sina_finance_7x24,wallstreetcn_a_stock" {
+	if strings.Join(sources, ",") != "cls_telegraph,eastmoney_full,eastmoney_kuaixun,jin10_kuaixun,jin10_资讯,sina_finance_7x24,wallstreetcn_a_stock" {
 		t.Fatalf("expected all enabled A股 news sources to be crawled, got %v", sources)
 	}
 }
 
 func TestRunAStockWindowNewsCrawlForDateCrawlsMiddaySources(t *testing.T) {
+	t.Setenv("YUQING_A_STOCK_NEWS_SOURCE_CONFIG", filepath.Join(t.TempDir(), "sources.json"))
 	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/a-stock/trading-day" || r.URL.Query().Get("date") != "2026-06-16" {
 			t.Fatalf("unexpected trading-day request: %s", r.URL.String())
@@ -661,7 +671,7 @@ func TestRunAStockWindowNewsCrawlForDateCrawlsMiddaySources(t *testing.T) {
 		t.Fatalf("runAStockWindowNewsCrawlForDate midday error: %v", err)
 	}
 	sort.Strings(sources)
-	if strings.Join(sources, ",") != "cls_telegraph,eastmoney_kuaixun,jin10_full,jin10_kuaixun,jin10_资讯,sina_finance_7x24,wallstreetcn_a_stock" {
+	if strings.Join(sources, ",") != "cls_telegraph,eastmoney_full,eastmoney_kuaixun,jin10_full,jin10_kuaixun,jin10_资讯,sina_finance_7x24,wallstreetcn_a_stock" {
 		t.Fatalf("expected midday crawl to cover all A股 news sources including 金十全站, got %v", sources)
 	}
 }
@@ -694,6 +704,7 @@ func TestAStockRecommendationWindowUsesPhase(t *testing.T) {
 }
 
 func TestRunAStockRecommendationContinuesWhenOneSourceFails(t *testing.T) {
+	t.Setenv("YUQING_A_STOCK_NEWS_SOURCE_CONFIG", filepath.Join(t.TempDir(), "sources.json"))
 	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"date":           "2026-06-16",
@@ -750,7 +761,7 @@ func TestRunAStockRecommendationContinuesWhenOneSourceFails(t *testing.T) {
 	if !contentQueried {
 		t.Fatal("expected recommendation window to be queried after partial crawl failure")
 	}
-	if !slices.Contains(sources, "eastmoney_kuaixun") || !slices.Contains(sources, "sina_finance_7x24") {
+	if !slices.Contains(sources, "eastmoney_kuaixun") || !slices.Contains(sources, "eastmoney_full") || !slices.Contains(sources, "sina_finance_7x24") {
 		t.Fatalf("expected later A股 sources to run after headline failure, got %v", sources)
 	}
 	if len(generatedPeriods) != 1 || generatedPeriods[0] != "afternoon" {
@@ -2453,21 +2464,26 @@ func TestSchedulerFinanceNewsCrawlJobsEnabledWhenConfigured(t *testing.T) {
 		jobs[job.Name] = job
 	}
 
-	for _, name := range []string{
-		"eastmoney-kuaixun-crawl",
-		"jin10-full-crawl",
-		"wallstreetcn-a-stock-crawl",
-		"cls-telegraph-crawl",
-		"sina-finance-7x24-crawl",
+	for _, tc := range []struct {
+		name string
+		cron string
+	}{
+		{name: "eastmoney-kuaixun-crawl", cron: "0 0/5 * * * ?"},
+		{name: "eastmoney-full-crawl", cron: "0 1/5 * * * ?"},
+		{name: "jin10-full-crawl", cron: "0 0/5 * * * ?"},
+		{name: "wallstreetcn-a-stock-crawl", cron: "0 0/5 * * * ?"},
+		{name: "cls-telegraph-crawl", cron: "0 0/5 * * * ?"},
+		{name: "sina-finance-7x24-crawl", cron: "0 0/5 * * * ?"},
 	} {
-		job := jobs[name]
-		if !job.Enabled || job.Cron != "0 0/5 * * * ?" || job.IntervalSec != 300 || job.NextRunAt == nil {
-			t.Fatalf("expected enabled 5-minute finance news crawl job %s, got %+v", name, job)
+		job := jobs[tc.name]
+		if !job.Enabled || job.Cron != tc.cron || job.IntervalSec != 300 || job.NextRunAt == nil {
+			t.Fatalf("expected enabled 5-minute finance news crawl job %s, got %+v", tc.name, job)
 		}
 	}
 }
 
 func TestRunAStockIncrementalCrawlJobsUseRecentPublishWindow(t *testing.T) {
+	t.Setenv("YUQING_A_STOCK_NEWS_SOURCE_CONFIG", filepath.Join(t.TempDir(), "sources.json"))
 	type crawlRequest struct {
 		sourceType string
 		start      string
@@ -2505,6 +2521,7 @@ func TestRunAStockIncrementalCrawlJobsUseRecentPublishWindow(t *testing.T) {
 		sourceType string
 	}{
 		{name: "eastmoney-kuaixun-crawl", sourceType: provider.SourceTypeEastMoneyKuaixun},
+		{name: "eastmoney-full-crawl", sourceType: provider.SourceTypeEastMoneyFull},
 		{name: "jin10-full-crawl", sourceType: provider.SourceTypeJin10Full},
 		{name: "wallstreetcn-a-stock-crawl", sourceType: provider.SourceTypeWallStreetCNAStock},
 		{name: "cls-telegraph-crawl", sourceType: provider.SourceTypeCLSTelegraph},
@@ -2536,6 +2553,29 @@ func TestRunAStockIncrementalCrawlJobsUseRecentPublishWindow(t *testing.T) {
 		if end.Sub(start) != 32*time.Minute {
 			t.Fatalf("request %d expected 32-minute recent window, got start=%s end=%s", idx, request.start, request.end)
 		}
+	}
+}
+
+func TestRunAStockIncrementalCrawlSkipsDisabledSource(t *testing.T) {
+	settingsPath := filepath.Join(t.TempDir(), "sources.json")
+	t.Setenv("YUQING_A_STOCK_NEWS_SOURCE_CONFIG", settingsPath)
+	if err := astocknews.UpdateSetting(settingsPath, provider.SourceTypeEastMoneyKuaixun, "crawl", false); err != nil {
+		t.Fatalf("UpdateSetting crawl error: %v", err)
+	}
+	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("disabled source should not call crawler: %s", r.URL.String())
+	}))
+	defer crawler.Close()
+
+	worker := NewWorker(config.Config{
+		HTTPTimeout:           time.Second,
+		SchedulerCrawlTimeout: time.Second,
+		CrawlerURL:            crawler.URL,
+	})
+	err := worker.runAStockIncrementalNewsCrawl(context.Background(), provider.SourceTypeEastMoneyKuaixun)
+	var skipped jobSkippedError
+	if !errors.As(err, &skipped) {
+		t.Fatalf("expected disabled source to be skipped, got %v", err)
 	}
 }
 

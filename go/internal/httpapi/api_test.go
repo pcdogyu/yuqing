@@ -85,6 +85,9 @@ func TestValidSourceType(t *testing.T) {
 	if got := validSourceType(provider.SourceTypeEastMoneyKuaixun); got != provider.SourceTypeEastMoneyKuaixun {
 		t.Fatalf("expected eastmoney kuaixun source type, got %q", got)
 	}
+	if got := validSourceType(provider.SourceTypeEastMoneyFull); got != provider.SourceTypeEastMoneyFull {
+		t.Fatalf("expected eastmoney full source type, got %q", got)
+	}
 	if got := validSourceType(provider.SourceTypeWallStreetCNAStock); got != provider.SourceTypeWallStreetCNAStock {
 		t.Fatalf("expected wallstreetcn a-stock source type, got %q", got)
 	}

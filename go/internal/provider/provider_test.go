@@ -31,10 +31,11 @@ func TestRegistryResolve(t *testing.T) {
 	panews := stubProvider{sourceType: SourceTypePANewsNewsflash}
 	theBlock := stubProvider{sourceType: SourceTypeTheBlockLatest}
 	eastmoney := stubProvider{sourceType: SourceTypeEastMoneyKuaixun}
+	eastmoneyFull := stubProvider{sourceType: SourceTypeEastMoneyFull}
 	wallstreetcn := stubProvider{sourceType: SourceTypeWallStreetCNAStock}
 	cls := stubProvider{sourceType: SourceTypeCLSTelegraph}
 	sina := stubProvider{sourceType: SourceTypeSinaFinance7x24}
-	registry := Registry{Flash: flash, Headline: headline, Jin10Full: jin10Full, CryptoX: cryptoX, CryptoTelegram: telegram, ForesightNewsflash: foresight, CoinDeskZHLatest: coindesk, PANewsNewsflash: panews, TheBlockLatest: theBlock, EastMoneyKuaixun: eastmoney, WallStreetCNAStock: wallstreetcn, CLSTelegraph: cls, SinaFinance7x24: sina}
+	registry := Registry{Flash: flash, Headline: headline, Jin10Full: jin10Full, CryptoX: cryptoX, CryptoTelegram: telegram, ForesightNewsflash: foresight, CoinDeskZHLatest: coindesk, PANewsNewsflash: panews, TheBlockLatest: theBlock, EastMoneyKuaixun: eastmoney, EastMoneyFull: eastmoneyFull, WallStreetCNAStock: wallstreetcn, CLSTelegraph: cls, SinaFinance7x24: sina}
 
 	if got := registry.Resolve(SourceTypeFlash); got != flash {
 		t.Fatalf("expected flash provider, got %#v", got)
@@ -72,6 +73,9 @@ func TestRegistryResolve(t *testing.T) {
 	if got := registry.Resolve(SourceTypeEastMoneyKuaixun); got != eastmoney {
 		t.Fatalf("expected eastmoney kuaixun provider, got %#v", got)
 	}
+	if got := registry.Resolve(SourceTypeEastMoneyFull); got != eastmoneyFull {
+		t.Fatalf("expected eastmoney full provider, got %#v", got)
+	}
 	if got := registry.Resolve(SourceTypeWallStreetCNAStock); got != wallstreetcn {
 		t.Fatalf("expected wallstreetcn a-stock provider, got %#v", got)
 	}
@@ -108,8 +112,8 @@ func TestRegistryAllPreservesSlots(t *testing.T) {
 	registry := Registry{Flash: flash}
 
 	all := registry.All()
-	if len(all) != 13 {
-		t.Fatalf("expected 13 providers, got %d", len(all))
+	if len(all) != 14 {
+		t.Fatalf("expected 14 providers, got %d", len(all))
 	}
 	if all[0] != flash {
 		t.Fatalf("expected flash provider in first slot, got %#v", all[0])

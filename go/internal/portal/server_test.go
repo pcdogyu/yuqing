@@ -24,6 +24,7 @@ import (
 	"github.com/go-resty/resty/v2"
 
 	"github.com/pcdogyu/yuqing/go/internal/app"
+	"github.com/pcdogyu/yuqing/go/internal/astocknews"
 	"github.com/pcdogyu/yuqing/go/internal/config"
 	"github.com/pcdogyu/yuqing/go/internal/model"
 	"github.com/pcdogyu/yuqing/go/internal/nlp"
@@ -368,8 +369,10 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		`window.addEventListener("popstate"`,
 		"金十全站信息",
 		"jin10_full",
-		"东方财富网",
+		"东方财富快讯",
 		"eastmoney_kuaixun",
+		"东方财富全站",
+		"eastmoney_full",
 		"华尔街见闻",
 		"wallstreetcn_a_stock",
 		"财联社",
@@ -3541,6 +3544,7 @@ func TestAStockPageOmitsNewsSourceStatsSection(t *testing.T) {
 }
 
 func TestSystemNewsStatsSectionRendersAStockSourceStats(t *testing.T) {
+	t.Setenv("YUQING_A_STOCK_NEWS_SOURCE_CONFIG", filepath.Join(t.TempDir(), "sources.json"))
 	items := make([]model.Item, 0, 12)
 	for i := 1; i <= 12; i++ {
 		sourceType := "flash"
@@ -3595,7 +3599,7 @@ func TestSystemNewsStatsSectionRendersAStockSourceStats(t *testing.T) {
 		t.Fatalf("expected system page 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{`href="/system?section=newsstats">新闻统计</a>`, `name="section" value="newsstats"`, `value="2026-06-11"`, "财经新闻来源统计", "08:00-09:30 财经新闻", "09:30-13:00 财经新闻", "来源", "新闻条数", "最近抓取", "金十快讯", "7条", "东方财富网", "5条", "财联社", "0条", "暂无数据"} {
+	for _, want := range []string{`href="/system?section=newsstats">新闻统计</a>`, `name="section" value="newsstats"`, `value="2026-06-11"`, "财经新闻来源统计", "08:00-09:30 财经新闻", "09:30-13:00 财经新闻", "来源", "原始地址", "新闻条数", "最近抓取", "开关", "推荐", "金十快讯", "7条", "东方财富快讯", "5条", "东方财富全站", "财联社", "0条", "暂无数据", `href="https://kuaixun.eastmoney.com/"`, `name="form_type" value="astock_news_source_setting"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected news stats section to contain %q, got %s", want, body)
 		}
@@ -3610,7 +3614,39 @@ func TestSystemNewsStatsSectionRendersAStockSourceStats(t *testing.T) {
 	}
 }
 
+func TestSystemNewsStatsSourceSettingPostPersistsConfig(t *testing.T) {
+	settingsPath := filepath.Join(t.TempDir(), "sources.json")
+	t.Setenv("YUQING_A_STOCK_NEWS_SOURCE_CONFIG", settingsPath)
+
+	srv := NewServer(config.Config{})
+	form := url.Values{}
+	form.Set("form_type", "astock_news_source_setting")
+	form.Set("section", "newsstats")
+	form.Set("strategy_date", "2026-06-11")
+	form.Set("source_type", "eastmoney_kuaixun")
+	form.Set("setting", "recommendation")
+	form.Set("enabled", "0")
+	req := httptest.NewRequest(http.MethodPost, "/system?section=newsstats", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	srv.handleSystem(rr, req, map[string]any{"id": 1})
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect after source setting save, got %d", rr.Code)
+	}
+	if location := rr.Header().Get("Location"); !strings.Contains(location, "section=newsstats") || !strings.Contains(location, "strategy_date=2026-06-11") {
+		t.Fatalf("unexpected redirect location: %s", location)
+	}
+	settings, err := astocknews.LoadSettings(settingsPath)
+	if err != nil {
+		t.Fatalf("LoadSettings error: %v", err)
+	}
+	if settings["eastmoney_kuaixun"].RecommendationEnabled {
+		t.Fatalf("expected eastmoney recommendation to be disabled, got %+v", settings["eastmoney_kuaixun"])
+	}
+}
+
 func TestAStockNewsSectionShowsSourceRunDiagnostics(t *testing.T) {
+	t.Setenv("YUQING_A_STOCK_NEWS_SOURCE_CONFIG", filepath.Join(t.TempDir(), "sources.json"))
 	setAStockNowForTest(t, time.Date(2026, 6, 22, 12, 20, 0, 0, aStockLocation()))
 	ctx := aStockContext{
 		Date:            "2026-06-22",
@@ -3629,7 +3665,7 @@ func TestAStockNewsSectionShowsSourceRunDiagnostics(t *testing.T) {
 	var b strings.Builder
 	renderAStockNewsWindow(&b, ctx)
 	body := b.String()
-	for _, want := range []string{"金十快讯", "1条", "success", "18/18/0", "新浪财经", "failed", `title="upstream timeout"`, `role="tooltip">upstream timeout`, "东方财富网", "0条", "最近抓取早于统计截止，可能未覆盖后续新闻", "源站抓取数 / 入库新增数 / 更新数"} {
+	for _, want := range []string{"金十快讯", "1条", "success", "18/18/0", "新浪财经", "failed", `title="upstream timeout"`, `role="tooltip">upstream timeout`, "东方财富快讯", "0条", "东方财富全站", "最近抓取早于统计截止，可能未覆盖后续新闻", "源站抓取数 / 入库新增数 / 更新数", "原始地址", "开关", "推荐"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 news diagnostics to contain %q, got %s", want, body)
 		}
@@ -9013,6 +9049,7 @@ func TestAStockRecommendationsApplyHoldingSummaryBonus(t *testing.T) {
 }
 
 func TestAStockCrawlActionTriggersAllJin10Sources(t *testing.T) {
+	t.Setenv("YUQING_A_STOCK_NEWS_SOURCE_CONFIG", filepath.Join(t.TempDir(), "sources.json"))
 	var sources []string
 	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -9035,7 +9072,7 @@ func TestAStockCrawlActionTriggersAllJin10Sources(t *testing.T) {
 		t.Fatalf("expected redirect, got %d", rr.Code)
 	}
 	sort.Strings(sources)
-	if strings.Join(sources, ",") != "cls_telegraph,eastmoney_kuaixun,jin10_full,jin10_kuaixun,jin10_资讯,sina_finance_7x24,wallstreetcn_a_stock" {
+	if strings.Join(sources, ",") != "cls_telegraph,eastmoney_full,eastmoney_kuaixun,jin10_full,jin10_kuaixun,jin10_资讯,sina_finance_7x24,wallstreetcn_a_stock" {
 		t.Fatalf("expected all A股 public news sources to be crawled, got %v", sources)
 	}
 	if loc := rr.Header().Get("Location"); !strings.Contains(loc, "/a-stock?") || !strings.Contains(loc, "date=2026-06-16") {

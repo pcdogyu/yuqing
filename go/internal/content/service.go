@@ -3463,6 +3463,7 @@ func (s *Service) externalIntegrationStatuses(ctx context.Context) []model.Opera
 	result := []model.OperationExternalStatus{
 		{Name: "jin10_full", Status: boolStatus(s.cfg.Jin10FullEnabled), Message: "controlled by YUQING_JIN10_FULL_ENABLED"},
 		{Name: "eastmoney_kuaixun", Status: boolStatus(strings.TrimSpace(s.cfg.EastMoneyKuaixunURL) != ""), Message: s.cfg.EastMoneyKuaixunURL},
+		{Name: "eastmoney_full", Status: boolStatus(strings.TrimSpace(s.cfg.EastMoneyKuaixunURL) != ""), Message: s.cfg.EastMoneyKuaixunURL},
 		{Name: "wallstreetcn_a_stock", Status: boolStatus(strings.TrimSpace(s.cfg.WallStreetCNAStockURL) != ""), Message: s.cfg.WallStreetCNAStockURL},
 		{Name: "cls_telegraph", Status: boolStatus(strings.TrimSpace(s.cfg.CLSTelegraphURL) != ""), Message: s.cfg.CLSTelegraphURL},
 		{Name: "sina_finance_7x24", Status: boolStatus(strings.TrimSpace(s.cfg.SinaFinance7x24URL) != ""), Message: s.cfg.SinaFinance7x24URL},

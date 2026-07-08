@@ -11,11 +11,11 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/pcdogyu/yuqing/go/internal/astockcode"
+	"github.com/pcdogyu/yuqing/go/internal/astocknews"
 	"github.com/pcdogyu/yuqing/go/internal/model"
-	"github.com/pcdogyu/yuqing/go/internal/provider"
 )
 
-var aStockRecommendationSources = []string{provider.SourceTypeFlash, provider.SourceTypeHeadline, provider.SourceTypeJin10Full, provider.SourceTypeEastMoneyKuaixun, provider.SourceTypeWallStreetCNAStock, provider.SourceTypeCLSTelegraph, provider.SourceTypeSinaFinance7x24}
+var aStockRecommendationSources = astocknews.SourceTypes()
 
 const (
 	aStockIncrementalNewsLookback  = 30 * time.Minute
@@ -35,6 +35,10 @@ func (w *Worker) runAStockWindowNewsCrawl(ctx context.Context, period string, ph
 }
 
 func (w *Worker) runAStockIncrementalNewsCrawl(ctx context.Context, sourceType string) error {
+	settings, _ := astocknews.LoadSettings("")
+	if !astocknews.CrawlEnabled(settings, sourceType) {
+		return jobSkippedError{message: fmt.Sprintf("a-stock news crawl skipped because %s is disabled", astocknews.Label(sourceType))}
+	}
 	return w.runCrawlWithOptions(ctx, sourceType, aStockIncrementalNewsCrawlOptions(time.Now()))
 }
 
@@ -1155,8 +1159,12 @@ func normalizeAStockRecommendationPhase(phase string) string {
 
 func (w *Worker) aStockRecommendationCrawlSources() []string {
 	sources := make([]string, 0, len(aStockRecommendationSources))
+	settings, _ := astocknews.LoadSettings("")
 	for _, sourceType := range aStockRecommendationSources {
 		if sourceType == "jin10_full" && !w.cfg.Jin10FullEnabled {
+			continue
+		}
+		if !astocknews.CrawlEnabled(settings, sourceType) {
 			continue
 		}
 		sources = append(sources, sourceType)

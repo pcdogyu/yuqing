@@ -30,6 +30,7 @@ type Provider struct {
 	pageURL      string
 	apiURL       string
 	searchAPIURL string
+	sourceType   string
 }
 
 func NewProvider(client *resty.Client, pageURL string) *Provider {
@@ -42,14 +43,28 @@ func NewProvider(client *resty.Client, pageURL string) *Provider {
 		pageURL:      pageURL,
 		apiURL:       listAPIURL(pageURL),
 		searchAPIURL: searchAPIURL(pageURL),
+		sourceType:   provider.SourceTypeEastMoneyKuaixun,
 	}
 }
 
+func NewFullProvider(client *resty.Client, pageURL string) *Provider {
+	p := NewProvider(client, pageURL)
+	p.sourceType = provider.SourceTypeEastMoneyFull
+	return p
+}
+
 func (p *Provider) SourceType() string {
-	return provider.SourceTypeEastMoneyKuaixun
+	return p.sourceType
 }
 
 func (p *Provider) Fetch(ctx context.Context) ([]model.Item, error) {
+	if p.SourceType() == provider.SourceTypeEastMoneyFull {
+		items, err := p.fetchSearchItems(ctx, time.Now().UTC())
+		if err != nil {
+			return nil, err
+		}
+		return p.enrichItems(ctx, dedupe(p.withSourceType(items))), nil
+	}
 	collected := make([]model.Item, 0, 80)
 	var errs []string
 
@@ -60,13 +75,6 @@ func (p *Provider) Fetch(ctx context.Context) ([]model.Item, error) {
 		collected = append(collected, items...)
 	}
 
-	searchItems, searchErr := p.fetchSearchItems(ctx, time.Now().UTC())
-	if searchErr != nil {
-		errs = append(errs, searchErr.Error())
-	} else {
-		collected = append(collected, searchItems...)
-	}
-
 	collected = p.enrichItems(ctx, dedupe(collected))
 	if len(collected) == 0 && len(errs) > 0 {
 		return nil, fmt.Errorf("%s", strings.Join(errs, "; "))
@@ -75,6 +83,13 @@ func (p *Provider) Fetch(ctx context.Context) ([]model.Item, error) {
 }
 
 func (p *Provider) FetchWithOptions(ctx context.Context, options model.CrawlOptions) ([]model.Item, error) {
+	if p.SourceType() == provider.SourceTypeEastMoneyFull {
+		items, err := p.fetchSearchItems(ctx, time.Now().UTC())
+		if err != nil {
+			return nil, err
+		}
+		return p.enrichItems(ctx, dedupe(p.withSourceType(items))), nil
+	}
 	start, hasStart := parseOptionTime(options.Start)
 	if !hasStart && strings.TrimSpace(options.End) == "" {
 		return p.Fetch(ctx)
@@ -106,17 +121,22 @@ func (p *Provider) FetchWithOptions(ctx context.Context, options model.CrawlOpti
 			break
 		}
 	}
-	searchItems, searchErr := p.fetchSearchItems(ctx, time.Now().UTC())
-	if searchErr != nil {
-		errs = append(errs, searchErr.Error())
-	} else {
-		collected = append(collected, searchItems...)
-	}
 	collected = p.enrichItems(ctx, dedupe(collected))
 	if len(collected) == 0 && len(errs) > 0 {
 		return nil, fmt.Errorf("%s", strings.Join(errs, "; "))
 	}
 	return collected, nil
+}
+
+func (p *Provider) withSourceType(items []model.Item) []model.Item {
+	sourceType := p.SourceType()
+	if sourceType == "" {
+		sourceType = provider.SourceTypeEastMoneyKuaixun
+	}
+	for i := range items {
+		items[i].SourceType = sourceType
+	}
+	return items
 }
 
 func (p *Provider) fetchFastNewsPage(ctx context.Context, sortEnd string, capturedAt time.Time) ([]model.Item, []newsRow, error) {
