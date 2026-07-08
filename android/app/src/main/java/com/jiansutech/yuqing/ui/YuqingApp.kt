@@ -94,7 +94,6 @@ import com.jiansutech.yuqing.data.Report
 import com.jiansutech.yuqing.data.SchedulerJob
 import com.jiansutech.yuqing.data.ServiceStatus
 import com.jiansutech.yuqing.data.StockHolding
-import com.jiansutech.yuqing.data.StockResearch
 import com.jiansutech.yuqing.data.TaskRun
 import kotlinx.serialization.decodeFromString
 import java.time.DayOfWeek
@@ -128,6 +127,7 @@ private fun PortalScreen(
         ?: modules.first()
     var backtestDetail by remember { mutableStateOf<AStockBacktestDetailState?>(null) }
     var lastArticleTabClickAt by remember { mutableStateOf(0L) }
+    var bottomNavSecretTapState by remember { mutableStateOf(BottomNavSecretTapState()) }
     val detail = backtestDetail
     val articleDetail = state.articleDetail
     BackHandler(enabled = detail != null || articleDetail != null) {
@@ -142,6 +142,7 @@ private fun PortalScreen(
         selected.key == "search" ||
         selected.key == "a_stock" ||
         selected.key == "auction" ||
+        selected.key == "stock_research" ||
         selected.key == "system"
     val hideModuleStrip = hideTopBar || selected.key == "system"
     Scaffold(
@@ -187,25 +188,32 @@ private fun PortalScreen(
         bottomBar = {
             if (detail == null && articleDetail == null) {
                 NavigationBar {
-                    listOf("dashboard", "articles", "a_stock", "auction", "system").forEach { key ->
+                    bottomNavigationKeys.forEach { key ->
                         val module = modules.firstOrNull { it.key == key }
                             ?: fallback.firstOrNull { it.key == key }
                             ?: AndroidModule(key = key, title = key)
+                        val navTitle = bottomNavigationTitle(key, module.title)
                         NavigationBarItem(
                             selected = selected.key == key,
                             onClick = {
                                 val now = SystemClock.elapsedRealtime()
-                                if (isArticleTabDoubleClick(key, selected.key, lastArticleTabClickAt, now)) {
-                                    viewModel.forceRefreshArticles()
+                                val secretTap = nextBottomNavSecretTapState(bottomNavSecretTapState, key, now)
+                                bottomNavSecretTapState = secretTap.state
+                                if (secretTap.unlocked) {
+                                    viewModel.selectModule("system")
                                 } else {
-                                    viewModel.selectModule(key)
-                                }
-                                if (key == "articles") {
-                                    lastArticleTabClickAt = now
+                                    if (isArticleTabDoubleClick(key, selected.key, lastArticleTabClickAt, now)) {
+                                        viewModel.forceRefreshArticles()
+                                    } else {
+                                        viewModel.selectModule(key)
+                                    }
+                                    if (key == "articles") {
+                                        lastArticleTabClickAt = now
+                                    }
                                 }
                             },
-                            icon = { Icon(moduleIcon(key), contentDescription = module.title) },
-                            label = { Text(module.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            icon = { Icon(moduleIcon(key), contentDescription = navTitle) },
+                            label = { Text(navTitle, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         )
                     }
                 }
@@ -275,6 +283,30 @@ private fun PortalScreen(
 }
 
 internal const val ARTICLE_TAB_DOUBLE_CLICK_MS = 400L
+internal const val BOTTOM_NAV_SYSTEM_UNLOCK_TAPS = 10
+internal const val BOTTOM_NAV_SYSTEM_UNLOCK_WINDOW_MS = 5_000L
+
+private val bottomNavigationKeys = listOf("dashboard", "articles", "a_stock", "stock_research", "auction")
+private val bottomNavigationTitles = mapOf(
+    "dashboard" to "总览",
+    "articles" to "文章",
+    "a_stock" to "A股",
+    "stock_research" to "研报",
+    "auction" to "集合",
+)
+
+private fun bottomNavigationTitle(key: String, fallback: String): String = bottomNavigationTitles[key] ?: fallback
+
+internal data class BottomNavSecretTapState(
+    val key: String = "",
+    val count: Int = 0,
+    val lastClickAt: Long = 0L,
+)
+
+internal data class BottomNavSecretTapResult(
+    val state: BottomNavSecretTapState,
+    val unlocked: Boolean,
+)
 
 internal fun isArticleTabDoubleClick(
     clickedKey: String,
@@ -286,6 +318,30 @@ internal fun isArticleTabDoubleClick(
         currentKey == "articles" &&
         lastArticleTabClickAt > 0 &&
         now - lastArticleTabClickAt in 0..ARTICLE_TAB_DOUBLE_CLICK_MS
+}
+
+internal fun nextBottomNavSecretTapState(
+    current: BottomNavSecretTapState,
+    clickedKey: String,
+    now: Long,
+    targetTaps: Int = BOTTOM_NAV_SYSTEM_UNLOCK_TAPS,
+    windowMillis: Long = BOTTOM_NAV_SYSTEM_UNLOCK_WINDOW_MS,
+): BottomNavSecretTapResult {
+    val isConsecutive = current.key == clickedKey &&
+        current.lastClickAt > 0 &&
+        now - current.lastClickAt in 0..windowMillis
+    val nextCount = if (isConsecutive) current.count + 1 else 1
+    if (nextCount >= targetTaps) {
+        return BottomNavSecretTapResult(BottomNavSecretTapState(), true)
+    }
+    return BottomNavSecretTapResult(
+        BottomNavSecretTapState(
+            key = clickedKey,
+            count = nextCount,
+            lastClickAt = now,
+        ),
+        false,
+    )
 }
 
 @Composable
@@ -338,7 +394,7 @@ private fun ModuleContent(
         "analysis" -> AnalysisModule(dashboard)
         "reports" -> ReportsModule(dashboard.reports, viewModel)
         "a_stock" -> AStockModule(state, viewModel, onOpenAStockBacktest)
-        "stock_research" -> StockResearchModule(dashboard.stockResearch.items, viewModel)
+        "stock_research" -> StockResearchModule(state, viewModel)
         "holdings" -> HoldingsModule(dashboard.holdings.items)
         "system" -> SystemModule(dashboard, state, viewModel, versionUpgradeState, onCheckUpgrade)
         else -> GenericModule(key, dashboard)
@@ -654,13 +710,30 @@ private fun AStockAuctionModule(result: AStockAuctionListResult, viewModel: Yuqi
 }
 
 @Composable
-private fun StockResearchModule(items: List<StockResearch>, viewModel: YuqingViewModel) {
+private fun StockResearchModule(state: YuqingUiState, viewModel: YuqingViewModel) {
+    val items = state.stockResearch.items
     LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { viewModel.requestAction("stock_research_backfill", "回补研报调研") }) { Text("回补") }
                 Button(onClick = { viewModel.requestAction("stock_research_pdf_parse", "解析研报 PDF") }) { Text("解析PDF") }
             }
+        }
+        if (state.stockResearchLoading) {
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Text("加载研报信息")
+                }
+            }
+        }
+        if (!state.stockResearchLoading && items.isEmpty()) {
+            item { EmptyState("暂无研报信息") }
         }
         items(items) { SimpleRow("${it.code} ${it.name}", "${it.title} ${it.institution} ${it.pdfStatus}") }
     }

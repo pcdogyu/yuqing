@@ -59,6 +59,12 @@ interface YuqingApi {
         @Query("ignore_recent") ignoreRecent: Boolean = false,
     ): ApiEnvelope<AStockRecommendationSnapshot>
 
+    @GET("api/v1/stock-research")
+    suspend fun stockResearch(
+        @Query("page") page: Int = 1,
+        @Query("page_size") pageSize: Int = 20,
+    ): ApiEnvelope<StockResearchListResult>
+
     @GET("api/v1/search/full")
     suspend fun searchFull(
         @Query("keyword") keyword: String,

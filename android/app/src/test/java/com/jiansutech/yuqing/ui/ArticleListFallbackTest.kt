@@ -41,6 +41,37 @@ class ArticleListFallbackTest {
     }
 
     @Test
+    fun bottomNavSecretTapUnlocksSystemAfterTenConsecutiveTaps() {
+        var state = BottomNavSecretTapState()
+        var unlocked = false
+
+        repeat(10) { index ->
+            val result = nextBottomNavSecretTapState(state, "auction", now = 1_000L + index * 100L)
+            state = result.state
+            unlocked = result.unlocked
+        }
+
+        assertEquals(true, unlocked)
+        assertEquals(BottomNavSecretTapState(), state)
+    }
+
+    @Test
+    fun bottomNavSecretTapResetsWhenMenuChangesOrWindowExpires() {
+        var state = BottomNavSecretTapState()
+
+        repeat(9) { index ->
+            state = nextBottomNavSecretTapState(state, "a_stock", now = 1_000L + index * 100L).state
+        }
+        val changedMenu = nextBottomNavSecretTapState(state, "auction", now = 2_000L)
+        assertEquals(false, changedMenu.unlocked)
+        assertEquals(BottomNavSecretTapState(key = "auction", count = 1, lastClickAt = 2_000L), changedMenu.state)
+
+        val expiredWindow = nextBottomNavSecretTapState(changedMenu.state, "auction", now = 8_001L)
+        assertEquals(false, expiredWindow.unlocked)
+        assertEquals(BottomNavSecretTapState(key = "auction", count = 1, lastClickAt = 8_001L), expiredWindow.state)
+    }
+
+    @Test
     fun filterHiddenArticlesDropsMatchingIds() {
         val result = ItemListResult(
             items = listOf(

@@ -27,6 +27,7 @@ import com.jiansutech.yuqing.data.NetworkEnvironmentSelector
 import com.jiansutech.yuqing.data.SearchResult
 import com.jiansutech.yuqing.data.SessionState
 import com.jiansutech.yuqing.data.SessionStore
+import com.jiansutech.yuqing.data.StockResearchListResult
 import com.jiansutech.yuqing.data.YuqingApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -93,6 +94,8 @@ data class YuqingUiState(
     val afternoonAStockRecommendation: AStockRecommendationSnapshot? = null,
     val afternoonAStockRecommendations: List<AStockRecommendation> = emptyList(),
     val aStockRecommendationWindow: AStockRecommendationWindow = currentAStockRecommendationWindow(),
+    val stockResearch: StockResearchListResult = StockResearchListResult(),
+    val stockResearchLoading: Boolean = false,
     val searchKeyword: String = "",
     val searchResult: SearchResult? = null,
     val connectionTests: Map<String, ConnectionTestResult> = emptyMap(),
@@ -242,6 +245,9 @@ class YuqingViewModel(
         if (key == "auction") {
             loadAStockAuction()
         }
+        if (key == "stock_research") {
+            loadStockResearch()
+        }
     }
 
     fun updateSearchKeyword(value: String) {
@@ -331,6 +337,7 @@ class YuqingViewModel(
                         aStockAuctionDate = correctedDashboard.aStock.auction.date.ifBlank { it.aStockAuctionDate },
                         aStockRecommendation = correctedDashboard.aStock.recommendation.takeIf { snapshot -> snapshot.found },
                         aStockRecommendations = parseAStockRecommendations(correctedDashboard.aStock.recommendation.recommendationsJson),
+                        stockResearch = correctedDashboard.stockResearch,
                         message = "数据已刷新",
                     )
                 }
@@ -355,6 +362,9 @@ class YuqingViewModel(
             }
             if (_uiState.value.selectedModuleKey == "auction") {
                 loadAStockAuction()
+            }
+            if (_uiState.value.selectedModuleKey == "stock_research") {
+                loadStockResearch()
             }
         }
     }
@@ -769,6 +779,28 @@ class YuqingViewModel(
                 _uiState.update { it.copy(error = throwable.message ?: "集合竞价加载失败") }
             }
             _uiState.update { it.copy(loading = false) }
+        }
+    }
+
+    fun loadStockResearch(page: Int = 1) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(stockResearchLoading = true, error = "", message = "") }
+            val session = sessionStore.state.first()
+            runCatching {
+                currentYuqingApi(session)
+                    .stockResearch(page = page.coerceAtLeast(1), pageSize = 20)
+                    .data ?: error("研报信息为空")
+            }.onSuccess { result ->
+                _uiState.update {
+                    it.copy(
+                        stockResearch = result,
+                        message = "研报信息已加载",
+                    )
+                }
+            }.onFailure { throwable ->
+                _uiState.update { it.copy(error = throwable.message ?: "研报信息加载失败") }
+            }
+            _uiState.update { it.copy(stockResearchLoading = false) }
         }
     }
 
