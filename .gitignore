@@ -33,6 +33,7 @@ android/build/
 # Mobile release artifacts
 release/*.apk
 release/*.zip
+release/netuser.json
 
 # Local Git pack/index artifacts are handled by the run script; keep them out of the tree if they surface during maintenance.
 .git/objects/pack/*.idx

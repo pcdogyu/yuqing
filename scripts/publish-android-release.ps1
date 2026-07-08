@@ -5,6 +5,7 @@ param(
     [string]$ServerReleaseDir = "C:\yuqing\release",
     [string]$ServerUser = "10.15.0.7\hyuser",
     [string]$ReleaseBaseUrl = "http://10.15.0.7:8099",
+    [string]$CredentialFile = "",
     [string]$ApkSigner = "",
     [switch]$SkipBuild,
     [switch]$SkipCopy,
@@ -16,6 +17,36 @@ $ErrorActionPreference = "Stop"
 
 if ([string]::IsNullOrWhiteSpace($ReleaseDir)) {
     $ReleaseDir = Join-Path $RepoRoot "release"
+}
+if ([string]::IsNullOrWhiteSpace($CredentialFile)) {
+    $CredentialFile = Join-Path $ReleaseDir "netuser.json"
+}
+
+$serverPassword = ""
+if (Test-Path -LiteralPath $CredentialFile) {
+    $credential = Get-Content -LiteralPath $CredentialFile -Raw | ConvertFrom-Json
+    if ($credential.serverShare) {
+        $ServerShare = [string]$credential.serverShare
+    }
+    if ($credential.serverReleaseDir) {
+        $ServerReleaseDir = [string]$credential.serverReleaseDir
+    }
+    if ($credential.releaseBaseUrl) {
+        $ReleaseBaseUrl = [string]$credential.releaseBaseUrl
+    }
+    $credentialUser = ""
+    if ($credential.username) {
+        $credentialUser = [string]$credential.username
+    }
+    if ($credential.host -and $credentialUser -and -not $credentialUser.Contains("\")) {
+        $credentialUser = "$($credential.host)\$credentialUser"
+    }
+    if ($credentialUser) {
+        $ServerUser = $credentialUser
+    }
+    if ($credential.password) {
+        $serverPassword = [string]$credential.password
+    }
 }
 
 $androidDir = Join-Path $RepoRoot "android"
@@ -89,7 +120,9 @@ Write-Host "Set-Location C:\yuqing\go"
 Write-Host ".\run.bat --skip-pull"
 Write-Host ""
 Write-Host "Copy command:"
-Write-Host "net use $ServerShare /user:$ServerUser * /persistent:no"
+Write-Host ".\scripts\publish-android-release.ps1"
+Write-Host "# Uses credential file: $CredentialFile"
+Write-Host "# Manual fallback: net use $ServerShare /user:$ServerUser * /persistent:no"
 Write-Host "robocopy $ReleaseDir $ServerShare *.apk *.zip /XO /R:2 /W:2"
 Write-Host "net use $ServerShare /delete"
 Write-Host ""
@@ -104,7 +137,11 @@ if ($SkipCopy) {
 }
 
 if (-not $SkipNetUse) {
-    net use $ServerShare /user:$ServerUser * /persistent:no
+    if ([string]::IsNullOrWhiteSpace($serverPassword)) {
+        net use $ServerShare /user:$ServerUser * /persistent:no
+    } else {
+        net use $ServerShare $serverPassword /user:$ServerUser /persistent:no
+    }
     if ($LASTEXITCODE -ne 0) {
         throw "net use failed with exit code $LASTEXITCODE"
     }
