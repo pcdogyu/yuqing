@@ -73,7 +73,6 @@ data class StockResearchPdfState(
     val message: String = "",
     val localPath: String = "",
     val localUri: String = "",
-    val pageIndex: Int = 0,
 ) {
     val hasLocalFile: Boolean get() = localPath.isNotBlank() && localUri.isNotBlank()
 }
@@ -936,12 +935,6 @@ class YuqingViewModel(
                     )
                 }
             }
-        }
-    }
-
-    fun selectStockResearchPdfPage(pageIndex: Int) {
-        _uiState.update {
-            it.copy(stockResearchPdf = it.stockResearchPdf.copy(pageIndex = pageIndex.coerceAtLeast(0)))
         }
     }
 

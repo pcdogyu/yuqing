@@ -319,7 +319,6 @@ private fun PortalScreen(
                     pdfState = state.stockResearchPdf,
                     onDownloadPdf = { viewModel.downloadStockResearchPdf(force = false) },
                     onRedownloadPdf = { viewModel.downloadStockResearchPdf(force = true) },
-                    onPdfPageSelected = viewModel::selectStockResearchPdfPage,
                     onPdfError = viewModel::reportStockResearchPdfError,
                 )
             } else {
@@ -898,7 +897,6 @@ private fun StockResearchDetailScreen(
     pdfState: StockResearchPdfState,
     onDownloadPdf: () -> Unit,
     onRedownloadPdf: () -> Unit,
-    onPdfPageSelected: (Int) -> Unit,
     onPdfError: (String) -> Unit,
 ) {
     val uriHandler = LocalUriHandler.current
@@ -985,7 +983,6 @@ private fun StockResearchDetailScreen(
                         onError = onPdfError,
                     )
                 },
-                onPdfPageSelected = onPdfPageSelected,
             )
         }
         if (sourceUrl.isNotBlank() || item.pdfUrl.isNotBlank()) {
@@ -1061,7 +1058,6 @@ private fun StockResearchPdfSection(
     onDownloadPdf: () -> Unit,
     onRedownloadPdf: () -> Unit,
     onOpenLocalPdf: () -> Unit,
-    onPdfPageSelected: (Int) -> Unit,
 ) {
     Card {
         Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1114,8 +1110,6 @@ private fun StockResearchPdfSection(
             if (pdfState.hasLocalFile) {
                 StockResearchPdfPreview(
                     localPath = pdfState.localPath,
-                    pageIndex = pdfState.pageIndex,
-                    onPageSelected = onPdfPageSelected,
                 )
             } else {
                 Text("下载后可在本页预览，并可离线打开。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1127,14 +1121,12 @@ private fun StockResearchPdfSection(
 @Composable
 private fun StockResearchPdfPreview(
     localPath: String,
-    pageIndex: Int,
-    onPageSelected: (Int) -> Unit,
 ) {
-    var renderState by remember(localPath, pageIndex) { mutableStateOf(PdfRenderState(loading = true)) }
-    LaunchedEffect(localPath, pageIndex) {
+    var renderState by remember(localPath) { mutableStateOf(PdfRenderState(loading = true)) }
+    LaunchedEffect(localPath) {
         renderState = PdfRenderState(loading = true)
         renderState = withContext(Dispatchers.IO) {
-            renderPdfPage(localPath, pageIndex)
+            renderPdfPages(localPath)
         }
     }
     if (renderState.loading) {
@@ -1148,41 +1140,34 @@ private fun StockResearchPdfPreview(
         Text(renderState.error, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
         return
     }
-    val bitmap = renderState.bitmap ?: return
+    val bitmaps = renderState.bitmaps
+    if (bitmaps.isEmpty()) {
+        return
+    }
     val pageCount = renderState.pageCount.coerceAtLeast(1)
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Image(
-            bitmap = bitmap.asImageBitmap(),
-            contentDescription = "PDF预览",
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(bitmap.width.toFloat() / bitmap.height.toFloat()),
-            contentScale = ContentScale.FillWidth,
-        )
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            TextButton(onClick = { onPageSelected((pageIndex - 1).coerceAtLeast(0)) }, enabled = pageIndex > 0) {
-                Text("上一页")
-            }
-            Text("第 ${pageIndex + 1} / $pageCount 页", style = MaterialTheme.typography.bodySmall)
-            TextButton(onClick = { onPageSelected(pageIndex + 1) }, enabled = pageIndex + 1 < pageCount) {
-                Text("下一页")
-            }
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        bitmaps.forEachIndexed { index, bitmap ->
+            Text("第 ${index + 1} / $pageCount 页", style = MaterialTheme.typography.bodySmall)
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = "PDF预览第${index + 1}页",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(bitmap.width.toFloat() / bitmap.height.toFloat()),
+                contentScale = ContentScale.FillWidth,
+            )
         }
     }
 }
 
 private data class PdfRenderState(
     val loading: Boolean = false,
-    val bitmap: Bitmap? = null,
+    val bitmaps: List<Bitmap> = emptyList(),
     val pageCount: Int = 0,
     val error: String = "",
 )
 
-private fun renderPdfPage(localPath: String, requestedPageIndex: Int): PdfRenderState {
+private fun renderPdfPages(localPath: String): PdfRenderState {
     val file = File(localPath)
     if (!file.isFile || file.length() <= 0L) {
         return PdfRenderState(error = "本地PDF文件不存在")
@@ -1193,15 +1178,18 @@ private fun renderPdfPage(localPath: String, requestedPageIndex: Int): PdfRender
                 if (renderer.pageCount <= 0) {
                     return PdfRenderState(error = "PDF没有可预览页面")
                 }
-                val pageIndex = requestedPageIndex.coerceIn(0, renderer.pageCount - 1)
-                renderer.openPage(pageIndex).use { page ->
-                    val width = 1080
-                    val height = (width.toFloat() / page.width.toFloat() * page.height.toFloat()).toInt().coerceAtLeast(1)
-                    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-                    bitmap.eraseColor(android.graphics.Color.WHITE)
-                    page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                    PdfRenderState(bitmap = bitmap, pageCount = renderer.pageCount)
+                val bitmaps = mutableListOf<Bitmap>()
+                for (pageIndex in 0 until renderer.pageCount) {
+                    renderer.openPage(pageIndex).use { page ->
+                        val width = 900
+                        val height = (width.toFloat() / page.width.toFloat() * page.height.toFloat()).toInt().coerceAtLeast(1)
+                        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                        bitmap.eraseColor(android.graphics.Color.WHITE)
+                        page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                        bitmaps += bitmap
+                    }
                 }
+                PdfRenderState(bitmaps = bitmaps, pageCount = renderer.pageCount)
             }
         }
     }.getOrElse { throwable ->

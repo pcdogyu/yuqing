@@ -96,7 +96,7 @@ func FetchSource(ctx context.Context, rawURL string, opts FetchOptions) model.St
 }
 
 func SourceUpdateFromPDFText(text string, fetchedAt string) model.StockResearchSourceUpdate {
-	text = NormalizePlainText(text)
+	text = FormatPDFText(text)
 	if fetchedAt == "" {
 		fetchedAt = time.Now().UTC().Format(time.RFC3339)
 	}
@@ -104,6 +104,10 @@ func SourceUpdateFromPDFText(text string, fetchedAt string) model.StockResearchS
 		return model.StockResearchSourceUpdate{SourceFetchStatus: SourceStatusFailed, SourceFetchError: "PDF 文本为空", SourceFetchedAt: fetchedAt}
 	}
 	return model.StockResearchSourceUpdate{SourceText: text, SourceFetchStatus: SourceStatusParsed, SourceFetchedAt: fetchedAt}
+}
+
+func FormatPDFText(raw string) string {
+	return NormalizePlainText(raw)
 }
 
 func LooksLikePDFURL(raw string) bool {

@@ -137,15 +137,18 @@ func (w *Worker) handleRunStockResearchPDFParse(wr http.ResponseWriter, r *http.
 		ID:      id,
 		Code:    strings.TrimSpace(r.URL.Query().Get("code")),
 		Company: strings.TrimSpace(r.URL.Query().Get("company")),
+		Kind:    strings.TrimSpace(r.URL.Query().Get("kind")),
 		Source:  strings.TrimSpace(r.URL.Query().Get("source")),
 		Start:   strings.TrimSpace(r.URL.Query().Get("start")),
 		End:     strings.TrimSpace(r.URL.Query().Get("end")),
+		DryRun:  parseBoolQuery(r, "dry_run"),
+		Force:   parseBoolQuery(r, "force"),
 	}
 	startedAt := time.Now().UTC()
 	result, err := w.runStockResearchPDFParse(r.Context(), opts)
 	finishedAt := time.Now().UTC()
 	status := "success"
-	message := fmt.Sprintf("stock research pdf parse completed: total=%d parsed=%d no_pdf=%d no_text=%d failed=%d", result.Total, result.Parsed, result.NoPDF, result.NoText, result.Failed)
+	message := fmt.Sprintf("stock research pdf parse completed: total=%d existing_pdf=%d need_download=%d parsed=%d no_pdf=%d no_text=%d failed=%d dry_run=%t", result.Total, result.ExistingPDF, result.NeedDownload, result.Parsed, result.NoPDF, result.NoText, result.Failed, result.DryRun)
 	if err != nil {
 		status = "failed"
 		message = err.Error()
@@ -156,6 +159,15 @@ func (w *Worker) handleRunStockResearchPDFParse(wr http.ResponseWriter, r *http.
 		return
 	}
 	apiutil.WriteJSON(wr, http.StatusOK, "ok", map[string]any{"status": "triggered", "result": result})
+}
+
+func parseBoolQuery(r *http.Request, key string) bool {
+	switch strings.ToLower(strings.TrimSpace(r.URL.Query().Get(key))) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func (w *Worker) handleRunAStockAuctionBackfill(wr http.ResponseWriter, r *http.Request) {

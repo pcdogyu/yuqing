@@ -87,6 +87,7 @@ type StockResearchPDFUpdate struct {
 	SourceFetchStatus string  `json:"source_fetch_status"`
 	SourceFetchError  string  `json:"source_fetch_error"`
 	SourceFetchedAt   string  `json:"source_fetched_at"`
+	Force             bool    `json:"force"`
 }
 
 type StockResearchSourceUpdate struct {

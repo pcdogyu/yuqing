@@ -432,6 +432,7 @@ WHERE id = ?`, id)
 }
 
 func (s *Store) UpdateStockResearchPDF(ctx context.Context, id int64, update model.StockResearchPDFUpdate) (model.StockResearchSurvey, error) {
+	force := update.Force
 	sourceText := strings.TrimSpace(update.SourceText)
 	sourceStatus := stockResearchSourceStatus(update.SourceFetchStatus)
 	sourceError := strings.TrimSpace(update.SourceFetchError)
@@ -445,10 +446,10 @@ func (s *Store) UpdateStockResearchPDF(ctx context.Context, id int64, update mod
 	res, err := s.db.ExecContext(ctx, `
 UPDATE stock_research_surveys
 SET pdf_url = ?, pdf_file_path = ?, pdf_status = ?, pdf_text = ?, pdf_error = ?, pdf_fetched_at = ?, pdf_parsed_at = ?, nlp_score = ?, nlp_rating = ?, nlp_reason = ?, nlp_scored_at = ?,
-	source_text = CASE WHEN ? <> '' AND (source_text = '' OR source_fetch_status = 'pending_pdf') THEN ? ELSE source_text END,
-	source_fetch_status = CASE WHEN ? <> '' AND (source_text = '' OR source_fetch_status = 'pending_pdf') THEN ? ELSE source_fetch_status END,
-	source_fetch_error = CASE WHEN ? <> '' AND (source_text = '' OR source_fetch_status = 'pending_pdf') THEN ? ELSE source_fetch_error END,
-	source_fetched_at = CASE WHEN ? <> '' AND (source_text = '' OR source_fetch_status = 'pending_pdf') THEN ? ELSE source_fetched_at END,
+	source_text = CASE WHEN ? <> '' AND (? OR source_text = '' OR source_fetch_status = 'pending_pdf') THEN ? ELSE source_text END,
+	source_fetch_status = CASE WHEN ? <> '' AND (? OR source_text = '' OR source_fetch_status = 'pending_pdf') THEN ? ELSE source_fetch_status END,
+	source_fetch_error = CASE WHEN ? <> '' AND (? OR source_text = '' OR source_fetch_status = 'pending_pdf') THEN ? ELSE source_fetch_error END,
+	source_fetched_at = CASE WHEN ? <> '' AND (? OR source_text = '' OR source_fetch_status = 'pending_pdf') THEN ? ELSE source_fetched_at END,
 	updated_at = ?
 WHERE id = ?`,
 		strings.TrimSpace(update.PDFURL),
@@ -462,10 +463,10 @@ WHERE id = ?`,
 		strings.TrimSpace(update.NLPRating),
 		strings.TrimSpace(update.NLPReason),
 		strings.TrimSpace(update.NLPScoredAt),
-		sourceText, sourceText,
-		sourceStatus, sourceStatus,
-		sourceError, sourceError,
-		sourceFetchedAt, sourceFetchedAt,
+		sourceText, force, sourceText,
+		sourceStatus, force, sourceStatus,
+		sourceError, force, sourceError,
+		sourceFetchedAt, force, sourceFetchedAt,
 		time.Now().UTC().Format(time.RFC3339),
 		id,
 	)

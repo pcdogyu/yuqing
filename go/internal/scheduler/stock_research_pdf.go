@@ -24,21 +24,29 @@ import (
 
 const stockResearchPDFMaxBytes = 30 * 1024 * 1024
 
+var stockResearchPDFParseItemMinTimeout = 2 * time.Minute
+
 type stockResearchPDFParseOptions struct {
 	ID      int64
 	Code    string
 	Company string
+	Kind    string
 	Source  string
 	Start   string
 	End     string
+	DryRun  bool
+	Force   bool
 }
 
 type stockResearchPDFParseResult struct {
-	Total  int `json:"total"`
-	Parsed int `json:"parsed"`
-	NoPDF  int `json:"no_pdf"`
-	NoText int `json:"no_text"`
-	Failed int `json:"failed"`
+	Total        int  `json:"total"`
+	ExistingPDF  int  `json:"existing_pdf"`
+	NeedDownload int  `json:"need_download"`
+	Parsed       int  `json:"parsed"`
+	NoPDF        int  `json:"no_pdf"`
+	NoText       int  `json:"no_text"`
+	Failed       int  `json:"failed"`
+	DryRun       bool `json:"dry_run"`
 }
 
 var stockResearchPDFTextExtractor = extractStockResearchPDFText
@@ -48,10 +56,21 @@ func (w *Worker) runStockResearchPDFParse(ctx context.Context, opts stockResearc
 	if err != nil {
 		return stockResearchPDFParseResult{}, err
 	}
-	result := stockResearchPDFParseResult{Total: len(items)}
+	result := stockResearchPDFParseResult{Total: len(items), DryRun: opts.DryRun}
 	var errs []string
 	for _, item := range items {
-		update := w.buildStockResearchPDFUpdate(ctx, item)
+		if existingStockResearchPDFPath(item) != "" {
+			result.ExistingPDF++
+		} else if stockResearchHasPDFSource(item) {
+			result.NeedDownload++
+		}
+		if opts.DryRun {
+			if !stockResearchHasPDFSource(item) {
+				result.NoPDF++
+			}
+			continue
+		}
+		update := w.buildStockResearchPDFUpdateWithTimeout(ctx, item, opts)
 		switch update.PDFStatus {
 		case "parsed":
 			result.Parsed++
@@ -82,9 +101,12 @@ func (w *Worker) loadStockResearchPDFCandidates(ctx context.Context, opts stockR
 	}
 	query := url.Values{}
 	query.Set("page_size", "200")
-	if strings.TrimSpace(opts.Source) == "cninfo_investor_relation" {
+	switch {
+	case strings.TrimSpace(opts.Kind) != "":
+		query.Set("kind", strings.TrimSpace(opts.Kind))
+	case strings.TrimSpace(opts.Source) == "cninfo_investor_relation":
 		query.Set("kind", "survey")
-	} else {
+	default:
 		query.Set("kind", "report")
 	}
 	if opts.Code != "" {
@@ -117,24 +139,58 @@ func (w *Worker) loadStockResearchPDFCandidates(ctx context.Context, opts stockR
 	return items, nil
 }
 
-func (w *Worker) buildStockResearchPDFUpdate(ctx context.Context, item model.StockResearchSurvey) model.StockResearchPDFUpdate {
+func (w *Worker) buildStockResearchPDFUpdateWithTimeout(ctx context.Context, item model.StockResearchSurvey, opts stockResearchPDFParseOptions) model.StockResearchPDFUpdate {
 	now := time.Now().UTC().Format(time.RFC3339)
-	pdfURL, err := w.resolveStockResearchPDFURL(ctx, item)
-	if err != nil {
-		return model.StockResearchPDFUpdate{PDFURL: item.PDFURL, PDFStatus: "failed", PDFError: err.Error(), PDFParsedAt: now}
+	timeout := maxDuration(w.cfg.HTTPTimeout*6, stockResearchPDFParseItemMinTimeout)
+	itemCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	updates := make(chan model.StockResearchPDFUpdate, 1)
+	go func() {
+		updates <- w.buildStockResearchPDFUpdate(itemCtx, item, opts)
+	}()
+
+	select {
+	case update := <-updates:
+		return update
+	case <-itemCtx.Done():
+		return model.StockResearchPDFUpdate{
+			PDFURL:       strings.TrimSpace(nonEmptyText(item.PDFURL, item.SourceURL)),
+			PDFFilePath:  existingStockResearchPDFPath(item),
+			PDFStatus:    "failed",
+			PDFError:     fmt.Sprintf("PDF 解析超时: %s", timeout),
+			PDFParsedAt:  now,
+			PDFFetchedAt: now,
+			Force:        opts.Force,
+		}
 	}
-	if pdfURL == "" {
-		return model.StockResearchPDFUpdate{PDFURL: item.PDFURL, PDFStatus: "no_pdf", PDFError: "未找到 PDF 链接", PDFParsedAt: now}
-	}
-	filePath, err := w.downloadStockResearchPDF(ctx, item, pdfURL)
-	if err != nil {
-		return model.StockResearchPDFUpdate{PDFURL: pdfURL, PDFStatus: "failed", PDFError: err.Error(), PDFParsedAt: now}
+}
+
+func (w *Worker) buildStockResearchPDFUpdate(ctx context.Context, item model.StockResearchSurvey, opts stockResearchPDFParseOptions) model.StockResearchPDFUpdate {
+	now := time.Now().UTC().Format(time.RFC3339)
+	filePath := existingStockResearchPDFPath(item)
+	pdfURL := strings.TrimSpace(item.PDFURL)
+	if filePath == "" {
+		resolvedURL, err := w.resolveStockResearchPDFURL(ctx, item)
+		if err != nil {
+			return model.StockResearchPDFUpdate{PDFURL: item.PDFURL, PDFStatus: "failed", PDFError: err.Error(), PDFParsedAt: now}
+		}
+		pdfURL = resolvedURL
+		if pdfURL == "" {
+			return model.StockResearchPDFUpdate{PDFURL: item.PDFURL, PDFStatus: "no_pdf", PDFError: "未找到 PDF 链接", PDFParsedAt: now}
+		}
+		filePath, err = w.downloadStockResearchPDF(ctx, item, pdfURL)
+		if err != nil {
+			return model.StockResearchPDFUpdate{PDFURL: pdfURL, PDFStatus: "failed", PDFError: err.Error(), PDFParsedAt: now}
+		}
+	} else if pdfURL == "" {
+		pdfURL = strings.TrimSpace(item.SourceURL)
 	}
 	rawText, err := stockResearchPDFTextExtractor(filePath)
 	if err != nil {
 		return model.StockResearchPDFUpdate{PDFURL: pdfURL, PDFFilePath: filePath, PDFStatus: "failed", PDFError: err.Error(), PDFFetchedAt: now, PDFParsedAt: now}
 	}
-	text := cleanStockResearchText(rawText)
+	text := stockresearch.FormatPDFText(rawText)
 	if text == "" {
 		return model.StockResearchPDFUpdate{PDFURL: pdfURL, PDFFilePath: filePath, PDFStatus: "no_text", PDFError: "PDF 可能为扫描版或图片型研报", PDFFetchedAt: now, PDFParsedAt: now}
 	}
@@ -153,6 +209,7 @@ func (w *Worker) buildStockResearchPDFUpdate(ctx context.Context, item model.Sto
 		SourceFetchStatus: sourceUpdate.SourceFetchStatus,
 		SourceFetchError:  sourceUpdate.SourceFetchError,
 		SourceFetchedAt:   sourceUpdate.SourceFetchedAt,
+		Force:             opts.Force,
 	}
 	if score, ok := w.scoreStockResearchPDF(ctx, item, text); ok {
 		update.NLPScore = score.Score
@@ -161,6 +218,23 @@ func (w *Worker) buildStockResearchPDFUpdate(ctx context.Context, item model.Sto
 		update.NLPScoredAt = now
 	}
 	return update
+}
+
+func existingStockResearchPDFPath(item model.StockResearchSurvey) string {
+	path := filepath.Clean(strings.TrimSpace(item.PDFFilePath))
+	if path == "." || path == "" {
+		return ""
+	}
+	if info, err := os.Stat(path); err == nil && !info.IsDir() && info.Size() > 0 {
+		return path
+	}
+	return ""
+}
+
+func stockResearchHasPDFSource(item model.StockResearchSurvey) bool {
+	return existingStockResearchPDFPath(item) != "" ||
+		strings.TrimSpace(item.PDFURL) != "" ||
+		strings.TrimSpace(item.SourceURL) != ""
 }
 
 func (w *Worker) scoreStockResearchPDF(ctx context.Context, item model.StockResearchSurvey, text string) (model.NLPStockScoreResponse, bool) {

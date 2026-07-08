@@ -455,10 +455,36 @@ func TestStockResearchPDFAPIUpdatesDownloadsAndReadsText(t *testing.T) {
 		t.Fatalf("expected pdf update to sync source text, got %+v", updateEnvelope.Data)
 	}
 
+	skipPDFReq := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/internal/stock-research/%d/pdf", itemID), strings.NewReader(fmt.Sprintf(`{"pdf_url":"https://sina.example.com/1.pdf","pdf_file_path":%q,"pdf_status":"parsed","pdf_text":"新版研报正文","pdf_fetched_at":"2026-06-16T02:00:00Z","pdf_parsed_at":"2026-06-16T02:01:00Z"}`, pdfPath)))
+	skipPDFRR := httptest.NewRecorder()
+	router.ServeHTTP(skipPDFRR, skipPDFReq)
+	if skipPDFRR.Code != http.StatusOK {
+		t.Fatalf("expected pdf skip update 200, got %d body=%s", skipPDFRR.Code, skipPDFRR.Body.String())
+	}
+	if err := json.Unmarshal(skipPDFRR.Body.Bytes(), &updateEnvelope); err != nil {
+		t.Fatalf("unmarshal pdf skip update response: %v", err)
+	}
+	if updateEnvelope.Data.PDFText != "新版研报正文" || updateEnvelope.Data.SourceText != "科大讯飞研报正文" {
+		t.Fatalf("expected pdf update without force to preserve existing source text, got %+v", updateEnvelope.Data)
+	}
+
+	forcePDFReq := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/internal/stock-research/%d/pdf", itemID), strings.NewReader(fmt.Sprintf(`{"pdf_url":"https://sina.example.com/1.pdf","pdf_file_path":%q,"pdf_status":"parsed","pdf_text":"新版研报正文\n第二段","pdf_fetched_at":"2026-06-16T03:00:00Z","pdf_parsed_at":"2026-06-16T03:01:00Z","force":true}`, pdfPath)))
+	forcePDFRR := httptest.NewRecorder()
+	router.ServeHTTP(forcePDFRR, forcePDFReq)
+	if forcePDFRR.Code != http.StatusOK {
+		t.Fatalf("expected pdf force update 200, got %d body=%s", forcePDFRR.Code, forcePDFRR.Body.String())
+	}
+	if err := json.Unmarshal(forcePDFRR.Body.Bytes(), &updateEnvelope); err != nil {
+		t.Fatalf("unmarshal pdf force update response: %v", err)
+	}
+	if updateEnvelope.Data.SourceText != "新版研报正文\n第二段" || updateEnvelope.Data.SourceFetchedAt != "2026-06-16T03:01:00Z" {
+		t.Fatalf("expected pdf force update to overwrite source text, got %+v", updateEnvelope.Data)
+	}
+
 	textReq := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/stock-research/%d/pdf/text", itemID), nil)
 	textRR := httptest.NewRecorder()
 	router.ServeHTTP(textRR, textReq)
-	if textRR.Code != http.StatusOK || !strings.Contains(textRR.Body.String(), "科大讯飞研报正文") {
+	if textRR.Code != http.StatusOK || !strings.Contains(textRR.Body.String(), "新版研报正文") {
 		t.Fatalf("expected parsed pdf text, got status=%d body=%s", textRR.Code, textRR.Body.String())
 	}
 

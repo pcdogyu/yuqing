@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -20,7 +21,7 @@ func TestRunStockResearchPDFParseFindsPDFDownloadsAndWritesContent(t *testing.T)
 		if _, err := os.Stat(filePath); err != nil {
 			t.Fatalf("expected downloaded pdf file: %v", err)
 		}
-		return "研报 PDF 文本", nil
+		return "研报 PDF 文本\n第二段\n\n第三段", nil
 	}
 	t.Cleanup(func() { stockResearchPDFTextExtractor = previousExtractor })
 
@@ -87,8 +88,158 @@ func TestRunStockResearchPDFParseFindsPDFDownloadsAndWritesContent(t *testing.T)
 	if result.Total != 1 || result.Parsed != 1 || result.Failed != 0 {
 		t.Fatalf("unexpected parse result: %+v", result)
 	}
-	if captured.PDFStatus != "parsed" || captured.PDFURL != external.URL+"/research.pdf" || captured.PDFText != "研报 PDF 文本" || captured.SourceText != "研报 PDF 文本" || captured.SourceFetchStatus != "parsed" || !strings.HasSuffix(captured.PDFFilePath, "sina-pdf-1.pdf") {
+	if captured.PDFStatus != "parsed" || captured.PDFURL != external.URL+"/research.pdf" || captured.PDFText != "研报 PDF 文本\n第二段\n\n第三段" || captured.SourceText != captured.PDFText || captured.SourceFetchStatus != "parsed" || !strings.HasSuffix(captured.PDFFilePath, "sina-pdf-1.pdf") {
 		t.Fatalf("unexpected captured update: %+v", captured)
+	}
+	if strings.Contains(captured.PDFText, "文本 第二段") {
+		t.Fatalf("expected parsed PDF text to preserve line breaks, got %q", captured.PDFText)
+	}
+}
+
+func TestRunStockResearchPDFParseDryRunCountsAndSkipsWrites(t *testing.T) {
+	pdfPath := filepath.Join(t.TempDir(), "existing.pdf")
+	if err := os.WriteFile(pdfPath, []byte("%PDF-1.4\nfake\n"), 0o644); err != nil {
+		t.Fatalf("write existing pdf: %v", err)
+	}
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/stock-research":
+			if r.URL.Query().Get("kind") != "all" || r.URL.Query().Get("start") != "2026-07-06" || r.URL.Query().Get("end") != "2026-07-08" {
+				t.Fatalf("unexpected stock research query: %s", r.URL.RawQuery)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockResearchListResult{
+				Page: 1, PageSize: 200, Total: 3,
+				Items: []model.StockResearchSurvey{
+					{ID: 1, PDFFilePath: pdfPath, SourceType: "sina_finance_report", SourceKey: "existing"},
+					{ID: 2, SourceURL: "https://example.com/report", SourceType: "sina_finance_report", SourceKey: "download"},
+					{ID: 3, SourceType: "sina_finance_report", SourceKey: "missing"},
+				},
+			}})
+		case r.Method == http.MethodPost:
+			t.Fatalf("dry run should not write content update: %s", r.URL.Path)
+		default:
+			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	worker := NewWorker(config.Config{
+		ContentURL:          content.URL,
+		StockResearchPDFDir: t.TempDir(),
+		HTTPTimeout:         time.Second,
+		ExternalRetryWait:   time.Millisecond,
+	})
+	result, err := worker.runStockResearchPDFParse(context.Background(), stockResearchPDFParseOptions{Start: "2026-07-06", End: "2026-07-08", Kind: "all", DryRun: true, Force: true})
+	if err != nil {
+		t.Fatalf("runStockResearchPDFParse dry run error: %v", err)
+	}
+	if !result.DryRun || result.Total != 3 || result.ExistingPDF != 1 || result.NeedDownload != 1 || result.NoPDF != 1 || result.Parsed != 0 || result.Failed != 0 {
+		t.Fatalf("unexpected dry-run result: %+v", result)
+	}
+}
+
+func TestRunStockResearchPDFParseUsesExistingLocalPDFBeforeResolvingURL(t *testing.T) {
+	pdfPath := filepath.Join(t.TempDir(), "local.pdf")
+	if err := os.WriteFile(pdfPath, []byte("%PDF-1.4\nfake\n"), 0o644); err != nil {
+		t.Fatalf("write existing pdf: %v", err)
+	}
+	previousExtractor := stockResearchPDFTextExtractor
+	stockResearchPDFTextExtractor = func(filePath string) (string, error) {
+		if filePath != pdfPath {
+			t.Fatalf("expected extractor to use existing local pdf %q, got %q", pdfPath, filePath)
+		}
+		return "本地PDF第一段\n本地PDF第二段", nil
+	}
+	t.Cleanup(func() { stockResearchPDFTextExtractor = previousExtractor })
+
+	var captured model.StockResearchPDFUpdate
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/stock-research/11":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockResearchSurvey{
+				ID: 11, Code: "300476", Name: "胜宏科技", Kind: "survey", Title: "胜宏科技投资者关系活动记录",
+				PDFFilePath: pdfPath, SourceURL: "https://invalid.example.com/no-page", SourceType: investorRelationsSourceType, SourceKey: "ir-local", ResearchDate: "2026-07-08",
+			}})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/internal/stock-research/11/pdf":
+			if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+				t.Fatalf("decode captured update: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": captured})
+		default:
+			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	worker := NewWorker(config.Config{
+		ContentURL:          content.URL,
+		StockResearchPDFDir: t.TempDir(),
+		HTTPTimeout:         time.Second,
+		ExternalRetryWait:   time.Millisecond,
+	})
+	result, err := worker.runStockResearchPDFParse(context.Background(), stockResearchPDFParseOptions{ID: 11, Force: true})
+	if err != nil {
+		t.Fatalf("runStockResearchPDFParse local pdf error: %v", err)
+	}
+	if result.Parsed != 1 || result.ExistingPDF != 1 || result.NeedDownload != 0 {
+		t.Fatalf("unexpected local pdf result: %+v", result)
+	}
+	if captured.PDFStatus != "parsed" || captured.PDFFilePath != pdfPath || !captured.Force || !strings.Contains(captured.PDFText, "本地PDF第一段\n本地PDF第二段") {
+		t.Fatalf("unexpected local pdf update: %+v", captured)
+	}
+}
+
+func TestRunStockResearchPDFParseTimesOutSingleStuckPDF(t *testing.T) {
+	pdfPath := filepath.Join(t.TempDir(), "stuck.pdf")
+	if err := os.WriteFile(pdfPath, []byte("%PDF-1.4\nfake\n"), 0o644); err != nil {
+		t.Fatalf("write existing pdf: %v", err)
+	}
+	previousExtractor := stockResearchPDFTextExtractor
+	previousMinTimeout := stockResearchPDFParseItemMinTimeout
+	stockResearchPDFTextExtractor = func(filePath string) (string, error) {
+		time.Sleep(120 * time.Millisecond)
+		return "too late", nil
+	}
+	stockResearchPDFParseItemMinTimeout = 10 * time.Millisecond
+	t.Cleanup(func() {
+		stockResearchPDFTextExtractor = previousExtractor
+		stockResearchPDFParseItemMinTimeout = previousMinTimeout
+	})
+
+	var captured model.StockResearchPDFUpdate
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/stock-research/12":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockResearchSurvey{
+				ID: 12, Code: "688048", Name: "长光华芯", Kind: "report", Title: "芯所往，光所至",
+				PDFFilePath: pdfPath, PDFURL: "https://example.com/stuck.pdf", SourceType: "eastmoney_report", SourceKey: "stuck",
+			}})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/internal/stock-research/12/pdf":
+			if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+				t.Fatalf("decode captured update: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": captured})
+		default:
+			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	worker := NewWorker(config.Config{
+		ContentURL:          content.URL,
+		StockResearchPDFDir: t.TempDir(),
+		HTTPTimeout:         time.Millisecond,
+		ExternalRetryWait:   time.Millisecond,
+	})
+	result, err := worker.runStockResearchPDFParse(context.Background(), stockResearchPDFParseOptions{ID: 12, Force: true})
+	if err != nil {
+		t.Fatalf("runStockResearchPDFParse timeout error: %v", err)
+	}
+	if result.Failed != 1 || captured.PDFStatus != "failed" || !strings.Contains(captured.PDFError, "PDF 解析超时") || !captured.Force {
+		t.Fatalf("expected single PDF timeout to be written as failed, result=%+v update=%+v", result, captured)
 	}
 }
 

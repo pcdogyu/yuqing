@@ -23,3 +23,19 @@ func TestExtractHTMLSourceTextPreservesReadableFormatting(t *testing.T) {
 		t.Fatalf("expected blank lines to be compressed, got %q", text)
 	}
 }
+
+func TestFormatPDFTextPreservesLineBreaks(t *testing.T) {
+	text := FormatPDFText("  # PDF 原文  \n\n第一段\n第二段\n\n\n第三段  ")
+
+	for _, want := range []string{"# PDF 原文", "第一段\n第二段", "第二段\n\n第三段"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected formatted PDF text to contain %q, got %q", want, text)
+		}
+	}
+	if strings.Contains(text, "\n\n\n") {
+		t.Fatalf("expected repeated blank lines to be compressed, got %q", text)
+	}
+	if strings.Contains(text, "第一段 第二段") {
+		t.Fatalf("expected PDF text not to be collapsed into one line, got %q", text)
+	}
+}
