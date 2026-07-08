@@ -34,17 +34,11 @@ func TestFormatStockResearchTargetPrice(t *testing.T) {
 }
 
 func TestStockResearchPageRequestsTwentyItemsPerPage(t *testing.T) {
+	var requests int
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
 		if r.URL.Path != "/api/v1/stock-research" {
 			t.Fatalf("unexpected stock research content path: %s", r.URL.String())
-		}
-		if r.URL.Query().Get("source") == investorRelationsSourceType {
-			if r.URL.Query().Get("kind") != "survey" || r.URL.Query().Get("page") != "1" || r.URL.Query().Get("page_size") != "20" {
-				t.Fatalf("unexpected investor relations query: %s", r.URL.RawQuery)
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockResearchListResult{Page: 1, PageSize: stockResearchPageSize}})
-			return
 		}
 		if r.URL.Query().Get("page") != "3" || r.URL.Query().Get("page_size") != "20" {
 			t.Fatalf("expected portal to request page 3 with page_size=20, got %s", r.URL.RawQuery)
@@ -67,6 +61,9 @@ func TestStockResearchPageRequestsTwentyItemsPerPage(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected stock research page 200, got %d body=%s", rr.Code, rr.Body.String())
 	}
+	if requests != 1 {
+		t.Fatalf("expected one stock research request, got %d", requests)
+	}
 	body := rr.Body.String()
 	for _, want := range []string{"第 3/3 页，共 45 条", "page_size=20"} {
 		if !strings.Contains(body, want) {
@@ -79,14 +76,11 @@ func TestStockResearchPageRequestsTwentyItemsPerPage(t *testing.T) {
 }
 
 func TestStockResearchPageUsesPortalPDFLinks(t *testing.T) {
+	var requests int
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
 		if r.URL.Path != "/api/v1/stock-research" {
 			t.Fatalf("unexpected stock research content path: %s", r.URL.String())
-		}
-		if r.URL.Query().Get("source") == investorRelationsSourceType {
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockResearchListResult{Page: 1, PageSize: stockResearchPageSize}})
-			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -116,6 +110,9 @@ func TestStockResearchPageUsesPortalPDFLinks(t *testing.T) {
 	srv.handleStockResearchPage(rr, req, map[string]any{"id": 1})
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected stock research page 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if requests != 1 {
+		t.Fatalf("expected one stock research request, got %d", requests)
 	}
 	body := rr.Body.String()
 	for _, want := range []string{`href="/stock-research/7/pdf"`, `href="/stock-research/7/pdf/text"`} {

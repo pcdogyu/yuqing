@@ -16,8 +16,6 @@ import (
 const stockResearchPageSize = 20
 const investorRelationsSourceType = "cninfo_investor_relation"
 const investorRelationsScope = "investor_relations"
-const investorRelationsPageParam = "ir_page"
-const investorRelationsAnchor = "#investor-relations"
 
 func (s *Server) handleStockResearchPage(w http.ResponseWriter, r *http.Request, user any) {
 	if r.Method == http.MethodPost {
@@ -34,12 +32,8 @@ func (s *Server) handleStockResearchPage(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	filter := stockResearchFilterFromRequest(r)
-	investorFilter := investorRelationsFilterFromRequest(r)
 	ctx, err := s.loadStockResearchContext(filter)
 	syncStockResearchContextFilter(&ctx, filter)
-	filterInvestorRelationsFromResearchContext(&ctx)
-	investorCtx, investorErr := s.loadStockResearchContext(investorFilter)
-	syncStockResearchContextFilter(&investorCtx, investorFilter)
 	var b strings.Builder
 	renderStockResearchStyle(&b)
 	b.WriteString(`<section><h2>研报调研</h2><p class="research-muted">搜索上市公司研报和机构调研记录，支持文本型 PDF 下载与解析；扫描版 PDF 暂标记为无文本。</p></section>`)
@@ -56,7 +50,6 @@ func (s *Server) handleStockResearchPage(w http.ResponseWriter, r *http.Request,
 		renderStockResearchFilters(&b, ctx)
 		renderStockResearchTable(&b, ctx)
 	}
-	renderInvestorRelationsSection(&b, investorCtx, investorErr)
 	_ = s.writeSimplePage(w, "stock-research", "研报调研", b.String())
 	_ = user
 }
@@ -81,18 +74,6 @@ body[data-page='stock-research'] input,body[data-page='stock-research'] select,b
 .research-status-actions{display:flex;align-items:center;gap:8px;white-space:nowrap}.research-status-actions .research-action-form{flex:1 1 auto;min-width:0}.research-status-actions button{width:90%;height:90%;min-height:32px;margin:0;padding:7px 10px}
 .research-status.parsed{background:#e7f4ea;color:#214e34}.research-status.failed{background:#fdecea;color:#8a1f11}.research-status.no_text,.research-status.no_pdf{background:#fff7df;color:#695000}
 </style>`)
-}
-
-func renderInvestorRelationsSection(b *strings.Builder, ctx model.StockResearchListResult, err error) {
-	b.WriteString(`<section id="investor-relations"><h2>投资者关系</h2><p class="research-muted">抓取互动易投资者关系活动记录 PDF，解析为 Markdown 文本，并调用本地 NLP 服务生成股票评分。</p></section>`)
-	if err != nil {
-		b.WriteString(`<section><p>投资者关系数据读取失败：`)
-		b.WriteString(html.EscapeString(err.Error()))
-		b.WriteString(`</p></section>`)
-		return
-	}
-	renderInvestorRelationsFilters(b, ctx)
-	renderInvestorRelationsTable(b, ctx)
 }
 
 func (s *Server) handleInvestorRelationsPage(w http.ResponseWriter, r *http.Request, user any) {
@@ -245,19 +226,6 @@ func stockResearchFilterFromRequest(r *http.Request) model.StockResearchFilter {
 	}
 }
 
-func investorRelationsFilterFromRequest(r *http.Request) model.StockResearchFilter {
-	return model.StockResearchFilter{
-		Code:     strings.TrimSpace(r.URL.Query().Get("ir_code")),
-		Company:  strings.TrimSpace(r.URL.Query().Get("ir_company")),
-		Kind:     "survey",
-		Source:   investorRelationsSourceType,
-		Start:    strings.TrimSpace(r.URL.Query().Get("ir_start")),
-		End:      strings.TrimSpace(r.URL.Query().Get("ir_end")),
-		Page:     normalizeAStockNewsPage(r.URL.Query().Get(investorRelationsPageParam)),
-		PageSize: stockResearchPageSize,
-	}
-}
-
 func investorRelationsFilterFromForm(r *http.Request) model.StockResearchFilter {
 	return model.StockResearchFilter{
 		Code:     formValueAny(r, "ir_code", "code"),
@@ -289,24 +257,6 @@ func syncStockResearchContextFilter(ctx *model.StockResearchListResult, filter m
 	ctx.End = filter.End
 	ctx.Page = max(filter.Page, 1)
 	ctx.PageSize = stockResearchPageSize
-}
-
-func filterInvestorRelationsFromResearchContext(ctx *model.StockResearchListResult) {
-	if len(ctx.Items) == 0 {
-		return
-	}
-	before := len(ctx.Items)
-	items := ctx.Items[:0]
-	for _, item := range ctx.Items {
-		if strings.TrimSpace(item.SourceType) == investorRelationsSourceType {
-			continue
-		}
-		items = append(items, item)
-	}
-	ctx.Items = items
-	if removed := before - len(items); removed > 0 {
-		ctx.Total = max(ctx.Total-removed, len(items))
-	}
 }
 
 func (s *Server) loadStockResearchContext(filter model.StockResearchFilter) (model.StockResearchListResult, error) {
@@ -348,51 +298,48 @@ func stockResearchQuery(filter model.StockResearchFilter) url.Values {
 	return query
 }
 
-func investorRelationsQuery(filter model.StockResearchFilter) url.Values {
-	query := url.Values{}
-	query.Set(investorRelationsPageParam, fmt.Sprintf("%d", max(filter.Page, 1)))
-	if filter.Code != "" {
-		query.Set("ir_code", filter.Code)
-	}
-	if filter.Company != "" {
-		query.Set("ir_company", filter.Company)
-	}
-	if filter.Start != "" {
-		query.Set("ir_start", filter.Start)
-	}
-	if filter.End != "" {
-		query.Set("ir_end", filter.End)
-	}
-	return query
-}
-
 func investorRelationsStockResearchURL(filter model.StockResearchFilter, message string) string {
-	query := investorRelationsQuery(filter)
+	filter.Kind = "survey"
+	filter.Source = investorRelationsSourceType
+	if filter.Page <= 0 {
+		filter.Page = 1
+	}
+	filter.PageSize = stockResearchPageSize
+	query := stockResearchQuery(filter)
 	if strings.TrimSpace(message) != "" {
 		query.Set("msg", strings.TrimSpace(message))
 	}
 	if encoded := query.Encode(); encoded != "" {
-		return "/stock-research?" + encoded + investorRelationsAnchor
+		return "/stock-research?" + encoded
 	}
-	return "/stock-research" + investorRelationsAnchor
+	return "/stock-research"
 }
 
 func investorRelationsRedirectURLFromRequest(r *http.Request) string {
 	query := r.URL.Query()
 	filter := model.StockResearchFilter{
-		Code:     strings.TrimSpace(query.Get("code")),
-		Company:  strings.TrimSpace(query.Get("company")),
+		Code:     firstNonEmptyQuery(query, "code", "ir_code"),
+		Company:  firstNonEmptyQuery(query, "company", "ir_company"),
 		Kind:     "survey",
 		Source:   investorRelationsSourceType,
-		Start:    strings.TrimSpace(query.Get("start")),
-		End:      strings.TrimSpace(query.Get("end")),
+		Start:    firstNonEmptyQuery(query, "start", "ir_start"),
+		End:      firstNonEmptyQuery(query, "end", "ir_end"),
 		Page:     normalizeAStockNewsPage(query.Get("page")),
 		PageSize: stockResearchPageSize,
 	}
-	if filter.Page <= 1 && strings.TrimSpace(query.Get(investorRelationsPageParam)) != "" {
-		filter.Page = normalizeAStockNewsPage(query.Get(investorRelationsPageParam))
+	if filter.Page <= 1 && strings.TrimSpace(query.Get("ir_page")) != "" {
+		filter.Page = normalizeAStockNewsPage(query.Get("ir_page"))
 	}
 	return investorRelationsStockResearchURL(filter, query.Get("msg"))
+}
+
+func firstNonEmptyQuery(query url.Values, names ...string) string {
+	for _, name := range names {
+		if value := strings.TrimSpace(query.Get(name)); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func renderStockResearchFilters(b *strings.Builder, ctx model.StockResearchListResult) {
@@ -416,9 +363,6 @@ func renderStockResearchFilters(b *strings.Builder, ctx model.StockResearchListR
 	}
 	b.WriteString(`</select></div><div><label>来源</label><select name="source"><option value="">全部</option>`)
 	for _, source := range ctx.Sources {
-		if source == investorRelationsSourceType {
-			continue
-		}
 		b.WriteString(`<option value="`)
 		b.WriteString(html.EscapeString(source))
 		b.WriteString(`"`)
@@ -439,55 +383,21 @@ func renderStockResearchFilters(b *strings.Builder, ctx model.StockResearchListR
 	b.WriteString(`<button type="submit">回补近一年</button></form>`)
 	b.WriteString(`<form method="post" class="research-action-form"><input type="hidden" name="action" value="parse_pdf">`)
 	stockResearchHiddenFields(b, ctx)
-	b.WriteString(`<button type="submit">解析当前筛选研报PDF</button></form></div></section>`)
-}
-
-func renderInvestorRelationsFilters(b *strings.Builder, ctx model.StockResearchListResult) {
-	b.WriteString(`<section><h2>投资者关系筛选</h2><form method="get" action="/stock-research#investor-relations" class="research-toolbar"><div><label>股票代码</label><input name="ir_code" placeholder="002230" value="`)
-	b.WriteString(html.EscapeString(ctx.Code))
-	b.WriteString(`"></div><div><label>公司名称</label><input name="ir_company" placeholder="科大讯飞" value="`)
-	b.WriteString(html.EscapeString(ctx.Company))
-	b.WriteString(`"></div><div><label>开始日期</label><input type="date" name="ir_start" value="`)
-	b.WriteString(html.EscapeString(ctx.Start))
-	b.WriteString(`"></div><div><label>结束日期</label><input type="date" name="ir_end" value="`)
-	b.WriteString(html.EscapeString(ctx.End))
-	b.WriteString(`"></div><div><button type="submit">查询</button></div></form><div class="research-actions">`)
+	b.WriteString(`<button type="submit">解析当前筛选研报PDF</button></form>`)
 	b.WriteString(`<form method="post" class="research-action-form"><input type="hidden" name="scope" value="investor_relations"><input type="hidden" name="action" value="backfill_year">`)
-	investorRelationsHiddenFields(b, ctx)
-	b.WriteString(`<button type="submit">抓取近一年并解析PDF</button></form>`)
-	b.WriteString(`<form method="post" class="research-action-form"><input type="hidden" name="scope" value="investor_relations"><input type="hidden" name="action" value="parse_pdf">`)
-	investorRelationsHiddenFields(b, ctx)
-	b.WriteString(`<button type="submit">解析当前筛选PDF</button></form></div></section>`)
+	stockResearchHiddenFields(b, ctx)
+	b.WriteString(`<button type="submit">抓取投资者关系近一年并解析PDF</button></form></div></section>`)
 }
 
 type stockResearchTableOptions struct {
-	title              string
-	emptyMessage       string
-	pageParam          string
-	anchor             string
-	scope              string
-	hiddenFields       func(*strings.Builder, model.StockResearchListResult)
-	showInvestorSource bool
+	title        string
+	emptyMessage string
 }
 
 func renderStockResearchTable(b *strings.Builder, ctx model.StockResearchListResult) {
 	renderStockResearchTableWithOptions(b, ctx, stockResearchTableOptions{
 		title:        "研报调研列表",
 		emptyMessage: "暂无研报调研数据，请点击“回补近一年”或等待定时抓取任务。",
-		pageParam:    "page",
-		hiddenFields: stockResearchHiddenFields,
-	})
-}
-
-func renderInvestorRelationsTable(b *strings.Builder, ctx model.StockResearchListResult) {
-	renderStockResearchTableWithOptions(b, ctx, stockResearchTableOptions{
-		title:              "投资者关系列表",
-		emptyMessage:       "暂无投资者关系 PDF 数据，请点击“抓取近一年并解析PDF”或等待定时抓取任务。",
-		pageParam:          investorRelationsPageParam,
-		anchor:             investorRelationsAnchor,
-		scope:              investorRelationsScope,
-		hiddenFields:       investorRelationsHiddenFields,
-		showInvestorSource: true,
 	})
 }
 
@@ -497,12 +407,6 @@ func renderStockResearchTableWithOptions(b *strings.Builder, ctx model.StockRese
 	}
 	if opts.emptyMessage == "" {
 		opts.emptyMessage = "暂无研报调研数据，请点击“回补近一年”或等待定时抓取任务。"
-	}
-	if opts.pageParam == "" {
-		opts.pageParam = "page"
-	}
-	if opts.hiddenFields == nil {
-		opts.hiddenFields = stockResearchHiddenFields
 	}
 	b.WriteString(`<section><h2>`)
 	b.WriteString(html.EscapeString(opts.title))
@@ -524,10 +428,7 @@ func renderStockResearchTableWithOptions(b *strings.Builder, ctx model.StockRese
 			b.WriteString(`</td><td>`)
 			b.WriteString(html.EscapeString(nonEmptyText(item.Analyst, "--")))
 			b.WriteString(`</td><td>`)
-			label := stockResearchPageSourceLabel(item.SourceType)
-			if opts.showInvestorSource {
-				label = stockResearchSourceLabel(item.SourceType)
-			}
+			label := stockResearchSourceLabel(item.SourceType)
 			if label != "" {
 				b.WriteString(`<span class="research-source">`)
 				b.WriteString(html.EscapeString(label))
@@ -568,12 +469,7 @@ func renderStockResearchTableWithOptions(b *strings.Builder, ctx model.StockRese
 			b.WriteString(`</span><form method="post" class="research-action-form"><input type="hidden" name="action" value="parse_pdf_one"><input type="hidden" name="id" value="`)
 			b.WriteString(fmt.Sprintf("%d", item.ID))
 			b.WriteString(`">`)
-			if opts.scope != "" {
-				b.WriteString(`<input type="hidden" name="scope" value="`)
-				b.WriteString(html.EscapeString(opts.scope))
-				b.WriteString(`">`)
-			}
-			opts.hiddenFields(b, ctx)
+			stockResearchHiddenFields(b, ctx)
 			b.WriteString(`<button type="submit">重新解析</button></form></div>`)
 			if strings.TrimSpace(item.NLPScoredAt) != "" {
 				b.WriteString(`<div class="research-muted">NLP `)
@@ -592,15 +488,11 @@ func renderStockResearchTableWithOptions(b *strings.Builder, ctx model.StockRese
 		}
 	}
 	b.WriteString(`</table></div>`)
-	renderStockResearchPaginationFor(b, ctx, opts.pageParam, opts.anchor)
+	renderStockResearchPagination(b, ctx)
 	b.WriteString(`</section>`)
 }
 
 func renderStockResearchPagination(b *strings.Builder, ctx model.StockResearchListResult) {
-	renderStockResearchPaginationFor(b, ctx, "page", "")
-}
-
-func renderStockResearchPaginationFor(b *strings.Builder, ctx model.StockResearchListResult, pageParam, anchor string) {
 	if ctx.PageSize <= 0 || ctx.Total <= ctx.PageSize {
 		return
 	}
@@ -617,17 +509,10 @@ func renderStockResearchPaginationFor(b *strings.Builder, ctx model.StockResearc
 		}
 		filter := model.StockResearchFilter{Code: ctx.Code, Company: ctx.Company, Institution: ctx.Institution, Kind: ctx.Kind, Source: ctx.Source, Start: ctx.Start, End: ctx.End, Page: link.Page, PageSize: stockResearchPageSize}
 		query := stockResearchQuery(filter)
-		if pageParam == investorRelationsPageParam {
-			query = investorRelationsQuery(filter)
-		} else if pageParam != "" && pageParam != "page" {
-			query.Del("page")
-			query.Set(pageParam, fmt.Sprintf("%d", link.Page))
-		}
 		href := "/stock-research"
 		if encoded := query.Encode(); encoded != "" {
 			href += "?" + encoded
 		}
-		href += anchor
 		b.WriteString(`<a class="research-tab" href="`)
 		b.WriteString(html.EscapeString(href))
 		b.WriteString(`">`)
@@ -802,24 +687,6 @@ func stockResearchHiddenFields(b *strings.Builder, ctx model.StockResearchListRe
 	}
 }
 
-func investorRelationsHiddenFields(b *strings.Builder, ctx model.StockResearchListResult) {
-	for _, field := range []struct {
-		Name  string
-		Value string
-	}{
-		{"ir_code", ctx.Code},
-		{"ir_company", ctx.Company},
-		{"ir_start", ctx.Start},
-		{"ir_end", ctx.End},
-	} {
-		b.WriteString(`<input type="hidden" name="`)
-		b.WriteString(field.Name)
-		b.WriteString(`" value="`)
-		b.WriteString(html.EscapeString(field.Value))
-		b.WriteString(`">`)
-	}
-}
-
 func stockResearchKindLabel(kind string) string {
 	if strings.EqualFold(kind, "survey") {
 		return "调研"
@@ -981,13 +848,6 @@ func stockResearchSourceLabel(source string) string {
 	default:
 		return nonEmptyText(source, "--")
 	}
-}
-
-func stockResearchPageSourceLabel(source string) string {
-	if source == investorRelationsSourceType {
-		return ""
-	}
-	return stockResearchSourceLabel(source)
 }
 
 func stockResearchPDFStatusLabel(status string) string {
