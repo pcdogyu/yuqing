@@ -463,7 +463,7 @@ private fun ModuleContent(
         "projects" -> ProjectsModule(dashboard.projects, dashboard.rules)
         "articles" -> ArticlesModule(state.articleList, state.articleLoading, state.error, state.readArticleIds, viewModel)
         "search" -> SearchModule(state, viewModel)
-        "auction" -> AStockAuctionModule(state.aStockAuction, viewModel)
+        "auction" -> AStockAuctionModule(state.aStockAuction, state.aStockAuctionTrendDays, viewModel)
         "analysis" -> AnalysisModule(dashboard)
         "reports" -> ReportsModule(dashboard.reports, viewModel)
         "a_stock" -> AStockModule(state, viewModel, onOpenAStockBacktest)
@@ -731,8 +731,7 @@ private fun AStockModule(
 }
 
 @Composable
-private fun AStockAuctionModule(result: AStockAuctionListResult, viewModel: YuqingViewModel) {
-    var trendDays by remember { mutableStateOf(7) }
+private fun AStockAuctionModule(result: AStockAuctionListResult, trendDays: Int, viewModel: YuqingViewModel) {
     val storedCount = result.summaryCount.takeIf { it > 0 } ?: result.total
     val completenessText = if (storedCount in 1 until 4000) "数据可能不全" else ""
     val shenzhenLeaders = result.items
@@ -764,6 +763,11 @@ private fun AStockAuctionModule(result: AStockAuctionListResult, viewModel: Yuqi
                 Text("刷新集合竞价")
             }
         }
+        item { AuctionTrendHeader(trendDays, onPeriodSelected = viewModel::selectAStockAuctionTrendDays) }
+        item { AStockAuctionTrendChart(result, trendDays) }
+        if (result.trend.isEmpty()) {
+            item { SimpleRow("暂无历史走势", "接口暂未返回历史集合竞价金额") }
+        }
         item { SectionTitle("沪市金额最高") }
         if (shanghaiLeaders.isEmpty()) {
             item { SimpleRow("暂无沪市集合竞价数据", "请刷新或等待交易日数据写入") }
@@ -774,11 +778,6 @@ private fun AStockAuctionModule(result: AStockAuctionListResult, viewModel: Yuqi
             item { SimpleRow("暂无深市集合竞价数据", "请刷新或等待交易日数据写入") }
         }
         items(shenzhenLeaders) { AStockAuctionRow(it) }
-        item { AuctionTrendHeader(trendDays, onPeriodSelected = { trendDays = it }) }
-        item { AStockAuctionTrendChart(result, trendDays) }
-        if (result.trend.isEmpty()) {
-            item { SimpleRow("暂无历史走势", "接口暂未返回历史集合竞价金额") }
-        }
     }
 }
 
@@ -1935,7 +1934,7 @@ private fun AuctionTrendPeriodChip(
 private fun AStockAuctionTrendChart(result: AStockAuctionListResult, days: Int) {
     val trend = result.trend
         .filter { it.totalAmount > 0 }
-        .takeLast(days)
+        .takeLast(normalizeAStockAuctionTrendDays(days))
     if (trend.isEmpty()) {
         return
     }
@@ -1946,29 +1945,51 @@ private fun AStockAuctionTrendChart(result: AStockAuctionListResult, days: Int) 
         Column(Modifier.fillMaxWidth().padding(12.dp)) {
             Text("金额最高 ${formatAuctionAmount(maxAmount)}", style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(8.dp))
-            Canvas(Modifier.fillMaxWidth().height(150.dp)) {
-                val left = 8f
-                val right = size.width - 8f
-                val top = 10f
-                val bottom = size.height - 18f
-                repeat(4) { index ->
-                    val y = top + (bottom - top) * index / 3f
-                    drawLine(gridColor, Offset(left, y), Offset(right, y), strokeWidth = 1f)
-                }
-                val points = trend.mapIndexed { index, item ->
-                    val x = if (trend.size == 1) {
-                        (left + right) / 2f
-                    } else {
-                        left + (right - left) * index / (trend.size - 1).toFloat()
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(
+                    modifier = Modifier.width(64.dp).height(150.dp),
+                    verticalArrangement = Arrangement.SpaceBetween,
+                    horizontalAlignment = Alignment.End,
+                ) {
+                    listOf(maxAmount, maxAmount * 2 / 3, maxAmount / 3, 0.0).forEach { amount ->
+                        Text(
+                            formatAuctionAmount(amount),
+                            style = MaterialTheme.typography.labelSmall,
+                            textAlign = TextAlign.End,
+                            maxLines = 1,
+                        )
                     }
-                    val y = bottom - ((item.totalAmount / maxAmount).toFloat() * (bottom - top))
-                    Offset(x, y)
                 }
-                points.zipWithNext().forEach { (start, end) ->
-                    drawLine(lineColor, start, end, strokeWidth = 5f, cap = StrokeCap.Round)
-                }
-                points.forEach { point ->
-                    drawCircle(lineColor, radius = 5f, center = point)
+                Spacer(Modifier.width(8.dp))
+                Canvas(Modifier.weight(1f).height(150.dp)) {
+                    val left = 0f
+                    val right = size.width
+                    val top = 10f
+                    val bottom = size.height - 18f
+                    repeat(4) { index ->
+                        val y = top + (bottom - top) * index / 3f
+                        drawLine(gridColor, Offset(left, y), Offset(right, y), strokeWidth = 1f)
+                    }
+                    val points = trend.mapIndexed { index, item ->
+                        val x = if (trend.size == 1) {
+                            (left + right) / 2f
+                        } else {
+                            left + (right - left) * index / (trend.size - 1).toFloat()
+                        }
+                        val y = bottom - ((item.totalAmount / maxAmount).toFloat() * (bottom - top))
+                        Offset(x, y)
+                    }
+                    points.forEach { point ->
+                        drawLine(gridColor, Offset(point.x, top), Offset(point.x, bottom), strokeWidth = 1f)
+                    }
+                    drawLine(gridColor, Offset(left, top), Offset(left, bottom), strokeWidth = 1f)
+                    drawLine(gridColor, Offset(left, bottom), Offset(right, bottom), strokeWidth = 1f)
+                    points.zipWithNext().forEach { (start, end) ->
+                        drawLine(lineColor, start, end, strokeWidth = 4f, cap = StrokeCap.Round)
+                    }
+                    points.forEach { point ->
+                        drawCircle(lineColor, radius = 4f, center = point)
+                    }
                 }
             }
             Spacer(Modifier.height(6.dp))

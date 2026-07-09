@@ -50,6 +50,7 @@ interface YuqingApi {
         @Query("date") date: String = "",
         @Query("page") page: Int = 1,
         @Query("page_size") pageSize: Int = 20,
+        @Query("trend_days") trendDays: Int = 7,
     ): ApiEnvelope<AStockAuctionListResult>
 
     @GET("api/v1/a-stock/recommendations")

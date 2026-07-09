@@ -100,6 +100,7 @@ data class YuqingUiState(
     val aStockAuctionDate: String = AStockTradingCalendar.latestSelectableTradingDay(
         LocalDate.now(ZoneId.of("Asia/Shanghai")),
     ).toString(),
+    val aStockAuctionTrendDays: Int = DEFAULT_A_STOCK_AUCTION_TREND_DAYS,
     val aStockRecommendation: AStockRecommendationSnapshot? = null,
     val aStockRecommendations: List<AStockRecommendation> = emptyList(),
     val morningAStockRecommendation: AStockRecommendationSnapshot? = null,
@@ -784,20 +785,31 @@ class YuqingViewModel(
         }
     }
 
-    fun loadAStockAuction(date: String = _uiState.value.aStockAuctionDate) {
+    fun selectAStockAuctionTrendDays(days: Int) {
+        val normalized = normalizeAStockAuctionTrendDays(days)
+        _uiState.update { it.copy(aStockAuctionTrendDays = normalized) }
+        loadAStockAuction(trendDays = normalized)
+    }
+
+    fun loadAStockAuction(
+        date: String = _uiState.value.aStockAuctionDate,
+        trendDays: Int = _uiState.value.aStockAuctionTrendDays,
+    ) {
         viewModelScope.launch {
             _uiState.update { it.copy(loading = true, error = "", message = "") }
             val session = sessionStore.state.first()
             val requestedDate = date.ifBlank { LocalDate.now(ZoneId.of("Asia/Shanghai")).toString() }
+            val requestedTrendDays = normalizeAStockAuctionTrendDays(trendDays)
             runCatching {
                 currentYuqingApi(session)
-                    .aStockAuction(date = requestedDate, page = 1, pageSize = 6000)
+                    .aStockAuction(date = requestedDate, page = 1, pageSize = 6000, trendDays = requestedTrendDays)
                     .data ?: error("集合竞价数据为空")
             }.onSuccess { result ->
                 _uiState.update {
                     it.copy(
                         aStockAuction = result,
                         aStockAuctionDate = result.date.ifBlank { requestedDate },
+                        aStockAuctionTrendDays = requestedTrendDays,
                         message = "集合竞价已加载",
                     )
                 }
@@ -979,12 +991,20 @@ class YuqingViewModel(
 }
 
 private const val STARTUP_TAG = "YuqingStartup"
+internal const val DEFAULT_A_STOCK_AUCTION_TREND_DAYS = 7
 internal const val ARTICLE_PAGE_SIZE = 25
 internal const val STOCK_RESEARCH_PAGE_SIZE = 25
 internal const val DASHBOARD_VISIBLE_ARTICLE_LIMIT = 5
 internal const val DASHBOARD_ARTICLE_CACHE_LIMIT = 10
 private const val DASHBOARD_REFILL_PAGE_SIZE = 50
 private const val ARTICLE_REFILL_MAX_PAGES = 5
+
+internal fun normalizeAStockAuctionTrendDays(days: Int): Int {
+    return when (days) {
+        7, 14, 30 -> days
+        else -> DEFAULT_A_STOCK_AUCTION_TREND_DAYS
+    }
+}
 private val articleTimeFormats = listOf(
     DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"),
     DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"),

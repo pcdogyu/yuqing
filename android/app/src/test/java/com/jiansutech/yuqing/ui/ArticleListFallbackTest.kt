@@ -84,6 +84,15 @@ class ArticleListFallbackTest {
     }
 
     @Test
+    fun aStockAuctionTrendDaysAcceptsOnlySupportedPeriods() {
+        assertEquals(7, normalizeAStockAuctionTrendDays(7))
+        assertEquals(14, normalizeAStockAuctionTrendDays(14))
+        assertEquals(30, normalizeAStockAuctionTrendDays(30))
+        assertEquals(DEFAULT_A_STOCK_AUCTION_TREND_DAYS, normalizeAStockAuctionTrendDays(0))
+        assertEquals(DEFAULT_A_STOCK_AUCTION_TREND_DAYS, normalizeAStockAuctionTrendDays(15))
+    }
+
+    @Test
     fun stockResearchDisplayDatePrefersResearchDateThenPublishDate() {
         assertEquals(
             "2026-07-08",

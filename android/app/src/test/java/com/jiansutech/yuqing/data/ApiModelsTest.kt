@@ -113,6 +113,31 @@ class ApiModelsTest {
     }
 
     @Test
+    fun aStockAuctionRequestSendsTrendDays() = runTest {
+        val server = MockWebServer()
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"code":200,"message":"ok","data":{"items":[],"page":1,"page_size":6000,"total":0,"date":"2026-07-09","trend":[]}}"""),
+        )
+        server.start()
+        try {
+            val result = ApiFactory.yuqing(server.url("/").toString())
+                .aStockAuction(date = "2026-07-09", page = 1, pageSize = 6000, trendDays = 30)
+                .data
+            val request = server.takeRequest()
+
+            assertEquals("2026-07-09", result?.date)
+            assertEquals("/api/v1/a-stock/auction", request.requestUrl?.encodedPath)
+            assertEquals("2026-07-09", request.requestUrl?.queryParameter("date"))
+            assertEquals("6000", request.requestUrl?.queryParameter("page_size"))
+            assertEquals("30", request.requestUrl?.queryParameter("trend_days"))
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
     fun dashboardSerializationKeepsPortalCounts() {
         val dashboard = AndroidDashboard(
             overview = Overview(articleCount = 3, projectCount = 2, reportCount = 1),
