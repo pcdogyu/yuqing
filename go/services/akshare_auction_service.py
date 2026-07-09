@@ -1495,11 +1495,11 @@ def ths_stock_fund_flow_frame_to_items(frame: Any, trade_date: str, indicator: s
             "fetched_at": utc_now_iso(),
         }
         set_numeric_field(item, row, fields, "price", ["最新价", "当前价"])
-        set_numeric_field(item, row, fields, "change_pct", ["涨跌幅"], parse_percent_value)
-        set_numeric_field(item, row, fields, "turnover_pct", ["换手率"], parse_percent_value)
+        set_numeric_field(item, row, fields, "change_pct", ["涨跌幅", "阶段涨跌幅"], parse_percent_value)
+        set_numeric_field(item, row, fields, "turnover_pct", ["换手率", "连续换手率"], parse_percent_value)
         set_numeric_field(item, row, fields, "in_amount", ["流入资金", "流入资金(亿)"], lambda value: parse_amount_to_yuan(value, "亿"))
         set_numeric_field(item, row, fields, "out_amount", ["流出资金", "流出资金(亿)"], lambda value: parse_amount_to_yuan(value, "亿"))
-        set_numeric_field(item, row, fields, "main_net_inflow", ["净额", "净额(亿)"], lambda value: parse_amount_to_yuan(value, "亿"))
+        set_numeric_field(item, row, fields, "main_net_inflow", ["净额", "净额(亿)", "资金流入净额"], lambda value: parse_amount_to_yuan(value, "亿"))
         set_numeric_field(item, row, fields, "amount", ["成交额", "成交额(亿)"], lambda value: parse_amount_to_yuan(value, "亿"))
         item["field_counts_json"] = fund_flow_field_counts_json(fields)
         items.append(item)
@@ -2468,6 +2468,38 @@ def run_self_test() -> None:
     )
     assert stock_items[0]["code"] == "300502"
     assert stock_items[0]["source_type"] == "eastmoney"
+    ths_stock_rows = [
+        (
+            0,
+            {
+                "序号": 1408,
+                "股票代码": "002520",
+                "股票简称": "日发精机",
+                "最新价": "7.02",
+                "阶段涨跌幅": "-0.43%",
+                "连续换手率": "71.47%",
+                "资金流入净额": "-3.14亿",
+            },
+        )
+    ]
+    ths_stock = ths_stock_fund_flow_frame_to_items(
+        type(
+            "FakeTHSStockFrame",
+            (),
+            {"iterrows": lambda self: iter(ths_stock_rows)},
+        )(),
+        "2026-07-08",
+        "5日",
+        0,
+    )
+    assert ths_stock[0]["code"] == "002520"
+    assert ths_stock[0]["main_net_inflow"] == -314000000
+    assert round(ths_stock[0]["change_pct"], 4) == -0.43
+    assert round(ths_stock[0]["turnover_pct"], 4) == 71.47
+    ths_stock_counts = parse_fund_flow_field_counts(ths_stock[0]["field_counts_json"])
+    assert ths_stock_counts["main_net_inflow"] == 1
+    assert ths_stock_counts["change_pct"] == 1
+    assert ths_stock_counts["turnover_pct"] == 1
     sector_constituents = sector_constituent_frame_to_items(
         type(
             "FakeSectorConstituentFrame",
