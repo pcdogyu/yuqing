@@ -1215,6 +1215,9 @@ func TestRestartServiceAPIRequiresTokenAndSubmitsKnownService(t *testing.T) {
 	if restarted.Name != "crawler-service" || restarted.Port != 8083 || restarted.Path != ".\\cmd\\crawler-service" {
 		t.Fatalf("unexpected restart spec: %+v", restarted)
 	}
+	if !strings.HasSuffix(filepath.Clean(restarted.BinaryPath), filepath.Clean("bin/crawler-service.exe")) {
+		t.Fatalf("expected crawler restart to prefer built binary, got %+v", restarted)
+	}
 	if !testIntSliceContains(restarted.Ports, 8083) {
 		t.Fatalf("expected crawler restart ports to include 8083, got %+v", restarted.Ports)
 	}
@@ -1234,6 +1237,9 @@ func TestRestartServiceAPIRequiresTokenAndSubmitsKnownService(t *testing.T) {
 	}
 	if restarted.Name != "gateway-web" || restarted.Port != 8079 || restarted.Path != ".\\cmd\\gateway-web" {
 		t.Fatalf("unexpected gateway restart spec: %+v", restarted)
+	}
+	if !strings.HasSuffix(filepath.Clean(restarted.BinaryPath), filepath.Clean("bin/gateway-web.exe")) {
+		t.Fatalf("expected gateway restart to prefer built binary, got %+v", restarted)
 	}
 	if !testIntSliceContains(restarted.Ports, 8079) || !testIntSliceContains(restarted.Ports, 80) {
 		t.Fatalf("expected gateway restart ports to include 8079 and 80, got %+v", restarted.Ports)

@@ -3236,11 +3236,12 @@ func (s *Service) operationsSummary(ctx context.Context) model.OperationsSummary
 }
 
 type serviceRestartSpec struct {
-	Name  string
-	Path  string
-	Port  int
-	Ports []int
-	Root  string
+	Name       string
+	Path       string
+	BinaryPath string
+	Port       int
+	Ports      []int
+	Root       string
 }
 
 func (s *Service) serviceRestartSpec(name string) (serviceRestartSpec, bool) {
@@ -3277,7 +3278,14 @@ func (s *Service) serviceRestartSpec(name string) (serviceRestartSpec, bool) {
 	if err != nil {
 		root = "."
 	}
-	return serviceRestartSpec{Name: name, Path: def.path, Port: port, Ports: uniqueServiceRestartPorts(ports), Root: root}, true
+	return serviceRestartSpec{
+		Name:       name,
+		Path:       def.path,
+		BinaryPath: filepath.Join(root, "bin", name+".exe"),
+		Port:       port,
+		Ports:      uniqueServiceRestartPorts(ports),
+		Root:       root,
+	}, true
 }
 
 func (s *Service) gatewayWebListenAddrs() []string {
@@ -3328,6 +3336,7 @@ Start-Sleep -Seconds 1
 $root = %q
 $name = %q
 $servicePath = %q
+$binaryPath = %q
 $ports = @(%s)
 $pidDir = Join-Path $root "runtime-pids"
 New-Item -ItemType Directory -Force -Path $pidDir | Out-Null
@@ -3337,7 +3346,12 @@ function Stop-ProcessTree($targetPid) {
     Get-CimInstance Win32_Process -Filter ("ParentProcessId=" + $targetPid) -ErrorAction SilentlyContinue | ForEach-Object {
         Stop-ProcessTree $_.ProcessId
     }
-    Stop-Process -Id $targetPid -Force -ErrorAction SilentlyContinue
+    $taskkill = Join-Path $env:SystemRoot "System32\taskkill.exe"
+    if (-not (Test-Path $taskkill)) { $taskkill = "taskkill.exe" }
+    & $taskkill /F /T /PID $targetPid *> $null
+    if (Get-Process -Id $targetPid -ErrorAction SilentlyContinue) {
+        Stop-Process -Id $targetPid -Force -ErrorAction SilentlyContinue
+    }
 }
 if (Test-Path $pidFile) {
     $oldPid = Get-Content $pidFile -ErrorAction SilentlyContinue
@@ -3353,9 +3367,13 @@ $ports | ForEach-Object {
     }
 }
 Start-Sleep -Milliseconds 500
-$process = Start-Process -FilePath "go" -ArgumentList @("run", $servicePath) -WorkingDirectory $root -PassThru -WindowStyle Hidden
+if (Test-Path $binaryPath) {
+    $process = Start-Process -FilePath $binaryPath -WorkingDirectory $root -PassThru -WindowStyle Hidden
+} else {
+    $process = Start-Process -FilePath "go" -ArgumentList @("run", $servicePath) -WorkingDirectory $root -PassThru -WindowStyle Hidden
+}
 Set-Content -Path $pidFile -Value $process.Id
-`, spec.Root, spec.Name, spec.Path, serviceRestartPortsPowerShellLiteral(ports))
+`, spec.Root, spec.Name, spec.Path, spec.BinaryPath, serviceRestartPortsPowerShellLiteral(ports))
 	return exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script).Start()
 }
 
