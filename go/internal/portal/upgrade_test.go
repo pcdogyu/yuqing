@@ -86,6 +86,12 @@ func TestPortalUpgradeVersionHelpers(t *testing.T) {
 	if got := shortGitCommit("abc"); got != "abc" {
 		t.Fatalf("unexpected short commit: %s", got)
 	}
+	if got := portalUpgradePackageServiceName("./cmd/akshare-service"); got != "akshare-service" {
+		t.Fatalf("unexpected service name for akshare package: %s", got)
+	}
+	if got := portalUpgradePackageServiceName("internal/content"); got != "" {
+		t.Fatalf("expected non-command package to have no service name, got %s", got)
+	}
 }
 
 func TestPortalUpgradeCommandEnvUsesIsolatedGoCache(t *testing.T) {

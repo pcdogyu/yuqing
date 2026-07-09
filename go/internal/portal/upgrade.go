@@ -385,6 +385,9 @@ func runPortalUpgradeBuildPackages(ctx context.Context, log *bytes.Buffer, progr
 		startedAt := time.Now()
 		packageMessage := fmt.Sprintf("阶段: 打包构建 %d/%d %s", i+1, len(packages), pkg)
 		appendUpgradeLog(log, fmt.Sprintf("debug: 开始构建包 %d/%d: %s", i+1, len(packages), pkg))
+		if err := stopPortalUpgradePackageBeforeBuild(ctx, log, goDir, pkg); err != nil {
+			return err
+		}
 		if progress != nil {
 			progress(packageMessage, strings.TrimRight(log.String(), "\r\n"))
 		}
@@ -399,6 +402,35 @@ func runPortalUpgradeBuildPackages(ctx context.Context, log *bytes.Buffer, progr
 		}
 	}
 	return nil
+}
+
+func stopPortalUpgradePackageBeforeBuild(ctx context.Context, log *bytes.Buffer, goDir string, pkg string) error {
+	serviceName := portalUpgradePackageServiceName(pkg)
+	if serviceName == "" || serviceName == "gateway-web" {
+		return nil
+	}
+	stopScript := filepath.Join(goDir, "scripts", "stop-service.ps1")
+	if _, err := os.Stat(stopScript); err != nil {
+		appendUpgradeLog(log, fmt.Sprintf("debug: 跳过构建前停止 %s，未找到 %s", serviceName, stopScript))
+		return nil
+	}
+	expectedPath := filepath.Join(goDir, "bin", serviceName+".exe")
+	appendUpgradeLog(log, "debug: 构建前释放 "+serviceName+" 进程")
+	return runPortalUpgradeCommand(ctx, log, goDir, false,
+		"powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+		"-File", stopScript,
+		"-Name", serviceName,
+		"-ExpectedPath", expectedPath,
+	)
+}
+
+func portalUpgradePackageServiceName(pkg string) string {
+	pkg = strings.TrimSpace(filepath.ToSlash(pkg))
+	const prefix = "./cmd/"
+	if !strings.HasPrefix(pkg, prefix) {
+		return ""
+	}
+	return strings.TrimSpace(strings.TrimPrefix(pkg, prefix))
 }
 
 func finishPortalUpgrade(ok bool, startedAt time.Time, logText string, err error) portalUpgradeResult {
