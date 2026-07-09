@@ -301,7 +301,7 @@ class YuqingViewModel(
         }
     }
 
-    fun refreshAll() {
+    fun refreshAll(successMessage: String = "数据已刷新") {
         viewModelScope.launch {
             val startedAt = SystemClock.elapsedRealtime()
             _uiState.update { it.copy(loading = true, error = "", message = "") }
@@ -356,7 +356,7 @@ class YuqingViewModel(
                         aStockRecommendation = correctedDashboard.aStock.recommendation.takeIf { snapshot -> snapshot.found },
                         aStockRecommendations = parseAStockRecommendations(correctedDashboard.aStock.recommendation.recommendationsJson),
                         stockResearch = correctedDashboard.stockResearch,
-                        message = "数据已刷新",
+                        message = successMessage,
                     )
                 }
                 Log.i(
@@ -457,7 +457,15 @@ class YuqingViewModel(
             runCatching {
                 dashboardCacheDao.clear()
                 articleUserActionDao.clearAll()
-            }.onSuccess {
+                val deletedPdfCount = stockResearchPdfDownloader.clearDownloadedPdfs()
+                Log.i(STARTUP_TAG, "YuqingViewModel.clearCache deletedPdfCount=$deletedPdfCount")
+                deletedPdfCount
+            }.onSuccess { deletedPdfCount ->
+                val successMessage = if (deletedPdfCount > 0) {
+                    "缓存已清除，已删除${deletedPdfCount}个PDF文件"
+                } else {
+                    "缓存已清除，未发现已下载PDF文件"
+                }
                 _uiState.update {
                     it.copy(
                         dashboard = it.dashboard?.let { dashboard ->
@@ -465,10 +473,10 @@ class YuqingViewModel(
                         },
                         articleList = null,
                         readArticleIds = emptySet(),
-                        message = "缓存已清除",
+                        message = successMessage,
                     )
                 }
-                refreshAll()
+                refreshAll(successMessage = successMessage)
             }.onFailure { throwable ->
                 Log.w(STARTUP_TAG, "YuqingViewModel.clearCache failed", throwable)
                 _uiState.update {

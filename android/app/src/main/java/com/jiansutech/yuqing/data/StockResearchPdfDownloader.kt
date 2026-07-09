@@ -84,6 +84,10 @@ class StockResearchPdfDownloader(
         error(errors.filter { it.isNotBlank() }.joinToString("；").ifBlank { "没有可下载的PDF" })
     }
 
+    suspend fun clearDownloadedPdfs(): Int = withContext(Dispatchers.IO) {
+        clearStockResearchPdfDirectory(localPdfDirectory())
+    }
+
     private fun downloadToFile(request: Request, target: File) {
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
@@ -112,9 +116,13 @@ class StockResearchPdfDownloader(
     }
 
     private fun localPdfFile(item: StockResearch): File {
+        return File(localPdfDirectory(), stockResearchPdfFileName(item))
+    }
+
+    private fun localPdfDirectory(): File {
         val root = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
             ?: context.filesDir
-        return File(File(root, PDF_DIRECTORY), stockResearchPdfFileName(item))
+        return File(root, PDF_DIRECTORY)
     }
 
     private fun asPdfFile(file: File): StockResearchPdfFile {
@@ -155,4 +163,37 @@ internal fun stockResearchPdfFileName(item: StockResearch): String {
         .take(80)
         .ifBlank { "stock-research" }
     return "$id-$safeLabel.pdf"
+}
+
+internal fun clearStockResearchPdfDirectory(directory: File): Int {
+    if (!directory.exists()) {
+        return 0
+    }
+
+    var deletedFiles = 0
+    val failures = mutableListOf<String>()
+    for (path in directory.walkBottomUp()) {
+        if (path == directory) {
+            continue
+        }
+        if (path.isFile) {
+            if (path.delete()) {
+                deletedFiles += 1
+            } else {
+                failures += path.absolutePath
+            }
+            continue
+        }
+        if (path.isDirectory && !path.delete() && path.exists()) {
+            failures += path.absolutePath
+        }
+    }
+
+    if (!directory.delete() && directory.exists() && directory.list()?.isNotEmpty() == true) {
+        failures += directory.absolutePath
+    }
+    if (failures.isNotEmpty()) {
+        error("无法删除PDF缓存文件: ${failures.joinToString(", ")}")
+    }
+    return deletedFiles
 }
