@@ -5929,6 +5929,40 @@ func TestAStockRecommendationSnapshotRejectsWaitingMorningBacktest(t *testing.T)
 	}
 }
 
+func TestAStockReadOnlyPageUsesBacktestSnapshotAuthority(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/a-stock/recommendations" {
+			http.NotFound(w, r)
+			return
+		}
+		writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{
+			Found:                 true,
+			StrategyDate:          "2026-07-03",
+			Period:                "morning",
+			RecommendationsJSON:   mustAStockTestJSON(t, []aStockRecommendation{{Rank: 1, Hotspot: "人工智能", Code: "601995", Name: "中金公司", Reason: "回测页快照股票"}}),
+			BacktestsJSON:         mustAStockTestJSON(t, []aStockBacktestRow{{Stock: "601995 中金公司", EntryOpen: "36.23", T0Return: "+0.41%", Status: "已回测T+0"}}),
+			NewsSummaryJSON:       mustAStockTestJSON(t, aStockSnapshotNewsSummary{Articles: []model.Item{{ID: 1, Title: "人工智能消息"}}}),
+			BacktestStatus:        "回测页快照",
+			GeneratedCount:        1,
+			FundFlowFilterEnabled: false,
+		})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	ctx := srv.loadAStockContextReadOnlyWithCache("2026-07-03", "morning", 1, false, false, false, false, false, newAStockRequestCache())
+
+	if len(ctx.Recommendations) != 1 || ctx.Recommendations[0].Code != "601995" {
+		t.Fatalf("expected A股 page to use backtest snapshot recommendations, got %+v", ctx.Recommendations)
+	}
+	if len(ctx.Backtests) != 1 || aStockBacktestRowCode(ctx.Backtests[0]) != "601995" {
+		t.Fatalf("expected A股 page backtests to match backtest snapshot, got %+v", ctx.Backtests)
+	}
+	if ctx.BacktestStatus != "回测页快照" {
+		t.Fatalf("expected backtest snapshot status, got %q", ctx.BacktestStatus)
+	}
+}
+
 func TestAStockMorningBacktestSnapshotRejectsWaitingEntryOpen(t *testing.T) {
 	backtests := []aStockBacktestRow{{
 		Stock:         "603259 药明康德",

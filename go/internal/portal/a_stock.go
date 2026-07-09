@@ -2580,7 +2580,7 @@ func (s *Server) loadAStockCompanionContextReadOnlyWithCache(strategyDate string
 
 func (s *Server) loadAStockReadOnlySnapshotContextWithCache(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool, cache *aStockRequestCache) (aStockContext, bool) {
 	ctx := newAStockBaseContext(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, aStockRecommendationPhaseFinal)
-	if s.applyAStockRecommendationSnapshotReadOnlyWithCache(&ctx, cache) {
+	if s.applyAStockBacktestSnapshotOnlyWithCache(&ctx, cache) {
 		if !applyAStockSnapshotNewsSummary(&ctx, newsPage, s.currentAStockSnapshotNewsSummary(ctx, cache)) {
 			if err := s.populateAStockContextArticleStatsWithCache(&ctx, newsPage, cache); err != nil && ctx.LoadMessage == "" {
 				ctx.LoadMessage = err.Error()
