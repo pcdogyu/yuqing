@@ -1668,7 +1668,7 @@ func TestAStockStockGenerateActionsSelectPeriod(t *testing.T) {
 			fromPeriod: "afternoon",
 			action:     "refresh_current_backtest",
 			wantPeriod: "afternoon",
-			wantMsg:    "下午推荐行情收益已按当前推荐股票重新补齐。",
+			wantMsg:    "下午推荐行情收益未补齐：未找到当前推荐股票。",
 		},
 	}
 
@@ -8580,6 +8580,126 @@ func TestAStockRepairStockNamesActionPersistsNamesFromLocalDictionary(t *testing
 	decodedLocation, _ := url.QueryUnescape(rr.Header().Get("Location"))
 	if !strings.Contains(decodedLocation, "股票名称已从集合竞价名称库补齐 2 只") {
 		t.Fatalf("expected repair summary in redirect, got %q", decodedLocation)
+	}
+}
+
+func TestAStockBacktestRefreshCurrentOnBacktestPageRefreshesVisiblePeriodsWithDetail(t *testing.T) {
+	snapshots := map[string]model.AStockRecommendationSnapshot{
+		"morning": {
+			Found:        true,
+			StrategyDate: "2026-07-07",
+			Period:       "morning",
+			RecommendationsJSON: mustAStockTestJSON(t, []aStockRecommendation{
+				{Rank: 1, Code: "601881", Name: "中国银河", Hotspot: "金融券商", Reason: "生成点 09:27", EntryTime: "09:30"},
+			}),
+			BacktestsJSON: mustAStockTestJSON(t, []aStockBacktestRow{
+				{Stock: "601881 中国银河", EntryOpen: "13.47", T0Return: "-2.15%", T0Close: "13.18", Status: "等待T+1行情"},
+			}),
+			BacktestStatus:           "已回测 0/1",
+			GeneratedCount:           1,
+			FundFlowFilterEnabled:    true,
+			LimitUpFilterEnabled:     false,
+			TodayMarketFilterEnabled: false,
+		},
+		"afternoon": {
+			Found:        true,
+			StrategyDate: "2026-07-07",
+			Period:       "afternoon",
+			RecommendationsJSON: mustAStockTestJSON(t, []aStockRecommendation{
+				{Rank: 1, Code: "688702", Name: "盛科通信", Hotspot: "半导体", Reason: "生成点 12:57", EntryTime: "13:01"},
+				{Rank: 2, Code: "688820", Name: "盛合晶微", Hotspot: "半导体", Reason: "生成点 12:57", EntryTime: "13:01"},
+			}),
+			BacktestsJSON: mustAStockTestJSON(t, []aStockBacktestRow{
+				{Stock: "688702 盛科通信", AfternoonOpen: "389.96", T0Return: "-3.07%", T0Close: "382.00", Days: []aStockBacktestCell{{Close: "--", Return: "--", ReturnClass: "astock-flat"}}, Status: "等待T+1行情"},
+				{Stock: "688820 盛合晶微", AfternoonOpen: "197.60", T0Return: "-0.01%", T0Close: "197.59", Days: []aStockBacktestCell{{Close: "188.32", Return: "-4.70%", ReturnClass: "astock-down"}}, BestReturn: "-4.70%", BestReturnClass: "astock-down", Status: "已回测T+1"},
+			}),
+			BacktestStatus:           "已回测 1/2",
+			GeneratedCount:           2,
+			FundFlowFilterEnabled:    true,
+			LimitUpFilterEnabled:     true,
+			TodayMarketFilterEnabled: false,
+		},
+	}
+	saved := map[string]model.AStockRecommendationSnapshot{}
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/a-stock/recommendations":
+			period := normalizeAStockPeriod(r.URL.Query().Get("period")).Key
+			if snapshot, ok := snapshots[period]; ok {
+				writeEnvelope(w, http.StatusOK, "ok", snapshot)
+				return
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/internal/a-stock/recommendations":
+			var snapshot model.AStockRecommendationSnapshot
+			if err := json.NewDecoder(r.Body).Decode(&snapshot); err != nil {
+				t.Fatalf("decode saved snapshot: %v", err)
+			}
+			saved[snapshot.Period] = snapshot
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Updated: 1})
+		default:
+			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	market := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		writeEnvelope(w, http.StatusOK, "ok", map[string]any{"items": []map[string]any{
+			{"code": "601881", "date": "2026-07-07", "open": 13.47, "close": 13.18, "pct": -2.51, "entry_price": 13.47},
+			{"code": "601881", "date": "2026-07-08", "open": 13.10, "close": 13.03, "pct": -1.14},
+			{"code": "601881", "date": "2026-07-09", "open": 13.05, "close": 12.97, "pct": -0.46},
+			{"code": "688702", "date": "2026-07-07", "open": 350.00, "close": 382.00, "pct": 7.00, "afternoon_entry_price": 389.96},
+			{"code": "688702", "date": "2026-07-08", "open": 389.39, "close": 401.50, "pct": 5.10},
+			{"code": "688702", "date": "2026-07-09", "open": 409.13, "close": 402.03, "pct": 0.13},
+			{"code": "688820", "date": "2026-07-07", "open": 183.08, "close": 197.59, "pct": 5.18, "afternoon_entry_price": 197.60},
+			{"code": "688820", "date": "2026-07-08", "open": 197.99, "close": 188.32, "pct": -4.69},
+			{"code": "688820", "date": "2026-07-09", "open": 191.94, "close": 194.77, "pct": 3.43},
+		}})
+	}))
+	defer market.Close()
+	t.Setenv("YUQING_ASTOCK_MARKET_URL", market.URL)
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	form := url.Values{}
+	form.Set("date", "2026-07-07")
+	form.Set("period", "morning")
+	form.Set("action", "refresh_current_backtest")
+	req := httptest.NewRequest(http.MethodPost, "/a-stock/backtest", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	srv.handleAStockBacktestPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if _, ok := saved["morning"]; !ok {
+		t.Fatalf("expected morning snapshot to be refreshed, saved=%+v", saved)
+	}
+	afternoon, ok := saved["afternoon"]
+	if !ok {
+		t.Fatalf("expected afternoon snapshot to be refreshed from backtest page, saved=%+v", saved)
+	}
+	var rows []aStockBacktestRow
+	if err := json.Unmarshal([]byte(afternoon.BacktestsJSON), &rows); err != nil {
+		t.Fatalf("decode afternoon backtests: %v", err)
+	}
+	got := aStockBacktestRowsByCode(rows)
+	if got["688702"].Status != "已回测T+2" || len(got["688702"].Days) < 2 || got["688702"].Days[1].Return == "--" {
+		t.Fatalf("expected 688702 T+2 data to be written, got %+v", got["688702"])
+	}
+	if got["688820"].Status != "已回测T+2" || len(got["688820"].Days) < 2 || got["688820"].Days[1].Return == "--" {
+		t.Fatalf("expected 688820 T+2 data to be written, got %+v", got["688820"])
+	}
+	location, err := url.QueryUnescape(rr.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("decode redirect location: %v", err)
+	}
+	for _, want := range []string{"上午推荐行情收益", "下午推荐行情收益", "获取：date=2026-07-07 period=afternoon codes=688702,688820", "补齐：688702 盛科通信", "补齐：688820 盛合晶微"} {
+		if !strings.Contains(location, want) {
+			t.Fatalf("expected redirect detail to contain %q, got %s", want, location)
+		}
 	}
 }
 

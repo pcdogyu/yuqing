@@ -917,6 +917,7 @@ func (s *Server) handleAStockBacktestPage(w http.ResponseWriter, r *http.Request
 	if message == "" {
 		message = ctx.LoadMessage
 	}
+	detail := strings.TrimSpace(r.URL.Query().Get("detail"))
 
 	var b strings.Builder
 	b.WriteString(`<style>
@@ -939,11 +940,18 @@ func (s *Server) handleAStockBacktestPage(w http.ResponseWriter, r *http.Request
 		.astock-up{color:#b3261e;font-weight:700}
 		.astock-down{color:#1b7f3a;font-weight:700}
 		.astock-flat{color:#6a6257}
+		.astock-action-detail{white-space:pre-wrap;line-height:1.55;margin:10px 0 0;color:#3d3a34;font-family:Consolas,Menlo,monospace;font-size:13px}
 	</style>`)
 	if message != "" {
-		b.WriteString(`<section><p style="color:#214e34">`)
+		b.WriteString(`<section><h3>推荐行情收益</h3><p style="color:#214e34">`)
 		b.WriteString(html.EscapeString(message))
-		b.WriteString(`</p></section>`)
+		b.WriteString(`</p>`)
+		if detail != "" {
+			b.WriteString(`<pre class="astock-action-detail">`)
+			b.WriteString(html.EscapeString(detail))
+			b.WriteString(`</pre>`)
+		}
+		b.WriteString(`</section>`)
 	}
 	renderAStockBacktestSectionForPath(&b, "/a-stock/backtest", ctx.Date, ctx.Period, ctx.IgnoreRecent, ctx.IgnoreLimitUp, ctx.IgnoreFundFlow, ctx.TodayMarketFilterEnabled, morningCtx, afternoonCtx)
 
@@ -1026,8 +1034,11 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request, 
 		query.Set("msg", "行情已按当前策略日期刷新，页面已重新计算昨日收盘价、现价、涨跌幅和回测。")
 		persistRecommendation = true
 	case "refresh_current_backtest":
-		query.Set("msg", period.Label+"行情收益已按当前推荐股票重新补齐。")
-		persistRecommendation = true
+		result := s.refreshAStockCurrentBacktestAction(strategyDate, period.Key, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, redirectPath == "/a-stock/backtest")
+		query.Set("msg", result.Summary)
+		if result.Detail != "" {
+			query.Set("detail", result.Detail)
+		}
 	case "repair_stock_names":
 		query.Set("msg", s.repairAStockActionRecommendationNames(strategyDate, period.Key, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket))
 	case "backfill_auction":
@@ -1073,6 +1084,173 @@ func (s *Server) persistAStockActionRecommendation(strategyDate string, periodKe
 		}
 	}
 	return strings.Join(messages, " ")
+}
+
+type aStockBacktestRefreshActionResult struct {
+	Summary string
+	Detail  string
+}
+
+func (s *Server) refreshAStockCurrentBacktestAction(strategyDate string, periodKey string, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool, allVisiblePeriods bool) aStockBacktestRefreshActionResult {
+	cache := newAStockRequestCache()
+	periods := []string{normalizeAStockPeriod(periodKey).Key}
+	if allVisiblePeriods {
+		periods = []string{"morning", "afternoon"}
+	}
+	summaries := make([]string, 0, len(periods))
+	details := make([]string, 0, len(periods))
+	for _, period := range periods {
+		summary, detail := s.refreshAStockCurrentBacktestPeriod(strategyDate, period, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, cache)
+		if summary != "" {
+			summaries = append(summaries, summary)
+		}
+		if detail != "" {
+			details = append(details, detail)
+		}
+	}
+	return aStockBacktestRefreshActionResult{
+		Summary: strings.Join(summaries, " "),
+		Detail:  strings.Join(details, "\n\n"),
+	}
+}
+
+func (s *Server) refreshAStockCurrentBacktestPeriod(strategyDate string, periodKey string, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool, cache *aStockRequestCache) (string, string) {
+	ctx, ok, message := s.loadAStockRecommendationNameRepairContext(strategyDate, periodKey, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, cache)
+	if message != "" {
+		return message, message
+	}
+	if !ok || len(ctx.Recommendations) == 0 {
+		summary := ctx.PeriodLabel + "行情收益未补齐：未找到当前推荐股票。"
+		return summary, summary
+	}
+	previousRows := append([]aStockBacktestRow(nil), ctx.Backtests...)
+	previousByCode := aStockBacktestRowsByCode(previousRows)
+	repaired, skipped := s.repairAStockPersistedRecommendationsWithCache(ctx.Date, ctx.Recommendations, cache)
+	ctx.Recommendations = repaired
+	if len(ctx.Recommendations) == 0 {
+		summary := ctx.PeriodLabel + "行情收益未补齐：当前推荐股票名称无效。"
+		if skipped > 0 {
+			summary = fmt.Sprintf("%s 跳过无有效名称股票 %d 只。", strings.TrimSuffix(summary, "。"), skipped)
+		}
+		return summary, summary
+	}
+	ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus, ctx.LimitUpFiltered = s.loadAStockLockedMarketView(ctx.Date, ctx.Period, ctx.Recommendations)
+	ctx.EmptyReason = aStockRecommendationEmptyReason(ctx)
+	if err := s.saveAStockRecommendationSnapshot(ctx); err != nil {
+		summary := ctx.PeriodLabel + "行情收益保存失败：" + err.Error()
+		return summary, summary
+	}
+	updatedCells := countAStockBacktestUpdatedCells(previousByCode, ctx.Backtests)
+	summary := fmt.Sprintf("%s行情收益已按当前推荐股票重新补齐：读取 %d 只，写入 %d 行，补齐/更新 %d 个收益字段。", ctx.PeriodLabel, len(ctx.Recommendations), len(ctx.Backtests), updatedCells)
+	if skipped > 0 {
+		summary = fmt.Sprintf("%s 跳过无有效名称股票 %d 只。", summary, skipped)
+	}
+	detail := formatAStockBacktestRefreshDetail(ctx, previousByCode, updatedCells)
+	return summary, detail
+}
+
+func aStockBacktestRowsByCode(rows []aStockBacktestRow) map[string]aStockBacktestRow {
+	result := make(map[string]aStockBacktestRow, len(rows))
+	for _, row := range rows {
+		code := aStockBacktestRowCode(row)
+		if code != "" {
+			result[code] = row
+		}
+	}
+	return result
+}
+
+func countAStockBacktestUpdatedCells(previousByCode map[string]aStockBacktestRow, rows []aStockBacktestRow) int {
+	total := 0
+	for _, row := range rows {
+		total += countAStockBacktestRowUpdatedCells(previousByCode[aStockBacktestRowCode(row)], row)
+	}
+	return total
+}
+
+func countAStockBacktestRowUpdatedCells(previous aStockBacktestRow, current aStockBacktestRow) int {
+	count := 0
+	if aStockBacktestRefreshFieldChanged(previous.EntryOpen, current.EntryOpen) {
+		count++
+	}
+	if aStockBacktestRefreshFieldChanged(previous.AfternoonOpen, current.AfternoonOpen) {
+		count++
+	}
+	if aStockBacktestRefreshFieldChanged(previous.T0Return, current.T0Return) {
+		count++
+	}
+	for i := 0; i < 5; i++ {
+		var previousValue string
+		if i < len(previous.Days) {
+			previousValue = previous.Days[i].Return
+		}
+		var currentValue string
+		if i < len(current.Days) {
+			currentValue = current.Days[i].Return
+		}
+		if aStockBacktestRefreshFieldChanged(previousValue, currentValue) {
+			count++
+		}
+	}
+	if aStockBacktestRefreshFieldChanged(previous.BestReturn, current.BestReturn) {
+		count++
+	}
+	return count
+}
+
+func aStockBacktestRefreshFieldChanged(previous string, current string) bool {
+	previous = strings.TrimSpace(previous)
+	current = strings.TrimSpace(current)
+	if aStockBacktestValueMissing(current) {
+		return false
+	}
+	if aStockBacktestValueMissing(previous) {
+		return true
+	}
+	return previous != current
+}
+
+func formatAStockBacktestRefreshDetail(ctx aStockContext, previousByCode map[string]aStockBacktestRow, updatedCells int) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s行情收益\n", ctx.PeriodLabel)
+	fmt.Fprintf(&b, "获取：date=%s period=%s codes=%s source=%s\n", ctx.Date, ctx.Period, strings.Join(aStockRecommendationCodes(ctx.Recommendations), ","), aStockMarketConfigHint())
+	fmt.Fprintf(&b, "写入：recommendations=%d backtests=%d status=%s updated_fields=%d\n", len(ctx.Recommendations), len(ctx.Backtests), ctx.BacktestStatus, updatedCells)
+	for _, row := range ctx.Backtests {
+		code := aStockBacktestRowCode(row)
+		previous := previousByCode[code]
+		fmt.Fprintf(&b, "补齐：%s 原状态=%s -> 新状态=%s；%s\n", row.Stock, nonEmpty(previous.Status, "无旧行"), nonEmpty(row.Status, "--"), formatAStockBacktestRefreshRowValues(previous, row))
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func formatAStockBacktestRefreshRowValues(previous aStockBacktestRow, current aStockBacktestRow) string {
+	parts := []string{
+		formatAStockBacktestRefreshField("开盘", previous.EntryOpen, current.EntryOpen),
+		formatAStockBacktestRefreshField("下午开盘", previous.AfternoonOpen, current.AfternoonOpen),
+		formatAStockBacktestRefreshField("T+0", previous.T0Return, current.T0Return),
+	}
+	for i := 0; i < 5; i++ {
+		var previousValue string
+		if i < len(previous.Days) {
+			previousValue = previous.Days[i].Return
+		}
+		var currentValue string
+		if i < len(current.Days) {
+			currentValue = current.Days[i].Return
+		}
+		parts = append(parts, formatAStockBacktestRefreshField(fmt.Sprintf("T+%d", i+1), previousValue, currentValue))
+	}
+	parts = append(parts, formatAStockBacktestRefreshField("五日最高", previous.BestReturn, current.BestReturn))
+	return strings.Join(parts, "，")
+}
+
+func formatAStockBacktestRefreshField(label string, previous string, current string) string {
+	previous = nonEmpty(strings.TrimSpace(previous), "--")
+	current = nonEmpty(strings.TrimSpace(current), "--")
+	if previous == current {
+		return label + "=" + current
+	}
+	return fmt.Sprintf("%s=%s->%s", label, previous, current)
 }
 
 func aStockManualRecommendationEntryTime(strategyDate string, period string, refreshMode aStockRecommendationRefreshMode) string {
