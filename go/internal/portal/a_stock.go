@@ -2711,18 +2711,6 @@ func (s *Server) applyAStockBacktestSnapshotOnlyWithCache(ctx *aStockContext, ca
 	if !ok {
 		return false
 	}
-	if ctx.Period == "afternoon" && snapshot.LimitUpFilterEnabled != ctx.LimitUpFilterEnabled {
-		return false
-	}
-	if snapshot.TodayMarketFilterEnabled != ctx.TodayMarketFilterEnabled {
-		return false
-	}
-	if snapshot.FundFlowFilterEnabled != ctx.FundFlowFilterEnabled {
-		return false
-	}
-	if !ctx.TodayMarketFilterEnabled && strings.Contains(snapshot.BacktestStatus, "过滤无当日行情") {
-		return false
-	}
 	recommendationsJSON := normalizeAStockSnapshotJSONArray(snapshot.RecommendationsJSON)
 	backtestsJSON := normalizeAStockSnapshotJSONArray(snapshot.BacktestsJSON)
 	var recommendations []aStockRecommendation

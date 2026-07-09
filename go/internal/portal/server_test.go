@@ -1966,6 +1966,48 @@ func TestAStockBacktestPageGetUsesSnapshotOnly(t *testing.T) {
 	}
 }
 
+func TestAStockBacktestPageShowsHistoricalSnapshotWhenFundFlowStateDiffers(t *testing.T) {
+	snapshot := model.AStockRecommendationSnapshot{
+		Found:                 true,
+		StrategyDate:          "2026-07-03",
+		Period:                "morning",
+		RecommendationsJSON:   mustAStockTestJSON(t, []aStockRecommendation{{Rank: 1, Hotspot: "人工智能", Code: "601995", Name: "中金公司", Reason: "snapshot"}}),
+		BacktestsJSON:         mustAStockTestJSON(t, []aStockBacktestRow{{Stock: "601995 中金公司", EntryOpen: "36.38", T0Return: "+0.00%", T0Close: "36.38", T0ReturnClass: "astock-flat", BestReturn: "+2.36%", BestReturnClass: "astock-up", Status: "已回测T+2"}}),
+		BacktestStatus:        "已锁定推荐股票，已回测 1/1",
+		GeneratedCount:        1,
+		FundFlowFilterEnabled: false,
+	}
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/a-stock/recommendations" {
+			http.Error(w, "unexpected endpoint", http.StatusInternalServerError)
+			return
+		}
+		if r.URL.Query().Get("period") == "morning" {
+			writeEnvelope(w, http.StatusOK, "ok", snapshot)
+			return
+		}
+		writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	req := httptest.NewRequest(http.MethodGet, "/a-stock/backtest?date=2026-07-03&period=morning", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAStockBacktestPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "601995 中金公司") || strings.Contains(body, "暂无回测结果") {
+		t.Fatalf("expected historical snapshot to render despite current fund-flow state, got %s", body)
+	}
+	if !strings.Contains(body, `name="ignore_fund_flow" value="1"`) {
+		t.Fatalf("expected rendered actions to reflect disabled fund-flow snapshot state, got %s", body)
+	}
+}
+
 func TestAStockBacktestPageShowsRecommendationsWithoutBacktestRows(t *testing.T) {
 	snapshot := model.AStockRecommendationSnapshot{
 		Found:                 true,
