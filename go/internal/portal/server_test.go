@@ -1819,6 +1819,70 @@ func TestAStockBacktestPageRendersStandaloneBacktestAndNavigation(t *testing.T) 
 	}
 }
 
+func TestAStockFundFlowFilterSessionSyncsBetweenRecommendationAndBacktest(t *testing.T) {
+	setAStockNowForTest(t, time.Date(2026, 7, 9, 9, 30, 0, 0, time.FixedZone("CST", 8*3600)))
+	snapshot := model.AStockRecommendationSnapshot{
+		Found:                 true,
+		StrategyDate:          "2026-07-03",
+		Period:                "morning",
+		FundFlowFilterEnabled: false,
+		RecommendationsJSON:   mustAStockTestJSON(t, []aStockRecommendation{{Rank: 1, Hotspot: "人工智能", Code: "601995", Name: "中金公司"}}),
+		BacktestsJSON:         mustAStockTestJSON(t, []aStockBacktestRow{{Stock: "601995 中金公司", EntryOpen: "36.38", T0Return: "+0.00%", T0Close: "36.38", Status: "已回测T+2"}}),
+		BacktestStatus:        "已锁定推荐股票，已回测 1/1",
+	}
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/a-stock/recommendations":
+			if r.URL.Query().Get("date") == "2026-07-03" && r.URL.Query().Get("period") == "morning" {
+				writeEnvelope(w, http.StatusOK, "ok", snapshot)
+				return
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
+		case "/api/v1/articles":
+			writeEnvelope(w, http.StatusOK, "ok", model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 1000, Total: 0})
+		case "/api/v1/a-stock/stock-fund-flow-trend":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockStockFundFlowTrendResult{})
+		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
+			t.Fatalf("unexpected content request: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	pageReq := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-07-03&period=morning&ignore_fund_flow=1", nil)
+	pageRR := httptest.NewRecorder()
+	srv.handleAStockPage(pageRR, pageReq, map[string]any{"id": 1})
+	disabledCookie := aStockCookieByName(pageRR.Result().Cookies(), aStockFundFlowFilterCookieName)
+	if disabledCookie == nil || disabledCookie.Value != aStockFundFlowFilterCookieDisabled {
+		t.Fatalf("expected disabled fund-flow cookie, got %+v", pageRR.Result().Cookies())
+	}
+
+	backtestReq := httptest.NewRequest(http.MethodGet, "/a-stock/backtest?date=2026-07-03&period=morning", nil)
+	backtestReq.AddCookie(disabledCookie)
+	backtestRR := httptest.NewRecorder()
+	srv.handleAStockBacktestPage(backtestRR, backtestReq, map[string]any{"id": 1})
+	if backtestRR.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", backtestRR.Code, backtestRR.Body.String())
+	}
+	backtestBody := backtestRR.Body.String()
+	if !strings.Contains(backtestBody, "601995 中金公司") || strings.Contains(backtestBody, "暂无回测结果") {
+		t.Fatalf("expected backtest page to use disabled fund-flow session state, got %s", backtestBody)
+	}
+
+	enableReq := httptest.NewRequest(http.MethodGet, "/a-stock/backtest?date=2026-07-03&period=morning&filter_fund_flow=1", nil)
+	enableReq.AddCookie(disabledCookie)
+	enableRR := httptest.NewRecorder()
+	srv.handleAStockBacktestPage(enableRR, enableReq, map[string]any{"id": 1})
+	enabledCookie := aStockCookieByName(enableRR.Result().Cookies(), aStockFundFlowFilterCookieName)
+	if enabledCookie == nil || enabledCookie.Value != aStockFundFlowFilterCookieEnabled {
+		t.Fatalf("expected enabled fund-flow cookie, got %+v", enableRR.Result().Cookies())
+	}
+}
+
 func TestAStockBacktestPageGetUsesSnapshotOnly(t *testing.T) {
 	morningSnapshot := model.AStockRecommendationSnapshot{
 		Found:                 true,
@@ -3834,6 +3898,15 @@ func mustAStockTestJSON(t *testing.T, value any) string {
 		t.Fatalf("marshal A股测试数据: %v", err)
 	}
 	return string(raw)
+}
+
+func aStockCookieByName(cookies []*http.Cookie, name string) *http.Cookie {
+	for _, cookie := range cookies {
+		if cookie != nil && cookie.Name == name {
+			return cookie
+		}
+	}
+	return nil
 }
 
 func writeAStockTestMarketBars(w http.ResponseWriter, r *http.Request) {
@@ -6801,6 +6874,43 @@ func TestAStockOverviewLimitUpFilterToggle(t *testing.T) {
 	morningBody := morning.String()
 	if !strings.Contains(morningBody, "不适用") || strings.Contains(morningBody, "astock-filter-toggle-form") || strings.Contains(morningBody, "<button") {
 		t.Fatalf("expected morning limit-up filter cell to be non-interactive, got %s", morningBody)
+	}
+}
+
+func TestAStockOverviewFundFlowFilterToggleUsesExplicitState(t *testing.T) {
+	var enabled strings.Builder
+	writeAStockOverviewFundFlowFilterCell(&enabled, aStockContext{
+		Date:             "2026-06-22",
+		Period:           "morning",
+		NewsPage:         2,
+		IgnoreRecent:     true,
+		IgnoreLimitUp:    true,
+		FundFlowFiltered: 3,
+	})
+	enabledBody := enabled.String()
+	for _, want := range []string{"资金过滤", "已过滤 3", "关闭资金过滤", `name="ignore_fund_flow" value="1"`, `name="ignore_recent" value="1"`, `name="ignore_limit_up" value="1"`} {
+		if !strings.Contains(enabledBody, want) {
+			t.Fatalf("expected enabled fund-flow filter cell to contain %q, got %s", want, enabledBody)
+		}
+	}
+	if strings.Contains(enabledBody, `name="filter_fund_flow" value="1"`) {
+		t.Fatalf("expected enabled fund-flow toggle to request disabled state only, got %s", enabledBody)
+	}
+
+	var disabled strings.Builder
+	writeAStockOverviewFundFlowFilterCell(&disabled, aStockContext{
+		Date:           "2026-06-22",
+		Period:         "morning",
+		IgnoreFundFlow: true,
+	})
+	disabledBody := disabled.String()
+	for _, want := range []string{"资金过滤", "已关闭", "启用资金过滤", `name="filter_fund_flow" value="1"`} {
+		if !strings.Contains(disabledBody, want) {
+			t.Fatalf("expected disabled fund-flow filter cell to contain %q, got %s", want, disabledBody)
+		}
+	}
+	if strings.Contains(disabledBody, `name="ignore_fund_flow" value="1"`) {
+		t.Fatalf("expected disabled fund-flow toggle to request enabled state only, got %s", disabledBody)
 	}
 }
 

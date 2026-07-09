@@ -367,6 +367,9 @@ const (
 	aStockArticleFetchPageSize         = 1000
 	aStockArticleFetchMaxPages         = 100
 	aStockRecentLookbackDays           = 31
+	aStockFundFlowFilterCookieName     = "yuqing_astock_fund_flow_filter"
+	aStockFundFlowFilterCookieEnabled  = "enabled"
+	aStockFundFlowFilterCookieDisabled = "disabled"
 	aStockAuctionCandidateCacheTTL     = 5 * time.Minute
 	aStockMarketCandidateLimit         = 5000
 	aStockRecommendationLimit          = 12
@@ -440,7 +443,8 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 	newsPage := normalizeAStockNewsPage(r.URL.Query().Get("news_page"))
 	ignoreRecent := normalizeAStockIgnoreRecent(r.URL.Query())
 	ignoreLimitUp := normalizeAStockIgnoreLimitUp(r.URL.Query())
-	ignoreFundFlow := normalizeAStockIgnoreFundFlow(r.URL.Query())
+	ignoreFundFlow, fundFlowExplicit := normalizeAStockIgnoreFundFlowFromRequest(r)
+	setAStockFundFlowFilterCookie(w, ignoreFundFlow, fundFlowExplicit)
 	filterTodayMarket := normalizeAStockFilterTodayMarket(r.URL.Query())
 	forceRecommendationRefresh := normalizeAStockBool(r.URL.Query().Get("refresh_recommendations"))
 	refreshAllBacktests := normalizeAStockBool(r.URL.Query().Get("refresh_all_backtests"))
@@ -647,9 +651,7 @@ func renderAStockActionSection(b *strings.Builder, ctx aStockContext) {
 		if ctx.IgnoreLimitUp {
 			b.WriteString(`<input type="hidden" name="ignore_limit_up" value="1">`)
 		}
-		if ctx.IgnoreFundFlow {
-			b.WriteString(`<input type="hidden" name="ignore_fund_flow" value="1">`)
-		}
+		writeAStockFundFlowFilterInput(b, ctx.IgnoreFundFlow)
 		if ctx.TodayMarketFilterEnabled {
 			b.WriteString(`<input type="hidden" name="filter_today_market" value="1">`)
 		}
@@ -901,7 +903,8 @@ func (s *Server) handleAStockBacktestPage(w http.ResponseWriter, r *http.Request
 	newsPage := normalizeAStockNewsPage(r.URL.Query().Get("news_page"))
 	ignoreRecent := normalizeAStockIgnoreRecent(r.URL.Query())
 	ignoreLimitUp := normalizeAStockIgnoreLimitUp(r.URL.Query())
-	ignoreFundFlow := normalizeAStockIgnoreFundFlow(r.URL.Query())
+	ignoreFundFlow, fundFlowExplicit := normalizeAStockIgnoreFundFlowFromRequest(r)
+	setAStockFundFlowFilterCookie(w, ignoreFundFlow, fundFlowExplicit)
 	filterTodayMarket := normalizeAStockFilterTodayMarket(r.URL.Query())
 	requestCache := newAStockRequestCache()
 	ctx := s.loadAStockBacktestSnapshotContextWithCache(strategyDate, period.Key, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, requestCache)
@@ -970,7 +973,8 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request, 
 	query.Set("period", period.Key)
 	ignoreRecent := normalizeAStockBool(r.FormValue("ignore_recent"))
 	ignoreLimitUp := normalizeAStockBool(r.FormValue("ignore_limit_up"))
-	ignoreFundFlow := normalizeAStockBool(r.FormValue("ignore_fund_flow"))
+	ignoreFundFlow, fundFlowExplicit := normalizeAStockIgnoreFundFlowFromForm(r)
+	setAStockFundFlowFilterCookie(w, ignoreFundFlow, fundFlowExplicit)
 	filterTodayMarket := normalizeAStockBool(r.FormValue("filter_today_market"))
 	if ignoreRecent {
 		query.Set("ignore_recent", "1")
@@ -980,6 +984,8 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request, 
 	}
 	if ignoreFundFlow {
 		query.Set("ignore_fund_flow", "1")
+	} else if fundFlowExplicit {
+		query.Set("filter_fund_flow", "1")
 	}
 	if filterTodayMarket {
 		query.Set("filter_today_market", "1")
@@ -1489,9 +1495,7 @@ func writeAStockOverviewTodayMarketFilterCell(b *strings.Builder, ctx aStockCont
 	if ctx.IgnoreLimitUp {
 		b.WriteString(`<input type="hidden" name="ignore_limit_up" value="1">`)
 	}
-	if ctx.IgnoreFundFlow {
-		b.WriteString(`<input type="hidden" name="ignore_fund_flow" value="1">`)
-	}
+	writeAStockFundFlowFilterInput(b, ctx.IgnoreFundFlow)
 	if !ctx.TodayMarketFilterEnabled {
 		b.WriteString(`<input type="hidden" name="filter_today_market" value="1">`)
 	}
@@ -1512,9 +1516,7 @@ func writeAStockOverviewRecalculateCell(b *strings.Builder, ctx aStockContext) {
 	if ctx.IgnoreLimitUp {
 		b.WriteString(`<input type="hidden" name="ignore_limit_up" value="1">`)
 	}
-	if ctx.IgnoreFundFlow {
-		b.WriteString(`<input type="hidden" name="ignore_fund_flow" value="1">`)
-	}
+	writeAStockFundFlowFilterInput(b, ctx.IgnoreFundFlow)
 	if ctx.TodayMarketFilterEnabled {
 		b.WriteString(`<input type="hidden" name="filter_today_market" value="1">`)
 	}
@@ -1550,9 +1552,7 @@ func writeAStockOverviewFundFlowFilterCell(b *strings.Builder, ctx aStockContext
 	if ctx.IgnoreLimitUp {
 		b.WriteString(`<input type="hidden" name="ignore_limit_up" value="1">`)
 	}
-	if !ctx.IgnoreFundFlow {
-		b.WriteString(`<input type="hidden" name="ignore_fund_flow" value="1">`)
-	}
+	writeAStockFundFlowFilterInput(b, !ctx.IgnoreFundFlow)
 	if ctx.TodayMarketFilterEnabled {
 		b.WriteString(`<input type="hidden" name="filter_today_market" value="1">`)
 	}
@@ -1586,9 +1586,7 @@ func writeAStockOverviewLimitUpFilterCell(b *strings.Builder, ctx aStockContext)
 		if ctx.IgnoreRecent {
 			b.WriteString(`<input type="hidden" name="ignore_recent" value="1">`)
 		}
-		if ctx.IgnoreFundFlow {
-			b.WriteString(`<input type="hidden" name="ignore_fund_flow" value="1">`)
-		}
+		writeAStockFundFlowFilterInput(b, ctx.IgnoreFundFlow)
 		if ctx.TodayMarketFilterEnabled {
 			b.WriteString(`<input type="hidden" name="filter_today_market" value="1">`)
 		}
@@ -2150,9 +2148,7 @@ func renderAStockRecommendationHistoryActionsForPath(b *strings.Builder, targetP
 		if ignoreLimitUp {
 			b.WriteString(`<input type="hidden" name="ignore_limit_up" value="1">`)
 		}
-		if ignoreFundFlow {
-			b.WriteString(`<input type="hidden" name="ignore_fund_flow" value="1">`)
-		}
+		writeAStockFundFlowFilterInput(b, ignoreFundFlow)
 		if filterTodayMarket {
 			b.WriteString(`<input type="hidden" name="filter_today_market" value="1">`)
 		}
@@ -4230,13 +4226,69 @@ func normalizeAStockIgnoreLimitUp(query url.Values) bool {
 }
 
 func normalizeAStockIgnoreFundFlow(query url.Values) bool {
-	if normalizeAStockBool(query.Get("filter_fund_flow")) {
-		return false
+	ignoreFundFlow, _ := parseAStockFundFlowFilterValues(query)
+	return ignoreFundFlow
+}
+
+func normalizeAStockIgnoreFundFlowFromRequest(r *http.Request) (bool, bool) {
+	if r == nil {
+		return false, false
 	}
-	if _, ok := query["ignore_fund_flow"]; ok {
-		return normalizeAStockBool(query.Get("ignore_fund_flow"))
+	if ignoreFundFlow, explicit := parseAStockFundFlowFilterValues(r.URL.Query()); explicit {
+		return ignoreFundFlow, true
 	}
-	return false
+	return aStockFundFlowFilterFromCookie(r)
+}
+
+func normalizeAStockIgnoreFundFlowFromForm(r *http.Request) (bool, bool) {
+	if r == nil {
+		return false, false
+	}
+	if ignoreFundFlow, explicit := parseAStockFundFlowFilterValues(r.Form); explicit {
+		return ignoreFundFlow, true
+	}
+	return aStockFundFlowFilterFromCookie(r)
+}
+
+func parseAStockFundFlowFilterValues(values url.Values) (bool, bool) {
+	if normalizeAStockBool(values.Get("filter_fund_flow")) {
+		return false, true
+	}
+	if _, ok := values["ignore_fund_flow"]; ok {
+		return normalizeAStockBool(values.Get("ignore_fund_flow")), true
+	}
+	return false, false
+}
+
+func aStockFundFlowFilterFromCookie(r *http.Request) (bool, bool) {
+	cookie, err := r.Cookie(aStockFundFlowFilterCookieName)
+	if err != nil {
+		return false, false
+	}
+	switch strings.ToLower(strings.TrimSpace(cookie.Value)) {
+	case aStockFundFlowFilterCookieDisabled:
+		return true, false
+	case aStockFundFlowFilterCookieEnabled:
+		return false, false
+	default:
+		return false, false
+	}
+}
+
+func setAStockFundFlowFilterCookie(w http.ResponseWriter, ignoreFundFlow bool, explicit bool) {
+	if !explicit || w == nil {
+		return
+	}
+	value := aStockFundFlowFilterCookieEnabled
+	if ignoreFundFlow {
+		value = aStockFundFlowFilterCookieDisabled
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     aStockFundFlowFilterCookieName,
+		Value:    value,
+		Path:     "/",
+		SameSite: http.SameSiteLaxMode,
+	})
 }
 
 func normalizeAStockFilterTodayMarket(query url.Values) bool {
@@ -9316,6 +9368,14 @@ func aStockFundFlowFilterToggleLabel(ignoreFundFlow bool) string {
 		return "启用资金过滤"
 	}
 	return "关闭资金过滤"
+}
+
+func writeAStockFundFlowFilterInput(b *strings.Builder, ignoreFundFlow bool) {
+	if ignoreFundFlow {
+		b.WriteString(`<input type="hidden" name="ignore_fund_flow" value="1">`)
+		return
+	}
+	b.WriteString(`<input type="hidden" name="filter_fund_flow" value="1">`)
 }
 
 func aStockPeriods() []aStockPeriod {
