@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1830,11 +1831,16 @@ func TestAStockFundFlowFilterSessionSyncsBetweenRecommendationAndBacktest(t *tes
 		BacktestsJSON:         mustAStockTestJSON(t, []aStockBacktestRow{{Stock: "601995 中金公司", EntryOpen: "36.38", T0Return: "+0.00%", T0Close: "36.38", Status: "已回测T+2"}}),
 		BacktestStatus:        "已锁定推荐股票，已回测 1/1",
 	}
+	var queryMu sync.Mutex
+	fundFlowSnapshotQueries := make([]string, 0)
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/v1/a-stock/recommendations":
-			if r.URL.Query().Get("date") == "2026-07-03" && r.URL.Query().Get("period") == "morning" {
+			queryMu.Lock()
+			fundFlowSnapshotQueries = append(fundFlowSnapshotQueries, r.URL.RawQuery)
+			queryMu.Unlock()
+			if r.URL.Query().Get("date") == "2026-07-03" && r.URL.Query().Get("period") == "morning" && r.URL.Query().Get("fund_flow_filter_enabled") == "0" {
 				writeEnvelope(w, http.StatusOK, "ok", snapshot)
 				return
 			}
@@ -1880,6 +1886,14 @@ func TestAStockFundFlowFilterSessionSyncsBetweenRecommendationAndBacktest(t *tes
 	enabledCookie := aStockCookieByName(enableRR.Result().Cookies(), aStockFundFlowFilterCookieName)
 	if enabledCookie == nil || enabledCookie.Value != aStockFundFlowFilterCookieEnabled {
 		t.Fatalf("expected enabled fund-flow cookie, got %+v", enableRR.Result().Cookies())
+	}
+	queryMu.Lock()
+	defer queryMu.Unlock()
+	if !slices.ContainsFunc(fundFlowSnapshotQueries, func(raw string) bool {
+		values, err := url.ParseQuery(raw)
+		return err == nil && values.Get("period") == "morning" && values.Get("fund_flow_filter_enabled") == "0"
+	}) {
+		t.Fatalf("expected snapshot requests to include disabled fund-flow exact filter, got %v", fundFlowSnapshotQueries)
 	}
 }
 
@@ -2130,16 +2144,16 @@ func TestAStockBacktestPageFallsBackToTodayReadOnlyRecommendations(t *testing.T)
 		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"上午推荐", "今日回测使用只读实时推荐结果"} {
+	for _, want := range []string{"上午推荐", "精确快照待生成"} {
 		if !strings.Contains(body, want) {
-			t.Fatalf("expected today fallback backtest page to contain %q, got %s", want, body)
+			t.Fatalf("expected missing exact snapshot backtest page to contain %q, got %s", want, body)
 		}
 	}
-	if !strings.Contains(body, "<tr><td>上午推荐</td><td>") || strings.Contains(body, "暂无回测结果") {
-		t.Fatalf("expected today fallback backtest page to render recommendation rows, got %s", body)
+	if strings.Contains(body, "<tr><td>上午推荐</td><td>") || !strings.Contains(body, "精确快照待生成") {
+		t.Fatalf("expected missing exact snapshot backtest page to stay read-only empty, got %s", body)
 	}
 	if internalWrites != 0 {
-		t.Fatalf("expected GET fallback to avoid internal writes, got %d", internalWrites)
+		t.Fatalf("expected GET missing snapshot path to avoid internal writes, got %d", internalWrites)
 	}
 }
 
@@ -2159,7 +2173,7 @@ func TestAStockBacktestSnapshotMissingDoesNotFallback(t *testing.T) {
 	srv := NewServer(config.Config{ContentURL: content.URL})
 	ctx := srv.loadAStockBacktestSnapshotContextWithCache("2026-06-30", "afternoon", 1, false, false, false, false, newAStockRequestCache())
 
-	if ctx.BacktestStatus != "无推荐快照" || !strings.Contains(ctx.EmptyReason, "下午推荐暂无历史快照") {
+	if ctx.BacktestStatus != "无推荐快照" || !strings.Contains(ctx.EmptyReason, "下午推荐精确快照待生成") {
 		t.Fatalf("expected missing snapshot empty state, got status=%q reason=%q", ctx.BacktestStatus, ctx.EmptyReason)
 	}
 	if len(ctx.Recommendations) != 0 || len(ctx.Backtests) != 0 {
@@ -2208,7 +2222,7 @@ func TestAStockPageShowsBackfillCurrentWindowAction(t *testing.T) {
 	defer content.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
-	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-16&period=morning", nil)
+	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-16&period=morning&refresh_recommendations=1", nil)
 	rr := httptest.NewRecorder()
 	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
 
@@ -2637,7 +2651,7 @@ func TestAStockPageExplainsMorningNoNews(t *testing.T) {
 	defer content.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
-	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-16&period=morning", nil)
+	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-16&period=morning&refresh_recommendations=1", nil)
 	rr := httptest.NewRecorder()
 	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
 
@@ -2681,7 +2695,7 @@ func TestAStockPageBuildsFixedPoolRecommendationsWithoutAuction(t *testing.T) {
 	defer content.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
-	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-16&period=morning", nil)
+	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-16&period=morning&refresh_recommendations=1", nil)
 	rr := httptest.NewRecorder()
 	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
 
@@ -2728,7 +2742,7 @@ func TestAStockPageExplainsNewsWithoutHotspots(t *testing.T) {
 	defer content.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
-	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-16&period=morning", nil)
+	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-16&period=morning&refresh_recommendations=1", nil)
 	rr := httptest.NewRecorder()
 	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
 
@@ -2873,7 +2887,7 @@ func TestAStockPageLoadsAfternoonWindow(t *testing.T) {
 	defer content.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
-	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-16&period=afternoon", nil)
+	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-16&period=afternoon&refresh_recommendations=1", nil)
 	rr := httptest.NewRecorder()
 	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
 
@@ -2941,7 +2955,7 @@ func TestAStockPageOffersTodayNavigationAndAfterAlias(t *testing.T) {
 	defer content.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
-	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-11&period=after", nil)
+	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-11&period=after&refresh_recommendations=1", nil)
 	rr := httptest.NewRecorder()
 	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
 
@@ -3231,7 +3245,7 @@ func TestAStockPageReusesTradingDayStatusWithinRequest(t *testing.T) {
 	defer content.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL, SchedulerURL: scheduler.URL})
-	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-16&period=morning", nil)
+	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-16&period=morning&refresh_recommendations=1", nil)
 	rr := httptest.NewRecorder()
 	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
 	if rr.Code != http.StatusOK {
@@ -3625,7 +3639,7 @@ func TestAStockPageOmitsNewsSourceStatsSection(t *testing.T) {
 	defer content.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
-	firstReq := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-11&period=afternoon", nil)
+	firstReq := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-11&period=afternoon&refresh_recommendations=1", nil)
 	firstRR := httptest.NewRecorder()
 	srv.handleAStockPage(firstRR, firstReq, map[string]any{"id": 1})
 	if firstRR.Code != http.StatusOK {
@@ -6673,7 +6687,7 @@ func TestAStockPageBlocksRecommendationsOnNonTradingDay(t *testing.T) {
 	defer content.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL, SchedulerURL: scheduler.URL})
-	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-19", nil)
+	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-19&refresh_recommendations=1", nil)
 	rr := httptest.NewRecorder()
 	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
 	if rr.Code != http.StatusOK {

@@ -594,16 +594,38 @@ func TestAStockRecommendationSnapshotUpsertAndGet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpsertAStockRecommendationSnapshot update error: %v", err)
 	}
-	if second.Inserted != 0 || second.Updated != 1 {
+	if second.Inserted != 1 || second.Updated != 0 {
 		t.Fatalf("unexpected second upsert result: %+v", second)
 	}
 
-	snapshot, found, err := store.GetAStockRecommendationSnapshot(ctx, "2026-06-22", "afternoon", false)
+	defaultSnapshot, found, err := store.GetAStockRecommendationSnapshotWithFilter(ctx, "2026-06-22", "afternoon", model.AStockRecommendationSnapshotFilter{
+		HasLimitUpFilterEnabled:     true,
+		LimitUpFilterEnabled:        false,
+		HasTodayMarketFilterEnabled: true,
+		TodayMarketFilterEnabled:    false,
+		HasFundFlowFilterEnabled:    true,
+		FundFlowFilterEnabled:       false,
+	})
 	if err != nil {
-		t.Fatalf("GetAStockRecommendationSnapshot error: %v", err)
+		t.Fatalf("GetAStockRecommendationSnapshotWithFilter default error: %v", err)
+	}
+	if !found || defaultSnapshot.RecommendationsJSON != `[{"Code":"600000"}]` || defaultSnapshot.GeneratedCount != 1 || defaultSnapshot.LimitUpFilterEnabled || defaultSnapshot.TodayMarketFilterEnabled || defaultSnapshot.FundFlowFilterEnabled {
+		t.Fatalf("unexpected default snapshot: found=%v %+v", found, defaultSnapshot)
+	}
+
+	snapshot, found, err := store.GetAStockRecommendationSnapshotWithFilter(ctx, "2026-06-22", "afternoon", model.AStockRecommendationSnapshotFilter{
+		HasLimitUpFilterEnabled:     true,
+		LimitUpFilterEnabled:        true,
+		HasTodayMarketFilterEnabled: true,
+		TodayMarketFilterEnabled:    true,
+		HasFundFlowFilterEnabled:    true,
+		FundFlowFilterEnabled:       true,
+	})
+	if err != nil {
+		t.Fatalf("GetAStockRecommendationSnapshotWithFilter exact error: %v", err)
 	}
 	if !found || snapshot.RecommendationsJSON != `[{"Code":"000001"}]` || snapshot.BacktestsJSON != `[]` || !strings.Contains(snapshot.NewsSummaryJSON, `"人工智能"`) || snapshot.GeneratedCount != 1 || !snapshot.LimitUpFilterEnabled || snapshot.LimitUpFiltered != 2 || !snapshot.TodayMarketFilterEnabled || snapshot.NoTodayMarketCount != 4 || !snapshot.FundFlowFilterEnabled || snapshot.FundFlowFiltered != 3 || snapshot.FundFlowMissingCount != 1 {
-		t.Fatalf("unexpected snapshot: found=%v %+v", found, snapshot)
+		t.Fatalf("unexpected exact snapshot: found=%v %+v", found, snapshot)
 	}
 }
 

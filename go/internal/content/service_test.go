@@ -223,7 +223,15 @@ func TestAStockRecommendationSnapshotAPIUpsertsAndGets(t *testing.T) {
 		t.Fatalf("expected recommendation snapshot upsert 200, got %d body=%s", postRR.Code, postRR.Body.String())
 	}
 
-	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/recommendations?date=2026-06-22&period=afternoon", nil)
+	disabledPayload := `{"strategy_date":"2026-06-22","period":"afternoon","ignore_recent":false,"recommendations_json":"[{\"Code\":\"000001\"}]","backtests_json":"[]","backtest_status":"资金过滤关闭","generated_count":2,"limit_up_filter_enabled":true,"today_market_filter_enabled":true,"fund_flow_filter_enabled":false,"fund_flow_filtered":0}`
+	disabledPostReq := httptest.NewRequest(http.MethodPost, "/api/v1/internal/a-stock/recommendations", strings.NewReader(disabledPayload))
+	disabledPostRR := httptest.NewRecorder()
+	router.ServeHTTP(disabledPostRR, disabledPostReq)
+	if disabledPostRR.Code != http.StatusOK {
+		t.Fatalf("expected disabled fund-flow snapshot upsert 200, got %d body=%s", disabledPostRR.Code, disabledPostRR.Body.String())
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/recommendations?date=2026-06-22&period=afternoon&limit_up_filter_enabled=1&today_market_filter_enabled=1&fund_flow_filter_enabled=1", nil)
 	getRR := httptest.NewRecorder()
 	router.ServeHTTP(getRR, getReq)
 	if getRR.Code != http.StatusOK {
@@ -240,6 +248,25 @@ func TestAStockRecommendationSnapshotAPIUpsertsAndGets(t *testing.T) {
 	}
 	if envelope.Data.BacktestsJSON != "[]" {
 		t.Fatalf("expected null backtests json to be normalized to [], got %q", envelope.Data.BacktestsJSON)
+	}
+	if !strings.Contains(envelope.Data.RecommendationsJSON, "600000") {
+		t.Fatalf("expected enabled fund-flow exact snapshot, got %s", envelope.Data.RecommendationsJSON)
+	}
+
+	disabledGetReq := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/recommendations?date=2026-06-22&period=afternoon&limit_up_filter_enabled=1&today_market_filter_enabled=1&fund_flow_filter_enabled=0", nil)
+	disabledGetRR := httptest.NewRecorder()
+	router.ServeHTTP(disabledGetRR, disabledGetReq)
+	if disabledGetRR.Code != http.StatusOK {
+		t.Fatalf("expected disabled fund-flow snapshot get 200, got %d body=%s", disabledGetRR.Code, disabledGetRR.Body.String())
+	}
+	var disabledEnvelope struct {
+		Data model.AStockRecommendationSnapshot `json:"data"`
+	}
+	if err := json.Unmarshal(disabledGetRR.Body.Bytes(), &disabledEnvelope); err != nil {
+		t.Fatalf("decode disabled snapshot response error: %v", err)
+	}
+	if !disabledEnvelope.Data.Found || disabledEnvelope.Data.FundFlowFilterEnabled || disabledEnvelope.Data.GeneratedCount != 2 || !strings.Contains(disabledEnvelope.Data.RecommendationsJSON, "000001") {
+		t.Fatalf("expected disabled fund-flow exact snapshot, got %+v", disabledEnvelope.Data)
 	}
 }
 

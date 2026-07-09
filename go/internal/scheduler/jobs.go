@@ -463,6 +463,16 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 			},
 		}, "AStockDailyBacktestRefresh", "0 5 15 * * ?"),
 		withJobMeta(jobDefinition{
+			Name:        "a-stock-exact-snapshot-backfill",
+			Group:       "a-stock",
+			Description: "A股精确快照补齐：按资金过滤开启/关闭状态自动生成缺失快照，页面日期切换保持只读",
+			Interval:    24 * time.Hour,
+			Enabled:     true,
+			Run: func(ctx context.Context) error {
+				return w.runAStockExactSnapshotBackfill(ctx)
+			},
+		}, "AStockExactSnapshotBackfill", "0 29 2 * * ?; 0 29 9 * * ?; 0 59 12 * * ?; 0 35 15 * * ?"),
+		withJobMeta(jobDefinition{
 			Name:        "a-stock-auction-crawl",
 			Group:       "a-stock",
 			Description: "A股集合竞价金额：09:26 通过 AKShare 抓取全市场 09:25 集合竞价成交金额",

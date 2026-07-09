@@ -27,6 +27,7 @@ type Worker struct {
 	crawlClient *resty.Client
 	store       *sqlitestore.Store
 	mu          sync.Mutex
+	aStockMu    sync.Mutex
 }
 
 func NewWorker(cfg config.Config) *Worker {

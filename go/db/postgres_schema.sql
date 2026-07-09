@@ -514,7 +514,7 @@ CREATE TABLE IF NOT EXISTS a_stock_recommendation_snapshots (
 	empty_reason TEXT NOT NULL DEFAULT '',
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL,
-	PRIMARY KEY (strategy_date, period, ignore_recent)
+	PRIMARY KEY (strategy_date, period, ignore_recent, limit_up_filter_enabled, today_market_filter_enabled, fund_flow_filter_enabled)
 );
 
 CREATE TABLE IF NOT EXISTS a_stock_recommendation_selections (

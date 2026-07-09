@@ -604,7 +604,7 @@ CREATE TABLE IF NOT EXISTS a_stock_recommendation_snapshots (
 	empty_reason TEXT NOT NULL DEFAULT '',
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL,
-	PRIMARY KEY (strategy_date, period, ignore_recent)
+	PRIMARY KEY (strategy_date, period, ignore_recent, limit_up_filter_enabled, today_market_filter_enabled, fund_flow_filter_enabled)
 );
 
 CREATE TABLE IF NOT EXISTS a_stock_recommendation_selections (
@@ -888,6 +888,10 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_action_created_at ON audit_logs(action
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN fund_flow_filtered INTEGER NOT NULL DEFAULT 0`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN fund_flow_missing_count INTEGER NOT NULL DEFAULT 0`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN news_summary_json TEXT NOT NULL DEFAULT ''`)
+	if err := s.migrateAStockRecommendationSnapshotPrimaryKey(ctx); err != nil {
+		return err
+	}
+	_, _ = s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_a_stock_recommendations_updated ON a_stock_recommendation_snapshots(updated_at DESC)`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_selections ADD COLUMN entry_time TEXT NOT NULL DEFAULT ''`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_sector_fund_flows ADD COLUMN source_count INTEGER NOT NULL DEFAULT 1`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_sector_fund_flows ADD COLUMN source_types TEXT NOT NULL DEFAULT ''`)
@@ -908,6 +912,92 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_action_created_at ON audit_logs(action
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE warning_settings ADD COLUMN weekend_warning INTEGER NOT NULL DEFAULT 0`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE warning_settings ADD COLUMN warning_interval TEXT NOT NULL DEFAULT ''`)
 	return nil
+}
+
+func (s *Store) migrateAStockRecommendationSnapshotPrimaryKey(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(a_stock_recommendation_snapshots)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	pkColumns := make(map[int]string)
+	for rows.Next() {
+		var cid int
+		var name string
+		var columnType string
+		var notNull int
+		var defaultValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		if pk > 0 {
+			pkColumns[pk] = name
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	expected := []string{"strategy_date", "period", "ignore_recent", "limit_up_filter_enabled", "today_market_filter_enabled", "fund_flow_filter_enabled"}
+	if len(pkColumns) == len(expected) {
+		matches := true
+		for i, name := range expected {
+			if pkColumns[i+1] != name {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			return nil
+		}
+	}
+	_, err = s.db.ExecContext(ctx, `
+BEGIN;
+CREATE TABLE IF NOT EXISTS a_stock_recommendation_snapshots_new (
+	strategy_date TEXT NOT NULL,
+	period TEXT NOT NULL,
+	ignore_recent INTEGER NOT NULL DEFAULT 0,
+	recommendations_json TEXT NOT NULL DEFAULT '[]',
+	backtests_json TEXT NOT NULL DEFAULT '[]',
+	news_summary_json TEXT NOT NULL DEFAULT '',
+	backtest_status TEXT NOT NULL DEFAULT '',
+	generated_count INTEGER NOT NULL DEFAULT 0,
+	recent_filtered INTEGER NOT NULL DEFAULT 0,
+	same_day_morning_filtered INTEGER NOT NULL DEFAULT 0,
+	limit_up_filter_enabled INTEGER NOT NULL DEFAULT 0,
+	limit_up_filtered INTEGER NOT NULL DEFAULT 0,
+	today_market_filter_enabled INTEGER NOT NULL DEFAULT 0,
+	no_today_market_count INTEGER NOT NULL DEFAULT 0,
+	fund_flow_filter_enabled INTEGER NOT NULL DEFAULT 0,
+	fund_flow_filtered INTEGER NOT NULL DEFAULT 0,
+	fund_flow_missing_count INTEGER NOT NULL DEFAULT 0,
+	market_candidate_status TEXT NOT NULL DEFAULT '',
+	market_candidate_count INTEGER NOT NULL DEFAULT 0,
+	auction_amount_label TEXT NOT NULL DEFAULT '',
+	empty_reason TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	PRIMARY KEY (strategy_date, period, ignore_recent, limit_up_filter_enabled, today_market_filter_enabled, fund_flow_filter_enabled)
+);
+INSERT OR REPLACE INTO a_stock_recommendation_snapshots_new (
+	strategy_date, period, ignore_recent, recommendations_json, backtests_json, news_summary_json, backtest_status,
+	generated_count, recent_filtered, same_day_morning_filtered, limit_up_filter_enabled,
+	limit_up_filtered, today_market_filter_enabled, no_today_market_count, fund_flow_filter_enabled,
+	fund_flow_filtered, fund_flow_missing_count, market_candidate_status,
+	market_candidate_count, auction_amount_label, empty_reason, created_at, updated_at
+)
+SELECT
+	strategy_date, period, ignore_recent, recommendations_json, backtests_json, news_summary_json, backtest_status,
+	generated_count, recent_filtered, same_day_morning_filtered, limit_up_filter_enabled,
+	limit_up_filtered, today_market_filter_enabled, no_today_market_count, fund_flow_filter_enabled,
+	fund_flow_filtered, fund_flow_missing_count, market_candidate_status,
+	market_candidate_count, auction_amount_label, empty_reason, created_at, updated_at
+FROM a_stock_recommendation_snapshots
+ORDER BY updated_at ASC;
+DROP TABLE a_stock_recommendation_snapshots;
+ALTER TABLE a_stock_recommendation_snapshots_new RENAME TO a_stock_recommendation_snapshots;
+COMMIT;`)
+	return err
 }
 
 func (s *Store) migratePostgres(ctx context.Context) error {
@@ -943,6 +1033,9 @@ func (s *Store) migratePostgres(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN IF NOT EXISTS news_summary_json TEXT NOT NULL DEFAULT ''`); err != nil {
 		return err
 	}
+	if err := s.migratePostgresAStockRecommendationSnapshotPrimaryKey(ctx); err != nil {
+		return err
+	}
 	if _, err := s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_selections ADD COLUMN IF NOT EXISTS entry_time TEXT NOT NULL DEFAULT ''`); err != nil {
 		return err
 	}
@@ -956,6 +1049,30 @@ func (s *Store) migratePostgres(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+func (s *Store) migratePostgresAStockRecommendationSnapshotPrimaryKey(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `
+DO $$
+DECLARE
+	current_pk TEXT;
+BEGIN
+	SELECT string_agg(pk.attname, ',' ORDER BY pk.ord)
+	INTO current_pk
+	FROM (
+		SELECT a.attname, k.ord
+		FROM pg_index i
+		JOIN pg_class t ON t.oid = i.indrelid
+		CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord)
+		JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+		WHERE t.relname = 'a_stock_recommendation_snapshots' AND i.indisprimary
+	) pk;
+	IF current_pk IS DISTINCT FROM 'strategy_date,period,ignore_recent,limit_up_filter_enabled,today_market_filter_enabled,fund_flow_filter_enabled' THEN
+		ALTER TABLE a_stock_recommendation_snapshots DROP CONSTRAINT IF EXISTS a_stock_recommendation_snapshots_pkey;
+		ALTER TABLE a_stock_recommendation_snapshots ADD PRIMARY KEY (strategy_date, period, ignore_recent, limit_up_filter_enabled, today_market_filter_enabled, fund_flow_filter_enabled);
+	END IF;
+END $$;`)
+	return err
 }
 
 func (s *Store) StartCrawlRun(ctx context.Context, sourceType string, startedAt time.Time) (int64, error) {

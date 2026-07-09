@@ -10,6 +10,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -102,6 +103,223 @@ func TestGenerateAStockRecommendationSnapshotUsesDedicatedTimeout(t *testing.T) 
 	if !sawToken.Load() {
 		t.Fatal("expected generate request to include service token")
 	}
+}
+
+func TestRunAStockExactSnapshotBackfillGeneratesMissingFundFlowVariant(t *testing.T) {
+	akshare := newAStockTradingDayStatusTestServer(t, map[string]string{
+		"2026-06-16": "2026-06-15",
+	})
+	defer akshare.Close()
+
+	var mu sync.Mutex
+	contentQueries := make([]string, 0)
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/a-stock/recommendations" {
+			t.Fatalf("unexpected content request: %s", r.URL.String())
+		}
+		query := r.URL.Query()
+		if query.Get("date") != "2026-06-16" || query.Get("period") != "morning" {
+			t.Fatalf("unexpected snapshot query: %s", r.URL.RawQuery)
+		}
+		if query.Get("limit_up_filter_enabled") != "0" || query.Get("today_market_filter_enabled") != "0" {
+			t.Fatalf("expected exact morning filter query, got %s", r.URL.RawQuery)
+		}
+		fundFlowEnabled := query.Get("fund_flow_filter_enabled")
+		if fundFlowEnabled != "0" && fundFlowEnabled != "1" {
+			t.Fatalf("expected exact fund flow filter query, got %s", r.URL.RawQuery)
+		}
+		mu.Lock()
+		contentQueries = append(contentQueries, r.URL.RawQuery)
+		mu.Unlock()
+		writeSchedulerTestEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: fundFlowEnabled == "1"})
+	}))
+	defer content.Close()
+
+	generated := make([]string, 0)
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/internal/a-stock/recommendations/generate" {
+			t.Fatalf("unexpected gateway request: %s %s", r.Method, r.URL.String())
+		}
+		mu.Lock()
+		generated = append(generated, r.URL.RawQuery)
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer gateway.Close()
+
+	worker := NewWorker(config.Config{
+		AStockAuctionURL:      akshare.URL,
+		ContentURL:            content.URL,
+		GatewayWebURL:         gateway.URL,
+		HTTPTimeout:           time.Second,
+		SchedulerCrawlTimeout: time.Second,
+	})
+
+	now := time.Date(2026, 6, 16, 9, 29, 0, 0, aStockLocation())
+	if err := worker.runAStockExactSnapshotBackfillAt(context.Background(), now, 12); err != nil {
+		t.Fatalf("runAStockExactSnapshotBackfillAt error: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(contentQueries) != 2 {
+		t.Fatalf("expected two exact snapshot checks, got %d: %v", len(contentQueries), contentQueries)
+	}
+	if len(generated) != 1 {
+		t.Fatalf("expected one missing snapshot generation, got %d: %v", len(generated), generated)
+	}
+	got := generated[0]
+	for _, want := range []string{"date=2026-06-16", "period=morning", "phase=preopen", "ignore_fund_flow=1"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected generated query to contain %s, got %s", want, got)
+		}
+	}
+}
+
+func TestRunAStockExactSnapshotBackfillSkipsExistingSnapshots(t *testing.T) {
+	akshare := newAStockTradingDayStatusTestServer(t, map[string]string{
+		"2026-06-16": "2026-06-15",
+	})
+	defer akshare.Close()
+
+	contentCalls := 0
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/a-stock/recommendations" {
+			t.Fatalf("unexpected content request: %s", r.URL.String())
+		}
+		contentCalls++
+		writeSchedulerTestEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: true})
+	}))
+	defer content.Close()
+
+	gatewayCalls := 0
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gatewayCalls++
+		t.Fatalf("gateway should not be called for existing snapshots: %s", r.URL.String())
+	}))
+	defer gateway.Close()
+
+	worker := NewWorker(config.Config{
+		AStockAuctionURL:      akshare.URL,
+		ContentURL:            content.URL,
+		GatewayWebURL:         gateway.URL,
+		HTTPTimeout:           time.Second,
+		SchedulerCrawlTimeout: time.Second,
+	})
+
+	now := time.Date(2026, 6, 16, 9, 29, 0, 0, aStockLocation())
+	if err := worker.runAStockExactSnapshotBackfillAt(context.Background(), now, 12); err != nil {
+		t.Fatalf("runAStockExactSnapshotBackfillAt error: %v", err)
+	}
+	if contentCalls != 2 || gatewayCalls != 0 {
+		t.Fatalf("expected two snapshot checks and no generation, got content=%d gateway=%d", contentCalls, gatewayCalls)
+	}
+}
+
+func TestRunAStockExactSnapshotBackfillStopsAtPerRunLimit(t *testing.T) {
+	akshare := newAStockTradingDayStatusTestServer(t, map[string]string{
+		"2026-06-16": "2026-06-15",
+		"2026-06-15": "2026-06-12",
+		"2026-06-12": "2026-06-11",
+		"2026-06-11": "2026-06-10",
+		"2026-06-10": "2026-06-09",
+		"2026-06-09": "2026-06-08",
+	})
+	defer akshare.Close()
+
+	contentCalls := 0
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/a-stock/recommendations" {
+			t.Fatalf("unexpected content request: %s", r.URL.String())
+		}
+		contentCalls++
+		writeSchedulerTestEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
+	}))
+	defer content.Close()
+
+	generated := make([]string, 0)
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/internal/a-stock/recommendations/generate" {
+			t.Fatalf("unexpected gateway request: %s %s", r.Method, r.URL.String())
+		}
+		generated = append(generated, r.URL.RawQuery)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer gateway.Close()
+
+	worker := NewWorker(config.Config{
+		AStockAuctionURL:      akshare.URL,
+		ContentURL:            content.URL,
+		GatewayWebURL:         gateway.URL,
+		HTTPTimeout:           time.Second,
+		SchedulerCrawlTimeout: time.Second,
+	})
+
+	now := time.Date(2026, 6, 16, 15, 35, 0, 0, aStockLocation())
+	if err := worker.runAStockExactSnapshotBackfillAt(context.Background(), now, 3); err != nil {
+		t.Fatalf("runAStockExactSnapshotBackfillAt error: %v", err)
+	}
+	if contentCalls != 3 || len(generated) != 3 {
+		t.Fatalf("expected generation to stop at limit, got content=%d generated=%d queries=%v", contentCalls, len(generated), generated)
+	}
+	if !strings.Contains(generated[0], "period=morning") || strings.Contains(generated[0], "ignore_fund_flow=1") {
+		t.Fatalf("expected first generated snapshot to be morning with fund flow enabled, got %s", generated[0])
+	}
+	if !strings.Contains(generated[1], "period=morning") || !strings.Contains(generated[1], "ignore_fund_flow=1") {
+		t.Fatalf("expected second generated snapshot to be morning with fund flow disabled, got %s", generated[1])
+	}
+	if !strings.Contains(generated[2], "period=afternoon") || strings.Contains(generated[2], "ignore_fund_flow=1") {
+		t.Fatalf("expected third generated snapshot to be afternoon with fund flow enabled, got %s", generated[2])
+	}
+}
+
+func TestRunAStockExactSnapshotBackfillSkipsWhenRecommendationTaskRunning(t *testing.T) {
+	worker := NewWorker(config.Config{})
+	worker.aStockMu.Lock()
+	defer worker.aStockMu.Unlock()
+
+	now := time.Date(2026, 6, 16, 9, 29, 0, 0, aStockLocation())
+	err := worker.runAStockExactSnapshotBackfillAt(context.Background(), now, 12)
+	var skipped jobSkippedError
+	if !errors.As(err, &skipped) {
+		t.Fatalf("expected skipped error while a-stock task lock is held, got %v", err)
+	}
+	if !strings.Contains(skipped.Error(), "another a-stock recommendation task is running") {
+		t.Fatalf("unexpected skipped message: %s", skipped.Error())
+	}
+}
+
+func newAStockTradingDayStatusTestServer(t *testing.T, previousByDate map[string]string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/a-stock/trading-day" {
+			t.Fatalf("unexpected trading-day request: %s", r.URL.String())
+		}
+		date := r.URL.Query().Get("date")
+		previous, ok := previousByDate[date]
+		if !ok {
+			t.Fatalf("unexpected trading-day date: %s", r.URL.RawQuery)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"date":                 date,
+			"is_trading_day":       true,
+			"previous_trading_day": previous,
+			"latest_trading_day":   date,
+			"next_trading_day":     "",
+			"source":               "test",
+			"reason":               "trading_day",
+			"message":              "open",
+		})
+	}))
+}
+
+func writeSchedulerTestEnvelope(w http.ResponseWriter, code int, message string, data any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"code":    code,
+		"message": message,
+		"data":    data,
+	})
 }
 
 func TestRunCrawlIncludesCrawlerErrorMessage(t *testing.T) {
@@ -254,10 +472,10 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	if err := json.Unmarshal(listRR.Body.Bytes(), &listEnvelope); err != nil {
 		t.Fatalf("unmarshal jobs list: %v", err)
 	}
-	if len(listEnvelope.Data) != 42 {
-		t.Fatalf("expected 42 scheduler jobs, got %d", len(listEnvelope.Data))
+	if len(listEnvelope.Data) != 43 {
+		t.Fatalf("expected 43 scheduler jobs, got %d", len(listEnvelope.Data))
 	}
-	var heartbeatJob, hotJob, eastmoneyJob, eastmoneyFullJob, jin10FullJob, wallStreetCNJob, clsJob, sinaJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningNewsCrawlJob, aStockMorningPreviewJob, aStockMorningJob, aStockAfternoonPreviewJob, aStockMiddayNewsCrawlJob, aStockAfternoonJob, aStockAfternoonOpenRefreshJob, aStockDailyBacktestRefreshJob, aStockAuctionJob, aStockSectorFundFlowJob, aStockHoldingsJob, stockResearchJob, investorRelationsJob Job
+	var heartbeatJob, hotJob, eastmoneyJob, eastmoneyFullJob, jin10FullJob, wallStreetCNJob, clsJob, sinaJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningNewsCrawlJob, aStockMorningPreviewJob, aStockMorningJob, aStockAfternoonPreviewJob, aStockMiddayNewsCrawlJob, aStockAfternoonJob, aStockAfternoonOpenRefreshJob, aStockDailyBacktestRefreshJob, aStockExactSnapshotBackfillJob, aStockAuctionJob, aStockSectorFundFlowJob, aStockHoldingsJob, stockResearchJob, investorRelationsJob Job
 	aStockSectorFundFlowJobCount := 0
 	for _, job := range listEnvelope.Data {
 		switch job.Name {
@@ -305,6 +523,8 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 			aStockAfternoonOpenRefreshJob = job
 		case "a-stock-daily-backtest-refresh":
 			aStockDailyBacktestRefreshJob = job
+		case "a-stock-exact-snapshot-backfill":
+			aStockExactSnapshotBackfillJob = job
 		case "a-stock-auction-crawl":
 			aStockAuctionJob = job
 		case "a-stock-sector-fund-flow-crawl":
@@ -377,6 +597,9 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	}
 	if aStockDailyBacktestRefreshJob.Cron != "0 5 15 * * ?" || aStockDailyBacktestRefreshJob.NextRunAt == nil {
 		t.Fatalf("expected A股 daily backtest refresh cron metadata, got %+v", aStockDailyBacktestRefreshJob)
+	}
+	if aStockExactSnapshotBackfillJob.Cron != "0 29 2 * * ?; 0 29 9 * * ?; 0 59 12 * * ?; 0 35 15 * * ?" || aStockExactSnapshotBackfillJob.NextRunAt == nil {
+		t.Fatalf("expected A股 exact snapshot backfill cron metadata, got %+v", aStockExactSnapshotBackfillJob)
 	}
 	if aStockAuctionJob.Cron != "0 26 9 * * ?" || aStockAuctionJob.Enabled {
 		t.Fatalf("expected A股 auction crawl disabled by default with 09:26 cron, got %+v", aStockAuctionJob)

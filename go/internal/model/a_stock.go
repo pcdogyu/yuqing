@@ -107,6 +107,20 @@ type AStockRecommendationSnapshot struct {
 	UpdatedAt                time.Time `json:"updated_at"`
 }
 
+type AStockRecommendationSnapshotFilter struct {
+	IgnoreRecent                bool
+	HasLimitUpFilterEnabled     bool
+	LimitUpFilterEnabled        bool
+	HasTodayMarketFilterEnabled bool
+	TodayMarketFilterEnabled    bool
+	HasFundFlowFilterEnabled    bool
+	FundFlowFilterEnabled       bool
+}
+
+func (f AStockRecommendationSnapshotFilter) Exact() bool {
+	return f.HasLimitUpFilterEnabled && f.HasTodayMarketFilterEnabled && f.HasFundFlowFilterEnabled
+}
+
 type AStockRecommendationSnapshotUpsertResult struct {
 	Inserted int `json:"inserted"`
 	Updated  int `json:"updated"`

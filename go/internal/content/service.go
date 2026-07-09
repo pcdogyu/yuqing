@@ -104,6 +104,7 @@ type Store interface {
 	ListAStockAuctionAmounts(rctx context.Context, filter model.AStockAuctionFilter) (model.AStockAuctionListResult, error)
 	UpsertAStockRecommendationSnapshot(rctx context.Context, snapshot model.AStockRecommendationSnapshot) (model.AStockRecommendationSnapshotUpsertResult, error)
 	GetAStockRecommendationSnapshot(rctx context.Context, strategyDate string, period string, ignoreRecent bool) (model.AStockRecommendationSnapshot, bool, error)
+	GetAStockRecommendationSnapshotWithFilter(rctx context.Context, strategyDate string, period string, filter model.AStockRecommendationSnapshotFilter) (model.AStockRecommendationSnapshot, bool, error)
 	UpsertAStockRecommendationSelections(rctx context.Context, selectionSet model.AStockRecommendationSelectionSet) (model.AStockRecommendationSelectionUpsertResult, error)
 	ListAStockRecommendationSelections(rctx context.Context, strategyDate string, period string) (model.AStockRecommendationSelectionListResult, error)
 	ListAStockRecommendationLatestDates(rctx context.Context, strategyDate string, period string, codes []string) (model.AStockRecommendationLatestDateListResult, error)
@@ -695,7 +696,16 @@ func (s *Service) handleGetAStockRecommendationSnapshot(w http.ResponseWriter, r
 		return
 	}
 	ignoreRecent := normalizeBoolQuery(r.URL.Query().Get("ignore_recent"))
-	snapshot, found, err := s.store.GetAStockRecommendationSnapshot(r.Context(), date, period, ignoreRecent)
+	filter := model.AStockRecommendationSnapshotFilter{
+		IgnoreRecent:                ignoreRecent,
+		HasLimitUpFilterEnabled:     hasQueryParam(r.URL.Query(), "limit_up_filter_enabled"),
+		LimitUpFilterEnabled:        normalizeBoolQuery(r.URL.Query().Get("limit_up_filter_enabled")),
+		HasTodayMarketFilterEnabled: hasQueryParam(r.URL.Query(), "today_market_filter_enabled"),
+		TodayMarketFilterEnabled:    normalizeBoolQuery(r.URL.Query().Get("today_market_filter_enabled")),
+		HasFundFlowFilterEnabled:    hasQueryParam(r.URL.Query(), "fund_flow_filter_enabled"),
+		FundFlowFilterEnabled:       normalizeBoolQuery(r.URL.Query().Get("fund_flow_filter_enabled")),
+	}
+	snapshot, found, err := s.store.GetAStockRecommendationSnapshotWithFilter(r.Context(), date, period, filter)
 	if err != nil {
 		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
 		return
@@ -819,6 +829,11 @@ func normalizeBoolQuery(raw string) bool {
 	default:
 		return false
 	}
+}
+
+func hasQueryParam(values url.Values, name string) bool {
+	_, ok := values[name]
+	return ok
 }
 
 func (s *Service) handleListAStockSectorFundFlows(w http.ResponseWriter, r *http.Request) {

@@ -66,6 +66,23 @@ type aStockBacktestRefreshSummary struct {
 	Failures  []string
 }
 
+const aStockExactSnapshotBackfillMaxPerRun = 12
+
+type aStockExactSnapshotBackfillTarget struct {
+	StrategyDate   string
+	Period         string
+	Phase          string
+	IgnoreFundFlow bool
+}
+
+type aStockExactSnapshotBackfillSummary struct {
+	Generated int
+	Existing  int
+	Skipped   int
+	Failed    int
+	Failures  []string
+}
+
 func (w *Worker) runAStockAfternoonOpenRefresh(ctx context.Context) error {
 	return w.runAStockAfternoonOpenRefreshForDate(ctx, time.Now().In(aStockLocation()).Format("2006-01-02"))
 }
@@ -83,6 +100,11 @@ func (w *Worker) runAStockDailyBacktestRefreshForDate(ctx context.Context, strat
 }
 
 func (w *Worker) runAStockBacktestRefreshForDate(ctx context.Context, strategyDate string, previousTradingDays int, periods []string, label string) error {
+	unlock, lockErr := w.tryLockAStockRecommendationGeneration(label)
+	if lockErr != nil {
+		return lockErr
+	}
+	defer unlock()
 	strategyDate = normalizeAStockRecommendationDate(strategyDate)
 	if strategyDate == "" {
 		strategyDate = time.Now().In(aStockLocation()).Format("2006-01-02")
@@ -135,6 +157,129 @@ func (w *Worker) runAStockBacktestRefreshForDate(ctx context.Context, strategyDa
 		return fmt.Errorf("%s failed for %s: refreshed=%d missing=%d failed=%d: %s", label, nonEmpty(tradingDay.Date, strategyDate), summary.Refreshed, summary.Missing, summary.Failed, strings.Join(summary.Failures, "; "))
 	}
 	return nil
+}
+
+func (w *Worker) runAStockExactSnapshotBackfill(ctx context.Context) error {
+	return w.runAStockExactSnapshotBackfillAt(ctx, time.Now().In(aStockLocation()), aStockExactSnapshotBackfillMaxPerRun)
+}
+
+func (w *Worker) runAStockExactSnapshotBackfillAt(ctx context.Context, now time.Time, maxGenerate int) error {
+	unlock, lockErr := w.tryLockAStockRecommendationGeneration("a-stock exact snapshot backfill")
+	if lockErr != nil {
+		return lockErr
+	}
+	defer unlock()
+	targets, err := w.aStockExactSnapshotBackfillTargets(ctx, now)
+	if err != nil {
+		return err
+	}
+	if len(targets) == 0 {
+		return jobSkippedError{message: "a-stock exact snapshot backfill skipped: no targets"}
+	}
+	if maxGenerate <= 0 {
+		maxGenerate = aStockExactSnapshotBackfillMaxPerRun
+	}
+	summary := aStockExactSnapshotBackfillSummary{Failures: make([]string, 0)}
+	for _, target := range targets {
+		if summary.Generated >= maxGenerate {
+			summary.Skipped++
+			continue
+		}
+		exists, err := w.hasAStockExactRecommendationSnapshot(ctx, target)
+		if err != nil {
+			summary.Failed++
+			summary.Failures = append(summary.Failures, fmt.Sprintf("%s/%s ignore_fund_flow=%t: %v", target.StrategyDate, target.Period, target.IgnoreFundFlow, err))
+			continue
+		}
+		if exists {
+			summary.Existing++
+			continue
+		}
+		if err := w.generateAStockRecommendationSnapshotWithModeAndFundFlow(ctx, target.StrategyDate, target.Period, target.Phase, "", target.IgnoreFundFlow); err != nil {
+			summary.Failed++
+			summary.Failures = append(summary.Failures, fmt.Sprintf("%s/%s ignore_fund_flow=%t: %v", target.StrategyDate, target.Period, target.IgnoreFundFlow, err))
+			continue
+		}
+		summary.Generated++
+	}
+	log.Info().
+		Int("generated", summary.Generated).
+		Int("existing", summary.Existing).
+		Int("skipped", summary.Skipped).
+		Int("failed", summary.Failed).
+		Msg("a-stock exact snapshot backfill finished")
+	if summary.Generated == 0 && summary.Existing == 0 && summary.Failed == 0 {
+		return jobSkippedError{message: fmt.Sprintf("a-stock exact snapshot backfill skipped: generated=0 existing=0 skipped=%d", summary.Skipped)}
+	}
+	if summary.Failed > 0 {
+		return fmt.Errorf("a-stock exact snapshot backfill failed: generated=%d existing=%d skipped=%d failed=%d: %s", summary.Generated, summary.Existing, summary.Skipped, summary.Failed, strings.Join(summary.Failures, "; "))
+	}
+	return nil
+}
+
+func (w *Worker) aStockExactSnapshotBackfillTargets(ctx context.Context, now time.Time) ([]aStockExactSnapshotBackfillTarget, error) {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	current := now.In(aStockLocation())
+	periods := []string{"morning", "afternoon"}
+	phase := "final"
+	startDate := current.Format("2006-01-02")
+	previousTradingDays := 0
+	switch current.Hour() {
+	case 2:
+		status, err := w.loadAStockTradingDayStatus(ctx, startDate)
+		if err != nil {
+			return nil, err
+		}
+		startDate = strings.TrimSpace(status.PreviousTradingDay)
+		if startDate == "" && !status.IsTradingDay {
+			startDate = strings.TrimSpace(status.LatestTradingDay)
+		}
+		if startDate == "" {
+			return nil, jobSkippedError{message: "a-stock exact snapshot backfill skipped: previous trading day unavailable"}
+		}
+		previousTradingDays = 6
+	case 9:
+		periods = []string{"morning"}
+		phase = "preopen"
+	case 12:
+		periods = []string{"afternoon"}
+		phase = "preopen"
+	case 15:
+		previousTradingDays = 6
+	default:
+		previousTradingDays = 0
+	}
+	status, err := w.loadAStockTradingDayStatus(ctx, startDate)
+	if err != nil {
+		return nil, err
+	}
+	if !status.IsTradingDay {
+		message := strings.TrimSpace(status.Message)
+		if message == "" {
+			message = "A-share market is closed; stock recommendations are disabled."
+		}
+		return nil, jobSkippedError{message: fmt.Sprintf("a-stock exact snapshot backfill skipped for %s: %s", nonEmpty(status.Date, startDate), message)}
+	}
+	dates, err := w.aStockBacktestRefreshDates(ctx, status, previousTradingDays)
+	if err != nil {
+		return nil, err
+	}
+	targets := make([]aStockExactSnapshotBackfillTarget, 0, len(dates)*len(periods)*2)
+	for _, date := range dates {
+		for _, period := range periods {
+			for _, ignoreFundFlow := range []bool{false, true} {
+				targets = append(targets, aStockExactSnapshotBackfillTarget{
+					StrategyDate:   date,
+					Period:         period,
+					Phase:          phase,
+					IgnoreFundFlow: ignoreFundFlow,
+				})
+			}
+		}
+	}
+	return targets, nil
 }
 
 func (w *Worker) aStockBacktestRefreshDates(ctx context.Context, tradingDay aStockTradingDayStatus, previousTradingDays int) ([]string, error) {
@@ -231,15 +376,36 @@ func (w *Worker) loadAStockRecommendationSelections(ctx context.Context, strateg
 }
 
 func (w *Worker) loadAStockRecommendationSnapshot(ctx context.Context, strategyDate string, period string) (model.AStockRecommendationSnapshot, error) {
+	return w.loadAStockRecommendationSnapshotWithExactFilters(ctx, strategyDate, period, false, false, false, false, false)
+}
+
+func (w *Worker) hasAStockExactRecommendationSnapshot(ctx context.Context, target aStockExactSnapshotBackfillTarget) (bool, error) {
+	period := normalizeAStockRecommendationPeriod(target.Period)
+	snapshot, err := w.loadAStockRecommendationSnapshotWithExactFilters(ctx, target.StrategyDate, period, true, false, period == "afternoon", false, !target.IgnoreFundFlow)
+	if err != nil {
+		return false, err
+	}
+	return snapshot.Found, nil
+}
+
+func (w *Worker) loadAStockRecommendationSnapshotWithExactFilters(ctx context.Context, strategyDate string, period string, exact bool, ignoreRecent bool, limitUpFilterEnabled bool, todayMarketFilterEnabled bool, fundFlowFilterEnabled bool) (model.AStockRecommendationSnapshot, error) {
 	baseURL := strings.TrimRight(strings.TrimSpace(w.cfg.ContentURL), "/")
 	if baseURL == "" {
 		return model.AStockRecommendationSnapshot{}, fmt.Errorf("YUQING_CONTENT_URL not configured")
 	}
-	resp, err := w.crawlClient.R().
+	req := w.crawlClient.R().
 		SetContext(ctx).
 		SetQueryParam("date", normalizeAStockRecommendationDate(strategyDate)).
-		SetQueryParam("period", normalizeAStockRecommendationPeriod(period)).
-		Get(baseURL + "/api/v1/a-stock/recommendations")
+		SetQueryParam("period", normalizeAStockRecommendationPeriod(period))
+	if ignoreRecent {
+		req.SetQueryParam("ignore_recent", "1")
+	}
+	if exact {
+		req.SetQueryParam("limit_up_filter_enabled", boolQuery(limitUpFilterEnabled))
+		req.SetQueryParam("today_market_filter_enabled", boolQuery(todayMarketFilterEnabled))
+		req.SetQueryParam("fund_flow_filter_enabled", boolQuery(fundFlowFilterEnabled))
+	}
+	resp, err := req.Get(baseURL + "/api/v1/a-stock/recommendations")
 	if err != nil {
 		return model.AStockRecommendationSnapshot{}, err
 	}
@@ -257,6 +423,13 @@ func (w *Worker) loadAStockRecommendationSnapshot(ctx context.Context, strategyD
 		return model.AStockRecommendationSnapshot{}, err
 	}
 	return envelope.Data, nil
+}
+
+func boolQuery(value bool) string {
+	if value {
+		return "1"
+	}
+	return "0"
 }
 
 func aStockSnapshotHasRecommendations(snapshot model.AStockRecommendationSnapshot) bool {
@@ -332,6 +505,13 @@ type jobSkippedError struct {
 
 func (e jobSkippedError) Error() string {
 	return e.message
+}
+
+func (w *Worker) tryLockAStockRecommendationGeneration(label string) (func(), error) {
+	if !w.aStockMu.TryLock() {
+		return nil, jobSkippedError{message: fmt.Sprintf("%s skipped: another a-stock recommendation task is running", strings.TrimSpace(label))}
+	}
+	return w.aStockMu.Unlock, nil
 }
 
 type aStockAuctionBackfillResult struct {
@@ -1003,6 +1183,11 @@ func (w *Worker) fetchExternalAStockHoldings(ctx context.Context, period string,
 }
 
 func (w *Worker) runAStockRecommendationForDate(ctx context.Context, strategyDate string, period string, phase string) error {
+	unlock, lockErr := w.tryLockAStockRecommendationGeneration("a-stock recommendation")
+	if lockErr != nil {
+		return lockErr
+	}
+	defer unlock()
 	normalizedPhase := normalizeAStockRecommendationPhase(phase)
 	tradingDay, err := w.loadAStockTradingDayStatus(ctx, strategyDate)
 	if err != nil {
@@ -1118,6 +1303,10 @@ func (w *Worker) refreshAStockRecommendationBacktestSnapshot(ctx context.Context
 }
 
 func (w *Worker) generateAStockRecommendationSnapshotWithMode(ctx context.Context, strategyDate string, period string, phase string, refreshMode string) error {
+	return w.generateAStockRecommendationSnapshotWithModeAndFundFlow(ctx, strategyDate, period, phase, refreshMode, false)
+}
+
+func (w *Worker) generateAStockRecommendationSnapshotWithModeAndFundFlow(ctx context.Context, strategyDate string, period string, phase string, refreshMode string, ignoreFundFlow bool) error {
 	baseURL := strings.TrimRight(strings.TrimSpace(w.cfg.GatewayWebURL), "/")
 	if baseURL == "" {
 		return fmt.Errorf("YUQING_GATEWAY_URL not configured")
@@ -1129,6 +1318,9 @@ func (w *Worker) generateAStockRecommendationSnapshotWithMode(ctx context.Contex
 		SetQueryParam("phase", normalizeAStockRecommendationPhase(phase))
 	if strings.TrimSpace(refreshMode) != "" {
 		req.SetQueryParam("refresh_mode", strings.TrimSpace(refreshMode))
+	}
+	if ignoreFundFlow {
+		req.SetQueryParam("ignore_fund_flow", "1")
 	}
 	resp, err := req.Post(baseURL + "/internal/a-stock/recommendations/generate")
 	if err != nil {

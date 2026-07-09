@@ -34,7 +34,8 @@ func (s *Store) UpsertAStockRecommendationSnapshot(ctx context.Context, snapshot
 		fundFlowFilterEnabled = 1
 	}
 	existed := false
-	if err := s.db.QueryRowContext(ctx, `SELECT 1 FROM a_stock_recommendation_snapshots WHERE strategy_date = ? AND period = ? AND ignore_recent = ?`, snapshot.StrategyDate, snapshot.Period, ignoreRecent).Scan(new(int)); err == nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT 1 FROM a_stock_recommendation_snapshots WHERE strategy_date = ? AND period = ? AND ignore_recent = ? AND limit_up_filter_enabled = ? AND today_market_filter_enabled = ? AND fund_flow_filter_enabled = ?`,
+		snapshot.StrategyDate, snapshot.Period, ignoreRecent, limitUpFilterEnabled, todayMarketFilterEnabled, fundFlowFilterEnabled).Scan(new(int)); err == nil {
 		existed = true
 	} else if err != sql.ErrNoRows {
 		return result, err
@@ -60,7 +61,7 @@ INSERT INTO a_stock_recommendation_snapshots (
 	fund_flow_filtered, fund_flow_missing_count, market_candidate_status,
 	market_candidate_count, auction_amount_label, empty_reason, created_at, updated_at
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(strategy_date, period, ignore_recent) DO UPDATE SET
+ON CONFLICT(strategy_date, period, ignore_recent, limit_up_filter_enabled, today_market_filter_enabled, fund_flow_filter_enabled) DO UPDATE SET
 	recommendations_json = excluded.recommendations_json,
 	backtests_json = excluded.backtests_json,
 	news_summary_json = excluded.news_summary_json,
@@ -127,10 +128,59 @@ SELECT strategy_date, period, ignore_recent, recommendations_json, backtests_jso
 	fund_flow_filtered, fund_flow_missing_count, market_candidate_status,
 	market_candidate_count, auction_amount_label, empty_reason, created_at, updated_at
 FROM a_stock_recommendation_snapshots
-WHERE strategy_date = ? AND period = ? AND ignore_recent = ?`,
+WHERE strategy_date = ? AND period = ? AND ignore_recent = ?
+ORDER BY updated_at DESC
+LIMIT 1`,
 		strings.TrimSpace(strategyDate),
 		strings.TrimSpace(period),
 		ignoreRecentInt,
+	)
+	snapshot, err := scanAStockRecommendationSnapshot(row)
+	if err != nil {
+		if errorsIsNoRows(err) {
+			return model.AStockRecommendationSnapshot{}, false, nil
+		}
+		return model.AStockRecommendationSnapshot{}, false, err
+	}
+	snapshot.Found = true
+	return snapshot, true, nil
+}
+
+func (s *Store) GetAStockRecommendationSnapshotWithFilter(ctx context.Context, strategyDate string, period string, filter model.AStockRecommendationSnapshotFilter) (model.AStockRecommendationSnapshot, bool, error) {
+	if !filter.Exact() {
+		return s.GetAStockRecommendationSnapshot(ctx, strategyDate, period, filter.IgnoreRecent)
+	}
+	ignoreRecentInt := 0
+	if filter.IgnoreRecent {
+		ignoreRecentInt = 1
+	}
+	limitUpFilterEnabled := 0
+	if filter.LimitUpFilterEnabled {
+		limitUpFilterEnabled = 1
+	}
+	todayMarketFilterEnabled := 0
+	if filter.TodayMarketFilterEnabled {
+		todayMarketFilterEnabled = 1
+	}
+	fundFlowFilterEnabled := 0
+	if filter.FundFlowFilterEnabled {
+		fundFlowFilterEnabled = 1
+	}
+	row := s.db.QueryRowContext(ctx, `
+SELECT strategy_date, period, ignore_recent, recommendations_json, backtests_json, backtest_status,
+	news_summary_json, generated_count, recent_filtered, same_day_morning_filtered, limit_up_filter_enabled,
+	limit_up_filtered, today_market_filter_enabled, no_today_market_count, fund_flow_filter_enabled,
+	fund_flow_filtered, fund_flow_missing_count, market_candidate_status,
+	market_candidate_count, auction_amount_label, empty_reason, created_at, updated_at
+FROM a_stock_recommendation_snapshots
+WHERE strategy_date = ? AND period = ? AND ignore_recent = ?
+	AND limit_up_filter_enabled = ? AND today_market_filter_enabled = ? AND fund_flow_filter_enabled = ?`,
+		strings.TrimSpace(strategyDate),
+		strings.TrimSpace(period),
+		ignoreRecentInt,
+		limitUpFilterEnabled,
+		todayMarketFilterEnabled,
+		fundFlowFilterEnabled,
 	)
 	snapshot, err := scanAStockRecommendationSnapshot(row)
 	if err != nil {

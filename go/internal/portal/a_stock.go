@@ -1330,7 +1330,7 @@ func (s *Server) loadAStockRecommendationNameRepairContext(strategyDate string, 
 		BacktestStatus:               "已补齐股票名称",
 		GeneratedRecommendationCount: 0,
 	}
-	if snapshot, ok := s.loadAStockRecommendationSnapshotWithCache(ctx.Date, ctx.Period, ignoreRecent, cache); ok {
+	if snapshot, ok := s.loadAStockRecommendationSnapshotForContextWithCache(ctx, cache); ok {
 		var recommendations []aStockRecommendation
 		if err := json.Unmarshal([]byte(normalizeAStockSnapshotJSONArray(snapshot.RecommendationsJSON)), &recommendations); err != nil {
 			return ctx, false, ctx.PeriodLabel + "推荐快照解析失败：" + err.Error()
@@ -2008,7 +2008,9 @@ func renderAStockBacktestSectionForPath(b *strings.Builder, targetPath string, s
 	mergedRows := combineAStockBacktestRows(morningCtx, afternoonCtx)
 	b.WriteString(`<div class="astock-scroll"><table class="astock-table"><tr><th>推荐窗口</th><th>股票</th><th>上午开盘价</th><th>下午开盘价</th><th>T+0 收益</th><th>T+1 收益</th><th>T+2 收益</th><th>T+3 收益</th><th>T+4 收益</th><th>T+5 收益</th><th>五日内最高收益</th><th>命中状态</th></tr>`)
 	if len(mergedRows) == 0 {
-		b.WriteString(`<tr><td colspan="12">暂无回测结果，等待行情同步。</td></tr>`)
+		b.WriteString(`<tr><td colspan="12">`)
+		b.WriteString(html.EscapeString(aStockBacktestEmptyReason(period, morningCtx, afternoonCtx)))
+		b.WriteString(`</td></tr>`)
 		b.WriteString(`</table></div></section>`)
 		return
 	}
@@ -2253,6 +2255,26 @@ func combineAStockBacktestRows(morningCtx aStockContext, afternoonCtx aStockCont
 		})
 	}
 	return rows
+}
+
+func aStockBacktestEmptyReason(period string, morningCtx aStockContext, afternoonCtx aStockContext) string {
+	switch normalizeAStockPeriod(period).Key {
+	case "morning":
+		if reason := strings.TrimSpace(morningCtx.EmptyReason); reason != "" {
+			return reason
+		}
+	case "afternoon":
+		if reason := strings.TrimSpace(afternoonCtx.EmptyReason); reason != "" {
+			return reason
+		}
+	}
+	if reason := strings.TrimSpace(morningCtx.EmptyReason); reason != "" {
+		return reason
+	}
+	if reason := strings.TrimSpace(afternoonCtx.EmptyReason); reason != "" {
+		return reason
+	}
+	return "暂无回测结果，等待行情同步。"
 }
 
 func aStockBacktestRowsForDisplay(ctx aStockContext) []aStockBacktestRow {
@@ -2515,23 +2537,12 @@ func (s *Server) loadAStockContextReadOnlyWithCache(strategyDate string, periodK
 	}
 	if !forceRecommendationRefresh {
 		if ctx, ok := s.loadAStockReadOnlySnapshotContextWithCache(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, cache); ok {
-			if !hasAStockBacktestDisplayData(ctx) && shouldUseAStockFastReadOnlyFallback(ctx.Date) {
-				fast, fastOK := s.loadAStockFastReadOnlyContextWithCache(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, true, cache)
-				if fastOK {
-					s.storeCachedAStockReadOnlyContext(cacheKey, fast)
-					return fast
-				}
-			}
 			s.storeCachedAStockReadOnlyContext(cacheKey, ctx)
 			return ctx
 		}
-		if shouldUseAStockFastReadOnlyFallback(strategyDate) {
-			fast, fastOK := s.loadAStockFastReadOnlyContextWithCache(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, true, cache)
-			if fastOK {
-				s.storeCachedAStockReadOnlyContext(cacheKey, fast)
-				return fast
-			}
-		}
+		ctx := aStockMissingExactSnapshotContext(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket)
+		s.storeCachedAStockReadOnlyContext(cacheKey, ctx)
+		return ctx
 	}
 	ctx := s.loadAStockContextWithRecommendationPhasePersistence(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, forceRecommendationRefresh, aStockRecommendationPhaseFinal, cache, true, false)
 	s.storeCachedAStockReadOnlyContext(cacheKey, ctx)
@@ -2552,29 +2563,22 @@ func (s *Server) loadAStockCompanionContextReadOnlyWithCache(strategyDate string
 	if !forceRecommendationRefresh {
 		ctx, ok := s.loadAStockReadOnlySnapshotContextWithCache(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, cache)
 		if ok {
-			if !hasAStockBacktestDisplayData(ctx) && shouldUseAStockFastReadOnlyFallback(ctx.Date) {
-				fast, fastOK := s.loadAStockFastReadOnlyContextWithCache(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, false, cache)
-				if fastOK {
-					s.storeCachedAStockReadOnlyContext(cacheKey, fast)
-					return fast
-				}
-			}
 			s.storeCachedAStockReadOnlyContext(cacheKey, ctx)
 			return ctx
 		}
-		if shouldUseAStockFastReadOnlyFallback(strategyDate) {
-			fast, fastOK := s.loadAStockFastReadOnlyContextWithCache(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, false, cache)
-			if fastOK {
-				s.storeCachedAStockReadOnlyContext(cacheKey, fast)
-				return fast
-			}
-		}
-		ctx.BacktestStatus = "无推荐快照"
-		ctx.EmptyReason = fmt.Sprintf("暂无推荐股票：%s暂无历史快照。", ctx.PeriodLabel)
+		ctx = aStockMissingExactSnapshotContext(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket)
+		s.storeCachedAStockReadOnlyContext(cacheKey, ctx)
 		return ctx
 	}
 	ctx := s.loadAStockContextWithRecommendationPhasePersistence(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, forceRecommendationRefresh, aStockRecommendationPhaseFinal, cache, false, false)
 	s.storeCachedAStockReadOnlyContext(cacheKey, ctx)
+	return ctx
+}
+
+func aStockMissingExactSnapshotContext(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool) aStockContext {
+	ctx := newAStockBaseContext(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, aStockRecommendationPhaseFinal)
+	ctx.BacktestStatus = "无推荐快照"
+	ctx.EmptyReason = fmt.Sprintf("暂无推荐股票：%s精确快照待生成，请稍后刷新。", ctx.PeriodLabel)
 	return ctx
 }
 
@@ -2592,7 +2596,7 @@ func (s *Server) loadAStockReadOnlySnapshotContextWithCache(strategyDate string,
 }
 
 func (s *Server) currentAStockSnapshotNewsSummary(ctx aStockContext, cache *aStockRequestCache) string {
-	snapshot, ok := s.loadAStockRecommendationSnapshotWithCache(ctx.Date, ctx.Period, ctx.IgnoreRecent, cache)
+	snapshot, ok := s.loadAStockRecommendationSnapshotForContextWithCache(ctx, cache)
 	if !ok {
 		return ""
 	}
@@ -2642,18 +2646,10 @@ func buildAStockSnapshotNewsSummaryJSON(ctx aStockContext) (string, error) {
 func (s *Server) loadAStockBacktestSnapshotContextWithCache(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool, cache *aStockRequestCache) aStockContext {
 	ctx := newAStockBaseContext(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, aStockRecommendationPhaseFinal)
 	if s.applyAStockBacktestSnapshotOnlyWithCache(&ctx, cache) {
-		if !hasAStockBacktestDisplayData(ctx) {
-			if fallback, ok := s.loadTodayAStockBacktestFallbackContextWithCache(ctx, cache); ok {
-				return fallback
-			}
-		}
 		return ctx
 	}
-	if fallback, ok := s.loadTodayAStockBacktestFallbackContextWithCache(ctx, cache); ok {
-		return fallback
-	}
 	ctx.BacktestStatus = "无推荐快照"
-	ctx.EmptyReason = fmt.Sprintf("暂无推荐股票：%s暂无历史快照。", ctx.PeriodLabel)
+	ctx.EmptyReason = fmt.Sprintf("暂无推荐股票：%s精确快照待生成，请稍后刷新。", ctx.PeriodLabel)
 	return ctx
 }
 
@@ -2708,7 +2704,7 @@ func (s *Server) applyAStockBacktestSnapshotOnlyWithCache(ctx *aStockContext, ca
 	if ctx == nil || strings.TrimSpace(s.cfg.ContentURL) == "" {
 		return false
 	}
-	snapshot, ok := s.loadAStockRecommendationSnapshotWithCache(ctx.Date, ctx.Period, ctx.IgnoreRecent, cache)
+	snapshot, ok := s.loadAStockRecommendationSnapshotForContextWithCache(*ctx, cache)
 	if !ok {
 		return false
 	}
@@ -3124,7 +3120,7 @@ func (s *Server) applyAStockRecommendationSnapshotRecommendationsWithCache(ctx *
 	if ctx == nil || strings.TrimSpace(s.cfg.ContentURL) == "" || !isAStockOfficialSelectionContext(ctx.IgnoreRecent, ctx.IgnoreLimitUp, ctx.IgnoreFundFlow, ctx.TodayMarketFilterEnabled) {
 		return false
 	}
-	snapshot, ok := s.loadAStockRecommendationSnapshotWithCache(ctx.Date, ctx.Period, false, cache)
+	snapshot, ok := s.loadAStockRecommendationSnapshotForContextWithCache(*ctx, cache)
 	if !ok {
 		return false
 	}
@@ -3188,7 +3184,7 @@ func (s *Server) applyAStockRecommendationSnapshotWithFreshnessCache(ctx *aStock
 	if ctx == nil || strings.TrimSpace(s.cfg.ContentURL) == "" {
 		return false
 	}
-	snapshot, ok := s.loadAStockRecommendationSnapshotWithCache(ctx.Date, ctx.Period, ctx.IgnoreRecent, cache)
+	snapshot, ok := s.loadAStockRecommendationSnapshotForContextWithCache(*ctx, cache)
 	if !ok {
 		return false
 	}
@@ -3281,12 +3277,34 @@ func (s *Server) loadAStockRecommendationSnapshot(strategyDate string, period st
 }
 
 func (s *Server) loadAStockRecommendationSnapshotWithCache(strategyDate string, period string, ignoreRecent bool, cache *aStockRequestCache) (model.AStockRecommendationSnapshot, bool) {
+	return s.loadAStockRecommendationSnapshotQueryWithCache(strategyDate, period, ignoreRecent, false, false, false, false, false, false, cache)
+}
+
+func (s *Server) loadAStockRecommendationSnapshotForContextWithCache(ctx aStockContext, cache *aStockRequestCache) (model.AStockRecommendationSnapshot, bool) {
+	return s.loadAStockRecommendationSnapshotExactWithCache(ctx.Date, ctx.Period, ctx.IgnoreRecent, ctx.LimitUpFilterEnabled, ctx.TodayMarketFilterEnabled, ctx.FundFlowFilterEnabled, cache)
+}
+
+func (s *Server) loadAStockRecommendationSnapshotExactWithCache(strategyDate string, period string, ignoreRecent bool, limitUpFilterEnabled bool, todayMarketFilterEnabled bool, fundFlowFilterEnabled bool, cache *aStockRequestCache) (model.AStockRecommendationSnapshot, bool) {
+	return s.loadAStockRecommendationSnapshotQueryWithCache(strategyDate, period, ignoreRecent, true, limitUpFilterEnabled, true, todayMarketFilterEnabled, true, fundFlowFilterEnabled, cache)
+}
+
+func (s *Server) loadAStockRecommendationSnapshotQueryWithCache(strategyDate string, period string, ignoreRecent bool, hasLimitUpFilterEnabled bool, limitUpFilterEnabled bool, hasTodayMarketFilterEnabled bool, todayMarketFilterEnabled bool, hasFundFlowFilterEnabled bool, fundFlowFilterEnabled bool, cache *aStockRequestCache) (model.AStockRecommendationSnapshot, bool) {
 	if strings.TrimSpace(s.cfg.ContentURL) == "" {
 		return model.AStockRecommendationSnapshot{}, false
 	}
 	date := normalizeAStockStrategyDate(strategyDate)
 	normalizedPeriod := normalizeAStockPeriod(period).Key
-	cacheKey := date + "|" + normalizedPeriod + "|" + fmt.Sprint(ignoreRecent)
+	cacheKey := strings.Join([]string{
+		date,
+		normalizedPeriod,
+		fmt.Sprint(ignoreRecent),
+		fmt.Sprint(hasLimitUpFilterEnabled),
+		fmt.Sprint(limitUpFilterEnabled),
+		fmt.Sprint(hasTodayMarketFilterEnabled),
+		fmt.Sprint(todayMarketFilterEnabled),
+		fmt.Sprint(hasFundFlowFilterEnabled),
+		fmt.Sprint(fundFlowFilterEnabled),
+	}, "|")
 	if cache != nil {
 		if entry, ok := cache.snapshots[cacheKey]; ok {
 			return entry.snapshot, entry.found
@@ -3295,6 +3313,15 @@ func (s *Server) loadAStockRecommendationSnapshotWithCache(strategyDate string, 
 	query := "/api/v1/a-stock/recommendations?date=" + url.QueryEscape(date) + "&period=" + url.QueryEscape(normalizedPeriod)
 	if ignoreRecent {
 		query += "&ignore_recent=1"
+	}
+	if hasLimitUpFilterEnabled {
+		query += "&limit_up_filter_enabled=" + aStockBoolQueryValue(limitUpFilterEnabled)
+	}
+	if hasTodayMarketFilterEnabled {
+		query += "&today_market_filter_enabled=" + aStockBoolQueryValue(todayMarketFilterEnabled)
+	}
+	if hasFundFlowFilterEnabled {
+		query += "&fund_flow_filter_enabled=" + aStockBoolQueryValue(fundFlowFilterEnabled)
 	}
 	snapshot := model.AStockRecommendationSnapshot{}
 	found := true
@@ -3306,6 +3333,13 @@ func (s *Server) loadAStockRecommendationSnapshotWithCache(strategyDate string, 
 		cache.snapshots[cacheKey] = aStockRecommendationSnapshotCacheEntry{snapshot: snapshot, found: found}
 	}
 	return snapshot, found
+}
+
+func aStockBoolQueryValue(value bool) string {
+	if value {
+		return "1"
+	}
+	return "0"
 }
 
 func (s *Server) loadAStockRecommendationSelections(strategyDate string, period string) (model.AStockRecommendationSelectionListResult, bool) {
@@ -3559,7 +3593,7 @@ func (s *Server) restoreAStockBacktestsFromSnapshotWithCache(ctx *aStockContext,
 	if ctx == nil || strings.TrimSpace(s.cfg.ContentURL) == "" || len(ctx.Backtests) == 0 || !aStockBacktestsNeedRestore(ctx.Backtests, ctx.BacktestStatus) {
 		return
 	}
-	snapshot, ok := s.loadAStockRecommendationSnapshotWithCache(ctx.Date, ctx.Period, ctx.IgnoreRecent, cache)
+	snapshot, ok := s.loadAStockRecommendationSnapshotForContextWithCache(*ctx, cache)
 	if !ok {
 		return
 	}
