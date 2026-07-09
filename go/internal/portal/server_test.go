@@ -6294,8 +6294,8 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 				}
 			case "688981":
 				items = []model.AStockStockFundFlow{
-					{TradeDate: "2026-06-16", Indicator: "今日", Code: "688981", Name: "中芯国际", MainNetInflow: -3000000},
-					{TradeDate: "2026-06-15", Indicator: "今日", Code: "688981", Name: "中芯国际", MainNetInflow: -2000000},
+					{TradeDate: "2026-06-16", Indicator: "今日", Code: "688981", Name: "中芯国际", MainNetInflow: 3000000},
+					{TradeDate: "2026-06-15", Indicator: "今日", Code: "688981", Name: "中芯国际", MainNetInflow: 2000000},
 				}
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -6382,7 +6382,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"金十快讯", "金十资讯", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "31日内过滤", "涨停过滤", "当日行情", "不过滤", "重新计算", "关闭31日过滤", "关闭涨停过滤", "启用当日行情过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "5日资金动向", "+1200.00万", "-500.00万", "上午推荐", "下午推荐", "推荐窗口", "08:00-09:30", "重新生成上午推荐", "重新生成下午推荐", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="refresh_backtest"`, `name="action" value="recalculate"`, "2026-06-12 周五", "2026-06-15 周一", "今日", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "推荐排名前9股票", "002230 科大讯飞", `002230 科大讯飞<span class="astock-hotspot-date">（2026-06-12）</span>`, "688981 中芯国际", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "已回测"} {
+	for _, want := range []string{"金十快讯", "金十资讯", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "31日内过滤", "涨停过滤", "当日行情", "不过滤", "重新计算", "关闭31日过滤", "关闭涨停过滤", "启用当日行情过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "5日资金动向", "+1200.00万", "+500.00万", "上午推荐", "下午推荐", "推荐窗口", "08:00-09:30", "重新生成上午推荐", "重新生成下午推荐", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="refresh_backtest"`, `name="action" value="recalculate"`, "2026-06-12 周五", "2026-06-15 周一", "今日", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "推荐排名前9股票", "002230 科大讯飞", `002230 科大讯飞<span class="astock-hotspot-date">（2026-06-12）</span>`, "688981 中芯国际", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "已回测"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}
@@ -6431,6 +6431,7 @@ func TestAStockRecommendationFundFlowFilterScoresAndReplenishes(t *testing.T) {
 		"300003": {-7000000, 2000000},
 		"300004": {-15000000, -10000000, -8000000},
 		"300006": {0},
+		"300007": {20000000},
 	}
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -6472,20 +6473,25 @@ func TestAStockRecommendationFundFlowFilterScoresAndReplenishes(t *testing.T) {
 	}
 	replacementPool := []aStockRecommendation{
 		{Rank: 1, Hotspot: "半导体", Code: "300006", Name: "递补", HotspotScore: 50, MarketScore: 50, Reason: "replacement"},
+		{Rank: 2, Hotspot: "半导体", Code: "300007", Name: "正资金递补", HotspotScore: 49, MarketScore: 49, Reason: "replacement"},
 	}
 
 	result := srv.applyAStockRecommendationFundFlowFilterWithCache("2026-06-16", base, replacementPool, nil, len(base), newAStockRequestCache())
-	if result.Filtered != 1 || result.Replenished != 1 || result.Missing != 1 || result.Shortfall {
+	if result.Filtered != 2 || result.Replenished != 2 || result.Missing != 1 || result.Shortfall {
 		t.Fatalf("unexpected fund-flow filter result: %+v", result)
 	}
 	if len(result.Recommendations) != len(base) {
 		t.Fatalf("expected recommendations to be replenished to %d, got %+v", len(base), result.Recommendations)
 	}
-	if _, ok := aStockRecommendationCodeSet(result.Recommendations)["300004"]; ok {
-		t.Fatalf("expected sustained outflow stock to be filtered, got %+v", result.Recommendations)
+	for _, code := range []string{"300003", "300004"} {
+		if _, ok := aStockRecommendationCodeSet(result.Recommendations)[code]; ok {
+			t.Fatalf("expected negative fund-flow stock %s to be filtered, got %+v", code, result.Recommendations)
+		}
 	}
-	if _, ok := aStockRecommendationCodeSet(result.Recommendations)["300006"]; !ok {
-		t.Fatalf("expected replacement stock to be used, got %+v", result.Recommendations)
+	for _, code := range []string{"300006", "300007"} {
+		if _, ok := aStockRecommendationCodeSet(result.Recommendations)[code]; !ok {
+			t.Fatalf("expected replacement stock %s to be used, got %+v", code, result.Recommendations)
+		}
 	}
 
 	strong := mustAStockRecommendationForTest(t, result.Recommendations, "300001")
@@ -6496,13 +6502,91 @@ func TestAStockRecommendationFundFlowFilterScoresAndReplenishes(t *testing.T) {
 	if inflow.MarketScore != 95 || !strings.Contains(inflow.Reason, "资金加分 5") {
 		t.Fatalf("expected inflow bonus, got %+v", inflow)
 	}
-	outflow := mustAStockRecommendationForTest(t, result.Recommendations, "300003")
-	if outflow.MarketScore != 75 || !strings.Contains(outflow.Reason, "资金减分 5") {
-		t.Fatalf("expected light outflow penalty without filtering, got %+v", outflow)
+	zero := mustAStockRecommendationForTest(t, result.Recommendations, "300006")
+	if zero.MarketScore != 50 || strings.Contains(zero.Reason, "资金加分") || strings.Contains(zero.Reason, "资金减分") {
+		t.Fatalf("expected zero fund flow to keep stock without score change, got %+v", zero)
 	}
 	missing := mustAStockRecommendationForTest(t, result.Recommendations, "300005")
 	if missing.FundFlow5D != "--" || missing.MarketScore != 60 {
 		t.Fatalf("expected missing fund flow data to keep stock without score change, got %+v", missing)
+	}
+}
+
+func TestAStockRecommendationGenerateIgnoreFundFlowKeepsNegativeFundFlowRecommendation(t *testing.T) {
+	market := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		writeEnvelope(w, http.StatusOK, "ok", map[string]any{
+			"items": []map[string]any{
+				{"code": "002230", "date": "2026-06-15", "open": 10.00, "close": 10.00, "pct": 0.0},
+				{"code": "002230", "date": "2026-06-16", "open": 10.10, "close": 10.20, "pct": 2.0},
+			},
+		})
+	}))
+	defer market.Close()
+	t.Setenv("YUQING_ASTOCK_MARKET_URL", market.URL)
+
+	fundFlowCalls := 0
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/articles":
+			if r.URL.Query().Get("time_field") == "captured_at" {
+				writeEnvelope(w, http.StatusOK, "ok", model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0})
+				return
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.ItemListResult{
+				Items: []model.Item{{
+					ID:          9901,
+					SourceType:  "flash",
+					Title:       "科大讯飞盘前活跃",
+					Summary:     "AI 人工智能算力需求增长",
+					PublishTime: "2026-06-16 09:26:30",
+					TagFlags:    "0.002230",
+					CapturedAt:  time.Date(2026, 6, 16, 1, 26, 30, 0, time.UTC),
+				}},
+				Page: 1, PageSize: 200, Total: 1,
+			})
+		case "/api/v1/a-stock/auction":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockAuctionListResult{
+				Date:  "2026-06-16",
+				Items: []model.AStockAuctionAmount{{TradeDate: "2026-06-16", Code: "002230", Name: "科大讯飞", AuctionAmount: 10000000, AuctionVolume: 1000000}},
+			})
+		case "/api/v1/a-stock/recommendation-latest-dates":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationLatestDateListResult{Items: []model.AStockRecommendationLatestDate{}})
+		case "/api/v1/a-stock/holdings/summary":
+			writeEnvelope(w, http.StatusOK, "ok", model.StockInstitutionHoldingSummary{})
+		case "/api/v1/a-stock/stock-fund-flow-trend":
+			fundFlowCalls++
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockStockFundFlowTrendResult{
+				Items: []model.AStockStockFundFlow{{TradeDate: "2026-06-16", Indicator: "今日", Code: r.URL.Query().Get("code"), MainNetInflow: -1}},
+				Total: 1, EndDate: "2026-06-16", Indicator: "今日", Code: r.URL.Query().Get("code"), Days: 5,
+			})
+		case "/api/v1/internal/a-stock/recommendations":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Inserted: 1})
+		default:
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	req := httptest.NewRequest(http.MethodPost, "/internal/a-stock/recommendations/generate?date=2026-06-16&period=morning&phase=final&ignore_recent=1&ignore_fund_flow=1", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAStockRecommendationGenerate(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected generate 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	var envelope struct {
+		Data aStockRecommendationGenerateResult `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode generate response: %v", err)
+	}
+	if envelope.Data.FundFlowFilterEnabled || envelope.Data.FundFlowFiltered != 0 || fundFlowCalls != 0 {
+		t.Fatalf("expected ignore_fund_flow to skip fund-flow filtering, data=%+v fundFlowCalls=%d", envelope.Data, fundFlowCalls)
+	}
+	if envelope.Data.RecommendationCount == 0 {
+		t.Fatalf("expected recommendation to remain when fund-flow filter is disabled, data=%+v", envelope.Data)
 	}
 }
 
@@ -8129,6 +8213,41 @@ func TestAStockRecommendationsUseTopThreeHotspotIndustries(t *testing.T) {
 		if _, ok := wantCodes[rec.Code]; !ok {
 			t.Fatalf("expected fixed-pool recommendation, got %+v from %+v", rec, recommendations)
 		}
+	}
+}
+
+func TestAStockHotspotsApplyNegativeNewsPenalty(t *testing.T) {
+	hotspots := buildAStockHotspots([]model.Item{
+		{ID: 1, Title: "半导体板块震荡走弱", Summary: "芯片存储冲高回落，普冉股份跌超10%"},
+		{ID: 2, Title: "半导体板块拉升", Summary: "芯片存储需求走强"},
+		{ID: 3, Title: "人工智能算力需求增长", Summary: "AI 大模型机器人产业链活跃"},
+	})
+	semiconductor := aStockHotspot{}
+	for _, hotspot := range hotspots {
+		if hotspot.Name == "半导体" {
+			semiconductor = hotspot
+			break
+		}
+	}
+	if semiconductor.Name == "" {
+		t.Fatalf("expected semiconductor hotspot, got %+v", hotspots)
+	}
+	if semiconductor.NegativeNewsCount != 1 || semiconductor.NegativeNewsPenalty != 30 {
+		t.Fatalf("expected one negative news penalty, got %+v", semiconductor)
+	}
+	if semiconductor.Score != 1 {
+		t.Fatalf("expected negative penalty to floor hotspot score at 1, got %+v", semiconductor)
+	}
+	if isAStockNegativeNewsItem(model.Item{Title: "半导体板块拉升", Summary: "芯片存储需求走强"}) {
+		t.Fatal("expected positive news text not to trigger negative penalty")
+	}
+
+	recommendations := buildAStockRecommendationsWithLimit([]aStockHotspot{semiconductor}, nil, 3, 3)
+	if len(recommendations) == 0 {
+		t.Fatalf("expected semiconductor fixed-pool recommendations, got %+v", recommendations)
+	}
+	if !strings.Contains(recommendations[0].Reason, "负面新闻 1 条，板块减分 30") {
+		t.Fatalf("expected recommendation reason to include negative news penalty, got %+v", recommendations[0])
 	}
 }
 

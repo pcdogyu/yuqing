@@ -77,12 +77,14 @@ type aStockSnapshotNewsSummary struct {
 }
 
 type aStockHotspot struct {
-	Name         string
-	Keywords     []string
-	Score        int
-	Evidence     int
-	MatchedItems []model.Item
-	TopStocks    []aStockHotspotStock
+	Name                string
+	Keywords            []string
+	Score               int
+	Evidence            int
+	NegativeNewsCount   int
+	NegativeNewsPenalty int
+	MatchedItems        []model.Item
+	TopStocks           []aStockHotspotStock
 }
 
 type aStockHotspotStock struct {
@@ -361,8 +363,7 @@ const (
 	aStockSectorDrawdownPenalty        = 15
 	aStockFundFlowBonusThreshold       = 30000000.0
 	aStockFundFlowStrongBonusThreshold = 100000000.0
-	aStockFundFlowHardFilterThreshold  = -30000000.0
-	aStockFundFlowHardFilterDays       = 3
+	aStockNegativeNewsPenalty          = 30
 	aStockNewsPageSize                 = 10
 	aStockArticleFetchPageSize         = 1000
 	aStockArticleFetchMaxPages         = 100
@@ -4667,7 +4668,7 @@ func aStockFundFlowScoreAdjustment(total float64) int {
 }
 
 func isAStockFundFlowHardFiltered(assessment aStockFundFlow5DAssessment) bool {
-	return assessment.Total <= aStockFundFlowHardFilterThreshold && assessment.NegativeDays >= aStockFundFlowHardFilterDays
+	return assessment.Total < 0
 }
 
 func formatAStockFundFlowScoreReason(total float64, scoreDelta int) string {
@@ -7413,12 +7414,20 @@ func buildAStockHotspots(items []model.Item) []aStockHotspot {
 			keywords = append(keywords, keyword)
 		}
 		sort.Strings(keywords)
+		negativeNewsCount := countAStockNegativeNewsItems(matches)
+		negativeNewsPenalty := negativeNewsCount * aStockNegativeNewsPenalty
+		score := len(matches)*10 + len(keywords)*3 - negativeNewsPenalty
+		if score < 1 {
+			score = 1
+		}
 		hotspots = append(hotspots, aStockHotspot{
-			Name:         rule.Name,
-			Keywords:     keywords,
-			Score:        len(matches)*10 + len(keywords)*3,
-			Evidence:     len(matches),
-			MatchedItems: matches,
+			Name:                rule.Name,
+			Keywords:            keywords,
+			Score:               score,
+			Evidence:            len(matches),
+			NegativeNewsCount:   negativeNewsCount,
+			NegativeNewsPenalty: negativeNewsPenalty,
+			MatchedItems:        matches,
 		})
 	}
 	sort.SliceStable(hotspots, func(i, j int) bool {
@@ -7431,6 +7440,52 @@ func buildAStockHotspots(items []model.Item) []aStockHotspot {
 		return hotspots[:8]
 	}
 	return hotspots
+}
+
+func countAStockNegativeNewsItems(items []model.Item) int {
+	count := 0
+	for _, item := range items {
+		if isAStockNegativeNewsItem(item) {
+			count++
+		}
+	}
+	return count
+}
+
+func isAStockNegativeNewsItem(item model.Item) bool {
+	text := strings.ToLower(strings.Join([]string{item.Title, item.Summary, item.Content}, " "))
+	for _, keyword := range aStockNegativeNewsKeywords() {
+		if strings.Contains(text, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+func aStockNegativeNewsKeywords() []string {
+	return []string{
+		"震荡走弱",
+		"走弱",
+		"冲高回落",
+		"回落",
+		"下挫",
+		"跳水",
+		"跌超",
+		"大跌",
+		"跌停",
+		"下跌",
+		"走低",
+		"领跌",
+		"承压",
+		"回调",
+	}
+}
+
+func formatAStockHotspotNegativeNewsPenaltyReason(hotspot aStockHotspot) string {
+	if hotspot.NegativeNewsCount <= 0 || hotspot.NegativeNewsPenalty <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("负面新闻 %d 条，板块减分 %d", hotspot.NegativeNewsCount, hotspot.NegativeNewsPenalty)
 }
 
 func buildAStockHotspotsWithTopStocks(hotspots []aStockHotspot, marketCandidates []aStockMarketCandidate, limit int) []aStockHotspot {
@@ -7641,6 +7696,7 @@ func buildAStockRecommendationsWithLimitAndSectorGate(hotspots []aStockHotspot, 
 			if len(stock.Keywords) > 0 && !stock.Fallback && !stock.FixedPool {
 				reason = fmt.Sprintf("%s，股票名命中 %s", reason, strings.Join(stock.Keywords, "、"))
 			}
+			reason = appendAStockReason(reason, formatAStockHotspotNegativeNewsPenaltyReason(hotspot))
 			recommendations = append(recommendations, aStockRecommendation{
 				Rank:         len(recommendations) + 1,
 				Hotspot:      hotspot.Name,
