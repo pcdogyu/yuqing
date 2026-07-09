@@ -9,14 +9,17 @@
 - 发布页面：`http://10.15.0.7:8099/release/`
 - 最新版本 API：`http://10.15.0.7:8099/api/v1/release/latest`
 - 本地凭据文件：`release\netuser.json`
+- 网页前端排查登录凭据：`go\pem\admin.json`
 
 `release\netuser.json` 保存 Windows 共享目录登录信息，仅用于本机发布，不提交到 Git。
+`go\pem\admin.json` 保存 `http://10.15.0.7/` 网页前端排查登录信息，仅用于本机浏览器/自动化排查，不提交到 Git。
 
 ## 准备
 
 1. 确认需要发布的代码已经提交并推送。
 2. 确认工作区没有会影响 Android 构建的未提交改动。
 3. 确认 `release\netuser.json` 存在。
+4. 如需排查网页前端，确认 `go\pem\admin.json` 存在，并使用其中的 `loginUrl`、`username`、`password` 登录。
 
 检查命令：
 
