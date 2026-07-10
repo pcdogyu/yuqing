@@ -1795,6 +1795,8 @@ func TestAStockBacktestPageRendersStandaloneBacktestAndNavigation(t *testing.T) 
 		"推荐历史",
 		"上午推荐",
 		"下午推荐",
+		"实时价",
+		"实时收益",
 		"T+0 收益",
 		"五日内最高收益",
 		`/a-stock/backtest?date=2026-06-16&period=afternoon&ignore_recent=1&filter_today_market=1`,
@@ -8903,6 +8905,7 @@ func TestAStockRepairStockNamesActionPersistsNamesFromLocalDictionary(t *testing
 }
 
 func TestAStockBacktestRefreshCurrentOnBacktestPageRefreshesVisiblePeriodsWithDetail(t *testing.T) {
+	setAStockNowForTest(t, time.Date(2026, 7, 7, 14, 30, 0, 0, aStockLocation()))
 	snapshots := map[string]model.AStockRecommendationSnapshot{
 		"morning": {
 			Found:        true,
@@ -8979,6 +8982,33 @@ func TestAStockBacktestRefreshCurrentOnBacktestPageRefreshesVisiblePeriodsWithDe
 	}))
 	defer market.Close()
 	t.Setenv("YUQING_ASTOCK_MARKET_URL", market.URL)
+	quote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		parts := strings.Split(r.URL.Query().Get("secid"), ".")
+		code := ""
+		if len(parts) == 2 {
+			code = normalizeAStockCode(parts[1])
+		}
+		rawPriceByCode := map[string]int{
+			"601881": 1299,
+			"688702": 40600,
+			"688820": 19000,
+		}
+		rawPrice := rawPriceByCode[code]
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{
+				"f43": rawPrice,
+				"f57": code,
+				"f58": code,
+			},
+		})
+	}))
+	defer quote.Close()
+	previousQuoteURL := aStockEastmoneyQuoteURL
+	aStockEastmoneyQuoteURL = quote.URL
+	t.Cleanup(func() {
+		aStockEastmoneyQuoteURL = previousQuoteURL
+	})
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
 	form := url.Values{}
@@ -8996,6 +9026,14 @@ func TestAStockBacktestRefreshCurrentOnBacktestPageRefreshesVisiblePeriodsWithDe
 	if _, ok := saved["morning"]; !ok {
 		t.Fatalf("expected morning snapshot to be refreshed, saved=%+v", saved)
 	}
+	var morningRows []aStockBacktestRow
+	if err := json.Unmarshal([]byte(saved["morning"].BacktestsJSON), &morningRows); err != nil {
+		t.Fatalf("decode morning backtests: %v", err)
+	}
+	morningGot := aStockBacktestRowsByCode(morningRows)
+	if morningGot["601881"].CurrentPrice != "12.99" || morningGot["601881"].CurrentReturn != "-3.56%" || morningGot["601881"].CurrentReturnClass != "astock-down" {
+		t.Fatalf("expected morning realtime price and return to be written, got %+v", morningGot["601881"])
+	}
 	afternoon, ok := saved["afternoon"]
 	if !ok {
 		t.Fatalf("expected afternoon snapshot to be refreshed from backtest page, saved=%+v", saved)
@@ -9011,11 +9049,14 @@ func TestAStockBacktestRefreshCurrentOnBacktestPageRefreshesVisiblePeriodsWithDe
 	if got["688820"].Status != "已回测T+2" || len(got["688820"].Days) < 2 || got["688820"].Days[1].Return == "--" {
 		t.Fatalf("expected 688820 T+2 data to be written, got %+v", got["688820"])
 	}
+	if got["688702"].CurrentPrice != "406.00" || got["688702"].CurrentReturn != "+4.11%" || got["688702"].CurrentReturnClass != "astock-up" {
+		t.Fatalf("expected 688702 realtime price and return to be written, got %+v", got["688702"])
+	}
 	location, err := url.QueryUnescape(rr.Header().Get("Location"))
 	if err != nil {
 		t.Fatalf("decode redirect location: %v", err)
 	}
-	for _, want := range []string{"上午推荐行情收益", "下午推荐行情收益", "获取：date=2026-07-07 period=afternoon codes=688702,688820", "补齐：688702 盛科通信", "补齐：688820 盛合晶微"} {
+	for _, want := range []string{"上午推荐行情收益", "下午推荐行情收益", "获取：date=2026-07-07 period=afternoon codes=688702,688820", "实时价：东方财富 quote", "实时价=--->406.00", "实时收益=--->+4.11%", "补齐：688702 盛科通信", "补齐：688820 盛合晶微"} {
 		if !strings.Contains(location, want) {
 			t.Fatalf("expected redirect detail to contain %q, got %s", want, location)
 		}

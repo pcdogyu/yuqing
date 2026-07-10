@@ -138,16 +138,19 @@ type aStockBacktestCell struct {
 }
 
 type aStockBacktestRow struct {
-	Stock           string
-	EntryOpen       string
-	AfternoonOpen   string
-	T0Return        string
-	T0Close         string
-	T0ReturnClass   string
-	Days            []aStockBacktestCell
-	BestReturn      string
-	BestReturnClass string
-	Status          string
+	Stock              string
+	EntryOpen          string
+	AfternoonOpen      string
+	T0Return           string
+	T0Close            string
+	T0ReturnClass      string
+	CurrentPrice       string
+	CurrentReturn      string
+	CurrentReturnClass string
+	Days               []aStockBacktestCell
+	BestReturn         string
+	BestReturnClass    string
+	Status             string
 }
 
 type aStockTopicRule struct {
@@ -1142,13 +1145,14 @@ func (s *Server) refreshAStockCurrentBacktestPeriod(strategyDate string, periodK
 		return summary, summary
 	}
 	ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus, ctx.LimitUpFiltered = s.loadAStockLockedMarketView(ctx.Date, ctx.Period, ctx.Recommendations)
+	ctx.Backtests = s.enrichAStockBacktestsWithRealtimeQuotes(ctx.Date, ctx.Period, ctx.Backtests)
 	ctx.EmptyReason = aStockRecommendationEmptyReason(ctx)
 	if err := s.saveAStockRecommendationSnapshot(ctx); err != nil {
 		summary := ctx.PeriodLabel + "行情收益保存失败：" + err.Error()
 		return summary, summary
 	}
 	updatedCells := countAStockBacktestUpdatedCells(previousByCode, ctx.Backtests)
-	summary := fmt.Sprintf("%s行情收益已按当前推荐股票重新补齐：读取 %d 只，写入 %d 行，补齐/更新 %d 个收益字段。", ctx.PeriodLabel, len(ctx.Recommendations), len(ctx.Backtests), updatedCells)
+	summary := fmt.Sprintf("%s行情收益已按当前推荐股票重新补齐：读取 %d 只，写入 %d 行，补齐/更新 %d 个行情/收益字段。", ctx.PeriodLabel, len(ctx.Recommendations), len(ctx.Backtests), updatedCells)
 	if skipped > 0 {
 		summary = fmt.Sprintf("%s 跳过无有效名称股票 %d 只。", summary, skipped)
 	}
@@ -1186,6 +1190,15 @@ func countAStockBacktestRowUpdatedCells(previous aStockBacktestRow, current aSto
 	if aStockBacktestRefreshFieldChanged(previous.T0Return, current.T0Return) {
 		count++
 	}
+	if aStockBacktestRefreshFieldChanged(previous.T0Close, current.T0Close) {
+		count++
+	}
+	if aStockBacktestRefreshFieldChanged(previous.CurrentPrice, current.CurrentPrice) {
+		count++
+	}
+	if aStockBacktestRefreshFieldChanged(previous.CurrentReturn, current.CurrentReturn) {
+		count++
+	}
 	for i := 0; i < 5; i++ {
 		var previousValue string
 		if i < len(previous.Days) {
@@ -1220,7 +1233,7 @@ func aStockBacktestRefreshFieldChanged(previous string, current string) bool {
 func formatAStockBacktestRefreshDetail(ctx aStockContext, previousByCode map[string]aStockBacktestRow, updatedCells int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s行情收益\n", ctx.PeriodLabel)
-	fmt.Fprintf(&b, "获取：date=%s period=%s codes=%s source=%s\n", ctx.Date, ctx.Period, strings.Join(aStockRecommendationCodes(ctx.Recommendations), ","), aStockMarketConfigHint())
+	fmt.Fprintf(&b, "获取：date=%s period=%s codes=%s source=%s；%s\n", ctx.Date, ctx.Period, strings.Join(aStockRecommendationCodes(ctx.Recommendations), ","), aStockMarketConfigHint(), aStockRealtimeQuoteConfigHint(ctx.Date))
 	fmt.Fprintf(&b, "写入：recommendations=%d backtests=%d status=%s updated_fields=%d\n", len(ctx.Recommendations), len(ctx.Backtests), ctx.BacktestStatus, updatedCells)
 	for _, row := range ctx.Backtests {
 		code := aStockBacktestRowCode(row)
@@ -1234,7 +1247,10 @@ func formatAStockBacktestRefreshRowValues(previous aStockBacktestRow, current aS
 	parts := []string{
 		formatAStockBacktestRefreshField("开盘", previous.EntryOpen, current.EntryOpen),
 		formatAStockBacktestRefreshField("下午开盘", previous.AfternoonOpen, current.AfternoonOpen),
+		formatAStockBacktestRefreshField("实时价", previous.CurrentPrice, current.CurrentPrice),
+		formatAStockBacktestRefreshField("实时收益", previous.CurrentReturn, current.CurrentReturn),
 		formatAStockBacktestRefreshField("T+0", previous.T0Return, current.T0Return),
+		formatAStockBacktestRefreshField("T+0收盘", previous.T0Close, current.T0Close),
 	}
 	for i := 0; i < 5; i++ {
 		var previousValue string
@@ -2002,13 +2018,13 @@ func renderAStockBacktestSectionForPath(b *strings.Builder, targetPath string, s
 	if strings.TrimSpace(strategyDate) == "" {
 		strategyDate = nonEmpty(morningCtx.Date, afternoonCtx.Date)
 	}
-	b.WriteString(`<section><h2>消息回测</h2><p class="astock-muted">上午推荐按上午开盘价计算，下午推荐按下午开盘价计算；T+0 到 T+5 及五日内最高收益均按对应推荐窗口的基准价回测。</p>`)
+	b.WriteString(`<section><h2>消息回测</h2><p class="astock-muted">上午推荐按上午开盘价计算，下午推荐按下午开盘价计算；实时收益按当前实时价相对推荐基准价计算，T+0 到 T+5 及五日内最高收益按对应推荐窗口的基准价回测。</p>`)
 	renderAStockRecommendationHistoryTabsForPath(b, targetPath, strategyDate, period, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket)
 	renderAStockRecommendationHistoryActionsForPath(b, targetPath, strategyDate, period, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket)
 	mergedRows := combineAStockBacktestRows(morningCtx, afternoonCtx)
-	b.WriteString(`<div class="astock-scroll"><table class="astock-table"><tr><th>推荐窗口</th><th>股票</th><th>上午开盘价</th><th>下午开盘价</th><th>T+0 收益</th><th>T+1 收益</th><th>T+2 收益</th><th>T+3 收益</th><th>T+4 收益</th><th>T+5 收益</th><th>五日内最高收益</th><th>命中状态</th></tr>`)
+	b.WriteString(`<div class="astock-scroll"><table class="astock-table"><tr><th>推荐窗口</th><th>股票</th><th>上午开盘价</th><th>下午开盘价</th><th>实时价</th><th>实时收益</th><th>T+0 收益</th><th>T+1 收益</th><th>T+2 收益</th><th>T+3 收益</th><th>T+4 收益</th><th>T+5 收益</th><th>五日内最高收益</th><th>命中状态</th></tr>`)
 	if len(mergedRows) == 0 {
-		b.WriteString(`<tr><td colspan="12">`)
+		b.WriteString(`<tr><td colspan="14">`)
 		b.WriteString(html.EscapeString(aStockBacktestEmptyReason(period, morningCtx, afternoonCtx)))
 		b.WriteString(`</td></tr>`)
 		b.WriteString(`</table></div></section>`)
@@ -2026,6 +2042,14 @@ func renderAStockBacktestSectionForPath(b *strings.Builder, targetPath string, s
 		b.WriteString(`</td><td>`)
 		b.WriteString(html.EscapeString(afternoonOpen))
 		b.WriteString(`</td><td><span class="`)
+		b.WriteString(html.EscapeString(aStockBacktestCurrentReturnClass(row)))
+		b.WriteString(`">`)
+		b.WriteString(html.EscapeString(nonEmpty(strings.TrimSpace(row.CurrentPrice), "--")))
+		b.WriteString(`</span></td><td><span class="`)
+		b.WriteString(html.EscapeString(aStockBacktestCurrentReturnClass(row)))
+		b.WriteString(`">`)
+		b.WriteString(html.EscapeString(nonEmpty(strings.TrimSpace(row.CurrentReturn), "--")))
+		b.WriteString(`</span></td><td><span class="`)
 		b.WriteString(html.EscapeString(row.T0ReturnClass))
 		b.WriteString(`">`)
 		b.WriteString(html.EscapeString(row.T0Return))
@@ -2301,15 +2325,18 @@ func aStockBacktestRowsForDisplay(ctx aStockContext) []aStockBacktestRow {
 
 func aStockBacktestPlaceholderRow(rec aStockRecommendation) aStockBacktestRow {
 	return aStockBacktestRow{
-		Stock:           aStockRecommendationStockLabel(rec),
-		EntryOpen:       "--",
-		AfternoonOpen:   "--",
-		T0Return:        "--",
-		T0Close:         "--",
-		T0ReturnClass:   "astock-flat",
-		BestReturn:      "--",
-		BestReturnClass: "astock-flat",
-		Status:          "等待行情同步",
+		Stock:              aStockRecommendationStockLabel(rec),
+		EntryOpen:          "--",
+		AfternoonOpen:      "--",
+		T0Return:           "--",
+		T0Close:            "--",
+		T0ReturnClass:      "astock-flat",
+		CurrentPrice:       "--",
+		CurrentReturn:      "--",
+		CurrentReturnClass: "astock-flat",
+		BestReturn:         "--",
+		BestReturnClass:    "astock-flat",
+		Status:             "等待行情同步",
 	}
 }
 
@@ -2338,6 +2365,10 @@ func aStockBacktestDisplayOpenPrices(period string, row aStockBacktestRow) (stri
 		morningOpen = afternoonOpen
 	}
 	return nonEmpty(morningOpen, "--"), "--"
+}
+
+func aStockBacktestCurrentReturnClass(row aStockBacktestRow) string {
+	return nonEmpty(strings.TrimSpace(row.CurrentReturnClass), "astock-flat")
 }
 
 func (s *Server) loadAStockContext(strategyDate string, periodKey string, newsPage int, ignoreRecent bool) aStockContext {
@@ -3663,6 +3694,18 @@ func mergeAStockBacktestRowFromSnapshot(current aStockBacktestRow, previous aSto
 		current.T0Close = previous.T0Close
 		changed = true
 	}
+	if aStockBacktestValueMissing(current.CurrentPrice) && !aStockBacktestValueMissing(previous.CurrentPrice) {
+		current.CurrentPrice = previous.CurrentPrice
+		changed = true
+	}
+	if aStockBacktestValueMissing(current.CurrentReturn) && !aStockBacktestValueMissing(previous.CurrentReturn) {
+		current.CurrentReturn = previous.CurrentReturn
+		current.CurrentReturnClass = previous.CurrentReturnClass
+		changed = true
+	} else if strings.TrimSpace(current.CurrentReturnClass) == "" && strings.TrimSpace(previous.CurrentReturnClass) != "" {
+		current.CurrentReturnClass = previous.CurrentReturnClass
+		changed = true
+	}
 	if aStockBacktestValueMissing(current.BestReturn) && !aStockBacktestValueMissing(previous.BestReturn) {
 		current.BestReturn = previous.BestReturn
 		current.BestReturnClass = previous.BestReturnClass
@@ -3707,7 +3750,7 @@ func aStockBacktestFilledDataCount(rows []aStockBacktestRow) int {
 
 func aStockBacktestRowFilledDataCount(row aStockBacktestRow) int {
 	total := 0
-	for _, value := range []string{row.EntryOpen, row.AfternoonOpen, row.T0Return, row.T0Close, row.BestReturn} {
+	for _, value := range []string{row.EntryOpen, row.AfternoonOpen, row.T0Return, row.T0Close, row.CurrentPrice, row.CurrentReturn, row.BestReturn} {
 		if !aStockBacktestValueMissing(value) {
 			total++
 		}
@@ -6044,6 +6087,67 @@ func (s *Server) loadSinaAStockSessionPrices(strategyDate string, codes []string
 	return prices
 }
 
+type aStockRealtimeQuote struct {
+	Code  string
+	Price float64
+}
+
+func (s *Server) loadEastmoneyAStockRealtimeQuotes(codes []string) map[string]aStockRealtimeQuote {
+	baseURL := strings.TrimSpace(aStockEastmoneyQuoteURL)
+	if baseURL == "" || len(codes) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(codes))
+	uniqueCodes := make([]string, 0, len(codes))
+	for _, rawCode := range codes {
+		code := normalizeAStockCode(rawCode)
+		if !astockcode.IsShanghaiShenzhen(code) {
+			continue
+		}
+		if _, ok := seen[code]; ok {
+			continue
+		}
+		seen[code] = struct{}{}
+		uniqueCodes = append(uniqueCodes, code)
+	}
+	if len(uniqueCodes) == 0 {
+		return nil
+	}
+	var wg sync.WaitGroup
+	quoteCh := make(chan aStockRealtimeQuote, len(uniqueCodes))
+	for _, code := range uniqueCodes {
+		code := code
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
+			defer cancel()
+			resp, err := s.client.R().
+				SetContext(ctx).
+				SetHeader("User-Agent", nonEmpty(strings.TrimSpace(s.cfg.UserAgent), "Mozilla/5.0")).
+				SetQueryParam("secid", eastmoneyAStockSecID(code)).
+				SetQueryParam("fields", "f43,f57,f58,f60,f170").
+				Get(baseURL)
+			if err != nil || !resp.IsSuccess() {
+				return
+			}
+			quote, ok := decodeEastmoneyAStockRealtimeQuote(resp.Body(), code)
+			if ok {
+				quoteCh <- quote
+			}
+		}()
+	}
+	wg.Wait()
+	close(quoteCh)
+	quotes := make(map[string]aStockRealtimeQuote)
+	for quote := range quoteCh {
+		if quote.Code != "" && quote.Price > 0 {
+			quotes[quote.Code] = quote
+		}
+	}
+	return quotes
+}
+
 func (s *Server) loadYahooAStockBars(strategyDate string, codes []string) ([]aStockMarketBar, error) {
 	day, err := time.ParseInLocation("2006-01-02", strategyDate, aStockLocation())
 	if err != nil {
@@ -6331,6 +6435,74 @@ func applyAStockLockedMarketBars(strategyDate string, period string, recommendat
 	return recommendations, rows, status, 0
 }
 
+func (s *Server) enrichAStockBacktestsWithRealtimeQuotes(strategyDate string, period string, rows []aStockBacktestRow) []aStockBacktestRow {
+	if len(rows) == 0 || normalizeAStockStrategyDate(strategyDate) != aStockTodayDate() {
+		return rows
+	}
+	codes := make([]string, 0, len(rows))
+	seen := make(map[string]struct{}, len(rows))
+	for _, row := range rows {
+		code := aStockBacktestRowCode(row)
+		if code == "" {
+			continue
+		}
+		if _, ok := seen[code]; ok {
+			continue
+		}
+		seen[code] = struct{}{}
+		codes = append(codes, code)
+	}
+	quotes := s.loadEastmoneyAStockRealtimeQuotes(codes)
+	if len(quotes) == 0 {
+		return rows
+	}
+	normalizedPeriod := normalizeAStockPeriod(period).Key
+	enriched := append([]aStockBacktestRow(nil), rows...)
+	for i := range enriched {
+		code := aStockBacktestRowCode(enriched[i])
+		quote, ok := quotes[code]
+		if !ok || quote.Price <= 0 {
+			continue
+		}
+		enriched[i].CurrentPrice = formatAStockPrice(quote.Price)
+		entryPrice := aStockBacktestEntryPriceForReturn(normalizedPeriod, enriched[i])
+		if entryPrice <= 0 {
+			if strings.TrimSpace(enriched[i].CurrentReturn) == "" {
+				enriched[i].CurrentReturn = "--"
+			}
+			if strings.TrimSpace(enriched[i].CurrentReturnClass) == "" {
+				enriched[i].CurrentReturnClass = "astock-flat"
+			}
+			continue
+		}
+		currentReturn := (quote.Price/entryPrice - 1) * 100
+		enriched[i].CurrentReturn = formatAStockPct(currentReturn)
+		enriched[i].CurrentReturnClass = aStockPctClass(currentReturn)
+	}
+	return enriched
+}
+
+func aStockBacktestEntryPriceForReturn(period string, row aStockBacktestRow) float64 {
+	if normalizeAStockPeriod(period).Key == "afternoon" {
+		if price := parseAStockPriceText(row.AfternoonOpen); price > 0 {
+			return price
+		}
+		return parseAStockPriceText(row.EntryOpen)
+	}
+	if price := parseAStockPriceText(row.EntryOpen); price > 0 {
+		return price
+	}
+	return parseAStockPriceText(row.AfternoonOpen)
+}
+
+func parseAStockPriceText(value string) float64 {
+	price, ok := aStockFloat(strings.TrimSpace(value))
+	if !ok || price <= 0 {
+		return 0
+	}
+	return price
+}
+
 func isAStockLimitUpPct(code string, name string, pct float64) bool {
 	return pct >= aStockLimitUpPctThreshold(code, name)
 }
@@ -6457,16 +6629,19 @@ func buildAStockBacktestRows(strategyDate string, period string, recommendations
 	rows := make([]aStockBacktestRow, 0, len(recommendations))
 	for _, rec := range recommendations {
 		row := aStockBacktestRow{
-			Stock:           rec.Code + " " + rec.Name,
-			EntryOpen:       "--",
-			AfternoonOpen:   "--",
-			T0Return:        "--",
-			T0Close:         "--",
-			T0ReturnClass:   "astock-flat",
-			Days:            make([]aStockBacktestCell, 5),
-			BestReturn:      "--",
-			BestReturnClass: "astock-flat",
-			Status:          "等待行情接口配置",
+			Stock:              rec.Code + " " + rec.Name,
+			EntryOpen:          "--",
+			AfternoonOpen:      "--",
+			T0Return:           "--",
+			T0Close:            "--",
+			T0ReturnClass:      "astock-flat",
+			CurrentPrice:       "--",
+			CurrentReturn:      "--",
+			CurrentReturnClass: "astock-flat",
+			Days:               make([]aStockBacktestCell, 5),
+			BestReturn:         "--",
+			BestReturnClass:    "astock-flat",
+			Status:             "等待行情接口配置",
 		}
 		for i := range row.Days {
 			row.Days[i] = aStockBacktestCell{Close: "--", Return: "--", ReturnClass: "astock-flat"}
@@ -6789,6 +6964,44 @@ func decodeSinaAStockSessionPrice(body []byte, strategyDate string, session stri
 	return 0, false
 }
 
+func decodeEastmoneyAStockRealtimeQuote(body []byte, expectedCode string) (aStockRealtimeQuote, bool) {
+	var payload struct {
+		Data map[string]any `json:"data"`
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(body)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&payload); err != nil || len(payload.Data) == 0 {
+		return aStockRealtimeQuote{}, false
+	}
+	code := normalizeAStockCode(firstString(payload.Data, "f57", "code", "stock_code", "symbol"))
+	expectedCode = normalizeAStockCode(expectedCode)
+	if code == "" {
+		code = expectedCode
+	}
+	if expectedCode != "" && code != expectedCode {
+		return aStockRealtimeQuote{}, false
+	}
+	rawPrice, ok := firstFloat(payload.Data, "f43", "price", "current_price", "latest_price")
+	if !ok {
+		return aStockRealtimeQuote{}, false
+	}
+	price := normalizeEastmoneyRealtimeScaledPrice(rawPrice)
+	if price <= 0 {
+		return aStockRealtimeQuote{}, false
+	}
+	return aStockRealtimeQuote{Code: code, Price: price}, true
+}
+
+func normalizeEastmoneyRealtimeScaledPrice(value float64) float64 {
+	if value <= 0 {
+		return 0
+	}
+	if value >= 100 {
+		return value / 100
+	}
+	return value
+}
+
 func extractSinaAStockJSONPBody(raw string) string {
 	raw = strings.TrimSpace(raw)
 	start := strings.Index(raw, "=(")
@@ -7070,6 +7283,13 @@ func aStockMarketConfigHint() string {
 		return "默认东方财富日 K，失败后使用 Yahoo Finance 日线；也可用 YUQING_ASTOCK_MARKET_URL 覆盖"
 	}
 	return "YUQING_ASTOCK_MARKET_URL，失败后回退东方财富日 K / Yahoo Finance 日线"
+}
+
+func aStockRealtimeQuoteConfigHint(strategyDate string) string {
+	if normalizeAStockStrategyDate(strategyDate) != aStockTodayDate() {
+		return "实时价：非今日策略日期不补"
+	}
+	return "实时价：东方财富 quote"
 }
 
 func aStockMarketEndDate(strategyDate string) string {
