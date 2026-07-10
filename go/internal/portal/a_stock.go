@@ -180,6 +180,7 @@ type aStockMarketCandidate struct {
 	Evidence      int
 	WeakEvidence  int
 	WeakPenalty   int
+	BadEvidence   int
 	Keywords      []string
 	Fallback      bool
 	FixedPool     bool
@@ -9922,6 +9923,9 @@ func newsDerivedAStockMarketCandidates(hotspots []aStockHotspot) []aStockMarketC
 	order := make([]string, 0)
 	for _, hotspot := range hotspots {
 		for _, item := range hotspot.MatchedItems {
+			if isAStockNegativeNewsItem(item) {
+				continue
+			}
 			for _, mention := range extractAStockMentionsFromItem(item) {
 				code := normalizeAStockCode(mention.Code)
 				if !isAStockCode(code) {
@@ -10196,7 +10200,7 @@ func scoreAStockMarketCandidatesWithSectorGate(hotspot aStockHotspot, candidates
 		if (candidate.Fallback || candidate.FixedPool) && len(keywords) == 0 {
 			keywords = intersectAStockKeywords(candidate.Keywords, hotspot.Keywords)
 		}
-		if evidence == 0 && len(keywords) == 0 {
+		if effectiveEvidence == 0 && evidenceResult.Weak == 0 && len(keywords) == 0 {
 			continue
 		}
 		if !sectorGate.Allows(hotspot, candidate) {
@@ -10205,6 +10209,7 @@ func scoreAStockMarketCandidatesWithSectorGate(hotspot aStockHotspot, candidates
 		candidate.Evidence = evidence
 		candidate.WeakEvidence = evidenceResult.Weak
 		candidate.WeakPenalty = weakPenalty
+		candidate.BadEvidence = evidenceResult.Negative
 		candidate.Keywords = keywords
 		candidate.MatchedScore = aStockMarketRankScore(candidate.Rank) + effectiveEvidence*25 + len(keywords)*12 - weakPenalty
 		scored = append(scored, candidate)
@@ -10279,12 +10284,14 @@ type aStockStockEvidenceItem struct {
 	codes map[string]struct{}
 	text  string
 	weak  bool
+	bad   bool
 }
 
 type aStockStockEvidenceAssessment struct {
-	Count  int
-	Strong int
-	Weak   int
+	Count    int
+	Strong   int
+	Weak     int
+	Negative int
 }
 
 func newAStockStockEvidenceIndex(items []model.Item) aStockStockEvidenceIndex {
@@ -10301,6 +10308,7 @@ func newAStockStockEvidenceIndex(items []model.Item) aStockStockEvidenceIndex {
 			codes: codes,
 			text:  strings.ToLower(item.Title + " " + item.Summary + " " + item.Content + " " + item.RawPayload),
 			weak:  isAStockWeakFinancingEvidenceItem(item),
+			bad:   isAStockNegativeNewsItem(item),
 		})
 	}
 	return index
@@ -10334,7 +10342,9 @@ func (idx aStockStockEvidenceIndex) Assess(candidate aStockMarketCandidate) aSto
 			continue
 		}
 		assessment.Count++
-		if item.weak {
+		if item.bad {
+			assessment.Negative++
+		} else if item.weak {
 			assessment.Weak++
 		} else {
 			assessment.Strong++

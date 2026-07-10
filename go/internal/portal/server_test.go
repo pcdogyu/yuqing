@@ -8551,6 +8551,28 @@ func TestAStockRecommendationsDoNotInferFundMonitorTitleAsStockName(t *testing.T
 	}
 }
 
+func TestAStockRecommendationsExcludeNegativeOnlyStockEvidence(t *testing.T) {
+	hotspot := aStockHotspot{
+		Name:     "半导体测试",
+		Keywords: []string{"半导体", "芯片"},
+		Score:    120,
+		Evidence: 2,
+		MatchedItems: []model.Item{
+			{Title: "半导体板块冲高回落，芯原股份跟跌", Summary: "晶合集成跌超10%，芯原股份下挫", TagFlags: "0.688521"},
+			{Title: "芯片行业午后活跃", Summary: "半导体设备需求改善"},
+		},
+	}
+
+	recommendations := buildAStockRecommendationsWithLimit([]aStockHotspot{hotspot}, []aStockMarketCandidate{
+		{Code: "688521", Name: "芯原股份", Rank: 1, AuctionAmount: 9000000},
+		{Code: "688981", Name: "中芯国际", Rank: 2, AuctionAmount: 8000000},
+	}, aStockReplacementPoolLimit, aStockReplacementPerHotspot)
+
+	if _, ok := aStockTestRecommendationsByCode(recommendations)["688521"]; ok {
+		t.Fatalf("expected negative-only stock evidence to exclude 688521, got %+v", recommendations)
+	}
+}
+
 func TestAStockMarketBarsPenalizeMorningLowOpen(t *testing.T) {
 	recommendations := []aStockRecommendation{
 		{Rank: 1, Hotspot: "人工智能", Code: "002520", Name: "日发精机", HotspotScore: 100, MarketScore: 100, Reason: "弱盘口"},
