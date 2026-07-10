@@ -1929,7 +1929,7 @@ private fun AStockBacktestEntryRow(
                 ) {
                     Text(
                         "现价 $currentPrice",
-                        fontSize = 13.sp,
+                        fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
