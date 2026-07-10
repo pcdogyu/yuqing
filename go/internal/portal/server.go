@@ -135,6 +135,7 @@ type Server struct {
 	aStockArticles  map[string]aStockServerArticlesCacheEntry
 	aStockFragments map[string]aStockServerFragmentCacheEntry
 	aStockContexts  map[string]aStockServerContextCacheEntry
+	aStockQuotes    map[string]aStockRealtimeQuoteCacheEntry
 }
 
 type mobileQRCodeState struct {
@@ -353,6 +354,7 @@ func NewServer(cfg config.Config) *Server {
 		aStockArticles:  map[string]aStockServerArticlesCacheEntry{},
 		aStockFragments: map[string]aStockServerFragmentCacheEntry{},
 		aStockContexts:  map[string]aStockServerContextCacheEntry{},
+		aStockQuotes:    map[string]aStockRealtimeQuoteCacheEntry{},
 	}
 }
 

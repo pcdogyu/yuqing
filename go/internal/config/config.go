@@ -47,6 +47,7 @@ type Config struct {
 	CLSTelegraphURL            string
 	SinaFinance7x24URL         string
 	AStockAuctionURL           string
+	AStockQuoteURL             string
 	AStockHoldingURL           string
 	StockResearchURL           string
 	StockResearchPDFDir        string
@@ -129,6 +130,8 @@ func Load() Config {
 
 	gatewayWebAddr := envOrDefaultWithAliases("YUQING_GATEWAY_ADDR", ":8079", "JIN10_PORTAL_WEB_ADDR")
 	gatewayWebHTTPAddrs := envListOrDefault("YUQING_GATEWAY_HTTP_ADDRS", defaultGatewayWebHTTPAddrs(gatewayWebAddr))
+	aStockAuctionURL := envOrDefault("YUQING_ASTOCK_AUCTION_URL", "")
+	aStockQuoteURL := envOrDefault("YUQING_ASTOCK_QUOTE_URL", aStockAuctionURL)
 
 	return Config{
 		ListenAddr:                 envOrDefault("YUQING_LISTEN_ADDR", ":8090"),
@@ -165,7 +168,8 @@ func Load() Config {
 		WallStreetCNAStockURL:      envOrDefaultAllowEmpty("YUQING_WALLSTREETCN_A_STOCK_URL", "https://wallstreetcn.com/live/a-stock"),
 		CLSTelegraphURL:            envOrDefaultAllowEmpty("YUQING_CLS_TELEGRAPH_URL", "https://www.cls.cn/telegraph"),
 		SinaFinance7x24URL:         envOrDefaultAllowEmpty("YUQING_SINA_FINANCE_7X24_URL", "https://finance.sina.com.cn/7x24/?tag=10"),
-		AStockAuctionURL:           envOrDefault("YUQING_ASTOCK_AUCTION_URL", ""),
+		AStockAuctionURL:           aStockAuctionURL,
+		AStockQuoteURL:             aStockQuoteURL,
 		AStockHoldingURL:           envOrDefault("YUQING_ASTOCK_HOLDING_URL", ""),
 		StockResearchURL:           envOrDefault("YUQING_STOCK_RESEARCH_URL", ""),
 		StockResearchPDFDir:        envOrDefault("YUQING_STOCK_RESEARCH_PDF_DIR", filepath.Join("data", "stock-research-pdfs")),

@@ -42,6 +42,7 @@ func TestLoadUsesDefaults(t *testing.T) {
 	unsetEnv(t, "YUQING_CLS_TELEGRAPH_URL")
 	unsetEnv(t, "YUQING_SINA_FINANCE_7X24_URL")
 	t.Setenv("YUQING_ASTOCK_AUCTION_URL", "")
+	t.Setenv("YUQING_ASTOCK_QUOTE_URL", "")
 	t.Setenv("YUQING_ASTOCK_HOLDING_URL", "")
 	t.Setenv("YUQING_STOCK_RESEARCH_PDF_DIR", "")
 	unsetEnv(t, "YUQING_INVESTOR_RELATIONS_URL")
@@ -133,6 +134,9 @@ func TestLoadUsesDefaults(t *testing.T) {
 	}
 	if cfg.AStockAuctionURL != "" {
 		t.Fatalf("expected empty A股 auction url by default, got %q", cfg.AStockAuctionURL)
+	}
+	if cfg.AStockQuoteURL != "" {
+		t.Fatalf("expected empty A股 quote url by default, got %q", cfg.AStockQuoteURL)
 	}
 	if cfg.AStockHoldingURL != "" {
 		t.Fatalf("expected empty A股 holding url by default, got %q", cfg.AStockHoldingURL)
@@ -287,6 +291,9 @@ func TestLoadPrefersPrimaryAndAliasEnv(t *testing.T) {
 	}
 	if cfg.AStockAuctionURL != "http://akshare.example.com" {
 		t.Fatalf("expected A股 auction url loaded, got %q", cfg.AStockAuctionURL)
+	}
+	if cfg.AStockQuoteURL != "http://akshare.example.com" {
+		t.Fatalf("expected A股 quote url to inherit auction url, got %q", cfg.AStockQuoteURL)
 	}
 	if cfg.AStockHoldingURL != "http://holding.example.com" {
 		t.Fatalf("expected A股 holding url loaded, got %q", cfg.AStockHoldingURL)
