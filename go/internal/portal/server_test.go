@@ -5539,6 +5539,7 @@ func TestAStockPageRefreshAllBacktestsSupplementsCurrentDayAfternoonBacktest(t *
 
 func TestAStockPageRefreshCurrentBacktestPersistsT0Return(t *testing.T) {
 	setAStockNowForTest(t, time.Date(2026, 6, 24, 14, 2, 0, 0, time.FixedZone("CST", 8*3600)))
+	setAStockEastmoneyQuoteURLForTest(t, "")
 
 	market := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -8913,9 +8914,11 @@ func TestAStockBacktestRefreshCurrentOnBacktestPageRefreshesVisiblePeriodsWithDe
 			Period:       "morning",
 			RecommendationsJSON: mustAStockTestJSON(t, []aStockRecommendation{
 				{Rank: 1, Code: "601881", Name: "中国银河", Hotspot: "金融券商", Reason: "生成点 09:27", EntryTime: "09:30"},
+				{Rank: 2, Code: "300394", Name: "天孚通信", Hotspot: "通信设备", Reason: "生成点 09:27", EntryTime: "09:30"},
 			}),
 			BacktestsJSON: mustAStockTestJSON(t, []aStockBacktestRow{
 				{Stock: "601881 中国银河", EntryOpen: "13.47", T0Return: "-2.15%", T0Close: "13.18", Status: "等待T+1行情"},
+				{Stock: "300394 天孚通信", EntryOpen: "281.00", T0Return: "-0.60%", T0Close: "279.31", T0ReturnClass: "astock-down", Status: "等待T+1行情"},
 			}),
 			BacktestStatus:           "已回测 0/1",
 			GeneratedCount:           1,
@@ -8982,6 +8985,18 @@ func TestAStockBacktestRefreshCurrentOnBacktestPageRefreshesVisiblePeriodsWithDe
 	}))
 	defer market.Close()
 	t.Setenv("YUQING_ASTOCK_MARKET_URL", market.URL)
+	emptyEastmoney := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"klines": []string{}}})
+	}))
+	defer emptyEastmoney.Close()
+	setAStockEastmoneyKlineURLForTest(t, emptyEastmoney.URL)
+	emptyYahoo := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"chart":{"result":[]}}`))
+	}))
+	defer emptyYahoo.Close()
+	setAStockYahooChartURLForTest(t, emptyYahoo.URL)
 	quote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		parts := strings.Split(r.URL.Query().Get("secid"), ".")
@@ -8991,6 +9006,7 @@ func TestAStockBacktestRefreshCurrentOnBacktestPageRefreshesVisiblePeriodsWithDe
 		}
 		rawPriceByCode := map[string]int{
 			"601881": 1299,
+			"300394": 28430,
 			"688702": 40600,
 			"688820": 19000,
 		}
@@ -9034,6 +9050,9 @@ func TestAStockBacktestRefreshCurrentOnBacktestPageRefreshesVisiblePeriodsWithDe
 	if morningGot["601881"].CurrentPrice != "12.99" || morningGot["601881"].CurrentReturn != "-3.56%" || morningGot["601881"].CurrentReturnClass != "astock-down" {
 		t.Fatalf("expected morning realtime price and return to be written, got %+v", morningGot["601881"])
 	}
+	if morningGot["300394"].EntryOpen != "281.00" || morningGot["300394"].T0Return != "+1.17%" || morningGot["300394"].T0Close != "284.30" || morningGot["300394"].CurrentPrice != "284.30" || morningGot["300394"].CurrentReturn != "+1.17%" || morningGot["300394"].Status != "等待T+1行情" {
+		t.Fatalf("expected 300394 old open to be preserved and T+0 to be refreshed from realtime quote, got %+v", morningGot["300394"])
+	}
 	afternoon, ok := saved["afternoon"]
 	if !ok {
 		t.Fatalf("expected afternoon snapshot to be refreshed from backtest page, saved=%+v", saved)
@@ -9060,6 +9079,40 @@ func TestAStockBacktestRefreshCurrentOnBacktestPageRefreshesVisiblePeriodsWithDe
 		if !strings.Contains(location, want) {
 			t.Fatalf("expected redirect detail to contain %q, got %s", want, location)
 		}
+	}
+}
+
+func TestAStockRealtimeQuoteFillsMissingMorningOpenAndT0Return(t *testing.T) {
+	setAStockNowForTest(t, time.Date(2026, 7, 10, 10, 30, 0, 0, aStockLocation()))
+	quote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("secid") != "0.300394" {
+			t.Fatalf("unexpected quote request: %s", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"f43":1050,"f46":1000,"f57":"300394","f58":"天孚通信","f170":500}}`))
+	}))
+	defer quote.Close()
+	setAStockEastmoneyQuoteURLForTest(t, quote.URL)
+
+	srv := NewServer(config.Config{})
+	rows := srv.enrichAStockBacktestsWithRealtimeQuotes("2026-07-10", "morning", []aStockBacktestRow{{
+		Stock:              "300394 天孚通信",
+		EntryOpen:          "--",
+		T0Return:           "--",
+		T0Close:            "--",
+		T0ReturnClass:      "astock-flat",
+		CurrentPrice:       "--",
+		CurrentReturn:      "--",
+		CurrentReturnClass: "astock-flat",
+		Status:             "无行情数据",
+	}})
+
+	if len(rows) != 1 || rows[0].EntryOpen != "10.00" || rows[0].CurrentPrice != "10.50" || rows[0].CurrentReturn != "+5.00%" || rows[0].T0Return != "+5.00%" || rows[0].T0Close != "10.50" || rows[0].Status != "等待T+1行情" {
+		t.Fatalf("expected realtime quote to fill missing morning open/current/T+0 fields, got %+v", rows)
+	}
+	bars := srv.realtimeAStockMarketBars("2026-07-10", []string{"300394"})
+	if len(bars) != 1 || bars[0].Open != 10 || bars[0].EntryPrice != 10 || bars[0].Close != 10.5 || bars[0].Pct != 5 {
+		t.Fatalf("expected realtime quote to produce today market bar, got %+v", bars)
 	}
 }
 

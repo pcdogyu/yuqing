@@ -1145,7 +1145,12 @@ func (s *Server) refreshAStockCurrentBacktestPeriod(strategyDate string, periodK
 		return summary, summary
 	}
 	ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus, ctx.LimitUpFiltered = s.loadAStockLockedMarketView(ctx.Date, ctx.Period, ctx.Recommendations)
+	if merged, changed := mergeAStockBacktestRowsFromSnapshot(ctx.Backtests, previousRows); changed {
+		ctx.Backtests = merged
+		ctx.BacktestStatus = formatAStockLockedBacktestStatus(ctx.Period, ctx.Backtests)
+	}
 	ctx.Backtests = s.enrichAStockBacktestsWithRealtimeQuotes(ctx.Date, ctx.Period, ctx.Backtests)
+	ctx.BacktestStatus = formatAStockLockedBacktestStatus(ctx.Period, ctx.Backtests)
 	ctx.EmptyReason = aStockRecommendationEmptyReason(ctx)
 	if err := s.saveAStockRecommendationSnapshot(ctx); err != nil {
 		summary := ctx.PeriodLabel + "行情收益保存失败：" + err.Error()
@@ -5496,10 +5501,14 @@ func (s *Server) loadAStockMarketBars(strategyDate string, codes []string, endpo
 					}
 				}
 				s.enrichAStockSessionPrices(strategyDate, codes, bars)
+				bars = s.supplementAStockMarketBarsWithRealtimeQuotes(strategyDate, codes, bars)
 				return bars, nil
 			}
 		}
 		if bars, fallbackErr := s.loadDefaultAStockBarsWithSessionPrices(strategyDate, codes); fallbackErr == nil && len(bars) > 0 {
+			return bars, nil
+		}
+		if bars := s.realtimeAStockMarketBars(strategyDate, codes); len(bars) > 0 {
 			return bars, nil
 		}
 		if err != nil {
@@ -5516,10 +5525,61 @@ func (s *Server) loadAStockMarketBars(strategyDate string, codes []string, endpo
 func (s *Server) loadDefaultAStockBarsWithSessionPrices(strategyDate string, codes []string) ([]aStockMarketBar, error) {
 	bars, err := s.loadDefaultAStockBars(strategyDate, codes)
 	if err != nil || len(bars) == 0 {
+		if quoteBars := s.realtimeAStockMarketBars(strategyDate, codes); len(quoteBars) > 0 {
+			return quoteBars, nil
+		}
 		return bars, err
 	}
 	s.enrichAStockSessionPrices(strategyDate, codes, bars)
+	bars = s.supplementAStockMarketBarsWithRealtimeQuotes(strategyDate, codes, bars)
 	return bars, nil
+}
+
+func (s *Server) supplementAStockMarketBarsWithRealtimeQuotes(strategyDate string, codes []string, bars []aStockMarketBar) []aStockMarketBar {
+	quoteBars := s.realtimeAStockMarketBars(strategyDate, codes)
+	if len(quoteBars) == 0 {
+		return bars
+	}
+	return mergeAStockMarketBars(bars, quoteBars)
+}
+
+func (s *Server) realtimeAStockMarketBars(strategyDate string, codes []string) []aStockMarketBar {
+	strategyDate = normalizeAStockStrategyDate(strategyDate)
+	if strategyDate == "" || strategyDate != aStockTodayDate() || len(codes) == 0 {
+		return nil
+	}
+	quotes := s.loadEastmoneyAStockRealtimeQuotes(codes)
+	if len(quotes) == 0 {
+		return nil
+	}
+	bars := make([]aStockMarketBar, 0, len(codes))
+	seen := make(map[string]struct{}, len(codes))
+	for _, rawCode := range codes {
+		code := normalizeAStockCode(rawCode)
+		if code == "" {
+			continue
+		}
+		if _, ok := seen[code]; ok {
+			continue
+		}
+		seen[code] = struct{}{}
+		quote, ok := quotes[code]
+		if !ok || quote.Price <= 0 {
+			continue
+		}
+		bar := aStockMarketBar{
+			Code:  code,
+			Date:  strategyDate,
+			Open:  quote.Open,
+			Close: quote.Price,
+			Pct:   quote.Pct,
+		}
+		if quote.Open > 0 {
+			bar.EntryPrice = quote.Open
+		}
+		bars = append(bars, bar)
+	}
+	return bars
 }
 
 func shouldSupplementAStockMarketBars(strategyDate string, codes []string, bars []aStockMarketBar) bool {
@@ -6090,6 +6150,8 @@ func (s *Server) loadSinaAStockSessionPrices(strategyDate string, codes []string
 type aStockRealtimeQuote struct {
 	Code  string
 	Price float64
+	Open  float64
+	Pct   float64
 }
 
 func (s *Server) loadEastmoneyAStockRealtimeQuotes(codes []string) map[string]aStockRealtimeQuote {
@@ -6126,7 +6188,7 @@ func (s *Server) loadEastmoneyAStockRealtimeQuotes(codes []string) map[string]aS
 				SetContext(ctx).
 				SetHeader("User-Agent", nonEmpty(strings.TrimSpace(s.cfg.UserAgent), "Mozilla/5.0")).
 				SetQueryParam("secid", eastmoneyAStockSecID(code)).
-				SetQueryParam("fields", "f43,f57,f58,f60,f170").
+				SetQueryParam("fields", "f43,f46,f57,f58,f60,f170").
 				Get(baseURL)
 			if err != nil || !resp.IsSuccess() {
 				return
@@ -6405,34 +6467,7 @@ func applyAStockLockedMarketBars(strategyDate string, period string, recommendat
 		}
 	}
 	rows := buildAStockBacktestRows(strategyDate, period, recommendations, byCode)
-	completed := 0
-	waitingEntry := 0
-	noData := 0
-	for _, row := range rows {
-		switch {
-		case row.Status == "已回测" || strings.HasPrefix(row.Status, "已回测"):
-			completed++
-		case row.Status == "等待下午开盘价" || row.Status == "等待当日开盘价":
-			waitingEntry++
-		case row.Status == "无行情数据":
-			noData++
-		}
-	}
-	status := fmt.Sprintf("已锁定推荐股票，已回测 %d/%d", completed, len(rows))
-	if waitingEntry > 0 {
-		if normalizedPeriod == "afternoon" {
-			status = fmt.Sprintf("%s，等待下午开盘价股票 %d", status, waitingEntry)
-		} else {
-			status = fmt.Sprintf("%s，等待当日开盘价股票 %d", status, waitingEntry)
-		}
-	}
-	if noData > 0 {
-		status = fmt.Sprintf("%s，无行情数据股票 %d", status, noData)
-	}
-	if len(rows) == 0 {
-		status = "已锁定推荐股票，无回测结果"
-	}
-	return recommendations, rows, status, 0
+	return recommendations, rows, formatAStockLockedBacktestStatus(normalizedPeriod, rows), 0
 }
 
 func (s *Server) enrichAStockBacktestsWithRealtimeQuotes(strategyDate string, period string, rows []aStockBacktestRow) []aStockBacktestRow {
@@ -6464,6 +6499,9 @@ func (s *Server) enrichAStockBacktestsWithRealtimeQuotes(strategyDate string, pe
 		if !ok || quote.Price <= 0 {
 			continue
 		}
+		if normalizedPeriod != "afternoon" && aStockBacktestValueMissing(enriched[i].EntryOpen) && quote.Open > 0 {
+			enriched[i].EntryOpen = formatAStockPrice(quote.Open)
+		}
 		enriched[i].CurrentPrice = formatAStockPrice(quote.Price)
 		entryPrice := aStockBacktestEntryPriceForReturn(normalizedPeriod, enriched[i])
 		if entryPrice <= 0 {
@@ -6478,8 +6516,53 @@ func (s *Server) enrichAStockBacktestsWithRealtimeQuotes(strategyDate string, pe
 		currentReturn := (quote.Price/entryPrice - 1) * 100
 		enriched[i].CurrentReturn = formatAStockPct(currentReturn)
 		enriched[i].CurrentReturnClass = aStockPctClass(currentReturn)
+		enriched[i].T0Close = formatAStockPrice(quote.Price)
+		enriched[i].T0Return = formatAStockPct(currentReturn)
+		enriched[i].T0ReturnClass = aStockPctClass(currentReturn)
+		if aStockBacktestStatusNeedsRestore(enriched[i].Status) && aStockBacktestRealtimeQuoteHasEntryOpen(normalizedPeriod, enriched[i]) {
+			enriched[i].Status = "等待T+1行情"
+		}
 	}
 	return enriched
+}
+
+func aStockBacktestRealtimeQuoteHasEntryOpen(period string, row aStockBacktestRow) bool {
+	if normalizeAStockPeriod(period).Key == "afternoon" {
+		return !aStockBacktestValueMissing(row.AfternoonOpen)
+	}
+	return !aStockBacktestValueMissing(row.EntryOpen)
+}
+
+func formatAStockLockedBacktestStatus(period string, rows []aStockBacktestRow) string {
+	normalizedPeriod := normalizeAStockPeriod(period).Key
+	completed := 0
+	waitingEntry := 0
+	noData := 0
+	for _, row := range rows {
+		switch {
+		case row.Status == "已回测" || strings.HasPrefix(row.Status, "已回测"):
+			completed++
+		case row.Status == "等待下午开盘价" || row.Status == "等待当日开盘价":
+			waitingEntry++
+		case row.Status == "无行情数据":
+			noData++
+		}
+	}
+	status := fmt.Sprintf("已锁定推荐股票，已回测 %d/%d", completed, len(rows))
+	if waitingEntry > 0 {
+		if normalizedPeriod == "afternoon" {
+			status = fmt.Sprintf("%s，等待下午开盘价股票 %d", status, waitingEntry)
+		} else {
+			status = fmt.Sprintf("%s，等待当日开盘价股票 %d", status, waitingEntry)
+		}
+	}
+	if noData > 0 {
+		status = fmt.Sprintf("%s，无行情数据股票 %d", status, noData)
+	}
+	if len(rows) == 0 {
+		status = "已锁定推荐股票，无回测结果"
+	}
+	return status
 }
 
 func aStockBacktestEntryPriceForReturn(period string, row aStockBacktestRow) float64 {
@@ -6989,7 +7072,11 @@ func decodeEastmoneyAStockRealtimeQuote(body []byte, expectedCode string) (aStoc
 	if price <= 0 {
 		return aStockRealtimeQuote{}, false
 	}
-	return aStockRealtimeQuote{Code: code, Price: price}, true
+	rawOpen, _ := firstFloat(payload.Data, "f46", "open", "open_price")
+	open := normalizeEastmoneyRealtimeScaledPrice(rawOpen)
+	rawPct, _ := firstFloat(payload.Data, "f170", "pct", "pct_chg", "change_pct")
+	pct := normalizeEastmoneyRealtimeScaledPct(rawPct)
+	return aStockRealtimeQuote{Code: code, Price: price, Open: open, Pct: pct}, true
 }
 
 func normalizeEastmoneyRealtimeScaledPrice(value float64) float64 {
@@ -6997,6 +7084,13 @@ func normalizeEastmoneyRealtimeScaledPrice(value float64) float64 {
 		return 0
 	}
 	if value >= 100 {
+		return value / 100
+	}
+	return value
+}
+
+func normalizeEastmoneyRealtimeScaledPct(value float64) float64 {
+	if value >= 100 || value <= -100 {
 		return value / 100
 	}
 	return value
