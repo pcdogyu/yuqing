@@ -94,6 +94,15 @@ class ArticleListFallbackTest {
     }
 
     @Test
+    fun aStockDateLabelSplitsDateAndWeekday() {
+        assertEquals(
+            AStockDateLabelParts(date = "2026-07-10", weekday = "周五"),
+            formatAStockDateLabelParts("2026-07-10"),
+        )
+        assertEquals(AStockDateLabelParts(date = "bad-date"), formatAStockDateLabelParts("bad-date"))
+    }
+
+    @Test
     fun backtestValueToneUsesAStockRedUpGreenDownSemantics() {
         assertEquals(BacktestValueTone.Up, backtestValueTone("+10.44%"))
         assertEquals(BacktestValueTone.Down, backtestValueTone(" -3.27%"))

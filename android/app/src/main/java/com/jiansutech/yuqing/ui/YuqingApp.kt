@@ -655,6 +655,7 @@ private fun AStockModule(
     val morningBacktests = remember(morningSnapshot?.backtestsJson) { parseAStockBacktests(morningSnapshot?.backtestsJson) }
     val afternoonBacktests = remember(afternoonSnapshot?.backtestsJson) { parseAStockBacktests(afternoonSnapshot?.backtestsJson) }
     val isLatestDate = isLatestSelectableAStockDate(window.date)
+    val dateLabel = formatAStockDateLabelParts(window.date)
     LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
             Row(
@@ -669,12 +670,26 @@ private fun AStockModule(
                         Text("前一日")
                     }
                 }
-                Text(
-                    formatAStockDateWithWeekday(window.date),
+                Column(
                     modifier = Modifier.weight(1f),
-                    fontWeight = FontWeight.SemiBold,
-                    textAlign = TextAlign.Center,
-                )
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        dateLabel.date,
+                        fontWeight = FontWeight.SemiBold,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                    )
+                    if (dateLabel.weekday.isNotBlank()) {
+                        Text(
+                            dateLabel.weekday,
+                            fontWeight = FontWeight.SemiBold,
+                            textAlign = TextAlign.Center,
+                            maxLines = 1,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                }
                 Box(
                     modifier = Modifier.weight(1f),
                     contentAlignment = Alignment.CenterEnd,
@@ -2091,8 +2106,13 @@ private fun cleanAStockRecommendationReason(value: String): String {
         .trim { it.isWhitespace() || it == '；' || it == '，' }
 }
 
-private fun formatAStockDateWithWeekday(value: String): String {
-    val date = runCatching { LocalDate.parse(value) }.getOrNull() ?: return value
+internal data class AStockDateLabelParts(
+    val date: String,
+    val weekday: String = "",
+)
+
+internal fun formatAStockDateLabelParts(value: String): AStockDateLabelParts {
+    val date = runCatching { LocalDate.parse(value) }.getOrNull() ?: return AStockDateLabelParts(date = value)
     val weekday = when (date.dayOfWeek) {
         DayOfWeek.MONDAY -> "周一"
         DayOfWeek.TUESDAY -> "周二"
@@ -2102,7 +2122,7 @@ private fun formatAStockDateWithWeekday(value: String): String {
         DayOfWeek.SATURDAY -> "周六"
         DayOfWeek.SUNDAY -> "周日"
     }
-    return "$value（$weekday）"
+    return AStockDateLabelParts(date = value, weekday = weekday)
 }
 
 private fun isLatestSelectableAStockDate(value: String): Boolean {
