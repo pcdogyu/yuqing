@@ -743,7 +743,10 @@ class YuqingViewModel(
         loadAStockRecommendationDay(today.toString())
     }
 
-    fun loadAStockRecommendationDay(date: String = _uiState.value.aStockRecommendationWindow.date) {
+    fun loadAStockRecommendationDay(
+        date: String = _uiState.value.aStockRecommendationWindow.date,
+        onSuccess: ((AStockRecommendationSnapshot, AStockRecommendationSnapshot) -> Unit)? = null,
+    ) {
         viewModelScope.launch {
             _uiState.update { it.copy(loading = true, error = "", message = "") }
             val session = sessionStore.state.first()
@@ -780,6 +783,7 @@ class YuqingViewModel(
                         },
                     )
                 }
+                onSuccess?.invoke(morning, afternoon)
             }.onFailure { throwable ->
                 _uiState.update { it.copy(error = throwable.message ?: "推荐股票加载失败") }
             }

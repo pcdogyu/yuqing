@@ -156,6 +156,7 @@ private fun PortalScreen(
         ?: fallback.firstOrNull { it.key == state.selectedModuleKey }
         ?: modules.first()
     var backtestDetail by remember { mutableStateOf<AStockBacktestDetailState?>(null) }
+    var backtestNavigationMessage by remember { mutableStateOf("") }
     var lastArticleTabClickAt by remember { mutableStateOf(0L) }
     var bottomNavSecretTapState by remember { mutableStateOf(BottomNavSecretTapState()) }
     var bottomNavLockedUntil by remember { mutableStateOf(0L) }
@@ -190,6 +191,41 @@ private fun PortalScreen(
                 } else {
                     current
                 }
+            }
+        }
+    }
+    fun openAStockBacktestTradingDate(date: String, pick: AStockBacktestTradingDatePick) {
+        backtestNavigationMessage = ""
+        viewModel.loadAStockRecommendationDay(date) { morning, afternoon ->
+            val snapshotDate = morning.strategyDate.ifBlank { afternoon.strategyDate.ifBlank { date } }
+            val items = buildAStockBacktestNavigationItems(
+                strategyDate = snapshotDate,
+                morningRecommendations = parseAStockRecommendations(morning.recommendationsJson),
+                morningBacktests = parseAStockBacktests(morning.backtestsJson),
+                afternoonRecommendations = parseAStockRecommendations(afternoon.recommendationsJson),
+                afternoonBacktests = parseAStockBacktests(afternoon.backtestsJson),
+            )
+            val target = when (pick) {
+                AStockBacktestTradingDatePick.First -> items.firstOrNull()
+                AStockBacktestTradingDatePick.Last -> items.lastOrNull()
+            }
+            if (target == null) {
+                backtestNavigationMessage = "${snapshotDate} 暂无推荐股票"
+            } else {
+                backtestDetail = target.toDetailState(items)
+            }
+        }
+    }
+    fun openAStockBacktestAdjacentTarget(current: AStockBacktestDetailState, target: AStockBacktestAdjacentTarget, offset: Int) {
+        backtestNavigationMessage = ""
+        when (target.kind) {
+            AStockBacktestAdjacentTargetKind.Stock -> {
+                backtestDetail = adjacentAStockBacktestDetail(current, offset) ?: current
+            }
+            AStockBacktestAdjacentTargetKind.TradingDate -> {
+                val targetDate = target.tradingDate ?: return
+                val pick = target.tradingDatePick ?: return
+                openAStockBacktestTradingDate(targetDate, pick)
             }
         }
     }
@@ -324,11 +360,16 @@ private fun PortalScreen(
                         backtestDetail = adjacentAStockBacktestDetail(detail, -1) ?: detail
                     },
                     onPreviousStock = {
-                        backtestDetail = adjacentAStockBacktestDetail(detail, -1) ?: detail
+                        aStockBacktestAdjacentTargets(detail).previous?.let { target ->
+                            openAStockBacktestAdjacentTarget(detail, target, -1)
+                        }
                     },
                     onNextStock = {
-                        backtestDetail = adjacentAStockBacktestDetail(detail, 1) ?: detail
+                        aStockBacktestAdjacentTargets(detail).next?.let { target ->
+                            openAStockBacktestAdjacentTarget(detail, target, 1)
+                        }
                     },
+                    navigationMessage = backtestNavigationMessage,
                     refreshingPrice = state.aStockBacktestPriceRefreshing,
                     onRefreshPrice = {
                         refreshBacktestDetailPrice(detail)
@@ -361,7 +402,10 @@ private fun PortalScreen(
                     viewModel = viewModel,
                     versionUpgradeState = versionUpgradeState,
                     onCheckUpgrade = onCheckUpgrade,
-                    onOpenAStockBacktest = { backtestDetail = it },
+                    onOpenAStockBacktest = {
+                        backtestNavigationMessage = ""
+                        backtestDetail = it
+                    },
                 )
             }
         }
@@ -679,6 +723,15 @@ private fun AStockModule(
     val afternoonRecommendations = state.afternoonAStockRecommendations
     val morningBacktests = remember(morningSnapshot?.backtestsJson) { parseAStockBacktests(morningSnapshot?.backtestsJson) }
     val afternoonBacktests = remember(afternoonSnapshot?.backtestsJson) { parseAStockBacktests(afternoonSnapshot?.backtestsJson) }
+    val backtestNavigationItems = remember(window.date, morningRecommendations, morningBacktests, afternoonRecommendations, afternoonBacktests) {
+        buildAStockBacktestNavigationItems(
+            strategyDate = window.date,
+            morningRecommendations = morningRecommendations,
+            morningBacktests = morningBacktests,
+            afternoonRecommendations = afternoonRecommendations,
+            afternoonBacktests = afternoonBacktests,
+        )
+    }
     val isLatestDate = isLatestSelectableAStockDate(window.date)
     val dateLabel = formatAStockDateLabelParts(window.date)
     LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -741,18 +794,10 @@ private fun AStockModule(
         if (morningRecommendations.isEmpty()) {
             item { SimpleRow("暂无上午推荐", morningSnapshot?.emptyReason.ifNullOrBlank("08:00-09:30 暂无推荐股票")) }
         }
-        items(morningRecommendations) { item ->
-            AStockRecommendationRow(item) {
+        items(backtestNavigationItems.filter { it.period == "morning" }) { navItem ->
+            AStockRecommendationRow(navItem.recommendation) {
                 onOpenAStockBacktest(
-                    AStockBacktestDetailState(
-                        recommendation = item,
-                        row = findAStockBacktest(morningBacktests, item),
-                        strategyDate = window.date,
-                        period = "morning",
-                        sectionLabel = "上午推荐",
-                        recommendations = morningRecommendations,
-                        backtests = morningBacktests,
-                    ),
+                    navItem.toDetailState(backtestNavigationItems),
                 )
             }
         }
@@ -761,18 +806,10 @@ private fun AStockModule(
         if (afternoonRecommendations.isEmpty()) {
             item { SimpleRow("暂无下午推荐", afternoonSnapshot?.emptyReason.ifNullOrBlank("09:30-13:00 暂无推荐股票")) }
         }
-        items(afternoonRecommendations) { item ->
-            AStockRecommendationRow(item) {
+        items(backtestNavigationItems.filter { it.period == "afternoon" }) { navItem ->
+            AStockRecommendationRow(navItem.recommendation) {
                 onOpenAStockBacktest(
-                    AStockBacktestDetailState(
-                        recommendation = item,
-                        row = findAStockBacktest(afternoonBacktests, item),
-                        strategyDate = window.date,
-                        period = "afternoon",
-                        sectionLabel = "下午推荐",
-                        recommendations = afternoonRecommendations,
-                        backtests = afternoonBacktests,
-                    ),
+                    navItem.toDetailState(backtestNavigationItems),
                 )
             }
         }
@@ -1790,14 +1827,22 @@ private fun isPanewsNewsflashSource(sourceType: String): Boolean {
     return sourceType.trim().equals("panews_newsflash", ignoreCase = true)
 }
 
-private data class AStockBacktestDetailState(
+internal data class AStockBacktestDetailState(
     val recommendation: AStockRecommendation,
     val row: AStockBacktestRow?,
     val strategyDate: String,
     val period: String,
     val sectionLabel: String,
-    val recommendations: List<AStockRecommendation> = emptyList(),
-    val backtests: List<AStockBacktestRow> = emptyList(),
+    val navigationItems: List<AStockBacktestNavigationItem> = emptyList(),
+    val navigationIndex: Int = -1,
+)
+
+internal data class AStockBacktestNavigationItem(
+    val recommendation: AStockRecommendation,
+    val row: AStockBacktestRow?,
+    val strategyDate: String,
+    val period: String,
+    val sectionLabel: String,
 )
 
 private fun AStockBacktestRow.displayEntryOpen(): String {
@@ -1819,13 +1864,14 @@ private fun AStockBacktestDetailScreen(
     onSwipeUp: () -> Unit,
     onPreviousStock: () -> Unit,
     onNextStock: () -> Unit,
+    navigationMessage: String,
     refreshingPrice: Boolean,
     onRefreshPrice: () -> Unit,
 ) {
     val row = state.row
     val currentClosePrice = aStockBacktestDetailCurrentPrice(row, state.recommendation)
     val currentMarketPct = aStockBacktestDetailCurrentMarketPct(row)
-    val adjacentLabels = aStockBacktestAdjacentLabels(state.recommendations, state.recommendation)
+    val adjacentTargets = aStockBacktestAdjacentTargets(state)
     val swipeThreshold = with(LocalDensity.current) { 96.dp.toPx() }
     var dragOffset by remember(state.recommendation.code, state.sectionLabel) { mutableStateOf(Offset.Zero) }
     LazyColumn(
@@ -1860,6 +1906,9 @@ private fun AStockBacktestDetailScreen(
                     "今日 $currentMarketPct",
                 ).joinToString("  "),
             )
+        }
+        if (navigationMessage.isNotBlank()) {
+            item { SimpleRow("切换提示", navigationMessage) }
         }
         if (row == null) {
             item { SimpleRow("暂无回测结果", "请先在 A股页面刷新当前回测。") }
@@ -1896,11 +1945,11 @@ private fun AStockBacktestDetailScreen(
                     cleanAStockRecommendationReason(state.recommendation.reason).ifBlank { "暂无推荐说明" },
                 )
             }
-            if (adjacentLabels.hasAnyTarget) {
+            if (adjacentTargets.hasAnyTarget) {
                 item {
                     AStockBacktestAdjacentNavigation(
-                        previousLabel = adjacentLabels.previous,
-                        nextLabel = adjacentLabels.next,
+                        previousLabel = adjacentTargets.previous?.label,
+                        nextLabel = adjacentTargets.next?.label,
                         onPreviousStock = onPreviousStock,
                         onNextStock = onNextStock,
                     )
@@ -2267,15 +2316,32 @@ private fun applyAStockBacktestDetailSnapshot(
 ): AStockBacktestDetailState {
     val recommendations = parseAStockRecommendations(snapshot.recommendationsJson)
     val backtests = parseAStockBacktests(snapshot.backtestsJson)
+    val snapshotDate = snapshot.strategyDate.ifBlank { state.strategyDate }
+    val snapshotPeriod = snapshot.period.ifBlank { state.period }
     val recommendation = recommendations.firstOrNull { sameAStockRecommendation(it, state.recommendation) }
         ?: state.recommendation
+    val row = findAStockBacktest(backtests, recommendation) ?: findAStockBacktest(backtests, state.recommendation) ?: state.row
+    val navigationItems = replaceAStockBacktestNavigationPeriod(
+        items = state.navigationItems,
+        strategyDate = snapshotDate,
+        period = snapshotPeriod,
+        sectionLabel = if (snapshotPeriod == "afternoon") "下午推荐" else "上午推荐",
+        recommendations = recommendations,
+        backtests = backtests,
+    )
+    val navigationIndex = navigationItems.indexOfFirst { item ->
+        item.strategyDate == snapshotDate &&
+            item.period == snapshotPeriod &&
+            sameAStockRecommendation(item.recommendation, recommendation)
+    }.takeIf { it >= 0 } ?: state.navigationIndex
     return state.copy(
         recommendation = recommendation,
-        row = findAStockBacktest(backtests, recommendation) ?: findAStockBacktest(backtests, state.recommendation) ?: state.row,
-        strategyDate = snapshot.strategyDate.ifBlank { state.strategyDate },
-        period = snapshot.period.ifBlank { state.period },
-        recommendations = recommendations.ifEmpty { state.recommendations },
-        backtests = backtests.ifEmpty { state.backtests },
+        row = row,
+        strategyDate = snapshotDate,
+        period = snapshotPeriod,
+        sectionLabel = if (snapshotPeriod == "afternoon") "下午推荐" else "上午推荐",
+        navigationItems = navigationItems,
+        navigationIndex = navigationIndex,
     )
 }
 
@@ -2297,6 +2363,90 @@ private fun findAStockBacktest(rows: List<AStockBacktestRow>, item: AStockRecomm
         val stock = row.stock.trim()
         stock == code || stock.startsWith("$code ")
     }
+}
+
+internal fun buildAStockBacktestNavigationItems(
+    strategyDate: String,
+    morningRecommendations: List<AStockRecommendation>,
+    morningBacktests: List<AStockBacktestRow>,
+    afternoonRecommendations: List<AStockRecommendation>,
+    afternoonBacktests: List<AStockBacktestRow>,
+): List<AStockBacktestNavigationItem> {
+    return buildList {
+        morningRecommendations.forEach { item ->
+            add(
+                AStockBacktestNavigationItem(
+                    recommendation = item,
+                    row = findAStockBacktest(morningBacktests, item),
+                    strategyDate = strategyDate,
+                    period = "morning",
+                    sectionLabel = "上午推荐",
+                ),
+            )
+        }
+        afternoonRecommendations.forEach { item ->
+            add(
+                AStockBacktestNavigationItem(
+                    recommendation = item,
+                    row = findAStockBacktest(afternoonBacktests, item),
+                    strategyDate = strategyDate,
+                    period = "afternoon",
+                    sectionLabel = "下午推荐",
+                ),
+            )
+        }
+    }
+}
+
+private fun replaceAStockBacktestNavigationPeriod(
+    items: List<AStockBacktestNavigationItem>,
+    strategyDate: String,
+    period: String,
+    sectionLabel: String,
+    recommendations: List<AStockRecommendation>,
+    backtests: List<AStockBacktestRow>,
+): List<AStockBacktestNavigationItem> {
+    if (items.isEmpty()) {
+        return recommendations.map { item ->
+            AStockBacktestNavigationItem(
+                recommendation = item,
+                row = findAStockBacktest(backtests, item),
+                strategyDate = strategyDate,
+                period = period,
+                sectionLabel = sectionLabel,
+            )
+        }
+    }
+    val start = items.indexOfFirst { it.strategyDate == strategyDate && it.period == period }
+    if (start < 0) {
+        return items
+    }
+    val end = items.indexOfLast { it.strategyDate == strategyDate && it.period == period }
+    val replacement = recommendations.map { item ->
+        AStockBacktestNavigationItem(
+            recommendation = item,
+            row = findAStockBacktest(backtests, item),
+            strategyDate = strategyDate,
+            period = period,
+            sectionLabel = sectionLabel,
+        )
+    }
+    return items.take(start) + replacement + items.drop(end + 1)
+}
+
+internal fun AStockBacktestNavigationItem.toDetailState(
+    navigationItems: List<AStockBacktestNavigationItem>,
+): AStockBacktestDetailState {
+    val index = navigationItems.indexOf(this)
+    return AStockBacktestDetailState(
+        recommendation = recommendation,
+        row = row,
+        strategyDate = strategyDate,
+        period = period,
+        sectionLabel = sectionLabel,
+        navigationItems = navigationItems,
+        navigationIndex = index,
+    )
 }
 
 internal fun aStockBacktestDetailCurrentPrice(row: AStockBacktestRow?, recommendation: AStockRecommendation): String {
@@ -2331,40 +2481,90 @@ private fun aStockUsableDisplayValue(value: String?): String? {
     return trimmed
 }
 
-private fun adjacentAStockBacktestDetail(state: AStockBacktestDetailState, offset: Int): AStockBacktestDetailState? {
-    val currentIndex = state.recommendations.indexOfFirst { sameAStockRecommendation(it, state.recommendation) }
+internal fun adjacentAStockBacktestDetail(state: AStockBacktestDetailState, offset: Int): AStockBacktestDetailState? {
+    val currentIndex = state.navigationIndex
     if (currentIndex < 0) {
         return null
     }
-    val nextRecommendation = state.recommendations.getOrNull(currentIndex + offset) ?: return null
-    return state.copy(
-        recommendation = nextRecommendation,
-        row = findAStockBacktest(state.backtests, nextRecommendation),
-    )
+    return state.navigationItems.getOrNull(currentIndex + offset)?.toDetailState(state.navigationItems)
 }
 
-internal data class AStockBacktestAdjacentLabels(
-    val previous: String? = null,
-    val next: String? = null,
+internal enum class AStockBacktestAdjacentTargetKind {
+    Stock,
+    TradingDate,
+}
+
+internal enum class AStockBacktestTradingDatePick {
+    First,
+    Last,
+}
+
+internal data class AStockBacktestAdjacentTarget(
+    val label: String,
+    val kind: AStockBacktestAdjacentTargetKind,
+    val tradingDate: String? = null,
+    val tradingDatePick: AStockBacktestTradingDatePick? = null,
+)
+
+internal data class AStockBacktestAdjacentTargets(
+    val previous: AStockBacktestAdjacentTarget? = null,
+    val next: AStockBacktestAdjacentTarget? = null,
 ) {
     val hasAnyTarget: Boolean
         get() = previous != null || next != null
 }
 
-internal fun aStockBacktestAdjacentLabels(
-    recommendations: List<AStockRecommendation>,
-    current: AStockRecommendation,
-): AStockBacktestAdjacentLabels {
-    if (recommendations.size <= 1) {
-        return AStockBacktestAdjacentLabels()
+internal fun aStockBacktestAdjacentTargets(
+    state: AStockBacktestDetailState,
+    latestTradingDate: LocalDate = AStockTradingCalendar.latestSelectableTradingDay(LocalDate.now(ZoneId.of("Asia/Shanghai"))),
+): AStockBacktestAdjacentTargets {
+    val currentIndex = state.navigationIndex
+    val items = state.navigationItems
+    if (currentIndex < 0 || currentIndex >= items.size) {
+        return AStockBacktestAdjacentTargets()
     }
-    val currentIndex = recommendations.indexOfFirst { sameAStockRecommendation(it, current) }
-    if (currentIndex < 0) {
-        return AStockBacktestAdjacentLabels()
+    val currentDate = runCatching { LocalDate.parse(state.strategyDate) }.getOrNull()
+    val previousStock = items.getOrNull(currentIndex - 1)?.let { item ->
+        AStockBacktestAdjacentTarget(
+            label = aStockRecommendationCodeNameLabel(item.recommendation),
+            kind = AStockBacktestAdjacentTargetKind.Stock,
+        )
     }
-    return AStockBacktestAdjacentLabels(
-        previous = recommendations.getOrNull(currentIndex - 1)?.let(::aStockRecommendationCodeNameLabel)?.ifBlank { null },
-        next = recommendations.getOrNull(currentIndex + 1)?.let(::aStockRecommendationCodeNameLabel)?.ifBlank { null },
+    val nextStock = items.getOrNull(currentIndex + 1)?.let { item ->
+        AStockBacktestAdjacentTarget(
+            label = aStockRecommendationCodeNameLabel(item.recommendation),
+            kind = AStockBacktestAdjacentTargetKind.Stock,
+        )
+    }
+    val previousTradingDate = if (previousStock == null && currentDate != null) {
+        AStockTradingCalendar.previousTradingDay(currentDate).toString()
+    } else {
+        null
+    }
+    val nextTradingDate = if (nextStock == null && currentDate != null && currentDate.isBefore(latestTradingDate)) {
+        AStockTradingCalendar.nextTradingDay(currentDate).let { next ->
+            if (next.isAfter(latestTradingDate)) null else next.toString()
+        }
+    } else {
+        null
+    }
+    return AStockBacktestAdjacentTargets(
+        previous = previousStock ?: previousTradingDate?.let { date ->
+            AStockBacktestAdjacentTarget(
+                label = date,
+                kind = AStockBacktestAdjacentTargetKind.TradingDate,
+                tradingDate = date,
+                tradingDatePick = AStockBacktestTradingDatePick.Last,
+            )
+        },
+        next = nextStock ?: nextTradingDate?.let { date ->
+            AStockBacktestAdjacentTarget(
+                label = date,
+                kind = AStockBacktestAdjacentTargetKind.TradingDate,
+                tradingDate = date,
+                tradingDatePick = AStockBacktestTradingDatePick.First,
+            )
+        },
     )
 }
 

@@ -12,6 +12,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 import java.time.Instant
+import java.time.LocalDate
 
 class ArticleListFallbackTest {
     @Test
@@ -113,33 +114,101 @@ class ArticleListFallbackTest {
     }
 
     @Test
-    fun aStockBacktestAdjacentLabelsShowOnlyAvailableNeighbors() {
-        val first = testAStockRecommendation("002520", "日发精机", 1)
-        val middle = testAStockRecommendation("603893", "瑞芯微", 2)
-        val last = testAStockRecommendation("688385", "复旦微电", 3)
-        val recommendations = listOf(first, middle, last)
+    fun aStockBacktestAdjacentTargetsJoinMorningAndAfternoon() {
+        val items = buildAStockBacktestNavigationItems(
+            strategyDate = "2026-07-10",
+            morningRecommendations = listOf(
+                testAStockRecommendation("300054", "鼎龙股份", 3),
+                testAStockRecommendation("688135", "利扬芯片", 4),
+            ),
+            morningBacktests = emptyList(),
+            afternoonRecommendations = listOf(testAStockRecommendation("002747", "埃斯顿", 1)),
+            afternoonBacktests = emptyList(),
+        )
 
-        assertEquals(
-            AStockBacktestAdjacentLabels(previous = null, next = "603893 瑞芯微"),
-            aStockBacktestAdjacentLabels(recommendations, first),
+        val morningLastTargets = aStockBacktestAdjacentTargets(
+            items[1].toDetailState(items),
+            latestTradingDate = LocalDate.parse("2026-07-10"),
         )
-        assertEquals(
-            AStockBacktestAdjacentLabels(previous = "002520 日发精机", next = "688385 复旦微电"),
-            aStockBacktestAdjacentLabels(recommendations, middle),
+        val afternoonFirstTargets = aStockBacktestAdjacentTargets(
+            items[2].toDetailState(items),
+            latestTradingDate = LocalDate.parse("2026-07-10"),
         )
-        assertEquals(
-            AStockBacktestAdjacentLabels(previous = "603893 瑞芯微", next = null),
-            aStockBacktestAdjacentLabels(recommendations, last),
-        )
+
+        assertEquals("002747 埃斯顿", morningLastTargets.next?.label)
+        assertEquals(AStockBacktestAdjacentTargetKind.Stock, morningLastTargets.next?.kind)
+        assertEquals("688135 利扬芯片", afternoonFirstTargets.previous?.label)
+        assertEquals(AStockBacktestAdjacentTargetKind.Stock, afternoonFirstTargets.previous?.kind)
     }
 
     @Test
-    fun aStockBacktestAdjacentLabelsHideWhenNoSwitchTargetExists() {
-        val current = testAStockRecommendation("002520", "日发精机", 1)
-        val unknown = testAStockRecommendation("600000", "浦发银行", 9)
+    fun aStockBacktestAdjacentTargetsShowTradingDateBoundaries() {
+        val todayItems = buildAStockBacktestNavigationItems(
+            strategyDate = "2026-07-10",
+            morningRecommendations = listOf(testAStockRecommendation("688249", "晶合集成", 1)),
+            morningBacktests = emptyList(),
+            afternoonRecommendations = listOf(testAStockRecommendation("002747", "埃斯顿", 1)),
+            afternoonBacktests = emptyList(),
+        )
+        val todayFirstTargets = aStockBacktestAdjacentTargets(
+            todayItems.first().toDetailState(todayItems),
+            latestTradingDate = LocalDate.parse("2026-07-10"),
+        )
+        val todayLastTargets = aStockBacktestAdjacentTargets(
+            todayItems.last().toDetailState(todayItems),
+            latestTradingDate = LocalDate.parse("2026-07-10"),
+        )
+        val yesterdayItems = buildAStockBacktestNavigationItems(
+            strategyDate = "2026-07-09",
+            morningRecommendations = listOf(testAStockRecommendation("000977", "浪潮信息", 1)),
+            morningBacktests = emptyList(),
+            afternoonRecommendations = emptyList(),
+            afternoonBacktests = emptyList(),
+        )
+        val yesterdayLastTargets = aStockBacktestAdjacentTargets(
+            yesterdayItems.last().toDetailState(yesterdayItems),
+            latestTradingDate = LocalDate.parse("2026-07-10"),
+        )
 
-        assertEquals(AStockBacktestAdjacentLabels(), aStockBacktestAdjacentLabels(listOf(current), current))
-        assertEquals(AStockBacktestAdjacentLabels(), aStockBacktestAdjacentLabels(listOf(current), unknown))
+        assertEquals("2026-07-09", todayFirstTargets.previous?.label)
+        assertEquals(AStockBacktestTradingDatePick.Last, todayFirstTargets.previous?.tradingDatePick)
+        assertNull(todayLastTargets.next)
+        assertEquals("2026-07-10", yesterdayLastTargets.next?.label)
+        assertEquals(AStockBacktestTradingDatePick.First, yesterdayLastTargets.next?.tradingDatePick)
+    }
+
+    @Test
+    fun aStockBacktestAdjacentDetailUsesNavigationIndexWhenCodesRepeat() {
+        val morning = testAStockRecommendation("300394", "天孚通信", 1)
+        val afternoon = testAStockRecommendation("300394", "天孚通信", 1)
+        val next = testAStockRecommendation("002747", "埃斯顿", 2)
+        val items = buildAStockBacktestNavigationItems(
+            strategyDate = "2026-07-10",
+            morningRecommendations = listOf(morning),
+            morningBacktests = emptyList(),
+            afternoonRecommendations = listOf(afternoon, next),
+            afternoonBacktests = emptyList(),
+        )
+        val afternoonState = items[1].toDetailState(items)
+
+        val nextState = adjacentAStockBacktestDetail(afternoonState, 1)
+
+        assertEquals("002747", nextState?.recommendation?.code)
+        assertEquals("afternoon", nextState?.period)
+        assertEquals("", aStockRecommendationCodeNameLabel(AStockRecommendation()))
+    }
+
+    @Test
+    fun aStockBacktestAdjacentTargetsHideWhenNoSwitchTargetExists() {
+        val emptyState = AStockBacktestDetailState(
+            recommendation = testAStockRecommendation("002520", "日发精机", 1),
+            row = null,
+            strategyDate = "2026-07-10",
+            period = "morning",
+            sectionLabel = "上午推荐",
+        )
+
+        assertEquals(AStockBacktestAdjacentTargets(), aStockBacktestAdjacentTargets(emptyState))
         assertEquals("", aStockRecommendationCodeNameLabel(AStockRecommendation()))
     }
 
