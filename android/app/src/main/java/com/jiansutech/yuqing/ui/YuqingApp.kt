@@ -1865,10 +1865,27 @@ private fun AStockBacktestMetricRow(label: String, returnValue: String, closeVal
 }
 
 @Composable
-private fun backtestValueColor(value: String) = when {
-    value.startsWith("+") -> MaterialTheme.colorScheme.primary
-    value.startsWith("-") -> MaterialTheme.colorScheme.error
-    else -> MaterialTheme.colorScheme.onSurface
+private fun backtestValueColor(value: String) = when (backtestValueTone(value)) {
+    BacktestValueTone.Up -> AStockPriceUpColor
+    BacktestValueTone.Down -> AStockPriceDownColor
+    BacktestValueTone.Flat -> MaterialTheme.colorScheme.onSurface
+}
+
+private val AStockPriceUpColor = Color(0xFFC62828)
+private val AStockPriceDownColor = Color(0xFF2E7D32)
+
+internal enum class BacktestValueTone {
+    Up,
+    Down,
+    Flat,
+}
+
+private val SignedPercentPrefixPattern = Regex("""^[+-]\s*\d""")
+
+internal fun backtestValueTone(value: String): BacktestValueTone = when {
+    value.trimStart().startsWith("+") && SignedPercentPrefixPattern.containsMatchIn(value.trimStart()) -> BacktestValueTone.Up
+    value.trimStart().startsWith("-") && SignedPercentPrefixPattern.containsMatchIn(value.trimStart()) -> BacktestValueTone.Down
+    else -> BacktestValueTone.Flat
 }
 
 @Composable

@@ -93,6 +93,14 @@ class ArticleListFallbackTest {
     }
 
     @Test
+    fun backtestValueToneUsesAStockRedUpGreenDownSemantics() {
+        assertEquals(BacktestValueTone.Up, backtestValueTone("+10.44%"))
+        assertEquals(BacktestValueTone.Down, backtestValueTone(" -3.27%"))
+        assertEquals(BacktestValueTone.Flat, backtestValueTone("--"))
+        assertEquals(BacktestValueTone.Flat, backtestValueTone(""))
+    }
+
+    @Test
     fun stockResearchDisplayDatePrefersResearchDateThenPublishDate() {
         assertEquals(
             "2026-07-08",
