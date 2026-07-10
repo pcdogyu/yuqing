@@ -178,6 +178,8 @@ type aStockMarketCandidate struct {
 	AuctionVolume float64
 	MatchedScore  int
 	Evidence      int
+	WeakEvidence  int
+	WeakPenalty   int
 	Keywords      []string
 	Fallback      bool
 	FixedPool     bool
@@ -372,6 +374,10 @@ const (
 	aStockFundFlowBonusThreshold       = 30000000.0
 	aStockFundFlowStrongBonusThreshold = 100000000.0
 	aStockNegativeNewsPenalty          = 30
+	aStockLowOpenPenaltyThresholdPct   = -2.0
+	aStockLowOpenPenalty               = 80
+	aStockWeakEvidencePenalty          = 30
+	aStockFundFlowMedianPenalty        = 30
 	aStockNewsPageSize                 = 10
 	aStockArticleFetchPageSize         = 1000
 	aStockArticleFetchMaxPages         = 100
@@ -4883,6 +4889,7 @@ func (s *Server) applyAStockRecommendationFundFlowFilterWithCache(strategyDate s
 		return result
 	}
 	seen := make(map[string]struct{}, len(base))
+	assessments := make(map[string]aStockFundFlow5DAssessment)
 	baseHotspotCounts := make(map[string]int)
 	keptHotspotCounts := make(map[string]int)
 	kept := make([]aStockRecommendation, 0, minInt(len(base), target))
@@ -4909,6 +4916,9 @@ func (s *Server) applyAStockRecommendationFundFlowFilterWithCache(strategyDate s
 			return false
 		}
 		assessment := s.assessAStockRecommendationFundFlow5DWithCache(strategyDate, code, cache)
+		if !assessment.Missing {
+			assessments[code] = assessment
+		}
 		if !assessment.Missing && isAStockFundFlowHardFiltered(assessment) {
 			if countFiltered {
 				result.Filtered++
@@ -4964,7 +4974,60 @@ func (s *Server) applyAStockRecommendationFundFlowFilterWithCache(strategyDate s
 		}
 	}
 	result.Shortfall = len(kept) < target
+	kept = applyAStockFundFlowMedianPenaltyToRecommendations(kept, assessments)
 	result.Recommendations = sortAStockRecommendationsByScore(kept)
+	return result
+}
+
+func applyAStockFundFlowMedianPenaltyToRecommendations(recommendations []aStockRecommendation, assessments map[string]aStockFundFlow5DAssessment) []aStockRecommendation {
+	if len(recommendations) == 0 || len(assessments) == 0 {
+		return recommendations
+	}
+	totalsByHotspot := make(map[string][]float64)
+	for _, rec := range recommendations {
+		hotspot := normalizeAStockRecommendationHotspot(rec.Hotspot)
+		if hotspot == "" {
+			continue
+		}
+		assessment, ok := assessments[normalizeAStockCode(rec.Code)]
+		if !ok || assessment.Missing {
+			continue
+		}
+		totalsByHotspot[hotspot] = append(totalsByHotspot[hotspot], assessment.Total)
+	}
+	medianByHotspot := make(map[string]float64, len(totalsByHotspot))
+	for hotspot, totals := range totalsByHotspot {
+		if len(totals) < 3 {
+			continue
+		}
+		sort.Float64s(totals)
+		mid := len(totals) / 2
+		if len(totals)%2 == 0 {
+			medianByHotspot[hotspot] = (totals[mid-1] + totals[mid]) / 2
+		} else {
+			medianByHotspot[hotspot] = totals[mid]
+		}
+	}
+	if len(medianByHotspot) == 0 {
+		return recommendations
+	}
+	result := append([]aStockRecommendation(nil), recommendations...)
+	for i := range result {
+		hotspot := normalizeAStockRecommendationHotspot(result[i].Hotspot)
+		median, ok := medianByHotspot[hotspot]
+		if !ok {
+			continue
+		}
+		assessment, ok := assessments[normalizeAStockCode(result[i].Code)]
+		if !ok || assessment.Missing || assessment.Total >= median {
+			continue
+		}
+		result[i] = applyAStockRecommendationScorePenalty(
+			result[i],
+			aStockFundFlowMedianPenalty,
+			fmt.Sprintf("5日资金低于同热点中位数 %s，资金强度减分 %d", formatSectorFundFlowMoney(median), aStockFundFlowMedianPenalty),
+		)
+	}
 	return result
 }
 
@@ -5655,6 +5718,19 @@ func appendAStockReason(reason string, addition string) string {
 		return reason
 	}
 	return reason + "，" + addition
+}
+
+func applyAStockRecommendationScorePenalty(rec aStockRecommendation, penalty int, reason string) aStockRecommendation {
+	if penalty <= 0 {
+		return rec
+	}
+	baseScore := rec.MarketScore
+	if baseScore == 0 {
+		baseScore = rec.HotspotScore
+	}
+	rec.MarketScore = baseScore - penalty
+	rec.Reason = appendAStockReason(rec.Reason, reason)
+	return rec
 }
 
 func rerankAStockRecommendations(recommendations []aStockRecommendation) []aStockRecommendation {
@@ -6856,6 +6932,17 @@ func applyAStockMarketBars(strategyDate string, period string, recommendations [
 			recommendations[i].PrevClose = formatAStockPrice(prev.Close)
 			recommendations[i].PrevPct = formatAStockPct(prev.Pct)
 			recommendations[i].PrevPctClass = aStockPctClass(prev.Pct)
+			if normalizedPeriod == "morning" && entry.Close > 0 && prev.Close > 0 {
+				entryPrice := aStockEntryPriceForRecommendation(entry, normalizedPeriod, recommendations[i])
+				openPct := (entryPrice/prev.Close - 1) * 100
+				if entryPrice > 0 && openPct <= aStockLowOpenPenaltyThresholdPct {
+					recommendations[i] = applyAStockRecommendationScorePenalty(
+						recommendations[i],
+						aStockLowOpenPenalty,
+						fmt.Sprintf("开盘低开 %s，盘口减分 %d", formatAStockPct(openPct), aStockLowOpenPenalty),
+					)
+				}
+			}
 			if change, ok := aStockLookbackChange(byCode[recommendations[i].Code], strategyDate, 30, prev.Close); ok {
 				recommendations[i].Change30 = formatAStockPct(change)
 				recommendations[i].Change30Class = aStockPctClass(change)
@@ -8696,6 +8783,9 @@ func buildAStockRecommendationsWithLimitAndSectorGate(hotspots []aStockHotspot, 
 			if len(stock.Keywords) > 0 && !stock.Fallback && !stock.FixedPool {
 				reason = fmt.Sprintf("%s，股票名命中 %s", reason, strings.Join(stock.Keywords, "、"))
 			}
+			if stock.WeakPenalty > 0 {
+				reason = appendAStockReason(reason, fmt.Sprintf("融资融券弱新闻 %d 条，个股证据减分 %d", stock.WeakEvidence, stock.WeakPenalty))
+			}
 			reason = appendAStockReason(reason, formatAStockHotspotNegativeNewsPenaltyReason(hotspot))
 			recommendations = append(recommendations, aStockRecommendation{
 				Rank:         len(recommendations) + 1,
@@ -10056,7 +10146,13 @@ func scoreAStockMarketCandidatesWithSectorGate(hotspot aStockHotspot, candidates
 		if isBlockedAStockRecommendationCandidate(candidate) {
 			continue
 		}
-		evidence := evidenceIndex.Count(candidate)
+		evidenceResult := evidenceIndex.Assess(candidate)
+		evidence := evidenceResult.Count
+		effectiveEvidence := evidenceResult.Strong
+		weakPenalty := 0
+		if evidence > 0 && effectiveEvidence == 0 && evidenceResult.Weak > 0 {
+			weakPenalty = aStockWeakEvidencePenalty
+		}
 		keywords := aStockCandidateKeywordMatches(candidate.Name, hotspot.Keywords)
 		if (candidate.Fallback || candidate.FixedPool) && len(keywords) == 0 {
 			keywords = intersectAStockKeywords(candidate.Keywords, hotspot.Keywords)
@@ -10068,8 +10164,10 @@ func scoreAStockMarketCandidatesWithSectorGate(hotspot aStockHotspot, candidates
 			continue
 		}
 		candidate.Evidence = evidence
+		candidate.WeakEvidence = evidenceResult.Weak
+		candidate.WeakPenalty = weakPenalty
 		candidate.Keywords = keywords
-		candidate.MatchedScore = aStockMarketRankScore(candidate.Rank) + evidence*25 + len(keywords)*12
+		candidate.MatchedScore = aStockMarketRankScore(candidate.Rank) + effectiveEvidence*25 + len(keywords)*12 - weakPenalty
 		scored = append(scored, candidate)
 	}
 	sort.SliceStable(scored, func(i, j int) bool {
@@ -10141,6 +10239,13 @@ type aStockStockEvidenceIndex struct {
 type aStockStockEvidenceItem struct {
 	codes map[string]struct{}
 	text  string
+	weak  bool
+}
+
+type aStockStockEvidenceAssessment struct {
+	Count  int
+	Strong int
+	Weak   int
 }
 
 func newAStockStockEvidenceIndex(items []model.Item) aStockStockEvidenceIndex {
@@ -10156,33 +10261,70 @@ func newAStockStockEvidenceIndex(items []model.Item) aStockStockEvidenceIndex {
 		index.items = append(index.items, aStockStockEvidenceItem{
 			codes: codes,
 			text:  strings.ToLower(item.Title + " " + item.Summary + " " + item.Content + " " + item.RawPayload),
+			weak:  isAStockWeakFinancingEvidenceItem(item),
 		})
 	}
 	return index
 }
 
 func (idx aStockStockEvidenceIndex) Count(candidate aStockMarketCandidate) int {
+	return idx.Assess(candidate).Count
+}
+
+func (idx aStockStockEvidenceIndex) Assess(candidate aStockMarketCandidate) aStockStockEvidenceAssessment {
 	if len(idx.items) == 0 {
-		return 0
+		return aStockStockEvidenceAssessment{}
 	}
 	code := normalizeAStockCode(candidate.Code)
 	name := strings.ToLower(strings.TrimSpace(candidate.Name))
 	if code == "" && name == "" {
-		return 0
+		return aStockStockEvidenceAssessment{}
 	}
-	count := 0
+	assessment := aStockStockEvidenceAssessment{}
 	for _, item := range idx.items {
+		matched := false
 		if code != "" {
 			if _, ok := item.codes[code]; ok {
-				count++
-				continue
+				matched = true
 			}
 		}
-		if name != "" && strings.Contains(item.text, name) {
-			count++
+		if !matched && name != "" && strings.Contains(item.text, name) {
+			matched = true
+		}
+		if !matched {
+			continue
+		}
+		assessment.Count++
+		if item.weak {
+			assessment.Weak++
+		} else {
+			assessment.Strong++
 		}
 	}
-	return count
+	return assessment
+}
+
+func isAStockWeakFinancingEvidenceItem(item model.Item) bool {
+	text := strings.ToLower(strings.Join([]string{item.Title, item.Summary, item.Content}, " "))
+	for _, keyword := range aStockWeakFinancingEvidenceKeywords() {
+		if strings.Contains(text, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+func aStockWeakFinancingEvidenceKeywords() []string {
+	return []string{
+		"融资净买入",
+		"融资净偿还",
+		"融资余额",
+		"融资买入",
+		"融资偿还",
+		"融资融券",
+		"融券",
+		"两融余额",
+	}
 }
 
 func aStockStockListCodeSet(raw string) map[string]struct{} {

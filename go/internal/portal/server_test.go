@@ -8489,6 +8489,88 @@ func TestAStockHotspotsApplyNegativeNewsPenalty(t *testing.T) {
 	}
 }
 
+func TestAStockRecommendationsPenalizeWeakFinancingEvidence(t *testing.T) {
+	hotspot := aStockHotspot{
+		Name:     "AI测试",
+		Keywords: []string{"AI", "人工智能"},
+		Score:    100,
+		Evidence: 2,
+		MatchedItems: []model.Item{
+			{Title: "日发精机：融资净买入596.68万元，融资余额1.62亿元", TagFlags: "0.002520"},
+			{Title: "瑞芯微上半年净利润同比增长", Summary: "AI芯片需求提升", TagFlags: "1.603893"},
+		},
+	}
+
+	recommendations := buildAStockRecommendationsWithLimit([]aStockHotspot{hotspot}, []aStockMarketCandidate{
+		{Code: "002520", Name: "日发精机", Rank: 1, AuctionAmount: 9000000},
+		{Code: "603893", Name: "瑞芯微", Rank: 20, AuctionAmount: 8000000},
+	}, aStockReplacementPoolLimit, aStockReplacementPerHotspot)
+
+	byCode := aStockTestRecommendationsByCode(recommendations)
+	if _, ok := byCode["002520"]; !ok {
+		t.Fatalf("expected weak evidence stock in recommendations, got %+v", recommendations)
+	}
+	if _, ok := byCode["603893"]; !ok {
+		t.Fatalf("expected strong evidence stock in recommendations, got %+v", recommendations)
+	}
+	if recommendations[0].Code != "603893" {
+		t.Fatalf("expected strong evidence stock to outrank weak financing evidence, got %+v", recommendations)
+	}
+	weak := byCode["002520"]
+	if !strings.Contains(weak.Reason, "融资融券弱新闻 1 条，个股证据减分 30") {
+		t.Fatalf("expected weak financing evidence penalty reason, got %+v", weak)
+	}
+}
+
+func TestAStockMarketBarsPenalizeMorningLowOpen(t *testing.T) {
+	recommendations := []aStockRecommendation{
+		{Rank: 1, Hotspot: "人工智能", Code: "002520", Name: "日发精机", HotspotScore: 100, MarketScore: 100, Reason: "弱盘口"},
+		{Rank: 2, Hotspot: "人工智能", Code: "603893", Name: "瑞芯微", HotspotScore: 100, MarketScore: 100, Reason: "正常盘口"},
+	}
+	bars := []aStockMarketBar{
+		{Code: "002520", Date: "2026-07-07", Close: 10},
+		{Code: "002520", Date: "2026-07-08", Open: 9.75, EntryPrice: 9.75, Close: 9.90},
+		{Code: "603893", Date: "2026-07-07", Close: 10},
+		{Code: "603893", Date: "2026-07-08", Open: 10.00, EntryPrice: 10.00, Close: 10.10},
+	}
+
+	got, _, _, _, _ := applyAStockMarketBars("2026-07-08", "morning", recommendations, bars, false, false, 0)
+
+	if len(got) != 2 {
+		t.Fatalf("expected two recommendations, got %+v", got)
+	}
+	if got[0].Code != "603893" || got[1].Code != "002520" {
+		t.Fatalf("expected low-open stock to be reranked lower, got %+v", got)
+	}
+	if got[1].MarketScore != 20 || !strings.Contains(got[1].Reason, "开盘低开 -2.50%，盘口减分 80") {
+		t.Fatalf("expected low-open penalty and reason, got %+v", got[1])
+	}
+}
+
+func TestAStockFundFlowMedianPenaltyWithinHotspot(t *testing.T) {
+	recommendations := []aStockRecommendation{
+		{Rank: 1, Hotspot: "人工智能", Code: "002520", Name: "日发精机", HotspotScore: 100, MarketScore: 100, Reason: "资金偏弱"},
+		{Rank: 2, Hotspot: "人工智能", Code: "603893", Name: "瑞芯微", HotspotScore: 100, MarketScore: 100, Reason: "资金较强"},
+		{Rank: 3, Hotspot: "人工智能", Code: "688385", Name: "复旦微电", HotspotScore: 100, MarketScore: 100, Reason: "资金中位"},
+	}
+	assessments := map[string]aStockFundFlow5DAssessment{
+		"002520": {Total: 80000000},
+		"603893": {Total: 1800000000},
+		"688385": {Total: 300000000},
+	}
+
+	got := applyAStockFundFlowMedianPenaltyToRecommendations(recommendations, assessments)
+	byCode := aStockTestRecommendationsByCode(got)
+
+	weak := byCode["002520"]
+	if weak.MarketScore != 70 || !strings.Contains(weak.Reason, "5日资金低于同热点中位数 +3.00亿，资金强度减分 30") {
+		t.Fatalf("expected below-median fund-flow penalty, got %+v", weak)
+	}
+	if byCode["603893"].MarketScore != 100 || byCode["688385"].MarketScore != 100 {
+		t.Fatalf("expected median and above-median stocks to keep score, got %+v", got)
+	}
+}
+
 func TestAStockHotspotTopStocksUseRecommendationScoreAndLimit(t *testing.T) {
 	hotspot := aStockHotspot{
 		Name:     "人工智能",
