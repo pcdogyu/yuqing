@@ -138,7 +138,7 @@ class ApiModelsTest {
     }
 
     @Test
-    fun aStockRecommendationRequestSendsDefaultFilterState() = runTest {
+    fun aStockRecommendationRequestOmitsDefaultFilterState() = runTest {
         val server = MockWebServer()
         server.enqueue(
             MockResponse()
@@ -155,8 +155,42 @@ class ApiModelsTest {
             assertEquals("/api/v1/a-stock/recommendations", request.requestUrl?.encodedPath)
             assertEquals("2026-07-10", request.requestUrl?.queryParameter("date"))
             assertEquals("morning", request.requestUrl?.queryParameter("period"))
+            assertEquals(null, request.requestUrl?.queryParameter("ignore_recent"))
+            assertEquals(null, request.requestUrl?.queryParameter("limit_up_filter_enabled"))
+            assertEquals(null, request.requestUrl?.queryParameter("today_market_filter_enabled"))
+            assertEquals(null, request.requestUrl?.queryParameter("fund_flow_filter_enabled"))
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
+    fun aStockRecommendationRequestSendsExplicitFilterState() = runTest {
+        val server = MockWebServer()
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"code":200,"message":"ok","data":{"found":true,"strategy_date":"2026-07-10","period":"afternoon","recommendations_json":"[]","backtests_json":"[]"}}"""),
+        )
+        server.start()
+        try {
+            ApiFactory.yuqing(server.url("/").toString())
+                .aStockRecommendations(
+                    date = "2026-07-10",
+                    period = "afternoon",
+                    ignoreRecent = false,
+                    limitUpFilterEnabled = true,
+                    todayMarketFilterEnabled = false,
+                    fundFlowFilterEnabled = true,
+                )
+                .data
+            val request = server.takeRequest()
+
+            assertEquals("/api/v1/a-stock/recommendations", request.requestUrl?.encodedPath)
+            assertEquals("2026-07-10", request.requestUrl?.queryParameter("date"))
+            assertEquals("afternoon", request.requestUrl?.queryParameter("period"))
             assertEquals("false", request.requestUrl?.queryParameter("ignore_recent"))
-            assertEquals("false", request.requestUrl?.queryParameter("limit_up_filter_enabled"))
+            assertEquals("true", request.requestUrl?.queryParameter("limit_up_filter_enabled"))
             assertEquals("false", request.requestUrl?.queryParameter("today_market_filter_enabled"))
             assertEquals("true", request.requestUrl?.queryParameter("fund_flow_filter_enabled"))
         } finally {

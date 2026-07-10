@@ -57,10 +57,10 @@ interface YuqingApi {
     suspend fun aStockRecommendations(
         @Query("date") date: String,
         @Query("period") period: String,
-        @Query("ignore_recent") ignoreRecent: Boolean = false,
-        @Query("limit_up_filter_enabled") limitUpFilterEnabled: Boolean = false,
-        @Query("today_market_filter_enabled") todayMarketFilterEnabled: Boolean = false,
-        @Query("fund_flow_filter_enabled") fundFlowFilterEnabled: Boolean = true,
+        @Query("ignore_recent") ignoreRecent: Boolean? = null,
+        @Query("limit_up_filter_enabled") limitUpFilterEnabled: Boolean? = null,
+        @Query("today_market_filter_enabled") todayMarketFilterEnabled: Boolean? = null,
+        @Query("fund_flow_filter_enabled") fundFlowFilterEnabled: Boolean? = null,
     ): ApiEnvelope<AStockRecommendationSnapshot>
 
     @POST("api/v1/a-stock/backtests/refresh-price")
