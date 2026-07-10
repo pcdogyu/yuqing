@@ -1824,6 +1824,24 @@ func TestAStockBacktestPageRendersStandaloneBacktestAndNavigation(t *testing.T) 
 	}
 }
 
+func TestAStockBacktestCurrentPriceClassUsesCurrentReturn(t *testing.T) {
+	row := aStockBacktestRow{
+		CurrentPrice:          "277.29",
+		CurrentReturn:         "-1.32%",
+		CurrentReturnClass:    "astock-down",
+		CurrentMarketPct:      "+2.88%",
+		CurrentMarketPctClass: "astock-up",
+	}
+	if got := aStockBacktestCurrentReturnClass(row); got != "astock-down" {
+		t.Fatalf("expected realtime price color to follow current return, got %q", got)
+	}
+	row.CurrentReturn = "--"
+	row.CurrentReturnClass = ""
+	if got := aStockBacktestCurrentReturnClass(row); got != "astock-up" {
+		t.Fatalf("expected realtime price color to fall back to market pct, got %q", got)
+	}
+}
+
 func TestAStockFundFlowFilterSessionSyncsBetweenRecommendationAndBacktest(t *testing.T) {
 	setAStockNowForTest(t, time.Date(2026, 7, 9, 9, 30, 0, 0, time.FixedZone("CST", 8*3600)))
 	snapshot := model.AStockRecommendationSnapshot{

@@ -2560,10 +2560,10 @@ func aStockBacktestDisplayOpenPrices(period string, row aStockBacktestRow) (stri
 }
 
 func aStockBacktestCurrentReturnClass(row aStockBacktestRow) string {
-	if !aStockBacktestValueMissing(row.CurrentMarketPct) {
-		return nonEmpty(strings.TrimSpace(row.CurrentMarketPctClass), "astock-flat")
+	if !aStockBacktestValueMissing(row.CurrentReturn) {
+		return nonEmpty(strings.TrimSpace(row.CurrentReturnClass), "astock-flat")
 	}
-	return nonEmpty(strings.TrimSpace(row.CurrentReturnClass), "astock-flat")
+	return nonEmpty(strings.TrimSpace(row.CurrentMarketPctClass), "astock-flat")
 }
 
 func (s *Server) loadAStockContext(strategyDate string, periodKey string, newsPage int, ignoreRecent bool) aStockContext {
