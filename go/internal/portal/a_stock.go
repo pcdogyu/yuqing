@@ -1425,9 +1425,9 @@ func formatAStockBacktestRefreshRowValues(previous aStockBacktestRow, current aS
 	parts := []string{
 		formatAStockBacktestRefreshField("开盘", previous.EntryOpen, current.EntryOpen),
 		formatAStockBacktestRefreshField("下午开盘", previous.AfternoonOpen, current.AfternoonOpen),
-		formatAStockBacktestRefreshField("实时价", previous.CurrentPrice, current.CurrentPrice),
-		formatAStockBacktestRefreshField("实时收益", previous.CurrentReturn, current.CurrentReturn),
-		formatAStockBacktestRefreshField("市场涨跌幅", previous.CurrentMarketPct, current.CurrentMarketPct),
+		formatAStockBacktestRefreshField("现价", previous.CurrentPrice, current.CurrentPrice),
+		formatAStockBacktestRefreshField("当前收益", previous.CurrentReturn, current.CurrentReturn),
+		formatAStockBacktestRefreshField("今日涨跌", previous.CurrentMarketPct, current.CurrentMarketPct),
 		formatAStockBacktestRefreshField("T+0", previous.T0Return, current.T0Return),
 		formatAStockBacktestRefreshField("T+0收盘", previous.T0Close, current.T0Close),
 	}
@@ -5757,7 +5757,6 @@ func (s *Server) loadAStockMarketBars(strategyDate string, codes []string, endpo
 					}
 				}
 				s.enrichAStockSessionPrices(strategyDate, codes, bars)
-				bars = s.supplementAStockMarketBarsWithRealtimeQuotes(strategyDate, codes, bars)
 				return bars, nil
 			}
 		}
@@ -6997,7 +6996,13 @@ func applyAStockLockedMarketBars(strategyDate string, period string, recommendat
 }
 
 func (s *Server) enrichAStockBacktestsWithRealtimeQuotes(strategyDate string, period string, rows []aStockBacktestRow) []aStockBacktestRow {
-	if len(rows) == 0 || normalizeAStockStrategyDate(strategyDate) != aStockTodayDate() {
+	strategyDate = normalizeAStockStrategyDate(strategyDate)
+	quoteDate := aStockRealtimeQuoteDateForStrategyDate(strategyDate)
+	if len(rows) == 0 || quoteDate == "" {
+		return rows
+	}
+	realtimeOffset := aStockBacktestRealtimeTradingDayOffset(strategyDate, quoteDate)
+	if realtimeOffset < 0 || realtimeOffset > 5 {
 		return rows
 	}
 	codes := make([]string, 0, len(rows))
@@ -7044,14 +7049,106 @@ func (s *Server) enrichAStockBacktestsWithRealtimeQuotes(strategyDate string, pe
 		currentReturn := (quote.Price/entryPrice - 1) * 100
 		enriched[i].CurrentReturn = formatAStockPct(currentReturn)
 		enriched[i].CurrentReturnClass = aStockPctClass(currentReturn)
-		enriched[i].T0Close = formatAStockPrice(quote.Price)
-		enriched[i].T0Return = formatAStockPct(currentReturn)
-		enriched[i].T0ReturnClass = aStockPctClass(currentReturn)
+		if realtimeOffset == 0 {
+			enriched[i].T0Close = formatAStockPrice(quote.Price)
+			enriched[i].T0Return = formatAStockPct(currentReturn)
+			enriched[i].T0ReturnClass = aStockPctClass(currentReturn)
+		} else {
+			enriched[i].Days = ensureAStockBacktestCells(enriched[i].Days, 5)
+			enriched[i].Days[realtimeOffset-1] = aStockBacktestCell{
+				Close:          formatAStockPrice(quote.Price),
+				Return:         formatAStockPct(currentReturn),
+				ReturnClass:    aStockPctClass(currentReturn),
+				MarketPct:      formatAStockPct(quote.Pct),
+				MarketPctClass: aStockPctClass(quote.Pct),
+			}
+			enriched[i].BestReturn, enriched[i].BestReturnClass = aStockBestBacktestReturn(enriched[i])
+		}
 		if aStockBacktestStatusNeedsRestore(enriched[i].Status) && aStockBacktestRealtimeQuoteHasEntryOpen(normalizedPeriod, enriched[i]) {
 			enriched[i].Status = "等待T+1行情"
 		}
+		if realtimeOffset > 0 {
+			enriched[i].Status = formatAStockBacktestStatusFromFilledDays(enriched[i].Days)
+		}
 	}
 	return enriched
+}
+
+func aStockBacktestRealtimeTradingDayOffset(strategyDate string, quoteDate string) int {
+	strategyDate = normalizeAStockStrategyDate(strategyDate)
+	quoteDate = normalizeAStockStrategyDate(quoteDate)
+	if strategyDate == "" || quoteDate == "" || quoteDate < strategyDate {
+		return -1
+	}
+	if quoteDate == strategyDate {
+		return 0
+	}
+	start, err := time.ParseInLocation("2006-01-02", strategyDate, aStockLocation())
+	if err != nil {
+		return -1
+	}
+	end, err := time.ParseInLocation("2006-01-02", quoteDate, aStockLocation())
+	if err != nil {
+		return -1
+	}
+	offset := 0
+	for day := start.AddDate(0, 0, 1); !day.After(end); day = day.AddDate(0, 0, 1) {
+		if isLocalAStockTradingDay(day.Format("2006-01-02")) {
+			offset++
+		}
+	}
+	if offset == 0 {
+		return -1
+	}
+	return offset
+}
+
+func ensureAStockBacktestCells(cells []aStockBacktestCell, size int) []aStockBacktestCell {
+	if size <= 0 {
+		return cells
+	}
+	if len(cells) >= size {
+		return cells
+	}
+	result := append([]aStockBacktestCell(nil), cells...)
+	for len(result) < size {
+		result = append(result, defaultAStockBacktestCell())
+	}
+	return result
+}
+
+func aStockBestBacktestReturn(row aStockBacktestRow) (string, string) {
+	bestSet := false
+	best := 0.0
+	for _, cell := range row.Days {
+		if value, ok := aStockFloat(strings.TrimSpace(cell.Return)); ok {
+			if !bestSet || value > best {
+				bestSet = true
+				best = value
+			}
+		}
+	}
+	if !bestSet {
+		return "--", "astock-flat"
+	}
+	return formatAStockPct(best), aStockPctClass(best)
+}
+
+func formatAStockBacktestStatusFromFilledDays(days []aStockBacktestCell) string {
+	filled := 0
+	for i, cell := range days {
+		if aStockBacktestValueMissing(cell.Close) && aStockBacktestValueMissing(cell.Return) {
+			break
+		}
+		filled = i + 1
+	}
+	if filled <= 0 {
+		return "等待T+1行情"
+	}
+	if filled < 5 {
+		return fmt.Sprintf("已回测T+%d", filled)
+	}
+	return "已回测"
 }
 
 func aStockBacktestRealtimeQuoteHasEntryOpen(period string, row aStockBacktestRow) bool {
@@ -7936,9 +8033,9 @@ func aStockMarketConfigHint() string {
 
 func aStockRealtimeQuoteConfigHint(strategyDate string) string {
 	if aStockRealtimeQuoteDateForStrategyDate(strategyDate) == "" {
-		return "实时价：非今日策略日期不补"
+		return "现价：非今日策略日期不补"
 	}
-	return "实时价：通达信 quote（1分钟缓存），失败后回退东方财富 quote"
+	return "现价：通达信 quote（1分钟缓存），失败后回退东方财富 quote"
 }
 
 func aStockMarketEndDate(strategyDate string) string {

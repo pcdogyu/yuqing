@@ -3,6 +3,7 @@
 
 The Go scheduler calls:
   GET /api/a-stock/auction?date=YYYY-MM-DD
+  GET /api/a-stock/tdx-quote?codes=000001,600000
   GET /api/a-stock/sector-fund-flow?sector_type=行业资金流&indicator=今日&source=eastmoney
   GET /api/a-stock/stock-fund-flow?indicator=今日&source=eastmoney
   GET /api/a-stock/sector-constituents?sector_type=行业资金流&sector_name=半导体
@@ -39,7 +40,15 @@ DEFAULT_PORT = 8087
 DEFAULT_WORKERS = 12
 DEFAULT_CACHE_DIR = Path("data") / "akshare-cache" / "a-stock-auction"
 DEFAULT_TRADING_DAY_CACHE_TTL_SEC = 6 * 60 * 60
+DEFAULT_TDX_QUOTE_CACHE_TTL_SEC = 60
 DEFAULT_RESEARCH_SYMBOLS = ["002230", "300059", "000001", "600519", "300750", "000858", "601318"]
+DEFAULT_TDX_HQ_SERVERS = [
+    ("119.147.212.81", 7709),
+    ("119.147.212.81", 7721),
+    ("202.108.253.130", 7709),
+    ("180.153.18.170", 7709),
+    ("47.103.48.45", 7709),
+]
 HOLDING_DETAIL_TYPES = ["基金", "QFII", "社保", "券商", "信托", "保险"]
 HOLDING_DETAIL_CHANGES = ["新进", "增加", "不变", "减少"]
 EASTMONEY_CLIST_URLS = [
@@ -215,8 +224,13 @@ ASTOCK_2026_MARKET_HOLIDAYS = {
 _akshare_module: Any | None = None
 _akshare_error: str | None = None
 _akshare_lock = threading.Lock()
+_pytdx_hq_api: Any | None = None
+_pytdx_error: str | None = None
+_pytdx_lock = threading.Lock()
 _trading_day_cache_lock = threading.Lock()
 _trading_day_cache: dict[str, Any] = {"fetched_at": 0.0, "dates": []}
+_tdx_quote_cache_lock = threading.Lock()
+_tdx_quote_cache: dict[str, dict[str, Any]] = {}
 
 
 def trading_day_cache_ttl_sec() -> int:
@@ -224,6 +238,13 @@ def trading_day_cache_ttl_sec() -> int:
         return int(os.getenv("AKSHARE_TRADING_DAY_CACHE_TTL_SEC", str(DEFAULT_TRADING_DAY_CACHE_TTL_SEC)))
     except ValueError:
         return DEFAULT_TRADING_DAY_CACHE_TTL_SEC
+
+
+def tdx_quote_cache_ttl_sec() -> int:
+    try:
+        return int(os.getenv("TDX_QUOTE_CACHE_TTL_SEC", str(DEFAULT_TDX_QUOTE_CACHE_TTL_SEC)))
+    except ValueError:
+        return DEFAULT_TDX_QUOTE_CACHE_TTL_SEC
 
 
 def load_akshare() -> Any:
@@ -243,6 +264,44 @@ def load_akshare() -> Any:
             raise RuntimeError(_akshare_error) from exc
         _akshare_module = ak
         return ak
+
+
+def load_pytdx_hq_api() -> Any:
+    global _pytdx_hq_api, _pytdx_error
+    with _pytdx_lock:
+        if _pytdx_hq_api is not None:
+            return _pytdx_hq_api
+        if _pytdx_error:
+            raise RuntimeError(_pytdx_error)
+        try:
+            from pytdx.hq import TdxHq_API  # type: ignore
+        except Exception as exc:  # pragma: no cover - depends on host env
+            _pytdx_error = (
+                "pytdx is not installed or cannot be imported; run "
+                "python -m pip install -r requirements-akshare.txt"
+            )
+            raise RuntimeError(_pytdx_error) from exc
+        _pytdx_hq_api = TdxHq_API
+        return _pytdx_hq_api
+
+
+def tdx_hq_servers() -> list[tuple[str, int]]:
+    raw = os.getenv("TDX_HQ_SERVERS", "").strip()
+    if not raw:
+        return DEFAULT_TDX_HQ_SERVERS
+    servers: list[tuple[str, int]] = []
+    for item in raw.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        host, _, raw_port = item.partition(":")
+        try:
+            port = int(raw_port or "7709")
+        except ValueError:
+            port = 7709
+        if host:
+            servers.append((host, port))
+    return servers or DEFAULT_TDX_HQ_SERVERS
 
 
 def local_today() -> str:
@@ -519,6 +578,63 @@ def call_pre_market_minute(ak: Any, code: str) -> Any:
 def is_sh_sz_code(code: Any) -> bool:
     normalized = text_value(code).zfill(6)
     return len(normalized) == 6 and normalized.isdigit() and normalized.startswith(SH_SZ_A_STOCK_PREFIXES)
+
+
+def normalize_sh_sz_code(code: Any) -> str:
+    normalized = text_value(code).lower()
+    if normalized.startswith(("sh", "sz")):
+        normalized = normalized[2:]
+    normalized = normalized.zfill(6)
+    if is_sh_sz_code(normalized):
+        return normalized
+    return ""
+
+
+def tdx_market_for_code(code: Any) -> int | None:
+    normalized = normalize_sh_sz_code(code)
+    if not normalized:
+        return None
+    if normalized.startswith(("600", "601", "603", "605", "688", "689")):
+        return 1
+    return 0
+
+
+def tdx_quote_item_from_row(row: dict[str, Any]) -> dict[str, Any] | None:
+    code = normalize_sh_sz_code(row.get("code"))
+    if not code:
+        return None
+    price = finite_float(row.get("price"))
+    if price <= 0:
+        return None
+    last_close = finite_float(row.get("last_close"))
+    pct = finite_float(row.get("pct"))
+    if pct == 0 and last_close > 0:
+        pct = (price / last_close - 1) * 100
+    item = {
+        "code": code,
+        "name": text_value(row.get("name")),
+        "price": round(price, 4),
+        "open": round(finite_float(row.get("open")), 4),
+        "pct": round(pct, 4),
+        "source": "tdx",
+        "cached": bool(row.get("cached")),
+        "fetched_at": row.get("fetched_at") or utc_now_iso(),
+    }
+    return item
+
+
+def parse_tdx_quote_codes(value: str | None) -> list[str]:
+    if not value:
+        return []
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in value.replace(";", ",").split(","):
+        code = normalize_sh_sz_code(item)
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        result.append(code)
+    return result
 
 
 def has_resolved_stock_name(code: Any, name: Any) -> bool:
@@ -1880,6 +1996,110 @@ class AuctionService:
         except Exception as exc:
             return {"status": "degraded", "akshare": "missing", "error": str(exc)}
 
+    def fetch_tdx_quote(self, query: dict[str, list[str]]) -> dict[str, Any]:
+        started = time.time()
+        codes = parse_tdx_quote_codes(first_query_value(query, "codes") or first_query_value(query, "code"))
+        if not codes:
+            return {"_http_status": 400, "items": [], "message": "codes required", "fetched_at": utc_now_iso()}
+        cached, missing = self.read_tdx_quote_cache(codes)
+        fetched: list[dict[str, Any]] = []
+        warning = ""
+        if missing:
+            try:
+                fetched = self.request_tdx_quotes(missing)
+                self.write_tdx_quote_cache(fetched)
+            except Exception as exc:
+                warning = str(exc)
+        items_by_code: dict[str, dict[str, Any]] = {}
+        for item in cached + fetched:
+            code = normalize_sh_sz_code(item.get("code"))
+            if code:
+                items_by_code[code] = item
+        items = [items_by_code[code] for code in codes if code in items_by_code]
+        payload: dict[str, Any] = {
+            "items": items,
+            "count": len(items),
+            "requested": len(codes),
+            "source": "tdx",
+            "cache_ttl_sec": tdx_quote_cache_ttl_sec(),
+            "elapsed_sec": round(time.time() - started, 3),
+            "fetched_at": utc_now_iso(),
+        }
+        if warning:
+            payload["warning"] = warning
+        if not items:
+            payload["_http_status"] = 502
+            payload["message"] = warning or "tdx quote returned no usable data"
+        return payload
+
+    def read_tdx_quote_cache(self, codes: list[str]) -> tuple[list[dict[str, Any]], list[str]]:
+        now = time.time()
+        ttl = tdx_quote_cache_ttl_sec()
+        cached: list[dict[str, Any]] = []
+        missing: list[str] = []
+        with _tdx_quote_cache_lock:
+            for code in codes:
+                entry = _tdx_quote_cache.get(code)
+                if entry and now - float(entry.get("fetched_at_ts", 0.0)) <= ttl:
+                    item = dict(entry["item"])
+                    item["cached"] = True
+                    cached.append(item)
+                else:
+                    missing.append(code)
+        return cached, missing
+
+    def write_tdx_quote_cache(self, items: list[dict[str, Any]]) -> None:
+        now = time.time()
+        with _tdx_quote_cache_lock:
+            for item in items:
+                code = normalize_sh_sz_code(item.get("code"))
+                if not code or finite_float(item.get("price")) <= 0:
+                    continue
+                cached_item = dict(item)
+                cached_item["cached"] = False
+                _tdx_quote_cache[code] = {"fetched_at_ts": now, "item": cached_item}
+
+    def request_tdx_quotes(self, codes: list[str]) -> list[dict[str, Any]]:
+        api_cls = load_pytdx_hq_api()
+        securities: list[tuple[int, str]] = []
+        for code in codes:
+            market = tdx_market_for_code(code)
+            if market is not None:
+                securities.append((market, code))
+        if not securities:
+            return []
+        errors: list[str] = []
+        for host, port in tdx_hq_servers():
+            api = api_cls()
+            connected = False
+            try:
+                try:
+                    connected = bool(api.connect(host, port, time_out=2))
+                except TypeError:
+                    connected = bool(api.connect(host, port))
+                if not connected:
+                    errors.append(f"{host}:{port} connect failed")
+                    continue
+                rows = api.get_security_quotes(securities) or []
+                items: list[dict[str, Any]] = []
+                for row in rows:
+                    item = tdx_quote_item_from_row(row_to_dict(row))
+                    if item:
+                        item["server"] = f"{host}:{port}"
+                        items.append(item)
+                if items:
+                    return items
+                errors.append(f"{host}:{port} returned no usable quote")
+            except Exception as exc:
+                errors.append(f"{host}:{port} {exc}")
+            finally:
+                if connected:
+                    try:
+                        api.disconnect()
+                    except Exception:
+                        pass
+        raise RuntimeError("; ".join(errors) or "tdx quote servers returned no data")
+
     def fetch_trading_day(self, query: dict[str, list[str]]) -> dict[str, Any]:
         ak = load_akshare()
         return trading_day_status(ak, first_query_value(query, "date") or local_today())
@@ -2261,6 +2481,14 @@ class RequestHandler(BaseHTTPRequestHandler):
                     payload.pop("_http_status", None)
                 self.write_json(status, payload)
                 return
+            if parsed.path == "/api/a-stock/tdx-quote":
+                payload = self.service.fetch_tdx_quote(query)
+                status = int(payload.get("_http_status", 200))
+                if "_http_status" in payload:
+                    payload = dict(payload)
+                    payload.pop("_http_status", None)
+                self.write_json(status, payload)
+                return
             if parsed.path == "/api/a-stock/holdings":
                 payload = self.service.fetch_holdings(query)
                 status = int(payload.get("_http_status", 200))
@@ -2366,6 +2594,14 @@ def run_self_test() -> None:
     assert not is_sh_sz_code("012322")
     assert not is_sh_sz_code("011631")
     assert not is_sh_sz_code("920118")
+    assert tdx_market_for_code("000001") == 0
+    assert tdx_market_for_code("600000") == 1
+    assert parse_tdx_quote_codes("000001,sh600000,920118") == ["000001", "600000"]
+    tdx_item = tdx_quote_item_from_row({"code": "000977", "price": 93.67, "last_close": 86.0, "open": 92.0})
+    assert tdx_item is not None
+    assert tdx_item["code"] == "000977"
+    assert tdx_item["price"] == 93.67
+    assert round(tdx_item["pct"], 4) == 8.9186
     assert has_resolved_stock_name("301696", "测试股份")
     assert not has_resolved_stock_name("301696", "301696")
     assert not has_resolved_stock_name("000034", "金十数据整理")

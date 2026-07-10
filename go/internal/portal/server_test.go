@@ -9244,7 +9244,7 @@ func TestAStockBacktestRefreshCurrentOnBacktestPageRefreshesVisiblePeriodsWithDe
 	if err != nil {
 		t.Fatalf("decode redirect location: %v", err)
 	}
-	for _, want := range []string{"上午推荐行情收益", "下午推荐行情收益", "获取：date=2026-07-07 period=afternoon codes=688702,688820", "实时价：通达信 quote", "实时价=--->406.00", "实时收益=--->+4.11%", "补齐：688702 盛科通信", "补齐：688820 盛合晶微"} {
+	for _, want := range []string{"上午推荐行情收益", "下午推荐行情收益", "获取：date=2026-07-07 period=afternoon codes=688702,688820", "现价：通达信 quote", "现价=--->406.00", "当前收益=--->+4.11%", "补齐：688702 盛科通信", "补齐：688820 盛合晶微"} {
 		if !strings.Contains(location, want) {
 			t.Fatalf("expected redirect detail to contain %q, got %s", want, location)
 		}
