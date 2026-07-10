@@ -741,6 +741,7 @@ func TestRunAStockRecommendationGeneratesMorningSnapshot(t *testing.T) {
 	t.Setenv("YUQING_A_STOCK_NEWS_SOURCE_CONFIG", filepath.Join(t.TempDir(), "sources.json"))
 	var generatedPeriods []string
 	var generatedPhases []string
+	var generatedRefreshModes []string
 	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"date":           "2026-06-16",
@@ -779,6 +780,7 @@ func TestRunAStockRecommendationGeneratesMorningSnapshot(t *testing.T) {
 		}
 		generatedPeriods = append(generatedPeriods, r.URL.Query().Get("period"))
 		generatedPhases = append(generatedPhases, r.URL.Query().Get("phase"))
+		generatedRefreshModes = append(generatedRefreshModes, r.URL.Query().Get("refresh_mode"))
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer gateway.Close()
@@ -797,6 +799,9 @@ func TestRunAStockRecommendationGeneratesMorningSnapshot(t *testing.T) {
 	}
 	if len(generatedPeriods) != 1 || generatedPeriods[0] != "morning" || len(generatedPhases) != 1 || generatedPhases[0] != "final" {
 		t.Fatalf("expected morning final recommendation snapshot generation, got periods=%v phases=%v", generatedPeriods, generatedPhases)
+	}
+	if len(generatedRefreshModes) != 1 || generatedRefreshModes[0] != "preserve_locked" {
+		t.Fatalf("expected morning final to preserve locked recommendations, got refresh_modes=%v", generatedRefreshModes)
 	}
 }
 

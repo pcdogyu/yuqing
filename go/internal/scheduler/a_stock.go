@@ -1220,7 +1220,11 @@ func (w *Worker) runAStockRecommendationForDate(ctx context.Context, strategyDat
 	if !resp.IsSuccess() {
 		return fmt.Errorf("a-stock %s recommendation content warmup failed: %s", label, resp.Status())
 	}
-	if err := w.generateAStockRecommendationSnapshot(ctx, strategyDate, period, normalizedPhase); err != nil {
+	refreshMode := ""
+	if normalizeAStockRecommendationPeriod(period) == "morning" && normalizedPhase == "final" {
+		refreshMode = "preserve_locked"
+	}
+	if err := w.generateAStockRecommendationSnapshotWithMode(ctx, strategyDate, period, normalizedPhase, refreshMode); err != nil {
 		return err
 	}
 	log.Info().
