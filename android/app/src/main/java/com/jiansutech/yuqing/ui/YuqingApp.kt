@@ -98,6 +98,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import kotlin.math.abs
 import com.jiansutech.yuqing.BuildConfig
@@ -1910,6 +1911,7 @@ private fun AStockBacktestAdjacentButton(
     OutlinedButton(onClick = onClick, modifier = modifier.height(44.dp)) {
         Text(
             label,
+            fontSize = 16.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center,
