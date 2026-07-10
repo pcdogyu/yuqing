@@ -11,6 +11,11 @@ set "SKIP_PULL=0"
 if /I "%~1"=="--skip-pull" set "SKIP_PULL=1"
 set "AFTER_PULL=0"
 if /I "%~1"=="--after-pull" set "AFTER_PULL=1"
+set "FULL_RUN=0"
+for %%A in (%*) do (
+    if /I "%%~A"=="-full" set "FULL_RUN=1"
+    if /I "%%~A"=="--full" set "FULL_RUN=1"
+)
 set "SCRIPT_PATH=%~f0"
 if "%AFTER_PULL%"=="1" if not "%~2"=="" set "SCRIPT_PATH=%~f2"
 
@@ -50,6 +55,7 @@ if not defined YUQING_RELEASE_DIR (
 )
 for %%I in ("%YUQING_RELEASE_DIR%") do set "YUQING_RELEASE_DIR=%%~fI"
 if not exist "%YUQING_RELEASE_DIR%" mkdir "%YUQING_RELEASE_DIR%"
+if "%FULL_RUN%"=="1" set "YUQING_RUN_GO_TEST=1"
 if not defined YUQING_SCHEDULER_ADDR (
     set "YUQING_SCHEDULER_ADDR=:8086"
 )
@@ -110,7 +116,11 @@ if "%SKIP_PULL%"=="0" if "%AFTER_PULL%"=="0" (
         echo Failed to create bootstrap copy: %TEMP_BOOTSTRAP%
         goto :fail
     )
-    cmd /c ""%TEMP_BOOTSTRAP%" --after-pull "%~f0""
+    if "%FULL_RUN%"=="1" (
+        cmd /c ""%TEMP_BOOTSTRAP%" --after-pull "%~f0" --full"
+    ) else (
+        cmd /c ""%TEMP_BOOTSTRAP%" --after-pull "%~f0""
+    )
     set "BOOTSTRAP_EXIT=%ERRORLEVEL%"
     del /Q "%TEMP_BOOTSTRAP%" >nul 2>nul
     exit /b %BOOTSTRAP_EXIT%
@@ -159,12 +169,18 @@ if "%SKIP_PULL%"=="1" (
         )
         if not "!YUQING_HEAD_BEFORE!"=="!YUQING_HEAD_AFTER!" (
             echo Repository updated. Restarting run.bat with the refreshed worktree...
+        ) else if "%FULL_RUN%"=="1" (
+            echo Repository already up to date. -full requested, continuing with go test, go build, stop services, and start services.
         ) else (
             call :ensure_services_after_up_to_date
             exit /b !ERRORLEVEL!
         )
     )
-    cmd /c ""%GO_DIR%\run.bat" --skip-pull"
+    if "%FULL_RUN%"=="1" (
+        cmd /c ""%GO_DIR%\run.bat" --skip-pull --full"
+    ) else (
+        cmd /c ""%GO_DIR%\run.bat" --skip-pull"
+    )
     exit /b %ERRORLEVEL%
 ) else (
     echo Internal error: unexpected startup mode.
@@ -185,7 +201,7 @@ set "LDFLAGS=-X github.com/pcdogyu/yuqing/go/internal/app.Version=%YUQING_RUN_VE
 
 if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
 
-echo [3/6] Skip go test during startup...
+echo [3/6] Run optional go test before startup...
 if "%YUQING_RUN_GO_TEST%"=="1" (
     echo YUQING_RUN_GO_TEST=1, running go test ./... before startup.
     echo Go test flags: %GO_TEST_FLAGS%
