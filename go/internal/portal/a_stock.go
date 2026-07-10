@@ -1165,6 +1165,161 @@ func (s *Server) refreshAStockCurrentBacktestPeriod(strategyDate string, periodK
 	return summary, detail
 }
 
+type aStockBacktestRefreshPriceRequest struct {
+	Date   string `json:"date"`
+	Period string `json:"period"`
+	Code   string `json:"code"`
+}
+
+type aStockBacktestRefreshPriceResult struct {
+	Summary  string                             `json:"summary"`
+	Detail   string                             `json:"detail"`
+	Snapshot model.AStockRecommendationSnapshot `json:"snapshot"`
+}
+
+func (s *Server) handleAStockBacktestRefreshPrice(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeRawJSON(w, http.StatusMethodNotAllowed, map[string]any{"code": http.StatusMethodNotAllowed, "message": "method not allowed"})
+		return
+	}
+	payload := aStockBacktestRefreshPriceRequest{
+		Date:   r.URL.Query().Get("date"),
+		Period: r.URL.Query().Get("period"),
+		Code:   r.URL.Query().Get("code"),
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		var bodyPayload aStockBacktestRefreshPriceRequest
+		if err := json.NewDecoder(r.Body).Decode(&bodyPayload); err != nil {
+			writeRawJSON(w, http.StatusBadRequest, map[string]any{"code": http.StatusBadRequest, "message": "invalid json"})
+			return
+		}
+		if strings.TrimSpace(bodyPayload.Date) != "" {
+			payload.Date = bodyPayload.Date
+		}
+		if strings.TrimSpace(bodyPayload.Period) != "" {
+			payload.Period = bodyPayload.Period
+		}
+		if strings.TrimSpace(bodyPayload.Code) != "" {
+			payload.Code = bodyPayload.Code
+		}
+	}
+	result, status, message := s.refreshAStockBacktestPrice(payload)
+	if status != http.StatusOK {
+		writeRawJSON(w, status, map[string]any{"code": status, "message": message})
+		return
+	}
+	writeRawJSON(w, http.StatusOK, map[string]any{"code": http.StatusOK, "message": "ok", "data": result})
+}
+
+func (s *Server) refreshAStockBacktestPrice(payload aStockBacktestRefreshPriceRequest) (aStockBacktestRefreshPriceResult, int, string) {
+	if strings.TrimSpace(s.cfg.ContentURL) == "" {
+		return aStockBacktestRefreshPriceResult{}, http.StatusBadGateway, "content url required"
+	}
+	strategyDate := normalizeAStockStrategyDate(payload.Date)
+	period := normalizeAStockPeriod(payload.Period)
+	code := normalizeAStockCode(payload.Code)
+	if strategyDate == "" || period.Key == "" || code == "" {
+		return aStockBacktestRefreshPriceResult{}, http.StatusBadRequest, "date, period and code required"
+	}
+	cache := newAStockRequestCache()
+	ctx, ok, message := s.loadAStockRecommendationNameRepairContext(strategyDate, period.Key, false, false, false, false, cache)
+	if message != "" {
+		return aStockBacktestRefreshPriceResult{}, http.StatusInternalServerError, message
+	}
+	if !ok || len(ctx.Recommendations) == 0 {
+		return aStockBacktestRefreshPriceResult{}, http.StatusNotFound, period.Label + "未找到推荐快照。"
+	}
+	recIndex := aStockRecommendationIndexByCode(ctx.Recommendations, code)
+	if recIndex < 0 {
+		return aStockBacktestRefreshPriceResult{}, http.StatusNotFound, period.Label + "未找到当前股票 " + code + "。"
+	}
+	previousRows := append([]aStockBacktestRow(nil), ctx.Backtests...)
+	previousByCode := aStockBacktestRowsByCode(previousRows)
+	previousRow := previousByCode[code]
+	targetRecommendation := ctx.Recommendations[recIndex]
+	refreshedRecommendations, refreshedRows, status, _ := s.loadAStockLockedMarketView(ctx.Date, ctx.Period, []aStockRecommendation{targetRecommendation})
+	if strings.Contains(status, "行情读取失败") {
+		return aStockBacktestRefreshPriceResult{}, http.StatusBadGateway, status
+	}
+	if len(refreshedRecommendations) == 0 || len(refreshedRows) == 0 {
+		return aStockBacktestRefreshPriceResult{}, http.StatusBadGateway, period.Label + code + "未返回有效行情。"
+	}
+	refreshedRow := refreshedRows[0]
+	if previousRow.Stock != "" {
+		if merged, _ := mergeAStockBacktestRowFromSnapshot(refreshedRow, previousRow); merged.Stock != "" {
+			refreshedRow = merged
+		}
+	}
+	refreshedRows = s.enrichAStockBacktestsWithRealtimeQuotes(ctx.Date, ctx.Period, []aStockBacktestRow{refreshedRow})
+	refreshedRow = refreshedRows[0]
+	if !aStockBacktestRowHasRefreshPrice(refreshedRow) {
+		return aStockBacktestRefreshPriceResult{}, http.StatusBadGateway, period.Label + code + "未返回有效价格。"
+	}
+	refreshedRecommendation := refreshedRecommendations[0]
+	if !aStockBacktestValueMissing(refreshedRow.CurrentPrice) {
+		refreshedRecommendation.CurrentPrice = refreshedRow.CurrentPrice
+	}
+	if !aStockBacktestValueMissing(refreshedRow.CurrentReturn) {
+		refreshedRecommendation.TodayPct = refreshedRow.CurrentReturn
+		refreshedRecommendation.TodayPctClass = refreshedRow.CurrentReturnClass
+	}
+	ctx.Recommendations[recIndex] = refreshedRecommendation
+	ctx.Backtests = replaceAStockBacktestRowByCode(ctx.Backtests, code, refreshedRow)
+	ctx.BacktestStatus = formatAStockLockedBacktestStatus(ctx.Period, ctx.Backtests)
+	ctx.EmptyReason = aStockRecommendationEmptyReason(ctx)
+	if err := s.saveAStockRecommendationSnapshot(ctx); err != nil {
+		return aStockBacktestRefreshPriceResult{}, http.StatusInternalServerError, period.Label + "行情价格保存失败：" + err.Error()
+	}
+	snapshot, err := s.buildAStockRecommendationSnapshot(ctx)
+	if err != nil {
+		return aStockBacktestRefreshPriceResult{}, http.StatusInternalServerError, period.Label + "行情价格返回失败：" + err.Error()
+	}
+	updatedCells := countAStockBacktestRowUpdatedCells(previousRow, refreshedRow)
+	summary := fmt.Sprintf("%s%s行情价格已刷新：补齐/更新 %d 个行情/收益字段。", period.Label, code, updatedCells)
+	detailCtx := ctx
+	detailCtx.Recommendations = []aStockRecommendation{refreshedRecommendation}
+	detailCtx.Backtests = []aStockBacktestRow{refreshedRow}
+	detailCtx.BacktestStatus = refreshedRow.Status
+	detail := formatAStockBacktestRefreshDetail(detailCtx, previousByCode, updatedCells)
+	return aStockBacktestRefreshPriceResult{Summary: summary, Detail: detail, Snapshot: snapshot}, http.StatusOK, "ok"
+}
+
+func aStockRecommendationIndexByCode(recommendations []aStockRecommendation, code string) int {
+	code = normalizeAStockCode(code)
+	for i, rec := range recommendations {
+		if normalizeAStockCode(rec.Code) == code {
+			return i
+		}
+	}
+	return -1
+}
+
+func replaceAStockBacktestRowByCode(rows []aStockBacktestRow, code string, row aStockBacktestRow) []aStockBacktestRow {
+	code = normalizeAStockCode(code)
+	result := append([]aStockBacktestRow(nil), rows...)
+	for i := range result {
+		if aStockBacktestRowCode(result[i]) == code {
+			result[i] = row
+			return result
+		}
+	}
+	return append(result, row)
+}
+
+func aStockBacktestRowHasRefreshPrice(row aStockBacktestRow) bool {
+	for _, value := range []string{row.EntryOpen, row.AfternoonOpen, row.T0Close, row.T0Return, row.CurrentPrice, row.CurrentReturn, row.BestReturn} {
+		if !aStockBacktestValueMissing(value) {
+			return true
+		}
+	}
+	for _, day := range row.Days {
+		if !aStockBacktestValueMissing(day.Close) || !aStockBacktestValueMissing(day.Return) {
+			return true
+		}
+	}
+	return false
+}
+
 func aStockBacktestRowsByCode(rows []aStockBacktestRow) map[string]aStockBacktestRow {
 	result := make(map[string]aStockBacktestRow, len(rows))
 	for _, row := range rows {
@@ -3569,20 +3724,38 @@ func (s *Server) saveAStockRecommendationSnapshot(ctx aStockContext) error {
 	if strings.TrimSpace(s.cfg.ContentURL) == "" {
 		return nil
 	}
+	snapshot, err := s.buildAStockRecommendationSnapshot(ctx)
+	if err != nil {
+		return err
+	}
+	resp, err := s.client.R().
+		SetBody(snapshot).
+		Post(strings.TrimRight(s.cfg.ContentURL, "/") + "/api/v1/internal/a-stock/recommendations")
+	if err != nil {
+		return err
+	}
+	if !resp.IsSuccess() {
+		return fmt.Errorf(resp.Status())
+	}
+	return nil
+}
+
+func (s *Server) buildAStockRecommendationSnapshot(ctx aStockContext) (model.AStockRecommendationSnapshot, error) {
 	recommendations, _ := s.repairAStockRecommendationsForPersistence(ctx.Date, ctx.Recommendations)
 	recommendationsJSON, err := json.Marshal(recommendations)
 	if err != nil {
-		return err
+		return model.AStockRecommendationSnapshot{}, err
 	}
 	backtestsJSON, err := json.Marshal(filterAStockBacktestsForRecommendations(ctx.Backtests, recommendations))
 	if err != nil {
-		return err
+		return model.AStockRecommendationSnapshot{}, err
 	}
 	newsSummaryJSON, err := buildAStockSnapshotNewsSummaryJSON(ctx)
 	if err != nil {
-		return err
+		return model.AStockRecommendationSnapshot{}, err
 	}
 	snapshot := model.AStockRecommendationSnapshot{
+		Found:                    true,
 		StrategyDate:             ctx.Date,
 		Period:                   ctx.Period,
 		IgnoreRecent:             ctx.IgnoreRecent,
@@ -3605,16 +3778,7 @@ func (s *Server) saveAStockRecommendationSnapshot(ctx aStockContext) error {
 		AuctionAmountLabel:       ctx.AuctionAmountLabel,
 		EmptyReason:              ctx.EmptyReason,
 	}
-	resp, err := s.client.R().
-		SetBody(snapshot).
-		Post(strings.TrimRight(s.cfg.ContentURL, "/") + "/api/v1/internal/a-stock/recommendations")
-	if err != nil {
-		return err
-	}
-	if !resp.IsSuccess() {
-		return fmt.Errorf(resp.Status())
-	}
-	return nil
+	return snapshot, nil
 }
 
 func (s *Server) restoreAStockBacktestsFromSnapshot(ctx *aStockContext) {

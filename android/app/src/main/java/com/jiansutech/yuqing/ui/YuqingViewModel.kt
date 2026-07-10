@@ -10,6 +10,7 @@ import com.jiansutech.yuqing.data.AndroidActionRequest
 import com.jiansutech.yuqing.data.AndroidDashboard
 import com.jiansutech.yuqing.data.AndroidModule
 import com.jiansutech.yuqing.data.AStockAuctionListResult
+import com.jiansutech.yuqing.data.AStockBacktestPriceRefreshRequest
 import com.jiansutech.yuqing.data.AStockRecommendation
 import com.jiansutech.yuqing.data.AStockRecommendationSnapshot
 import com.jiansutech.yuqing.data.ArticleItem
@@ -108,6 +109,7 @@ data class YuqingUiState(
     val afternoonAStockRecommendation: AStockRecommendationSnapshot? = null,
     val afternoonAStockRecommendations: List<AStockRecommendation> = emptyList(),
     val aStockRecommendationWindow: AStockRecommendationWindow = currentAStockRecommendationWindow(),
+    val aStockBacktestPriceRefreshing: Boolean = false,
     val stockResearch: StockResearchListResult = StockResearchListResult(),
     val stockResearchLoading: Boolean = false,
     val stockResearchDetail: StockResearch? = null,
@@ -785,6 +787,50 @@ class YuqingViewModel(
         }
     }
 
+    fun refreshAStockBacktestPrice(
+        date: String,
+        period: String,
+        code: String,
+        onSuccess: (AStockRecommendationSnapshot) -> Unit,
+    ) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(aStockBacktestPriceRefreshing = true, error = "", message = "") }
+            val session = sessionStore.state.first()
+            runCatching {
+                currentYuqingApi(session)
+                    .refreshAStockBacktestPrice(AStockBacktestPriceRefreshRequest(date = date, period = period, code = code))
+                    .data ?: error("刷新价格结果为空")
+            }.onSuccess { result ->
+                val snapshot = result.snapshot
+                val normalizedPeriod = snapshot.period.ifBlank { period }
+                val recommendations = parseAStockRecommendations(snapshot.recommendationsJson)
+                _uiState.update { current ->
+                    val morningSnapshot = if (normalizedPeriod == "morning") snapshot else current.morningAStockRecommendation
+                    val morningRecommendations = if (normalizedPeriod == "morning") recommendations else current.morningAStockRecommendations
+                    val afternoonSnapshot = if (normalizedPeriod == "afternoon") snapshot else current.afternoonAStockRecommendation
+                    val afternoonRecommendations = if (normalizedPeriod == "afternoon") recommendations else current.afternoonAStockRecommendations
+                    current.copy(
+                        morningAStockRecommendation = morningSnapshot,
+                        morningAStockRecommendations = morningRecommendations,
+                        afternoonAStockRecommendation = afternoonSnapshot,
+                        afternoonAStockRecommendations = afternoonRecommendations,
+                        aStockRecommendation = if (current.aStockRecommendationWindow.period == normalizedPeriod) {
+                            snapshot
+                        } else {
+                            current.aStockRecommendation
+                        },
+                        aStockRecommendations = morningRecommendations + afternoonRecommendations,
+                        message = result.summary.ifBlank { "价格已刷新" },
+                    )
+                }
+                onSuccess(snapshot)
+            }.onFailure { throwable ->
+                _uiState.update { it.copy(error = throwable.message ?: "刷新价格失败") }
+            }
+            _uiState.update { it.copy(aStockBacktestPriceRefreshing = false) }
+        }
+    }
+
     fun selectAStockAuctionTrendDays(days: Int) {
         val normalized = normalizeAStockAuctionTrendDays(days)
         _uiState.update { it.copy(aStockAuctionTrendDays = normalized) }
@@ -1032,7 +1078,7 @@ private fun aStockRecommendationWindow(date: String, period: String): AStockReco
     )
 }
 
-private fun parseAStockRecommendations(raw: String): List<AStockRecommendation> {
+internal fun parseAStockRecommendations(raw: String): List<AStockRecommendation> {
     val payload = raw.trim().ifBlank { "[]" }
     return runCatching {
         ApiFactory.json.decodeFromString<List<AStockRecommendation>>(payload)

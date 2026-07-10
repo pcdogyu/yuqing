@@ -9118,6 +9118,179 @@ func TestAStockRealtimeQuoteFillsMissingMorningOpenAndT0Return(t *testing.T) {
 	}
 }
 
+func TestAStockBacktestRefreshPriceOnlyUpdatesRequestedStock(t *testing.T) {
+	setAStockNowForTest(t, time.Date(2026, 7, 10, 10, 30, 0, 0, aStockLocation()))
+	recommendations := []aStockRecommendation{
+		{Rank: 1, Hotspot: "人工智能", Code: "300394", Name: "天孚通信", CurrentPrice: "--", TodayPct: "--", Reason: "目标股票"},
+		{Rank: 2, Hotspot: "人工智能", Code: "688249", Name: "晶合集成", CurrentPrice: "58.40", TodayPct: "-10.44%", Reason: "其他股票"},
+	}
+	backtests := []aStockBacktestRow{
+		{
+			Stock:              "300394 天孚通信",
+			EntryOpen:          "--",
+			T0Return:           "--",
+			T0Close:            "--",
+			T0ReturnClass:      "astock-flat",
+			CurrentPrice:       "--",
+			CurrentReturn:      "--",
+			CurrentReturnClass: "astock-flat",
+			Days:               []aStockBacktestCell{{Close: "--", Return: "--", ReturnClass: "astock-flat"}},
+			BestReturn:         "--",
+			BestReturnClass:    "astock-flat",
+			Status:             "无行情数据",
+		},
+		{
+			Stock:              "688249 晶合集成",
+			EntryOpen:          "65.21",
+			T0Return:           "-10.44%",
+			T0Close:            "58.40",
+			T0ReturnClass:      "astock-down",
+			CurrentPrice:       "58.40",
+			CurrentReturn:      "-10.44%",
+			CurrentReturnClass: "astock-down",
+			Days:               []aStockBacktestCell{{Close: "58.40", Return: "-10.44%", ReturnClass: "astock-down"}},
+			BestReturn:         "-10.44%",
+			BestReturnClass:    "astock-down",
+			Status:             "已回测T+1",
+		},
+	}
+	var saved model.AStockRecommendationSnapshot
+	saveCount := 0
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/a-stock/recommendations":
+			if r.URL.Query().Get("date") != "2026-07-10" || r.URL.Query().Get("period") != "morning" {
+				t.Fatalf("unexpected snapshot query: %s", r.URL.RawQuery)
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{
+				Found:                    true,
+				StrategyDate:             "2026-07-10",
+				Period:                   "morning",
+				RecommendationsJSON:      mustAStockTestJSON(t, recommendations),
+				BacktestsJSON:            mustAStockTestJSON(t, backtests),
+				BacktestStatus:           "已锁定推荐股票，已回测 1/2，无行情数据股票 1",
+				FundFlowFilterEnabled:    true,
+				LimitUpFilterEnabled:     false,
+				TodayMarketFilterEnabled: false,
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/internal/a-stock/recommendations":
+			saveCount++
+			if err := json.NewDecoder(r.Body).Decode(&saved); err != nil {
+				t.Fatalf("decode saved snapshot: %v", err)
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Updated: 1})
+		default:
+			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	market := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("codes") != "300394" {
+			t.Fatalf("expected only requested stock to hit market endpoint, got %s", r.URL.RawQuery)
+		}
+		writeEnvelope(w, http.StatusOK, "ok", map[string]any{"items": []map[string]any{
+			{"code": "300394", "date": "2026-07-10", "open": 281.00, "close": 279.31, "pct": -0.60, "entry_price": 281.00},
+		}})
+	}))
+	defer market.Close()
+	t.Setenv("YUQING_ASTOCK_MARKET_URL", market.URL)
+
+	quote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("secid") != "0.300394" {
+			t.Fatalf("unexpected quote request: %s", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"f43":28430,"f46":28100,"f57":"300394","f58":"天孚通信","f170":117}}`))
+	}))
+	defer quote.Close()
+	setAStockEastmoneyQuoteURLForTest(t, quote.URL)
+
+	srv := NewServer(config.Config{ContentURL: content.URL, ServiceToken: "secret"})
+	req := httptest.NewRequest(http.MethodPost, "/internal/a-stock/backtests/refresh-price", strings.NewReader(`{"date":"2026-07-10","period":"morning","code":"300394"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Service-Token", "secret")
+	rr := httptest.NewRecorder()
+	srv.Router().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected refresh price 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if saveCount != 1 {
+		t.Fatalf("expected exactly one snapshot save, got %d", saveCount)
+	}
+	var envelope struct {
+		Data aStockBacktestRefreshPriceResult `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode refresh response: %v", err)
+	}
+	if !strings.Contains(envelope.Data.Summary, "300394") || envelope.Data.Snapshot.Period != "morning" {
+		t.Fatalf("unexpected refresh response: %+v", envelope.Data)
+	}
+	var savedRows []aStockBacktestRow
+	if err := json.Unmarshal([]byte(saved.BacktestsJSON), &savedRows); err != nil {
+		t.Fatalf("decode saved backtests: %v", err)
+	}
+	rowsByCode := aStockBacktestRowsByCode(savedRows)
+	target := rowsByCode["300394"]
+	if target.EntryOpen != "281.00" || target.T0Close != "284.30" || target.T0Return != "+1.17%" || target.CurrentPrice != "284.30" || target.CurrentReturn != "+1.17%" || target.Status != "等待T+1行情" {
+		t.Fatalf("expected target stock price fields to refresh, got %+v", target)
+	}
+	other := rowsByCode["688249"]
+	if other.EntryOpen != "65.21" || other.T0Close != "58.40" || other.CurrentPrice != "58.40" || other.CurrentReturn != "-10.44%" || other.Status != "已回测T+1" {
+		t.Fatalf("expected other stock to remain unchanged, got %+v", other)
+	}
+	var savedRecommendations []aStockRecommendation
+	if err := json.Unmarshal([]byte(saved.RecommendationsJSON), &savedRecommendations); err != nil {
+		t.Fatalf("decode saved recommendations: %v", err)
+	}
+	targetRecommendation := mustAStockRecommendationForTest(t, savedRecommendations, "300394")
+	if targetRecommendation.CurrentPrice != "284.30" || targetRecommendation.TodayPct != "+1.17%" {
+		t.Fatalf("expected target recommendation current fields to refresh, got %+v", targetRecommendation)
+	}
+	otherRecommendation := mustAStockRecommendationForTest(t, savedRecommendations, "688249")
+	if otherRecommendation.CurrentPrice != "58.40" || otherRecommendation.TodayPct != "-10.44%" {
+		t.Fatalf("expected other recommendation current fields unchanged, got %+v", otherRecommendation)
+	}
+}
+
+func TestAStockBacktestRefreshPriceMissingCodeDoesNotWriteSnapshot(t *testing.T) {
+	recommendations := []aStockRecommendation{{Rank: 1, Code: "300394", Name: "天孚通信"}}
+	var wrote bool
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/a-stock/recommendations":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{
+				Found:               true,
+				StrategyDate:        "2026-07-10",
+				Period:              "morning",
+				RecommendationsJSON: mustAStockTestJSON(t, recommendations),
+				BacktestsJSON:       "[]",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/internal/a-stock/recommendations":
+			wrote = true
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Updated: 1})
+		default:
+			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	_, status, message := srv.refreshAStockBacktestPrice(aStockBacktestRefreshPriceRequest{
+		Date:   "2026-07-10",
+		Period: "morning",
+		Code:   "688249",
+	})
+	if status != http.StatusNotFound || !strings.Contains(message, "688249") {
+		t.Fatalf("expected missing code 404, got status=%d message=%s", status, message)
+	}
+	if wrote {
+		t.Fatal("expected missing code refresh to avoid snapshot write")
+	}
+}
+
 func TestAStockSnapshotSaveRepairsNamesFromEastmoneyQuote(t *testing.T) {
 	var captured model.AStockRecommendationSnapshot
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

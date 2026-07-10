@@ -194,6 +194,7 @@ func (s *Service) Routes(r chi.Router) {
 	r.Get("/api/v1/a-stock/auction", s.handleListAStockAuctionAmounts)
 	r.Post("/api/v1/admin/a-stock/auction", s.handleUpsertAStockAuctionAmounts)
 	r.Get("/api/v1/a-stock/recommendations", s.handleGetAStockRecommendationSnapshot)
+	r.Post("/api/v1/a-stock/backtests/refresh-price", s.handleRefreshAStockBacktestPrice)
 	r.Post("/api/v1/internal/a-stock/recommendations", s.handleUpsertAStockRecommendationSnapshot)
 	r.Get("/api/v1/a-stock/recommendation-selections", s.handleListAStockRecommendationSelections)
 	r.Post("/api/v1/internal/a-stock/recommendation-selections", s.handleUpsertAStockRecommendationSelections)
@@ -721,6 +722,43 @@ func (s *Service) handleGetAStockRecommendationSnapshot(w http.ResponseWriter, r
 	snapshot.Found = found
 	normalizeAStockRecommendationSnapshotJSON(&snapshot)
 	apiutil.WriteJSON(w, http.StatusOK, "ok", snapshot)
+}
+
+type aStockBacktestRefreshPriceRequest struct {
+	Date   string `json:"date"`
+	Period string `json:"period"`
+	Code   string `json:"code"`
+}
+
+func (s *Service) handleRefreshAStockBacktestPrice(w http.ResponseWriter, r *http.Request) {
+	var payload aStockBacktestRefreshPriceRequest
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid json", nil)
+		return
+	}
+	payload.Date = strings.TrimSpace(payload.Date)
+	payload.Period = strings.TrimSpace(payload.Period)
+	payload.Code = astockcode.Normalize(payload.Code)
+	if payload.Date == "" || payload.Period == "" || payload.Code == "" {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "date, period and code required", nil)
+		return
+	}
+	baseURL := strings.TrimRight(strings.TrimSpace(s.cfg.GatewayWebURL), "/")
+	if baseURL == "" {
+		apiutil.WriteJSON(w, http.StatusBadGateway, "gateway url required", nil)
+		return
+	}
+	resp, err := s.client.R().
+		SetHeader("X-Service-Token", s.cfg.ServiceToken).
+		SetBody(payload).
+		Post(baseURL + "/internal/a-stock/backtests/refresh-price")
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusBadGateway, err.Error(), nil)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(resp.StatusCode())
+	_, _ = w.Write(resp.Body())
 }
 
 func (s *Service) handleUpsertAStockRecommendationSnapshot(w http.ResponseWriter, r *http.Request) {

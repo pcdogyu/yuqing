@@ -63,6 +63,11 @@ interface YuqingApi {
         @Query("fund_flow_filter_enabled") fundFlowFilterEnabled: Boolean = true,
     ): ApiEnvelope<AStockRecommendationSnapshot>
 
+    @POST("api/v1/a-stock/backtests/refresh-price")
+    suspend fun refreshAStockBacktestPrice(
+        @Body request: AStockBacktestPriceRefreshRequest,
+    ): ApiEnvelope<AStockBacktestPriceRefreshResult>
+
     @GET("api/v1/stock-research")
     suspend fun stockResearch(
         @Query("page") page: Int = 1,

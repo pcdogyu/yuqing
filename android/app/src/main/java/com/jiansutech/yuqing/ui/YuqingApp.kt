@@ -109,6 +109,7 @@ import com.jiansutech.yuqing.data.AStockAuctionAmount
 import com.jiansutech.yuqing.data.AStockAuctionListResult
 import com.jiansutech.yuqing.data.AStockBacktestRow
 import com.jiansutech.yuqing.data.AStockRecommendation
+import com.jiansutech.yuqing.data.AStockRecommendationSnapshot
 import com.jiansutech.yuqing.data.ArticleItem
 import com.jiansutech.yuqing.data.ApiFactory
 import com.jiansutech.yuqing.data.ItemListResult
@@ -308,6 +309,16 @@ private fun PortalScreen(
                     },
                     onNextStock = {
                         backtestDetail = adjacentAStockBacktestDetail(detail, 1) ?: detail
+                    },
+                    refreshingPrice = state.aStockBacktestPriceRefreshing,
+                    onRefreshPrice = {
+                        viewModel.refreshAStockBacktestPrice(
+                            date = detail.strategyDate,
+                            period = detail.period,
+                            code = detail.recommendation.code,
+                        ) { snapshot ->
+                            backtestDetail = applyAStockBacktestDetailSnapshot(detail, snapshot)
+                        }
                     },
                 )
             } else if (articleDetail != null) {
@@ -724,6 +735,7 @@ private fun AStockModule(
                         recommendation = item,
                         row = findAStockBacktest(morningBacktests, item),
                         strategyDate = window.date,
+                        period = "morning",
                         sectionLabel = "上午推荐",
                         recommendations = morningRecommendations,
                         backtests = morningBacktests,
@@ -743,6 +755,7 @@ private fun AStockModule(
                         recommendation = item,
                         row = findAStockBacktest(afternoonBacktests, item),
                         strategyDate = window.date,
+                        period = "afternoon",
                         sectionLabel = "下午推荐",
                         recommendations = afternoonRecommendations,
                         backtests = afternoonBacktests,
@@ -1768,6 +1781,7 @@ private data class AStockBacktestDetailState(
     val recommendation: AStockRecommendation,
     val row: AStockBacktestRow?,
     val strategyDate: String,
+    val period: String,
     val sectionLabel: String,
     val recommendations: List<AStockRecommendation> = emptyList(),
     val backtests: List<AStockBacktestRow> = emptyList(),
@@ -1792,9 +1806,12 @@ private fun AStockBacktestDetailScreen(
     onSwipeUp: () -> Unit,
     onPreviousStock: () -> Unit,
     onNextStock: () -> Unit,
+    refreshingPrice: Boolean,
+    onRefreshPrice: () -> Unit,
 ) {
     val row = state.row
-    val currentClosePrice = state.recommendation.currentPrice.ifBlank { "--" }
+    val currentClosePrice = aStockBacktestDetailCurrentPrice(row, state.recommendation)
+    val currentReturn = aStockBacktestDetailCurrentReturn(row, state.recommendation)
     val adjacentLabels = aStockBacktestAdjacentLabels(state.recommendations, state.recommendation)
     val swipeThreshold = with(LocalDensity.current) { 96.dp.toPx() }
     var dragOffset by remember(state.recommendation.code, state.sectionLabel) { mutableStateOf(Offset.Zero) }
@@ -1827,7 +1844,7 @@ private fun AStockBacktestDetailScreen(
                     state.strategyDate,
                     state.sectionLabel,
                     "现价 $currentClosePrice",
-                    "今日 ${state.recommendation.todayPct.ifBlank { "--" }}",
+                    "今日 $currentReturn",
                 ).joinToString("  "),
             )
         }
@@ -1835,9 +1852,10 @@ private fun AStockBacktestDetailScreen(
             item { SimpleRow("暂无回测结果", "请先在 A股页面刷新当前回测。") }
         } else {
             item {
-                SimpleRow(
-                    "买入价 ${row.displayEntryOpen()}",
-                    "状态 ${row.status.ifBlank { "--" }}",
+                AStockBacktestEntryRow(
+                    row = row,
+                    refreshingPrice = refreshingPrice,
+                    onRefreshPrice = onRefreshPrice,
                 )
             }
             item { SectionTitle("回测数据") }
@@ -1871,6 +1889,42 @@ private fun AStockBacktestDetailScreen(
                         onPreviousStock = onPreviousStock,
                         onNextStock = onNextStock,
                     )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AStockBacktestEntryRow(
+    row: AStockBacktestRow,
+    refreshingPrice: Boolean,
+    onRefreshPrice: () -> Unit,
+) {
+    Card {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("买入价 ${row.displayEntryOpen()}", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(4.dp))
+                Text("状态 ${row.status.ifBlank { "--" }}", style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            Button(
+                onClick = onRefreshPrice,
+                enabled = !refreshingPrice,
+            ) {
+                if (refreshingPrice) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                    )
+                } else {
+                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("刷新")
                 }
             }
         }
@@ -2140,6 +2194,24 @@ private fun parseAStockBacktests(raw: String?): List<AStockBacktestRow> {
     }.getOrDefault(emptyList())
 }
 
+private fun applyAStockBacktestDetailSnapshot(
+    state: AStockBacktestDetailState,
+    snapshot: AStockRecommendationSnapshot,
+): AStockBacktestDetailState {
+    val recommendations = parseAStockRecommendations(snapshot.recommendationsJson)
+    val backtests = parseAStockBacktests(snapshot.backtestsJson)
+    val recommendation = recommendations.firstOrNull { sameAStockRecommendation(it, state.recommendation) }
+        ?: state.recommendation
+    return state.copy(
+        recommendation = recommendation,
+        row = findAStockBacktest(backtests, recommendation) ?: findAStockBacktest(backtests, state.recommendation) ?: state.row,
+        strategyDate = snapshot.strategyDate.ifBlank { state.strategyDate },
+        period = snapshot.period.ifBlank { state.period },
+        recommendations = recommendations.ifEmpty { state.recommendations },
+        backtests = backtests.ifEmpty { state.backtests },
+    )
+}
+
 private fun findAStockBacktest(rows: List<AStockBacktestRow>, item: AStockRecommendation): AStockBacktestRow? {
     val code = item.code.trim()
     if (code.isBlank()) {
@@ -2149,6 +2221,26 @@ private fun findAStockBacktest(rows: List<AStockBacktestRow>, item: AStockRecomm
         val stock = row.stock.trim()
         stock == code || stock.startsWith("$code ")
     }
+}
+
+internal fun aStockBacktestDetailCurrentPrice(row: AStockBacktestRow?, recommendation: AStockRecommendation): String {
+    return aStockUsableDisplayValue(row?.currentPrice)
+        ?: aStockUsableDisplayValue(recommendation.currentPrice)
+        ?: "--"
+}
+
+internal fun aStockBacktestDetailCurrentReturn(row: AStockBacktestRow?, recommendation: AStockRecommendation): String {
+    return aStockUsableDisplayValue(row?.currentReturn)
+        ?: aStockUsableDisplayValue(recommendation.todayPct)
+        ?: "--"
+}
+
+private fun aStockUsableDisplayValue(value: String?): String? {
+    val trimmed = value?.trim().orEmpty()
+    if (trimmed.isBlank() || trimmed == "--") {
+        return null
+    }
+    return trimmed
 }
 
 private fun adjacentAStockBacktestDetail(state: AStockBacktestDetailState, offset: Int): AStockBacktestDetailState? {

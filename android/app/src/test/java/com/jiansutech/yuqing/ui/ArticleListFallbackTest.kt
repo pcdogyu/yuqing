@@ -1,6 +1,7 @@
 package com.jiansutech.yuqing.ui
 
 import com.jiansutech.yuqing.data.AndroidDashboard
+import com.jiansutech.yuqing.data.AStockBacktestRow
 import com.jiansutech.yuqing.data.AStockRecommendation
 import com.jiansutech.yuqing.data.ArticleItem
 import com.jiansutech.yuqing.data.ItemListResult
@@ -139,6 +140,42 @@ class ArticleListFallbackTest {
         assertEquals(AStockBacktestAdjacentLabels(), aStockBacktestAdjacentLabels(listOf(current), current))
         assertEquals(AStockBacktestAdjacentLabels(), aStockBacktestAdjacentLabels(listOf(current), unknown))
         assertEquals("", aStockRecommendationCodeNameLabel(AStockRecommendation()))
+    }
+
+    @Test
+    fun aStockBacktestDetailCurrentValuesPreferRefreshedRowFields() {
+        val recommendation = AStockRecommendation(
+            code = "300394",
+            name = "天孚通信",
+            currentPrice = "279.31",
+            todayPct = "+2.88%",
+        )
+        val row = AStockBacktestRow(
+            stock = "300394 天孚通信",
+            currentPrice = "284.30",
+            currentReturn = "+1.17%",
+        )
+
+        assertEquals("284.30", aStockBacktestDetailCurrentPrice(row, recommendation))
+        assertEquals("+1.17%", aStockBacktestDetailCurrentReturn(row, recommendation))
+    }
+
+    @Test
+    fun aStockBacktestDetailCurrentValuesFallbackToRecommendationFields() {
+        val recommendation = AStockRecommendation(
+            code = "300394",
+            name = "天孚通信",
+            currentPrice = "279.31",
+            todayPct = "+2.88%",
+        )
+        val row = AStockBacktestRow(
+            stock = "300394 天孚通信",
+            currentPrice = "--",
+            currentReturn = "",
+        )
+
+        assertEquals("279.31", aStockBacktestDetailCurrentPrice(row, recommendation))
+        assertEquals("+2.88%", aStockBacktestDetailCurrentReturn(row, recommendation))
     }
 
     @Test

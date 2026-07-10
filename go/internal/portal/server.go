@@ -382,6 +382,7 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/volume", s.requireSessionUnlessRemoved(s.handleVolume))
 	mux.HandleFunc("/volume/", s.requireSessionUnlessRemoved(s.handleVolume))
 	mux.HandleFunc("/internal/a-stock/recommendations/generate", s.requireServiceToken(s.handleAStockRecommendationGenerate))
+	mux.HandleFunc("/internal/a-stock/backtests/refresh-price", s.requireServiceToken(s.handleAStockBacktestRefreshPrice))
 	mux.HandleFunc("/a-stock/popup", s.requireSessionJSON(s.handleAStockPopup))
 	mux.HandleFunc("/a-stock/popup/dismiss", s.requireSessionJSON(s.handleAStockPopupDismiss))
 	mux.HandleFunc("/a-stock/backtest", s.requireSession(s.handleAStockBacktestPage))

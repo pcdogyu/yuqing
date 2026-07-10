@@ -206,13 +206,16 @@ class ApiModelsTest {
     }
 
     @Test
-	fun aStockBacktestRowParsesT0Close() {
-		val payload = """
-			{
-			  "Stock": "603083 剑桥科技",
+    fun aStockBacktestRowParsesT0Close() {
+        val payload = """
+            {
+              "Stock": "603083 剑桥科技",
               "EntryOpen": "240.00",
               "T0Return": "+1.70%",
               "T0Close": "244.08",
+              "CurrentPrice": "245.00",
+              "CurrentReturn": "+2.08%",
+              "CurrentReturnClass": "astock-up",
               "Days": [{"Close":"250.00","Return":"+4.17%"}],
               "BestReturn": "+4.17%",
               "Status": "已回测T+1"
@@ -221,28 +224,80 @@ class ApiModelsTest {
 
         val row = ApiFactory.json.decodeFromString(AStockBacktestRow.serializer(), payload)
 
-		assertEquals("244.08", row.t0Close)
-		assertEquals("+4.17%", row.days.first().returnPct)
-	}
+        assertEquals("244.08", row.t0Close)
+        assertEquals("245.00", row.currentPrice)
+        assertEquals("+2.08%", row.currentReturn)
+        assertEquals("astock-up", row.currentReturnClass)
+        assertEquals("+4.17%", row.days.first().returnPct)
+    }
 
-	@Test
-	fun stockResearchParsesStoredSourceText() {
-		val payload = """
-			{
-			  "id": 7,
-			  "title": "研报标题",
-			  "source_text": "第一段\n\n第二段",
-			  "source_fetch_status": "parsed",
-			  "source_fetched_at": "2026-07-08T01:00:00Z"
-			}
-		""".trimIndent()
+    @Test
+    fun aStockBacktestRefreshPricePostsJsonBody() = runTest {
+        val server = MockWebServer()
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody(
+                    """
+                    {
+                      "code": 200,
+                      "message": "ok",
+                      "data": {
+                        "summary": "价格已刷新",
+                        "detail": "明细",
+                        "snapshot": {
+                          "found": true,
+                          "strategy_date": "2026-07-10",
+                          "period": "morning",
+                          "recommendations_json": "[]",
+                          "backtests_json": "[]"
+                        }
+                      }
+                    }
+                    """.trimIndent(),
+                ),
+        )
+        server.start()
+        try {
+            val result = ApiFactory.yuqing(server.url("/").toString())
+                .refreshAStockBacktestPrice(
+                    AStockBacktestPriceRefreshRequest(
+                        date = "2026-07-10",
+                        period = "morning",
+                        code = "300394",
+                    ),
+                )
+                .data
+            val request = server.takeRequest()
 
-		val item = ApiFactory.json.decodeFromString(StockResearch.serializer(), payload)
+            assertEquals("/api/v1/a-stock/backtests/refresh-price", request.requestUrl?.encodedPath)
+            assertEquals("POST", request.method)
+            assertTrue(request.body.readUtf8().contains("\"code\":\"300394\""))
+            assertEquals("价格已刷新", result?.summary)
+            assertEquals("morning", result?.snapshot?.period)
+        } finally {
+            server.shutdown()
+        }
+    }
 
-		assertEquals("第一段\n\n第二段", item.sourceText)
-		assertEquals("parsed", item.sourceFetchStatus)
-		assertEquals("2026-07-08T01:00:00Z", item.sourceFetchedAt)
-	}
+    @Test
+    fun stockResearchParsesStoredSourceText() {
+        val payload = """
+            {
+              "id": 7,
+              "title": "研报标题",
+              "source_text": "第一段\n\n第二段",
+              "source_fetch_status": "parsed",
+              "source_fetched_at": "2026-07-08T01:00:00Z"
+            }
+        """.trimIndent()
+
+        val item = ApiFactory.json.decodeFromString(StockResearch.serializer(), payload)
+
+        assertEquals("第一段\n\n第二段", item.sourceText)
+        assertEquals("parsed", item.sourceFetchStatus)
+        assertEquals("2026-07-08T01:00:00Z", item.sourceFetchedAt)
+    }
 
 	@Test
 	fun stockResearchPdfFileNameUsesIdAndSanitizesLabel() {

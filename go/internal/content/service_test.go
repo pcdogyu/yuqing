@@ -294,6 +294,66 @@ func TestAStockRecommendationSnapshotAPIUpsertsAndGets(t *testing.T) {
 	}
 }
 
+func TestAStockBacktestRefreshPriceAPIProxiesToGateway(t *testing.T) {
+	var gatewayCalled bool
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gatewayCalled = true
+		if r.Method != http.MethodPost || r.URL.Path != "/internal/a-stock/backtests/refresh-price" {
+			t.Fatalf("unexpected gateway request: %s %s", r.Method, r.URL.String())
+		}
+		if r.Header.Get("X-Service-Token") != "secret" {
+			t.Fatalf("expected service token to be forwarded, got %q", r.Header.Get("X-Service-Token"))
+		}
+		var payload aStockBacktestRefreshPriceRequest
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode gateway payload: %v", err)
+		}
+		if payload.Date != "2026-07-10" || payload.Period != "morning" || payload.Code != "300394" {
+			t.Fatalf("unexpected gateway payload: %+v", payload)
+		}
+		apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]any{
+			"summary": "价格已刷新",
+			"detail":  "明细",
+			"snapshot": model.AStockRecommendationSnapshot{
+				Found:               true,
+				StrategyDate:        "2026-07-10",
+				Period:              "morning",
+				RecommendationsJSON: "[]",
+				BacktestsJSON:       "[]",
+			},
+		})
+	}))
+	defer gateway.Close()
+
+	store := newContentSearchTestStore(t)
+	svc := NewService(config.Config{GatewayWebURL: gateway.URL, ServiceToken: "secret"}, store)
+	router := svc.Router()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/a-stock/backtests/refresh-price", strings.NewReader(`{"date":"2026-07-10","period":"morning","code":"300394"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected refresh proxy 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !gatewayCalled {
+		t.Fatal("expected gateway to be called")
+	}
+	var envelope struct {
+		Data struct {
+			Summary  string                             `json:"summary"`
+			Snapshot model.AStockRecommendationSnapshot `json:"snapshot"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode proxy response: %v", err)
+	}
+	if envelope.Data.Summary != "价格已刷新" || !envelope.Data.Snapshot.Found || envelope.Data.Snapshot.Period != "morning" {
+		t.Fatalf("unexpected proxy response: %+v", envelope.Data)
+	}
+}
+
 func TestAStockRecommendationSelectionsAPIUpsertsAndLists(t *testing.T) {
 	store := newContentSearchTestStore(t)
 	svc := NewService(config.Config{}, store)
