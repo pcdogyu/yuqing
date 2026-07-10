@@ -1063,7 +1063,7 @@ func (s *Server) handleAStockPageAction(w http.ResponseWriter, r *http.Request, 
 			query.Set("detail", result.Detail)
 		}
 	case "repair_stock_names":
-		query.Set("msg", s.repairAStockActionRecommendationNames(strategyDate, period.Key, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket))
+		query.Set("msg", s.repairAStockActionRecommendationNames(strategyDate, period.Key, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, redirectPath == "/a-stock/backtest"))
 	case "backfill_auction":
 		query.Set("msg", s.triggerAStockAuctionBackfillDate(strategyDate))
 		persistRecommendation = true
@@ -1478,11 +1478,26 @@ func aStockManualRecommendationEntryTime(strategyDate string, period string, ref
 	return normalizeAStockGeneratedEntryTime("afternoon", fmt.Sprintf("%02d:%02d", now.Hour(), now.Minute()))
 }
 
-func (s *Server) repairAStockActionRecommendationNames(strategyDate string, periodKey string, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool) string {
+func (s *Server) repairAStockActionRecommendationNames(strategyDate string, periodKey string, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool, allVisiblePeriods bool) string {
 	if strings.TrimSpace(s.cfg.ContentURL) == "" {
 		return "内容服务未配置，无法补股票名称。"
 	}
 	cache := newAStockRequestCache()
+	periods := []string{normalizeAStockPeriod(periodKey).Key}
+	if allVisiblePeriods {
+		periods = []string{"morning", "afternoon"}
+	}
+	messages := make([]string, 0, len(periods))
+	for _, period := range periods {
+		message := s.repairAStockActionRecommendationNamesPeriod(strategyDate, period, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, cache)
+		if strings.TrimSpace(message) != "" {
+			messages = append(messages, message)
+		}
+	}
+	return strings.Join(messages, " ")
+}
+
+func (s *Server) repairAStockActionRecommendationNamesPeriod(strategyDate string, periodKey string, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool, cache *aStockRequestCache) string {
 	ctx, ok, loadMessage := s.loadAStockRecommendationNameRepairContext(strategyDate, periodKey, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, cache)
 	if loadMessage != "" {
 		return loadMessage

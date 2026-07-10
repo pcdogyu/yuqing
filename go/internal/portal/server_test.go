@@ -9228,6 +9228,106 @@ func TestAStockRepairStockNamesActionPersistsNamesFromLocalDictionary(t *testing
 	}
 }
 
+func TestAStockBacktestRepairStockNamesActionRepairsVisiblePeriods(t *testing.T) {
+	snapshots := map[string]model.AStockRecommendationSnapshot{
+		"morning": {
+			Found:        true,
+			StrategyDate: "2026-07-10",
+			Period:       "morning",
+			RecommendationsJSON: mustAStockTestJSON(t, []aStockRecommendation{
+				{Rank: 1, Code: "688249", Name: "晶合集成", Hotspot: "半导体", Reason: "valid"},
+			}),
+			BacktestsJSON: mustAStockTestJSON(t, []aStockBacktestRow{
+				{Stock: "688249 晶合集成", EntryOpen: "65.21", T0Return: "-17.01%", T0Close: "54.12", Status: "等待T+1行情"},
+			}),
+			BacktestStatus:        "已读取推荐快照",
+			GeneratedCount:        1,
+			FundFlowFilterEnabled: true,
+		},
+		"afternoon": {
+			Found:        true,
+			StrategyDate: "2026-07-10",
+			Period:       "afternoon",
+			RecommendationsJSON: mustAStockTestJSON(t, []aStockRecommendation{
+				{Rank: 1, Code: "000021", Name: "主力资金监控", Hotspot: "人工智能", Reason: "bad inferred name"},
+			}),
+			BacktestsJSON: mustAStockTestJSON(t, []aStockBacktestRow{
+				{Stock: "000021 主力资金监控", AfternoonOpen: "60.30", T0Return: "-3.96%", T0Close: "57.91", Status: "等待T+1行情"},
+			}),
+			BacktestStatus:           "已读取推荐快照",
+			GeneratedCount:           1,
+			LimitUpFilterEnabled:     true,
+			FundFlowFilterEnabled:    true,
+			TodayMarketFilterEnabled: false,
+		},
+	}
+	savedSnapshots := map[string]model.AStockRecommendationSnapshot{}
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/a-stock/recommendations":
+			writeEnvelope(w, http.StatusOK, "ok", snapshots[r.URL.Query().Get("period")])
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/a-stock/code-names":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockCodeNameListResult{
+				Total: 1,
+				Items: []model.AStockCodeName{{Code: "000021", Name: "深科技", Source: "auction"}},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/internal/a-stock/recommendation-selections":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionUpsertResult{Updated: 1})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/internal/a-stock/recommendations":
+			var snapshot model.AStockRecommendationSnapshot
+			if err := json.NewDecoder(r.Body).Decode(&snapshot); err != nil {
+				t.Fatalf("decode snapshot: %v", err)
+			}
+			savedSnapshots[snapshot.Period] = snapshot
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Updated: 1})
+		default:
+			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	form := url.Values{}
+	form.Set("date", "2026-07-10")
+	form.Set("period", "morning")
+	form.Set("filter_fund_flow", "1")
+	form.Set("action", "repair_stock_names")
+	req := httptest.NewRequest(http.MethodPost, "/a-stock/backtest", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	srv.handleAStockBacktestPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if _, ok := savedSnapshots["morning"]; !ok {
+		t.Fatalf("expected morning snapshot to be saved, got %+v", savedSnapshots)
+	}
+	afternoon, ok := savedSnapshots["afternoon"]
+	if !ok {
+		t.Fatalf("expected afternoon snapshot to be saved, got %+v", savedSnapshots)
+	}
+	var recommendations []aStockRecommendation
+	if err := json.Unmarshal([]byte(afternoon.RecommendationsJSON), &recommendations); err != nil {
+		t.Fatalf("decode recommendations: %v", err)
+	}
+	if len(recommendations) != 1 || recommendations[0].Code != "000021" || recommendations[0].Name != "深科技" {
+		t.Fatalf("expected afternoon recommendation name repaired, got %+v", recommendations)
+	}
+	var backtests []aStockBacktestRow
+	if err := json.Unmarshal([]byte(afternoon.BacktestsJSON), &backtests); err != nil {
+		t.Fatalf("decode backtests: %v", err)
+	}
+	if len(backtests) != 1 || backtests[0].Stock != "000021 深科技" {
+		t.Fatalf("expected afternoon backtest name repaired, got %+v", backtests)
+	}
+	decodedLocation, _ := url.QueryUnescape(rr.Header().Get("Location"))
+	if !strings.Contains(decodedLocation, "上午推荐股票名称已从集合竞价名称库补齐") || !strings.Contains(decodedLocation, "下午推荐股票名称已从集合竞价名称库补齐") {
+		t.Fatalf("expected both visible periods in repair summary, got %q", decodedLocation)
+	}
+}
+
 func TestAStockBacktestRefreshCurrentOnBacktestPageRefreshesVisiblePeriodsWithDetail(t *testing.T) {
 	setAStockNowForTest(t, time.Date(2026, 7, 7, 14, 30, 0, 0, aStockLocation()))
 	snapshots := map[string]model.AStockRecommendationSnapshot{
