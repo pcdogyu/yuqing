@@ -1,6 +1,7 @@
 package com.jiansutech.yuqing.ui
 
 import com.jiansutech.yuqing.data.AndroidDashboard
+import com.jiansutech.yuqing.data.AStockRecommendation
 import com.jiansutech.yuqing.data.ArticleItem
 import com.jiansutech.yuqing.data.ItemListResult
 import com.jiansutech.yuqing.data.StockResearch
@@ -98,6 +99,37 @@ class ArticleListFallbackTest {
         assertEquals(BacktestValueTone.Down, backtestValueTone(" -3.27%"))
         assertEquals(BacktestValueTone.Flat, backtestValueTone("--"))
         assertEquals(BacktestValueTone.Flat, backtestValueTone(""))
+    }
+
+    @Test
+    fun aStockBacktestAdjacentLabelsShowOnlyAvailableNeighbors() {
+        val first = testAStockRecommendation("002520", "日发精机", 1)
+        val middle = testAStockRecommendation("603893", "瑞芯微", 2)
+        val last = testAStockRecommendation("688385", "复旦微电", 3)
+        val recommendations = listOf(first, middle, last)
+
+        assertEquals(
+            AStockBacktestAdjacentLabels(previous = null, next = "603893 瑞芯微"),
+            aStockBacktestAdjacentLabels(recommendations, first),
+        )
+        assertEquals(
+            AStockBacktestAdjacentLabels(previous = "002520 日发精机", next = "688385 复旦微电"),
+            aStockBacktestAdjacentLabels(recommendations, middle),
+        )
+        assertEquals(
+            AStockBacktestAdjacentLabels(previous = "603893 瑞芯微", next = null),
+            aStockBacktestAdjacentLabels(recommendations, last),
+        )
+    }
+
+    @Test
+    fun aStockBacktestAdjacentLabelsHideWhenNoSwitchTargetExists() {
+        val current = testAStockRecommendation("002520", "日发精机", 1)
+        val unknown = testAStockRecommendation("600000", "浦发银行", 9)
+
+        assertEquals(AStockBacktestAdjacentLabels(), aStockBacktestAdjacentLabels(listOf(current), current))
+        assertEquals(AStockBacktestAdjacentLabels(), aStockBacktestAdjacentLabels(listOf(current), unknown))
+        assertEquals("", aStockRecommendationCodeNameLabel(AStockRecommendation()))
     }
 
     @Test
@@ -309,4 +341,8 @@ class ArticleListFallbackTest {
 
         assertEquals(listOf(listArticle, listNext), articles)
     }
+}
+
+private fun testAStockRecommendation(code: String, name: String, rank: Int): AStockRecommendation {
+    return AStockRecommendation(rank = rank, code = code, name = name)
 }

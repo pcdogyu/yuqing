@@ -58,6 +58,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SwipeToDismissBox
@@ -300,6 +301,12 @@ private fun PortalScreen(
                     },
                     onSwipeUp = {
                         backtestDetail = adjacentAStockBacktestDetail(detail, -1) ?: detail
+                    },
+                    onPreviousStock = {
+                        backtestDetail = adjacentAStockBacktestDetail(detail, -1) ?: detail
+                    },
+                    onNextStock = {
+                        backtestDetail = adjacentAStockBacktestDetail(detail, 1) ?: detail
                     },
                 )
             } else if (articleDetail != null) {
@@ -1767,9 +1774,12 @@ private fun AStockBacktestDetailScreen(
     state: AStockBacktestDetailState,
     onSwipeDown: () -> Unit,
     onSwipeUp: () -> Unit,
+    onPreviousStock: () -> Unit,
+    onNextStock: () -> Unit,
 ) {
     val row = state.row
     val currentClosePrice = state.recommendation.currentPrice.ifBlank { "--" }
+    val adjacentLabels = aStockBacktestAdjacentLabels(state.recommendations, state.recommendation)
     val swipeThreshold = with(LocalDensity.current) { 96.dp.toPx() }
     var dragOffset by remember(state.recommendation.code, state.sectionLabel) { mutableStateOf(Offset.Zero) }
     LazyColumn(
@@ -1837,7 +1847,58 @@ private fun AStockBacktestDetailScreen(
                     cleanAStockRecommendationReason(state.recommendation.reason).ifBlank { "暂无推荐说明" },
                 )
             }
+            if (adjacentLabels.hasAnyTarget) {
+                item {
+                    AStockBacktestAdjacentNavigation(
+                        previousLabel = adjacentLabels.previous,
+                        nextLabel = adjacentLabels.next,
+                        onPreviousStock = onPreviousStock,
+                        onNextStock = onNextStock,
+                    )
+                }
+            }
         }
+    }
+}
+
+@Composable
+private fun AStockBacktestAdjacentNavigation(
+    previousLabel: String?,
+    nextLabel: String?,
+    onPreviousStock: () -> Unit,
+    onNextStock: () -> Unit,
+) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(32.dp)) {
+        AStockBacktestAdjacentButton(
+            label = previousLabel,
+            onClick = onPreviousStock,
+            modifier = Modifier.weight(1f),
+        )
+        AStockBacktestAdjacentButton(
+            label = nextLabel,
+            onClick = onNextStock,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+@Composable
+private fun AStockBacktestAdjacentButton(
+    label: String?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (label == null) {
+        Spacer(modifier.height(44.dp))
+        return
+    }
+    OutlinedButton(onClick = onClick, modifier = modifier.height(44.dp)) {
+        Text(
+            label,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+        )
     }
 }
 
@@ -2078,6 +2139,35 @@ private fun adjacentAStockBacktestDetail(state: AStockBacktestDetailState, offse
         recommendation = nextRecommendation,
         row = findAStockBacktest(state.backtests, nextRecommendation),
     )
+}
+
+internal data class AStockBacktestAdjacentLabels(
+    val previous: String? = null,
+    val next: String? = null,
+) {
+    val hasAnyTarget: Boolean
+        get() = previous != null || next != null
+}
+
+internal fun aStockBacktestAdjacentLabels(
+    recommendations: List<AStockRecommendation>,
+    current: AStockRecommendation,
+): AStockBacktestAdjacentLabels {
+    if (recommendations.size <= 1) {
+        return AStockBacktestAdjacentLabels()
+    }
+    val currentIndex = recommendations.indexOfFirst { sameAStockRecommendation(it, current) }
+    if (currentIndex < 0) {
+        return AStockBacktestAdjacentLabels()
+    }
+    return AStockBacktestAdjacentLabels(
+        previous = recommendations.getOrNull(currentIndex - 1)?.let(::aStockRecommendationCodeNameLabel)?.ifBlank { null },
+        next = recommendations.getOrNull(currentIndex + 1)?.let(::aStockRecommendationCodeNameLabel)?.ifBlank { null },
+    )
+}
+
+internal fun aStockRecommendationCodeNameLabel(item: AStockRecommendation): String {
+    return listOf(item.code.trim(), item.name.trim()).filter { it.isNotBlank() }.joinToString(" ")
 }
 
 private fun sameAStockRecommendation(left: AStockRecommendation, right: AStockRecommendation): Boolean {
