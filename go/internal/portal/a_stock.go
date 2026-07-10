@@ -8907,6 +8907,9 @@ func shouldUseResolvedAStockRecommendationName(code string, name string, resolve
 	if !hasResolvedAStockRecommendationName(code, name) {
 		return true
 	}
+	if isInvalidAStockRecommendationName(name) {
+		return true
+	}
 	if name == resolved {
 		return true
 	}
@@ -8915,11 +8918,41 @@ func shouldUseResolvedAStockRecommendationName(code string, name string, resolve
 
 func hasResolvedAStockRecommendationName(code string, name string) bool {
 	name = astockcode.DisplayName(code, name)
-	return astockcode.HasResolvedName(code, name)
+	return astockcode.HasResolvedName(code, name) && !isInvalidAStockRecommendationName(name)
 }
 
 func isAStockRecommendationPlaceholderName(name string) bool {
 	return astockcode.IsPlaceholderName(name)
+}
+
+func isInvalidAStockRecommendationName(name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false
+	}
+	blockedExact := map[string]struct{}{
+		"主力资金监控": {},
+		"资金监控":   {},
+		"资金流向":   {},
+		"市场要闻":   {},
+		"盘前市场要闻": {},
+		"金十数据整理": {},
+	}
+	if _, ok := blockedExact[name]; ok {
+		return true
+	}
+	blockedFragments := []string{
+		"主力资金监控",
+		"资金监控",
+		"融资融券",
+		"盘前市场要闻",
+	}
+	for _, fragment := range blockedFragments {
+		if strings.Contains(name, fragment) {
+			return true
+		}
+	}
+	return false
 }
 
 func fixedPoolAStockMarketCandidates(hotspots []aStockHotspot, marketCandidates []aStockMarketCandidate) []aStockMarketCandidate {
@@ -9726,6 +9759,9 @@ func shouldResolveAStockRecommendationName(code string, name string) bool {
 	if !hasResolvedAStockRecommendationName(code, name) {
 		return true
 	}
+	if isInvalidAStockRecommendationName(name) {
+		return true
+	}
 	return len([]rune(name)) <= 2
 }
 
@@ -10119,6 +10155,9 @@ func validAStockMentionName(name string) bool {
 		return false
 	}
 	if isAStockRecommendationPlaceholderName(name) {
+		return false
+	}
+	if isInvalidAStockRecommendationName(name) {
 		return false
 	}
 	blocked := []string{"A股", "港股", "美股", "股票", "股指", "板块", "概念", "期货", "国债期货", "中证转债指数"}
