@@ -348,7 +348,7 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		"今日涨跌幅",
 		"5日资金动向",
 		"资金过滤",
-		"关闭资金过滤",
+		"启用资金过滤",
 		".astock-table th{white-space:nowrap}",
 		".astock-recommendation-table th:nth-child(2),.astock-recommendation-table td:nth-child(2){width:7.5%;white-space:nowrap}",
 		".astock-recommendation-table th:last-child,.astock-recommendation-table td:last-child{width:36%}",
@@ -441,7 +441,7 @@ func TestAStockPagePartialReturnsFragmentJSON(t *testing.T) {
 
 func TestAStockPageFragmentCacheKeysAndBypass(t *testing.T) {
 	srv := NewServer(config.Config{})
-	key := aStockPageFragmentCacheKey("2026-06-15", "morning", 1, false, false, false, false)
+	key := aStockPageFragmentCacheKey("2026-06-15", "morning", 1, false, false, true, false)
 	srv.storeCachedAStockPageFragment(key, aStockPartialPayload{
 		HTML:         `<div id="astock-page-content">cached morning</div>`,
 		CanonicalURL: "/a-stock?date=2026-06-15&period=morning",
@@ -488,15 +488,15 @@ func TestAStockPageFragmentCacheKeysAndBypass(t *testing.T) {
 		}
 	}
 
-	baseKey := aStockPageFragmentCacheKey("2026-06-15", "morning", 1, false, false, false, false)
+	baseKey := aStockPageFragmentCacheKey("2026-06-15", "morning", 1, false, false, true, false)
 	for name, otherKey := range map[string]string{
-		"date":                aStockPageFragmentCacheKey("2026-06-16", "morning", 1, false, false, false, false),
-		"period":              aStockPageFragmentCacheKey("2026-06-15", "afternoon", 1, false, false, false, false),
-		"news_page":           aStockPageFragmentCacheKey("2026-06-15", "morning", 2, false, false, false, false),
-		"ignore_recent":       aStockPageFragmentCacheKey("2026-06-15", "morning", 1, true, false, false, false),
-		"ignore_limit_up":     aStockPageFragmentCacheKey("2026-06-15", "morning", 1, false, true, false, false),
-		"ignore_fund_flow":    aStockPageFragmentCacheKey("2026-06-15", "morning", 1, false, false, true, false),
-		"filter_today_market": aStockPageFragmentCacheKey("2026-06-15", "morning", 1, false, false, false, true),
+		"date":                aStockPageFragmentCacheKey("2026-06-16", "morning", 1, false, false, true, false),
+		"period":              aStockPageFragmentCacheKey("2026-06-15", "afternoon", 1, false, false, true, false),
+		"news_page":           aStockPageFragmentCacheKey("2026-06-15", "morning", 2, false, false, true, false),
+		"ignore_recent":       aStockPageFragmentCacheKey("2026-06-15", "morning", 1, true, false, true, false),
+		"ignore_limit_up":     aStockPageFragmentCacheKey("2026-06-15", "morning", 1, false, true, true, false),
+		"filter_fund_flow":    aStockPageFragmentCacheKey("2026-06-15", "morning", 1, false, false, false, false),
+		"filter_today_market": aStockPageFragmentCacheKey("2026-06-15", "morning", 1, false, false, true, true),
 	} {
 		if otherKey == baseKey {
 			t.Fatalf("expected %s to be part of fragment cache key %q", name, baseKey)
@@ -1898,6 +1898,173 @@ func TestAStockFundFlowFilterSessionSyncsBetweenRecommendationAndBacktest(t *tes
 		return err == nil && values.Get("period") == "morning" && values.Get("fund_flow_filter_enabled") == "0"
 	}) {
 		t.Fatalf("expected snapshot requests to include disabled fund-flow exact filter, got %v", fundFlowSnapshotQueries)
+	}
+}
+
+func TestAStockJuneDefaultFundFlowDisabledIgnoresEnabledCookie(t *testing.T) {
+	setAStockNowForTest(t, time.Date(2026, 7, 10, 9, 30, 0, 0, time.FixedZone("CST", 8*3600)))
+	snapshot := model.AStockRecommendationSnapshot{
+		Found:                 true,
+		StrategyDate:          "2026-06-18",
+		Period:                "morning",
+		FundFlowFilterEnabled: false,
+		RecommendationsJSON:   mustAStockTestJSON(t, []aStockRecommendation{{Rank: 1, Hotspot: "人工智能", Code: "002230", Name: "科大讯飞", Reason: "六月关闭资金过滤快照"}}),
+		BacktestsJSON:         mustAStockTestJSON(t, []aStockBacktestRow{{Stock: "002230 科大讯飞", EntryOpen: "11.05", T0Return: "+1.23%", T0Close: "11.19", Status: "已回测T+1"}}),
+		BacktestStatus:        "已读取六月关闭资金过滤快照",
+		GeneratedCount:        1,
+	}
+	var mu sync.Mutex
+	snapshotQueries := make([]url.Values, 0)
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/a-stock/recommendations":
+			mu.Lock()
+			snapshotQueries = append(snapshotQueries, r.URL.Query())
+			mu.Unlock()
+			if r.URL.Query().Get("date") == "2026-06-18" && r.URL.Query().Get("period") == "morning" && r.URL.Query().Get("fund_flow_filter_enabled") == "0" {
+				writeEnvelope(w, http.StatusOK, "ok", snapshot)
+				return
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
+		case "/api/v1/articles":
+			writeEnvelope(w, http.StatusOK, "ok", model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 1000, Total: 0})
+		case "/api/v1/a-stock/stock-fund-flow-trend":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockStockFundFlowTrendResult{})
+		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
+			t.Fatalf("unexpected content request: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	enabledCookie := &http.Cookie{Name: aStockFundFlowFilterCookieName, Value: aStockFundFlowFilterCookieEnabled, Path: "/"}
+	pageReq := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-18&period=morning", nil)
+	pageReq.AddCookie(enabledCookie)
+	pageRR := httptest.NewRecorder()
+	srv.handleAStockPage(pageRR, pageReq, map[string]any{"id": 1})
+	pageBody := pageRR.Body.String()
+	if pageRR.Code != http.StatusOK || !strings.Contains(pageBody, "002230") || !strings.Contains(pageBody, "科大讯飞") {
+		t.Fatalf("expected June page to read disabled fund-flow snapshot, code=%d body=%s", pageRR.Code, pageRR.Body.String())
+	}
+
+	backtestReq := httptest.NewRequest(http.MethodGet, "/a-stock/backtest?date=2026-06-18&period=morning", nil)
+	backtestReq.AddCookie(enabledCookie)
+	backtestRR := httptest.NewRecorder()
+	srv.handleAStockBacktestPage(backtestRR, backtestReq, map[string]any{"id": 1})
+	backtestBody := backtestRR.Body.String()
+	if backtestRR.Code != http.StatusOK || !strings.Contains(backtestBody, "002230") || !strings.Contains(backtestBody, "科大讯飞") {
+		t.Fatalf("expected June backtest to read disabled fund-flow snapshot, code=%d body=%s", backtestRR.Code, backtestRR.Body.String())
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !slices.ContainsFunc(snapshotQueries, func(values url.Values) bool {
+		return values.Get("date") == "2026-06-18" && values.Get("period") == "morning" && values.Get("fund_flow_filter_enabled") == "0"
+	}) {
+		t.Fatalf("expected June snapshot queries to request fund_flow_filter_enabled=0, got %v", snapshotQueries)
+	}
+}
+
+func TestAStockExplicitFundFlowAndJulyCookieDefaults(t *testing.T) {
+	setAStockNowForTest(t, time.Date(2026, 7, 10, 9, 30, 0, 0, time.FixedZone("CST", 8*3600)))
+	var mu sync.Mutex
+	snapshotQueries := make([]url.Values, 0)
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/a-stock/recommendations":
+			query := r.URL.Query()
+			mu.Lock()
+			snapshotQueries = append(snapshotQueries, query)
+			mu.Unlock()
+			fundFlowEnabled := query.Get("fund_flow_filter_enabled") != "0"
+			snapshot := model.AStockRecommendationSnapshot{
+				Found:                 true,
+				StrategyDate:          query.Get("date"),
+				Period:                normalizeAStockPeriod(query.Get("period")).Key,
+				FundFlowFilterEnabled: fundFlowEnabled,
+				RecommendationsJSON:   mustAStockTestJSON(t, []aStockRecommendation{{Rank: 1, Hotspot: "测试热点", Code: "600000", Name: "测试银行"}}),
+				BacktestsJSON:         mustAStockTestJSON(t, []aStockBacktestRow{{Stock: "600000 测试银行", EntryOpen: "10.00", T0Return: "+0.00%", T0Close: "10.00", Status: "已回测T+0"}}),
+				BacktestStatus:        "已读取测试快照",
+				GeneratedCount:        1,
+			}
+			writeEnvelope(w, http.StatusOK, "ok", snapshot)
+		case "/api/v1/articles":
+			writeEnvelope(w, http.StatusOK, "ok", model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 1000, Total: 0})
+		case "/api/v1/a-stock/stock-fund-flow-trend":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockStockFundFlowTrendResult{})
+		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
+			t.Fatalf("unexpected content request: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	for _, tc := range []struct {
+		name       string
+		targetURL  string
+		cookie     *http.Cookie
+		wantDate   string
+		wantFilter string
+	}{
+		{name: "june explicit enabled", targetURL: "/a-stock?date=2026-06-18&period=morning&filter_fund_flow=1", wantDate: "2026-06-18", wantFilter: "1"},
+		{name: "july default enabled", targetURL: "/a-stock?date=2026-07-09&period=morning", wantDate: "2026-07-09", wantFilter: "1"},
+		{name: "july disabled cookie", targetURL: "/a-stock?date=2026-07-09&period=morning", cookie: &http.Cookie{Name: aStockFundFlowFilterCookieName, Value: aStockFundFlowFilterCookieDisabled, Path: "/"}, wantDate: "2026-07-09", wantFilter: "0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.targetURL, nil)
+			if tc.cookie != nil {
+				req.AddCookie(tc.cookie)
+			}
+			rr := httptest.NewRecorder()
+			srv.handleAStockPage(rr, req, map[string]any{"id": 1})
+			body := rr.Body.String()
+			if rr.Code != http.StatusOK || !strings.Contains(body, "600000") || !strings.Contains(body, "测试银行") {
+				t.Fatalf("expected page to render test snapshot, code=%d body=%s", rr.Code, rr.Body.String())
+			}
+		})
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	for _, want := range []struct {
+		date   string
+		filter string
+	}{
+		{date: "2026-06-18", filter: "1"},
+		{date: "2026-07-09", filter: "1"},
+		{date: "2026-07-09", filter: "0"},
+	} {
+		if !slices.ContainsFunc(snapshotQueries, func(values url.Values) bool {
+			return values.Get("date") == want.date && values.Get("period") == "morning" && values.Get("fund_flow_filter_enabled") == want.filter
+		}) {
+			t.Fatalf("expected snapshot query date=%s fund_flow_filter_enabled=%s, got %v", want.date, want.filter, snapshotQueries)
+		}
+	}
+}
+
+func TestAStockJuneDateLinksDoNotLeakFundFlowDisabledToJuly(t *testing.T) {
+	setAStockNowForTest(t, time.Date(2026, 7, 10, 9, 30, 0, 0, time.FixedZone("CST", 8*3600)))
+	srv := NewServer(config.Config{})
+	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-30&period=morning", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `/a-stock?date=2026-07-01&period=morning`) {
+		t.Fatalf("expected June page to render July date link without fund-flow parameter, got %s", body)
+	}
+	if strings.Contains(body, `/a-stock?date=2026-07-01&period=morning&ignore_fund_flow=1`) {
+		t.Fatalf("expected June page not to leak ignore_fund_flow=1 into July date link, got %s", body)
 	}
 }
 
@@ -4437,7 +4604,7 @@ func TestAStockContextRefreshAllBacktestsBypassesValidSnapshot(t *testing.T) {
 	defer content.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
-	ctx := srv.loadAStockContextWithCache("2026-06-23", "morning", 1, false, false, false, false, true, newAStockRequestCache())
+	ctx := srv.loadAStockContextWithCache("2026-06-23", "morning", 1, false, false, true, false, true, newAStockRequestCache())
 	if len(ctx.Recommendations) != 1 || ctx.Recommendations[0].Code != "600010" {
 		t.Fatalf("expected refresh path to use selection, got %+v", ctx.Recommendations)
 	}
@@ -4491,7 +4658,7 @@ func TestAStockContextFallsBackWhenSnapshotMissing(t *testing.T) {
 	defer content.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
-	ctx := srv.loadAStockContextWithCache("2026-06-23", "morning", 1, false, false, false, false, false, newAStockRequestCache())
+	ctx := srv.loadAStockContextWithCache("2026-06-23", "morning", 1, false, false, true, false, false, newAStockRequestCache())
 	if len(ctx.Recommendations) != 1 || ctx.Recommendations[0].Code != "600011" {
 		t.Fatalf("expected selection fallback recommendation, got %+v", ctx.Recommendations)
 	}
@@ -4562,7 +4729,7 @@ func TestAStockContextFallsBackWhenSnapshotStale(t *testing.T) {
 	defer content.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
-	ctx := srv.loadAStockContextWithCache("2026-06-23", "afternoon", 1, false, false, false, false, false, newAStockRequestCache())
+	ctx := srv.loadAStockContextWithCache("2026-06-23", "afternoon", 1, false, false, true, false, false, newAStockRequestCache())
 	if len(ctx.Backtests) != 1 || ctx.Backtests[0].AfternoonOpen != "20.00" || ctx.Backtests[0].T0Return != "+5.00%" {
 		t.Fatalf("expected stale snapshot to recompute afternoon backtest, got %+v", ctx.Backtests)
 	}
@@ -4689,7 +4856,7 @@ func TestAStockContextRefreshKeepsPersistedRecommendationSelections(t *testing.T
 	defer content.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
-	ctx := srv.loadAStockContextWithCache("2026-06-23", "afternoon", 1, false, false, false, false, true, newAStockRequestCache())
+	ctx := srv.loadAStockContextWithCache("2026-06-23", "afternoon", 1, false, false, true, false, true, newAStockRequestCache())
 	if len(ctx.Recommendations) != 2 || ctx.Recommendations[0].Code != "002008" || ctx.Recommendations[1].Code != "688367" {
 		t.Fatalf("expected locked afternoon selections to stay unchanged, got %+v", ctx.Recommendations)
 	}
@@ -4747,7 +4914,7 @@ func TestAStockRecommendationGeneratePreserveLockedRefreshModeKeepsSelections(t 
 	defer content.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
-	req := httptest.NewRequest(http.MethodPost, "/internal/a-stock/recommendations/generate?date=2026-06-23&period=morning&phase=final&refresh_mode=preserve_locked", nil)
+	req := httptest.NewRequest(http.MethodPost, "/internal/a-stock/recommendations/generate?date=2026-06-23&period=morning&phase=final&refresh_mode=preserve_locked&ignore_fund_flow=1", nil)
 	rr := httptest.NewRecorder()
 	srv.handleAStockRecommendationGenerate(rr, req)
 	if rr.Code != http.StatusOK {
@@ -4842,7 +5009,7 @@ func TestAStockContextRefreshDoesNotRefilterLockedAfternoonSelectionsByMorningQu
 	defer content.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
-	ctx := srv.loadAStockContextWithCache("2026-06-23", "afternoon", 1, false, false, false, false, true, newAStockRequestCache())
+	ctx := srv.loadAStockContextWithCache("2026-06-23", "afternoon", 1, false, false, true, false, true, newAStockRequestCache())
 	if len(ctx.Recommendations) != 2 || ctx.SameDayMorningFiltered != 0 {
 		t.Fatalf("expected locked afternoon selections to avoid morning quota refilter, got filtered=%d recommendations=%+v", ctx.SameDayMorningFiltered, ctx.Recommendations)
 	}
@@ -4923,7 +5090,7 @@ func TestAStockRebuildRefiltersLockedMorningSelectionsAndClearsPersistedRows(t *
 	defer content.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
-	ctx := srv.loadAStockContextWithRecommendationPhasePersistenceMode("2026-06-16", "morning", 1, false, false, false, false, true, aStockRecommendationPhaseFinal, newAStockRequestCache(), false, true, aStockRecommendationRebuild)
+	ctx := srv.loadAStockContextWithRecommendationPhasePersistenceMode("2026-06-16", "morning", 1, false, false, true, false, true, aStockRecommendationPhaseFinal, newAStockRequestCache(), false, true, aStockRecommendationRebuild)
 	if currentSelectionGets != 0 {
 		t.Fatalf("expected rebuild to skip current locked selections, got %d current selection reads", currentSelectionGets)
 	}
@@ -5019,7 +5186,7 @@ func TestAStockMorningRebuildReplenishesAfterRecentFilter(t *testing.T) {
 	defer content.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
-	ctx := srv.loadAStockContextWithRecommendationPhasePersistenceMode("2026-06-16", "morning", 1, false, false, false, false, true, aStockRecommendationPhaseFinal, newAStockRequestCache(), false, true, aStockRecommendationRebuild)
+	ctx := srv.loadAStockContextWithRecommendationPhasePersistenceMode("2026-06-16", "morning", 1, false, false, true, false, true, aStockRecommendationPhaseFinal, newAStockRequestCache(), false, true, aStockRecommendationRebuild)
 	if ctx.RecentFiltered != 3 || ctx.RecentReplenished != 3 || ctx.RecentReplenishShortfall {
 		t.Fatalf("expected three recent stocks to be replenished, got filtered=%d replenished=%d shortfall=%v recs=%+v", ctx.RecentFiltered, ctx.RecentReplenished, ctx.RecentReplenishShortfall, ctx.Recommendations)
 	}
@@ -5090,7 +5257,7 @@ func TestAStockContextEmptySnapshotIsAuthoritative(t *testing.T) {
 				BacktestStatus:        "无推荐股票",
 				EmptyReason:           "空快照",
 				LimitUpFilterEnabled:  true,
-				FundFlowFilterEnabled: true,
+				FundFlowFilterEnabled: false,
 			})
 		case "/api/v1/internal/a-stock/recommendations":
 			saveHits++
@@ -5108,7 +5275,7 @@ func TestAStockContextEmptySnapshotIsAuthoritative(t *testing.T) {
 	defer content.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
-	ctx := srv.loadAStockContextWithCache("2026-06-23", "afternoon", 1, false, false, false, false, false, newAStockRequestCache())
+	ctx := srv.loadAStockContextWithCache("2026-06-23", "afternoon", 1, false, false, true, false, false, newAStockRequestCache())
 	if len(ctx.Recommendations) != 0 || len(ctx.Backtests) != 0 {
 		t.Fatalf("expected empty snapshot to remain empty, got recommendations=%+v backtests=%+v", ctx.Recommendations, ctx.Backtests)
 	}
@@ -5844,7 +6011,7 @@ func TestAStockContextRefreshSeedsSelectionsFromExistingSnapshot(t *testing.T) {
 				BacktestsJSON:         `[]`,
 				BacktestStatus:        "旧快照",
 				GeneratedCount:        1,
-				FundFlowFilterEnabled: true,
+				FundFlowFilterEnabled: false,
 			})
 		case "/api/v1/internal/a-stock/recommendation-selections":
 			if err := json.NewDecoder(r.Body).Decode(&savedSelections); err != nil {
@@ -5865,7 +6032,7 @@ func TestAStockContextRefreshSeedsSelectionsFromExistingSnapshot(t *testing.T) {
 	defer content.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
-	ctx := srv.loadAStockContextWithCache("2026-06-23", "morning", 1, false, false, false, false, true, newAStockRequestCache())
+	ctx := srv.loadAStockContextWithCache("2026-06-23", "morning", 1, false, false, true, false, true, newAStockRequestCache())
 
 	if len(ctx.Recommendations) != 1 || ctx.Recommendations[0].Code != "603083" {
 		t.Fatalf("expected refresh to keep snapshot recommendation code, got %+v", ctx.Recommendations)
@@ -6427,7 +6594,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 	defer scheduler.Close()
 
 	srv := NewServer(config.Config{ContentURL: content.URL, SchedulerURL: scheduler.URL})
-	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-16&refresh_recommendations=1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/a-stock?date=2026-06-16&refresh_recommendations=1&filter_fund_flow=1", nil)
 	rr := httptest.NewRecorder()
 	srv.handleAStockPage(rr, req, map[string]any{"id": 1})
 
@@ -9077,7 +9244,7 @@ func TestAStockBacktestRefreshCurrentOnBacktestPageRefreshesVisiblePeriodsWithDe
 	if err != nil {
 		t.Fatalf("decode redirect location: %v", err)
 	}
-	for _, want := range []string{"上午推荐行情收益", "下午推荐行情收益", "获取：date=2026-07-07 period=afternoon codes=688702,688820", "实时价：东方财富 quote", "实时价=--->406.00", "实时收益=--->+4.11%", "补齐：688702 盛科通信", "补齐：688820 盛合晶微"} {
+	for _, want := range []string{"上午推荐行情收益", "下午推荐行情收益", "获取：date=2026-07-07 period=afternoon codes=688702,688820", "实时价：通达信 quote", "实时价=--->406.00", "实时收益=--->+4.11%", "补齐：688702 盛科通信", "补齐：688820 盛合晶微"} {
 		if !strings.Contains(location, want) {
 			t.Fatalf("expected redirect detail to contain %q, got %s", want, location)
 		}
@@ -9115,6 +9282,51 @@ func TestAStockRealtimeQuoteFillsMissingMorningOpenAndT0Return(t *testing.T) {
 	bars := srv.realtimeAStockMarketBars("2026-07-10", []string{"300394"})
 	if len(bars) != 1 || bars[0].Open != 10 || bars[0].EntryPrice != 10 || bars[0].Close != 10.5 || bars[0].Pct != 5 {
 		t.Fatalf("expected realtime quote to produce today market bar, got %+v", bars)
+	}
+}
+
+func TestAStockRealtimeQuotesPreferTongdaxinAndCacheForOneMinute(t *testing.T) {
+	now := time.Date(2026, 7, 10, 10, 30, 0, 0, aStockLocation())
+	previousNow := aStockNow
+	aStockNow = func() time.Time { return now }
+	t.Cleanup(func() { aStockNow = previousNow })
+	tdxCalls := 0
+	tdx := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tdxCalls++
+		if r.URL.Path != "/api/a-stock/tdx-quote" || r.URL.Query().Get("codes") != "300946" {
+			t.Fatalf("unexpected tdx request: %s", r.URL.String())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"items":[{"code":"300946","price":40.00,"open":38.60,"pct":3.63,"source":"tdx"}]}`))
+	}))
+	defer tdx.Close()
+	eastmoneyCalls := 0
+	eastmoney := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		eastmoneyCalls++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer eastmoney.Close()
+	setAStockEastmoneyQuoteURLForTest(t, eastmoney.URL)
+
+	srv := NewServer(config.Config{AStockQuoteURL: tdx.URL})
+	first := srv.loadAStockRealtimeQuotes([]string{"300946"})
+	if first["300946"].Price != 40 || first["300946"].Pct != 3.63 || first["300946"].Source != "tdx" || first["300946"].Cached {
+		t.Fatalf("expected first quote from tdx, got %+v", first["300946"])
+	}
+	second := srv.loadAStockRealtimeQuotes([]string{"300946"})
+	if second["300946"].Price != 40 || !second["300946"].Cached {
+		t.Fatalf("expected second quote from one-minute cache, got %+v", second["300946"])
+	}
+	if tdxCalls != 1 || eastmoneyCalls != 0 {
+		t.Fatalf("expected one tdx call and no eastmoney fallback, got tdx=%d eastmoney=%d", tdxCalls, eastmoneyCalls)
+	}
+	now = now.Add(61 * time.Second)
+	third := srv.loadAStockRealtimeQuotes([]string{"300946"})
+	if third["300946"].Price != 40 || third["300946"].Cached {
+		t.Fatalf("expected refreshed tdx quote after cache expiry, got %+v", third["300946"])
+	}
+	if tdxCalls != 2 || eastmoneyCalls != 0 {
+		t.Fatalf("expected tdx call after cache expiry and no eastmoney fallback, got tdx=%d eastmoney=%d", tdxCalls, eastmoneyCalls)
 	}
 }
 
