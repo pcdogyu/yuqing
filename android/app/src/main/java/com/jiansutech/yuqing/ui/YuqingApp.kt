@@ -1854,6 +1854,8 @@ private fun AStockBacktestDetailScreen(
             item {
                 AStockBacktestEntryRow(
                     row = row,
+                    currentPrice = currentClosePrice,
+                    currentReturn = currentReturn,
                     refreshingPrice = refreshingPrice,
                     onRefreshPrice = onRefreshPrice,
                 )
@@ -1898,6 +1900,8 @@ private fun AStockBacktestDetailScreen(
 @Composable
 private fun AStockBacktestEntryRow(
     row: AStockBacktestRow,
+    currentPrice: String,
+    currentReturn: String,
     refreshingPrice: Boolean,
     onRefreshPrice: () -> Unit,
 ) {
@@ -1912,9 +1916,33 @@ private fun AStockBacktestEntryRow(
                 Spacer(Modifier.height(4.dp))
                 Text("状态 ${row.status.ifBlank { "--" }}", style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
+            Column(
+                modifier = Modifier.width(88.dp),
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    "实时价 $currentPrice",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.End,
+                )
+                Text(
+                    currentReturn,
+                    color = backtestValueColor(currentReturn),
+                    fontSize = 13.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.End,
+                )
+            }
             Button(
                 onClick = onRefreshPrice,
                 enabled = !refreshingPrice,
+                modifier = Modifier.height(40.dp),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
             ) {
                 if (refreshingPrice) {
                     CircularProgressIndicator(
@@ -1922,14 +1950,17 @@ private fun AStockBacktestEntryRow(
                         strokeWidth = 2.dp,
                     )
                 } else {
-                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("刷新")
+                    Text("刷新", fontSize = 13.sp)
                 }
             }
         }
     }
 }
+
+internal val AStockBacktestAdjacentButtonSpacing = 0.dp
+internal val AStockBacktestAdjacentButtonFontSize = 14.sp
 
 @Composable
 private fun AStockBacktestAdjacentNavigation(
@@ -1938,7 +1969,7 @@ private fun AStockBacktestAdjacentNavigation(
     onPreviousStock: () -> Unit,
     onNextStock: () -> Unit,
 ) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(32.dp)) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(AStockBacktestAdjacentButtonSpacing)) {
         AStockBacktestAdjacentButton(
             label = previousLabel,
             onClick = onPreviousStock,
@@ -1962,10 +1993,14 @@ private fun AStockBacktestAdjacentButton(
         Spacer(modifier.height(44.dp))
         return
     }
-    OutlinedButton(onClick = onClick, modifier = modifier.height(44.dp)) {
+    OutlinedButton(
+        onClick = onClick,
+        modifier = modifier.height(44.dp),
+        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+    ) {
         Text(
             label,
-            fontSize = 16.sp,
+            fontSize = AStockBacktestAdjacentButtonFontSize,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center,

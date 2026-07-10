@@ -143,6 +143,12 @@ class ArticleListFallbackTest {
     }
 
     @Test
+    fun aStockBacktestAdjacentButtonUsesCompactLayoutDefaults() {
+        assertEquals(0f, AStockBacktestAdjacentButtonSpacing.value, 0.001f)
+        assertEquals(14f, AStockBacktestAdjacentButtonFontSize.value, 0.001f)
+    }
+
+    @Test
     fun aStockBacktestDetailCurrentValuesPreferRefreshedRowFields() {
         val recommendation = AStockRecommendation(
             code = "300394",
