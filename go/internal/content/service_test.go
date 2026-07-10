@@ -231,6 +231,14 @@ func TestAStockRecommendationSnapshotAPIUpsertsAndGets(t *testing.T) {
 		t.Fatalf("expected disabled fund-flow snapshot upsert 200, got %d body=%s", disabledPostRR.Code, disabledPostRR.Body.String())
 	}
 
+	defaultEnabledPayload := `{"strategy_date":"2026-06-22","period":"afternoon","ignore_recent":false,"recommendations_json":"[{\"Code\":\"600001\"}]","backtests_json":"[]","backtest_status":"网页默认资金过滤开启","generated_count":1,"limit_up_filter_enabled":false,"today_market_filter_enabled":false,"fund_flow_filter_enabled":true,"fund_flow_filtered":1}`
+	defaultEnabledPostReq := httptest.NewRequest(http.MethodPost, "/api/v1/internal/a-stock/recommendations", strings.NewReader(defaultEnabledPayload))
+	defaultEnabledPostRR := httptest.NewRecorder()
+	router.ServeHTTP(defaultEnabledPostRR, defaultEnabledPostReq)
+	if defaultEnabledPostRR.Code != http.StatusOK {
+		t.Fatalf("expected default enabled fund-flow snapshot upsert 200, got %d body=%s", defaultEnabledPostRR.Code, defaultEnabledPostRR.Body.String())
+	}
+
 	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/recommendations?date=2026-06-22&period=afternoon&limit_up_filter_enabled=1&today_market_filter_enabled=1&fund_flow_filter_enabled=1", nil)
 	getRR := httptest.NewRecorder()
 	router.ServeHTTP(getRR, getReq)
@@ -251,6 +259,22 @@ func TestAStockRecommendationSnapshotAPIUpsertsAndGets(t *testing.T) {
 	}
 	if !strings.Contains(envelope.Data.RecommendationsJSON, "600000") {
 		t.Fatalf("expected enabled fund-flow exact snapshot, got %s", envelope.Data.RecommendationsJSON)
+	}
+
+	defaultGetReq := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/recommendations?date=2026-06-22&period=afternoon", nil)
+	defaultGetRR := httptest.NewRecorder()
+	router.ServeHTTP(defaultGetRR, defaultGetReq)
+	if defaultGetRR.Code != http.StatusOK {
+		t.Fatalf("expected default recommendation snapshot get 200, got %d body=%s", defaultGetRR.Code, defaultGetRR.Body.String())
+	}
+	var defaultEnvelope struct {
+		Data model.AStockRecommendationSnapshot `json:"data"`
+	}
+	if err := json.Unmarshal(defaultGetRR.Body.Bytes(), &defaultEnvelope); err != nil {
+		t.Fatalf("decode default snapshot response error: %v", err)
+	}
+	if !defaultEnvelope.Data.Found || !defaultEnvelope.Data.FundFlowFilterEnabled || !strings.Contains(defaultEnvelope.Data.RecommendationsJSON, "600001") {
+		t.Fatalf("expected default get to use fund-flow enabled snapshot, got %+v", defaultEnvelope.Data)
 	}
 
 	disabledGetReq := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/recommendations?date=2026-06-22&period=afternoon&limit_up_filter_enabled=1&today_market_filter_enabled=1&fund_flow_filter_enabled=0", nil)

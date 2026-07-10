@@ -696,16 +696,24 @@ func (s *Service) handleGetAStockRecommendationSnapshot(w http.ResponseWriter, r
 		return
 	}
 	ignoreRecent := normalizeBoolQuery(r.URL.Query().Get("ignore_recent"))
+	query := r.URL.Query()
+	fundFlowFilterEnabled := true
+	if hasQueryParam(query, "fund_flow_filter_enabled") {
+		fundFlowFilterEnabled = normalizeBoolQuery(query.Get("fund_flow_filter_enabled"))
+	}
 	filter := model.AStockRecommendationSnapshotFilter{
 		IgnoreRecent:                ignoreRecent,
-		HasLimitUpFilterEnabled:     hasQueryParam(r.URL.Query(), "limit_up_filter_enabled"),
-		LimitUpFilterEnabled:        normalizeBoolQuery(r.URL.Query().Get("limit_up_filter_enabled")),
-		HasTodayMarketFilterEnabled: hasQueryParam(r.URL.Query(), "today_market_filter_enabled"),
-		TodayMarketFilterEnabled:    normalizeBoolQuery(r.URL.Query().Get("today_market_filter_enabled")),
-		HasFundFlowFilterEnabled:    hasQueryParam(r.URL.Query(), "fund_flow_filter_enabled"),
-		FundFlowFilterEnabled:       normalizeBoolQuery(r.URL.Query().Get("fund_flow_filter_enabled")),
+		HasLimitUpFilterEnabled:     true,
+		LimitUpFilterEnabled:        normalizeBoolQuery(query.Get("limit_up_filter_enabled")),
+		HasTodayMarketFilterEnabled: true,
+		TodayMarketFilterEnabled:    normalizeBoolQuery(query.Get("today_market_filter_enabled")),
+		HasFundFlowFilterEnabled:    true,
+		FundFlowFilterEnabled:       fundFlowFilterEnabled,
 	}
 	snapshot, found, err := s.store.GetAStockRecommendationSnapshotWithFilter(r.Context(), date, period, filter)
+	if err == nil && !found && !hasQueryParam(query, "limit_up_filter_enabled") && !hasQueryParam(query, "today_market_filter_enabled") && !hasQueryParam(query, "fund_flow_filter_enabled") {
+		snapshot, found, err = s.store.GetAStockRecommendationSnapshot(r.Context(), date, period, ignoreRecent)
+	}
 	if err != nil {
 		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
 		return

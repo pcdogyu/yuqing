@@ -58,6 +58,9 @@ interface YuqingApi {
         @Query("date") date: String,
         @Query("period") period: String,
         @Query("ignore_recent") ignoreRecent: Boolean = false,
+        @Query("limit_up_filter_enabled") limitUpFilterEnabled: Boolean = false,
+        @Query("today_market_filter_enabled") todayMarketFilterEnabled: Boolean = false,
+        @Query("fund_flow_filter_enabled") fundFlowFilterEnabled: Boolean = true,
     ): ApiEnvelope<AStockRecommendationSnapshot>
 
     @GET("api/v1/stock-research")
