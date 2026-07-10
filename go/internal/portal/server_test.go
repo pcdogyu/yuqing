@@ -1796,7 +1796,6 @@ func TestAStockBacktestPageRendersStandaloneBacktestAndNavigation(t *testing.T) 
 		"上午推荐",
 		"下午推荐",
 		"实时价",
-		"实时收益",
 		"T+0 收益",
 		"五日内最高收益",
 		`/a-stock/backtest?date=2026-06-16&period=afternoon&ignore_recent=1&filter_today_market=1`,
@@ -1819,6 +1818,9 @@ func TestAStockBacktestPageRendersStandaloneBacktestAndNavigation(t *testing.T) 
 	}
 	if strings.Contains(body, `href="/a-stock/backtest?date=2026-06-16&amp;period=morning`) {
 		t.Fatalf("expected backtest page to hide morning/afternoon period switch buttons, got %s", body)
+	}
+	if strings.Contains(body, "实时收益") {
+		t.Fatalf("expected backtest table to hide realtime return column, got %s", body)
 	}
 }
 

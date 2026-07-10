@@ -2023,13 +2023,13 @@ func renderAStockBacktestSectionForPath(b *strings.Builder, targetPath string, s
 	if strings.TrimSpace(strategyDate) == "" {
 		strategyDate = nonEmpty(morningCtx.Date, afternoonCtx.Date)
 	}
-	b.WriteString(`<section><h2>消息回测</h2><p class="astock-muted">上午推荐按上午开盘价计算，下午推荐按下午开盘价计算；实时收益按当前实时价相对推荐基准价计算，T+0 到 T+5 及五日内最高收益按对应推荐窗口的基准价回测。</p>`)
+	b.WriteString(`<section><h2>消息回测</h2><p class="astock-muted">上午推荐按上午开盘价计算，下午推荐按下午开盘价计算；实时价展示当前价格，T+0 到 T+5 及五日内最高收益按对应推荐窗口的基准价回测。</p>`)
 	renderAStockRecommendationHistoryTabsForPath(b, targetPath, strategyDate, period, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket)
 	renderAStockRecommendationHistoryActionsForPath(b, targetPath, strategyDate, period, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket)
 	mergedRows := combineAStockBacktestRows(morningCtx, afternoonCtx)
-	b.WriteString(`<div class="astock-scroll"><table class="astock-table"><tr><th>推荐窗口</th><th>股票</th><th>上午开盘价</th><th>下午开盘价</th><th>实时价</th><th>实时收益</th><th>T+0 收益</th><th>T+1 收益</th><th>T+2 收益</th><th>T+3 收益</th><th>T+4 收益</th><th>T+5 收益</th><th>五日内最高收益</th><th>命中状态</th></tr>`)
+	b.WriteString(`<div class="astock-scroll"><table class="astock-table"><tr><th>推荐窗口</th><th>股票</th><th>上午开盘价</th><th>下午开盘价</th><th>实时价</th><th>T+0 收益</th><th>T+1 收益</th><th>T+2 收益</th><th>T+3 收益</th><th>T+4 收益</th><th>T+5 收益</th><th>五日内最高收益</th><th>命中状态</th></tr>`)
 	if len(mergedRows) == 0 {
-		b.WriteString(`<tr><td colspan="14">`)
+		b.WriteString(`<tr><td colspan="13">`)
 		b.WriteString(html.EscapeString(aStockBacktestEmptyReason(period, morningCtx, afternoonCtx)))
 		b.WriteString(`</td></tr>`)
 		b.WriteString(`</table></div></section>`)
@@ -2050,10 +2050,6 @@ func renderAStockBacktestSectionForPath(b *strings.Builder, targetPath string, s
 		b.WriteString(html.EscapeString(aStockBacktestCurrentReturnClass(row)))
 		b.WriteString(`">`)
 		b.WriteString(html.EscapeString(nonEmpty(strings.TrimSpace(row.CurrentPrice), "--")))
-		b.WriteString(`</span></td><td><span class="`)
-		b.WriteString(html.EscapeString(aStockBacktestCurrentReturnClass(row)))
-		b.WriteString(`">`)
-		b.WriteString(html.EscapeString(nonEmpty(strings.TrimSpace(row.CurrentReturn), "--")))
 		b.WriteString(`</span></td><td><span class="`)
 		b.WriteString(html.EscapeString(row.T0ReturnClass))
 		b.WriteString(`">`)
