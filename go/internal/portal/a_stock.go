@@ -3333,7 +3333,7 @@ func (s *Server) loadRecentAStockRecommendationCodesForPeriodWithCache(strategyD
 		if len(result) == 0 {
 			result = make(map[string]struct{})
 		}
-		for code := range s.loadPersistedAStockRecommendationCodesWithCache(strategyDate, "morning", false, cache) {
+		for code := range s.loadPersistedAStockRecommendationCodesFromAllSourcesWithCache(strategyDate, "morning", false, cache) {
 			result[code] = struct{}{}
 		}
 	}
@@ -4692,7 +4692,7 @@ func (s *Server) loadRecentAStockRecommendationCodesWithCache(strategyDate strin
 	result := make(map[string]struct{})
 	for _, date := range dates {
 		for _, period := range aStockPeriods() {
-			for code := range s.loadPersistedAStockRecommendationCodesWithCache(date, period.Key, false, cache) {
+			for code := range s.loadPersistedAStockRecommendationCodesFromAllSourcesWithCache(date, period.Key, false, cache) {
 				result[code] = struct{}{}
 			}
 		}
@@ -4757,6 +4757,32 @@ func (s *Server) loadPersistedAStockRecommendationCodes(strategyDate string, per
 
 func (s *Server) loadPersistedAStockRecommendationCodesWithCache(strategyDate string, period string, ignoreRecent bool, cache *aStockRequestCache) map[string]struct{} {
 	return aStockRecommendationCodeSet(s.loadPersistedAStockRecommendationsWithCache(strategyDate, period, ignoreRecent, cache))
+}
+
+func (s *Server) loadPersistedAStockRecommendationCodesFromAllSourcesWithCache(strategyDate string, period string, ignoreRecent bool, cache *aStockRequestCache) map[string]struct{} {
+	codes := make(map[string]struct{})
+	addCode := func(code string) {
+		code = normalizeAStockCode(code)
+		if astockcode.IsShanghaiShenzhen(code) {
+			codes[code] = struct{}{}
+		}
+	}
+	if !ignoreRecent {
+		if result, ok := s.loadAStockRecommendationSelectionsWithCache(strategyDate, period, cache); ok {
+			for _, item := range result.Items {
+				addCode(item.Code)
+			}
+		}
+	}
+	if snapshot, ok := s.loadAStockRecommendationSnapshotWithCache(strategyDate, period, ignoreRecent, cache); ok {
+		var recommendations []aStockRecommendation
+		if err := json.Unmarshal([]byte(normalizeAStockSnapshotJSONArray(snapshot.RecommendationsJSON)), &recommendations); err == nil {
+			for _, rec := range recommendations {
+				addCode(rec.Code)
+			}
+		}
+	}
+	return codes
 }
 
 func (s *Server) loadPersistedAStockRecommendations(strategyDate string, period string, ignoreRecent bool) []aStockRecommendation {

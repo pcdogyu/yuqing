@@ -7544,6 +7544,7 @@ func TestAStockContextCanIgnoreRecentRecommendationFilter(t *testing.T) {
 
 func TestAStockRecentRecommendationFilterUsesCalendarDays(t *testing.T) {
 	queriedSelectionDates := map[string]struct{}{}
+	queriedSnapshotDates := map[string]struct{}{}
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -7557,6 +7558,12 @@ func TestAStockRecentRecommendationFilterUsesCalendarDays(t *testing.T) {
 					Items: []model.AStockRecommendationSelection{{Rank: 1, Code: "600030", Name: "中信证券", Hotspot: "金融券商", Reason: "recent"}},
 				})
 				return
+			case date == "2026-06-24" && r.URL.Query().Get("period") == "morning":
+				writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{
+					Found: true,
+					Items: []model.AStockRecommendationSelection{{Rank: 1, Code: "600099", Name: "林海股份", Hotspot: "机器人", Reason: "selection recent"}},
+				})
+				return
 			case date == "2026-06-14" && r.URL.Query().Get("period") == "morning":
 				writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{
 					Found: true,
@@ -7566,6 +7573,19 @@ func TestAStockRecentRecommendationFilterUsesCalendarDays(t *testing.T) {
 			}
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{Found: false})
 		case "/api/v1/a-stock/recommendations":
+			date := r.URL.Query().Get("date")
+			queriedSnapshotDates[date] = struct{}{}
+			if date == "2026-06-24" && r.URL.Query().Get("period") == "morning" {
+				writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{
+					Found:        true,
+					StrategyDate: date,
+					Period:       "morning",
+					RecommendationsJSON: mustAStockTestJSON(t, []aStockRecommendation{
+						{Rank: 1, Code: "002520", Name: "日发精机", Hotspot: "机器人", Reason: "snapshot recent"},
+					}),
+				})
+				return
+			}
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
 		default:
 			t.Fatalf("unexpected content path: %s", r.URL.String())
@@ -7581,8 +7601,17 @@ func TestAStockRecentRecommendationFilterUsesCalendarDays(t *testing.T) {
 	if _, ok := recentCodes["600031"]; !ok {
 		t.Fatalf("expected 2026-06-14 recommendation at 31-calendar-day boundary, got %+v", recentCodes)
 	}
+	if _, ok := recentCodes["600099"]; !ok {
+		t.Fatalf("expected recent selections to be included, got %+v", recentCodes)
+	}
+	if _, ok := recentCodes["002520"]; !ok {
+		t.Fatalf("expected recent snapshot code to be included even when selections exist, got %+v", recentCodes)
+	}
 	if _, ok := queriedSelectionDates["2026-06-14"]; !ok {
 		t.Fatalf("expected 31-calendar-day boundary date to be queried, queried dates=%+v", queriedSelectionDates)
+	}
+	if _, ok := queriedSnapshotDates["2026-06-24"]; !ok {
+		t.Fatalf("expected snapshots to be queried alongside selections, queried dates=%+v", queriedSnapshotDates)
 	}
 	if _, ok := queriedSelectionDates["2026-06-13"]; ok {
 		t.Fatalf("expected date outside 31-calendar-day lookback to be skipped, queried dates=%+v", queriedSelectionDates)
