@@ -266,6 +266,8 @@ data class AStockBacktestRow(
     @SerialName("CurrentPrice") val currentPrice: String = "",
     @SerialName("CurrentReturn") val currentReturn: String = "",
     @SerialName("CurrentReturnClass") val currentReturnClass: String = "",
+    @SerialName("CurrentMarketPct") val currentMarketPct: String = "",
+    @SerialName("CurrentMarketPctClass") val currentMarketPctClass: String = "",
     @SerialName("Days") val days: List<AStockBacktestCell> = emptyList(),
     @SerialName("BestReturn") val bestReturn: String = "",
     @SerialName("Status") val status: String = "",
@@ -275,6 +277,8 @@ data class AStockBacktestRow(
 data class AStockBacktestCell(
     @SerialName("Close") val close: String = "",
     @SerialName("Return") val returnPct: String = "",
+    @SerialName("MarketPct") val marketPct: String = "",
+    @SerialName("MarketPctClass") val marketPctClass: String = "",
 )
 
 @Serializable

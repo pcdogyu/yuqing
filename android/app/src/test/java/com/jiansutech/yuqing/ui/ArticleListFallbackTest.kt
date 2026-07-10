@@ -1,6 +1,7 @@
 package com.jiansutech.yuqing.ui
 
 import com.jiansutech.yuqing.data.AndroidDashboard
+import com.jiansutech.yuqing.data.AStockBacktestCell
 import com.jiansutech.yuqing.data.AStockBacktestRow
 import com.jiansutech.yuqing.data.AStockRecommendation
 import com.jiansutech.yuqing.data.ArticleItem
@@ -160,14 +161,15 @@ class ArticleListFallbackTest {
             stock = "300394 天孚通信",
             currentPrice = "284.30",
             currentReturn = "+1.17%",
+            currentMarketPct = "+1.17%",
         )
 
         assertEquals("284.30", aStockBacktestDetailCurrentPrice(row, recommendation))
-        assertEquals("+1.17%", aStockBacktestDetailCurrentReturn(row, recommendation))
+        assertEquals("+1.17%", aStockBacktestDetailCurrentMarketPct(row))
     }
 
     @Test
-    fun aStockBacktestDetailCurrentValuesFallbackToRecommendationFields() {
+    fun aStockBacktestDetailCurrentPriceFallsBackToLatestBacktestClose() {
         val recommendation = AStockRecommendation(
             code = "300394",
             name = "天孚通信",
@@ -178,10 +180,29 @@ class ArticleListFallbackTest {
             stock = "300394 天孚通信",
             currentPrice = "--",
             currentReturn = "",
+            days = listOf(AStockBacktestCell(close = "283.82", marketPct = "+1.00%")),
+        )
+
+        assertEquals("283.82", aStockBacktestDetailCurrentPrice(row, recommendation))
+        assertEquals("+1.00%", aStockBacktestDetailCurrentMarketPct(row))
+    }
+
+    @Test
+    fun aStockBacktestDetailCurrentMarketPctDoesNotFallbackToRecommendationTodayPct() {
+        val recommendation = AStockRecommendation(
+            code = "300394",
+            name = "天孚通信",
+            currentPrice = "279.31",
+            todayPct = "+2.88%",
+        )
+        val row = AStockBacktestRow(
+            stock = "300394 天孚通信",
+            currentPrice = "--",
+            currentReturn = "+1.17%",
         )
 
         assertEquals("279.31", aStockBacktestDetailCurrentPrice(row, recommendation))
-        assertEquals("+2.88%", aStockBacktestDetailCurrentReturn(row, recommendation))
+        assertEquals("--", aStockBacktestDetailCurrentMarketPct(row))
     }
 
     @Test

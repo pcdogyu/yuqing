@@ -216,7 +216,9 @@ class ApiModelsTest {
               "CurrentPrice": "245.00",
               "CurrentReturn": "+2.08%",
               "CurrentReturnClass": "astock-up",
-              "Days": [{"Close":"250.00","Return":"+4.17%"}],
+              "CurrentMarketPct": "+1.00%",
+              "CurrentMarketPctClass": "astock-up",
+              "Days": [{"Close":"250.00","Return":"+4.17%","MarketPct":"+2.00%","MarketPctClass":"astock-up"}],
               "BestReturn": "+4.17%",
               "Status": "已回测T+1"
             }
@@ -228,7 +230,11 @@ class ApiModelsTest {
         assertEquals("245.00", row.currentPrice)
         assertEquals("+2.08%", row.currentReturn)
         assertEquals("astock-up", row.currentReturnClass)
+        assertEquals("+1.00%", row.currentMarketPct)
+        assertEquals("astock-up", row.currentMarketPctClass)
         assertEquals("+4.17%", row.days.first().returnPct)
+        assertEquals("+2.00%", row.days.first().marketPct)
+        assertEquals("astock-up", row.days.first().marketPctClass)
     }
 
     @Test

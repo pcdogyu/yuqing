@@ -9109,7 +9109,7 @@ func TestAStockRealtimeQuoteFillsMissingMorningOpenAndT0Return(t *testing.T) {
 		Status:             "无行情数据",
 	}})
 
-	if len(rows) != 1 || rows[0].EntryOpen != "10.00" || rows[0].CurrentPrice != "10.50" || rows[0].CurrentReturn != "+5.00%" || rows[0].T0Return != "+5.00%" || rows[0].T0Close != "10.50" || rows[0].Status != "等待T+1行情" {
+	if len(rows) != 1 || rows[0].EntryOpen != "10.00" || rows[0].CurrentPrice != "10.50" || rows[0].CurrentReturn != "+5.00%" || rows[0].CurrentMarketPct != "+5.00%" || rows[0].T0Return != "+5.00%" || rows[0].T0Close != "10.50" || rows[0].Status != "等待T+1行情" {
 		t.Fatalf("expected realtime quote to fill missing morning open/current/T+0 fields, got %+v", rows)
 	}
 	bars := srv.realtimeAStockMarketBars("2026-07-10", []string{"300394"})
@@ -9234,7 +9234,7 @@ func TestAStockBacktestRefreshPriceOnlyUpdatesRequestedStock(t *testing.T) {
 	}
 	rowsByCode := aStockBacktestRowsByCode(savedRows)
 	target := rowsByCode["300394"]
-	if target.EntryOpen != "281.00" || target.T0Close != "284.30" || target.T0Return != "+1.17%" || target.CurrentPrice != "284.30" || target.CurrentReturn != "+1.17%" || target.Status != "等待T+1行情" {
+	if target.EntryOpen != "281.00" || target.T0Close != "284.30" || target.T0Return != "+1.17%" || target.CurrentPrice != "284.30" || target.CurrentReturn != "+1.17%" || target.CurrentMarketPct != "+1.17%" || target.Status != "等待T+1行情" {
 		t.Fatalf("expected target stock price fields to refresh, got %+v", target)
 	}
 	other := rowsByCode["688249"]
@@ -9251,6 +9251,133 @@ func TestAStockBacktestRefreshPriceOnlyUpdatesRequestedStock(t *testing.T) {
 	}
 	otherRecommendation := mustAStockRecommendationForTest(t, savedRecommendations, "688249")
 	if otherRecommendation.CurrentPrice != "58.40" || otherRecommendation.TodayPct != "-10.44%" {
+		t.Fatalf("expected other recommendation current fields unchanged, got %+v", otherRecommendation)
+	}
+}
+
+func TestAStockBacktestRefreshPriceUsesRealtimeMarketPctForHistoricalWindow(t *testing.T) {
+	setAStockNowForTest(t, time.Date(2026, 7, 10, 11, 30, 0, 0, aStockLocation()))
+	recommendations := []aStockRecommendation{
+		{Rank: 1, Hotspot: "软件", Code: "000977", Name: "浪潮信息", CurrentPrice: "85.99", TodayPct: "+10.00%", Reason: "目标股票"},
+		{Rank: 2, Hotspot: "软件", Code: "300946", Name: "恒而达", CurrentPrice: "44.00", TodayPct: "+1.00%", Reason: "其他股票"},
+	}
+	backtests := []aStockBacktestRow{
+		{
+			Stock:              "000977 浪潮信息",
+			EntryOpen:          "83.00",
+			T0Return:           "+3.60%",
+			T0Close:            "85.99",
+			T0ReturnClass:      "astock-up",
+			CurrentPrice:       "85.99",
+			CurrentReturn:      "+3.60%",
+			CurrentReturnClass: "astock-up",
+			Days:               []aStockBacktestCell{{Close: "--", Return: "--", ReturnClass: "astock-flat"}},
+			BestReturn:         "--",
+			BestReturnClass:    "astock-flat",
+			Status:             "等待T+1行情",
+		},
+		{
+			Stock:              "300946 恒而达",
+			EntryOpen:          "44.00",
+			T0Return:           "+1.00%",
+			T0Close:            "44.44",
+			T0ReturnClass:      "astock-up",
+			CurrentPrice:       "44.44",
+			CurrentReturn:      "+1.00%",
+			CurrentReturnClass: "astock-up",
+			Days:               []aStockBacktestCell{{Close: "44.44", Return: "+1.00%", ReturnClass: "astock-up"}},
+			BestReturn:         "+1.00%",
+			BestReturnClass:    "astock-up",
+			Status:             "已回测T+1",
+		},
+	}
+	var saved model.AStockRecommendationSnapshot
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/a-stock/recommendations":
+			if r.URL.Query().Get("date") != "2026-07-09" || r.URL.Query().Get("period") != "morning" {
+				t.Fatalf("unexpected snapshot query: %s", r.URL.RawQuery)
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{
+				Found:                    true,
+				StrategyDate:             "2026-07-09",
+				Period:                   "morning",
+				RecommendationsJSON:      mustAStockTestJSON(t, recommendations),
+				BacktestsJSON:            mustAStockTestJSON(t, backtests),
+				BacktestStatus:           "已锁定推荐股票，已回测 1/2",
+				FundFlowFilterEnabled:    true,
+				LimitUpFilterEnabled:     false,
+				TodayMarketFilterEnabled: false,
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/internal/a-stock/recommendations":
+			if err := json.NewDecoder(r.Body).Decode(&saved); err != nil {
+				t.Fatalf("decode saved snapshot: %v", err)
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Updated: 1})
+		default:
+			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	market := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("codes") != "000977" {
+			t.Fatalf("expected only requested stock to hit market endpoint, got %s", r.URL.RawQuery)
+		}
+		writeEnvelope(w, http.StatusOK, "ok", map[string]any{"items": []map[string]any{
+			{"code": "000977", "date": "2026-07-09", "open": 83.00, "close": 85.99, "pct": 10.00, "entry_price": 83.00},
+			{"code": "000977", "date": "2026-07-10", "open": 92.00, "close": 90.00, "pct": 4.67},
+		}})
+	}))
+	defer market.Close()
+	t.Setenv("YUQING_ASTOCK_MARKET_URL", market.URL)
+
+	quote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("secid") != "0.000977" {
+			t.Fatalf("unexpected quote request: %s", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"f43":9367,"f46":9200,"f57":"000977","f58":"浪潮信息","f170":893}}`))
+	}))
+	defer quote.Close()
+	setAStockEastmoneyQuoteURLForTest(t, quote.URL)
+
+	srv := NewServer(config.Config{ContentURL: content.URL, ServiceToken: "secret"})
+	req := httptest.NewRequest(http.MethodPost, "/internal/a-stock/backtests/refresh-price", strings.NewReader(`{"date":"2026-07-09","period":"morning","code":"000977"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Service-Token", "secret")
+	rr := httptest.NewRecorder()
+	srv.Router().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected refresh price 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	var savedRows []aStockBacktestRow
+	if err := json.Unmarshal([]byte(saved.BacktestsJSON), &savedRows); err != nil {
+		t.Fatalf("decode saved backtests: %v", err)
+	}
+	rowsByCode := aStockBacktestRowsByCode(savedRows)
+	target := rowsByCode["000977"]
+	if target.CurrentPrice != "93.67" || target.CurrentMarketPct != "+8.93%" || target.CurrentReturn != "+12.86%" {
+		t.Fatalf("expected historical refresh to use realtime quote price, market pct, and entry return, got %+v", target)
+	}
+	if len(target.Days) == 0 || target.Days[0].Close != "93.67" || target.Days[0].Return != "+12.86%" || target.Days[0].MarketPct != "+8.93%" {
+		t.Fatalf("expected T+1 cell to store close, entry return, and market pct, got %+v", target.Days)
+	}
+	other := rowsByCode["300946"]
+	if other.CurrentPrice != "44.44" || other.CurrentReturn != "+1.00%" || other.Stock != "300946 恒而达" {
+		t.Fatalf("expected other stock to remain unchanged, got %+v", other)
+	}
+	var savedRecommendations []aStockRecommendation
+	if err := json.Unmarshal([]byte(saved.RecommendationsJSON), &savedRecommendations); err != nil {
+		t.Fatalf("decode saved recommendations: %v", err)
+	}
+	targetRecommendation := mustAStockRecommendationForTest(t, savedRecommendations, "000977")
+	if targetRecommendation.CurrentPrice != "93.67" || targetRecommendation.TodayPct != "+8.93%" || targetRecommendation.TodayPctClass != "astock-up" {
+		t.Fatalf("expected target recommendation to store realtime market pct, got %+v", targetRecommendation)
+	}
+	otherRecommendation := mustAStockRecommendationForTest(t, savedRecommendations, "300946")
+	if otherRecommendation.CurrentPrice != "44.00" || otherRecommendation.TodayPct != "+1.00%" {
 		t.Fatalf("expected other recommendation current fields unchanged, got %+v", otherRecommendation)
 	}
 }

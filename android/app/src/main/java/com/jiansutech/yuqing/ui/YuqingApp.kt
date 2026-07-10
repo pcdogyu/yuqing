@@ -1811,7 +1811,7 @@ private fun AStockBacktestDetailScreen(
 ) {
     val row = state.row
     val currentClosePrice = aStockBacktestDetailCurrentPrice(row, state.recommendation)
-    val currentReturn = aStockBacktestDetailCurrentReturn(row, state.recommendation)
+    val currentMarketPct = aStockBacktestDetailCurrentMarketPct(row)
     val adjacentLabels = aStockBacktestAdjacentLabels(state.recommendations, state.recommendation)
     val swipeThreshold = with(LocalDensity.current) { 96.dp.toPx() }
     var dragOffset by remember(state.recommendation.code, state.sectionLabel) { mutableStateOf(Offset.Zero) }
@@ -1844,7 +1844,7 @@ private fun AStockBacktestDetailScreen(
                     state.strategyDate,
                     state.sectionLabel,
                     "现价 $currentClosePrice",
-                    "今日 $currentReturn",
+                    "今日 $currentMarketPct",
                 ).joinToString("  "),
             )
         }
@@ -1855,7 +1855,7 @@ private fun AStockBacktestDetailScreen(
                 AStockBacktestEntryRow(
                     row = row,
                     currentPrice = currentClosePrice,
-                    currentReturn = currentReturn,
+                    currentMarketPct = currentMarketPct,
                     refreshingPrice = refreshingPrice,
                     onRefreshPrice = onRefreshPrice,
                 )
@@ -1901,7 +1901,7 @@ private fun AStockBacktestDetailScreen(
 private fun AStockBacktestEntryRow(
     row: AStockBacktestRow,
     currentPrice: String,
-    currentReturn: String,
+    currentMarketPct: String,
     refreshingPrice: Boolean,
     onRefreshPrice: () -> Unit,
 ) {
@@ -1930,8 +1930,8 @@ private fun AStockBacktestEntryRow(
                     textAlign = TextAlign.End,
                 )
                 Text(
-                    currentReturn,
-                    color = backtestValueColor(currentReturn),
+                    currentMarketPct,
+                    color = backtestValueColor(currentMarketPct),
                     fontSize = 13.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -2013,7 +2013,7 @@ private fun AStockBacktestMetricHeader() {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("阶段", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
         Text("收盘价", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
-        Text("涨幅", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
+        Text("收益", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
     }
 }
 
@@ -2260,14 +2260,26 @@ private fun findAStockBacktest(rows: List<AStockBacktestRow>, item: AStockRecomm
 
 internal fun aStockBacktestDetailCurrentPrice(row: AStockBacktestRow?, recommendation: AStockRecommendation): String {
     return aStockUsableDisplayValue(row?.currentPrice)
+        ?: latestAStockBacktestClose(row)
         ?: aStockUsableDisplayValue(recommendation.currentPrice)
         ?: "--"
 }
 
-internal fun aStockBacktestDetailCurrentReturn(row: AStockBacktestRow?, recommendation: AStockRecommendation): String {
-    return aStockUsableDisplayValue(row?.currentReturn)
-        ?: aStockUsableDisplayValue(recommendation.todayPct)
+internal fun aStockBacktestDetailCurrentMarketPct(row: AStockBacktestRow?): String {
+    return aStockUsableDisplayValue(row?.currentMarketPct)
+        ?: latestAStockBacktestMarketPct(row)
         ?: "--"
+}
+
+private fun latestAStockBacktestClose(row: AStockBacktestRow?): String? {
+    row ?: return null
+    return row.days.asReversed().firstNotNullOfOrNull { aStockUsableDisplayValue(it.close) }
+        ?: aStockUsableDisplayValue(row.t0Close)
+}
+
+private fun latestAStockBacktestMarketPct(row: AStockBacktestRow?): String? {
+    row ?: return null
+    return row.days.asReversed().firstNotNullOfOrNull { aStockUsableDisplayValue(it.marketPct) }
 }
 
 private fun aStockUsableDisplayValue(value: String?): String? {
