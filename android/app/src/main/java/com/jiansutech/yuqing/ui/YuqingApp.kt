@@ -178,6 +178,24 @@ private fun PortalScreen(
             viewModel.closeStockResearchDetail()
         }
     }
+    fun refreshBacktestDetailPrice(target: AStockBacktestDetailState) {
+        viewModel.refreshAStockBacktestPrice(
+            date = target.strategyDate,
+            period = target.period,
+            code = target.recommendation.code,
+        ) { snapshot ->
+            backtestDetail = backtestDetail?.let { current ->
+                if (sameAStockBacktestDetailTarget(current, target)) {
+                    applyAStockBacktestDetailSnapshot(current, snapshot)
+                } else {
+                    current
+                }
+            }
+        }
+    }
+    LaunchedEffect(detail?.strategyDate, detail?.period, detail?.recommendation?.code) {
+        detail?.let { refreshBacktestDetailPrice(it) }
+    }
     val hideTopBar = selected.key == "dashboard" ||
         selected.key == "articles" ||
         selected.key == "search" ||
@@ -313,13 +331,7 @@ private fun PortalScreen(
                     },
                     refreshingPrice = state.aStockBacktestPriceRefreshing,
                     onRefreshPrice = {
-                        viewModel.refreshAStockBacktestPrice(
-                            date = detail.strategyDate,
-                            period = detail.period,
-                            code = detail.recommendation.code,
-                        ) { snapshot ->
-                            backtestDetail = applyAStockBacktestDetailSnapshot(detail, snapshot)
-                        }
+                        refreshBacktestDetailPrice(detail)
                     },
                 )
             } else if (articleDetail != null) {
@@ -2252,6 +2264,15 @@ private fun applyAStockBacktestDetailSnapshot(
         recommendations = recommendations.ifEmpty { state.recommendations },
         backtests = backtests.ifEmpty { state.backtests },
     )
+}
+
+private fun sameAStockBacktestDetailTarget(
+    current: AStockBacktestDetailState,
+    target: AStockBacktestDetailState,
+): Boolean {
+    return current.strategyDate == target.strategyDate &&
+        current.period == target.period &&
+        current.recommendation.code == target.recommendation.code
 }
 
 private fun findAStockBacktest(rows: List<AStockBacktestRow>, item: AStockRecommendation): AStockBacktestRow? {
