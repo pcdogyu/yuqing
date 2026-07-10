@@ -563,7 +563,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-tab.disabled{color:#9a9388;border-color:#ece7dc;background:#faf8f2;pointer-events:none}
 		.astock-history-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:stretch;margin:0 0 18px}
 		.astock-history-actions form{display:flex;margin:0}
-		.astock-history-actions button,.astock-history-actions .astock-filter-toggle{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;min-height:38px;margin:0;padding:8px 12px;line-height:1.2}
+		.astock-history-actions button,.astock-history-actions .astock-filter-toggle{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;min-height:38px;margin:0;padding:8px 12px;font-family:inherit;font-size:14px;font-weight:700;line-height:1.2}
 		.astock-history-actions .astock-filter-toggle{background:#214e34;color:#fff;border-color:#214e34;text-decoration:none}
 		.astock-pagination{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:14px}
 		.astock-up{color:#b3261e;font-weight:700}
@@ -960,7 +960,7 @@ func (s *Server) handleAStockBacktestPage(w http.ResponseWriter, r *http.Request
 		.astock-tab.active{background:#214e34;color:#fff;border-color:#214e34}
 		.astock-history-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:stretch;margin:0 0 18px}
 		.astock-history-actions form{display:flex;margin:0}
-		.astock-history-actions button,.astock-history-actions .astock-filter-toggle{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;min-height:38px;margin:0;padding:8px 12px;border:1px solid #214e34;border-radius:8px;background:#214e34;color:#fff;font-weight:700;line-height:1.2;text-decoration:none}
+		.astock-history-actions button,.astock-history-actions .astock-filter-toggle{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;min-height:38px;margin:0;padding:8px 12px;border:1px solid #214e34;border-radius:8px;background:#214e34;color:#fff;font-family:inherit;font-size:14px;font-weight:700;line-height:1.2;text-decoration:none}
 		.astock-up{color:#b3261e;font-weight:700}
 		.astock-down{color:#1b7f3a;font-weight:700}
 		.astock-flat{color:#6a6257}
