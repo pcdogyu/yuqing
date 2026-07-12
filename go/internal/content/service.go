@@ -105,6 +105,8 @@ type Store interface {
 	UpsertAStockRecommendationSnapshot(rctx context.Context, snapshot model.AStockRecommendationSnapshot) (model.AStockRecommendationSnapshotUpsertResult, error)
 	GetAStockRecommendationSnapshot(rctx context.Context, strategyDate string, period string, ignoreRecent bool) (model.AStockRecommendationSnapshot, bool, error)
 	GetAStockRecommendationSnapshotWithFilter(rctx context.Context, strategyDate string, period string, filter model.AStockRecommendationSnapshotFilter) (model.AStockRecommendationSnapshot, bool, error)
+	UpsertAStockRecommendationShadowSnapshot(rctx context.Context, snapshot model.AStockRecommendationShadowSnapshot) (model.AStockRecommendationSnapshotUpsertResult, error)
+	BuildAStockRecommendationPerformance(rctx context.Context, filter model.AStockRecommendationPerformanceFilter) (model.AStockRecommendationPerformanceSummary, error)
 	UpsertAStockRecommendationSelections(rctx context.Context, selectionSet model.AStockRecommendationSelectionSet) (model.AStockRecommendationSelectionUpsertResult, error)
 	ListAStockRecommendationSelections(rctx context.Context, strategyDate string, period string) (model.AStockRecommendationSelectionListResult, error)
 	ListAStockRecommendationLatestDates(rctx context.Context, strategyDate string, period string, codes []string) (model.AStockRecommendationLatestDateListResult, error)
@@ -194,8 +196,10 @@ func (s *Service) Routes(r chi.Router) {
 	r.Get("/api/v1/a-stock/auction", s.handleListAStockAuctionAmounts)
 	r.Post("/api/v1/admin/a-stock/auction", s.handleUpsertAStockAuctionAmounts)
 	r.Get("/api/v1/a-stock/recommendations", s.handleGetAStockRecommendationSnapshot)
+	r.Get("/api/v1/a-stock/recommendation-performance", s.handleGetAStockRecommendationPerformance)
 	r.Post("/api/v1/a-stock/backtests/refresh-price", s.handleRefreshAStockBacktestPrice)
 	r.Post("/api/v1/internal/a-stock/recommendations", s.handleUpsertAStockRecommendationSnapshot)
+	r.Post("/api/v1/internal/a-stock/recommendation-shadow-snapshots", s.handleUpsertAStockRecommendationShadowSnapshot)
 	r.Get("/api/v1/a-stock/recommendation-selections", s.handleListAStockRecommendationSelections)
 	r.Post("/api/v1/internal/a-stock/recommendation-selections", s.handleUpsertAStockRecommendationSelections)
 	r.Get("/api/v1/a-stock/recommendation-latest-dates", s.handleListAStockRecommendationLatestDates)
@@ -724,6 +728,28 @@ func (s *Service) handleGetAStockRecommendationSnapshot(w http.ResponseWriter, r
 	apiutil.WriteJSON(w, http.StatusOK, "ok", snapshot)
 }
 
+func (s *Service) handleGetAStockRecommendationPerformance(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	filter := model.AStockRecommendationPerformanceFilter{
+		StartDate: strings.TrimSpace(query.Get("start")),
+		EndDate:   strings.TrimSpace(query.Get("end")),
+		Period:    strings.TrimSpace(query.Get("period")),
+		Strategy:  strings.TrimSpace(query.Get("strategy")),
+	}
+	if filter.StartDate == "" {
+		filter.StartDate = strings.TrimSpace(query.Get("start_date"))
+	}
+	if filter.EndDate == "" {
+		filter.EndDate = strings.TrimSpace(query.Get("end_date"))
+	}
+	result, err := s.store.BuildAStockRecommendationPerformance(r.Context(), filter)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
 type aStockBacktestRefreshPriceRequest struct {
 	Date   string `json:"date"`
 	Period string `json:"period"`
@@ -775,6 +801,28 @@ func (s *Service) handleUpsertAStockRecommendationSnapshot(w http.ResponseWriter
 	}
 	normalizeAStockRecommendationSnapshotJSON(&snapshot)
 	result, err := s.store.UpsertAStockRecommendationSnapshot(r.Context(), snapshot)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleUpsertAStockRecommendationShadowSnapshot(w http.ResponseWriter, r *http.Request) {
+	var snapshot model.AStockRecommendationShadowSnapshot
+	if err := json.NewDecoder(r.Body).Decode(&snapshot); err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid json", nil)
+		return
+	}
+	snapshot.StrategyKey = strings.TrimSpace(snapshot.StrategyKey)
+	snapshot.StrategyDate = strings.TrimSpace(snapshot.StrategyDate)
+	snapshot.Period = strings.TrimSpace(snapshot.Period)
+	if snapshot.StrategyKey == "" || snapshot.StrategyDate == "" || snapshot.Period == "" {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "strategy_key, strategy_date and period required", nil)
+		return
+	}
+	normalizeAStockRecommendationSnapshotJSON(&snapshot.AStockRecommendationSnapshot)
+	result, err := s.store.UpsertAStockRecommendationShadowSnapshot(r.Context(), snapshot)
 	if err != nil {
 		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
 		return

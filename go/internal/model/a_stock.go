@@ -126,6 +126,45 @@ type AStockRecommendationSnapshotUpsertResult struct {
 	Updated  int `json:"updated"`
 }
 
+type AStockRecommendationShadowSnapshot struct {
+	StrategyKey string `json:"strategy_key"`
+	AStockRecommendationSnapshot
+}
+
+type AStockRecommendationPerformanceFilter struct {
+	StartDate string `json:"start_date"`
+	EndDate   string `json:"end_date"`
+	Period    string `json:"period"`
+	Strategy  string `json:"strategy"`
+}
+
+type AStockRecommendationPerformanceGroup struct {
+	Dimension           string  `json:"dimension"`
+	Key                 string  `json:"key"`
+	RecommendationCount int     `json:"recommendation_count"`
+	SampleCount         int     `json:"sample_count"`
+	WinCount            int     `json:"win_count"`
+	WinRate             float64 `json:"win_rate"`
+	AverageReturn       float64 `json:"average_return"`
+	RecommendationCover float64 `json:"recommendation_cover"`
+	InsufficientSamples bool    `json:"insufficient_samples"`
+}
+
+type AStockRecommendationPerformanceSummary struct {
+	Strategy            string                                 `json:"strategy"`
+	StartDate           string                                 `json:"start_date"`
+	EndDate             string                                 `json:"end_date"`
+	Period              string                                 `json:"period"`
+	RecommendationCount int                                    `json:"recommendation_count"`
+	SampleCount         int                                    `json:"sample_count"`
+	WinCount            int                                    `json:"win_count"`
+	WinRate             float64                                `json:"win_rate"`
+	AverageReturn       float64                                `json:"average_return"`
+	RecommendationCover float64                                `json:"recommendation_cover"`
+	InsufficientSamples bool                                   `json:"insufficient_samples"`
+	Groups              []AStockRecommendationPerformanceGroup `json:"groups"`
+}
+
 type AStockRecommendationSelection struct {
 	StrategyDate string    `json:"strategy_date"`
 	Period       string    `json:"period"`

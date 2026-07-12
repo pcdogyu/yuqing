@@ -629,6 +629,102 @@ func TestAStockRecommendationSnapshotUpsertAndGet(t *testing.T) {
 	}
 }
 
+func TestAStockRecommendationPerformanceBuildsT1Metrics(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	if _, ok := parseAStockPerformancePct("+1.23%"); !ok {
+		t.Fatal("expected positive percent to parse")
+	}
+	if value, ok := parseAStockPerformancePct("0.00%"); !ok || value != 0 {
+		t.Fatalf("expected zero percent to parse, got value=%v ok=%v", value, ok)
+	}
+	if value, ok := parseAStockPerformancePct("-0.01%"); !ok || value >= 0 {
+		t.Fatalf("expected negative percent to parse, got value=%v ok=%v", value, ok)
+	}
+	if _, ok := parseAStockPerformancePct("--"); ok {
+		t.Fatal("expected missing percent not to parse")
+	}
+
+	_, err := store.UpsertAStockRecommendationSnapshot(ctx, model.AStockRecommendationSnapshot{
+		StrategyDate: "2026-06-22",
+		Period:       "morning",
+		RecommendationsJSON: `[
+			{"Rank":1,"Hotspot":"人工智能","Code":"600001","Name":"胜率一号","MarketScore":260,"FundFlow5D":"+1.00亿","Change30":"+5.00%","Change60":"+8.00%"},
+			{"Rank":4,"Hotspot":"人工智能","Code":"600002","Name":"持平二号","MarketScore":210,"FundFlow5D":"-1.00亿","Change30":"-11.00%","Change60":"+1.00%"},
+			{"Rank":7,"Hotspot":"机器人","Code":"600003","Name":"未成熟三号","MarketScore":160,"FundFlow5D":"--","Change30":"--","Change60":"--"},
+			{"Rank":8,"Hotspot":"机器人","Code":"600004","Name":"无回测四号","MarketScore":120,"FundFlow5D":"+0.00亿","Change30":"+1.00%","Change60":"+2.00%"}
+		]`,
+		BacktestsJSON: `[
+			{"Stock":"600001 胜率一号","Days":[{"Return":"+1.23%"}]},
+			{"Stock":"600002 持平二号","Days":[{"Return":"0.00%"}]},
+			{"Stock":"600003 未成熟三号","Days":[{"Return":"--"}]}
+		]`,
+		BacktestStatus: "已回测",
+	})
+	if err != nil {
+		t.Fatalf("UpsertAStockRecommendationSnapshot error: %v", err)
+	}
+
+	summary, err := store.BuildAStockRecommendationPerformance(ctx, model.AStockRecommendationPerformanceFilter{
+		StartDate: "2026-06-01",
+		EndDate:   "2026-06-30",
+		Period:    "all",
+		Strategy:  "official",
+	})
+	if err != nil {
+		t.Fatalf("BuildAStockRecommendationPerformance error: %v", err)
+	}
+	if summary.RecommendationCount != 4 || summary.SampleCount != 2 || summary.WinCount != 1 {
+		t.Fatalf("unexpected summary counts: %+v", summary)
+	}
+	if summary.WinRate != 0.5 || summary.AverageReturn < 0.61 || summary.AverageReturn > 0.62 || summary.RecommendationCover != 0.5 {
+		t.Fatalf("unexpected summary metrics: %+v", summary)
+	}
+	groups := map[string]model.AStockRecommendationPerformanceGroup{}
+	for _, group := range summary.Groups {
+		groups[group.Dimension+"|"+group.Key] = group
+	}
+	if groups["period|morning"].SampleCount != 2 || groups["fund_flow|净流出"].SampleCount != 1 || groups["drawdown|回撤<-10%"].SampleCount != 1 {
+		t.Fatalf("unexpected grouped metrics: %+v", summary.Groups)
+	}
+}
+
+func TestAStockRecommendationPerformanceUsesShadowSnapshots(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	result, err := store.UpsertAStockRecommendationShadowSnapshot(ctx, model.AStockRecommendationShadowSnapshot{
+		StrategyKey: "t1_shadow_v1",
+		AStockRecommendationSnapshot: model.AStockRecommendationSnapshot{
+			StrategyDate:        "2026-06-23",
+			Period:              "afternoon",
+			RecommendationsJSON: `[{"Rank":1,"Hotspot":"机器人","Code":"600010","Name":"影子一号","MarketScore":300,"FundFlow5D":"+2.00亿","Change30":"+6.00%","Change60":"+9.00%"}]`,
+			BacktestsJSON:       `[{"Stock":"600010 影子一号","Days":[{"Return":"+2.00%"}]}]`,
+			BacktestStatus:      "已回测",
+			GeneratedCount:      1,
+		},
+	})
+	if err != nil {
+		t.Fatalf("UpsertAStockRecommendationShadowSnapshot error: %v", err)
+	}
+	if result.Inserted != 1 || result.Updated != 0 {
+		t.Fatalf("unexpected shadow upsert result: %+v", result)
+	}
+	summary, err := store.BuildAStockRecommendationPerformance(ctx, model.AStockRecommendationPerformanceFilter{
+		StartDate: "2026-06-01",
+		EndDate:   "2026-06-30",
+		Period:    "all",
+		Strategy:  "t1_shadow_v1",
+	})
+	if err != nil {
+		t.Fatalf("BuildAStockRecommendationPerformance shadow error: %v", err)
+	}
+	if summary.Strategy != "t1_shadow_v1" || summary.RecommendationCount != 1 || summary.SampleCount != 1 || summary.WinCount != 1 || summary.WinRate != 1 {
+		t.Fatalf("unexpected shadow summary: %+v", summary)
+	}
+}
+
 func TestAStockRecommendationSelectionsUpsertAndList(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()

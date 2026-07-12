@@ -294,6 +294,60 @@ func TestAStockRecommendationSnapshotAPIUpsertsAndGets(t *testing.T) {
 	}
 }
 
+func TestAStockRecommendationPerformanceAPIUsesOfficialAndShadowSnapshots(t *testing.T) {
+	store := newContentSearchTestStore(t)
+	svc := NewService(config.Config{}, store)
+	router := svc.Router()
+
+	officialPayload := `{"strategy_date":"2026-06-23","period":"morning","recommendations_json":"[{\"Rank\":1,\"Hotspot\":\"人工智能\",\"Code\":\"600001\",\"Name\":\"正式一号\",\"MarketScore\":260,\"FundFlow5D\":\"+1.00亿\",\"Change30\":\"+5.00%\",\"Change60\":\"+8.00%\"}]","backtests_json":"[{\"Stock\":\"600001 正式一号\",\"Days\":[{\"Return\":\"+1.00%\"}]}]","backtest_status":"已回测","generated_count":1}`
+	officialReq := httptest.NewRequest(http.MethodPost, "/api/v1/internal/a-stock/recommendations", strings.NewReader(officialPayload))
+	officialRR := httptest.NewRecorder()
+	router.ServeHTTP(officialRR, officialReq)
+	if officialRR.Code != http.StatusOK {
+		t.Fatalf("expected official upsert 200, got %d body=%s", officialRR.Code, officialRR.Body.String())
+	}
+
+	shadowPayload := `{"strategy_key":"t1_shadow_v1","strategy_date":"2026-06-23","period":"morning","recommendations_json":"[{\"Rank\":1,\"Hotspot\":\"人工智能\",\"Code\":\"600002\",\"Name\":\"影子一号\",\"MarketScore\":300,\"FundFlow5D\":\"+2.00亿\",\"Change30\":\"+6.00%\",\"Change60\":\"+9.00%\"}]","backtests_json":"[{\"Stock\":\"600002 影子一号\",\"Days\":[{\"Return\":\"-0.50%\"}]}]","backtest_status":"已回测","generated_count":1}`
+	shadowReq := httptest.NewRequest(http.MethodPost, "/api/v1/internal/a-stock/recommendation-shadow-snapshots", strings.NewReader(shadowPayload))
+	shadowRR := httptest.NewRecorder()
+	router.ServeHTTP(shadowRR, shadowReq)
+	if shadowRR.Code != http.StatusOK {
+		t.Fatalf("expected shadow upsert 200, got %d body=%s", shadowRR.Code, shadowRR.Body.String())
+	}
+
+	officialPerfReq := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/recommendation-performance?start=2026-06-01&end=2026-06-30&period=all&strategy=official", nil)
+	officialPerfRR := httptest.NewRecorder()
+	router.ServeHTTP(officialPerfRR, officialPerfReq)
+	if officialPerfRR.Code != http.StatusOK {
+		t.Fatalf("expected official performance 200, got %d body=%s", officialPerfRR.Code, officialPerfRR.Body.String())
+	}
+	var officialEnvelope struct {
+		Data model.AStockRecommendationPerformanceSummary `json:"data"`
+	}
+	if err := json.Unmarshal(officialPerfRR.Body.Bytes(), &officialEnvelope); err != nil {
+		t.Fatalf("decode official performance: %v", err)
+	}
+	if officialEnvelope.Data.SampleCount != 1 || officialEnvelope.Data.WinCount != 1 || officialEnvelope.Data.WinRate != 1 {
+		t.Fatalf("unexpected official performance: %+v", officialEnvelope.Data)
+	}
+
+	shadowPerfReq := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/recommendation-performance?start=2026-06-01&end=2026-06-30&period=all&strategy=t1_shadow_v1", nil)
+	shadowPerfRR := httptest.NewRecorder()
+	router.ServeHTTP(shadowPerfRR, shadowPerfReq)
+	if shadowPerfRR.Code != http.StatusOK {
+		t.Fatalf("expected shadow performance 200, got %d body=%s", shadowPerfRR.Code, shadowPerfRR.Body.String())
+	}
+	var shadowEnvelope struct {
+		Data model.AStockRecommendationPerformanceSummary `json:"data"`
+	}
+	if err := json.Unmarshal(shadowPerfRR.Body.Bytes(), &shadowEnvelope); err != nil {
+		t.Fatalf("decode shadow performance: %v", err)
+	}
+	if shadowEnvelope.Data.Strategy != "t1_shadow_v1" || shadowEnvelope.Data.SampleCount != 1 || shadowEnvelope.Data.WinCount != 0 || shadowEnvelope.Data.WinRate != 0 {
+		t.Fatalf("unexpected shadow performance: %+v", shadowEnvelope.Data)
+	}
+}
+
 func TestAStockBacktestRefreshPriceAPIProxiesToGateway(t *testing.T) {
 	var gatewayCalled bool
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -389,6 +389,10 @@ const (
 	aStockHotspotLimit                 = 3
 	aStockMarketRankScoreBase          = 200
 	aStockStocksPerHotspot             = 3
+	aStockT1ShadowStrategyKey          = "t1_shadow_v1"
+	aStockT1ShadowRecommendationLimit  = 6
+	aStockT1ShadowStocksPerHotspot     = 2
+	aStockT1ShadowDrawdownThreshold    = -10.0
 	aStockRecommendationPhasePreopen   = "preopen"
 	aStockRecommendationPhaseFinal     = "final"
 	aStockRealtimeQuoteCacheTTL        = time.Minute
@@ -935,6 +939,8 @@ func (s *Server) handleAStockBacktestPage(w http.ResponseWriter, r *http.Request
 		message = ctx.LoadMessage
 	}
 	detail := strings.TrimSpace(r.URL.Query().Get("detail"))
+	officialPerformance, officialPerformanceOK := s.loadAStockRecommendationPerformance(ctx.Date, "all", "official")
+	shadowPerformance, shadowPerformanceOK := s.loadAStockRecommendationPerformance(ctx.Date, "all", aStockT1ShadowStrategyKey)
 
 	var b strings.Builder
 	b.WriteString(`<style>
@@ -970,6 +976,7 @@ func (s *Server) handleAStockBacktestPage(w http.ResponseWriter, r *http.Request
 		}
 		b.WriteString(`</section>`)
 	}
+	renderAStockT1PerformanceSection(&b, officialPerformance, officialPerformanceOK, shadowPerformance, shadowPerformanceOK)
 	renderAStockBacktestSectionForPath(&b, "/a-stock/backtest", ctx.Date, ctx.Period, ctx.IgnoreRecent, ctx.IgnoreLimitUp, ctx.IgnoreFundFlow, ctx.FundFlowFilterExplicit, ctx.TodayMarketFilterEnabled, morningCtx, afternoonCtx)
 
 	_ = s.writeSimplePage(w, "a-stock-backtest", "A股回测", b.String())
@@ -2270,6 +2277,103 @@ func renderAStockBacktestSectionForPath(b *strings.Builder, targetPath string, s
 	b.WriteString(`</table></div></section>`)
 }
 
+func renderAStockT1PerformanceSection(b *strings.Builder, official model.AStockRecommendationPerformanceSummary, officialOK bool, shadow model.AStockRecommendationPerformanceSummary, shadowOK bool) {
+	b.WriteString(`<section><h2>T+1 胜率评估</h2>`)
+	if !officialOK && !shadowOK {
+		b.WriteString(`<div class="astock-empty">暂无 T+1 胜率统计，请先生成推荐快照并刷新 T+1 回测。</div></section>`)
+		return
+	}
+	b.WriteString(`<p class="astock-muted">按 T+1 收益大于 0 计胜，仅统计已有 T+1 回测收益的成熟样本；影子策略不替换正式推荐。</p>`)
+	b.WriteString(`<div class="astock-scroll"><table class="astock-table"><tr><th>策略</th><th>区间</th><th>推荐数</th><th>成熟样本</th><th>胜数</th><th>T+1胜率</th><th>平均T+1</th><th>覆盖率</th><th>状态</th></tr>`)
+	renderAStockT1PerformanceRow(b, "正式推荐", official, officialOK)
+	renderAStockT1PerformanceRow(b, aStockT1ShadowStrategyKey, shadow, shadowOK)
+	b.WriteString(`</table></div>`)
+	renderAStockT1PerformancePeriodGroups(b, official, officialOK, shadow, shadowOK)
+	b.WriteString(`</section>`)
+}
+
+func renderAStockT1PerformanceRow(b *strings.Builder, label string, summary model.AStockRecommendationPerformanceSummary, ok bool) {
+	if !ok {
+		b.WriteString(`<tr><td>`)
+		b.WriteString(html.EscapeString(label))
+		b.WriteString(`</td><td colspan="8">暂无统计</td></tr>`)
+		return
+	}
+	status := "可观察"
+	if summary.InsufficientSamples {
+		status = "样本不足"
+	}
+	b.WriteString(`<tr><td>`)
+	b.WriteString(html.EscapeString(label))
+	b.WriteString(`</td><td>`)
+	b.WriteString(html.EscapeString(summary.StartDate + " ~ " + summary.EndDate))
+	b.WriteString(`</td><td>`)
+	b.WriteString(fmt.Sprint(summary.RecommendationCount))
+	b.WriteString(`</td><td>`)
+	b.WriteString(fmt.Sprint(summary.SampleCount))
+	b.WriteString(`</td><td>`)
+	b.WriteString(fmt.Sprint(summary.WinCount))
+	b.WriteString(`</td><td>`)
+	b.WriteString(html.EscapeString(formatAStockPerformanceRatio(summary.WinRate)))
+	b.WriteString(`</td><td><span class="`)
+	b.WriteString(html.EscapeString(aStockPctClass(summary.AverageReturn)))
+	b.WriteString(`">`)
+	b.WriteString(html.EscapeString(formatAStockPct(summary.AverageReturn)))
+	b.WriteString(`</span></td><td>`)
+	b.WriteString(html.EscapeString(formatAStockPerformanceRatio(summary.RecommendationCover)))
+	b.WriteString(`</td><td>`)
+	b.WriteString(html.EscapeString(status))
+	b.WriteString(`</td></tr>`)
+}
+
+func renderAStockT1PerformancePeriodGroups(b *strings.Builder, official model.AStockRecommendationPerformanceSummary, officialOK bool, shadow model.AStockRecommendationPerformanceSummary, shadowOK bool) {
+	b.WriteString(`<h3>窗口拆分</h3><div class="astock-scroll"><table class="astock-table"><tr><th>策略</th><th>窗口</th><th>成熟样本</th><th>胜数</th><th>T+1胜率</th><th>平均T+1</th></tr>`)
+	renderAStockT1PerformancePeriodGroupRows(b, "正式推荐", official, officialOK)
+	renderAStockT1PerformancePeriodGroupRows(b, aStockT1ShadowStrategyKey, shadow, shadowOK)
+	b.WriteString(`</table></div>`)
+}
+
+func renderAStockT1PerformancePeriodGroupRows(b *strings.Builder, label string, summary model.AStockRecommendationPerformanceSummary, ok bool) {
+	if !ok {
+		return
+	}
+	for _, group := range summary.Groups {
+		if group.Dimension != "period" {
+			continue
+		}
+		b.WriteString(`<tr><td>`)
+		b.WriteString(html.EscapeString(label))
+		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(aStockPerformancePeriodLabel(group.Key)))
+		b.WriteString(`</td><td>`)
+		b.WriteString(fmt.Sprint(group.SampleCount))
+		b.WriteString(`</td><td>`)
+		b.WriteString(fmt.Sprint(group.WinCount))
+		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(formatAStockPerformanceRatio(group.WinRate)))
+		b.WriteString(`</td><td><span class="`)
+		b.WriteString(html.EscapeString(aStockPctClass(group.AverageReturn)))
+		b.WriteString(`">`)
+		b.WriteString(html.EscapeString(formatAStockPct(group.AverageReturn)))
+		b.WriteString(`</span></td></tr>`)
+	}
+}
+
+func formatAStockPerformanceRatio(value float64) string {
+	return fmt.Sprintf("%.2f%%", value*100)
+}
+
+func aStockPerformancePeriodLabel(period string) string {
+	switch normalizeAStockPeriod(period).Key {
+	case "morning":
+		return "上午推荐"
+	case "afternoon":
+		return "下午推荐"
+	default:
+		return period
+	}
+}
+
 func renderAStockRecommendationHistoryTabs(b *strings.Builder, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool) {
 	renderAStockRecommendationHistoryTabsForPath(b, "/a-stock", strategyDate, period, ignoreRecent, ignoreLimitUp, ignoreFundFlow, false, filterTodayMarket)
 }
@@ -2602,6 +2706,7 @@ func (s *Server) handleAStockRecommendationGenerate(w http.ResponseWriter, r *ht
 		refreshMode = aStockRecommendationPreserveLocked
 	}
 	ctx := s.loadAStockContextWithRecommendationPhasePersistenceMode(strategyDate, period.Key, 1, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, true, phase, newAStockRequestCache(), true, true, refreshMode)
+	_ = s.saveAStockT1ShadowRecommendationSnapshot(ctx)
 	writeRawJSON(w, http.StatusOK, map[string]any{
 		"code":    http.StatusOK,
 		"message": "ok",
@@ -3595,6 +3700,31 @@ func aStockBoolQueryValue(value bool) string {
 	return "0"
 }
 
+func (s *Server) loadAStockRecommendationPerformance(strategyDate string, period string, strategy string) (model.AStockRecommendationPerformanceSummary, bool) {
+	if strings.TrimSpace(s.cfg.ContentURL) == "" {
+		return model.AStockRecommendationPerformanceSummary{}, false
+	}
+	date := normalizeAStockStrategyDate(strategyDate)
+	if date == "" {
+		date = aStockTodayDate()
+	}
+	endDate := date
+	startDate := date
+	if parsed, err := time.Parse("2006-01-02", date); err == nil {
+		startDate = parsed.AddDate(0, 0, -90).Format("2006-01-02")
+	}
+	query := url.Values{}
+	query.Set("start", startDate)
+	query.Set("end", endDate)
+	query.Set("period", nonEmpty(strings.TrimSpace(period), "all"))
+	query.Set("strategy", nonEmpty(strings.TrimSpace(strategy), "official"))
+	var summary model.AStockRecommendationPerformanceSummary
+	if err := s.getJSON(strings.TrimRight(s.cfg.ContentURL, "/")+"/api/v1/a-stock/recommendation-performance?"+query.Encode(), &summary); err != nil {
+		return model.AStockRecommendationPerformanceSummary{}, false
+	}
+	return summary, true
+}
+
 func (s *Server) loadAStockRecommendationSelections(strategyDate string, period string) (model.AStockRecommendationSelectionListResult, bool) {
 	return s.loadAStockRecommendationSelectionsWithCache(strategyDate, period, nil)
 }
@@ -3845,6 +3975,299 @@ func (s *Server) buildAStockRecommendationSnapshot(ctx aStockContext) (model.ASt
 		EmptyReason:              ctx.EmptyReason,
 	}
 	return snapshot, nil
+}
+
+func (s *Server) saveAStockT1ShadowRecommendationSnapshot(ctx aStockContext) error {
+	if strings.TrimSpace(s.cfg.ContentURL) == "" || strings.TrimSpace(ctx.Date) == "" || strings.TrimSpace(ctx.Period) == "" {
+		return nil
+	}
+	cache := newAStockRequestCache()
+	marketCandidates, candidateStatus, auctionResult := s.loadAStockMarketCandidatesWithStatusWithCache(ctx.Date, cache)
+	hotspots := aStockRecommendationHotspotSlice(ctx.Hotspots)
+	if len(hotspots) == 0 && len(ctx.Articles) > 0 {
+		hotspots = buildAStockHotspots(ctx.Articles)
+	}
+	sectorGate := s.loadAStockHotspotSectorGateWithCache(hotspots, cache)
+	recommendations := buildAStockT1ShadowRecommendationsWithSectorGate(hotspots, marketCandidates, sectorGate)
+	recommendations = withAStockRecommendationEntryTimes(recommendations, ctx.Period, "")
+	recommendations = s.applyAStockHoldingSummariesWithCache(recommendations, cache)
+	var fundFlowFiltered int
+	var fundFlowMissing int
+	fundFlowEnabled := ctx.FundFlowFilterEnabled && !ctx.IgnoreFundFlow
+	if fundFlowEnabled {
+		recommendations, fundFlowFiltered, fundFlowMissing = s.applyAStockT1ShadowFundFlowWithCache(ctx.Date, recommendations, cache)
+	}
+	recommendations, backtests, status, limitUpFiltered, noTodayMarketCount := s.loadAStockMarketView(ctx.Date, ctx.Period, recommendations, true, true, 0)
+	var riskFiltered int
+	recommendations, backtests, riskFiltered = filterAStockT1ShadowMarketRiskRecommendations(ctx.Period, recommendations, backtests)
+	recommendations = limitAStockRecommendationsByHotspot(recommendations, aStockT1ShadowRecommendationLimit, aStockT1ShadowStocksPerHotspot)
+	backtests = filterAStockBacktestsForRecommendations(backtests, recommendations)
+	status = appendAStockBacktestStatus(status, formatAStockT1ShadowStatus(fundFlowFiltered, fundFlowMissing, riskFiltered))
+	shadowCtx := ctx
+	shadowCtx.Recommendations = recommendations
+	shadowCtx.Backtests = backtests
+	shadowCtx.BacktestStatus = status
+	shadowCtx.GeneratedRecommendationCount = len(recommendations)
+	shadowCtx.LimitUpFilterEnabled = true
+	shadowCtx.LimitUpFiltered = limitUpFiltered
+	shadowCtx.TodayMarketFilterEnabled = true
+	shadowCtx.NoTodayMarketCount = noTodayMarketCount
+	shadowCtx.FundFlowFilterEnabled = fundFlowEnabled
+	shadowCtx.FundFlowFiltered = fundFlowFiltered
+	shadowCtx.FundFlowMissingCount = fundFlowMissing
+	shadowCtx.MarketCandidateStatus = candidateStatus
+	shadowCtx.MarketCandidateCount = len(aStockRecommendationCandidatesForLimit(hotspots, marketCandidates, aStockRecommendationLimit, aStockStocksPerHotspot))
+	if auctionLabel := normalizeAStockAuctionSummaryLabel(formatAStockAuctionSummaryAmount(auctionResult)); auctionLabel != "" {
+		shadowCtx.AuctionAmountLabel = auctionLabel
+	}
+	shadowCtx.EmptyReason = aStockRecommendationEmptyReason(shadowCtx)
+	snapshot, err := s.buildAStockRecommendationSnapshot(shadowCtx)
+	if err != nil {
+		return err
+	}
+	payload := model.AStockRecommendationShadowSnapshot{
+		StrategyKey:                  aStockT1ShadowStrategyKey,
+		AStockRecommendationSnapshot: snapshot,
+	}
+	resp, err := s.client.R().
+		SetBody(payload).
+		Post(strings.TrimRight(s.cfg.ContentURL, "/") + "/api/v1/internal/a-stock/recommendation-shadow-snapshots")
+	if err != nil {
+		return err
+	}
+	if !resp.IsSuccess() {
+		return fmt.Errorf(resp.Status())
+	}
+	return nil
+}
+
+func buildAStockT1ShadowRecommendationsWithSectorGate(hotspots []aStockHotspot, marketCandidates []aStockMarketCandidate, sectorGate *aStockHotspotSectorGate) []aStockRecommendation {
+	if len(hotspots) > aStockHotspotLimit {
+		hotspots = hotspots[:aStockHotspotLimit]
+	}
+	candidates := aStockRecommendationCandidatesForLimit(hotspots, marketCandidates, aStockReplacementPoolLimit, aStockReplacementPerHotspot)
+	if len(hotspots) == 0 || len(candidates) == 0 {
+		return nil
+	}
+	byCode := make(map[string]aStockT1ShadowScoredRecommendation)
+	for _, hotspot := range hotspots {
+		for _, stock := range scoreAStockMarketCandidatesWithSectorGate(hotspot, candidates, sectorGate) {
+			strongEvidence := aStockT1ShadowStrongEvidence(stock)
+			if !isAStockT1ShadowEligibleCandidate(stock, strongEvidence) {
+				continue
+			}
+			marketScore := aStockT1ShadowMarketScore(hotspot, stock, strongEvidence)
+			rec := aStockRecommendation{
+				Hotspot:      hotspot.Name,
+				Code:         stock.Code,
+				Name:         stock.Name,
+				HotspotScore: hotspot.Score,
+				MarketScore:  marketScore,
+				Reason:       formatAStockT1ShadowReason(hotspot, stock, strongEvidence, marketScore),
+			}
+			scored := aStockT1ShadowScoredRecommendation{
+				Recommendation: rec,
+				StrongEvidence: strongEvidence,
+				AuctionAmount:  stock.AuctionAmount,
+				AuctionVolume:  stock.AuctionVolume,
+			}
+			if existing, ok := byCode[stock.Code]; !ok || lessAStockT1ShadowScoredRecommendation(existing, scored) {
+				byCode[stock.Code] = scored
+			}
+		}
+	}
+	scored := make([]aStockT1ShadowScoredRecommendation, 0, len(byCode))
+	for _, item := range byCode {
+		scored = append(scored, item)
+	}
+	sort.SliceStable(scored, func(i, j int) bool {
+		return lessAStockT1ShadowScoredRecommendation(scored[j], scored[i])
+	})
+	recommendations := make([]aStockRecommendation, 0, len(scored))
+	for _, item := range scored {
+		recommendations = append(recommendations, item.Recommendation)
+	}
+	return rerankAStockRecommendations(limitAStockRecommendationsByHotspot(recommendations, aStockReplacementPoolLimit, aStockReplacementPerHotspot))
+}
+
+type aStockT1ShadowScoredRecommendation struct {
+	Recommendation aStockRecommendation
+	StrongEvidence int
+	AuctionAmount  float64
+	AuctionVolume  float64
+}
+
+func lessAStockT1ShadowScoredRecommendation(left aStockT1ShadowScoredRecommendation, right aStockT1ShadowScoredRecommendation) bool {
+	if left.Recommendation.MarketScore != right.Recommendation.MarketScore {
+		return left.Recommendation.MarketScore < right.Recommendation.MarketScore
+	}
+	if left.StrongEvidence != right.StrongEvidence {
+		return left.StrongEvidence < right.StrongEvidence
+	}
+	if left.AuctionAmount != right.AuctionAmount {
+		return left.AuctionAmount < right.AuctionAmount
+	}
+	if left.AuctionVolume != right.AuctionVolume {
+		return left.AuctionVolume < right.AuctionVolume
+	}
+	return left.Recommendation.Code > right.Recommendation.Code
+}
+
+func aStockT1ShadowStrongEvidence(candidate aStockMarketCandidate) int {
+	strongEvidence := candidate.Evidence - candidate.WeakEvidence - candidate.BadEvidence
+	if strongEvidence < 0 {
+		return 0
+	}
+	return strongEvidence
+}
+
+func isAStockT1ShadowEligibleCandidate(candidate aStockMarketCandidate, strongEvidence int) bool {
+	if candidate.BadEvidence > 0 || strongEvidence <= 0 {
+		return false
+	}
+	if candidate.Fallback {
+		return true
+	}
+	return len(candidate.Keywords) > 0
+}
+
+func aStockT1ShadowMarketScore(hotspot aStockHotspot, candidate aStockMarketCandidate, strongEvidence int) int {
+	score := hotspot.Score + strongEvidence*80 + aStockMarketRankScore(candidate.Rank)*2 + len(candidate.Keywords)*25
+	if candidate.Fallback {
+		score += 30
+	}
+	return score
+}
+
+func formatAStockT1ShadowReason(hotspot aStockHotspot, candidate aStockMarketCandidate, strongEvidence int, marketScore int) string {
+	source := "集合竞价候选"
+	if candidate.Fallback {
+		source = "实时新闻明确提及股票"
+	}
+	reason := fmt.Sprintf("T+1影子策略：%s，强新闻证据 %d 条，热点分 %d，T+1分 %d", source, strongEvidence, hotspot.Score, marketScore)
+	if len(candidate.Keywords) > 0 {
+		reason = appendAStockReason(reason, "股票/热点关键词 "+strings.Join(candidate.Keywords, "、"))
+	}
+	return reason
+}
+
+func (s *Server) applyAStockT1ShadowFundFlowWithCache(strategyDate string, recommendations []aStockRecommendation, cache *aStockRequestCache) ([]aStockRecommendation, int, int) {
+	if len(recommendations) == 0 {
+		return recommendations, 0, 0
+	}
+	filtered := make([]aStockRecommendation, 0, len(recommendations))
+	filteredCount := 0
+	missingCount := 0
+	for _, rec := range recommendations {
+		assessment := s.assessAStockRecommendationFundFlow5DWithCache(strategyDate, rec.Code, cache)
+		if assessment.Missing {
+			missingCount++
+			rec = applyAStockFundFlow5DAssessmentToRecommendation(rec, assessment, true)
+			filtered = append(filtered, rec)
+			continue
+		}
+		if assessment.Total < 0 {
+			filteredCount++
+			continue
+		}
+		rec = applyAStockFundFlow5DAssessmentToRecommendation(rec, assessment, true)
+		filtered = append(filtered, rec)
+	}
+	return sortAStockRecommendationsByScore(filtered), filteredCount, missingCount
+}
+
+func filterAStockT1ShadowMarketRiskRecommendations(period string, recommendations []aStockRecommendation, backtests []aStockBacktestRow) ([]aStockRecommendation, []aStockBacktestRow, int) {
+	if len(recommendations) == 0 {
+		return recommendations, backtests, 0
+	}
+	normalizedPeriod := normalizeAStockPeriod(period).Key
+	filtered := make([]aStockRecommendation, 0, len(recommendations))
+	filteredCount := 0
+	for _, rec := range recommendations {
+		if isAStockT1ShadowDrawdownBlocked(rec) || (normalizedPeriod == "morning" && isAStockT1ShadowLowOpenBlocked(rec)) {
+			filteredCount++
+			continue
+		}
+		filtered = append(filtered, rec)
+	}
+	filtered = sortAStockRecommendationsByScore(filtered)
+	return filtered, filterAStockBacktestsForRecommendations(backtests, filtered), filteredCount
+}
+
+func isAStockT1ShadowDrawdownBlocked(rec aStockRecommendation) bool {
+	for _, value := range []string{rec.Change30, rec.Change60} {
+		pct, ok := parseAStockPctText(value)
+		if ok && pct <= aStockT1ShadowDrawdownThreshold {
+			return true
+		}
+	}
+	return false
+}
+
+func isAStockT1ShadowLowOpenBlocked(rec aStockRecommendation) bool {
+	return strings.Contains(rec.Reason, "开盘低开")
+}
+
+func parseAStockPctText(value string) (float64, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "--" {
+		return 0, false
+	}
+	value = strings.TrimSuffix(value, "%")
+	value = strings.TrimPrefix(value, "+")
+	value = strings.ReplaceAll(value, ",", "")
+	parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+	if err != nil {
+		return 0, false
+	}
+	return parsed, true
+}
+
+func limitAStockRecommendationsByHotspot(recommendations []aStockRecommendation, maxRecommendations int, maxPerHotspot int) []aStockRecommendation {
+	if maxRecommendations <= 0 {
+		maxRecommendations = len(recommendations)
+	}
+	if maxPerHotspot <= 0 {
+		maxPerHotspot = maxRecommendations
+	}
+	limited := make([]aStockRecommendation, 0, minInt(len(recommendations), maxRecommendations))
+	hotspotCounts := make(map[string]int)
+	seen := make(map[string]struct{})
+	for _, rec := range recommendations {
+		code := normalizeAStockCode(rec.Code)
+		if code == "" {
+			continue
+		}
+		if _, exists := seen[code]; exists {
+			continue
+		}
+		hotspot := normalizeAStockRecommendationHotspot(rec.Hotspot)
+		if hotspotCounts[hotspot] >= maxPerHotspot {
+			continue
+		}
+		rec.Code = code
+		limited = append(limited, rec)
+		seen[code] = struct{}{}
+		hotspotCounts[hotspot]++
+		if len(limited) >= maxRecommendations {
+			break
+		}
+	}
+	return rerankAStockRecommendations(limited)
+}
+
+func formatAStockT1ShadowStatus(fundFlowFiltered int, fundFlowMissing int, riskFiltered int) string {
+	parts := make([]string, 0, 3)
+	if fundFlowFiltered > 0 {
+		parts = append(parts, fmt.Sprintf("T+1影子策略过滤资金净流出 %d 只", fundFlowFiltered))
+	}
+	if riskFiltered > 0 {
+		parts = append(parts, fmt.Sprintf("T+1影子策略过滤回撤/低开 %d 只", riskFiltered))
+	}
+	if fundFlowMissing > 0 {
+		parts = append(parts, fmt.Sprintf("T+1影子策略资金缺失 %d 只", fundFlowMissing))
+	}
+	return strings.Join(parts, "，")
 }
 
 func (s *Server) restoreAStockBacktestsFromSnapshot(ctx *aStockContext) {

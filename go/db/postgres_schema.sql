@@ -517,6 +517,24 @@ CREATE TABLE IF NOT EXISTS a_stock_recommendation_snapshots (
 	PRIMARY KEY (strategy_date, period, ignore_recent, limit_up_filter_enabled, today_market_filter_enabled, fund_flow_filter_enabled)
 );
 
+CREATE TABLE IF NOT EXISTS a_stock_recommendation_shadow_snapshots (
+	strategy_key TEXT NOT NULL,
+	strategy_date TEXT NOT NULL,
+	period TEXT NOT NULL,
+	recommendations_json TEXT NOT NULL DEFAULT '[]',
+	backtests_json TEXT NOT NULL DEFAULT '[]',
+	news_summary_json TEXT NOT NULL DEFAULT '',
+	backtest_status TEXT NOT NULL DEFAULT '',
+	generated_count INTEGER NOT NULL DEFAULT 0,
+	market_candidate_status TEXT NOT NULL DEFAULT '',
+	market_candidate_count INTEGER NOT NULL DEFAULT 0,
+	auction_amount_label TEXT NOT NULL DEFAULT '',
+	empty_reason TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	PRIMARY KEY (strategy_key, strategy_date, period)
+);
+
 CREATE TABLE IF NOT EXISTS a_stock_recommendation_selections (
 	strategy_date TEXT NOT NULL,
 	period TEXT NOT NULL,
@@ -745,6 +763,7 @@ CREATE INDEX IF NOT EXISTS idx_a_stock_auction_date_amount ON a_stock_auction_am
 CREATE INDEX IF NOT EXISTS idx_a_stock_auction_code ON a_stock_auction_amounts(code);
 CREATE INDEX IF NOT EXISTS idx_a_stock_code_names_updated ON a_stock_code_names(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_a_stock_recommendations_updated ON a_stock_recommendation_snapshots(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_a_stock_shadow_recommendations_updated ON a_stock_recommendation_shadow_snapshots(strategy_key, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_a_stock_recommendation_selections_lookup ON a_stock_recommendation_selections(strategy_date, period, rank, code);
 CREATE INDEX IF NOT EXISTS idx_a_stock_sector_fund_flow_lookup ON a_stock_sector_fund_flows(trade_date DESC, sector_type, indicator, rank);
 CREATE INDEX IF NOT EXISTS idx_a_stock_sector_fund_flow_name ON a_stock_sector_fund_flows(name);

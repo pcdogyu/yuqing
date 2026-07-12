@@ -2115,6 +2115,13 @@ func TestAStockBacktestPageGetUsesSnapshotOnly(t *testing.T) {
 		requests = append(requests, r.URL.String())
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/v1/a-stock/recommendation-performance" {
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationPerformanceSummary{
+				Strategy: r.URL.Query().Get("strategy"),
+				Period:   r.URL.Query().Get("period"),
+			})
+			return
+		}
 		if r.URL.Path != "/api/v1/a-stock/recommendations" {
 			http.Error(w, "unexpected endpoint", http.StatusInternalServerError)
 			return
@@ -2150,22 +2157,30 @@ func TestAStockBacktestPageGetUsesSnapshotOnly(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(requests) != 2 {
-		t.Fatalf("expected only morning and afternoon snapshot requests, got %d: %v", len(requests), requests)
+	if len(requests) != 4 {
+		t.Fatalf("expected morning/afternoon snapshots plus two performance requests, got %d: %v", len(requests), requests)
 	}
 	periodHits := map[string]int{}
+	performanceHits := 0
 	for _, raw := range requests {
 		u, err := url.Parse(raw)
 		if err != nil {
 			t.Fatalf("parse request URL %q: %v", raw, err)
 		}
+		if u.Path == "/api/v1/a-stock/recommendation-performance" {
+			performanceHits++
+			continue
+		}
 		if u.Path != "/api/v1/a-stock/recommendations" {
-			t.Fatalf("expected snapshot-only endpoint, got %q in %v", u.Path, requests)
+			t.Fatalf("expected snapshot/performance endpoint, got %q in %v", u.Path, requests)
 		}
 		periodHits[u.Query().Get("period")]++
 	}
 	if periodHits["morning"] != 1 || periodHits["afternoon"] != 1 {
 		t.Fatalf("expected one morning and one afternoon snapshot request, got %v from %v", periodHits, requests)
+	}
+	if performanceHits != 2 {
+		t.Fatalf("expected official and shadow performance requests, got %d from %v", performanceHits, requests)
 	}
 }
 
@@ -4080,7 +4095,27 @@ func handleAStockRecommendationSnapshotTestEndpoint(w http.ResponseWriter, r *ht
 			"data":    model.AStockRecommendationLatestDateListResult{Items: []model.AStockRecommendationLatestDate{}},
 		})
 		return true
+	case "/api/v1/a-stock/recommendation-performance":
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    http.StatusOK,
+			"message": "ok",
+			"data": model.AStockRecommendationPerformanceSummary{
+				Strategy:    r.URL.Query().Get("strategy"),
+				StartDate:   r.URL.Query().Get("start"),
+				EndDate:     r.URL.Query().Get("end"),
+				Period:      r.URL.Query().Get("period"),
+				SampleCount: 0,
+			},
+		})
+		return true
 	case "/api/v1/internal/a-stock/recommendations":
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    http.StatusOK,
+			"message": "ok",
+			"data":    model.AStockRecommendationSnapshotUpsertResult{Inserted: 1},
+		})
+		return true
+	case "/api/v1/internal/a-stock/recommendation-shadow-snapshots":
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"code":    http.StatusOK,
 			"message": "ok",
@@ -4100,6 +4135,15 @@ func handleAStockRecommendationSnapshotTestEndpoint(w http.ResponseWriter, r *ht
 }
 
 func handleEmptyAStockAuctionTestEndpoint(w http.ResponseWriter, r *http.Request) bool {
+	if r.URL.Path == "/api/v1/a-stock/recommendation-performance" {
+		writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationPerformanceSummary{
+			Strategy:  r.URL.Query().Get("strategy"),
+			StartDate: r.URL.Query().Get("start"),
+			EndDate:   r.URL.Query().Get("end"),
+			Period:    r.URL.Query().Get("period"),
+		})
+		return true
+	}
 	if r.URL.Path == "/api/v1/a-stock/recommendation-latest-dates" {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"code":    http.StatusOK,
@@ -4935,6 +4979,8 @@ func TestAStockRecommendationGeneratePreserveLockedRefreshModeKeepsSelections(t 
 			if err := json.NewDecoder(r.Body).Decode(&savedSnapshot); err != nil {
 				t.Fatalf("decode saved snapshot: %v", err)
 			}
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Updated: 1})
+		case "/api/v1/internal/a-stock/recommendation-shadow-snapshots":
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Updated: 1})
 		case "/api/v1/internal/a-stock/recommendation-selections":
 			selectionPosts++
@@ -6819,6 +6865,8 @@ func TestAStockRecommendationGenerateIgnoreFundFlowKeepsNegativeFundFlowRecommen
 				Total: 1, EndDate: "2026-06-16", Indicator: "今日", Code: r.URL.Query().Get("code"), Days: 5,
 			})
 		case "/api/v1/internal/a-stock/recommendations":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Inserted: 1})
+		case "/api/v1/internal/a-stock/recommendation-shadow-snapshots":
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Inserted: 1})
 		default:
 			t.Fatalf("unexpected content path: %s", r.URL.String())
@@ -8910,6 +8958,42 @@ func TestAStockHotspotsWithTopStocksFillsNinePerHotspot(t *testing.T) {
 				t.Fatalf("expected cross-hotspot display stocks to stay unique, duplicate %s in %+v", stock.Code, result)
 			}
 			seen[stock.Code] = struct{}{}
+		}
+	}
+}
+
+func TestAStockT1ShadowFiltersWeakEvidenceAndLimitsByHotspot(t *testing.T) {
+	weak := aStockMarketCandidate{Code: "600001", Name: "弱证据", Evidence: 1, WeakEvidence: 1, Fallback: true}
+	if isAStockT1ShadowEligibleCandidate(weak, aStockT1ShadowStrongEvidence(weak)) {
+		t.Fatal("expected weak-only evidence candidate to be filtered")
+	}
+	strong := aStockMarketCandidate{Code: "600002", Name: "强证据", Evidence: 1, Fallback: true}
+	if !isAStockT1ShadowEligibleCandidate(strong, aStockT1ShadowStrongEvidence(strong)) {
+		t.Fatal("expected strong news evidence candidate to pass")
+	}
+	marketWithoutKeyword := aStockMarketCandidate{Code: "600003", Name: "市场无关键词", Evidence: 1, Fallback: false}
+	if isAStockT1ShadowEligibleCandidate(marketWithoutKeyword, aStockT1ShadowStrongEvidence(marketWithoutKeyword)) {
+		t.Fatal("expected market candidate without stock-name keyword to be filtered")
+	}
+	recommendations := []aStockRecommendation{
+		{Hotspot: "人工智能", Code: "600001", MarketScore: 300},
+		{Hotspot: "人工智能", Code: "600002", MarketScore: 299},
+		{Hotspot: "人工智能", Code: "600003", MarketScore: 298},
+		{Hotspot: "机器人", Code: "600004", MarketScore: 297},
+		{Hotspot: "机器人", Code: "600005", MarketScore: 296},
+		{Hotspot: "机器人", Code: "600006", MarketScore: 295},
+		{Hotspot: "低空经济", Code: "600007", MarketScore: 294},
+		{Hotspot: "低空经济", Code: "600008", MarketScore: 293},
+		{Hotspot: "低空经济", Code: "600009", MarketScore: 292},
+	}
+	limited := limitAStockRecommendationsByHotspot(recommendations, aStockT1ShadowRecommendationLimit, aStockT1ShadowStocksPerHotspot)
+	if len(limited) != aStockT1ShadowRecommendationLimit {
+		t.Fatalf("expected shadow recommendations to cap at %d, got %+v", aStockT1ShadowRecommendationLimit, limited)
+	}
+	counts := aStockRecommendationHotspotCounts(limited)
+	for hotspot, count := range counts {
+		if count > aStockT1ShadowStocksPerHotspot {
+			t.Fatalf("expected hotspot %s to cap at %d, got %d in %+v", hotspot, aStockT1ShadowStocksPerHotspot, count, limited)
 		}
 	}
 }
