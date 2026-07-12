@@ -161,12 +161,6 @@ type aStockBacktestRow struct {
 type aStockTopicRule struct {
 	Name     string
 	Keywords []string
-	Stocks   []aStockStockPick
-}
-
-type aStockStockPick struct {
-	Code string
-	Name string
 }
 
 type aStockMarketCandidate struct {
@@ -183,7 +177,6 @@ type aStockMarketCandidate struct {
 	BadEvidence   int
 	Keywords      []string
 	Fallback      bool
-	FixedPool     bool
 }
 
 type aStockHotspotSectorGate struct {
@@ -2729,7 +2722,7 @@ func (s *Server) loadAStockFastReadOnlyContextWithCache(strategyDate string, per
 	}
 	candidates, candidateStatus, auctionResult := s.loadAStockMarketCandidatesWithStatusWithCache(ctx.Date, cache)
 	ctx.MarketCandidateStatus = candidateStatus
-	ctx.MarketCandidateCount = len(fixedPoolAStockMarketCandidates(aStockRecommendationHotspotSlice(ctx.Hotspots), candidates))
+	ctx.MarketCandidateCount = len(aStockRecommendationCandidatesForLimit(aStockRecommendationHotspotSlice(ctx.Hotspots), candidates, aStockRecommendationLimit, aStockStocksPerHotspot))
 	if auctionLabel := normalizeAStockAuctionSummaryLabel(formatAStockAuctionSummaryAmount(auctionResult)); auctionLabel != "" {
 		ctx.AuctionAmountLabel = auctionLabel
 	}
@@ -3150,7 +3143,7 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 		ctx.Hotspots = buildAStockHotspotsWithTopStocks(ctx.Hotspots, marketCandidates, aStockHotspotTopStockLimit)
 		ctx.Hotspots = s.applyAStockHotspotRecommendationDatesWithCache(ctx.Hotspots, strategyDate, period.Key, cache)
 		ctx.MarketCandidateStatus = candidateStatus
-		ctx.MarketCandidateCount = len(fixedPoolAStockMarketCandidates(aStockRecommendationHotspotSlice(ctx.Hotspots), marketCandidates))
+		ctx.MarketCandidateCount = len(aStockRecommendationCandidatesForLimit(aStockRecommendationHotspotSlice(ctx.Hotspots), marketCandidates, aStockRecommendationLimit, aStockStocksPerHotspot))
 		if auctionLabel := normalizeAStockAuctionSummaryLabel(formatAStockAuctionSummaryAmount(auctionResult)); auctionLabel != "" {
 			ctx.AuctionAmountLabel = auctionLabel
 		}
@@ -3234,7 +3227,7 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 			candidates, candidateStatus, auctionResult := s.loadAStockMarketCandidatesWithStatusWithCache(strategyDate, cache)
 			marketCandidates = candidates
 			ctx.MarketCandidateStatus = candidateStatus
-			ctx.MarketCandidateCount = len(fixedPoolAStockMarketCandidates(aStockRecommendationHotspotSlice(ctx.Hotspots), marketCandidates))
+			ctx.MarketCandidateCount = len(aStockRecommendationCandidatesForLimit(aStockRecommendationHotspotSlice(ctx.Hotspots), marketCandidates, aStockRecommendationLimit, aStockStocksPerHotspot))
 			if auctionLabel := normalizeAStockAuctionSummaryLabel(formatAStockAuctionSummaryAmount(auctionResult)); auctionLabel != "" {
 				ctx.AuctionAmountLabel = auctionLabel
 			}
@@ -8691,19 +8684,22 @@ func appendAStockHotspotTopStock(stocks []aStockHotspotStock, stock aStockMarket
 }
 
 func aStockHotspotTopStockCandidates(hotspots []aStockHotspot, marketCandidates []aStockMarketCandidate) aStockHotspotTopStockCandidateSet {
-	fixedCandidates := fixedPoolAStockMarketCandidates(hotspots, marketCandidates)
+	newsCandidates := newsDerivedAStockMarketCandidates(hotspots)
 	fallbackCandidates := sortedAStockHotspotFallbackCandidates(marketCandidates)
-	scoredCandidates := make([]aStockMarketCandidate, 0, len(fixedCandidates)+minInt(aStockHotspotScoredCandidateLimit, len(fallbackCandidates)))
-	seen := make(map[string]struct{}, len(fixedCandidates)+minInt(aStockHotspotScoredCandidateLimit, len(fallbackCandidates)))
-	for _, candidate := range fixedCandidates {
+	nameResolver := newAStockRecommendationNameResolver(marketCandidates)
+	scoredCandidates := make([]aStockMarketCandidate, 0, len(newsCandidates)+minInt(aStockHotspotScoredCandidateLimit, len(fallbackCandidates)))
+	seen := make(map[string]struct{}, len(newsCandidates)+minInt(aStockHotspotScoredCandidateLimit, len(fallbackCandidates)))
+	for _, candidate := range newsCandidates {
 		code := normalizeAStockCode(candidate.Code)
 		if code != "" {
+			candidate.Code = code
+			candidate.Name = resolveAStockRecommendationName(code, candidate.Name, nameResolver)
 			scoredCandidates = append(scoredCandidates, candidate)
 			seen[code] = struct{}{}
 		}
 	}
 	for _, candidate := range fallbackCandidates {
-		if len(scoredCandidates) >= len(fixedCandidates)+aStockHotspotScoredCandidateLimit {
+		if len(scoredCandidates) >= len(newsCandidates)+aStockHotspotScoredCandidateLimit {
 			break
 		}
 		code := candidate.Code
@@ -8786,20 +8782,7 @@ func buildAStockRecommendationsWithLimitAndSectorGate(hotspots []aStockHotspot, 
 			seen[stock.Code] = struct{}{}
 			marketScore := hotspot.Score + stock.MatchedScore
 			reason := ""
-			if stock.FixedPool {
-				reason = fmt.Sprintf(
-					"命中 %s，证据新闻 %d 条，热度分 %d；使用原始固定股票池，个股证据 %d 条，匹配分 %d，综合分 %d",
-					strings.Join(hotspot.Keywords, "、"),
-					hotspot.Evidence,
-					hotspot.Score,
-					stock.Evidence,
-					stock.MatchedScore,
-					marketScore,
-				)
-				if stock.AuctionAmount > 0 || stock.AuctionVolume > 0 {
-					reason = fmt.Sprintf("%s，集合竞价排名 %d，成交额 %s", reason, stock.Rank, formatAStockAuctionMoney(stock.AuctionAmount))
-				}
-			} else if stock.Fallback {
+			if stock.Fallback {
 				reason = fmt.Sprintf(
 					"命中 %s，证据新闻 %d 条，热度分 %d；使用实时新闻明确提及股票，个股证据 %d 条，匹配分 %d，综合分 %d",
 					strings.Join(hotspot.Keywords, "、"),
@@ -8822,7 +8805,7 @@ func buildAStockRecommendationsWithLimitAndSectorGate(hotspots []aStockHotspot, 
 					marketScore,
 				)
 			}
-			if len(stock.Keywords) > 0 && !stock.Fallback && !stock.FixedPool {
+			if len(stock.Keywords) > 0 && !stock.Fallback {
 				reason = fmt.Sprintf("%s，股票名命中 %s", reason, strings.Join(stock.Keywords, "、"))
 			}
 			if stock.WeakPenalty > 0 {
@@ -8851,13 +8834,10 @@ func buildAStockRecommendationsWithLimitAndSectorGate(hotspots []aStockHotspot, 
 }
 
 func aStockRecommendationCandidatesForLimit(hotspots []aStockHotspot, marketCandidates []aStockMarketCandidate, maxRecommendations int, maxPerHotspot int) []aStockMarketCandidate {
-	fixedCandidates := fixedPoolAStockMarketCandidates(hotspots, marketCandidates)
-	if maxRecommendations <= aStockRecommendationLimit && maxPerHotspot <= aStockStocksPerHotspot {
-		return fixedCandidates
-	}
 	nameResolver := newAStockRecommendationNameResolver(marketCandidates)
-	candidates := make([]aStockMarketCandidate, 0, len(fixedCandidates)+aStockHotspotScoredCandidateLimit)
-	seen := make(map[string]struct{}, len(fixedCandidates)+aStockHotspotScoredCandidateLimit)
+	newsCandidates := newsDerivedAStockMarketCandidates(hotspots)
+	candidates := make([]aStockMarketCandidate, 0, len(newsCandidates)+aStockHotspotScoredCandidateLimit)
+	seen := make(map[string]struct{}, len(newsCandidates)+aStockHotspotScoredCandidateLimit)
 	appendCandidate := func(candidate aStockMarketCandidate) {
 		code := normalizeAStockCode(candidate.Code)
 		name := resolveAStockRecommendationName(code, candidate.Name, nameResolver)
@@ -8875,14 +8855,11 @@ func aStockRecommendationCandidatesForLimit(hotspots []aStockHotspot, marketCand
 		candidates = append(candidates, candidate)
 		seen[code] = struct{}{}
 	}
-	for _, candidate := range fixedCandidates {
-		appendCandidate(candidate)
-	}
-	for _, candidate := range newsDerivedAStockMarketCandidates(hotspots) {
+	for _, candidate := range newsCandidates {
 		appendCandidate(candidate)
 	}
 	for _, candidate := range sortedAStockHotspotFallbackCandidates(marketCandidates) {
-		if len(candidates) >= len(fixedCandidates)+aStockHotspotScoredCandidateLimit {
+		if len(candidates) >= len(newsCandidates)+aStockHotspotScoredCandidateLimit {
 			break
 		}
 		appendCandidate(candidate)
@@ -8892,11 +8869,6 @@ func aStockRecommendationCandidatesForLimit(hotspots []aStockHotspot, marketCand
 
 func newAStockRecommendationNameResolver(marketCandidates []aStockMarketCandidate) map[string]string {
 	names := make(map[string]string)
-	for _, rule := range aStockTopicRulesByName() {
-		for _, stock := range rule.Stocks {
-			addAStockRecommendationResolvedName(names, stock.Code, stock.Name)
-		}
-	}
 	for _, candidate := range marketCandidates {
 		addAStockRecommendationResolvedName(names, candidate.Code, candidate.Name)
 	}
@@ -8952,6 +8924,9 @@ func shouldUseResolvedAStockRecommendationName(code string, name string, resolve
 	if isInvalidAStockRecommendationName(name) {
 		return true
 	}
+	if len([]rune(name)) <= 2 {
+		return true
+	}
 	if name == resolved {
 		return true
 	}
@@ -8997,75 +8972,11 @@ func isInvalidAStockRecommendationName(name string) bool {
 	return false
 }
 
-func fixedPoolAStockMarketCandidates(hotspots []aStockHotspot, marketCandidates []aStockMarketCandidate) []aStockMarketCandidate {
-	rules := aStockTopicRulesByName()
-	marketByCode := make(map[string]aStockMarketCandidate, len(marketCandidates))
-	for _, candidate := range marketCandidates {
-		code := normalizeAStockCode(candidate.Code)
-		if !astockcode.IsShanghaiShenzhen(code) {
-			continue
-		}
-		candidate.Code = code
-		marketByCode[code] = candidate
-	}
-	candidates := make([]aStockMarketCandidate, 0)
-	seen := make(map[string]struct{})
-	fallbackRank := 1
-	for _, hotspot := range hotspots {
-		rule, ok := rules[hotspot.Name]
-		if !ok {
-			continue
-		}
-		for _, stock := range rule.Stocks {
-			code := normalizeAStockCode(stock.Code)
-			name := astockcode.DisplayName(code, stock.Name)
-			if !astockcode.IsShanghaiShenzhen(code) || !hasResolvedAStockRecommendationName(code, name) {
-				continue
-			}
-			if isBlockedAStockRecommendationStock(code, name) {
-				continue
-			}
-			if _, exists := seen[code]; exists {
-				continue
-			}
-			seen[code] = struct{}{}
-			candidate := aStockMarketCandidate{
-				Code:      code,
-				Name:      name,
-				Rank:      fallbackRank,
-				Keywords:  append([]string(nil), rule.Keywords...),
-				FixedPool: true,
-			}
-			fallbackRank++
-			if marketCandidate, ok := marketByCode[code]; ok {
-				candidate.TradeDate = marketCandidate.TradeDate
-				candidate.Rank = marketCandidate.Rank
-				candidate.AuctionAmount = marketCandidate.AuctionAmount
-				candidate.AuctionVolume = marketCandidate.AuctionVolume
-				if marketName := astockcode.DisplayName(code, marketCandidate.Name); hasResolvedAStockRecommendationName(code, marketName) {
-					candidate.Name = marketName
-				}
-			}
-			candidates = append(candidates, candidate)
-		}
-	}
-	return candidates
-}
-
 func aStockRecommendationHotspotSlice(hotspots []aStockHotspot) []aStockHotspot {
 	if len(hotspots) > aStockHotspotLimit {
 		return hotspots[:aStockHotspotLimit]
 	}
 	return hotspots
-}
-
-func aStockTopicRulesByName() map[string]aStockTopicRule {
-	rules := aStockTopicRules()
-	byName := make(map[string]aStockTopicRule, len(rules))
-	for _, rule := range rules {
-		byName[rule.Name] = rule
-	}
-	return byName
 }
 
 type aStockRecommendationSnapshot struct {
@@ -9233,7 +9144,7 @@ func (g *aStockHotspotSectorGate) empty() bool {
 }
 
 func (g *aStockHotspotSectorGate) Allows(hotspot aStockHotspot, candidate aStockMarketCandidate) bool {
-	if g == nil || candidate.FixedPool || !candidate.Fallback {
+	if g == nil || !candidate.Fallback {
 		return true
 	}
 	hotspotName := normalizeAStockRecommendationHotspot(hotspot.Name)
@@ -10238,7 +10149,7 @@ func scoreAStockMarketCandidatesWithSectorGate(hotspot aStockHotspot, candidates
 			weakPenalty = aStockWeakEvidencePenalty
 		}
 		keywords := aStockCandidateKeywordMatches(candidate.Name, hotspot.Keywords)
-		if (candidate.Fallback || candidate.FixedPool) && len(keywords) == 0 {
+		if candidate.Fallback && len(keywords) == 0 {
 			keywords = intersectAStockKeywords(candidate.Keywords, hotspot.Keywords)
 		}
 		if effectiveEvidence == 0 && evidenceResult.Weak == 0 && len(keywords) == 0 {
@@ -10526,16 +10437,16 @@ func aStockMatchedKeywords(item model.Item) []string {
 
 func aStockTopicRules() []aStockTopicRule {
 	return []aStockTopicRule{
-		{Name: "人工智能", Keywords: []string{"AI", "人工智能", "大模型", "算力", "AIGC", "机器人"}, Stocks: []aStockStockPick{{Code: "002230", Name: "科大讯飞"}, {Code: "603019", Name: "中科曙光"}, {Code: "601138", Name: "工业富联"}}},
-		{Name: "半导体", Keywords: []string{"半导体", "芯片", "光刻", "晶圆", "存储", "先进封装"}, Stocks: []aStockStockPick{{Code: "688981", Name: "中芯国际"}, {Code: "002371", Name: "北方华创"}, {Code: "603986", Name: "兆易创新"}}},
-		{Name: "新能源", Keywords: []string{"新能源", "锂电", "储能", "光伏", "风电", "充电桩"}, Stocks: []aStockStockPick{{Code: "300750", Name: "宁德时代"}, {Code: "300274", Name: "阳光电源"}, {Code: "601012", Name: "隆基绿能"}}},
-		{Name: "低空经济", Keywords: []string{"低空经济", "eVTOL", "无人机", "通航", "飞行汽车"}, Stocks: []aStockStockPick{{Code: "000099", Name: "中信海直"}, {Code: "002085", Name: "万丰奥威"}, {Code: "300124", Name: "汇川技术"}}},
-		{Name: "金融券商", Keywords: []string{"券商", "证券", "银行", "保险", "降准", "降息", "资本市场"}, Stocks: []aStockStockPick{{Code: "300059", Name: "东方财富"}, {Code: "600030", Name: "中信证券"}, {Code: "600036", Name: "招商银行"}}},
-		{Name: "黄金有色", Keywords: []string{"黄金", "有色", "铜", "铝", "稀土", "贵金属"}, Stocks: []aStockStockPick{{Code: "600547", Name: "山东黄金"}, {Code: "601899", Name: "紫金矿业"}, {Code: "600111", Name: "北方稀土"}}},
-		{Name: "医药生物", Keywords: []string{"医药", "创新药", "疫苗", "医疗器械", "CXO"}, Stocks: []aStockStockPick{{Code: "600276", Name: "恒瑞医药"}, {Code: "300760", Name: "迈瑞医疗"}, {Code: "603259", Name: "药明康德"}}},
-		{Name: "消费电子", Keywords: []string{"消费电子", "苹果", "华为", "手机", "MR", "AR", "VR"}, Stocks: []aStockStockPick{{Code: "002475", Name: "立讯精密"}, {Code: "000725", Name: "京东方A"}, {Code: "300433", Name: "蓝思科技"}}},
-		{Name: "房地产", Keywords: []string{"房地产", "地产", "房贷", "楼市", "保障房"}, Stocks: []aStockStockPick{{Code: "000002", Name: "万科A"}, {Code: "001979", Name: "招商蛇口"}, {Code: "600048", Name: "保利发展"}}},
-		{Name: "军工航天", Keywords: []string{"军工", "航天", "卫星", "商业航天", "航空发动机"}, Stocks: []aStockStockPick{{Code: "600760", Name: "中航沈飞"}, {Code: "600893", Name: "航发动力"}, {Code: "002179", Name: "中航光电"}}},
+		{Name: "人工智能", Keywords: []string{"AI", "人工智能", "大模型", "算力", "AIGC", "机器人"}},
+		{Name: "半导体", Keywords: []string{"半导体", "芯片", "光刻", "晶圆", "存储", "先进封装"}},
+		{Name: "新能源", Keywords: []string{"新能源", "锂电", "储能", "光伏", "风电", "充电桩"}},
+		{Name: "低空经济", Keywords: []string{"低空经济", "eVTOL", "无人机", "通航", "飞行汽车"}},
+		{Name: "金融券商", Keywords: []string{"券商", "证券", "银行", "保险", "降准", "降息", "资本市场"}},
+		{Name: "黄金有色", Keywords: []string{"黄金", "有色", "铜", "铝", "稀土", "贵金属"}},
+		{Name: "医药生物", Keywords: []string{"医药", "创新药", "疫苗", "医疗器械", "CXO"}},
+		{Name: "消费电子", Keywords: []string{"消费电子", "苹果", "华为", "手机", "MR", "AR", "VR"}},
+		{Name: "房地产", Keywords: []string{"房地产", "地产", "房贷", "楼市", "保障房"}},
+		{Name: "军工航天", Keywords: []string{"军工", "航天", "卫星", "商业航天", "航空发动机"}},
 	}
 }
 

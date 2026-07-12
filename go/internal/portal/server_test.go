@@ -2855,7 +2855,7 @@ func TestAStockPageExplainsMorningNoNews(t *testing.T) {
 	}
 }
 
-func TestAStockPageBuildsFixedPoolRecommendationsWithoutAuction(t *testing.T) {
+func TestAStockPageDoesNotBuildRecommendationsWithoutAuctionOrStockMentions(t *testing.T) {
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if handleAStockRecommendationSnapshotTestEndpoint(w, r) {
@@ -2892,9 +2892,14 @@ func TestAStockPageBuildsFixedPoolRecommendationsWithoutAuction(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"人工智能", "科大讯飞", "使用原始固定股票池", "补录集合竞价"} {
+	for _, want := range []string{"人工智能", "暂无推荐股票", "没有集合竞价候选数据", "补录集合竞价"} {
 		if !strings.Contains(body, want) {
-			t.Fatalf("expected fixed-pool recommendation without auction %q, got %s", want, body)
+			t.Fatalf("expected no-candidate recommendation explanation %q, got %s", want, body)
+		}
+	}
+	for _, notWant := range []string{"科大讯飞"} {
+		if strings.Contains(body, notWant) {
+			t.Fatalf("expected old static stock/content to be absent %q, got %s", notWant, body)
 		}
 	}
 }
@@ -3084,7 +3089,7 @@ func TestAStockPageLoadsAfternoonWindow(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"下午推荐", "09:30-13:00", `财经新闻数</span><strong>1</strong>`, "中信海直"} {
+	for _, want := range []string{"下午推荐", "09:30-13:00", `财经新闻数</span><strong>1</strong>`, "无人机龙头"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 afternoon page to contain %q, got %s", want, body)
 		}
@@ -3092,8 +3097,8 @@ func TestAStockPageLoadsAfternoonWindow(t *testing.T) {
 	if strings.Contains(body, "午间低空经济订单增加") {
 		t.Fatalf("expected A股 afternoon page not to render individual news title, got %s", body)
 	}
-	if strings.Contains(body, "<td>300777</td><td>无人机龙头</td>") {
-		t.Fatalf("expected broad market stock outside fixed pool to be absent from recommendation table, got %s", body)
+	if strings.Contains(body, "中信海直") {
+		t.Fatalf("expected static low-altitude stock to be absent from recommendation table, got %s", body)
 	}
 }
 
@@ -4783,6 +4788,20 @@ func TestAStockContextLoadsPersistedRecommendationSnapshot(t *testing.T) {
 					FundFlowFilterEnabled: true,
 				},
 			})
+		case "/api/v1/a-stock/auction":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": model.AStockAuctionListResult{
+					Date: r.URL.Query().Get("date"),
+					Items: []model.AStockAuctionAmount{{
+						TradeDate:     r.URL.Query().Get("date"),
+						Code:          "002230",
+						Name:          "科大讯飞",
+						AuctionVolume: 1000000,
+						AuctionAmount: 10000000,
+						Status:        "ok",
+					}},
+				},
+			})
 		case "/api/v1/internal/a-stock/recommendation-selections":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"data": model.AStockRecommendationSelectionUpsertResult{Inserted: 1, Total: 1},
@@ -5205,8 +5224,8 @@ func TestAStockMorningRebuildReplenishesAfterRecentFilter(t *testing.T) {
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
 	ctx := srv.loadAStockContextWithRecommendationPhasePersistenceMode("2026-06-16", "morning", 1, false, false, true, false, true, aStockRecommendationPhaseFinal, newAStockRequestCache(), false, true, aStockRecommendationRebuild)
-	if ctx.RecentFiltered != 3 || ctx.RecentReplenished != 3 || ctx.RecentReplenishShortfall {
-		t.Fatalf("expected three recent stocks to be replenished, got filtered=%d replenished=%d shortfall=%v recs=%+v", ctx.RecentFiltered, ctx.RecentReplenished, ctx.RecentReplenishShortfall, ctx.Recommendations)
+	if ctx.RecentFiltered != 3 || ctx.RecentReplenished != 1 || ctx.RecentReplenishShortfall {
+		t.Fatalf("expected recent stocks to be filtered and replenished without shortfall, got filtered=%d replenished=%d shortfall=%v recs=%+v", ctx.RecentFiltered, ctx.RecentReplenished, ctx.RecentReplenishShortfall, ctx.Recommendations)
 	}
 	if len(ctx.Recommendations) != 3 || len(savedSelections.Items) != 3 {
 		t.Fatalf("expected three replenished recommendations to be saved, ctx=%+v saved=%+v", ctx.Recommendations, savedSelections)
@@ -5219,13 +5238,13 @@ func TestAStockMorningRebuildReplenishesAfterRecentFilter(t *testing.T) {
 	}
 	for _, code := range []string{"002230", "603019", "601138"} {
 		if _, ok := gotCodes[code]; ok {
-			t.Fatalf("expected recent fixed-pool code %s to stay filtered, got %+v", code, ctx.Recommendations)
+			t.Fatalf("expected recent code %s to stay filtered, got %+v", code, ctx.Recommendations)
 		}
 	}
-	if !strings.Contains(ctx.BacktestStatus, "31日内重复过滤 3 只，递补 3 只") {
+	if !strings.Contains(ctx.BacktestStatus, "31日内重复过滤 3 只，递补 1 只") {
 		t.Fatalf("expected backtest status to mention replenishment, got %q", ctx.BacktestStatus)
 	}
-	if savedSnapshot.RecentFiltered != 3 || !strings.Contains(savedSnapshot.BacktestStatus, "递补 3 只") {
+	if savedSnapshot.RecentFiltered != 3 || !strings.Contains(savedSnapshot.BacktestStatus, "递补 1 只") {
 		t.Fatalf("expected saved snapshot to preserve replenishment status, got %+v", savedSnapshot)
 	}
 }
@@ -6458,7 +6477,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		if r.URL.Query().Get("date") != "2026-06-16" {
 			t.Fatalf("unexpected market date: %s", r.URL.RawQuery)
 		}
-		for _, code := range []string{"002230", "603019", "601138", "688981", "002371", "603986"} {
+		for _, code := range []string{"002230", "688981"} {
 			if !strings.Contains(r.URL.Query().Get("codes"), code) {
 				t.Fatalf("expected market query to include %s, got %s", code, r.URL.RawQuery)
 			}
@@ -8428,16 +8447,16 @@ func TestAStockRecommendationsUseTopThreeHotspotIndustries(t *testing.T) {
 		{Name: "新能源", Keywords: []string{"储能"}, Score: 25, Evidence: 1},
 		{Name: "医药生物", Keywords: []string{"医药"}, Score: 19, Evidence: 1},
 	}, []aStockMarketCandidate{
-		{Code: "100001", Name: "黄金一号", Rank: 1, AuctionAmount: 9000000},
-		{Code: "100002", Name: "黄金二号", Rank: 2, AuctionAmount: 8000000},
-		{Code: "100003", Name: "黄金三号", Rank: 3, AuctionAmount: 7000000},
-		{Code: "100004", Name: "华为手机一号", Rank: 4, AuctionAmount: 6000000},
-		{Code: "100005", Name: "华为手机二号", Rank: 5, AuctionAmount: 5000000},
-		{Code: "100006", Name: "华为手机三号", Rank: 6, AuctionAmount: 4000000},
-		{Code: "100007", Name: "储能一号", Rank: 7, AuctionAmount: 3000000},
-		{Code: "100008", Name: "储能二号", Rank: 8, AuctionAmount: 2000000},
-		{Code: "100009", Name: "储能三号", Rank: 9, AuctionAmount: 1000000},
-		{Code: "100010", Name: "医药一号", Rank: 10, AuctionAmount: 900000},
+		{Code: "600547", Name: "山东黄金", Rank: 1, AuctionAmount: 9000000},
+		{Code: "601899", Name: "紫金黄金", Rank: 2, AuctionAmount: 8000000},
+		{Code: "600111", Name: "黄金稀土", Rank: 3, AuctionAmount: 7000000},
+		{Code: "002475", Name: "华为精密", Rank: 4, AuctionAmount: 6000000},
+		{Code: "000725", Name: "华为显示", Rank: 5, AuctionAmount: 5000000},
+		{Code: "300433", Name: "华为科技", Rank: 6, AuctionAmount: 4000000},
+		{Code: "300750", Name: "储能时代", Rank: 7, AuctionAmount: 3000000},
+		{Code: "300274", Name: "储能电源", Rank: 8, AuctionAmount: 2000000},
+		{Code: "601012", Name: "储能绿能", Rank: 9, AuctionAmount: 1000000},
+		{Code: "600276", Name: "医药一号", Rank: 10, AuctionAmount: 900000},
 	})
 
 	if len(recommendations) != 9 {
@@ -8460,11 +8479,6 @@ func TestAStockRecommendationsUseTopThreeHotspotIndustries(t *testing.T) {
 			t.Fatalf("expected recommendations to include hotspot %q, got %+v", want, recommendations)
 		}
 	}
-	for _, rec := range recommendations {
-		if strings.HasPrefix(rec.Code, "1000") {
-			t.Fatalf("expected recommendations to ignore broad market candidates outside the fixed pool, got %+v", recommendations)
-		}
-	}
 	wantCodes := map[string]struct{}{
 		"600547": {},
 		"601899": {},
@@ -8478,7 +8492,7 @@ func TestAStockRecommendationsUseTopThreeHotspotIndustries(t *testing.T) {
 	}
 	for _, rec := range recommendations {
 		if _, ok := wantCodes[rec.Code]; !ok {
-			t.Fatalf("expected fixed-pool recommendation, got %+v from %+v", rec, recommendations)
+			t.Fatalf("expected matched market candidate recommendation, got %+v from %+v", rec, recommendations)
 		}
 	}
 }
@@ -8509,9 +8523,11 @@ func TestAStockHotspotsApplyNegativeNewsPenalty(t *testing.T) {
 		t.Fatal("expected positive news text not to trigger negative penalty")
 	}
 
-	recommendations := buildAStockRecommendationsWithLimit([]aStockHotspot{semiconductor}, nil, 3, 3)
+	recommendations := buildAStockRecommendationsWithLimit([]aStockHotspot{semiconductor}, []aStockMarketCandidate{
+		{Code: "688981", Name: "中芯半导体", Rank: 1, AuctionAmount: 9000000},
+	}, 3, 3)
 	if len(recommendations) == 0 {
-		t.Fatalf("expected semiconductor fixed-pool recommendations, got %+v", recommendations)
+		t.Fatalf("expected semiconductor matched recommendation, got %+v", recommendations)
 	}
 	if !strings.Contains(recommendations[0].Reason, "负面新闻 1 条，板块减分 30") {
 		t.Fatalf("expected recommendation reason to include negative news penalty, got %+v", recommendations[0])
@@ -8898,7 +8914,7 @@ func TestAStockHotspotsWithTopStocksFillsNinePerHotspot(t *testing.T) {
 	}
 }
 
-func TestAStockRecommendationsUseFixedPoolWhenAuctionCandidatesEmpty(t *testing.T) {
+func TestAStockRecommendationsUseNewsMentionedStocksWhenAuctionCandidatesEmpty(t *testing.T) {
 	recommendations := buildAStockRecommendations([]aStockHotspot{
 		{
 			Name:     "黄金有色",
@@ -8919,30 +8935,23 @@ func TestAStockRecommendationsUseFixedPoolWhenAuctionCandidatesEmpty(t *testing.
 		},
 	}, nil)
 
-	if len(recommendations) != 6 {
-		t.Fatalf("expected fixed-pool recommendations when auction candidates are empty, got %+v", recommendations)
+	if len(recommendations) != 2 {
+		t.Fatalf("expected news-mentioned recommendations when auction candidates are empty, got %+v", recommendations)
 	}
 	got := map[string]string{}
 	for _, rec := range recommendations {
 		got[rec.Code] = rec.Name
 	}
 	for code, name := range map[string]string{
-		"600547": "山东黄金",
-		"601899": "紫金矿业",
-		"600111": "北方稀土",
-		"002230": "科大讯飞",
-		"603019": "中科曙光",
-		"601138": "工业富联",
+		"601068": "中铝国际",
+		"600399": "抚顺特钢",
 	} {
 		if got[code] != name {
-			t.Fatalf("expected fixed-pool recommendation %s:%s, got %+v", code, name, recommendations)
+			t.Fatalf("expected news-mentioned recommendation %s:%s, got %+v", code, name, recommendations)
 		}
 	}
-	if _, ok := got["600399"]; ok {
-		t.Fatalf("expected explicit news stock outside fixed pool to be excluded, got %+v", recommendations)
-	}
-	if !strings.Contains(recommendations[0].Reason, "原始固定股票池") {
-		t.Fatalf("expected reason to explain fixed-pool fallback, got %q", recommendations[0].Reason)
+	if !strings.Contains(recommendations[0].Reason, "实时新闻明确提及股票") {
+		t.Fatalf("expected reason to explain news-mentioned stock, got %q", recommendations[0].Reason)
 	}
 }
 
@@ -9024,11 +9033,11 @@ func TestAStockRecommendationsAllowBankStocksButBlockEastmoney(t *testing.T) {
 		{Code: "000001", Name: "平安银行", Rank: 4, AuctionAmount: 6000000},
 	})
 
-	if len(recommendations) != 2 {
+	if len(recommendations) != 3 {
 		t.Fatalf("expected bank stocks to be allowed and 东方财富 to be blocked, got %+v", recommendations)
 	}
 	got := aStockTestRecommendationsByCode(recommendations)
-	for _, wantCode := range []string{"600036", "600030"} {
+	for _, wantCode := range []string{"600036", "600030", "000001"} {
 		if _, ok := got[wantCode]; !ok {
 			t.Fatalf("expected allowed finance recommendation %s, got %+v", wantCode, recommendations)
 		}
@@ -10029,13 +10038,13 @@ func TestAStockSnapshotRecommendationsUseMorningFinalWindow(t *testing.T) {
 
 	recommendations := buildAStockSnapshotRecommendations("2026-06-18", "morning", items, candidates)
 
-	if len(recommendations) != 3 {
+	if len(recommendations) != 1 {
 		t.Fatalf("expected morning final to use one 09:27 snapshot, got %+v", recommendations)
 	}
 	codes := map[string]struct{}{}
 	for _, rec := range recommendations {
 		if _, exists := codes[rec.Code]; exists {
-			t.Fatalf("expected duplicate fixed-pool codes to be deduplicated, got %+v", recommendations)
+			t.Fatalf("expected duplicate news-mentioned codes to be deduplicated, got %+v", recommendations)
 		}
 		codes[rec.Code] = struct{}{}
 	}
@@ -10072,7 +10081,7 @@ func TestAStockSnapshotRecommendationsUsePreopenWindows(t *testing.T) {
 	}
 
 	morning := buildAStockSnapshotRecommendationsWithPhase("2026-06-18", "morning", "preopen", morningItems, candidates)
-	if len(morning) != 3 || morning[0].Code != "002230" || !strings.Contains(morning[0].Reason, "生成点 09:27") {
+	if len(morning) != 1 || morning[0].Code != "002230" || !strings.Contains(morning[0].Reason, "生成点 09:27") {
 		t.Fatalf("expected morning preopen recommendations to stop before 09:27, got %+v", morning)
 	}
 	for _, rec := range morning {
@@ -10081,7 +10090,7 @@ func TestAStockSnapshotRecommendationsUsePreopenWindows(t *testing.T) {
 		}
 	}
 	afternoon := buildAStockSnapshotRecommendationsWithPhase("2026-06-18", "afternoon", "preopen", afternoonItems, candidates)
-	if len(afternoon) != 3 || afternoon[0].Code != "002230" || !strings.Contains(afternoon[0].Reason, "生成点 12:57") {
+	if len(afternoon) != 1 || afternoon[0].Code != "300024" || !strings.Contains(afternoon[0].Reason, "生成点 12:57") {
 		t.Fatalf("expected afternoon preopen recommendations to stop before 12:57, got %+v", afternoon)
 	}
 	for _, rec := range afternoon {
@@ -10137,8 +10146,8 @@ func TestAStockSnapshotRecommendationsRespectHotspotLimitAcrossSnapshots(t *test
 
 	recommendations := buildAStockSnapshotRecommendations("2026-06-18", "afternoon", items, candidates)
 
-	if len(recommendations) != 9 {
-		t.Fatalf("expected afternoon snapshot merge to keep fixed pools for max 3 hotspots, got %+v", recommendations)
+	if len(recommendations) != 3 {
+		t.Fatalf("expected afternoon snapshot merge to keep news-mentioned stocks for max 3 hotspots, got %+v", recommendations)
 	}
 	hotspots := make(map[string]struct{})
 	for _, rec := range recommendations {
@@ -10196,7 +10205,7 @@ func TestAStockAfternoonRecommendationsRespectDailyHotspotQuota(t *testing.T) {
 	}
 }
 
-func TestAStockRecommendationsExcludeFullMarketCandidateOutsideFixedPool(t *testing.T) {
+func TestAStockRecommendationsIncludeMatchedFullMarketCandidate(t *testing.T) {
 	recommendations := buildAStockRecommendations([]aStockHotspot{
 		{
 			Name:     "金融券商",
@@ -10211,21 +10220,15 @@ func TestAStockRecommendationsExcludeFullMarketCandidateOutsideFixedPool(t *test
 		{Code: "601688", Name: "华泰证券", Rank: 320, AuctionAmount: 1200000, AuctionVolume: 50000},
 	})
 
-	if len(recommendations) != 2 {
-		t.Fatalf("expected fixed finance stock pool to exclude 东方财富 and allow banks, got %+v", recommendations)
+	if len(recommendations) != 1 {
+		t.Fatalf("expected matched full-market candidate recommendation, got %+v", recommendations)
 	}
 	got := map[string]string{}
 	for _, rec := range recommendations {
 		got[rec.Code] = rec.Name
 	}
-	if _, ok := got["601688"]; ok {
-		t.Fatalf("expected non-fixed full-market candidate to be excluded, got %+v", recommendations)
-	}
-	if got["600030"] != "中信证券" {
-		t.Fatalf("expected non-bank fixed finance stock 中信证券, got %+v", recommendations)
-	}
-	if got["600036"] != "招商银行" {
-		t.Fatalf("expected bank fixed finance stock 招商银行, got %+v", recommendations)
+	if got["601688"] != "华泰证券" {
+		t.Fatalf("expected matched full-market stock 华泰证券, got %+v", recommendations)
 	}
 	if _, ok := got["300059"]; ok {
 		t.Fatalf("expected 东方财富 to remain excluded, got %+v", recommendations)
@@ -10286,11 +10289,11 @@ func TestAStockContextFallsBackToLatestAuctionDictionary(t *testing.T) {
 	srv := NewServer(config.Config{ContentURL: content.URL, SchedulerURL: scheduler.URL})
 	ctx := srv.loadAStockContext("2026-06-17", "morning", 1, true)
 
-	if len(ctx.Recommendations) != 2 {
+	if len(ctx.Recommendations) != 1 {
 		t.Fatalf("expected latest auction dictionary to produce recommendation, got %+v empty=%q", ctx.Recommendations, ctx.EmptyReason)
 	}
 	got := aStockTestRecommendationsByCode(ctx.Recommendations)
-	if got["600036"].Name != "招商银行" || got["600030"].Name != "中信证券" {
+	if got["600030"].Name != "中信证券" {
 		t.Fatalf("unexpected latest dictionary recommendations: %+v", ctx.Recommendations)
 	}
 	if len(auctionQueries) < 2 || !strings.Contains(auctionQueries[0], "date=2026-06-17") || strings.Contains(auctionQueries[1], "date=") {
