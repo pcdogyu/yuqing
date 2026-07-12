@@ -7260,7 +7260,7 @@ func TestAStockOverviewBacktestStatusIncludesFilterReasons(t *testing.T) {
 		SameDayMorningFiltered: 1,
 		LimitUpFiltered:        3,
 	})
-	for _, want := range []string{"已回测 3/3", "31日内重复过滤股票 2", "过滤上午同股票/热点名额 1", "涨停过滤股票 3"} {
+	for _, want := range []string{"已回测 3/3", "31日内重复过滤股票 2", "过滤上午同股票/热点/日内名额 1", "涨停过滤股票 3"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected overview status to contain %q, got %q", want, got)
 		}
@@ -8507,8 +8507,11 @@ func TestAStockRecommendationsUseTopThreeHotspotIndustries(t *testing.T) {
 		{Code: "600276", Name: "医药一号", Rank: 10, AuctionAmount: 900000},
 	})
 
-	if len(recommendations) != 9 {
-		t.Fatalf("expected 9 recommendations from top 3 industries, got %d", len(recommendations))
+	if len(recommendations) != aStockDailyRecommendationLimit {
+		t.Fatalf("expected %d recommendations by default, got %d", aStockDailyRecommendationLimit, len(recommendations))
+	}
+	if recommendations[0].Code != "600547" || recommendations[len(recommendations)-1].Code != "000725" {
+		t.Fatalf("expected default daily cap to keep first five ranked candidates, got %+v", recommendations)
 	}
 	for _, rec := range recommendations {
 		if rec.Hotspot == "医药生物" {
@@ -8524,6 +8527,9 @@ func TestAStockRecommendationsUseTopThreeHotspotIndustries(t *testing.T) {
 			}
 		}
 		if !found {
+			if len(recommendations) == aStockDailyRecommendationLimit {
+				continue
+			}
 			t.Fatalf("expected recommendations to include hotspot %q, got %+v", want, recommendations)
 		}
 	}
@@ -8533,10 +8539,6 @@ func TestAStockRecommendationsUseTopThreeHotspotIndustries(t *testing.T) {
 		"600111": {},
 		"002475": {},
 		"000725": {},
-		"300433": {},
-		"300750": {},
-		"300274": {},
-		"601012": {},
 	}
 	for _, rec := range recommendations {
 		if _, ok := wantCodes[rec.Code]; !ok {
@@ -8995,6 +8997,14 @@ func TestAStockT1ShadowFiltersWeakEvidenceAndLimitsByHotspot(t *testing.T) {
 		if count > aStockT1ShadowStocksPerHotspot {
 			t.Fatalf("expected hotspot %s to cap at %d, got %d in %+v", hotspot, aStockT1ShadowStocksPerHotspot, count, limited)
 		}
+	}
+	afternoon, skipped := limitAStockRecommendationsByCount(limited, remainingAStockDailyRecommendationLimit(4))
+	if skipped != aStockT1ShadowRecommendationLimit-1 || len(afternoon) != 1 {
+		t.Fatalf("expected shadow afternoon to leave one slot after four morning recommendations, skipped=%d got %+v", skipped, afternoon)
+	}
+	afternoon, skipped = limitAStockRecommendationsByCount(limited, remainingAStockDailyRecommendationLimit(5))
+	if skipped != aStockT1ShadowRecommendationLimit || len(afternoon) != 0 {
+		t.Fatalf("expected shadow afternoon to stop after five morning recommendations, skipped=%d got %+v", skipped, afternoon)
 	}
 }
 
@@ -10286,6 +10296,64 @@ func TestAStockAfternoonRecommendationsRespectDailyHotspotQuota(t *testing.T) {
 		if filtered[i].Code != want || filtered[i].Rank != i+1 {
 			t.Fatalf("expected filtered recommendation %d to be %s with rerank, got %+v", i+1, want, filtered)
 		}
+	}
+}
+
+func TestAStockAfternoonRecommendationsRespectDailyTotalLimit(t *testing.T) {
+	afternoon := []aStockRecommendation{
+		{Rank: 1, Hotspot: "AI", Code: "300001", Name: "Stock A", MarketScore: 120},
+		{Rank: 2, Hotspot: "AI", Code: "300002", Name: "Stock B", MarketScore: 110},
+		{Rank: 3, Hotspot: "Chips", Code: "300003", Name: "Stock C", MarketScore: 100},
+	}
+
+	filtered, skipped := limitAStockRecommendationsByCount(afternoon, remainingAStockDailyRecommendationLimit(4))
+	if skipped != 2 || len(filtered) != 1 || filtered[0].Code != "300001" {
+		t.Fatalf("expected morning 4 recommendations to leave one afternoon slot, skipped=%d filtered=%+v", skipped, filtered)
+	}
+	filtered, skipped = limitAStockRecommendationsByCount(afternoon, remainingAStockDailyRecommendationLimit(5))
+	if skipped != 3 || len(filtered) != 0 {
+		t.Fatalf("expected morning 5 recommendations to block afternoon slots, skipped=%d filtered=%+v", skipped, filtered)
+	}
+}
+
+func TestAStockAfternoonSameDayCapsUsePersistedMorningDailyTotal(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/a-stock/recommendation-selections":
+			if r.URL.Query().Get("date") == "2026-07-03" && r.URL.Query().Get("period") == "morning" {
+				writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{
+					Found: true,
+					Items: []model.AStockRecommendationSelection{
+						{Rank: 1, Code: "600001", Name: "Morning A", Hotspot: "One"},
+						{Rank: 2, Code: "600002", Name: "Morning B", Hotspot: "Two"},
+						{Rank: 3, Code: "600003", Name: "Morning C", Hotspot: "Three"},
+						{Rank: 4, Code: "600004", Name: "Morning D", Hotspot: "Four"},
+					},
+				})
+				return
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{Found: false})
+		case "/api/v1/a-stock/recommendations":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
+		default:
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	ctx := aStockContext{
+		Date:   "2026-07-03",
+		Period: "afternoon",
+		Recommendations: []aStockRecommendation{
+			{Rank: 1, Hotspot: "AI", Code: "300001", Name: "Stock A", MarketScore: 120},
+			{Rank: 2, Hotspot: "Chips", Code: "300002", Name: "Stock B", MarketScore: 110},
+			{Rank: 3, Hotspot: "Robotics", Code: "300003", Name: "Stock C", MarketScore: 100},
+		},
+	}
+	NewServer(config.Config{ContentURL: content.URL}).applyAStockAfternoonSameDayCapsWithCache(&ctx, nil, newAStockRequestCache())
+	if len(ctx.Recommendations) != 1 || ctx.Recommendations[0].Code != "300001" || ctx.SameDayMorningFiltered != 2 {
+		t.Fatalf("expected morning four recommendations to leave one afternoon slot, got filtered=%d recommendations=%+v", ctx.SameDayMorningFiltered, ctx.Recommendations)
 	}
 }
 
