@@ -482,7 +482,10 @@ func renderStockResearchFilters(b *strings.Builder, ctx model.StockResearchListR
 	stockResearchHiddenFields(b, ctx)
 	b.WriteString(`<input type="hidden" name="page" value="`)
 	b.WriteString(fmt.Sprintf("%d", max(ctx.Page, 1)))
-	b.WriteString(`"><button type="submit">补抓当前页原文入库</button></form></div></section>`)
+	b.WriteString(`"><button type="submit">补抓当前页原文入库</button></form>`)
+	b.WriteString(`<form method="post" class="research-action-form"><input type="hidden" name="action" value="repair_sina_source_7d">`)
+	stockResearchHiddenFields(b, ctx)
+	b.WriteString(`<button type="submit">修复近7日新浪原文</button></form></div></section>`)
 }
 
 type stockResearchTableOptions struct {
@@ -682,6 +685,8 @@ func (s *Server) handleStockResearchAction(w http.ResponseWriter, r *http.Reques
 			force := strings.TrimSpace(r.FormValue("force")) == "1"
 			message = s.fetchStockResearchSourceOne(r.Context(), id, force)
 		}
+	case "repair_sina_source_7d":
+		message = s.triggerSinaStockResearchSourceRepair()
 	}
 	if !preservePage {
 		filter.Page = 1
@@ -834,6 +839,37 @@ func (s *Server) triggerStockResearchBackfill(filter model.StockResearchFilter) 
 		return "研报调研回补失败：" + stockResearchSchedulerError(resp.Body(), resp.String())
 	}
 	return "研报调研近一年回补任务已触发，请稍后刷新查看。"
+}
+
+func (s *Server) triggerSinaStockResearchSourceRepair() string {
+	query := url.Values{}
+	query.Set("source", "sina_finance_report")
+	query.Set("force", "true")
+	resp, err := s.client.R().
+		SetHeader("X-Service-Token", s.cfg.ServiceToken).
+		Post(s.cfg.SchedulerURL + "/api/v1/scheduler/stock-research/source/repair?" + query.Encode())
+	if err != nil {
+		return "新浪研报原文修复失败：" + err.Error()
+	}
+	if !resp.IsSuccess() {
+		return "新浪研报原文修复失败：" + stockResearchSchedulerError(resp.Body(), resp.String())
+	}
+	var envelope struct {
+		Data struct {
+			Result struct {
+				Total    int  `json:"total"`
+				Repaired int  `json:"repaired"`
+				Skipped  int  `json:"skipped"`
+				Failed   int  `json:"failed"`
+				DryRun   bool `json:"dry_run"`
+			} `json:"result"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(resp.Body(), &envelope); err != nil {
+		return "新浪近7日研报原文修复任务已触发，请稍后刷新查看。"
+	}
+	result := envelope.Data.Result
+	return fmt.Sprintf("新浪近7日研报原文修复完成：共 %d 条，修复 %d 条，跳过 %d 条，失败 %d 条。", result.Total, result.Repaired, result.Skipped, result.Failed)
 }
 
 func (s *Server) triggerInvestorRelationsBackfill(filter model.StockResearchFilter) string {

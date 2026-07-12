@@ -49,7 +49,7 @@ class StockResearchPdfDownloader(
         }
 
         val errors = mutableListOf<String>()
-        if (item.id > 0) {
+        if (item.id > 0 && item.pdfFilePath.trim().isNotBlank()) {
             runCatching {
                 val requestBuilder = Request.Builder()
                     .url(stockResearchBackendPdfUrl(contentBaseUrl, item.id))

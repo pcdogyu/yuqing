@@ -89,6 +89,7 @@ func FetchSource(ctx context.Context, rawURL string, opts FetchOptions) model.St
 		return model.StockResearchSourceUpdate{SourceFetchStatus: SourceStatusFailed, SourceFetchError: err.Error(), SourceFetchedAt: now}
 	}
 	text := ExtractHTMLSourceText(string(decoded))
+	text = CleanSourceTextForURL(rawURL, text)
 	if text == "" {
 		return model.StockResearchSourceUpdate{SourceFetchStatus: SourceStatusFailed, SourceFetchError: "未提取到正文", SourceFetchedAt: now}
 	}
@@ -173,6 +174,72 @@ func FormatSourceBlocks(blocks []string) string {
 		}
 	}
 	return blankLinePattern.ReplaceAllString(strings.TrimSpace(strings.Join(out, "\n\n")), "\n\n")
+}
+
+func CleanSourceTextForURL(rawURL string, text string) string {
+	if IsSinaFinanceReportURL(rawURL) {
+		return CleanSinaFinanceReportText(text)
+	}
+	return NormalizePlainText(text)
+}
+
+func IsSinaFinanceReportURL(rawURL string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	path := strings.ToLower(parsed.EscapedPath())
+	return host == "stock.finance.sina.com.cn" &&
+		strings.Contains(path, "/stock/go.php/vreport_show/")
+}
+
+func CleanSinaFinanceReportText(text string) string {
+	blocks := sourceTextBlocks(text)
+	for len(blocks) > 0 && sinaFinanceReportLeadingNoise[blocks[0]] {
+		blocks = blocks[1:]
+	}
+	for i, block := range blocks {
+		if block == "数据推荐" {
+			blocks = blocks[:i]
+			break
+		}
+	}
+	return FormatSourceBlocks(blocks)
+}
+
+func sourceTextBlocks(text string) []string {
+	normalized := NormalizePlainText(text)
+	if normalized == "" {
+		return nil
+	}
+	rawBlocks := strings.Split(normalized, "\n\n")
+	blocks := make([]string, 0, len(rawBlocks))
+	for _, block := range rawBlocks {
+		if cleaned := NormalizePlainText(block); cleaned != "" {
+			blocks = append(blocks, cleaned)
+		}
+	}
+	return blocks
+}
+
+var sinaFinanceReportLeadingNoise = map[string]bool{
+	"研究报告":  true,
+	"最新滚动":  true,
+	"主力动向":  true,
+	"个股评级":  true,
+	"公司研究":  true,
+	"行业研究":  true,
+	"投资策略":  true,
+	"宏观研究":  true,
+	"金麒麟研报": true,
+	"更多":    true,
+	"晨报":    true,
+	"创业板":   true,
+	"基金":    true,
+	"债券":    true,
+	"金融工程":  true,
+	"个股点评":  true,
 }
 
 func NormalizePlainText(raw string) string {

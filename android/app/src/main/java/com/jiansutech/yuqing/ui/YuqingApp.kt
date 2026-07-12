@@ -1147,6 +1147,7 @@ private fun StockResearchPdfSection(
     Card {
         Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("PDF", fontWeight = FontWeight.SemiBold)
+            val hasDownloadablePdf = stockResearchHasDownloadablePdf(item)
             val status = listOf(
                 item.pdfStatus.trim(),
                 item.pdfFetchedAt.trim().takeIf { it.isNotBlank() }?.let { "抓取 $it" }.orEmpty(),
@@ -1166,14 +1167,20 @@ private fun StockResearchPdfSection(
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Button(
                     onClick = onDownloadPdf,
-                    enabled = !pdfState.loading && !pdfState.hasLocalFile,
+                    enabled = !pdfState.loading && !pdfState.hasLocalFile && hasDownloadablePdf,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     if (pdfState.loading) {
                         CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                         Spacer(Modifier.width(6.dp))
                     }
-                    Text(if (pdfState.hasLocalFile) "已下载" else "下载PDF")
+                    Text(
+                        when {
+                            pdfState.hasLocalFile -> "已下载"
+                            hasDownloadablePdf -> "下载PDF"
+                            else -> "暂无PDF"
+                        },
+                    )
                 }
                 if (pdfState.hasLocalFile) {
                     Row(
@@ -1197,7 +1204,15 @@ private fun StockResearchPdfSection(
                     localPath = pdfState.localPath,
                 )
             } else {
-                Text("下载后可在本页预览，并可离线打开。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    if (hasDownloadablePdf) {
+                        "下载后可在本页预览，并可离线打开。"
+                    } else {
+                        "当前研报暂无可下载PDF，可打开原文查看。"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }

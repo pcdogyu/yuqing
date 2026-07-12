@@ -314,6 +314,13 @@ class ArticleListFallbackTest {
     }
 
     @Test
+    fun stockResearchHasDownloadablePdfRequiresStoredPathOrExternalUrl() {
+        assertEquals(false, stockResearchHasDownloadablePdf(StockResearch(id = 4580)))
+        assertEquals(true, stockResearchHasDownloadablePdf(StockResearch(pdfFilePath = "data/report.pdf")))
+        assertEquals(true, stockResearchHasDownloadablePdf(StockResearch(pdfUrl = "https://example.com/report.pdf")))
+    }
+
+    @Test
     fun stockResearchTotalPagesRoundsUpAndHandlesEmptyTotal() {
         assertEquals(1, stockResearchTotalPages(total = 0, pageSize = 25))
         assertEquals(1, stockResearchTotalPages(total = 25, pageSize = 25))

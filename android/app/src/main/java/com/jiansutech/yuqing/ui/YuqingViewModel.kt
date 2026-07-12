@@ -78,6 +78,9 @@ data class StockResearchPdfState(
     val hasLocalFile: Boolean get() = localPath.isNotBlank() && localUri.isNotBlank()
 }
 
+internal fun stockResearchHasDownloadablePdf(item: StockResearch): Boolean =
+    item.pdfFilePath.trim().isNotBlank() || item.pdfUrl.trim().isNotBlank()
+
 private data class ArticleActionState(
     val readArticleIds: Set<Long>,
     val inactiveArticleIds: Set<Long>,
@@ -961,6 +964,17 @@ class YuqingViewModel(
         if (item.id <= 0) {
             _uiState.update {
                 it.copy(stockResearchPdf = it.stockResearchPdf.copy(error = "研报ID无效，无法下载PDF"))
+            }
+            return
+        }
+        if (!stockResearchHasDownloadablePdf(item)) {
+            _uiState.update {
+                it.copy(
+                    stockResearchPdf = StockResearchPdfState(
+                        itemId = item.id,
+                        error = "当前研报暂无可下载PDF，可打开原文查看",
+                    ),
+                )
             }
             return
         }

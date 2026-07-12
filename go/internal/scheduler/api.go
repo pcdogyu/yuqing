@@ -25,6 +25,7 @@ func (w *Worker) Router() http.Handler {
 	r.Get("/api/v1/scheduler/jobs", w.handleListJobs)
 	r.Post("/api/v1/scheduler/jobs/{name}/run", w.handleRunJob)
 	r.Post("/api/v1/scheduler/stock-research/backfill", w.handleRunStockResearchBackfill)
+	r.Post("/api/v1/scheduler/stock-research/source/repair", w.handleRunStockResearchSourceRepair)
 	r.Post("/api/v1/scheduler/stock-research/pdf/parse", w.handleRunStockResearchPDFParse)
 	r.Post("/api/v1/scheduler/investor-relations/backfill", w.handleRunInvestorRelationsBackfill)
 	r.Post("/api/v1/scheduler/a-stock/auction/latest", w.handleRunAStockAuctionLatest)
@@ -117,6 +118,35 @@ func (w *Worker) handleRunStockResearchBackfill(wr http.ResponseWriter, r *http.
 		return
 	}
 	apiutil.WriteJSON(wr, http.StatusOK, "ok", map[string]string{"status": "triggered"})
+}
+
+func (w *Worker) handleRunStockResearchSourceRepair(wr http.ResponseWriter, r *http.Request) {
+	if strings.TrimSpace(r.Header.Get("X-Service-Token")) != strings.TrimSpace(w.cfg.ServiceToken) {
+		apiutil.WriteJSON(wr, http.StatusUnauthorized, "unauthorized", nil)
+		return
+	}
+	opts := stockResearchSourceRepairOptions{
+		Source: strings.TrimSpace(r.URL.Query().Get("source")),
+		Start:  strings.TrimSpace(r.URL.Query().Get("start")),
+		End:    strings.TrimSpace(r.URL.Query().Get("end")),
+		DryRun: parseBoolQuery(r, "dry_run"),
+		Force:  parseBoolQuery(r, "force"),
+	}
+	startedAt := time.Now().UTC()
+	result, err := w.runStockResearchSourceRepair(r.Context(), opts)
+	finishedAt := time.Now().UTC()
+	status := "success"
+	message := fmt.Sprintf("stock research source repair completed: total=%d repaired=%d skipped=%d failed=%d dry_run=%t", result.Total, result.Repaired, result.Skipped, result.Failed, result.DryRun)
+	if err != nil {
+		status = "failed"
+		message = err.Error()
+	}
+	_ = w.recordTaskRun(r.Context(), "stock-research-source-repair", status, message, startedAt, &finishedAt)
+	if err != nil {
+		apiutil.WriteJSON(wr, http.StatusInternalServerError, err.Error(), result)
+		return
+	}
+	apiutil.WriteJSON(wr, http.StatusOK, "ok", map[string]any{"status": "triggered", "result": result})
 }
 
 func (w *Worker) handleRunStockResearchPDFParse(wr http.ResponseWriter, r *http.Request) {
