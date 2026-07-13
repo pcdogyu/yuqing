@@ -248,7 +248,7 @@ func (w *Worker) runAStockAuctionLatestTask(ctx context.Context, startedAt time.
 	result, err := w.runAStockAuctionLatest(ctx)
 	finishedAt := time.Now().UTC()
 	status := "success"
-	message := fmt.Sprintf("a-stock auction latest completed: date=%s total=%d ok=%d", result.Date, result.Total, result.OK)
+	message := fmt.Sprintf("a-stock auction latest completed: date=%s capture_slot=%s total=%d ok=%d", result.Date, result.CaptureSlot, result.Total, result.OK)
 	if err != nil {
 		status = "failed"
 		message = err.Error()

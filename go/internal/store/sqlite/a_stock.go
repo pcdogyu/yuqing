@@ -12,10 +12,22 @@ import (
 
 var aStockAuctionSHSZFilterSQL = astockcode.SQLWhere()
 
+const (
+	aStockAuctionCaptureSlot0925 = "0925"
+	aStockAuctionCaptureSlot0930 = "0930"
+)
+
 func (s *Store) UpsertAStockAuctionAmounts(ctx context.Context, tradeDate string, items []model.AStockAuctionAmount, replace bool) (model.AStockAuctionUpsertResult, error) {
 	tradeDate = strings.TrimSpace(tradeDate)
 	items = normalizeAStockAuctionSnapshotUnits(items)
-	result := model.AStockAuctionUpsertResult{Date: tradeDate, Total: len(items)}
+	defaultCaptureSlot := aStockAuctionCaptureSlot0930
+	for _, item := range items {
+		if slot := normalizeAStockAuctionCaptureSlot(item.CaptureSlot); slot != "" {
+			defaultCaptureSlot = slot
+			break
+		}
+	}
+	result := model.AStockAuctionUpsertResult{Date: tradeDate, CaptureSlot: defaultCaptureSlot, Total: len(items)}
 	if tradeDate == "" {
 		for _, item := range items {
 			if strings.TrimSpace(item.TradeDate) != "" {
@@ -36,26 +48,31 @@ func (s *Store) UpsertAStockAuctionAmounts(ctx context.Context, tradeDate string
 	}()
 
 	if replace {
-		replaceDates := map[string]struct{}{}
+		replaceKeys := map[string]string{}
 		if tradeDate != "" {
-			replaceDates[tradeDate] = struct{}{}
+			replaceKeys[tradeDate+"|"+defaultCaptureSlot] = defaultCaptureSlot
 		}
 		for _, item := range items {
 			if date := strings.TrimSpace(item.TradeDate); date != "" {
-				replaceDates[date] = struct{}{}
+				slot := normalizeAStockAuctionCaptureSlot(item.CaptureSlot)
+				if slot == "" {
+					slot = defaultCaptureSlot
+				}
+				replaceKeys[date+"|"+slot] = slot
 			}
 		}
-		for date := range replaceDates {
-			if _, err = tx.ExecContext(ctx, `DELETE FROM a_stock_auction_amounts WHERE trade_date = ?`, date); err != nil {
+		for key, slot := range replaceKeys {
+			date := strings.SplitN(key, "|", 2)[0]
+			if _, err = tx.ExecContext(ctx, `DELETE FROM a_stock_auction_amounts WHERE trade_date = ? AND capture_slot = ?`, date, slot); err != nil {
 				return result, err
 			}
 		}
 	}
 
 	stmt, err := tx.PrepareContext(ctx, `
-INSERT INTO a_stock_auction_amounts (trade_date, code, name, auction_price, auction_volume, auction_amount, source, status, fetched_at, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(trade_date, code) DO UPDATE SET
+INSERT INTO a_stock_auction_amounts (trade_date, capture_slot, code, name, auction_price, auction_volume, auction_amount, source, status, fetched_at, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(trade_date, capture_slot, code) DO UPDATE SET
 	name = excluded.name,
 	auction_price = excluded.auction_price,
 	auction_volume = excluded.auction_volume,
@@ -83,6 +100,10 @@ ON CONFLICT(trade_date, code) DO UPDATE SET
 	now := time.Now().UTC()
 	for _, item := range items {
 		date := nonEmpty(strings.TrimSpace(item.TradeDate), tradeDate)
+		captureSlot := normalizeAStockAuctionCaptureSlot(item.CaptureSlot)
+		if captureSlot == "" {
+			captureSlot = defaultCaptureSlot
+		}
 		code := astockcode.Normalize(item.Code)
 		name := astockcode.DisplayName(code, item.Name)
 		if resolved := astockcode.DisplayName(code, resolvedNames[code]); astockcode.HasResolvedName(code, resolved) {
@@ -93,7 +114,7 @@ ON CONFLICT(trade_date, code) DO UPDATE SET
 		}
 		existed := false
 		if !replace {
-			if scanErr := tx.QueryRowContext(ctx, `SELECT 1 FROM a_stock_auction_amounts WHERE trade_date = ? AND code = ?`, date, code).Scan(new(int)); scanErr == nil {
+			if scanErr := tx.QueryRowContext(ctx, `SELECT 1 FROM a_stock_auction_amounts WHERE trade_date = ? AND capture_slot = ? AND code = ?`, date, captureSlot, code).Scan(new(int)); scanErr == nil {
 				existed = true
 			} else if scanErr != sql.ErrNoRows {
 				err = scanErr
@@ -115,6 +136,7 @@ ON CONFLICT(trade_date, code) DO UPDATE SET
 		if _, err = stmt.ExecContext(
 			ctx,
 			date,
+			captureSlot,
 			code,
 			name,
 			item.AuctionPrice,
@@ -136,6 +158,17 @@ ON CONFLICT(trade_date, code) DO UPDATE SET
 	}
 	err = tx.Commit()
 	return result, err
+}
+
+func normalizeAStockAuctionCaptureSlot(value string) string {
+	switch strings.TrimSpace(value) {
+	case aStockAuctionCaptureSlot0925:
+		return aStockAuctionCaptureSlot0925
+	case aStockAuctionCaptureSlot0930:
+		return aStockAuctionCaptureSlot0930
+	default:
+		return ""
+	}
 }
 
 func normalizeAStockAuctionSnapshotUnits(items []model.AStockAuctionAmount) []model.AStockAuctionAmount {
@@ -182,17 +215,23 @@ func (s *Store) ListAStockAuctionAmounts(ctx context.Context, filter model.AStoc
 		filter.PageSize = 6000
 	}
 	filter.TrendDays = normalizeAStockAuctionTrendDays(filter.TrendDays)
+	requestedCaptureSlot := strings.TrimSpace(filter.CaptureSlot)
+	filter.CaptureSlot = normalizeAStockAuctionCaptureSlot(filter.CaptureSlot)
 	result := model.AStockAuctionListResult{Page: filter.Page, PageSize: filter.PageSize, Keyword: strings.TrimSpace(filter.Keyword)}
 	dates, err := s.latestAStockAuctionDates(ctx, 7)
 	if err != nil {
 		return result, err
 	}
 	result.Dates = dates
-	trend, err := s.listAStockAuctionTrend(ctx, filter.TrendDays)
+	trendSeries, err := s.listAStockAuctionTrendSeries(ctx, filter.TrendDays)
 	if err != nil {
 		return result, err
 	}
-	result.Trend = trend
+	result.TrendSeries = trendSeries
+	result.Trend = trendSeries[aStockAuctionCaptureSlot0930]
+	if len(result.Trend) == 0 {
+		result.Trend = trendSeries[aStockAuctionCaptureSlot0925]
+	}
 	result.LatestDate = ""
 	if len(dates) > 0 {
 		result.LatestDate = dates[0]
@@ -205,9 +244,22 @@ func (s *Store) ListAStockAuctionAmounts(ctx context.Context, filter model.AStoc
 		result.Items = []model.AStockAuctionAmount{}
 		return result, nil
 	}
+	if requestedCaptureSlot != "" && filter.CaptureSlot == "" {
+		result.Items = []model.AStockAuctionAmount{}
+		result.CaptureSlot = requestedCaptureSlot
+		return result, nil
+	}
+	result.CaptureSlot, err = s.resolveAStockAuctionCaptureSlot(ctx, result.Date, filter.CaptureSlot)
+	if err != nil {
+		return result, err
+	}
+	if result.CaptureSlot == "" {
+		result.Items = []model.AStockAuctionAmount{}
+		return result, nil
+	}
 
-	where := withAStockAuctionSHSZWhere(`WHERE trade_date = ?`)
-	args := []any{result.Date}
+	where := withAStockAuctionSHSZWhere(`WHERE trade_date = ? AND capture_slot = ?`)
+	args := []any{result.Date, result.CaptureSlot}
 	keyword := result.Keyword
 	if keyword != "" {
 		like := "%" + keyword + "%"
@@ -225,7 +277,7 @@ func (s *Store) ListAStockAuctionAmounts(ctx context.Context, filter model.AStoc
 	offset := (filter.Page - 1) * filter.PageSize
 	queryArgs := append(args, filter.PageSize, offset)
 	rows, err := s.db.QueryContext(ctx, `
-SELECT trade_date, code, name, auction_price, auction_volume, auction_amount, source, status, fetched_at, created_at, updated_at
+SELECT trade_date, capture_slot, code, name, auction_price, auction_volume, auction_amount, source, status, fetched_at, created_at, updated_at
 FROM a_stock_auction_amounts `+where+`
 ORDER BY auction_amount DESC, code ASC
 LIMIT ? OFFSET ?`, queryArgs...)
@@ -246,6 +298,23 @@ LIMIT ? OFFSET ?`, queryArgs...)
 	}
 	result.Items = items
 	return result, nil
+}
+
+func (s *Store) resolveAStockAuctionCaptureSlot(ctx context.Context, date string, requested string) (string, error) {
+	requested = normalizeAStockAuctionCaptureSlot(requested)
+	if requested != "" {
+		return requested, nil
+	}
+	for _, slot := range []string{aStockAuctionCaptureSlot0930, aStockAuctionCaptureSlot0925} {
+		var count int
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM a_stock_auction_amounts WHERE trade_date = ? AND capture_slot = ? AND `+aStockAuctionSHSZFilterSQL, date, slot).Scan(&count); err != nil {
+			return "", err
+		}
+		if count > 0 {
+			return slot, nil
+		}
+	}
+	return "", nil
 }
 
 func normalizeAStockAuctionTrendDays(days int) int {
@@ -277,8 +346,24 @@ func (s *Store) latestAStockAuctionDates(ctx context.Context, limit int) ([]stri
 	return dates, rows.Err()
 }
 
-func (s *Store) listAStockAuctionTrend(ctx context.Context, limit int) ([]model.AStockAuctionTrend, error) {
+func (s *Store) listAStockAuctionTrendSeries(ctx context.Context, limit int) (map[string][]model.AStockAuctionTrend, error) {
+	out := map[string][]model.AStockAuctionTrend{}
+	for _, slot := range []string{aStockAuctionCaptureSlot0925, aStockAuctionCaptureSlot0930} {
+		trend, err := s.listAStockAuctionTrend(ctx, limit, slot)
+		if err != nil {
+			return nil, err
+		}
+		out[slot] = trend
+	}
+	return out, nil
+}
+
+func (s *Store) listAStockAuctionTrend(ctx context.Context, limit int, captureSlot string) ([]model.AStockAuctionTrend, error) {
 	limit = max(limit, 1)
+	captureSlot = normalizeAStockAuctionCaptureSlot(captureSlot)
+	if captureSlot == "" {
+		captureSlot = aStockAuctionCaptureSlot0930
+	}
 	rows, err := s.db.QueryContext(ctx, `
 WITH recent_dates AS (
 	SELECT DISTINCT trade_date
@@ -291,6 +376,7 @@ daily AS (
 	SELECT trade_date, COUNT(*) AS stock_count, COALESCE(SUM(auction_volume), 0) AS total_volume, COALESCE(SUM(auction_amount), 0) AS total_amount
 	FROM a_stock_auction_amounts
 	WHERE trade_date IN (SELECT trade_date FROM recent_dates)
+	  AND capture_slot = ?
 	  AND `+aStockAuctionSHSZFilterSQL+`
 	GROUP BY trade_date
 ),
@@ -298,11 +384,13 @@ max_rows AS (
 	SELECT a.trade_date, a.code, a.name
 	FROM a_stock_auction_amounts a
 	WHERE a.trade_date IN (SELECT trade_date FROM recent_dates)
+	  AND a.capture_slot = ?
 	  AND `+aStockAuctionSHSZFilterSQL+`
 	  AND NOT EXISTS (
 		SELECT 1
 		FROM a_stock_auction_amounts b
 		WHERE b.trade_date = a.trade_date
+		  AND b.capture_slot = a.capture_slot
 		  AND `+aStockAuctionSHSZFilterSQL+`
 		  AND (b.auction_amount > a.auction_amount OR (b.auction_amount = a.auction_amount AND b.code < a.code))
 	  )
@@ -310,7 +398,7 @@ max_rows AS (
 SELECT daily.trade_date, daily.stock_count, daily.total_volume, daily.total_amount, COALESCE(max_rows.code, ''), COALESCE(max_rows.name, '')
 FROM daily
 LEFT JOIN max_rows ON max_rows.trade_date = daily.trade_date
-ORDER BY daily.trade_date ASC`, limit)
+ORDER BY daily.trade_date ASC`, limit, captureSlot, captureSlot)
 	if err != nil {
 		return nil, err
 	}
@@ -321,12 +409,13 @@ ORDER BY daily.trade_date ASC`, limit)
 		if err := rows.Scan(&point.Date, &point.StockCount, &point.TotalVolume, &point.TotalAmount, &point.MaxStockCode, &point.MaxStockName); err != nil {
 			return nil, err
 		}
+		point.CaptureSlot = captureSlot
 		out = append(out, point)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	marketTop, err := s.listAStockAuctionTrendMarketTop(ctx, limit)
+	marketTop, err := s.listAStockAuctionTrendMarketTop(ctx, limit, captureSlot)
 	if err != nil {
 		return nil, err
 	}
@@ -336,8 +425,12 @@ ORDER BY daily.trade_date ASC`, limit)
 	return out, nil
 }
 
-func (s *Store) listAStockAuctionTrendMarketTop(ctx context.Context, limit int) (map[string][]model.AStockAuctionMarketTop, error) {
+func (s *Store) listAStockAuctionTrendMarketTop(ctx context.Context, limit int, captureSlot string) (map[string][]model.AStockAuctionMarketTop, error) {
 	limit = max(limit, 1)
+	captureSlot = normalizeAStockAuctionCaptureSlot(captureSlot)
+	if captureSlot == "" {
+		captureSlot = aStockAuctionCaptureSlot0930
+	}
 	rows, err := s.db.QueryContext(ctx, `
 WITH recent_dates AS (
 	SELECT DISTINCT trade_date
@@ -354,9 +447,10 @@ classified AS (
 			WHEN code LIKE '0%' OR code LIKE '3%' THEN '深市'
 			ELSE ''
 		END AS market,
-		code, name, auction_price, auction_volume, auction_amount, source, status, fetched_at, created_at, updated_at
+		capture_slot, code, name, auction_price, auction_volume, auction_amount, source, status, fetched_at, created_at, updated_at
 	FROM a_stock_auction_amounts
 	WHERE trade_date IN (SELECT trade_date FROM recent_dates)
+	  AND capture_slot = ?
 	  AND `+aStockAuctionSHSZFilterSQL+`
 	  AND auction_amount > 0
 ),
@@ -364,12 +458,12 @@ ranked AS (
 	SELECT
 		*,
 		ROW_NUMBER() OVER (
-			PARTITION BY trade_date, market
+		PARTITION BY trade_date, capture_slot, market
 			ORDER BY auction_amount DESC, code ASC
 		) AS rn
 	FROM classified
 )
-SELECT trade_date, market, code, name, auction_price, auction_volume, auction_amount, source, status, fetched_at, created_at, updated_at
+SELECT trade_date, capture_slot, market, code, name, auction_price, auction_volume, auction_amount, source, status, fetched_at, created_at, updated_at
 FROM ranked
 WHERE rn <= 3
   AND market <> ''
@@ -379,7 +473,7 @@ ORDER BY trade_date ASC,
 		WHEN '深市' THEN 2
 		ELSE 3
 	END,
-	rn ASC`, limit)
+	rn ASC`, limit, captureSlot)
 	if err != nil {
 		return nil, err
 	}
@@ -391,6 +485,7 @@ ORDER BY trade_date ASC,
 		var fetchedAt, createdAt, updatedAt string
 		if err := rows.Scan(
 			&item.TradeDate,
+			&item.CaptureSlot,
 			&market,
 			&item.Code,
 			&item.Name,
@@ -438,7 +533,8 @@ func (s *Store) loadAStockAuctionSummary(ctx context.Context, result *model.ASto
 SELECT COUNT(*), COALESCE(SUM(auction_amount), 0), MAX(fetched_at)
 FROM a_stock_auction_amounts
 WHERE trade_date = ?
-  AND `+aStockAuctionSHSZFilterSQL, result.Date).Scan(&result.SummaryCount, &result.TotalAmount, &fetchedAt); err != nil {
+  AND capture_slot = ?
+  AND `+aStockAuctionSHSZFilterSQL, result.Date, result.CaptureSlot).Scan(&result.SummaryCount, &result.TotalAmount, &fetchedAt); err != nil {
 		return err
 	}
 	if fetchedAt.Valid {
@@ -446,12 +542,13 @@ WHERE trade_date = ?
 		result.FetchedAt = &value
 	}
 	row := s.db.QueryRowContext(ctx, `
-SELECT trade_date, code, name, auction_price, auction_volume, auction_amount, source, status, fetched_at, created_at, updated_at
+SELECT trade_date, capture_slot, code, name, auction_price, auction_volume, auction_amount, source, status, fetched_at, created_at, updated_at
 FROM a_stock_auction_amounts
 WHERE trade_date = ?
+  AND capture_slot = ?
   AND `+aStockAuctionSHSZFilterSQL+`
 ORDER BY auction_amount DESC, code ASC
-LIMIT 1`, result.Date)
+LIMIT 1`, result.Date, result.CaptureSlot)
 	maxItem, err := scanAStockAuctionAmount(row)
 	if err != nil {
 		if errorsIsNoRows(err) {
@@ -468,6 +565,7 @@ func scanAStockAuctionAmount(scanner scanner) (model.AStockAuctionAmount, error)
 	var fetchedAt, createdAt, updatedAt string
 	if err := scanner.Scan(
 		&item.TradeDate,
+		&item.CaptureSlot,
 		&item.Code,
 		&item.Name,
 		&item.AuctionPrice,

@@ -445,6 +445,9 @@ func TestAStockAuctionAmountsUpsertAndList(t *testing.T) {
 	if latest.Date != "2026-06-16" || latest.LatestDate != "2026-06-16" || latest.Total != 5 || len(latest.Items) != 5 {
 		t.Fatalf("unexpected latest auction list: %+v", latest)
 	}
+	if latest.CaptureSlot != "0930" || latest.Items[0].CaptureSlot != "0930" {
+		t.Fatalf("expected default 0930 capture slot, got %+v", latest)
+	}
 	if latest.Items[0].Code != "002230" || latest.Items[0].AuctionAmount != 4200000 || latest.TotalAmount != 7892000 {
 		t.Fatalf("expected updated highest amount row and total amount, got %+v", latest)
 	}
@@ -453,6 +456,9 @@ func TestAStockAuctionAmountsUpsertAndList(t *testing.T) {
 	}
 	if len(latest.Trend) != 2 || latest.Trend[0].Date != "2026-06-15" || latest.Trend[1].Date != "2026-06-16" || latest.Trend[1].TotalVolume != 430000 {
 		t.Fatalf("expected two-day auction trend, got %+v", latest.Trend)
+	}
+	if len(latest.TrendSeries["0930"]) != 2 {
+		t.Fatalf("expected 0930 trend series, got %+v", latest.TrendSeries)
 	}
 	marketTop := func(market string) []model.AStockAuctionAmount {
 		for _, group := range latest.Trend[1].MarketTop {
@@ -496,6 +502,64 @@ func TestAStockAuctionAmountsUpsertAndList(t *testing.T) {
 	}
 	if replacedList.Total != 2 || len(replacedList.Items) != 2 || replacedList.Items[0].Code != "300750" {
 		t.Fatalf("expected replace snapshot to discard stale rows, got %+v", replacedList)
+	}
+}
+
+func TestAStockAuctionAmountsKeepDualCaptureSlots(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	fetchedAt := time.Date(2026, 7, 14, 1, 25, 5, 0, time.UTC)
+
+	if _, err := store.UpsertAStockAuctionAmounts(ctx, "2026-07-14", []model.AStockAuctionAmount{
+		{CaptureSlot: "0925", Code: "002230", Name: "科大讯飞", AuctionVolume: 10000, AuctionAmount: 1000000, Source: "eastmoney_clist", Status: "ok", FetchedAt: fetchedAt},
+	}, true); err != nil {
+		t.Fatalf("UpsertAStockAuctionAmounts 0925 error: %v", err)
+	}
+	if _, err := store.UpsertAStockAuctionAmounts(ctx, "2026-07-14", []model.AStockAuctionAmount{
+		{CaptureSlot: "0930", Code: "002230", Name: "科大讯飞", AuctionVolume: 20000, AuctionAmount: 2000000, Source: "eastmoney_clist", Status: "ok", FetchedAt: fetchedAt.Add(5 * time.Minute)},
+	}, true); err != nil {
+		t.Fatalf("UpsertAStockAuctionAmounts 0930 error: %v", err)
+	}
+	if _, err := store.UpsertAStockAuctionAmounts(ctx, "2026-07-14", []model.AStockAuctionAmount{
+		{CaptureSlot: "0925", Code: "600000", Name: "浦发银行", AuctionVolume: 30000, AuctionAmount: 3000000, Source: "eastmoney_clist", Status: "ok", FetchedAt: fetchedAt.Add(time.Minute)},
+	}, true); err != nil {
+		t.Fatalf("UpsertAStockAuctionAmounts replace 0925 error: %v", err)
+	}
+
+	defaultList, err := store.ListAStockAuctionAmounts(ctx, model.AStockAuctionFilter{Date: "2026-07-14", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListAStockAuctionAmounts default error: %v", err)
+	}
+	if defaultList.CaptureSlot != "0930" || defaultList.Total != 1 || defaultList.Items[0].Code != "002230" || defaultList.TotalAmount != 2000000 {
+		t.Fatalf("expected default 0930 snapshot to remain intact, got %+v", defaultList)
+	}
+	slot0925, err := store.ListAStockAuctionAmounts(ctx, model.AStockAuctionFilter{Date: "2026-07-14", CaptureSlot: "0925", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListAStockAuctionAmounts 0925 error: %v", err)
+	}
+	if slot0925.CaptureSlot != "0925" || slot0925.Total != 1 || slot0925.Items[0].Code != "600000" || slot0925.TotalAmount != 3000000 {
+		t.Fatalf("expected replaced 0925 snapshot only, got %+v", slot0925)
+	}
+	if len(defaultList.TrendSeries["0925"]) != 1 || len(defaultList.TrendSeries["0930"]) != 1 {
+		t.Fatalf("expected both trend series, got %+v", defaultList.TrendSeries)
+	}
+}
+
+func TestAStockAuctionAmountsDefaultFallsBackTo0925(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	fetchedAt := time.Date(2026, 7, 15, 1, 25, 5, 0, time.UTC)
+	if _, err := store.UpsertAStockAuctionAmounts(ctx, "2026-07-15", []model.AStockAuctionAmount{
+		{CaptureSlot: "0925", Code: "002230", Name: "科大讯飞", AuctionVolume: 10000, AuctionAmount: 1000000, Source: "eastmoney_clist", Status: "ok", FetchedAt: fetchedAt},
+	}, true); err != nil {
+		t.Fatalf("UpsertAStockAuctionAmounts 0925 error: %v", err)
+	}
+	list, err := store.ListAStockAuctionAmounts(ctx, model.AStockAuctionFilter{Date: "2026-07-15", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListAStockAuctionAmounts fallback error: %v", err)
+	}
+	if list.CaptureSlot != "0925" || list.Total != 1 || len(list.Items) != 1 || list.Items[0].CaptureSlot != "0925" {
+		t.Fatalf("expected default query to fall back to 0925, got %+v", list)
 	}
 }
 

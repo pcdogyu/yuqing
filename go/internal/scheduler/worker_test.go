@@ -601,8 +601,8 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	if aStockExactSnapshotBackfillJob.Cron != "0 29 2 * * ?; 0 29 9 * * ?; 0 59 12 * * ?; 0 35 15 * * ?" || aStockExactSnapshotBackfillJob.NextRunAt == nil {
 		t.Fatalf("expected A股 exact snapshot backfill cron metadata, got %+v", aStockExactSnapshotBackfillJob)
 	}
-	if aStockAuctionJob.Cron != "0 26 9 * * ?" || aStockAuctionJob.Enabled {
-		t.Fatalf("expected A股 auction crawl disabled by default with 09:26 cron, got %+v", aStockAuctionJob)
+	if aStockAuctionJob.Cron != "5 25 9 * * ?; 5 30 9 * * ?" || aStockAuctionJob.Enabled {
+		t.Fatalf("expected A股 auction crawl disabled by default with dual cron, got %+v", aStockAuctionJob)
 	}
 	if aStockSectorFundFlowJobCount != 1 {
 		t.Fatalf("expected one A股 sector fund flow job, got %d", aStockSectorFundFlowJobCount)
@@ -1856,6 +1856,7 @@ func TestRunAStockSectorFundFlowCrawlSkipsNonTradingDay(t *testing.T) {
 }
 
 func TestRunAStockAuctionCrawlForcesLatestRefresh(t *testing.T) {
+	writes := make([]string, 0, 2)
 	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/a-stock/trading-day":
@@ -1884,12 +1885,17 @@ func TestRunAStockAuctionCrawlForcesLatestRefresh(t *testing.T) {
 	}))
 	defer akshare.Close()
 
-	var writeCount int
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/admin/a-stock/auction" {
 			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
 		}
-		writeCount++
+		var payload struct {
+			CaptureSlot string `json:"capture_slot"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode content payload: %v", err)
+		}
+		writes = append(writes, payload.CaptureSlot)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer content.Close()
@@ -1900,11 +1906,14 @@ func TestRunAStockAuctionCrawlForcesLatestRefresh(t *testing.T) {
 		HTTPTimeout:      time.Second,
 		ServiceToken:     "secret-token",
 	})
-	if err := worker.runAStockAuctionCrawl(context.Background()); err != nil {
-		t.Fatalf("runAStockAuctionCrawl error: %v", err)
+	if err := worker.runAStockAuctionCrawlAt(context.Background(), time.Date(2026, 6, 18, 9, 25, 5, 0, aStockLocation())); err != nil {
+		t.Fatalf("runAStockAuctionCrawlAt 0925 error: %v", err)
 	}
-	if writeCount != 1 {
-		t.Fatalf("expected scheduled latest crawl to write once, got %d", writeCount)
+	if err := worker.runAStockAuctionCrawlAt(context.Background(), time.Date(2026, 6, 18, 9, 30, 5, 0, aStockLocation())); err != nil {
+		t.Fatalf("runAStockAuctionCrawlAt 0930 error: %v", err)
+	}
+	if len(writes) != 2 || writes[0] != "0925" || writes[1] != "0930" {
+		t.Fatalf("expected scheduled latest crawl to write 0925 then 0930, got %v", writes)
 	}
 }
 
@@ -2870,8 +2879,8 @@ func TestSchedulerAStockAuctionJobEnabledWhenEndpointConfigured(t *testing.T) {
 			break
 		}
 	}
-	if !auctionJob.Enabled || auctionJob.Cron != "0 26 9 * * ?" || auctionJob.NextRunAt == nil {
-		t.Fatalf("expected enabled A股 auction crawl with 09:26 cron, got %+v", auctionJob)
+	if !auctionJob.Enabled || auctionJob.Cron != "5 25 9 * * ?; 5 30 9 * * ?" || auctionJob.NextRunAt == nil {
+		t.Fatalf("expected enabled A股 auction crawl with dual cron, got %+v", auctionJob)
 	}
 }
 

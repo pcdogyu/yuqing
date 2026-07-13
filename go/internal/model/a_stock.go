@@ -4,6 +4,7 @@ import "time"
 
 type AStockAuctionAmount struct {
 	TradeDate     string    `json:"trade_date"`
+	CaptureSlot   string    `json:"capture_slot"`
 	Code          string    `json:"code"`
 	Name          string    `json:"name"`
 	AuctionPrice  float64   `json:"auction_price"`
@@ -17,34 +18,38 @@ type AStockAuctionAmount struct {
 }
 
 type AStockAuctionFilter struct {
-	Date      string `json:"date"`
-	Keyword   string `json:"keyword"`
-	Page      int    `json:"page"`
-	PageSize  int    `json:"page_size"`
-	TrendDays int    `json:"trend_days"`
+	Date        string `json:"date"`
+	CaptureSlot string `json:"capture_slot"`
+	Keyword     string `json:"keyword"`
+	Page        int    `json:"page"`
+	PageSize    int    `json:"page_size"`
+	TrendDays   int    `json:"trend_days"`
 }
 
 type AStockAuctionListResult struct {
-	Items        []AStockAuctionAmount `json:"items"`
-	Page         int                   `json:"page"`
-	PageSize     int                   `json:"page_size"`
-	Total        int                   `json:"total"`
-	Date         string                `json:"date"`
-	Keyword      string                `json:"keyword"`
-	LatestDate   string                `json:"latest_date"`
-	Dates        []string              `json:"dates"`
-	SummaryCount int                   `json:"summary_count"`
-	TotalAmount  float64               `json:"total_amount"`
-	MaxItem      *AStockAuctionAmount  `json:"max_item,omitempty"`
-	FetchedAt    *time.Time            `json:"fetched_at,omitempty"`
-	Trend        []AStockAuctionTrend  `json:"trend"`
+	Items        []AStockAuctionAmount           `json:"items"`
+	Page         int                             `json:"page"`
+	PageSize     int                             `json:"page_size"`
+	Total        int                             `json:"total"`
+	Date         string                          `json:"date"`
+	CaptureSlot  string                          `json:"capture_slot"`
+	Keyword      string                          `json:"keyword"`
+	LatestDate   string                          `json:"latest_date"`
+	Dates        []string                        `json:"dates"`
+	SummaryCount int                             `json:"summary_count"`
+	TotalAmount  float64                         `json:"total_amount"`
+	MaxItem      *AStockAuctionAmount            `json:"max_item,omitempty"`
+	FetchedAt    *time.Time                      `json:"fetched_at,omitempty"`
+	Trend        []AStockAuctionTrend            `json:"trend"`
+	TrendSeries  map[string][]AStockAuctionTrend `json:"trend_series,omitempty"`
 }
 
 type AStockAuctionUpsertResult struct {
-	Date     string `json:"date"`
-	Inserted int    `json:"inserted"`
-	Updated  int    `json:"updated"`
-	Total    int    `json:"total"`
+	Date        string `json:"date"`
+	CaptureSlot string `json:"capture_slot"`
+	Inserted    int    `json:"inserted"`
+	Updated     int    `json:"updated"`
+	Total       int    `json:"total"`
 }
 
 type AStockCodeName struct {
@@ -67,6 +72,7 @@ type AStockCodeNameUpsertResult struct {
 
 type AStockAuctionTrend struct {
 	Date         string                   `json:"date"`
+	CaptureSlot  string                   `json:"capture_slot,omitempty"`
 	StockCount   int                      `json:"stock_count"`
 	TotalVolume  float64                  `json:"total_volume"`
 	TotalAmount  float64                  `json:"total_amount"`

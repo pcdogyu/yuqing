@@ -620,11 +620,12 @@ func (s *Service) handleListArticles(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) handleListAStockAuctionAmounts(w http.ResponseWriter, r *http.Request) {
 	filter := model.AStockAuctionFilter{
-		Date:      strings.TrimSpace(r.URL.Query().Get("date")),
-		Keyword:   strings.TrimSpace(nonEmpty(r.URL.Query().Get("keyword"), r.URL.Query().Get("code"))),
-		Page:      apiutil.IntQuery(r, "page", 1),
-		PageSize:  apiutil.IntQuery(r, "page_size", 50),
-		TrendDays: normalizeAStockAuctionTrendDays(apiutil.IntQuery(r, "trend_days", 7)),
+		Date:        strings.TrimSpace(r.URL.Query().Get("date")),
+		CaptureSlot: strings.TrimSpace(r.URL.Query().Get("capture_slot")),
+		Keyword:     strings.TrimSpace(nonEmpty(r.URL.Query().Get("keyword"), r.URL.Query().Get("code"))),
+		Page:        apiutil.IntQuery(r, "page", 1),
+		PageSize:    apiutil.IntQuery(r, "page_size", 50),
+		TrendDays:   normalizeAStockAuctionTrendDays(apiutil.IntQuery(r, "trend_days", 7)),
 	}
 	result, err := s.store.ListAStockAuctionAmounts(r.Context(), filter)
 	if err != nil {
@@ -660,10 +661,11 @@ func normalizeAStockAuctionTrendDays(days int) int {
 
 func (s *Service) handleUpsertAStockAuctionAmounts(w http.ResponseWriter, r *http.Request) {
 	var payload struct {
-		Date      string                      `json:"date"`
-		Items     []model.AStockAuctionAmount `json:"items"`
-		CodeNames []model.AStockCodeName      `json:"code_names"`
-		Replace   bool                        `json:"replace"`
+		Date        string                      `json:"date"`
+		CaptureSlot string                      `json:"capture_slot"`
+		Items       []model.AStockAuctionAmount `json:"items"`
+		CodeNames   []model.AStockCodeName      `json:"code_names"`
+		Replace     bool                        `json:"replace"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid json", nil)
@@ -677,6 +679,9 @@ func (s *Service) handleUpsertAStockAuctionAmounts(w http.ResponseWriter, r *htt
 	for i := range payload.Items {
 		if strings.TrimSpace(payload.Items[i].TradeDate) == "" {
 			payload.Items[i].TradeDate = payload.Date
+		}
+		if strings.TrimSpace(payload.Items[i].CaptureSlot) == "" {
+			payload.Items[i].CaptureSlot = payload.CaptureSlot
 		}
 	}
 	if len(payload.CodeNames) > 0 {

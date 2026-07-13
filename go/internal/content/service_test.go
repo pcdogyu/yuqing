@@ -195,11 +195,17 @@ func TestAStockAuctionAmountAPIUpsertsAndLists(t *testing.T) {
 	if envelope.Data.Date != "2026-06-16" || envelope.Data.Total != 1 || len(envelope.Data.Items) != 1 || envelope.Data.Items[0].Code != "002230" {
 		t.Fatalf("unexpected auction list payload: %+v", envelope.Data)
 	}
+	if envelope.Data.CaptureSlot != "0930" || envelope.Data.Items[0].CaptureSlot != "0930" {
+		t.Fatalf("expected default 0930 capture slot, got %+v", envelope.Data)
+	}
 	if envelope.Data.TotalAmount != 5876080 || envelope.Data.MaxItem == nil || envelope.Data.MaxItem.Code != "002230" {
 		t.Fatalf("expected date summary independent of keyword filter, got %+v", envelope.Data)
 	}
 	if len(envelope.Data.Trend) != 1 || envelope.Data.Trend[0].TotalAmount != 5876080 || envelope.Data.Trend[0].TotalVolume != 213400 {
 		t.Fatalf("expected auction trend totals, got %+v", envelope.Data.Trend)
+	}
+	if len(envelope.Data.TrendSeries["0930"]) != 1 {
+		t.Fatalf("expected 0930 trend series, got %+v", envelope.Data.TrendSeries)
 	}
 	if len(envelope.Data.Trend[0].MarketTop) != 2 ||
 		envelope.Data.Trend[0].MarketTop[0].Market != "沪市" ||
@@ -207,6 +213,26 @@ func TestAStockAuctionAmountAPIUpsertsAndLists(t *testing.T) {
 		envelope.Data.Trend[0].MarketTop[1].Market != "深市" ||
 		envelope.Data.Trend[0].MarketTop[1].Items[0].Code != "002230" {
 		t.Fatalf("expected per-market auction amount top stocks, got %+v", envelope.Data.Trend[0].MarketTop)
+	}
+
+	slotPayload := `{"date":"2026-06-16","capture_slot":"0925","items":[{"code":"002230","name":"科大讯飞","auction_price":40,"auction_volume":100000,"auction_amount":4000000,"source":"eastmoney_clist","status":"ok"}],"replace":true}`
+	slotPostReq := httptest.NewRequest(http.MethodPost, "/api/v1/admin/a-stock/auction", strings.NewReader(slotPayload))
+	slotPostRR := httptest.NewRecorder()
+	router.ServeHTTP(slotPostRR, slotPostReq)
+	if slotPostRR.Code != http.StatusOK {
+		t.Fatalf("expected 0925 auction upsert 200, got %d body=%s", slotPostRR.Code, slotPostRR.Body.String())
+	}
+	slotListReq := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/auction?date=2026-06-16&capture_slot=0925&page=1&page_size=10", nil)
+	slotListRR := httptest.NewRecorder()
+	router.ServeHTTP(slotListRR, slotListReq)
+	if slotListRR.Code != http.StatusOK {
+		t.Fatalf("expected 0925 auction list 200, got %d body=%s", slotListRR.Code, slotListRR.Body.String())
+	}
+	if err := json.Unmarshal(slotListRR.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal 0925 auction list: %v", err)
+	}
+	if envelope.Data.CaptureSlot != "0925" || envelope.Data.TotalAmount != 4000000 || envelope.Data.Items[0].CaptureSlot != "0925" {
+		t.Fatalf("expected 0925 auction list, got %+v", envelope.Data)
 	}
 }
 

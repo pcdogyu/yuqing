@@ -560,6 +560,7 @@ CREATE TABLE IF NOT EXISTS crypto_insight_snapshots (
 
 CREATE TABLE IF NOT EXISTS a_stock_auction_amounts (
 	trade_date TEXT NOT NULL,
+	capture_slot TEXT NOT NULL DEFAULT '0930',
 	code TEXT NOT NULL,
 	name TEXT NOT NULL DEFAULT '',
 	auction_price REAL NOT NULL DEFAULT 0,
@@ -570,7 +571,7 @@ CREATE TABLE IF NOT EXISTS a_stock_auction_amounts (
 	fetched_at TEXT NOT NULL,
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL,
-	PRIMARY KEY (trade_date, code)
+	PRIMARY KEY (trade_date, capture_slot, code)
 );
 
 CREATE TABLE IF NOT EXISTS a_stock_code_names (
@@ -836,7 +837,7 @@ CREATE INDEX IF NOT EXISTS idx_stock_holdings_code_period ON stock_institution_h
 CREATE INDEX IF NOT EXISTS idx_stock_holdings_holder_period ON stock_institution_holdings(holder_name, report_period DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_stock_holdings_type_period ON stock_institution_holdings(holder_type, report_period DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_crawl_templates_enabled_updated ON crawl_templates(enabled, updated_at DESC, id DESC);
-CREATE INDEX IF NOT EXISTS idx_a_stock_auction_date_amount ON a_stock_auction_amounts(trade_date DESC, auction_amount DESC);
+CREATE INDEX IF NOT EXISTS idx_a_stock_auction_date_amount ON a_stock_auction_amounts(trade_date DESC, capture_slot, auction_amount DESC);
 CREATE INDEX IF NOT EXISTS idx_a_stock_auction_code ON a_stock_auction_amounts(code);
 CREATE INDEX IF NOT EXISTS idx_a_stock_code_names_updated ON a_stock_code_names(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_a_stock_recommendations_updated ON a_stock_recommendation_snapshots(updated_at DESC);
@@ -876,6 +877,11 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_action_created_at ON audit_logs(action
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return err
 	}
+	if err := s.migrateAStockAuctionCaptureSlot(ctx); err != nil {
+		return err
+	}
+	_, _ = s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_a_stock_auction_date_amount ON a_stock_auction_amounts(trade_date DESC, capture_slot, auction_amount DESC)`)
+	_, _ = s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_a_stock_auction_code ON a_stock_auction_amounts(code)`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE users ADD COLUMN status INTEGER NOT NULL DEFAULT 1`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE users ADD COLUMN term_of_validity TEXT NOT NULL DEFAULT '2099-01-19T00:00:00Z'`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE monitor_rules ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`)
@@ -1019,6 +1025,81 @@ COMMIT;`)
 	return err
 }
 
+func (s *Store) migrateAStockAuctionCaptureSlot(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(a_stock_auction_amounts)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	hasCaptureSlot := false
+	pkColumns := make(map[int]string)
+	for rows.Next() {
+		var cid int
+		var name string
+		var columnType string
+		var notNull int
+		var defaultValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		if name == "capture_slot" {
+			hasCaptureSlot = true
+		}
+		if pk > 0 {
+			pkColumns[pk] = name
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	expected := []string{"trade_date", "capture_slot", "code"}
+	if hasCaptureSlot && len(pkColumns) == len(expected) {
+		matches := true
+		for i, name := range expected {
+			if pkColumns[i+1] != name {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			return nil
+		}
+	}
+	captureSlotSelect := `'0930'`
+	if hasCaptureSlot {
+		captureSlotSelect = `COALESCE(NULLIF(capture_slot, ''), '0930')`
+	}
+	_, err = s.db.ExecContext(ctx, `
+BEGIN;
+CREATE TABLE IF NOT EXISTS a_stock_auction_amounts_new (
+	trade_date TEXT NOT NULL,
+	capture_slot TEXT NOT NULL DEFAULT '0930',
+	code TEXT NOT NULL,
+	name TEXT NOT NULL DEFAULT '',
+	auction_price REAL NOT NULL DEFAULT 0,
+	auction_volume REAL NOT NULL DEFAULT 0,
+	auction_amount REAL NOT NULL DEFAULT 0,
+	source TEXT NOT NULL DEFAULT '',
+	status TEXT NOT NULL DEFAULT 'ok',
+	fetched_at TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	PRIMARY KEY (trade_date, capture_slot, code)
+);
+INSERT OR REPLACE INTO a_stock_auction_amounts_new (
+	trade_date, capture_slot, code, name, auction_price, auction_volume, auction_amount, source, status, fetched_at, created_at, updated_at
+)
+SELECT
+	trade_date, `+captureSlotSelect+`, code, name, auction_price, auction_volume, auction_amount, source, status, fetched_at, created_at, updated_at
+FROM a_stock_auction_amounts
+ORDER BY updated_at ASC;
+DROP TABLE a_stock_auction_amounts;
+ALTER TABLE a_stock_auction_amounts_new RENAME TO a_stock_auction_amounts;
+COMMIT;`)
+	return err
+}
+
 func (s *Store) migratePostgres(ctx context.Context) error {
 	schemaPath := filepath.Join("db", "postgres_schema.sql")
 	schema, err := os.ReadFile(schemaPath)
@@ -1026,6 +1107,15 @@ func (s *Store) migratePostgres(ctx context.Context) error {
 		return fmt.Errorf("read postgres schema %s: %w", schemaPath, err)
 	}
 	if _, err := s.db.ExecContext(ctx, string(schema)); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE a_stock_auction_amounts ADD COLUMN IF NOT EXISTS capture_slot TEXT NOT NULL DEFAULT '0930'`); err != nil {
+		return err
+	}
+	if err := s.migratePostgresAStockAuctionPrimaryKey(ctx); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_a_stock_auction_date_amount ON a_stock_auction_amounts(trade_date DESC, capture_slot, auction_amount DESC)`); err != nil {
 		return err
 	}
 	if _, err := s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN IF NOT EXISTS limit_up_filter_enabled INTEGER NOT NULL DEFAULT 0`); err != nil {
@@ -1089,6 +1179,30 @@ BEGIN
 	IF current_pk IS DISTINCT FROM 'strategy_date,period,ignore_recent,limit_up_filter_enabled,today_market_filter_enabled,fund_flow_filter_enabled' THEN
 		ALTER TABLE a_stock_recommendation_snapshots DROP CONSTRAINT IF EXISTS a_stock_recommendation_snapshots_pkey;
 		ALTER TABLE a_stock_recommendation_snapshots ADD PRIMARY KEY (strategy_date, period, ignore_recent, limit_up_filter_enabled, today_market_filter_enabled, fund_flow_filter_enabled);
+	END IF;
+END $$;`)
+	return err
+}
+
+func (s *Store) migratePostgresAStockAuctionPrimaryKey(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `
+DO $$
+DECLARE
+	current_pk TEXT;
+BEGIN
+	SELECT string_agg(pk.attname, ',' ORDER BY pk.ord)
+	INTO current_pk
+	FROM (
+		SELECT a.attname, k.ord
+		FROM pg_index i
+		JOIN pg_class t ON t.oid = i.indrelid
+		CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord)
+		JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+		WHERE t.relname = 'a_stock_auction_amounts' AND i.indisprimary
+	) pk;
+	IF current_pk IS DISTINCT FROM 'trade_date,capture_slot,code' THEN
+		ALTER TABLE a_stock_auction_amounts DROP CONSTRAINT IF EXISTS a_stock_auction_amounts_pkey;
+		ALTER TABLE a_stock_auction_amounts ADD PRIMARY KEY (trade_date, capture_slot, code);
 	END IF;
 END $$;`)
 	return err

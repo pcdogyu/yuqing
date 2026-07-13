@@ -475,13 +475,13 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 		withJobMeta(jobDefinition{
 			Name:        "a-stock-auction-crawl",
 			Group:       "a-stock",
-			Description: "A股集合竞价金额：09:26 通过 AKShare 抓取全市场 09:25 集合竞价成交金额",
+			Description: "A股集合竞价金额：09:25:05、09:30:05 通过 AKShare 抓取全市场集合竞价成交金额",
 			Interval:    24 * time.Hour,
 			Enabled:     strings.TrimSpace(w.cfg.AStockAuctionURL) != "",
 			Run: func(ctx context.Context) error {
 				return w.runAStockAuctionCrawl(ctx)
 			},
-		}, "AStockAuctionCrawl", "0 26 9 * * ?"),
+		}, "AStockAuctionCrawl", "5 25 9 * * ?; 5 30 9 * * ?"),
 		withJobMeta(jobDefinition{
 			Name:        "a-stock-sector-fund-flow-crawl",
 			Group:       "a-stock",

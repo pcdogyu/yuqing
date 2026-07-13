@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 
 	"github.com/pcdogyu/yuqing/go/internal/model"
@@ -23,9 +24,10 @@ func (s *Server) handleAStockAuctionPage(w http.ResponseWriter, r *http.Request,
 	}
 	date := strings.TrimSpace(r.URL.Query().Get("date"))
 	keyword := strings.TrimSpace(r.URL.Query().Get("keyword"))
+	captureSlot := strings.TrimSpace(r.URL.Query().Get("capture_slot"))
 	page := normalizeAStockNewsPage(r.URL.Query().Get("page"))
 	trendDays := normalizeAStockAuctionTrendDaysText(r.URL.Query().Get("trend_days"))
-	ctx, err := s.loadAStockAuctionContext(date, keyword, page, trendDays)
+	ctx, err := s.loadAStockAuctionContext(date, keyword, captureSlot, page, trendDays)
 
 	var b strings.Builder
 	b.WriteString(`<style>
@@ -49,17 +51,21 @@ func (s *Server) handleAStockAuctionPage(w http.ResponseWriter, r *http.Request,
 		.auction-actions form{margin:0}
 		.auction-actions button{margin:0}
 		.auction-chart{width:100%;height:auto;min-height:260px}
-		.auction-chart-line{fill:none;stroke:#214e34;stroke-width:3}
+		.auction-chart-line{fill:none;stroke-width:3}
+		.auction-chart-line-0925{stroke:#15803d}
+		.auction-chart-line-0930{stroke:#c62828}
 		.auction-chart-area{fill:rgba(33,78,52,.08)}
 		.auction-chart-axis{stroke:#d6ccbb;stroke-width:1}
 		.auction-chart-grid-x{stroke:#d6ccbb;stroke-width:1}
 		.auction-chart-label{font-size:12px;fill:#6a6257}
-		.auction-chart-dot{fill:#214e34}
+		.auction-chart-dot-0925{fill:#15803d}
+		.auction-chart-dot-0930{fill:#c62828}
+		.auction-chart-legend{font-size:12px;fill:#3f3a33}
 		.auction-trend-table{margin-top:12px}
 		.auction-market-top{min-width:220px}
 		@media (max-width:760px){.auction-toolbar{grid-template-columns:1fr}}
 	</style>`)
-	b.WriteString(`<section><h2>集合竞价</h2><p class="auction-muted">每日 09:30 抓取沪深 A 股 09:25 开盘集合竞价成交金额，历史数据来自 PostgreSQL 配置下的业务库。</p></section>`)
+	b.WriteString(`<section><h2>集合竞价</h2><p class="auction-muted">每日 09:25:05、09:30:05 抓取沪深 A 股集合竞价成交金额，历史数据来自 PostgreSQL 配置下的业务库。</p></section>`)
 	if message := strings.TrimSpace(r.URL.Query().Get("msg")); message != "" {
 		b.WriteString(`<div class="auction-message">`)
 		b.WriteString(html.EscapeString(message))
@@ -99,13 +105,16 @@ func (s *Server) handleAStockAuctionAction(w http.ResponseWriter, r *http.Reques
 	http.Redirect(w, r, "/a-stock/auction?"+query.Encode(), http.StatusSeeOther)
 }
 
-func (s *Server) loadAStockAuctionContext(date string, keyword string, page int, trendDays int) (model.AStockAuctionListResult, error) {
+func (s *Server) loadAStockAuctionContext(date string, keyword string, captureSlot string, page int, trendDays int) (model.AStockAuctionListResult, error) {
 	query := url.Values{}
 	query.Set("page", fmt.Sprintf("%d", page))
 	query.Set("page_size", "6000")
 	query.Set("trend_days", fmt.Sprintf("%d", trendDays))
 	if date != "" {
 		query.Set("date", date)
+	}
+	if captureSlot != "" {
+		query.Set("capture_slot", captureSlot)
 	}
 	if keyword != "" {
 		query.Set("keyword", keyword)
@@ -151,6 +160,7 @@ func renderAStockAuctionSummary(b *strings.Builder, ctx model.AStockAuctionListR
 	}
 	b.WriteString(`<section><h2>当日汇总</h2><div class="auction-grid">`)
 	writeAStockAuctionMetric(b, "交易日", nonEmptyText(ctx.Date, "--"))
+	writeAStockAuctionMetric(b, "当前快照", nonEmptyText(ctx.CaptureSlot, "--"))
 	writeAStockAuctionMetric(b, "股票数", fmt.Sprintf("%d", ctx.SummaryCount))
 	writeAStockAuctionMetric(b, "集合竞价总金额", formatAStockAuctionMoney(ctx.TotalAmount))
 	writeAStockAuctionMetric(b, "最大金额股票", maxStock)
@@ -159,24 +169,28 @@ func renderAStockAuctionSummary(b *strings.Builder, ctx model.AStockAuctionListR
 }
 
 func renderAStockAuctionActions(b *strings.Builder) {
-	b.WriteString(`<section><h2>操作区</h2><div class="auction-actions"><form method="post"><input type="hidden" name="action" value="fetch_today_auction"><button type="submit">获取最新交易日集合竞价金额</button></form><form method="post"><input type="hidden" name="action" value="backfill_7d_auction"><button type="submit">回溯近7天集合竞价</button></form></div><p class="auction-muted">立即触发 scheduler 的 A股集合竞价抓取任务，从 AKShare 业务服务读取最新交易日并写入当前业务库。若 09:30 定时任务漏抓，仍可点击“获取最新交易日集合竞价金额”补抓；近 7 个交易日会按缓存/业务库记录回补；更早历史交易日仍需依赖已有缓存或业务库记录。</p></section>`)
+	b.WriteString(`<section><h2>操作区</h2><div class="auction-actions"><form method="post"><input type="hidden" name="action" value="fetch_today_auction"><button type="submit">获取最新交易日集合竞价金额</button></form><form method="post"><input type="hidden" name="action" value="backfill_7d_auction"><button type="submit">回溯近7天集合竞价</button></form></div><p class="auction-muted">立即触发 scheduler 的 A股集合竞价抓取任务，从 AKShare 业务服务读取最新交易日并写入当前业务库。若 09:25 或 09:30 定时任务漏抓，仍可点击“获取最新交易日集合竞价金额”按 09:30 快照补抓；近 7 个交易日会按缓存/业务库记录回补；更早历史交易日仍需依赖已有缓存或业务库记录。</p></section>`)
 }
 
 func renderAStockAuctionTrend(b *strings.Builder, ctx model.AStockAuctionListResult, trendDays int) {
 	trendDays = normalizeAStockAuctionTrendDays(trendDays)
 	points := aStockAuctionTrendWindow(ctx.Trend, trendDays)
+	trendSeries := ctx.TrendSeries
+	if len(trendSeries) == 0 && len(ctx.Trend) > 0 {
+		trendSeries = map[string][]model.AStockAuctionTrend{"0930": ctx.Trend}
+	}
 	title := aStockAuctionTrendTitle(trendDays)
 	b.WriteString(`<section><div class="auction-section-head"><h2>`)
 	b.WriteString(html.EscapeString(title))
 	b.WriteString(`</h2>`)
 	renderAStockAuctionTrendPeriods(b, ctx, trendDays)
 	b.WriteString(`</div>`)
-	if len(points) == 0 {
+	if len(points) == 0 && !aStockAuctionTrendSeriesHasData(trendSeries, trendDays) {
 		b.WriteString(`<div class="auction-empty">暂无趋势数据。请先点击“回溯近7天集合竞价”，或检查 YUQING_ASTOCK_AUCTION_URL 指向的 AKShare 业务服务。</div></section>`)
 		return
 	}
-	b.WriteString(`<p class="auction-muted">折线按每日集合竞价总成交额绘制，明细表同步展示总成交量，以及沪市、深市集合竞价金额最高的3只股票。</p>`)
-	b.WriteString(aStockAuctionTrendSVG(points, title))
+	b.WriteString(`<p class="auction-muted">折线按每日集合竞价总成交额绘制，09:25 为绿色，09:30 为红色；明细表同步展示当前默认快照的总成交量，以及沪市、深市集合竞价金额最高的3只股票。</p>`)
+	b.WriteString(aStockAuctionTrendSVG(trendSeries, title, trendDays))
 	b.WriteString(`<div class="auction-scroll"><table class="auction-table auction-trend-table"><tr><th>日期</th><th>股票数</th><th>集合竞价总金额</th><th>成交量</th><th>最大金额股票</th><th class="auction-market-top">沪市金额前三</th><th class="auction-market-top">深市金额前三</th></tr>`)
 	for _, point := range points {
 		b.WriteString(`<tr><td>`)
@@ -231,7 +245,22 @@ func aStockAuctionTrendPeriodURL(ctx model.AStockAuctionListResult, days int) st
 	if ctx.Keyword != "" {
 		query.Set("keyword", ctx.Keyword)
 	}
+	if ctx.CaptureSlot != "" {
+		query.Set("capture_slot", ctx.CaptureSlot)
+	}
 	query.Set("trend_days", fmt.Sprintf("%d", days))
+	return "/a-stock/auction?" + query.Encode()
+}
+
+func aStockAuctionCaptureSlotURL(ctx model.AStockAuctionListResult, captureSlot string) string {
+	query := url.Values{}
+	if ctx.Date != "" {
+		query.Set("date", ctx.Date)
+	}
+	if ctx.Keyword != "" {
+		query.Set("keyword", ctx.Keyword)
+	}
+	query.Set("capture_slot", captureSlot)
 	return "/a-stock/auction?" + query.Encode()
 }
 
@@ -289,8 +318,12 @@ func renderAStockAuctionFilters(b *strings.Builder, ctx model.AStockAuctionListR
 		if date == ctx.Date {
 			b.WriteString(` active`)
 		}
-		b.WriteString(`" href="/a-stock/auction?date=`)
-		b.WriteString(url.QueryEscape(date))
+		query := url.Values{"date": []string{date}}
+		if ctx.CaptureSlot != "" {
+			query.Set("capture_slot", ctx.CaptureSlot)
+		}
+		b.WriteString(`" href="/a-stock/auction?`)
+		b.WriteString(html.EscapeString(query.Encode()))
 		b.WriteString(`">`)
 		b.WriteString(html.EscapeString(date))
 		b.WriteString(`</a>`)
@@ -298,21 +331,37 @@ func renderAStockAuctionFilters(b *strings.Builder, ctx model.AStockAuctionListR
 	if len(ctx.Dates) == 0 {
 		b.WriteString(`<span class="auction-muted">暂无历史日期</span>`)
 	}
-	b.WriteString(`</div><form method="get" class="auction-toolbar"><div><label>交易日</label><input type="date" name="date" value="`)
+	b.WriteString(`</div><div class="auction-tabs"><a class="auction-tab`)
+	if ctx.CaptureSlot == "0925" {
+		b.WriteString(` active`)
+	}
+	b.WriteString(`" href="`)
+	b.WriteString(html.EscapeString(aStockAuctionCaptureSlotURL(ctx, "0925")))
+	b.WriteString(`">09:25 快照</a><a class="auction-tab`)
+	if ctx.CaptureSlot == "0930" || ctx.CaptureSlot == "" {
+		b.WriteString(` active`)
+	}
+	b.WriteString(`" href="`)
+	b.WriteString(html.EscapeString(aStockAuctionCaptureSlotURL(ctx, "0930")))
+	b.WriteString(`">09:30 快照</a></div><form method="get" class="auction-toolbar"><div><label>交易日</label><input type="date" name="date" value="`)
 	b.WriteString(html.EscapeString(ctx.Date))
 	b.WriteString(`"></div><div><label>股票代码/名称</label><input name="keyword" placeholder="如 002230 或 科大讯飞" value="`)
 	b.WriteString(html.EscapeString(ctx.Keyword))
-	b.WriteString(`"></div><button type="submit">查询</button></form></section>`)
+	b.WriteString(`"></div><input type="hidden" name="capture_slot" value="`)
+	b.WriteString(html.EscapeString(ctx.CaptureSlot))
+	b.WriteString(`"><button type="submit">查询</button></form></section>`)
 }
 
 func renderAStockAuctionTable(b *strings.Builder, ctx model.AStockAuctionListResult) {
-	b.WriteString(`<section><h2>集合竞价明细</h2><div class="auction-scroll"><table class="auction-table"><tr><th>日期</th><th>股票代码</th><th>股票名称</th><th>集合竞价价</th><th>成交量</th><th>成交额</th><th>来源</th><th>状态</th><th>抓取时间</th></tr>`)
+	b.WriteString(`<section><h2>集合竞价明细</h2><div class="auction-scroll"><table class="auction-table"><tr><th>日期</th><th>快照</th><th>股票代码</th><th>股票名称</th><th>集合竞价价</th><th>成交量</th><th>成交额</th><th>来源</th><th>状态</th><th>抓取时间</th></tr>`)
 	if len(ctx.Items) == 0 {
-		b.WriteString(`<tr><td colspan="9">暂无集合竞价数据，请确认 09:30 抓取任务或 AKShare 服务。</td></tr>`)
+		b.WriteString(`<tr><td colspan="10">暂无集合竞价数据，请确认 09:25/09:30 抓取任务或 AKShare 服务。</td></tr>`)
 	} else {
 		for _, item := range ctx.Items {
 			b.WriteString(`<tr><td>`)
 			b.WriteString(html.EscapeString(item.TradeDate))
+			b.WriteString(`</td><td>`)
+			b.WriteString(html.EscapeString(nonEmptyText(item.CaptureSlot, ctx.CaptureSlot)))
 			b.WriteString(`</td><td>`)
 			b.WriteString(html.EscapeString(item.Code))
 			b.WriteString(`</td><td>`)
@@ -361,6 +410,10 @@ func renderAStockAuctionPagination(b *strings.Builder, ctx model.AStockAuctionLi
 			b.WriteString(`&keyword=`)
 			b.WriteString(url.QueryEscape(ctx.Keyword))
 		}
+		if ctx.CaptureSlot != "" {
+			b.WriteString(`&capture_slot=`)
+			b.WriteString(url.QueryEscape(ctx.CaptureSlot))
+		}
 		b.WriteString(`&page=`)
 		b.WriteString(fmt.Sprintf("%d", link.Page))
 		b.WriteString(`">`)
@@ -405,7 +458,16 @@ func formatAStockAuctionMoney(value float64) string {
 	return fmt.Sprintf("%.2f万", value/10000)
 }
 
-func aStockAuctionTrendSVG(points []model.AStockAuctionTrend, title string) string {
+func aStockAuctionTrendSeriesHasData(series map[string][]model.AStockAuctionTrend, days int) bool {
+	for _, slot := range []string{"0925", "0930"} {
+		if len(aStockAuctionTrendWindow(series[slot], days)) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func aStockAuctionTrendSVG(series map[string][]model.AStockAuctionTrend, title string, days int) string {
 	const (
 		width  = 1120.0
 		height = 280.0
@@ -414,35 +476,37 @@ func aStockAuctionTrendSVG(points []model.AStockAuctionTrend, title string) stri
 		top    = 24.0
 		bottom = 52.0
 	)
+	windows := map[string][]model.AStockAuctionTrend{
+		"0925": aStockAuctionTrendWindow(series["0925"], days),
+		"0930": aStockAuctionTrendWindow(series["0930"], days),
+	}
+	dates := aStockAuctionTrendDates(windows)
 	maxAmount := 0.0
-	for _, point := range points {
-		if point.TotalAmount > maxAmount {
-			maxAmount = point.TotalAmount
+	for _, points := range windows {
+		for _, point := range points {
+			if point.TotalAmount > maxAmount {
+				maxAmount = point.TotalAmount
+			}
 		}
 	}
-	if maxAmount <= 0 {
+	if maxAmount <= 0 || len(dates) == 0 {
 		return `<div class="auction-empty">趋势金额均为空，请确认 AKShare 返回了成交额字段。</div>`
 	}
 	plotWidth := width - left - right
 	plotHeight := height - top - bottom
-	coords := make([]string, 0, len(points))
-	area := make([]string, 0, len(points)+2)
-	for i, point := range points {
-		x := aStockAuctionTrendX(i, len(points), left, plotWidth)
-		y := top + (1-point.TotalAmount/maxAmount)*plotHeight
-		coords = append(coords, fmt.Sprintf("%.1f,%.1f", x, y))
-		area = append(area, fmt.Sprintf("%.1f,%.1f", x, y))
-	}
-	area = append([]string{fmt.Sprintf("%.1f,%.1f", left, top+plotHeight)}, area...)
-	lastX := left
-	if len(points) > 1 {
-		lastX += plotWidth
-	}
-	area = append(area, fmt.Sprintf("%.1f,%.1f", lastX, top+plotHeight))
 	var b strings.Builder
 	b.WriteString(`<svg class="auction-chart" viewBox="0 0 1120 280" role="img" aria-label="`)
 	b.WriteString(html.EscapeString(title))
 	b.WriteString(`">`)
+	b.WriteString(`<circle cx="`)
+	b.WriteString(fmt.Sprintf("%.1f", left))
+	b.WriteString(`" cy="12" r="4" class="auction-chart-dot-0925"></circle><text class="auction-chart-legend" x="`)
+	b.WriteString(fmt.Sprintf("%.1f", left+10))
+	b.WriteString(`" y="16">09:25</text><circle cx="`)
+	b.WriteString(fmt.Sprintf("%.1f", left+74))
+	b.WriteString(`" cy="12" r="4" class="auction-chart-dot-0930"></circle><text class="auction-chart-legend" x="`)
+	b.WriteString(fmt.Sprintf("%.1f", left+84))
+	b.WriteString(`" y="16">09:30</text>`)
 	for i := 0; i <= 4; i++ {
 		y := top + float64(i)*plotHeight/4
 		amount := maxAmount * float64(4-i) / 4
@@ -462,8 +526,8 @@ func aStockAuctionTrendSVG(points []model.AStockAuctionTrend, title string) stri
 		b.WriteString(html.EscapeString(formatAStockAuctionAxisMoney(amount)))
 		b.WriteString(`</text>`)
 	}
-	for i, point := range points {
-		x := aStockAuctionTrendX(i, len(points), left, plotWidth)
+	for i, date := range dates {
+		x := aStockAuctionTrendX(i, len(dates), left, plotWidth)
 		b.WriteString(`<line class="auction-chart-grid-x" x1="`)
 		b.WriteString(fmt.Sprintf("%.1f", x))
 		b.WriteString(`" y1="`)
@@ -473,35 +537,58 @@ func aStockAuctionTrendSVG(points []model.AStockAuctionTrend, title string) stri
 		b.WriteString(`" y2="`)
 		b.WriteString(fmt.Sprintf("%.1f", top+plotHeight))
 		b.WriteString(`"><title>`)
-		b.WriteString(html.EscapeString(point.Date))
+		b.WriteString(html.EscapeString(date))
 		b.WriteString(`</title></line>`)
 	}
-	b.WriteString(`<polygon class="auction-chart-area" points="`)
-	b.WriteString(strings.Join(area, " "))
-	b.WriteString(`"></polygon><polyline class="auction-chart-line" points="`)
-	b.WriteString(strings.Join(coords, " "))
-	b.WriteString(`"></polyline>`)
-	for i, point := range points {
-		if i != 0 && i != len(points)-1 && i%5 != 0 {
+	dateIndex := make(map[string]int, len(dates))
+	for i, date := range dates {
+		dateIndex[date] = i
+	}
+	for _, slot := range []string{"0925", "0930"} {
+		points := windows[slot]
+		coords := make([]string, 0, len(points))
+		for _, point := range points {
+			i, ok := dateIndex[point.Date]
+			if !ok {
+				continue
+			}
+			x := aStockAuctionTrendX(i, len(dates), left, plotWidth)
+			y := top + (1-point.TotalAmount/maxAmount)*plotHeight
+			coords = append(coords, fmt.Sprintf("%.1f,%.1f", x, y))
+		}
+		if len(coords) == 0 {
 			continue
 		}
-		x := aStockAuctionTrendX(i, len(points), left, plotWidth)
-		y := top + (1-point.TotalAmount/maxAmount)*plotHeight
-		b.WriteString(`<circle class="auction-chart-dot" cx="`)
-		b.WriteString(fmt.Sprintf("%.1f", x))
-		b.WriteString(`" cy="`)
-		b.WriteString(fmt.Sprintf("%.1f", y))
-		b.WriteString(`" r="4"><title>`)
-		b.WriteString(html.EscapeString(point.Date + " " + formatAStockAuctionMoney(point.TotalAmount)))
-		b.WriteString(`</title></circle>`)
+		b.WriteString(`<polyline class="auction-chart-line auction-chart-line-`)
+		b.WriteString(slot)
+		b.WriteString(`" points="`)
+		b.WriteString(strings.Join(coords, " "))
+		b.WriteString(`"></polyline>`)
+		for _, point := range points {
+			i, ok := dateIndex[point.Date]
+			if !ok || (i != 0 && i != len(dates)-1 && i%5 != 0) {
+				continue
+			}
+			x := aStockAuctionTrendX(i, len(dates), left, plotWidth)
+			y := top + (1-point.TotalAmount/maxAmount)*plotHeight
+			b.WriteString(`<circle class="auction-chart-dot-`)
+			b.WriteString(slot)
+			b.WriteString(`" cx="`)
+			b.WriteString(fmt.Sprintf("%.1f", x))
+			b.WriteString(`" cy="`)
+			b.WriteString(fmt.Sprintf("%.1f", y))
+			b.WriteString(`" r="4"><title>`)
+			b.WriteString(html.EscapeString(slot + " " + point.Date + " " + formatAStockAuctionMoney(point.TotalAmount)))
+			b.WriteString(`</title></circle>`)
+		}
 	}
-	for i, point := range points {
-		x := aStockAuctionTrendX(i, len(points), left, plotWidth)
+	for i, date := range dates {
+		x := aStockAuctionTrendX(i, len(dates), left, plotWidth)
 		anchor := "middle"
 		switch {
 		case i == 0:
 			anchor = "start"
-		case i == len(points)-1:
+		case i == len(dates)-1:
 			anchor = "end"
 		}
 		b.WriteString(`<text class="auction-chart-label" x="`)
@@ -509,11 +596,28 @@ func aStockAuctionTrendSVG(points []model.AStockAuctionTrend, title string) stri
 		b.WriteString(`" text-anchor="`)
 		b.WriteString(anchor)
 		b.WriteString(`" y="268">`)
-		b.WriteString(html.EscapeString(point.Date))
+		b.WriteString(html.EscapeString(date))
 		b.WriteString(`</text>`)
 	}
 	b.WriteString(`</svg>`)
 	return b.String()
+}
+
+func aStockAuctionTrendDates(series map[string][]model.AStockAuctionTrend) []string {
+	seen := map[string]struct{}{}
+	for _, points := range series {
+		for _, point := range points {
+			if strings.TrimSpace(point.Date) != "" {
+				seen[point.Date] = struct{}{}
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for date := range seen {
+		out = append(out, date)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func formatAStockAuctionAxisMoney(value float64) string {

@@ -445,6 +445,11 @@ func aStockSnapshotHasRecommendations(snapshot model.AStockRecommendationSnapsho
 }
 
 func (w *Worker) runAStockAuctionCrawl(ctx context.Context) error {
+	return w.runAStockAuctionCrawlAt(ctx, time.Now().In(aStockLocation()))
+}
+
+func (w *Worker) runAStockAuctionCrawlAt(ctx context.Context, now time.Time) error {
+	captureSlot := aStockAuctionCaptureSlotForTime(now)
 	status, err := w.loadAStockTradingDayStatus(ctx, "")
 	if err != nil {
 		return fmt.Errorf("a-stock auction crawl trading-day check failed: %w", err)
@@ -456,7 +461,7 @@ func (w *Worker) runAStockAuctionCrawl(ctx context.Context) error {
 		}
 		return jobSkippedError{message: fmt.Sprintf("a-stock auction crawl skipped for %s: %s", nonEmpty(status.Date, time.Now().In(aStockLocation()).Format("2006-01-02")), message)}
 	}
-	result, err := w.runAStockAuctionLatest(ctx)
+	result, err := w.runAStockAuctionCrawlForDateResult(ctx, "", captureSlot)
 	if err != nil {
 		return err
 	}
@@ -465,6 +470,7 @@ func (w *Worker) runAStockAuctionCrawl(ctx context.Context) error {
 	}
 	log.Info().
 		Str("trade_date", result.Date).
+		Str("capture_slot", result.CaptureSlot).
 		Int("total", result.Total).
 		Int("ok", result.OK).
 		Msg("a-stock auction amounts crawled")
@@ -472,11 +478,11 @@ func (w *Worker) runAStockAuctionCrawl(ctx context.Context) error {
 }
 
 func (w *Worker) runAStockAuctionLatest(ctx context.Context) (aStockAuctionCrawlResult, error) {
-	return w.runAStockAuctionCrawlForDateResult(ctx, "")
+	return w.runAStockAuctionCrawlForDateResult(ctx, "", "0930")
 }
 
 func (w *Worker) runAStockAuctionCrawlForDate(ctx context.Context, tradeDate string) error {
-	result, err := w.runAStockAuctionCrawlForDateResult(ctx, tradeDate)
+	result, err := w.runAStockAuctionCrawlForDateResult(ctx, tradeDate, "0930")
 	if err != nil {
 		return err
 	}
@@ -485,6 +491,7 @@ func (w *Worker) runAStockAuctionCrawlForDate(ctx context.Context, tradeDate str
 	}
 	log.Info().
 		Str("trade_date", result.Date).
+		Str("capture_slot", result.CaptureSlot).
 		Int("total", result.Total).
 		Int("ok", result.OK).
 		Msg("a-stock auction amounts crawled")
@@ -492,11 +499,12 @@ func (w *Worker) runAStockAuctionCrawlForDate(ctx context.Context, tradeDate str
 }
 
 type aStockAuctionCrawlResult struct {
-	Date    string `json:"date"`
-	Total   int    `json:"total"`
-	OK      int    `json:"ok"`
-	Skipped bool   `json:"skipped,omitempty"`
-	Message string `json:"message,omitempty"`
+	Date        string `json:"date"`
+	CaptureSlot string `json:"capture_slot"`
+	Total       int    `json:"total"`
+	OK          int    `json:"ok"`
+	Skipped     bool   `json:"skipped,omitempty"`
+	Message     string `json:"message,omitempty"`
 }
 
 type aStockTradingDayStatus struct {
@@ -549,7 +557,25 @@ type aStockSectorFundFlowCrawlResult struct {
 	Indicator    string   `json:"indicator,omitempty"`
 }
 
-func (w *Worker) runAStockAuctionCrawlForDateResult(ctx context.Context, tradeDate string) (aStockAuctionCrawlResult, error) {
+func aStockAuctionCaptureSlotForTime(value time.Time) string {
+	local := value.In(aStockLocation())
+	if local.Hour() == 9 && local.Minute() < 30 {
+		return "0925"
+	}
+	return "0930"
+}
+
+func normalizeAStockAuctionCaptureSlot(value string) string {
+	switch strings.TrimSpace(value) {
+	case "0925":
+		return "0925"
+	default:
+		return "0930"
+	}
+}
+
+func (w *Worker) runAStockAuctionCrawlForDateResult(ctx context.Context, tradeDate string, captureSlot string) (aStockAuctionCrawlResult, error) {
+	captureSlot = normalizeAStockAuctionCaptureSlot(captureSlot)
 	baseURL := strings.TrimRight(strings.TrimSpace(w.cfg.AStockAuctionURL), "/")
 	if baseURL == "" {
 		return aStockAuctionCrawlResult{}, fmt.Errorf("YUQING_ASTOCK_AUCTION_URL not configured")
@@ -573,7 +599,7 @@ func (w *Worker) runAStockAuctionCrawlForDateResult(ctx context.Context, tradeDa
 			message = httpResp.Status()
 		}
 		if httpResp.StatusCode() == http.StatusUnprocessableEntity {
-			return aStockAuctionCrawlResult{Date: tradeDate, Skipped: true, Message: message}, nil
+			return aStockAuctionCrawlResult{Date: tradeDate, CaptureSlot: captureSlot, Skipped: true, Message: message}, nil
 		}
 		return aStockAuctionCrawlResult{}, fmt.Errorf("akshare auction endpoint failed: %s", message)
 	}
@@ -587,6 +613,9 @@ func (w *Worker) runAStockAuctionCrawlForDateResult(ctx context.Context, tradeDa
 	for i := range payload.Items {
 		if payload.Items[i].TradeDate == "" {
 			payload.Items[i].TradeDate = payload.Date
+		}
+		if payload.Items[i].CaptureSlot == "" {
+			payload.Items[i].CaptureSlot = captureSlot
 		}
 		if payload.Items[i].FetchedAt.IsZero() {
 			payload.Items[i].FetchedAt = time.Now().UTC()
@@ -609,13 +638,14 @@ func (w *Worker) runAStockAuctionCrawlForDateResult(ctx context.Context, tradeDa
 				message = fmt.Sprintf("AKShare 集合竞价接口返回 %d 条明细，但有效成交额/成交量为 0，未写入业务库", len(payload.Items))
 			}
 		}
-		return aStockAuctionCrawlResult{Date: payload.Date, Total: len(payload.Items), OK: okCount, Skipped: true, Message: message}, nil
+		return aStockAuctionCrawlResult{Date: payload.Date, CaptureSlot: captureSlot, Total: len(payload.Items), OK: okCount, Skipped: true, Message: message}, nil
 	}
 	writePayload := map[string]any{
-		"date":       payload.Date,
-		"items":      payload.Items,
-		"code_names": payload.CodeNames,
-		"replace":    true,
+		"date":         payload.Date,
+		"capture_slot": captureSlot,
+		"items":        payload.Items,
+		"code_names":   payload.CodeNames,
+		"replace":      true,
 	}
 	writeResp, err := w.client.R().
 		SetContext(ctx).
@@ -627,14 +657,14 @@ func (w *Worker) runAStockAuctionCrawlForDateResult(ctx context.Context, tradeDa
 	if !writeResp.IsSuccess() {
 		return aStockAuctionCrawlResult{}, fmt.Errorf("content auction upsert failed: %s", writeResp.Status())
 	}
-	return aStockAuctionCrawlResult{Date: payload.Date, Total: len(payload.Items), OK: okCount}, nil
+	return aStockAuctionCrawlResult{Date: payload.Date, CaptureSlot: captureSlot, Total: len(payload.Items), OK: okCount}, nil
 }
 
 func (w *Worker) runAStockAuctionBackfill(ctx context.Context, days int, start string, end string) (aStockAuctionBackfillResult, error) {
 	dates := aStockAuctionBackfillDates(days, start, end, time.Now().In(aStockLocation()))
 	result := aStockAuctionBackfillResult{Days: len(dates), Results: make([]aStockAuctionCrawlResult, 0, len(dates))}
 	for _, date := range dates {
-		item, err := w.runAStockAuctionCrawlForDateResult(ctx, date)
+		item, err := w.runAStockAuctionCrawlForDateResult(ctx, date, "0930")
 		if err != nil {
 			result.Failed++
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", date, err))

@@ -543,6 +543,40 @@ func TestAStockPagePostClearsSameDateCaches(t *testing.T) {
 
 func TestAStockAuctionPageLoadsSummaryAndRows(t *testing.T) {
 	fetchedAt := time.Date(2026, 6, 16, 1, 30, 0, 0, time.UTC)
+	trend0930 := []model.AStockAuctionTrend{
+		{Date: "2026-06-15", CaptureSlot: "0930", StockCount: 2, TotalVolume: 180000, TotalAmount: 4500000, MaxStockCode: "600000", MaxStockName: "浦发银行"},
+		{
+			Date:         "2026-06-16",
+			CaptureSlot:  "0930",
+			StockCount:   2,
+			TotalVolume:  213400,
+			TotalAmount:  5876080,
+			MaxStockCode: "002230",
+			MaxStockName: "科大讯飞",
+			MarketTop: []model.AStockAuctionMarketTop{
+				{
+					Market: "沪市",
+					Items: []model.AStockAuctionAmount{{
+						Code:          "600000",
+						Name:          "浦发银行",
+						AuctionAmount: 792000,
+					}},
+				},
+				{
+					Market: "深市",
+					Items: []model.AStockAuctionAmount{{
+						Code:          "002230",
+						Name:          "科大讯飞",
+						AuctionAmount: 5084080,
+					}},
+				},
+			},
+		},
+	}
+	trend0925 := []model.AStockAuctionTrend{
+		{Date: "2026-06-15", CaptureSlot: "0925", StockCount: 2, TotalVolume: 170000, TotalAmount: 4000000, MaxStockCode: "600000", MaxStockName: "浦发银行"},
+		{Date: "2026-06-16", CaptureSlot: "0925", StockCount: 2, TotalVolume: 200000, TotalAmount: 5000000, MaxStockCode: "002230", MaxStockName: "科大讯飞"},
+	}
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/a-stock/auction" {
 			t.Fatalf("unexpected auction content path: %s", r.URL.String())
@@ -562,6 +596,7 @@ func TestAStockAuctionPageLoadsSummaryAndRows(t *testing.T) {
 			"message": "ok",
 			"data": model.AStockAuctionListResult{
 				Date:         "2026-06-16",
+				CaptureSlot:  "0930",
 				Keyword:      "科",
 				LatestDate:   "2026-06-16",
 				Dates:        []string{"2026-06-16", "2026-06-15"},
@@ -572,6 +607,7 @@ func TestAStockAuctionPageLoadsSummaryAndRows(t *testing.T) {
 				TotalAmount:  151000000,
 				MaxItem: &model.AStockAuctionAmount{
 					TradeDate:     "2026-06-16",
+					CaptureSlot:   "0930",
 					Code:          "002230",
 					Name:          "科大讯飞",
 					AuctionAmount: 100000000,
@@ -580,6 +616,7 @@ func TestAStockAuctionPageLoadsSummaryAndRows(t *testing.T) {
 				FetchedAt: &fetchedAt,
 				Items: []model.AStockAuctionAmount{{
 					TradeDate:     "2026-06-16",
+					CaptureSlot:   "0930",
 					Code:          "002230",
 					Name:          "科大讯飞",
 					AuctionPrice:  41.2,
@@ -589,35 +626,8 @@ func TestAStockAuctionPageLoadsSummaryAndRows(t *testing.T) {
 					Status:        "ok",
 					FetchedAt:     fetchedAt,
 				}},
-				Trend: []model.AStockAuctionTrend{
-					{Date: "2026-06-15", StockCount: 2, TotalVolume: 180000, TotalAmount: 4500000, MaxStockCode: "600000", MaxStockName: "浦发银行"},
-					{
-						Date:         "2026-06-16",
-						StockCount:   2,
-						TotalVolume:  213400,
-						TotalAmount:  5876080,
-						MaxStockCode: "002230",
-						MaxStockName: "科大讯飞",
-						MarketTop: []model.AStockAuctionMarketTop{
-							{
-								Market: "沪市",
-								Items: []model.AStockAuctionAmount{{
-									Code:          "600000",
-									Name:          "浦发银行",
-									AuctionAmount: 792000,
-								}},
-							},
-							{
-								Market: "深市",
-								Items: []model.AStockAuctionAmount{{
-									Code:          "002230",
-									Name:          "科大讯飞",
-									AuctionAmount: 5084080,
-								}},
-							},
-						},
-					},
-				},
+				Trend:       trend0930,
+				TrendSeries: map[string][]model.AStockAuctionTrend{"0925": trend0925, "0930": trend0930},
 			},
 		})
 	}))
@@ -631,7 +641,7 @@ func TestAStockAuctionPageLoadsSummaryAndRows(t *testing.T) {
 		t.Fatalf("expected auction page 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"集合竞价", "操作区", "获取最新交易日集合竞价金额", "回溯近7天集合竞价", "当日汇总", "近7日资金趋势", "最近7天", "最近2周", "最近30天", "沪市金额前三", "深市金额前三", "2026-06-16", "科大讯飞", "浦发银行", "股票数", "2", "1.51亿", "508.41万", "79.20万", "12.34万", "akshare_pre_min", `value="科"`, `<svg class="auction-chart"`} {
+	for _, want := range []string{"集合竞价", "09:25:05", "09:30:05", "操作区", "获取最新交易日集合竞价金额", "回溯近7天集合竞价", "当日汇总", "当前快照", "0930", "近7日资金趋势", "最近7天", "最近2周", "最近30天", "沪市金额前三", "深市金额前三", "2026-06-16", "科大讯飞", "浦发银行", "股票数", "2", "1.51亿", "508.41万", "79.20万", "12.34万", "akshare_pre_min", `value="科"`, `<svg class="auction-chart"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected auction page to contain %q, got %s", want, body)
 		}
@@ -646,6 +656,8 @@ func TestAStockAuctionPageLoadsSummaryAndRows(t *testing.T) {
 		`class="auction-chart-label" x="1096.0" text-anchor="end" y="268">2026-06-16</text>`,
 		`class="auction-chart-label" text-anchor="end" x="48.0" y="28.0">587.61万</text>`,
 		`class="auction-chart-label" text-anchor="end" x="48.0" y="232.0">0</text>`,
+		`class="auction-chart-line auction-chart-line-0925"`,
+		`class="auction-chart-line auction-chart-line-0930"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected auction chart daily grid to contain %q, got %s", want, body)
@@ -7060,6 +7072,76 @@ func mustAStockScoreComponentForTest(t *testing.T, rec aStockRecommendation, lab
 	}
 	t.Fatalf("expected score component %q in %+v", label, aStockRecommendationScoreBreakdown(rec))
 	return aStockRecommendationScoreComponent{}
+}
+
+func aStockMomentumBarsForTest(t *testing.T, code string, endDate string, closes []float64, amounts []float64) []aStockMarketBar {
+	t.Helper()
+	end, err := time.ParseInLocation("2006-01-02", endDate, aStockLocation())
+	if err != nil {
+		t.Fatalf("parse end date: %v", err)
+	}
+	start := end.AddDate(0, 0, -len(closes)+1)
+	bars := make([]aStockMarketBar, 0, len(closes))
+	for i, closeValue := range closes {
+		if closeValue <= 0 {
+			t.Fatalf("close must be positive at %d", i)
+		}
+		open := closeValue
+		prevClose := closeValue
+		if i > 0 {
+			prevClose = closes[i-1]
+			open = prevClose
+		}
+		amount := 100000000.0
+		if i < len(amounts) && amounts[i] > 0 {
+			amount = amounts[i]
+		}
+		pct := 0.0
+		if i > 0 && prevClose > 0 {
+			pct = (closeValue/prevClose - 1) * 100
+		}
+		high := closeValue
+		if open > high {
+			high = open
+		}
+		low := closeValue
+		if open < low {
+			low = open
+		}
+		bars = append(bars, aStockMarketBar{
+			Code:       code,
+			Date:       start.AddDate(0, 0, i).Format("2006-01-02"),
+			Open:       open,
+			High:       high * 1.005,
+			Low:        low * 0.995,
+			Close:      closeValue,
+			Pct:        pct,
+			Volume:     amount / closeValue,
+			Amount:     amount,
+			EntryPrice: open,
+		})
+	}
+	return bars
+}
+
+func aStockMomentumAmountsForTest(size int, lastAmount float64) []float64 {
+	amounts := make([]float64, size)
+	for i := range amounts {
+		amounts[i] = 100000000
+	}
+	if size > 0 {
+		amounts[size-1] = lastAmount
+	}
+	return amounts
+}
+
+func aStockMomentumHasSignalForTest(signals []aStockMomentumSignal, name string) bool {
+	for _, signal := range signals {
+		if signal.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func TestAStockPageBlocksRecommendationsOnNonTradingDay(t *testing.T) {
