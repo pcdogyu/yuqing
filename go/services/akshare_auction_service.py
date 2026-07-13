@@ -328,7 +328,14 @@ def normalize_date(value: str | None) -> str:
 def normalize_optional_date(value: str | None) -> str:
     if not value:
         return ""
-    value = value.strip()
+    if isinstance(value, dt.datetime) or isinstance(value, dt.date) or hasattr(value, "strftime"):
+        try:
+            return value.strftime("%Y-%m-%d")
+        except Exception:
+            pass
+    value = str(value).strip()
+    if value.lower() in {"nat", "nan", "none"}:
+        return ""
     for fmt in ("%Y-%m-%d", "%Y%m%d", "%Y/%m/%d", "%Y.%m.%d"):
         try:
             return dt.datetime.strptime(value, fmt).strftime("%Y-%m-%d")
@@ -346,7 +353,7 @@ def date_add(value: str, days: int) -> str:
     return (base + dt.timedelta(days=days)).strftime("%Y-%m-%d")
 
 
-def date_in_range(value: str, start: str, end: str) -> bool:
+def optional_date_in_range(value: str, start: str, end: str) -> bool:
     normalized = normalize_optional_date(value)
     if not normalized:
         return False
@@ -2009,7 +2016,7 @@ def dividend_event_row_item(row: Any, code: str, start: str, end: str) -> dict[s
         or data.get("dividend_date")
         or data.get("派息日期")
     )
-    if not date_in_range(ex_date, start, end) and not date_in_range(dividend_date, start, end):
+    if not optional_date_in_range(ex_date, start, end) and not optional_date_in_range(dividend_date, start, end):
         return None
     return {
         "code": code,
@@ -2020,6 +2027,7 @@ def dividend_event_row_item(row: Any, code: str, start: str, end: str) -> dict[s
         "description": text_value(
             data.get("分红方案")
             or data.get("实施方案")
+            or data.get("实施方案分红说明")
             or data.get("派现")
             or data.get("description")
         ),
