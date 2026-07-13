@@ -2998,9 +2998,19 @@ func (s *Server) loadAStockFastReadOnlyContextWithCache(strategyDate string, per
 	if ctx.Period == "morning" && !ctx.IgnoreRecent && recommendationTarget > 0 {
 		recentReplacementPool = buildAStockSnapshotReplacementRecommendations(ctx.Date, ctx.Period, aStockRecommendationPhaseFinal, ctx.Articles, candidates)
 	}
+	exDividendStatus := ""
+	dailyLimitStatus := ""
 	if ctx.Period == "afternoon" && len(ctx.Recommendations) > 0 {
-		s.applyAStockAfternoonSameDayCapsWithCache(&ctx, candidates, cache)
-		recommendationTarget = len(ctx.Recommendations)
+		remaining := s.applyAStockAfternoonSameDayDuplicateCapsWithCache(&ctx, candidates, cache)
+		if remaining <= 0 {
+			_, skipped := limitAStockRecommendationsByCount(ctx.Recommendations, 0)
+			ctx.Recommendations = nil
+			ctx.SameDayMorningFiltered += skipped
+			dailyLimitStatus = formatAStockDailyRecommendationLimitStatus(skipped)
+			recommendationTarget = 0
+		} else if recommendationTarget > remaining {
+			recommendationTarget = remaining
+		}
 	}
 	if len(ctx.Recommendations) > 0 && !ctx.IgnoreRecent {
 		recentCodes = s.loadRecentAStockRecommendationCodesForPeriodWithCache(ctx.Date, ctx.Period, aStockRecentLookbackDays, cache)
@@ -3015,12 +3025,18 @@ func (s *Server) loadAStockFastReadOnlyContextWithCache(strategyDate string, per
 			ctx.Recommendations, ctx.RecentFiltered = filterRecentAStockRecommendations(ctx.Recommendations, recentCodes)
 		}
 	}
-	exDividendStatus := ""
-	dailyLimitStatus := ""
+	dailyLimitFilteredTotal := 0
 	if exDividendSkipped, dailyLimitSkipped := s.applyAStockRecommendationOutputFiltersWithCache(&ctx, cache); exDividendSkipped > 0 || dailyLimitSkipped > 0 {
 		exDividendStatus = formatAStockExDividendFilterStatus(exDividendSkipped)
-		dailyLimitStatus = formatAStockDailyRecommendationLimitStatus(dailyLimitSkipped)
+		dailyLimitFilteredTotal += dailyLimitSkipped
 		recommendationTarget = len(ctx.Recommendations)
+	}
+	if ctx.Period == "afternoon" && len(ctx.Recommendations) > 0 {
+		dailyLimitFilteredTotal += s.applyAStockAfternoonDailyLimitOnlyWithCache(&ctx, cache)
+		recommendationTarget = minInt(recommendationTarget, len(ctx.Recommendations))
+	}
+	if dailyLimitFilteredTotal > 0 {
+		dailyLimitStatus = formatAStockDailyRecommendationLimitStatus(dailyLimitFilteredTotal)
 	}
 	ctx.Recommendations = withAStockRecommendationEntryTimes(ctx.Recommendations, ctx.Period, "")
 	ctx.Recommendations = initializeAStockRecommendationMarket(ctx.Recommendations)
@@ -3525,8 +3541,16 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 			ctx.Recommendations = mergeAStockLimitUpReplacementPool(ctx.Recommendations, replacementPool)
 		}
 		if period.Key == "afternoon" && len(ctx.Recommendations) > 0 {
-			s.applyAStockAfternoonSameDayCapsWithCache(&ctx, candidates, cache)
-			recommendationTarget = len(ctx.Recommendations)
+			remaining := s.applyAStockAfternoonSameDayDuplicateCapsWithCache(&ctx, candidates, cache)
+			if remaining <= 0 {
+				_, skipped := limitAStockRecommendationsByCount(ctx.Recommendations, 0)
+				ctx.Recommendations = nil
+				ctx.SameDayMorningFiltered += skipped
+				dailyLimitStatus = formatAStockDailyRecommendationLimitStatus(skipped)
+				recommendationTarget = 0
+			} else if recommendationTarget > remaining {
+				recommendationTarget = remaining
+			}
 		}
 	}
 	if len(ctx.Recommendations) > 0 && !ctx.IgnoreRecent {
@@ -3555,10 +3579,18 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 		ctx.FundFlowMissingCount = result.Missing
 		fundFlowStatus = formatAStockFundFlowFilterStatus(result.Filtered, result.Replenished, result.Missing, result.Shortfall)
 	}
+	dailyLimitFilteredTotal := 0
 	if exDividendSkipped, dailyLimitSkipped := s.applyAStockRecommendationOutputFiltersWithCache(&ctx, cache); exDividendSkipped > 0 || dailyLimitSkipped > 0 {
 		exDividendStatus = formatAStockExDividendFilterStatus(exDividendSkipped)
-		dailyLimitStatus = formatAStockDailyRecommendationLimitStatus(dailyLimitSkipped)
+		dailyLimitFilteredTotal += dailyLimitSkipped
 		recommendationTarget = len(ctx.Recommendations)
+	}
+	if period.Key == "afternoon" && len(ctx.Recommendations) > 0 {
+		dailyLimitFilteredTotal += s.applyAStockAfternoonDailyLimitOnlyWithCache(&ctx, cache)
+		recommendationTarget = minInt(recommendationTarget, len(ctx.Recommendations))
+	}
+	if dailyLimitFilteredTotal > 0 {
+		dailyLimitStatus = formatAStockDailyRecommendationLimitStatus(dailyLimitFilteredTotal)
 	}
 	ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus, ctx.LimitUpFiltered, ctx.NoTodayMarketCount = s.loadAStockMarketView(strategyDate, ctx.Period, ctx.Recommendations, ctx.LimitUpFilterEnabled, ctx.TodayMarketFilterEnabled, recommendationTarget)
 	if forceRecommendationRefresh {
@@ -5374,8 +5406,18 @@ func (s *Server) applyAStockAfternoonSameDayCaps(ctx *aStockContext, candidates 
 }
 
 func (s *Server) applyAStockAfternoonSameDayCapsWithCache(ctx *aStockContext, candidates []aStockMarketCandidate, cache *aStockRequestCache) {
+	remaining := s.applyAStockAfternoonSameDayDuplicateCapsWithCache(ctx, candidates, cache)
 	if ctx == nil || ctx.Period != "afternoon" || len(ctx.Recommendations) == 0 {
 		return
+	}
+	filtered, dailyLimitFiltered := limitAStockRecommendationsByCount(ctx.Recommendations, remaining)
+	ctx.Recommendations = filtered
+	ctx.SameDayMorningFiltered += dailyLimitFiltered
+}
+
+func (s *Server) applyAStockAfternoonSameDayDuplicateCapsWithCache(ctx *aStockContext, candidates []aStockMarketCandidate, cache *aStockRequestCache) int {
+	if ctx == nil || ctx.Period != "afternoon" || len(ctx.Recommendations) == 0 {
+		return aStockDailyRecommendationLimit
 	}
 	morningRecommendations := s.loadSameDayMorningAStockRecommendationsWithCache(ctx.Date, candidates, cache)
 	filtered := ctx.Recommendations
@@ -5385,19 +5427,20 @@ func (s *Server) applyAStockAfternoonSameDayCapsWithCache(ctx *aStockContext, ca
 		filtered, sameCodeFiltered = filterAStockRecommendationsByCodes(filtered, aStockRecommendationCodeSet(morningRecommendations))
 		filtered, hotspotQuotaFiltered = filterAStockRecommendationsByMorningHotspotQuota(filtered, aStockRecommendationHotspotCounts(morningRecommendations), aStockStocksPerHotspot)
 	}
-	filtered, dailyLimitFiltered := limitAStockRecommendationsByCount(filtered, remainingAStockDailyRecommendationLimit(len(morningRecommendations)))
 	ctx.Recommendations = filtered
-	ctx.SameDayMorningFiltered += sameCodeFiltered + hotspotQuotaFiltered + dailyLimitFiltered
+	ctx.SameDayMorningFiltered += sameCodeFiltered + hotspotQuotaFiltered
+	return remainingAStockDailyRecommendationLimit(len(morningRecommendations))
 }
 
-func (s *Server) applyAStockAfternoonDailyLimitOnlyWithCache(ctx *aStockContext, cache *aStockRequestCache) {
+func (s *Server) applyAStockAfternoonDailyLimitOnlyWithCache(ctx *aStockContext, cache *aStockRequestCache) int {
 	if ctx == nil || ctx.Period != "afternoon" || len(ctx.Recommendations) == 0 {
-		return
+		return 0
 	}
 	morningRecommendations := s.loadSameDayMorningAStockRecommendationsWithCache(ctx.Date, nil, cache)
 	filtered, dailyLimitFiltered := limitAStockRecommendationsByCount(ctx.Recommendations, remainingAStockDailyRecommendationLimit(len(morningRecommendations)))
 	ctx.Recommendations = filtered
 	ctx.SameDayMorningFiltered += dailyLimitFiltered
+	return dailyLimitFiltered
 }
 
 func (s *Server) loadSameDayMorningAStockRecommendations(strategyDate string, candidates []aStockMarketCandidate) []aStockRecommendation {
