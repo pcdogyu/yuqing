@@ -17,6 +17,7 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	pdf "github.com/dslipak/pdf"
+	"github.com/go-resty/resty/v2"
 
 	"github.com/pcdogyu/yuqing/go/internal/model"
 	"github.com/pcdogyu/yuqing/go/internal/stockresearch"
@@ -25,6 +26,7 @@ import (
 const stockResearchPDFMaxBytes = 30 * 1024 * 1024
 
 var stockResearchPDFParseItemMinTimeout = 2 * time.Minute
+var stockResearchPDFContentMinTimeout = time.Second
 
 type stockResearchPDFParseOptions struct {
 	ID      int64
@@ -376,7 +378,7 @@ func (w *Worker) downloadStockResearchPDF(ctx context.Context, item model.StockR
 }
 
 func (w *Worker) writeStockResearchPDFUpdate(ctx context.Context, id int64, update model.StockResearchPDFUpdate) error {
-	resp, err := w.client.R().
+	resp, err := w.stockResearchPDFContentRequest().
 		SetContext(ctx).
 		SetBody(update).
 		Post(fmt.Sprintf("%s/api/v1/internal/stock-research/%d/pdf", strings.TrimRight(w.cfg.ContentURL, "/"), id))
@@ -393,7 +395,7 @@ func (w *Worker) getContentJSON(ctx context.Context, path string, target any) er
 	var envelope struct {
 		Data json.RawMessage `json:"data"`
 	}
-	resp, err := w.client.R().
+	resp, err := w.stockResearchPDFContentRequest().
 		SetContext(ctx).
 		SetResult(&envelope).
 		Get(strings.TrimRight(w.cfg.ContentURL, "/") + path)
@@ -407,6 +409,14 @@ func (w *Worker) getContentJSON(ctx context.Context, path string, target any) er
 		return nil
 	}
 	return json.Unmarshal(envelope.Data, target)
+}
+
+func (w *Worker) stockResearchPDFContentRequest() *resty.Request {
+	client := w.stockResearchPDFClient
+	if client == nil {
+		client = w.client
+	}
+	return client.R()
 }
 
 func extractStockResearchPDFText(filePath string) (string, error) {

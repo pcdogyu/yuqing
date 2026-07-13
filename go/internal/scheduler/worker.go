@@ -22,12 +22,13 @@ import (
 )
 
 type Worker struct {
-	cfg         config.Config
-	client      *resty.Client
-	crawlClient *resty.Client
-	store       *sqlitestore.Store
-	mu          sync.Mutex
-	aStockMu    sync.Mutex
+	cfg                    config.Config
+	client                 *resty.Client
+	crawlClient            *resty.Client
+	stockResearchPDFClient *resty.Client
+	store                  *sqlitestore.Store
+	mu                     sync.Mutex
+	aStockMu               sync.Mutex
 }
 
 func NewWorker(cfg config.Config) *Worker {
@@ -35,6 +36,7 @@ func NewWorker(cfg config.Config) *Worker {
 	if crawlTimeout <= 0 {
 		crawlTimeout = maxDuration(cfg.HTTPTimeout*6, cfg.HTTPTimeout)
 	}
+	stockResearchPDFContentTimeout := maxDuration(cfg.HTTPTimeout, stockResearchPDFContentMinTimeout)
 	return &Worker{
 		cfg: cfg,
 		client: resty.New().
@@ -46,6 +48,13 @@ func NewWorker(cfg config.Config) *Worker {
 			SetHeader("X-Service-Token", cfg.ServiceToken),
 		crawlClient: resty.New().
 			SetTimeout(crawlTimeout).
+			SetHeader("X-Service-Token", cfg.ServiceToken),
+		stockResearchPDFClient: resty.New().
+			SetTimeout(stockResearchPDFContentTimeout).
+			SetRetryCount(cfg.ExternalRetryCount).
+			SetRetryWaitTime(cfg.ExternalRetryWait).
+			SetRetryMaxWaitTime(maxDuration(cfg.ExternalRetryWait*6, cfg.ExternalRetryWait)).
+			AddRetryCondition(external.ShouldRetryResponse).
 			SetHeader("X-Service-Token", cfg.ServiceToken),
 	}
 }
