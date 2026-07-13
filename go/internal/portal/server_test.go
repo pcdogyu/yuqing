@@ -7051,6 +7051,17 @@ func mustAStockRecommendationForTest(t *testing.T, recommendations []aStockRecom
 	return aStockRecommendation{}
 }
 
+func mustAStockScoreComponentForTest(t *testing.T, rec aStockRecommendation, label string) aStockRecommendationScoreComponent {
+	t.Helper()
+	for _, component := range aStockRecommendationScoreBreakdown(rec) {
+		if component.Label == label {
+			return component
+		}
+	}
+	t.Fatalf("expected score component %q in %+v", label, aStockRecommendationScoreBreakdown(rec))
+	return aStockRecommendationScoreComponent{}
+}
+
 func TestAStockPageBlocksRecommendationsOnNonTradingDay(t *testing.T) {
 	scheduler := newAStockTradingDayServer(t, false)
 	defer scheduler.Close()
@@ -7955,17 +7966,102 @@ func TestAStockMarketViewKeepsMissingTodayMarketByDefault(t *testing.T) {
 	}
 }
 
+func TestAStockMarketBarsPenalizePreviousHighPctRisk(t *testing.T) {
+	recommendations := initializeAStockRecommendationMarket([]aStockRecommendation{
+		{Rank: 1, Hotspot: "机器人", Code: "600001", Name: "昨日涨停", HotspotScore: 100, MarketScore: 100, Reason: "热度分 100"},
+		{Rank: 2, Hotspot: "机器人", Code: "600002", Name: "昨日大涨", HotspotScore: 100, MarketScore: 100, Reason: "热度分 100"},
+		{Rank: 3, Hotspot: "机器人", Code: "600003", Name: "边界八点", HotspotScore: 100, MarketScore: 100, Reason: "热度分 100"},
+	})
+	bars := []aStockMarketBar{
+		{Code: "600001", Date: "2026-06-15", Close: 11.00, Pct: 9.90},
+		{Code: "600001", Date: "2026-06-16", Open: 11.10, Close: 11.20, Pct: 1.82},
+		{Code: "600002", Date: "2026-06-15", Close: 10.81, Pct: 8.01},
+		{Code: "600002", Date: "2026-06-16", Open: 10.90, Close: 11.00, Pct: 1.76},
+		{Code: "600003", Date: "2026-06-15", Close: 10.80, Pct: 8.00},
+		{Code: "600003", Date: "2026-06-16", Open: 10.90, Close: 11.00, Pct: 1.85},
+	}
+
+	filtered, _, status, _, _ := applyAStockMarketBars("2026-06-16", "morning", recommendations, bars, false, false, 0)
+
+	if len(filtered) != 3 {
+		t.Fatalf("expected previous high-pct stocks to remain with penalties, got %+v status=%q", filtered, status)
+	}
+	limitUp := mustAStockRecommendationForTest(t, filtered, "600001")
+	if limitUp.MarketScore != 50 || !strings.Contains(limitUp.Reason, "昨日涨停+9.90%，风险扣分 50") {
+		t.Fatalf("expected previous limit-up penalty only, got %+v", limitUp)
+	}
+	limitUpComponent := mustAStockScoreComponentForTest(t, limitUp, "昨日涨停")
+	if limitUpComponent.Score != -50 || !strings.Contains(limitUpComponent.Detail, "昨日涨停+9.90%") {
+		t.Fatalf("expected previous limit-up score component, got %+v", limitUpComponent)
+	}
+	if highComponent := aStockRecommendationScoreBreakdown(limitUp); strings.Contains(fmt.Sprint(highComponent), "昨日涨幅过高") {
+		t.Fatalf("expected previous limit-up not to also get high-pct penalty, got %+v", highComponent)
+	}
+	highPct := mustAStockRecommendationForTest(t, filtered, "600002")
+	if highPct.MarketScore != 60 || !strings.Contains(highPct.Reason, "昨日涨幅+8.01%，追高风险扣分 40") {
+		t.Fatalf("expected previous >8%% penalty, got %+v", highPct)
+	}
+	highPctComponent := mustAStockScoreComponentForTest(t, highPct, "昨日涨幅过高")
+	if highPctComponent.Score != -40 || !strings.Contains(highPctComponent.Detail, "昨日涨幅+8.01%") {
+		t.Fatalf("expected previous high-pct score component, got %+v", highPctComponent)
+	}
+	boundary := mustAStockRecommendationForTest(t, filtered, "600003")
+	if boundary.MarketScore != 100 || strings.Contains(boundary.Reason, "追高风险扣分") {
+		t.Fatalf("expected exactly 8.00%% previous pct not to be penalized, got %+v", boundary)
+	}
+}
+
+func TestAStockMarketBarsFilterTodayHighPctForMorningAndAfternoon(t *testing.T) {
+	recommendations := initializeAStockRecommendationMarket([]aStockRecommendation{
+		{Rank: 1, Hotspot: "人工智能", Code: "600001", Name: "今日过高", HotspotScore: 100, MarketScore: 100, Reason: "热度分 100"},
+		{Rank: 2, Hotspot: "人工智能", Code: "600002", Name: "今日边界", HotspotScore: 90, MarketScore: 90, Reason: "热度分 90"},
+	})
+	morningBars := []aStockMarketBar{
+		{Code: "600001", Date: "2026-06-15", Close: 10.00, Pct: 1.00},
+		{Code: "600001", Date: "2026-06-16", Open: 10.80, Close: 10.81, Pct: 8.01},
+		{Code: "600002", Date: "2026-06-15", Close: 10.00, Pct: 1.00},
+		{Code: "600002", Date: "2026-06-16", Open: 10.79, Close: 10.80, Pct: 8.00},
+	}
+
+	filtered, rows, status, limitUpFiltered, _ := applyAStockMarketBars("2026-06-16", "morning", recommendations, morningBars, false, false, 0)
+	if limitUpFiltered != 0 || len(filtered) != 1 || filtered[0].Code != "600002" || len(rows) != 1 {
+		t.Fatalf("expected morning today >8%% filter to keep only boundary stock, limitUp=%d recommendations=%+v rows=%+v", limitUpFiltered, filtered, rows)
+	}
+	if !strings.Contains(status, "过滤今日涨幅过高股票 1") {
+		t.Fatalf("expected morning status to mention today high-pct filter, got %q", status)
+	}
+
+	afternoonBars := []aStockMarketBar{
+		{Code: "600001", Date: "2026-06-15", Close: 10.00, Pct: 1.00},
+		{Code: "600001", Date: "2026-06-16", Open: 10.80, AfternoonEntryPrice: 10.80, Close: 10.81, Pct: 8.01},
+		{Code: "600002", Date: "2026-06-15", Close: 10.00, Pct: 1.00},
+		{Code: "600002", Date: "2026-06-16", Open: 10.79, AfternoonEntryPrice: 10.79, Close: 10.80, Pct: 8.00},
+	}
+	filtered, rows, status, limitUpFiltered, _ = applyAStockMarketBars("2026-06-16", "afternoon", recommendations, afternoonBars, false, false, 0)
+	if limitUpFiltered != 0 || len(filtered) != 1 || filtered[0].Code != "600002" || len(rows) != 1 {
+		t.Fatalf("expected afternoon today >8%% filter to ignore limit-up toggle and keep boundary stock, limitUp=%d recommendations=%+v rows=%+v", limitUpFiltered, filtered, rows)
+	}
+	if !strings.Contains(status, "过滤今日涨幅过高股票 1") {
+		t.Fatalf("expected afternoon status to mention today high-pct filter, got %q", status)
+	}
+
+	filtered, rows, status, _, _ = applyAStockMarketBars("2026-06-16", "morning", recommendations[:1], morningBars[:2], false, false, 0)
+	if len(filtered) != 0 || len(rows) != 0 || !strings.Contains(status, "今日涨幅过高过滤后无推荐股票") {
+		t.Fatalf("expected empty status when all stocks are filtered by today high-pct, recommendations=%+v rows=%+v status=%q", filtered, rows, status)
+	}
+}
+
 func TestAStockMarketViewFiltersLimitUpStocksForAfternoon(t *testing.T) {
 	recommendations := initializeAStockRecommendationMarket([]aStockRecommendation{
-		{Rank: 1, Hotspot: "黄金有色", Code: "600172", Name: "黄河旋风", HotspotScore: 80, MarketScore: 80, Reason: "热度分 80"},
-		{Rank: 2, Hotspot: "新能源", Code: "300179", Name: "四方达", HotspotScore: 79, MarketScore: 79, Reason: "热度分 79"},
-		{Rank: 3, Hotspot: "半导体", Code: "688662", Name: "富信科技", HotspotScore: 78, MarketScore: 78, Reason: "热度分 78"},
+		{Rank: 1, Hotspot: "黄金有色", Code: "600172", Name: "ST黄河", HotspotScore: 80, MarketScore: 80, Reason: "热度分 80"},
+		{Rank: 2, Hotspot: "新能源", Code: "300179", Name: "ST四方", HotspotScore: 79, MarketScore: 79, Reason: "热度分 79"},
+		{Rank: 3, Hotspot: "半导体", Code: "688662", Name: "ST富信", HotspotScore: 78, MarketScore: 78, Reason: "热度分 78"},
 		{Rank: 4, Hotspot: "金融券商", Code: "000001", Name: "平安银行", HotspotScore: 77, MarketScore: 77, Reason: "热度分 77"},
 	})
 	bars := []aStockMarketBar{
-		{Code: "600172", Date: "2026-06-22", Open: 15.41, AfternoonEntryPrice: 15.41, Close: 15.41, Pct: 9.99},
-		{Code: "300179", Date: "2026-06-22", Open: 46.75, AfternoonEntryPrice: 46.75, Close: 46.75, Pct: 20.00},
-		{Code: "688662", Date: "2026-06-22", Open: 158.66, AfternoonEntryPrice: 158.66, Close: 158.66, Pct: 19.99},
+		{Code: "600172", Date: "2026-06-22", Open: 15.41, AfternoonEntryPrice: 15.41, Close: 15.41, Pct: 4.90},
+		{Code: "300179", Date: "2026-06-22", Open: 46.75, AfternoonEntryPrice: 46.75, Close: 46.75, Pct: 4.90},
+		{Code: "688662", Date: "2026-06-22", Open: 158.66, AfternoonEntryPrice: 158.66, Close: 158.66, Pct: 4.90},
 		{Code: "000001", Date: "2026-06-22", Open: 12.3, AfternoonEntryPrice: 12.3, Close: 12.5, Pct: 1.63},
 	}
 
@@ -7987,13 +8083,13 @@ func TestAStockMarketViewFiltersLimitUpStocksForAfternoon(t *testing.T) {
 
 func TestAStockMarketViewBackfillsLimitUpStocksByHeat(t *testing.T) {
 	recommendations := initializeAStockRecommendationMarket([]aStockRecommendation{
-		{Rank: 1, Hotspot: "黄金有色", Code: "600172", Name: "黄河旋风", HotspotScore: 90, MarketScore: 90, Reason: "热度分 90"},
+		{Rank: 1, Hotspot: "黄金有色", Code: "600172", Name: "ST黄河", HotspotScore: 90, MarketScore: 90, Reason: "热度分 90"},
 		{Rank: 2, Hotspot: "黄金有色", Code: "000001", Name: "平安银行", HotspotScore: 85, MarketScore: 85, Reason: "热度分 85"},
 		{Rank: 3, Hotspot: "黄金有色", Code: "000002", Name: "万科A", HotspotScore: 84, MarketScore: 84, Reason: "热度分 84"},
 		{Rank: 4, Hotspot: "黄金有色", Code: "000003", Name: "国华网安", HotspotScore: 83, MarketScore: 83, Reason: "热度分 83"},
 	})
 	bars := []aStockMarketBar{
-		{Code: "600172", Date: "2026-06-22", Open: 15.41, AfternoonEntryPrice: 15.41, Close: 15.41, Pct: 9.99},
+		{Code: "600172", Date: "2026-06-22", Open: 15.41, AfternoonEntryPrice: 15.41, Close: 15.41, Pct: 4.90},
 		{Code: "000001", Date: "2026-06-22", Open: 12.3, AfternoonEntryPrice: 12.3, Close: 12.5, Pct: 1.63},
 		{Code: "000002", Date: "2026-06-22", Open: 8.2, AfternoonEntryPrice: 8.2, Close: 8.4, Pct: 2.44},
 		{Code: "000003", Date: "2026-06-22", Open: 9.1, AfternoonEntryPrice: 9.1, Close: 9.2, Pct: 1.1},

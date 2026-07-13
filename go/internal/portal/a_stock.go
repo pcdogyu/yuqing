@@ -418,6 +418,10 @@ const (
 	aStockOverheat30ThresholdPct       = 30.0
 	aStockOverheat60ThresholdPct       = 60.0
 	aStockNegativeNewsPenalty          = 30
+	aStockPrevLimitUpPenalty           = 50
+	aStockPrevHighPctThreshold         = 8.0
+	aStockPrevHighPctPenalty           = 40
+	aStockTodayHighPctFilterThreshold  = 8.0
 	aStockLowOpenPenaltyThresholdPct   = -2.0
 	aStockLowOpenPenalty               = 80
 	aStockWeakEvidencePenalty          = 30
@@ -6961,6 +6965,30 @@ func capAStockOverheatedFundFlowScore(rec aStockRecommendation, change30 float64
 	)
 }
 
+func applyAStockPreviousLimitUpPenalty(rec aStockRecommendation, prevPct float64) aStockRecommendation {
+	baseScore := rec.MarketScore
+	if baseScore == 0 {
+		baseScore = rec.HotspotScore
+	}
+	rec.MarketScore = baseScore - aStockPrevLimitUpPenalty
+	detail := fmt.Sprintf("昨日涨停%s，风险扣分 %d", formatAStockPct(prevPct), aStockPrevLimitUpPenalty)
+	appendAStockScoreComponentWithUnit(&rec, "昨日涨停", detail, -aStockPrevLimitUpPenalty, -aStockPrevLimitUpPenalty)
+	rec.Reason = appendAStockReason(rec.Reason, detail)
+	return rec
+}
+
+func applyAStockPreviousHighPctPenalty(rec aStockRecommendation, prevPct float64) aStockRecommendation {
+	baseScore := rec.MarketScore
+	if baseScore == 0 {
+		baseScore = rec.HotspotScore
+	}
+	rec.MarketScore = baseScore - aStockPrevHighPctPenalty
+	detail := fmt.Sprintf("昨日涨幅%s，追高风险扣分 %d", formatAStockPct(prevPct), aStockPrevHighPctPenalty)
+	appendAStockScoreComponentWithUnit(&rec, "昨日涨幅过高", detail, -aStockPrevHighPctPenalty, -aStockPrevHighPctPenalty)
+	rec.Reason = appendAStockReason(rec.Reason, detail)
+	return rec
+}
+
 func positiveAStockFundFlowScore(rec aStockRecommendation) int {
 	score := 0
 	for _, component := range aStockRecommendationScoreBreakdown(rec) {
@@ -8137,6 +8165,7 @@ func applyAStockMarketBars(strategyDate string, period string, recommendations [
 	filteredCount := 0
 	overheatFilteredCount := 0
 	lowOpenFilteredCount := 0
+	todayHighPctFilteredCount := 0
 	limitUpFilteredCount := 0
 	noEntryPriceCount := 0
 	waitingEntryPriceCount := 0
@@ -8167,6 +8196,10 @@ func applyAStockMarketBars(strategyDate string, period string, recommendations [
 			recommendations[i].TodayPct = formatAStockPct(entry.Pct)
 			recommendations[i].TodayPctClass = aStockPctClass(entry.Pct)
 		}
+		if ok && entry.Pct > aStockTodayHighPctFilterThreshold {
+			todayHighPctFilteredCount++
+			continue
+		}
 		if ok && filterLimitUp && isAStockLimitUpPct(recommendations[i].Code, recommendations[i].Name, entry.Pct) {
 			limitUpFilteredCount++
 			continue
@@ -8175,6 +8208,11 @@ func applyAStockMarketBars(strategyDate string, period string, recommendations [
 			recommendations[i].PrevClose = formatAStockPrice(prev.Close)
 			recommendations[i].PrevPct = formatAStockPct(prev.Pct)
 			recommendations[i].PrevPctClass = aStockPctClass(prev.Pct)
+			if isAStockLimitUpPct(recommendations[i].Code, recommendations[i].Name, prev.Pct) {
+				recommendations[i] = applyAStockPreviousLimitUpPenalty(recommendations[i], prev.Pct)
+			} else if prev.Pct > aStockPrevHighPctThreshold {
+				recommendations[i] = applyAStockPreviousHighPctPenalty(recommendations[i], prev.Pct)
+			}
 			if normalizedPeriod == "morning" && entry.Close > 0 && prev.Close > 0 {
 				entryPrice := aStockEntryPriceForRecommendation(entry, normalizedPeriod, recommendations[i])
 				openPct := (entryPrice/prev.Close - 1) * 100
@@ -8268,6 +8306,9 @@ func applyAStockMarketBars(strategyDate string, period string, recommendations [
 	if lowOpenFilteredCount > 0 {
 		status = fmt.Sprintf("%s，过滤低开股票 %d", status, lowOpenFilteredCount)
 	}
+	if todayHighPctFilteredCount > 0 {
+		status = fmt.Sprintf("%s，过滤今日涨幅过高股票 %d", status, todayHighPctFilteredCount)
+	}
 	if limitUpFilteredCount > 0 {
 		status = fmt.Sprintf("%s，过滤涨停股票 %d", status, limitUpFilteredCount)
 	}
@@ -8293,6 +8334,9 @@ func applyAStockMarketBars(strategyDate string, period string, recommendations [
 	if len(recommendations) == 0 && lowOpenFilteredCount > 0 {
 		status = fmt.Sprintf("低开过滤后无推荐股票，过滤低开股票 %d", lowOpenFilteredCount)
 	}
+	if len(recommendations) == 0 && todayHighPctFilteredCount > 0 {
+		status = fmt.Sprintf("今日涨幅过高过滤后无推荐股票，过滤今日涨幅过高股票 %d", todayHighPctFilteredCount)
+	}
 	if filterTodayMarket && len(recommendations) == 0 && noEntryPriceCount > 0 {
 		status = fmt.Sprintf("无当日行情可推荐，过滤无当日行情股票 %d", noEntryPriceCount)
 		if filteredCount > 0 {
@@ -8306,7 +8350,7 @@ func applyAStockMarketBars(strategyDate string, period string, recommendations [
 			status = fmt.Sprintf("%s，候选不足未补满", status)
 		}
 	}
-	if withPrev == 0 && completed == 0 && filteredCount == 0 && limitUpFilteredCount == 0 && noEntryPriceCount == 0 {
+	if withPrev == 0 && completed == 0 && filteredCount == 0 && limitUpFilteredCount == 0 && todayHighPctFilteredCount == 0 && noEntryPriceCount == 0 {
 		status = "无匹配行情"
 	}
 	return recommendations, rows, status, limitUpFilteredCount, noEntryPriceCount
