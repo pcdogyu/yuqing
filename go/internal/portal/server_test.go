@@ -9701,6 +9701,7 @@ func TestAStockPersistedRecommendationsRepairNamesAndFilterBacktests(t *testing.
 			Items: []model.AStockCodeName{
 				{Code: "301696", Name: "测试股份", Source: "akshare_code_name"},
 				{Code: "002179", Name: "中航光电", Source: "akshare_code_name"},
+				{Code: "603698", Name: "航天工程", Source: "akshare_code_name"},
 			},
 		})
 	}))
@@ -9712,10 +9713,11 @@ func TestAStockPersistedRecommendationsRepairNamesAndFilterBacktests(t *testing.
 		{Rank: 2, Code: "011631", Name: "基金测试", Hotspot: "黄金有色"},
 		{Rank: 3, Code: "301696", Name: "301696", Hotspot: "人工智能"},
 		{Rank: 4, Code: "002179", Name: "金十数据整理", Hotspot: "人工智能"},
-		{Rank: 5, Code: "600030", Name: "中信证券", Hotspot: "金融券商"},
+		{Rank: 5, Code: "603698", Name: "????", Hotspot: "军工航天"},
+		{Rank: 6, Code: "600030", Name: "中信证券", Hotspot: "金融券商"},
 	}, newAStockRequestCache())
 
-	if skipped != 2 || len(recommendations) != 3 {
+	if skipped != 2 || len(recommendations) != 4 {
 		t.Fatalf("expected two invalid persisted recommendations to be skipped, skipped=%d recommendations=%+v", skipped, recommendations)
 	}
 	if recommendations[0].Code != "301696" || recommendations[0].Name != "测试股份" {
@@ -9724,7 +9726,10 @@ func TestAStockPersistedRecommendationsRepairNamesAndFilterBacktests(t *testing.
 	if recommendations[1].Code != "002179" || recommendations[1].Name != "中航光电" {
 		t.Fatalf("expected placeholder name to be repaired from auction dictionary, got %+v", recommendations)
 	}
-	if recommendations[2].Code != "600030" || recommendations[2].Name != "中信证券" {
+	if recommendations[2].Code != "603698" || recommendations[2].Name != "航天工程" {
+		t.Fatalf("expected garbled 603698 name to be repaired from auction dictionary, got %+v", recommendations)
+	}
+	if recommendations[3].Code != "600030" || recommendations[3].Name != "中信证券" {
 		t.Fatalf("expected valid recommendation to remain, got %+v", recommendations)
 	}
 
@@ -9732,9 +9737,10 @@ func TestAStockPersistedRecommendationsRepairNamesAndFilterBacktests(t *testing.
 		{Stock: "012322 012322"},
 		{Stock: "301696 301696", Status: "已回测"},
 		{Stock: "002179 金十数据整理", Status: "已回测"},
+		{Stock: "603698 ????", Status: "已回测"},
 		{Stock: "600030 中信证券", Status: "已回测"},
 	}, recommendations)
-	if len(backtests) != 3 || backtests[0].Stock != "301696 测试股份" || backtests[1].Stock != "002179 中航光电" || backtests[2].Stock != "600030 中信证券" {
+	if len(backtests) != 4 || backtests[0].Stock != "301696 测试股份" || backtests[1].Stock != "002179 中航光电" || backtests[2].Stock != "603698 航天工程" || backtests[3].Stock != "600030 中信证券" {
 		t.Fatalf("expected backtests to follow repaired recommendations, got %+v", backtests)
 	}
 }
@@ -9754,25 +9760,28 @@ func TestAStockRepairStockNamesActionPersistsNamesFromLocalDictionary(t *testing
 					{Rank: 1, Code: "301696", Name: "301696", Hotspot: "人工智能", HotspotScore: 90, MarketScore: 100, Reason: "placeholder"},
 					{Rank: 2, Code: "002179", Name: "金十数据整理", Hotspot: "军工", HotspotScore: 80, MarketScore: 95, Reason: "placeholder"},
 					{Rank: 3, Code: "000021", Name: "主力资金监控", Hotspot: "人工智能", HotspotScore: 70, MarketScore: 90, Reason: "bad inferred name"},
+					{Rank: 4, Code: "603698", Name: "????", Hotspot: "军工航天", HotspotScore: 60, MarketScore: 85, Reason: "garbled name"},
 				}),
 				BacktestsJSON: mustAStockTestJSON(t, []aStockBacktestRow{
 					{Stock: "301696 301696", EntryOpen: "10.00", T0Return: "+2.00%", T0Close: "10.20", Status: "等待T+1行情"},
 					{Stock: "002179 金十数据整理", EntryOpen: "20.00", T0Return: "+1.00%", T0Close: "20.20", Status: "等待T+1行情"},
 					{Stock: "000021 主力资金监控", EntryOpen: "30.00", T0Return: "+1.00%", T0Close: "30.30", Status: "等待T+1行情"},
+					{Stock: "603698 ????", EntryOpen: "40.00", T0Return: "-1.00%", T0Close: "39.60", Status: "等待T+1行情"},
 				}),
 				BacktestStatus: "已读取推荐快照",
-				GeneratedCount: 3,
+				GeneratedCount: 4,
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/a-stock/code-names":
-			if !strings.Contains(r.URL.Query().Get("codes"), "301696") || !strings.Contains(r.URL.Query().Get("codes"), "002179") || !strings.Contains(r.URL.Query().Get("codes"), "000021") {
+			if !strings.Contains(r.URL.Query().Get("codes"), "301696") || !strings.Contains(r.URL.Query().Get("codes"), "002179") || !strings.Contains(r.URL.Query().Get("codes"), "000021") || !strings.Contains(r.URL.Query().Get("codes"), "603698") {
 				t.Fatalf("expected code name lookup for recommendation codes, got %s", r.URL.RawQuery)
 			}
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockCodeNameListResult{
-				Total: 3,
+				Total: 4,
 				Items: []model.AStockCodeName{
 					{Code: "301696", Name: "测试股份", Source: "auction"},
 					{Code: "002179", Name: "中航光电", Source: "auction"},
 					{Code: "000021", Name: "深科技", Source: "auction"},
+					{Code: "603698", Name: "航天工程", Source: "auction"},
 				},
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/internal/a-stock/recommendation-selections":
@@ -9804,25 +9813,25 @@ func TestAStockRepairStockNamesActionPersistsNamesFromLocalDictionary(t *testing
 	if rr.Code != http.StatusSeeOther {
 		t.Fatalf("expected 303, got %d body=%s", rr.Code, rr.Body.String())
 	}
-	if len(savedSelections.Items) != 3 || savedSelections.Items[0].Name != "测试股份" || savedSelections.Items[1].Name != "中航光电" || savedSelections.Items[2].Name != "深科技" {
+	if len(savedSelections.Items) != 4 || savedSelections.Items[0].Name != "测试股份" || savedSelections.Items[1].Name != "中航光电" || savedSelections.Items[2].Name != "深科技" || savedSelections.Items[3].Name != "航天工程" {
 		t.Fatalf("expected repaired names to be saved into selections, got %+v", savedSelections)
 	}
 	var recommendations []aStockRecommendation
 	if err := json.Unmarshal([]byte(savedSnapshot.RecommendationsJSON), &recommendations); err != nil {
 		t.Fatalf("decode recommendations: %v", err)
 	}
-	if len(recommendations) != 3 || recommendations[0].Name != "测试股份" || recommendations[1].Name != "中航光电" || recommendations[2].Name != "深科技" {
+	if len(recommendations) != 4 || recommendations[0].Name != "测试股份" || recommendations[1].Name != "中航光电" || recommendations[2].Name != "深科技" || recommendations[3].Name != "航天工程" {
 		t.Fatalf("expected repaired names to be saved into snapshot, got %+v", recommendations)
 	}
 	var backtests []aStockBacktestRow
 	if err := json.Unmarshal([]byte(savedSnapshot.BacktestsJSON), &backtests); err != nil {
 		t.Fatalf("decode backtests: %v", err)
 	}
-	if len(backtests) != 3 || backtests[0].Stock != "301696 测试股份" || backtests[1].Stock != "002179 中航光电" || backtests[2].Stock != "000021 深科技" {
+	if len(backtests) != 4 || backtests[0].Stock != "301696 测试股份" || backtests[1].Stock != "002179 中航光电" || backtests[2].Stock != "000021 深科技" || backtests[3].Stock != "603698 航天工程" {
 		t.Fatalf("expected repaired names to be saved into backtests, got %+v", backtests)
 	}
 	decodedLocation, _ := url.QueryUnescape(rr.Header().Get("Location"))
-	if !strings.Contains(decodedLocation, "股票名称已从集合竞价名称库补齐 3 只") {
+	if !strings.Contains(decodedLocation, "股票名称已从集合竞价名称库补齐 4 只") {
 		t.Fatalf("expected repair summary in redirect, got %q", decodedLocation)
 	}
 }

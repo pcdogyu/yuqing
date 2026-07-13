@@ -55,6 +55,9 @@ func HasResolvedName(code string, name string) bool {
 	if IsPlaceholderName(name) {
 		return false
 	}
+	if IsGarbledName(name) {
+		return false
+	}
 	if isSixDigitCode(Normalize(name)) && Normalize(name) == Normalize(code) {
 		return false
 	}
@@ -93,6 +96,11 @@ func IsPlaceholderName(name string) bool {
 		return true
 	}
 	return strings.Contains(name, "数据整理")
+}
+
+func IsGarbledName(name string) bool {
+	name = strings.TrimSpace(name)
+	return strings.Contains(name, "?") || strings.ContainsRune(name, '\uFFFD')
 }
 
 func isSixDigitCode(code string) bool {
