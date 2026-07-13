@@ -5056,8 +5056,7 @@ func TestAStockContextRefreshDoesNotRefilterLockedAfternoonSelectionsByMorningQu
 					Period:       "morning",
 					Items: []model.AStockRecommendationSelection{
 						{Rank: 1, Code: "600001", Name: "上午一", Hotspot: "机器人", MarketScore: 100, Reason: "morning-1"},
-						{Rank: 2, Code: "600002", Name: "上午二", Hotspot: "机器人", MarketScore: 99, Reason: "morning-2"},
-						{Rank: 3, Code: "600003", Name: "上午三", Hotspot: "机器人", MarketScore: 98, Reason: "morning-3"},
+						{Rank: 2, Code: "600002", Name: "上午二", Hotspot: "半导体", MarketScore: 99, Reason: "morning-2"},
 					},
 				})
 			case "afternoon":
@@ -8510,8 +8509,8 @@ func TestAStockRecommendationsUseTopThreeHotspotIndustries(t *testing.T) {
 	if len(recommendations) != aStockDailyRecommendationLimit {
 		t.Fatalf("expected %d recommendations by default, got %d", aStockDailyRecommendationLimit, len(recommendations))
 	}
-	if recommendations[0].Code != "600547" || recommendations[len(recommendations)-1].Code != "000725" {
-		t.Fatalf("expected default daily cap to keep first five ranked candidates, got %+v", recommendations)
+	if recommendations[0].Code != "600547" || recommendations[len(recommendations)-1].Code != "002475" {
+		t.Fatalf("expected default daily cap to keep first four ranked candidates, got %+v", recommendations)
 	}
 	for _, rec := range recommendations {
 		if rec.Hotspot == "医药生物" {
@@ -8614,6 +8613,93 @@ func TestAStockRecommendationsPenalizeWeakFinancingEvidence(t *testing.T) {
 	weak := byCode["002520"]
 	if !strings.Contains(weak.Reason, "融资融券弱新闻 1 条，个股证据减分 30") {
 		t.Fatalf("expected weak financing evidence penalty reason, got %+v", weak)
+	}
+}
+
+func TestAStockRecommendationReasonRendersScoreBreakdownTable(t *testing.T) {
+	rec := aStockRecommendation{
+		Hotspot:     "人工智能",
+		Code:        "002230",
+		Name:        "科大讯飞",
+		MarketScore: 115,
+		Reason:      "命中 AI，证据新闻 3 条，热度分 36；个股证据 1 条，匹配分 79，综合分 115",
+		ScoreBreakdown: []aStockRecommendationScoreComponent{
+			{Label: "新闻热度", Detail: "证据新闻 3 条", Score: 30},
+			{Label: "热点关键词", Detail: "命中关键词 2 个", Score: 6},
+			{Label: "个股证据", Detail: "有效证据 1 条 / 总证据 1 条", Score: 25},
+			{Label: "行情排名", Detail: "排名 1", Score: 40},
+			{Label: "股票名命中", Detail: "命中关键词 1 个", Score: 12},
+			{Label: "资金动向", Detail: "资金加分 2", Score: 2},
+		},
+	}
+	var b strings.Builder
+	writeAStockRecommendationReasonCell(&b, rec)
+	body := b.String()
+	for _, want := range []string{
+		`class="astock-score-table"`,
+		"<th>项目</th><th>组成</th><th>得分</th>",
+		"总分",
+		"115 分",
+		"新闻热度",
+		"证据新闻 3 条",
+		"个股证据",
+		"25 分",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected rendered score breakdown to contain %q, got %s", want, body)
+		}
+	}
+}
+
+func TestAStockRecommendationsFilterExDividendEvents(t *testing.T) {
+	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/a-stock/dividend-events" {
+			t.Fatalf("unexpected path: %s", r.URL.String())
+		}
+		if got := r.URL.Query().Get("date"); got != "2026-07-13" {
+			t.Fatalf("unexpected date: %s", got)
+		}
+		if got := r.URL.Query().Get("window_days"); got != "3" {
+			t.Fatalf("unexpected window_days: %s", got)
+		}
+		codes := strings.Split(r.URL.Query().Get("codes"), ",")
+		codeSet := map[string]struct{}{}
+		for _, code := range codes {
+			codeSet[code] = struct{}{}
+		}
+		for _, want := range []string{"600036", "600879", "002230"} {
+			if _, ok := codeSet[want]; !ok {
+				t.Fatalf("expected dividend query to include %s, got %s", want, r.URL.RawQuery)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(aStockDividendEventResult{
+			Items: []aStockDividendEvent{
+				{Code: "600036", Name: "招商银行", ExDate: "2026-07-10", DividendDate: "2026-07-10", Description: "10派10.03元(含税)", Source: "stock_dividend_cninfo"},
+			},
+			Date:  "2026-07-13",
+			Start: "2026-07-10",
+			End:   "2026-07-16",
+		})
+	}))
+	defer akshare.Close()
+
+	srv := NewServer(config.Config{AStockAuctionURL: akshare.URL})
+	ctx := aStockContext{
+		Date: "2026-07-13",
+		Recommendations: []aStockRecommendation{
+			{Rank: 1, Code: "600036", Name: "招商银行"},
+			{Rank: 2, Code: "600879", Name: "XD航天电"},
+			{Rank: 3, Code: "002230", Name: "科大讯飞"},
+		},
+	}
+
+	skipped := srv.applyAStockExDividendFilterWithCache(&ctx, newAStockRequestCache())
+	if skipped != 2 || ctx.ExDividendFiltered != 2 {
+		t.Fatalf("expected two ex-dividend recommendations filtered, skipped=%d ctx=%+v", skipped, ctx)
+	}
+	if len(ctx.Recommendations) != 1 || ctx.Recommendations[0].Code != "002230" || ctx.Recommendations[0].Rank != 1 {
+		t.Fatalf("expected only reranked 002230 to remain, got %+v", ctx.Recommendations)
 	}
 }
 
@@ -8998,13 +9084,13 @@ func TestAStockT1ShadowFiltersWeakEvidenceAndLimitsByHotspot(t *testing.T) {
 			t.Fatalf("expected hotspot %s to cap at %d, got %d in %+v", hotspot, aStockT1ShadowStocksPerHotspot, count, limited)
 		}
 	}
-	afternoon, skipped := limitAStockRecommendationsByCount(limited, remainingAStockDailyRecommendationLimit(4))
+	afternoon, skipped := limitAStockRecommendationsByCount(limited, remainingAStockDailyRecommendationLimit(3))
 	if skipped != aStockT1ShadowRecommendationLimit-1 || len(afternoon) != 1 {
-		t.Fatalf("expected shadow afternoon to leave one slot after four morning recommendations, skipped=%d got %+v", skipped, afternoon)
+		t.Fatalf("expected shadow afternoon to leave one slot after three morning recommendations, skipped=%d got %+v", skipped, afternoon)
 	}
-	afternoon, skipped = limitAStockRecommendationsByCount(limited, remainingAStockDailyRecommendationLimit(5))
+	afternoon, skipped = limitAStockRecommendationsByCount(limited, remainingAStockDailyRecommendationLimit(4))
 	if skipped != aStockT1ShadowRecommendationLimit || len(afternoon) != 0 {
-		t.Fatalf("expected shadow afternoon to stop after five morning recommendations, skipped=%d got %+v", skipped, afternoon)
+		t.Fatalf("expected shadow afternoon to stop after four morning recommendations, skipped=%d got %+v", skipped, afternoon)
 	}
 }
 
@@ -10306,13 +10392,13 @@ func TestAStockAfternoonRecommendationsRespectDailyTotalLimit(t *testing.T) {
 		{Rank: 3, Hotspot: "Chips", Code: "300003", Name: "Stock C", MarketScore: 100},
 	}
 
-	filtered, skipped := limitAStockRecommendationsByCount(afternoon, remainingAStockDailyRecommendationLimit(4))
+	filtered, skipped := limitAStockRecommendationsByCount(afternoon, remainingAStockDailyRecommendationLimit(3))
 	if skipped != 2 || len(filtered) != 1 || filtered[0].Code != "300001" {
-		t.Fatalf("expected morning 4 recommendations to leave one afternoon slot, skipped=%d filtered=%+v", skipped, filtered)
+		t.Fatalf("expected morning 3 recommendations to leave one afternoon slot, skipped=%d filtered=%+v", skipped, filtered)
 	}
-	filtered, skipped = limitAStockRecommendationsByCount(afternoon, remainingAStockDailyRecommendationLimit(5))
+	filtered, skipped = limitAStockRecommendationsByCount(afternoon, remainingAStockDailyRecommendationLimit(4))
 	if skipped != 3 || len(filtered) != 0 {
-		t.Fatalf("expected morning 5 recommendations to block afternoon slots, skipped=%d filtered=%+v", skipped, filtered)
+		t.Fatalf("expected morning 4 recommendations to block afternoon slots, skipped=%d filtered=%+v", skipped, filtered)
 	}
 }
 
@@ -10352,8 +10438,8 @@ func TestAStockAfternoonSameDayCapsUsePersistedMorningDailyTotal(t *testing.T) {
 		},
 	}
 	NewServer(config.Config{ContentURL: content.URL}).applyAStockAfternoonSameDayCapsWithCache(&ctx, nil, newAStockRequestCache())
-	if len(ctx.Recommendations) != 1 || ctx.Recommendations[0].Code != "300001" || ctx.SameDayMorningFiltered != 2 {
-		t.Fatalf("expected morning four recommendations to leave one afternoon slot, got filtered=%d recommendations=%+v", ctx.SameDayMorningFiltered, ctx.Recommendations)
+	if len(ctx.Recommendations) != 0 || ctx.SameDayMorningFiltered != 3 {
+		t.Fatalf("expected morning four recommendations to fill daily slots, got filtered=%d recommendations=%+v", ctx.SameDayMorningFiltered, ctx.Recommendations)
 	}
 }
 

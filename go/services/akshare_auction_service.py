@@ -7,6 +7,7 @@ The Go scheduler calls:
   GET /api/a-stock/sector-fund-flow?sector_type=行业资金流&indicator=今日&source=eastmoney
   GET /api/a-stock/stock-fund-flow?indicator=今日&source=eastmoney
   GET /api/a-stock/sector-constituents?sector_type=行业资金流&sector_name=半导体
+  GET /api/a-stock/dividend-events?date=YYYY-MM-DD&codes=000001,600000&window_days=3
   GET /api/a-stock/holdings?period=YYYYMMDD&code=002230
   GET /api/stock-research?code=002230&start=YYYY-MM-DD&end=YYYY-MM-DD
 
@@ -338,6 +339,18 @@ def normalize_optional_date(value: str | None) -> str:
     if " " in value:
         return normalize_optional_date(value.split(" ", 1)[0])
     return value
+
+
+def date_add(value: str, days: int) -> str:
+    base = dt.datetime.strptime(normalize_date(value), "%Y-%m-%d").date()
+    return (base + dt.timedelta(days=days)).strftime("%Y-%m-%d")
+
+
+def date_in_range(value: str, start: str, end: str) -> bool:
+    normalized = normalize_optional_date(value)
+    if not normalized:
+        return False
+    return start <= normalized <= end
 
 
 def parse_trade_date(value: Any) -> str:
@@ -1983,6 +1996,52 @@ def fetch_symbol_holdings_for_period(ak: Any, period: str, code: str) -> tuple[l
     return dedupe_holding_items(items), warnings
 
 
+def dividend_event_row_item(row: Any, code: str, start: str, end: str) -> dict[str, Any] | None:
+    data = row.to_dict() if hasattr(row, "to_dict") else dict(row)
+    ex_date = normalize_optional_date(
+        data.get("除权日")
+        or data.get("除权除息日")
+        or data.get("ex_date")
+        or data.get("除权除息日期")
+    )
+    dividend_date = normalize_optional_date(
+        data.get("派息日")
+        or data.get("dividend_date")
+        or data.get("派息日期")
+    )
+    if not date_in_range(ex_date, start, end) and not date_in_range(dividend_date, start, end):
+        return None
+    return {
+        "code": code,
+        "name": text_value(data.get("股票简称") or data.get("简称") or data.get("name")),
+        "ex_date": ex_date,
+        "dividend_date": dividend_date,
+        "record_date": normalize_optional_date(data.get("股权登记日") or data.get("record_date")),
+        "description": text_value(
+            data.get("分红方案")
+            or data.get("实施方案")
+            or data.get("派现")
+            or data.get("description")
+        ),
+        "source": "stock_dividend_cninfo",
+    }
+
+
+def fetch_dividend_events_for_symbol(ak: Any, code: str, start: str, end: str) -> tuple[list[dict[str, Any]], str]:
+    try:
+        frame = ak.stock_dividend_cninfo(symbol=code)
+    except Exception as exc:  # pragma: no cover - external service variability
+        return [], f"stock_dividend_cninfo {code}: {exc}"
+    items: list[dict[str, Any]] = []
+    if frame is None:
+        return items, ""
+    for _, row in frame.iterrows():
+        item = dividend_event_row_item(row, code, start, end)
+        if item:
+            items.append(item)
+    return items, ""
+
+
 class AuctionService:
     def __init__(self, cache_dir: Path, workers: int, default_limit: int):
         self.cache_dir = cache_dir
@@ -2434,6 +2493,38 @@ class AuctionService:
             payload["_http_status"] = 502
         return payload
 
+    def fetch_dividend_events(self, query: dict[str, list[str]]) -> dict[str, Any]:
+        started = time.time()
+        date = normalize_date(first_query_value(query, "date"))
+        window_days = max(0, int_value(first_query_value(query, "window_days"), 3))
+        start = normalize_optional_date(first_query_value(query, "start")) or date_add(date, -window_days)
+        end = normalize_optional_date(first_query_value(query, "end")) or date_add(date, window_days)
+        if start > end:
+            start, end = end, start
+        codes = parse_tdx_quote_codes(first_query_value(query, "codes") or first_query_value(query, "code"))
+        if not codes:
+            return {"_http_status": 400, "items": [], "message": "codes required", "fetched_at": utc_now_iso()}
+        ak = load_akshare()
+        items: list[dict[str, Any]] = []
+        warnings: list[str] = []
+        for code in codes:
+            code_items, warning = fetch_dividend_events_for_symbol(ak, code, start, end)
+            items.extend(code_items)
+            if warning:
+                warnings.append(warning)
+        payload: dict[str, Any] = {
+            "items": items,
+            "count": len(items),
+            "date": date,
+            "start": start,
+            "end": end,
+            "elapsed_sec": round(time.time() - started, 3),
+            "fetched_at": utc_now_iso(),
+        }
+        if warnings:
+            payload["warning"] = "; ".join(warnings)
+        return payload
+
 
 def first_query_value(query: dict[str, list[str]], key: str) -> str | None:
     values = query.get(key)
@@ -2483,6 +2574,14 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/a-stock/tdx-quote":
                 payload = self.service.fetch_tdx_quote(query)
+                status = int(payload.get("_http_status", 200))
+                if "_http_status" in payload:
+                    payload = dict(payload)
+                    payload.pop("_http_status", None)
+                self.write_json(status, payload)
+                return
+            if parsed.path == "/api/a-stock/dividend-events":
+                payload = self.service.fetch_dividend_events(query)
                 status = int(payload.get("_http_status", 200))
                 if "_http_status" in payload:
                     payload = dict(payload)

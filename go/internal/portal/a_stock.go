@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -56,6 +57,7 @@ type aStockContext struct {
 	FundFlowFilterEnabled        bool
 	FundFlowFiltered             int
 	FundFlowMissingCount         int
+	ExDividendFiltered           int
 	TodayMarketFilterEnabled     bool
 	NoTodayMarketCount           int
 	MarketCandidateStatus        string
@@ -118,7 +120,14 @@ type aStockRecommendation struct {
 	HoldingSummary  string
 	HoldingRatio    string
 	Reason          string
+	ScoreBreakdown  []aStockRecommendationScoreComponent `json:",omitempty"`
 	EntryTime       string
+}
+
+type aStockRecommendationScoreComponent struct {
+	Label  string
+	Detail string
+	Score  int
 }
 
 type aStockMarketBar struct {
@@ -164,19 +173,40 @@ type aStockTopicRule struct {
 }
 
 type aStockMarketCandidate struct {
-	Code          string
-	Name          string
-	TradeDate     string
-	Rank          int
-	AuctionAmount float64
-	AuctionVolume float64
-	MatchedScore  int
-	Evidence      int
-	WeakEvidence  int
-	WeakPenalty   int
-	BadEvidence   int
-	Keywords      []string
-	Fallback      bool
+	Code           string
+	Name           string
+	TradeDate      string
+	Rank           int
+	AuctionAmount  float64
+	AuctionVolume  float64
+	MatchedScore   int
+	Evidence       int
+	StrongEvidence int
+	WeakEvidence   int
+	WeakPenalty    int
+	BadEvidence    int
+	Keywords       []string
+	Fallback       bool
+}
+
+type aStockDividendEvent struct {
+	Code         string `json:"code"`
+	Name         string `json:"name"`
+	ExDate       string `json:"ex_date"`
+	DividendDate string `json:"dividend_date"`
+	RecordDate   string `json:"record_date"`
+	Description  string `json:"description"`
+	Source       string `json:"source"`
+}
+
+type aStockDividendEventResult struct {
+	Items     []aStockDividendEvent `json:"items"`
+	Count     int                   `json:"count"`
+	Date      string                `json:"date"`
+	Start     string                `json:"start"`
+	End       string                `json:"end"`
+	Warning   string                `json:"warning"`
+	FetchedAt string                `json:"fetched_at"`
 }
 
 type aStockHotspotSectorGate struct {
@@ -214,6 +244,7 @@ type aStockRequestCache struct {
 	selections                map[string]aStockRecommendationSelectionCacheEntry
 	holdingSummaries          map[string]aStockHoldingSummaryCacheEntry
 	stockFundFlowTrends       map[string]aStockStockFundFlowTrendCacheEntry
+	dividendEvents            map[string]aStockDividendEventCacheEntry
 	auctionResults            map[string]aStockAuctionResultCacheEntry
 	sectorConstituents        map[string]aStockSectorConstituentCodesCacheEntry
 	codeNames                 map[string]map[string]string
@@ -247,6 +278,11 @@ type aStockHoldingSummaryCacheEntry struct {
 
 type aStockStockFundFlowTrendCacheEntry struct {
 	result model.AStockStockFundFlowTrendResult
+	err    error
+}
+
+type aStockDividendEventCacheEntry struct {
+	result aStockDividendEventResult
 	err    error
 }
 
@@ -381,7 +417,7 @@ const (
 	aStockFundFlowFilterCookieDisabled = "disabled"
 	aStockAuctionCandidateCacheTTL     = 5 * time.Minute
 	aStockMarketCandidateLimit         = 5000
-	aStockDailyRecommendationLimit     = 5
+	aStockDailyRecommendationLimit     = 4
 	aStockRecommendationLimit          = aStockDailyRecommendationLimit
 	aStockReplacementPoolLimit         = 36
 	aStockReplacementPerHotspot        = 12
@@ -390,6 +426,7 @@ const (
 	aStockHotspotLimit                 = 3
 	aStockMarketRankScoreBase          = 200
 	aStockStocksPerHotspot             = 3
+	aStockExDividendWindowDays         = 3
 	aStockT1ShadowStrategyKey          = "t1_shadow_v1"
 	aStockT1ShadowRecommendationLimit  = aStockDailyRecommendationLimit
 	aStockT1ShadowStocksPerHotspot     = 2
@@ -554,6 +591,14 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-recommendation-table th,.astock-recommendation-table td{vertical-align:top}
 		.astock-recommendation-table th:nth-child(2),.astock-recommendation-table td:nth-child(2){width:7.5%;white-space:nowrap}
 		.astock-recommendation-table th:last-child,.astock-recommendation-table td:last-child{width:36%}
+		.astock-score-total{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px;color:#214e34;font-weight:700;line-height:1.25}
+		.astock-score-table{width:100%;min-width:0!important;table-layout:auto;border-collapse:collapse;font-size:12px;line-height:1.35}
+		.astock-score-table th,.astock-score-table td{padding:4px 6px;border:1px solid #ece7dc;vertical-align:top}
+		.astock-score-table th{background:#faf8f2;color:#554b40;font-weight:700;white-space:nowrap}
+		.astock-score-table td:first-child{white-space:nowrap}
+		.astock-score-table td:last-child{text-align:right;white-space:nowrap;font-weight:700}
+		.astock-score-detail{white-space:normal}
+		.astock-score-reason{margin-top:6px;color:#6a6257;font-size:12px;line-height:1.45}
 		.astock-date-tabs{display:flex;gap:8px;flex-wrap:nowrap;margin:14px 0 18px;overflow-x:auto;padding-bottom:6px;scrollbar-width:thin}
 		.astock-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 		.astock-tab{display:inline-flex;align-items:center;flex:0 0 auto;padding:8px 12px;border:1px solid #d6ccbb;border-radius:8px;color:#214e34;text-decoration:none;background:#fff}
@@ -1835,6 +1880,9 @@ func aStockOverviewBacktestStatus(ctx aStockContext) string {
 	if ctx.SameDayMorningFiltered > 0 {
 		reasons = append(reasons, fmt.Sprintf("过滤上午同股票/热点/日内名额 %d", ctx.SameDayMorningFiltered))
 	}
+	if ctx.ExDividendFiltered > 0 && !strings.Contains(status, "除权除息过滤") {
+		reasons = append(reasons, fmt.Sprintf("除权除息过滤股票 %d", ctx.ExDividendFiltered))
+	}
 	if ctx.LimitUpFiltered > 0 {
 		reasons = append(reasons, fmt.Sprintf("涨停过滤股票 %d", ctx.LimitUpFiltered))
 	}
@@ -2210,10 +2258,41 @@ func renderAStockRecommendationSubsection(b *strings.Builder, ctx aStockContext)
 		b.WriteString(`">`)
 		b.WriteString(html.EscapeString(rec.FundFlow5D))
 		b.WriteString(`</span></td><td>`)
-		b.WriteString(html.EscapeString(rec.Reason))
+		writeAStockRecommendationReasonCell(b, rec)
 		b.WriteString(`</td></tr>`)
 	}
 	b.WriteString(`</table></div>`)
+}
+
+func writeAStockRecommendationReasonCell(b *strings.Builder, rec aStockRecommendation) {
+	components := aStockRecommendationScoreBreakdown(rec)
+	if len(components) == 0 {
+		b.WriteString(html.EscapeString(rec.Reason))
+		return
+	}
+	total := aStockRecommendationScoreTotal(rec, components)
+	b.WriteString(`<div class="astock-score-total"><span>总分</span><span>`)
+	b.WriteString(fmt.Sprintf("%d 分", total))
+	b.WriteString(`</span></div><table class="astock-score-table"><tr><th>项目</th><th>组成</th><th>得分</th></tr>`)
+	for _, component := range components {
+		b.WriteString(`<tr><td>`)
+		b.WriteString(html.EscapeString(component.Label))
+		b.WriteString(`</td><td class="astock-score-detail">`)
+		b.WriteString(html.EscapeString(component.Detail))
+		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(formatAStockScoreComponentScore(component.Score)))
+		b.WriteString(`</td></tr>`)
+	}
+	b.WriteString(`</table>`)
+	if strings.TrimSpace(rec.Reason) != "" {
+		b.WriteString(`<div class="astock-score-reason">`)
+		b.WriteString(html.EscapeString(rec.Reason))
+		b.WriteString(`</div>`)
+	}
+}
+
+func formatAStockScoreComponentScore(score int) string {
+	return fmt.Sprintf("%d 分", score)
 }
 
 func renderAStockBacktestSection(b *strings.Builder, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool, morningCtx aStockContext, afternoonCtx aStockContext) {
@@ -2794,6 +2873,7 @@ func newAStockRequestCache() *aStockRequestCache {
 		selections:                make(map[string]aStockRecommendationSelectionCacheEntry),
 		holdingSummaries:          make(map[string]aStockHoldingSummaryCacheEntry),
 		stockFundFlowTrends:       make(map[string]aStockStockFundFlowTrendCacheEntry),
+		dividendEvents:            make(map[string]aStockDividendEventCacheEntry),
 		auctionResults:            make(map[string]aStockAuctionResultCacheEntry),
 		sectorConstituents:        make(map[string]aStockSectorConstituentCodesCacheEntry),
 		codeNames:                 make(map[string]map[string]string),
@@ -2864,12 +2944,20 @@ func (s *Server) loadAStockFastReadOnlyContextWithCache(strategyDate string, per
 			ctx.Recommendations, ctx.RecentFiltered = filterRecentAStockRecommendations(ctx.Recommendations, recentCodes)
 		}
 	}
+	exDividendStatus := ""
+	if skipped := s.applyAStockExDividendFilterWithCache(&ctx, cache); skipped > 0 {
+		exDividendStatus = formatAStockExDividendFilterStatus(skipped)
+		recommendationTarget = len(ctx.Recommendations)
+	}
 	ctx.Recommendations = withAStockRecommendationEntryTimes(ctx.Recommendations, ctx.Period, "")
 	ctx.Recommendations = initializeAStockRecommendationMarket(ctx.Recommendations)
 	ctx.Backtests = buildAStockBacktestRows(ctx.Date, ctx.Period, ctx.Recommendations, nil)
 	ctx.BacktestStatus = "只读快速推荐，等待行情同步"
 	if recentReplacementStatus != "" {
 		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, recentReplacementStatus)
+	}
+	if exDividendStatus != "" {
+		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, exDividendStatus)
 	}
 	ctx.EmptyReason = aStockRecommendationEmptyReason(ctx)
 	ctx.LoadMessage = appendAStockLoadMessage(ctx.LoadMessage, "今日推荐使用只读快速结果，未写入推荐快照。")
@@ -3078,8 +3166,12 @@ func (s *Server) applyAStockBacktestSnapshotOnlyWithCache(ctx *aStockContext, ca
 		return false
 	}
 	ctx.Recommendations = rerankAStockRecommendations(recommendations)
+	exDividendFiltered := s.applyAStockExDividendFilterWithCache(ctx, cache)
 	ctx.Backtests = filterAStockBacktestsForSnapshotRecommendations(backtests, ctx.Recommendations)
 	ctx.BacktestStatus = nonEmpty(snapshot.BacktestStatus, "已读取推荐快照")
+	if exDividendFiltered > 0 {
+		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, formatAStockExDividendFilterStatus(exDividendFiltered))
+	}
 	applyAStockSnapshotMetadata(ctx, snapshot)
 	ctx.EmptyReason = snapshot.EmptyReason
 	if ctx.EmptyReason == "" {
@@ -3332,6 +3424,7 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 	var recentCodes map[string]struct{}
 	recentReplacementStatus := ""
 	fundFlowStatus := ""
+	exDividendStatus := ""
 	if len(ctx.Hotspots) > 0 {
 		if marketCandidates == nil {
 			candidates, candidateStatus, auctionResult := s.loadAStockMarketCandidatesWithStatusWithCache(strategyDate, cache)
@@ -3389,6 +3482,10 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 		ctx.FundFlowMissingCount = result.Missing
 		fundFlowStatus = formatAStockFundFlowFilterStatus(result.Filtered, result.Replenished, result.Missing, result.Shortfall)
 	}
+	if skipped := s.applyAStockExDividendFilterWithCache(&ctx, cache); skipped > 0 {
+		exDividendStatus = formatAStockExDividendFilterStatus(skipped)
+		recommendationTarget = len(ctx.Recommendations)
+	}
 	ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus, ctx.LimitUpFiltered, ctx.NoTodayMarketCount = s.loadAStockMarketView(strategyDate, ctx.Period, ctx.Recommendations, ctx.LimitUpFilterEnabled, ctx.TodayMarketFilterEnabled, recommendationTarget)
 	if forceRecommendationRefresh {
 		s.restoreAStockBacktestsFromSnapshotWithCache(&ctx, cache)
@@ -3398,6 +3495,9 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 	}
 	if fundFlowStatus != "" {
 		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, fundFlowStatus)
+	}
+	if exDividendStatus != "" {
+		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, exDividendStatus)
 	}
 	if persist && shouldPersistAStockRecommendationSelectionsForDate(strategyDate, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, forceRecommendationRefresh) && (len(ctx.Recommendations) > 0 || rebuildRecommendations) {
 		if err := s.saveAStockRecommendationSelections(ctx); err != nil && ctx.LoadMessage == "" {
@@ -3461,6 +3561,9 @@ func (s *Server) applyAStockRecommendationSelectionsWithCache(ctx *aStockContext
 		return false
 	}
 	ctx.Recommendations, _ = s.repairAStockPersistedRecommendationsWithCache(ctx.Date, aStockRecommendationSelectionsToRecommendations(result.Items, ctx.Period), cache)
+	if skipped := s.applyAStockExDividendFilterWithCache(ctx, cache); skipped > 0 {
+		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, formatAStockExDividendFilterStatus(skipped))
+	}
 	if len(ctx.Recommendations) == 0 {
 		return false
 	}
@@ -3502,6 +3605,9 @@ func (s *Server) applyAStockRecommendationSnapshotRecommendationsWithCache(ctx *
 		return false
 	}
 	ctx.Recommendations, _ = s.repairAStockPersistedRecommendationsWithCache(ctx.Date, recommendations, cache)
+	if skipped := s.applyAStockExDividendFilterWithCache(ctx, cache); skipped > 0 {
+		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, formatAStockExDividendFilterStatus(skipped))
+	}
 	if len(ctx.Recommendations) == 0 {
 		return false
 	}
@@ -3606,11 +3712,15 @@ func (s *Server) applyAStockRecommendationSnapshotWithFreshnessCache(ctx *aStock
 		}
 	}
 	ctx.Recommendations, _ = s.repairAStockPersistedRecommendationsWithCache(ctx.Date, recommendations, cache)
+	exDividendFiltered := s.applyAStockExDividendFilterWithCache(ctx, cache)
 	if len(ctx.Recommendations) == 0 {
 		return false
 	}
 	ctx.Backtests = filterAStockBacktestsForRecommendations(backtests, ctx.Recommendations)
 	ctx.BacktestStatus = nonEmpty(snapshot.BacktestStatus, "已读取推荐快照")
+	if exDividendFiltered > 0 {
+		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, formatAStockExDividendFilterStatus(exDividendFiltered))
+	}
 	ctx.GeneratedRecommendationCount = snapshot.GeneratedCount
 	ctx.RecentFiltered = snapshot.RecentFiltered
 	ctx.SameDayMorningFiltered = snapshot.SameDayMorningFiltered
@@ -4960,6 +5070,9 @@ func aStockRecommendationEmptyReason(ctx aStockContext) string {
 	if ctx.SameDayMorningFiltered > 0 {
 		return fmt.Sprintf("暂无推荐股票：%s %s 已生成候选，但过滤上午同股票、热点或日内名额 %d 只。", ctx.PeriodLabel, windowLabel, ctx.SameDayMorningFiltered)
 	}
+	if ctx.ExDividendFiltered > 0 {
+		return fmt.Sprintf("暂无推荐股票：%s %s 已生成候选，但除权除息过滤 %d 只。", ctx.PeriodLabel, windowLabel, ctx.ExDividendFiltered)
+	}
 	if ctx.LimitUpFiltered > 0 {
 		return fmt.Sprintf("暂无推荐股票：%s %s 已生成候选，但涨停过滤 %d 只。", ctx.PeriodLabel, windowLabel, ctx.LimitUpFiltered)
 	}
@@ -5301,6 +5414,12 @@ func (s *Server) applyAStockHoldingSummariesWithCache(recommendations []aStockRe
 		}
 		bonus := aStockHoldingScore(summary)
 		recommendations[i].MarketScore += bonus
+		appendAStockScoreAdjustment(
+			&recommendations[i],
+			"机构持仓",
+			fmt.Sprintf("机构共持 %d 家，类型 %d 类", summary.HolderCount, summary.HolderTypeCount),
+			bonus,
+		)
 		recommendations[i].HoldingSummary = fmt.Sprintf("%d家/%d类", summary.HolderCount, summary.HolderTypeCount)
 		recommendations[i].HoldingRatio = formatAStockHoldingPct(summary.TotalFloatRatio)
 		recommendations[i].Reason = fmt.Sprintf(
@@ -5562,6 +5681,7 @@ func applyAStockFundFlow5DAssessmentToRecommendation(rec aStockRecommendation, a
 		baseScore = rec.HotspotScore
 	}
 	rec.MarketScore = baseScore + scoreDelta
+	appendAStockScoreAdjustment(&rec, "资金动向", formatAStockFundFlowScoreReason(assessment.Total, scoreDelta), scoreDelta)
 	rec.Reason = appendAStockReason(rec.Reason, formatAStockFundFlowScoreReason(assessment.Total, scoreDelta))
 	return rec
 }
@@ -6231,6 +6351,195 @@ func appendAStockReason(reason string, addition string) string {
 	return reason + "，" + addition
 }
 
+func appendAStockScoreComponent(rec *aStockRecommendation, label string, detail string, score int) {
+	if rec == nil {
+		return
+	}
+	label = strings.TrimSpace(label)
+	detail = strings.TrimSpace(detail)
+	if label == "" {
+		return
+	}
+	rec.ScoreBreakdown = append(rec.ScoreBreakdown, aStockRecommendationScoreComponent{
+		Label:  label,
+		Detail: detail,
+		Score:  score,
+	})
+}
+
+func appendAStockScoreComponentIfNonZero(rec *aStockRecommendation, label string, detail string, score int) {
+	if score == 0 {
+		return
+	}
+	appendAStockScoreComponent(rec, label, detail, score)
+}
+
+func appendAStockScoreAdjustment(rec *aStockRecommendation, label string, detail string, scoreDelta int) {
+	appendAStockScoreComponentIfNonZero(rec, label, detail, scoreDelta)
+}
+
+func aStockRecommendationScoreTotal(rec aStockRecommendation, components []aStockRecommendationScoreComponent) int {
+	if rec.MarketScore != 0 {
+		return rec.MarketScore
+	}
+	total := 0
+	for _, component := range components {
+		total += component.Score
+	}
+	return total
+}
+
+func aStockRecommendationScoreBreakdown(rec aStockRecommendation) []aStockRecommendationScoreComponent {
+	if len(rec.ScoreBreakdown) > 0 {
+		return rec.ScoreBreakdown
+	}
+	return parseAStockRecommendationScoreBreakdown(rec)
+}
+
+var (
+	aStockReasonHotspotScorePattern        = regexp.MustCompile(`命中\s*([^，；]+)，证据新闻\s*(\d+)\s*条，热度分\s*(-?\d+)`)
+	aStockReasonSimpleHotspotScorePattern  = regexp.MustCompile(`热度分\s*(-?\d+)`)
+	aStockReasonNegativePenaltyPattern     = regexp.MustCompile(`负面新闻\s*(\d+)\s*条，板块减分\s*(\d+)`)
+	aStockReasonMarketScorePattern         = regexp.MustCompile(`行情排名\s*(\d+)[^，；]*，成交额[^，；]*，个股证据\s*(\d+)\s*条，行情分\s*(-?\d+)`)
+	aStockReasonMatchedScorePattern        = regexp.MustCompile(`个股证据\s*(\d+)\s*条，匹配分\s*(-?\d+)`)
+	aStockReasonStockKeywordPattern        = regexp.MustCompile(`股票名命中\s*([^，；]+)`)
+	aStockReasonWeakPenaltyPattern         = regexp.MustCompile(`个股证据减分\s*(\d+)`)
+	aStockReasonHoldingBonusPattern        = regexp.MustCompile(`持仓加分\s*(\d+)`)
+	aStockReasonFundBonusPattern           = regexp.MustCompile(`资金加分\s*(\d+)`)
+	aStockReasonFundPenaltyPattern         = regexp.MustCompile(`资金减分\s*(\d+)`)
+	aStockReasonLowOpenPenaltyPattern      = regexp.MustCompile(`盘口减分\s*(\d+)`)
+	aStockReasonFundStrengthPenaltyPattern = regexp.MustCompile(`资金强度减分\s*(\d+)`)
+	aStockReasonSectorDrawdownPattern      = regexp.MustCompile(`板块回撤减分\s*(\d+)`)
+)
+
+func parseAStockRecommendationScoreBreakdown(rec aStockRecommendation) []aStockRecommendationScoreComponent {
+	reason := strings.TrimSpace(rec.Reason)
+	components := make([]aStockRecommendationScoreComponent, 0, 8)
+	if reason == "" {
+		if rec.MarketScore != 0 {
+			components = append(components, aStockRecommendationScoreComponent{Label: "保存总分", Detail: "历史推荐记录", Score: rec.MarketScore})
+		}
+		return components
+	}
+	if matches := aStockReasonHotspotScorePattern.FindStringSubmatch(reason); len(matches) == 4 {
+		keywordCount := countAStockDelimitedKeywords(matches[1])
+		newsCount := atoiAStockScorePart(matches[2])
+		hotspotScore := atoiAStockScorePart(matches[3])
+		negativePenalty := 0
+		if negativeMatches := aStockReasonNegativePenaltyPattern.FindStringSubmatch(reason); len(negativeMatches) == 3 {
+			negativeCount := atoiAStockScorePart(negativeMatches[1])
+			negativePenalty = atoiAStockScorePart(negativeMatches[2])
+			components = append(components, aStockRecommendationScoreComponent{Label: "新闻热度", Detail: fmt.Sprintf("证据新闻 %d 条", newsCount), Score: newsCount * 10})
+			components = append(components, aStockRecommendationScoreComponent{Label: "热点关键词", Detail: fmt.Sprintf("命中关键词 %d 个", keywordCount), Score: keywordCount * 3})
+			components = append(components, aStockRecommendationScoreComponent{Label: "负面新闻", Detail: fmt.Sprintf("负面新闻 %d 条", negativeCount), Score: -negativePenalty})
+		} else {
+			components = append(components, aStockRecommendationScoreComponent{Label: "新闻热度", Detail: fmt.Sprintf("证据新闻 %d 条", newsCount), Score: newsCount * 10})
+			components = append(components, aStockRecommendationScoreComponent{Label: "热点关键词", Detail: fmt.Sprintf("命中关键词 %d 个", keywordCount), Score: keywordCount * 3})
+		}
+		hotspotSum := 0
+		for _, component := range components {
+			hotspotSum += component.Score
+		}
+		if hotspotSum != hotspotScore {
+			components = append(components, aStockRecommendationScoreComponent{Label: "热度修正", Detail: fmt.Sprintf("展示热度分 %d", hotspotScore), Score: hotspotScore - hotspotSum})
+		}
+	} else if matches := aStockReasonSimpleHotspotScorePattern.FindStringSubmatch(reason); len(matches) == 2 {
+		components = append(components, aStockRecommendationScoreComponent{Label: "热点热度", Detail: "历史理由热度分", Score: atoiAStockScorePart(matches[1])})
+	} else if rec.HotspotScore != 0 {
+		components = append(components, aStockRecommendationScoreComponent{Label: "热点热度", Detail: "已保存热度分", Score: rec.HotspotScore})
+	}
+	if matches := aStockReasonMarketScorePattern.FindStringSubmatch(reason); len(matches) == 4 {
+		rank := atoiAStockScorePart(matches[1])
+		evidence := atoiAStockScorePart(matches[2])
+		matchScore := atoiAStockScorePart(matches[3])
+		components = appendAStockParsedMatchComponents(components, reason, rank, evidence, matchScore)
+	} else if matches := aStockReasonMatchedScorePattern.FindStringSubmatch(reason); len(matches) == 3 {
+		evidence := atoiAStockScorePart(matches[1])
+		matchScore := atoiAStockScorePart(matches[2])
+		components = appendAStockParsedMatchComponents(components, reason, 0, evidence, matchScore)
+	}
+	components = appendAStockParsedAdjustment(components, reason, aStockReasonHoldingBonusPattern, "机构持仓", "持仓加分", 1)
+	components = appendAStockParsedAdjustment(components, reason, aStockReasonFundBonusPattern, "资金动向", "资金加分", 1)
+	components = appendAStockParsedAdjustment(components, reason, aStockReasonFundPenaltyPattern, "资金动向", "资金减分", -1)
+	components = appendAStockParsedAdjustment(components, reason, aStockReasonLowOpenPenaltyPattern, "开盘盘口", "盘口减分", -1)
+	components = appendAStockParsedAdjustment(components, reason, aStockReasonFundStrengthPenaltyPattern, "资金强度", "资金强度减分", -1)
+	components = appendAStockParsedAdjustment(components, reason, aStockReasonSectorDrawdownPattern, "板块回撤", "板块回撤减分", -1)
+	total := 0
+	for _, component := range components {
+		total += component.Score
+	}
+	finalScore := aStockRecommendationScoreTotal(rec, components)
+	if finalScore != 0 && total != finalScore {
+		components = append(components, aStockRecommendationScoreComponent{Label: "总分修正", Detail: fmt.Sprintf("保存总分 %d", finalScore), Score: finalScore - total})
+	}
+	return components
+}
+
+func appendAStockParsedMatchComponents(components []aStockRecommendationScoreComponent, reason string, rank int, evidence int, matchScore int) []aStockRecommendationScoreComponent {
+	rankScore := aStockMarketRankScore(rank)
+	if rank > 0 {
+		components = append(components, aStockRecommendationScoreComponent{Label: "行情排名", Detail: fmt.Sprintf("排名 %d", rank), Score: rankScore})
+	}
+	weakPenalty := 0
+	if matches := aStockReasonWeakPenaltyPattern.FindStringSubmatch(reason); len(matches) == 2 {
+		weakPenalty = atoiAStockScorePart(matches[1])
+		components = append(components, aStockRecommendationScoreComponent{Label: "弱证据", Detail: "融资融券弱新闻", Score: -weakPenalty})
+	}
+	keywordScore := 0
+	if matches := aStockReasonStockKeywordPattern.FindStringSubmatch(reason); len(matches) == 2 {
+		keywordCount := countAStockDelimitedKeywords(matches[1])
+		keywordScore = keywordCount * 12
+		components = append(components, aStockRecommendationScoreComponent{Label: "股票名命中", Detail: fmt.Sprintf("命中关键词 %d 个", keywordCount), Score: keywordScore})
+	}
+	evidenceScore := evidence * 25
+	if weakPenalty > 0 && evidence == 1 {
+		evidenceScore = 0
+	}
+	components = append(components, aStockRecommendationScoreComponent{Label: "个股证据", Detail: fmt.Sprintf("个股证据 %d 条", evidence), Score: evidenceScore})
+	matchSum := rankScore + evidenceScore + keywordScore - weakPenalty
+	if matchSum != matchScore {
+		components = append(components, aStockRecommendationScoreComponent{Label: "匹配修正", Detail: fmt.Sprintf("展示匹配分 %d", matchScore), Score: matchScore - matchSum})
+	}
+	return components
+}
+
+func appendAStockParsedAdjustment(components []aStockRecommendationScoreComponent, reason string, pattern *regexp.Regexp, label string, detailPrefix string, sign int) []aStockRecommendationScoreComponent {
+	matches := pattern.FindAllStringSubmatch(reason, -1)
+	for _, match := range matches {
+		if len(match) != 2 {
+			continue
+		}
+		value := atoiAStockScorePart(match[1])
+		if value == 0 {
+			continue
+		}
+		components = append(components, aStockRecommendationScoreComponent{Label: label, Detail: fmt.Sprintf("%s %d", detailPrefix, value), Score: sign * value})
+	}
+	return components
+}
+
+func countAStockDelimitedKeywords(text string) int {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return 0
+	}
+	parts := strings.FieldsFunc(text, func(r rune) bool {
+		return r == '、' || r == ',' || r == '，' || r == '/' || r == ' '
+	})
+	count := 0
+	for _, part := range parts {
+		if strings.TrimSpace(part) != "" {
+			count++
+		}
+	}
+	return count
+}
+
+func atoiAStockScorePart(text string) int {
+	value, _ := strconv.Atoi(strings.TrimSpace(text))
+	return value
+}
+
 func applyAStockRecommendationScorePenalty(rec aStockRecommendation, penalty int, reason string) aStockRecommendation {
 	if penalty <= 0 {
 		return rec
@@ -6240,6 +6549,7 @@ func applyAStockRecommendationScorePenalty(rec aStockRecommendation, penalty int
 		baseScore = rec.HotspotScore
 	}
 	rec.MarketScore = baseScore - penalty
+	appendAStockScoreAdjustment(&rec, "扣分调整", reason, -penalty)
 	rec.Reason = appendAStockReason(rec.Reason, reason)
 	return rec
 }
@@ -7487,6 +7797,7 @@ func applyAStockMarketBars(strategyDate string, period string, recommendations [
 		recommendations[i].MarketScore = baseScore - penalty
 		if penalty > 0 {
 			recommendations[i].Reason = fmt.Sprintf("%s，板块回撤减分 %d，调整分 %d", recommendations[i].Reason, penalty, recommendations[i].MarketScore)
+			appendAStockScoreAdjustment(&recommendations[i], "板块回撤", fmt.Sprintf("板块回撤减分 %d", penalty), -penalty)
 		}
 	}
 	sort.SliceStable(recommendations, func(i, j int) bool {
@@ -9289,13 +9600,14 @@ func buildAStockRecommendationsWithLimitAndSectorGate(hotspots []aStockHotspot, 
 			}
 			reason = appendAStockReason(reason, formatAStockHotspotNegativeNewsPenaltyReason(hotspot))
 			recommendations = append(recommendations, aStockRecommendation{
-				Rank:         len(recommendations) + 1,
-				Hotspot:      hotspot.Name,
-				Code:         stock.Code,
-				Name:         stock.Name,
-				HotspotScore: hotspot.Score,
-				MarketScore:  marketScore,
-				Reason:       reason,
+				Rank:           len(recommendations) + 1,
+				Hotspot:        hotspot.Name,
+				Code:           stock.Code,
+				Name:           stock.Name,
+				HotspotScore:   hotspot.Score,
+				MarketScore:    marketScore,
+				Reason:         reason,
+				ScoreBreakdown: buildAStockRecommendationScoreBreakdown(hotspot, stock),
 			})
 			picked++
 			if picked >= maxPerHotspot || len(recommendations) >= maxRecommendations {
@@ -9307,6 +9619,63 @@ func buildAStockRecommendationsWithLimitAndSectorGate(hotspots []aStockHotspot, 
 		}
 	}
 	return recommendations
+}
+
+func buildAStockRecommendationScoreBreakdown(hotspot aStockHotspot, stock aStockMarketCandidate) []aStockRecommendationScoreComponent {
+	components := make([]aStockRecommendationScoreComponent, 0, 8)
+	components = append(components, aStockRecommendationScoreComponent{
+		Label:  "新闻热度",
+		Detail: fmt.Sprintf("证据新闻 %d 条", hotspot.Evidence),
+		Score:  hotspot.Evidence * 10,
+	})
+	components = append(components, aStockRecommendationScoreComponent{
+		Label:  "热点关键词",
+		Detail: fmt.Sprintf("命中关键词 %d 个", len(hotspot.Keywords)),
+		Score:  len(hotspot.Keywords) * 3,
+	})
+	if hotspot.NegativeNewsPenalty > 0 {
+		components = append(components, aStockRecommendationScoreComponent{
+			Label:  "负面新闻",
+			Detail: fmt.Sprintf("负面新闻 %d 条", hotspot.NegativeNewsCount),
+			Score:  -hotspot.NegativeNewsPenalty,
+		})
+	}
+	hotspotSum := 0
+	for _, component := range components {
+		hotspotSum += component.Score
+	}
+	if hotspotSum != hotspot.Score {
+		components = append(components, aStockRecommendationScoreComponent{
+			Label:  "热度修正",
+			Detail: fmt.Sprintf("展示热度分 %d", hotspot.Score),
+			Score:  hotspot.Score - hotspotSum,
+		})
+	}
+	components = append(components, aStockRecommendationScoreComponent{
+		Label:  "行情排名",
+		Detail: fmt.Sprintf("排名 %d", stock.Rank),
+		Score:  aStockMarketRankScore(stock.Rank),
+	})
+	components = append(components, aStockRecommendationScoreComponent{
+		Label:  "个股证据",
+		Detail: fmt.Sprintf("有效证据 %d 条 / 总证据 %d 条", stock.StrongEvidence, stock.Evidence),
+		Score:  stock.StrongEvidence * 25,
+	})
+	if len(stock.Keywords) > 0 {
+		components = append(components, aStockRecommendationScoreComponent{
+			Label:  "股票名命中",
+			Detail: fmt.Sprintf("命中关键词 %d 个", len(stock.Keywords)),
+			Score:  len(stock.Keywords) * 12,
+		})
+	}
+	if stock.WeakPenalty > 0 {
+		components = append(components, aStockRecommendationScoreComponent{
+			Label:  "弱证据",
+			Detail: fmt.Sprintf("融资融券弱新闻 %d 条", stock.WeakEvidence),
+			Score:  -stock.WeakPenalty,
+		})
+	}
+	return components
 }
 
 func aStockRecommendationCandidatesForLimit(hotspots []aStockHotspot, marketCandidates []aStockMarketCandidate, maxRecommendations int, maxPerHotspot int) []aStockMarketCandidate {
@@ -9944,7 +10313,13 @@ func mergeAStockLimitUpReplacementPool(base []aStockRecommendation, replacementP
 			continue
 		}
 		rec.Code = code
-		rec.MarketScore = lowScore - len(merged) - 1
+		nextScore := lowScore - len(merged) - 1
+		previousScore := rec.MarketScore
+		if previousScore == 0 {
+			previousScore = rec.HotspotScore
+		}
+		rec.MarketScore = nextScore
+		appendAStockScoreAdjustment(&rec, "递补排序", fmt.Sprintf("递补候选调整到 %d 分", nextScore), nextScore-previousScore)
 		rec.Reason = appendAStockReason(rec.Reason, "作为过滤递补候选")
 		rec.Rank = len(merged) + 1
 		merged = append(merged, rec)
@@ -10120,6 +10495,94 @@ func countAStockRecommendationNameChanges(original map[string]string, recommenda
 		}
 	}
 	return changed
+}
+
+func formatAStockExDividendFilterStatus(filtered int) string {
+	if filtered <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("除权除息过滤股票 %d", filtered)
+}
+
+func (s *Server) applyAStockExDividendFilterWithCache(ctx *aStockContext, cache *aStockRequestCache) int {
+	if ctx == nil || len(ctx.Recommendations) == 0 {
+		return 0
+	}
+	blockedCodes := aStockExDividendMarkedRecommendationCodes(ctx.Recommendations)
+	if events, err := s.loadAStockDividendEventsWithCache(ctx.Date, aStockRecommendationCodes(ctx.Recommendations), cache); err == nil {
+		for _, event := range events.Items {
+			code := normalizeAStockCode(event.Code)
+			if code == "" {
+				continue
+			}
+			if blockedCodes == nil {
+				blockedCodes = make(map[string]struct{})
+			}
+			blockedCodes[code] = struct{}{}
+		}
+	}
+	filtered, skipped := filterAStockRecommendationsByCodes(ctx.Recommendations, blockedCodes)
+	if skipped > 0 {
+		ctx.Recommendations = filtered
+		ctx.ExDividendFiltered += skipped
+	}
+	return skipped
+}
+
+func aStockExDividendMarkedRecommendationCodes(recommendations []aStockRecommendation) map[string]struct{} {
+	if len(recommendations) == 0 {
+		return nil
+	}
+	blockedCodes := make(map[string]struct{})
+	for _, rec := range recommendations {
+		code := normalizeAStockCode(rec.Code)
+		if code == "" || !isAStockExDividendMarkedName(rec.Name) {
+			continue
+		}
+		blockedCodes[code] = struct{}{}
+	}
+	if len(blockedCodes) == 0 {
+		return nil
+	}
+	return blockedCodes
+}
+
+func isAStockExDividendMarkedName(name string) bool {
+	normalized := strings.ToUpper(strings.TrimSpace(name))
+	return strings.HasPrefix(normalized, "XD") || strings.HasPrefix(normalized, "XR") || strings.HasPrefix(normalized, "DR")
+}
+
+func (s *Server) loadAStockDividendEventsWithCache(strategyDate string, codes []string, cache *aStockRequestCache) (aStockDividendEventResult, error) {
+	baseURL := strings.TrimRight(strings.TrimSpace(s.cfg.AStockAuctionURL), "/")
+	if baseURL == "" {
+		return aStockDividendEventResult{}, fmt.Errorf("a-stock auction url is empty")
+	}
+	date := normalizeAStockStrategyDate(strategyDate)
+	normalizedCodes := normalizeAStockCodeList(codes)
+	if len(normalizedCodes) == 0 {
+		return aStockDividendEventResult{}, fmt.Errorf("empty stock codes")
+	}
+	cacheKeyCodes := append([]string(nil), normalizedCodes...)
+	sort.Strings(cacheKeyCodes)
+	cacheKey := strings.Join([]string{date, fmt.Sprint(aStockExDividendWindowDays), strings.Join(cacheKeyCodes, ",")}, "|")
+	if cache != nil {
+		if entry, ok := cache.dividendEvents[cacheKey]; ok {
+			return entry.result, entry.err
+		}
+	}
+	query := url.Values{}
+	query.Set("date", date)
+	query.Set("codes", strings.Join(normalizedCodes, ","))
+	query.Set("window_days", fmt.Sprint(aStockExDividendWindowDays))
+	result := aStockDividendEventResult{}
+	resp, err := s.client.R().SetResult(&result).Get(baseURL + "/api/a-stock/dividend-events?" + query.Encode())
+	if err == nil && !resp.IsSuccess() {
+		err = fmt.Errorf(resp.Status())
+	}
+	if cache != nil {
+		cache.dividendEvents[cacheKey] = aStockDividendEventCacheEntry{result: result, err: err}
+	}
+	return result, err
 }
 
 func filterAStockRecommendationsByCodes(recommendations []aStockRecommendation, blockedCodes map[string]struct{}) ([]aStockRecommendation, int) {
@@ -10656,6 +11119,7 @@ func scoreAStockMarketCandidatesWithSectorGate(hotspot aStockHotspot, candidates
 			continue
 		}
 		candidate.Evidence = evidence
+		candidate.StrongEvidence = effectiveEvidence
 		candidate.WeakEvidence = evidenceResult.Weak
 		candidate.WeakPenalty = weakPenalty
 		candidate.BadEvidence = evidenceResult.Negative
