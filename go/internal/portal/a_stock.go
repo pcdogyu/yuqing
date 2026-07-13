@@ -431,7 +431,7 @@ const (
 	aStockFundFlowFilterCookieDisabled = "disabled"
 	aStockAuctionCandidateCacheTTL     = 5 * time.Minute
 	aStockMarketCandidateLimit         = 5000
-	aStockDailyRecommendationLimit     = 4
+	aStockDailyRecommendationLimit     = 5
 	aStockRecommendationLimit          = aStockDailyRecommendationLimit
 	aStockReplacementPoolLimit         = 36
 	aStockReplacementPerHotspot        = 12

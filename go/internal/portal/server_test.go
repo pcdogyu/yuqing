@@ -8612,8 +8612,8 @@ func TestAStockRecommendationsUseTopThreeHotspotIndustries(t *testing.T) {
 	if len(recommendations) != aStockDailyRecommendationLimit {
 		t.Fatalf("expected %d recommendations by default, got %d", aStockDailyRecommendationLimit, len(recommendations))
 	}
-	if recommendations[0].Code != "600547" || recommendations[len(recommendations)-1].Code != "002475" {
-		t.Fatalf("expected default daily cap to keep first four ranked candidates, got %+v", recommendations)
+	if recommendations[0].Code != "600547" || recommendations[len(recommendations)-1].Code != "000725" {
+		t.Fatalf("expected default daily cap to keep first five ranked candidates, got %+v", recommendations)
 	}
 	for _, rec := range recommendations {
 		if rec.Hotspot == "医药生物" {
@@ -8851,8 +8851,8 @@ func TestAStockRecommendationsOutputFiltersApplyDailyLimit(t *testing.T) {
 
 	srv := NewServer(config.Config{})
 	exDividendFiltered, dailyLimitFiltered := srv.applyAStockRecommendationOutputFiltersWithCache(&ctx, newAStockRequestCache())
-	if exDividendFiltered != 0 || dailyLimitFiltered != 2 || ctx.SameDayMorningFiltered != 2 {
-		t.Fatalf("expected only daily limit to filter two recommendations, ex=%d daily=%d ctx=%+v", exDividendFiltered, dailyLimitFiltered, ctx)
+	if exDividendFiltered != 0 || dailyLimitFiltered != 1 || ctx.SameDayMorningFiltered != 1 {
+		t.Fatalf("expected only daily limit to filter one recommendation, ex=%d daily=%d ctx=%+v", exDividendFiltered, dailyLimitFiltered, ctx)
 	}
 	if len(ctx.Recommendations) != aStockDailyRecommendationLimit {
 		t.Fatalf("expected final recommendations capped at %d, got %+v", aStockDailyRecommendationLimit, ctx.Recommendations)
@@ -9324,12 +9324,16 @@ func TestAStockT1ShadowFiltersWeakEvidenceAndLimitsByHotspot(t *testing.T) {
 		}
 	}
 	afternoon, skipped := limitAStockRecommendationsByCount(limited, remainingAStockDailyRecommendationLimit(3))
-	if skipped != aStockT1ShadowRecommendationLimit-1 || len(afternoon) != 1 {
-		t.Fatalf("expected shadow afternoon to leave one slot after three morning recommendations, skipped=%d got %+v", skipped, afternoon)
+	if skipped != aStockT1ShadowRecommendationLimit-2 || len(afternoon) != 2 {
+		t.Fatalf("expected shadow afternoon to leave two slots after three morning recommendations, skipped=%d got %+v", skipped, afternoon)
 	}
 	afternoon, skipped = limitAStockRecommendationsByCount(limited, remainingAStockDailyRecommendationLimit(4))
+	if skipped != aStockT1ShadowRecommendationLimit-1 || len(afternoon) != 1 {
+		t.Fatalf("expected shadow afternoon to leave one slot after four morning recommendations, skipped=%d got %+v", skipped, afternoon)
+	}
+	afternoon, skipped = limitAStockRecommendationsByCount(limited, remainingAStockDailyRecommendationLimit(5))
 	if skipped != aStockT1ShadowRecommendationLimit || len(afternoon) != 0 {
-		t.Fatalf("expected shadow afternoon to stop after four morning recommendations, skipped=%d got %+v", skipped, afternoon)
+		t.Fatalf("expected shadow afternoon to stop after five morning recommendations, skipped=%d got %+v", skipped, afternoon)
 	}
 }
 
@@ -10632,12 +10636,16 @@ func TestAStockAfternoonRecommendationsRespectDailyTotalLimit(t *testing.T) {
 	}
 
 	filtered, skipped := limitAStockRecommendationsByCount(afternoon, remainingAStockDailyRecommendationLimit(3))
-	if skipped != 2 || len(filtered) != 1 || filtered[0].Code != "300001" {
-		t.Fatalf("expected morning 3 recommendations to leave one afternoon slot, skipped=%d filtered=%+v", skipped, filtered)
+	if skipped != 1 || len(filtered) != 2 || filtered[0].Code != "300001" || filtered[1].Code != "300002" {
+		t.Fatalf("expected morning 3 recommendations to leave two afternoon slots, skipped=%d filtered=%+v", skipped, filtered)
 	}
 	filtered, skipped = limitAStockRecommendationsByCount(afternoon, remainingAStockDailyRecommendationLimit(4))
+	if skipped != 2 || len(filtered) != 1 || filtered[0].Code != "300001" {
+		t.Fatalf("expected morning 4 recommendations to leave one afternoon slot, skipped=%d filtered=%+v", skipped, filtered)
+	}
+	filtered, skipped = limitAStockRecommendationsByCount(afternoon, remainingAStockDailyRecommendationLimit(5))
 	if skipped != 3 || len(filtered) != 0 {
-		t.Fatalf("expected morning 4 recommendations to block afternoon slots, skipped=%d filtered=%+v", skipped, filtered)
+		t.Fatalf("expected morning 5 recommendations to block afternoon slots, skipped=%d filtered=%+v", skipped, filtered)
 	}
 }
 
@@ -10654,6 +10662,7 @@ func TestAStockAfternoonSameDayCapsUsePersistedMorningDailyTotal(t *testing.T) {
 						{Rank: 2, Code: "600002", Name: "Morning B", Hotspot: "Two"},
 						{Rank: 3, Code: "600003", Name: "Morning C", Hotspot: "Three"},
 						{Rank: 4, Code: "600004", Name: "Morning D", Hotspot: "Four"},
+						{Rank: 5, Code: "600005", Name: "Morning E", Hotspot: "Five"},
 					},
 				})
 				return
@@ -10678,7 +10687,7 @@ func TestAStockAfternoonSameDayCapsUsePersistedMorningDailyTotal(t *testing.T) {
 	}
 	NewServer(config.Config{ContentURL: content.URL}).applyAStockAfternoonSameDayCapsWithCache(&ctx, nil, newAStockRequestCache())
 	if len(ctx.Recommendations) != 0 || ctx.SameDayMorningFiltered != 3 {
-		t.Fatalf("expected morning four recommendations to fill daily slots, got filtered=%d recommendations=%+v", ctx.SameDayMorningFiltered, ctx.Recommendations)
+		t.Fatalf("expected morning five recommendations to fill daily slots, got filtered=%d recommendations=%+v", ctx.SameDayMorningFiltered, ctx.Recommendations)
 	}
 }
 
