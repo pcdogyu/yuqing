@@ -2828,6 +2828,14 @@ func TestAStockPageExplainsMorningNoNews(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 200, "message": "ok", "data": model.StockInstitutionHoldingSummary{}})
 			return
 		}
+		if r.URL.Path == "/api/v1/a-stock/sector-fund-flows" {
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockSectorFundFlowListResult{})
+			return
+		}
+		if r.URL.Path == "/api/v1/a-stock/sector-fund-flows" {
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockSectorFundFlowListResult{})
+			return
+		}
 		if r.URL.Path != "/api/v1/articles" {
 			if handleEmptyAStockAuctionTestEndpoint(w, r) {
 				return
@@ -3057,6 +3065,10 @@ func TestAStockPageLoadsAfternoonWindow(t *testing.T) {
 					},
 				},
 			})
+			return
+		}
+		if r.URL.Path == "/api/v1/a-stock/sector-fund-flows" {
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockSectorFundFlowListResult{})
 			return
 		}
 		if r.URL.Path != "/api/v1/articles" {
@@ -4167,7 +4179,7 @@ func handleEmptyAStockAuctionTestEndpoint(w http.ResponseWriter, r *http.Request
 				EndDate:   r.URL.Query().Get("end_date"),
 				Indicator: r.URL.Query().Get("indicator"),
 				Code:      r.URL.Query().Get("code"),
-				Days:      5,
+				Days:      atoiAStockScorePart(r.URL.Query().Get("days")),
 			},
 		})
 		return true
@@ -6583,7 +6595,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 			return
 		}
 		if r.URL.Path == "/api/v1/a-stock/stock-fund-flow-trend" {
-			if r.URL.Query().Get("end_date") != "2026-06-16" || r.URL.Query().Get("indicator") != "今日" || r.URL.Query().Get("days") != "5" {
+			if r.URL.Query().Get("end_date") != "2026-06-16" || r.URL.Query().Get("indicator") != "今日" || r.URL.Query().Get("days") != "10" {
 				t.Fatalf("unexpected stock fund flow trend query: %s", r.URL.RawQuery)
 			}
 			code := r.URL.Query().Get("code")
@@ -6609,7 +6621,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 					EndDate:   "2026-06-16",
 					Indicator: "今日",
 					Code:      code,
-					Days:      5,
+					Days:      10,
 				},
 			})
 			return
@@ -6633,6 +6645,10 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 					},
 				},
 			})
+			return
+		}
+		if r.URL.Path == "/api/v1/a-stock/sector-fund-flows" {
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockSectorFundFlowListResult{})
 			return
 		}
 		if r.URL.Path != "/api/v1/articles" {
@@ -6738,9 +6754,13 @@ func TestAStockRecommendationFundFlowFilterScoresAndReplenishes(t *testing.T) {
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path != "/api/v1/a-stock/stock-fund-flow-trend" {
+			if r.URL.Path == "/api/v1/a-stock/sector-fund-flows" {
+				writeEnvelope(w, http.StatusOK, "ok", model.AStockSectorFundFlowListResult{})
+				return
+			}
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
-		if r.URL.Query().Get("end_date") != "2026-06-16" || r.URL.Query().Get("indicator") != "今日" || r.URL.Query().Get("days") != "5" {
+		if r.URL.Query().Get("end_date") != "2026-06-16" || r.URL.Query().Get("indicator") != "今日" || r.URL.Query().Get("days") != "10" {
 			t.Fatalf("unexpected fund flow query: %s", r.URL.RawQuery)
 		}
 		code := normalizeAStockCode(r.URL.Query().Get("code"))
@@ -6760,7 +6780,7 @@ func TestAStockRecommendationFundFlowFilterScoresAndReplenishes(t *testing.T) {
 			EndDate:   "2026-06-16",
 			Indicator: "今日",
 			Code:      code,
-			Days:      5,
+			Days:      10,
 		})
 	}))
 	defer content.Close()
@@ -6797,11 +6817,11 @@ func TestAStockRecommendationFundFlowFilterScoresAndReplenishes(t *testing.T) {
 	}
 
 	strong := mustAStockRecommendationForTest(t, result.Recommendations, "300001")
-	if strong.MarketScore != 110 || !strings.Contains(strong.Reason, "资金加分 10") {
+	if strong.MarketScore != 145 || !strings.Contains(strong.Reason, "资金加分 45") {
 		t.Fatalf("expected strong inflow bonus, got %+v", strong)
 	}
 	inflow := mustAStockRecommendationForTest(t, result.Recommendations, "300002")
-	if inflow.MarketScore != 95 || !strings.Contains(inflow.Reason, "资金加分 5") {
+	if inflow.MarketScore != 110 || !strings.Contains(inflow.Reason, "资金加分 20") {
 		t.Fatalf("expected inflow bonus, got %+v", inflow)
 	}
 	zero := mustAStockRecommendationForTest(t, result.Recommendations, "300006")
@@ -8624,12 +8644,12 @@ func TestAStockRecommendationReasonRendersScoreBreakdownTable(t *testing.T) {
 		MarketScore: 115,
 		Reason:      "命中 AI，证据新闻 3 条，热度分 36；个股证据 1 条，匹配分 79，综合分 115",
 		ScoreBreakdown: []aStockRecommendationScoreComponent{
-			{Label: "新闻热度", Detail: "证据新闻 3 条", Score: 30},
-			{Label: "热点关键词", Detail: "命中关键词 2 个", Score: 6},
-			{Label: "个股证据", Detail: "有效证据 1 条 / 总证据 1 条", Score: 25},
-			{Label: "行情排名", Detail: "排名 1", Score: 40},
-			{Label: "股票名命中", Detail: "命中关键词 1 个", Score: 12},
-			{Label: "资金动向", Detail: "资金加分 2", Score: 2},
+			{Label: "新闻热度", Detail: "证据新闻 3 条", UnitValue: 10, Score: 30},
+			{Label: "热点关键词", Detail: "命中关键词 2 个", UnitValue: 3, Score: 6},
+			{Label: "个股证据", Detail: "有效证据 1 条 / 总证据 1 条", UnitValue: 25, Score: 25},
+			{Label: "行情排名", Detail: "排名 1", UnitValue: 40, Score: 40},
+			{Label: "股票名命中", Detail: "命中关键词 1 个", UnitValue: 12, Score: 12},
+			{Label: "资金动向", Detail: "资金加分 2", UnitValue: 2, Score: 2},
 		},
 	}
 	var b strings.Builder
@@ -8637,16 +8657,46 @@ func TestAStockRecommendationReasonRendersScoreBreakdownTable(t *testing.T) {
 	body := b.String()
 	for _, want := range []string{
 		`class="astock-score-table"`,
-		"<th>项目</th><th>组成</th><th>得分</th>",
+		"<th>项目</th><th>组成</th><th>分值</th><th>得分</th>",
 		"总分",
 		"115 分",
 		"新闻热度",
 		"证据新闻 3 条",
+		`class="astock-score-value">10</td><td>30 分`,
 		"个股证据",
 		"25 分",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected rendered score breakdown to contain %q, got %s", want, body)
+		}
+	}
+}
+
+func TestAStockRecommendationReasonParsesUnitValueForScoreBreakdownTable(t *testing.T) {
+	rec := aStockRecommendation{
+		Hotspot:     "金融券商",
+		Code:        "600036",
+		Name:        "招商银行",
+		MarketScore: 172,
+		Reason:      "命中 证券、银行，证据新闻 12 条，热度分 126；行情排名 143，成交额 3671.00万，个股证据 1 条，行情分 36，综合分 162，生成点 09:27，5日主力资金净流入 +10.34亿，资金加分 10",
+	}
+	var b strings.Builder
+	writeAStockRecommendationReasonCell(&b, rec)
+	body := b.String()
+	for _, want := range []string{
+		"172 分",
+		"<th>项目</th><th>组成</th><th>分值</th><th>得分</th>",
+		"证据新闻 12 条",
+		`class="astock-score-value">10</td><td>120 分`,
+		"命中关键词 2 个",
+		`class="astock-score-value">3</td><td>6 分`,
+		"排名 143",
+		`class="astock-score-value">11</td><td>11 分`,
+		"个股证据 1 条",
+		`class="astock-score-value">25</td><td>25 分`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected rendered parsed score breakdown to contain %q, got %s", want, body)
 		}
 	}
 }
@@ -8792,16 +8842,16 @@ func TestAStockMarketBarsPenalizeMorningLowOpen(t *testing.T) {
 		{Code: "603893", Date: "2026-07-08", Open: 10.00, EntryPrice: 10.00, Close: 10.10},
 	}
 
-	got, _, _, _, _ := applyAStockMarketBars("2026-07-08", "morning", recommendations, bars, false, false, 0)
+	got, _, status, _, _ := applyAStockMarketBars("2026-07-08", "morning", recommendations, bars, false, false, 0)
 
-	if len(got) != 2 {
-		t.Fatalf("expected two recommendations, got %+v", got)
+	if len(got) != 1 {
+		t.Fatalf("expected low-open recommendation to be filtered, got %+v", got)
 	}
-	if got[0].Code != "603893" || got[1].Code != "002520" {
-		t.Fatalf("expected low-open stock to be reranked lower, got %+v", got)
+	if got[0].Code != "603893" {
+		t.Fatalf("expected normal stock to remain, got %+v", got)
 	}
-	if got[1].MarketScore != 20 || !strings.Contains(got[1].Reason, "开盘低开 -2.50%，盘口减分 80") {
-		t.Fatalf("expected low-open penalty and reason, got %+v", got[1])
+	if !strings.Contains(status, "过滤低开股票 1") {
+		t.Fatalf("expected low-open hard filter status, got %q", status)
 	}
 }
 
@@ -8826,6 +8876,86 @@ func TestAStockFundFlowMedianPenaltyWithinHotspot(t *testing.T) {
 	}
 	if byCode["603893"].MarketScore != 100 || byCode["688385"].MarketScore != 100 {
 		t.Fatalf("expected median and above-median stocks to keep score, got %+v", got)
+	}
+}
+
+func TestAStockFundFlowScoreStrongInflowCapsAtFifty(t *testing.T) {
+	assessment := scoreAStockFundFlowAssessment(aStockFundFlow5DAssessment{
+		Total5D:  2100000000,
+		Total10D: 2100000000,
+	})
+	rec := applyAStockFundFlow5DAssessmentToRecommendation(aStockRecommendation{Code: "300001", HotspotScore: 100, MarketScore: 100, Reason: "base"}, assessment, true)
+
+	if assessment.ScoreDelta != 50 || rec.MarketScore != 150 || !strings.Contains(rec.Reason, "资金加分 50") {
+		t.Fatalf("expected strong inflow to cap at +50, assessment=%+v rec=%+v", assessment, rec)
+	}
+}
+
+func TestAStockFundFlowScoreContinuousOutflowCapsAtMinusFifty(t *testing.T) {
+	assessment := scoreAStockFundFlowAssessment(aStockFundFlow5DAssessment{
+		Total5D:        -10000000,
+		NegativeDays5D: 4,
+	})
+
+	if assessment.ScoreDelta != -50 || !strings.Contains(formatAStockFundFlowScoreReason(assessment), "近5日净流出4天") {
+		t.Fatalf("expected continuous outflow to cap at -50, got %+v", assessment)
+	}
+}
+
+func TestAStockFundFlowScoreTenDayPositiveFiveDayOutflow(t *testing.T) {
+	assessment := scoreAStockFundFlowAssessment(aStockFundFlow5DAssessment{
+		Total5D:        -10000000,
+		Total10D:       100000000,
+		NegativeDays5D: 1,
+	})
+
+	if assessment.ScoreDelta != -30 || !strings.Contains(formatAStockFundFlowScoreReason(assessment), "资金退潮减分 30") {
+		t.Fatalf("expected 10d inflow but 5d outflow to be penalized, got %+v", assessment)
+	}
+}
+
+func TestAStockFundFlowScoreTenDayOutflowFiveDayRepairCapsPositive(t *testing.T) {
+	assessment := scoreAStockFundFlowAssessment(aStockFundFlow5DAssessment{
+		Total5D:  2100000000,
+		Total10D: -100000000,
+	})
+
+	if assessment.ScoreDelta != 10 || !strings.Contains(formatAStockFundFlowScoreReason(assessment), "资金修复加分上限10") {
+		t.Fatalf("expected 10d outflow but 5d repair to cap at +10, got %+v", assessment)
+	}
+}
+
+func TestAStockFundFlowScoreSectorWeakCapsBonus(t *testing.T) {
+	weak := scoreAStockFundFlowAssessment(aStockFundFlow5DAssessment{
+		Total5D:    2100000000,
+		Total10D:   2100000000,
+		SectorWeak: true,
+	})
+	outflow := scoreAStockFundFlowAssessment(aStockFundFlow5DAssessment{
+		Total5D:          2100000000,
+		Total10D:         2100000000,
+		SectorNetOutflow: true,
+	})
+
+	if weak.ScoreDelta != 10 {
+		t.Fatalf("expected weak sector to cap fund bonus at +10, got %+v", weak)
+	}
+	if outflow.ScoreDelta != 0 {
+		t.Fatalf("expected sector net outflow to cap fund bonus at 0, got %+v", outflow)
+	}
+}
+
+func TestAStockFundFlowScoreRecentLargeOutflowSample(t *testing.T) {
+	assessment := scoreAStockFundFlowAssessment(aStockFundFlow5DAssessment{
+		Total5D:         -571000000,
+		Total10D:        -445629605.79,
+		NegativeDays5D:  3,
+		LatestNetInflow: -708000000,
+		LatestChangePct: -11.44,
+	})
+
+	if !assessment.HardFiltered || assessment.ScoreDelta != -50 {
+		t.Fatalf("expected 300475-like sample to be hard filtered and heavily penalized, got %+v", assessment)
 	}
 }
 
@@ -10538,6 +10668,8 @@ func TestAStockContextFallsBackToLatestAuctionDictionary(t *testing.T) {
 				Items: []model.Item{{ID: 110, SourceType: "flash", Title: "华泰证券：资金面仍具活跃基础", Summary: "证券资本市场活跃", PublishTime: "2026-06-17 08:37:00"}},
 				Page:  1, PageSize: 200, Total: 1,
 			}})
+		case "/api/v1/a-stock/sector-fund-flows":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockSectorFundFlowListResult{})
 		default:
 			if handleEmptyAStockAuctionTestEndpoint(w, r) {
 				return
