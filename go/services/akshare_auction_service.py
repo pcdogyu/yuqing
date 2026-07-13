@@ -63,6 +63,10 @@ EASTMONEY_CLIST_URLS = [
 EASTMONEY_A_STOCK_FS = "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23"
 EASTMONEY_FIELDS = "f12,f14,f2,f5,f6"
 EASTMONEY_SORT_FIELD = "f12"
+AUCTION_SNAPSHOT_UNIT_NORMALIZE_MIN_ITEMS = 1000
+AUCTION_SNAPSHOT_UNIT_NORMALIZE_AMOUNT_THRESHOLD = 1_000_000_000_000
+AUCTION_SNAPSHOT_UNIT_NORMALIZE_VOLUME_THRESHOLD = 100_000_000
+AUCTION_SNAPSHOT_UNIT_NORMALIZE_SOURCES = {"eastmoney_clist", "akshare_spot_em"}
 EASTMONEY_SECTOR_TYPE_IDS = {
     "行业资金流": "2",
     "概念资金流": "3",
@@ -803,6 +807,41 @@ def eastmoney_rows_to_items(rows: list[dict[str, Any]], trade_date: str, limit: 
         if limit > 0 and len(items) >= limit:
             break
     return items
+
+
+def should_normalize_auction_snapshot_units(items: list[dict[str, Any]]) -> bool:
+    if len(items) < AUCTION_SNAPSHOT_UNIT_NORMALIZE_MIN_ITEMS:
+        return False
+    snapshot_source_count = 0
+    total_volume = 0.0
+    total_amount = 0.0
+    for item in items:
+        if text_value(item.get("source")) in AUCTION_SNAPSHOT_UNIT_NORMALIZE_SOURCES:
+            snapshot_source_count += 1
+        total_volume += finite_float(item.get("auction_volume"))
+        total_amount += finite_float(item.get("auction_amount"))
+    if snapshot_source_count * 2 < len(items):
+        return False
+    return (
+        total_amount >= AUCTION_SNAPSHOT_UNIT_NORMALIZE_AMOUNT_THRESHOLD
+        or total_volume >= AUCTION_SNAPSHOT_UNIT_NORMALIZE_VOLUME_THRESHOLD
+    )
+
+
+def normalize_auction_snapshot_units(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not should_normalize_auction_snapshot_units(items):
+        return items
+    normalized: list[dict[str, Any]] = []
+    for item in items:
+        copied = dict(item)
+        volume = finite_float(copied.get("auction_volume"))
+        amount = finite_float(copied.get("auction_amount"))
+        if volume > 0:
+            copied["auction_volume"] = volume / 100
+        if amount > 0:
+            copied["auction_amount"] = amount / 100
+        normalized.append(copied)
+    return normalized
 
 
 def eastmoney_page_size(limit: int) -> int:
@@ -2263,6 +2302,7 @@ class AuctionService:
                         warning = f"AKShare snapshot returned no usable amounts and direct Eastmoney snapshot failed: {eastmoney_exc}"
         if code_name_warning:
             warning = ((warning + "; ") if warning else "") + f"code name universe fallback failed: {code_name_warning}"
+        items = normalize_auction_snapshot_units(items)
         payload = {
             "date": trade_date,
             "items": items,
@@ -2739,6 +2779,22 @@ def run_self_test() -> None:
     assert eastmoney_items[0]["name"] == "平安银行"
     assert eastmoney_items[0]["source"] == "eastmoney_clist"
     assert eastmoney_items[0]["status"] == "ok"
+    oversized_items = [
+        {
+            "code": f"30{i:04d}",
+            "name": f"测试股份{i}",
+            "auction_price": 10,
+            "auction_volume": 1_400_000,
+            "auction_amount": 3_500_000_000,
+            "source": "eastmoney_clist",
+            "status": "ok",
+        }
+        for i in range(1001)
+    ]
+    normalized_oversized = normalize_auction_snapshot_units(oversized_items)
+    assert normalized_oversized[0]["auction_volume"] == 14_000
+    assert normalized_oversized[0]["auction_amount"] == 35_000_000
+    assert eastmoney_items[0]["auction_volume"] == 1000
     assert not eastmoney_rows_to_items(
         [{"f12": "920118", "f14": "太湖远大", "f2": "18", "f5": "1000", "f6": "18000"}],
         "2026-06-18",

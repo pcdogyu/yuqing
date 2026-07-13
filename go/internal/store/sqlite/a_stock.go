@@ -14,6 +14,7 @@ var aStockAuctionSHSZFilterSQL = astockcode.SQLWhere()
 
 func (s *Store) UpsertAStockAuctionAmounts(ctx context.Context, tradeDate string, items []model.AStockAuctionAmount, replace bool) (model.AStockAuctionUpsertResult, error) {
 	tradeDate = strings.TrimSpace(tradeDate)
+	items = normalizeAStockAuctionSnapshotUnits(items)
 	result := model.AStockAuctionUpsertResult{Date: tradeDate, Total: len(items)}
 	if tradeDate == "" {
 		for _, item := range items {
@@ -135,6 +136,43 @@ ON CONFLICT(trade_date, code) DO UPDATE SET
 	}
 	err = tx.Commit()
 	return result, err
+}
+
+func normalizeAStockAuctionSnapshotUnits(items []model.AStockAuctionAmount) []model.AStockAuctionAmount {
+	if !shouldNormalizeAStockAuctionSnapshotUnits(items) {
+		return items
+	}
+	normalized := append([]model.AStockAuctionAmount(nil), items...)
+	for i := range normalized {
+		if normalized[i].AuctionVolume > 0 {
+			normalized[i].AuctionVolume = normalized[i].AuctionVolume / 100
+		}
+		if normalized[i].AuctionAmount > 0 {
+			normalized[i].AuctionAmount = normalized[i].AuctionAmount / 100
+		}
+	}
+	return normalized
+}
+
+func shouldNormalizeAStockAuctionSnapshotUnits(items []model.AStockAuctionAmount) bool {
+	if len(items) < 1000 {
+		return false
+	}
+	snapshotSourceCount := 0
+	totalVolume := 0.0
+	totalAmount := 0.0
+	for _, item := range items {
+		switch strings.TrimSpace(item.Source) {
+		case "eastmoney_clist", "akshare_spot_em":
+			snapshotSourceCount++
+		}
+		totalVolume += item.AuctionVolume
+		totalAmount += item.AuctionAmount
+	}
+	if snapshotSourceCount*2 < len(items) {
+		return false
+	}
+	return totalAmount >= 1000000000000 || totalVolume >= 100000000
 }
 
 func (s *Store) ListAStockAuctionAmounts(ctx context.Context, filter model.AStockAuctionFilter) (model.AStockAuctionListResult, error) {

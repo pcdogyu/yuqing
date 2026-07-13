@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -552,6 +553,46 @@ func TestAStockAuctionAmountsResolveNamesFromCodeDictionary(t *testing.T) {
 	}
 	if _, exists := got["002179"]; exists {
 		t.Fatalf("expected unresolved placeholder row to be skipped, got %+v", list.Items)
+	}
+}
+
+func TestAStockAuctionAmountsNormalizeOverscaledSnapshotUnits(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	fetchedAt := time.Date(2026, 7, 10, 1, 26, 0, 0, time.UTC)
+	items := make([]model.AStockAuctionAmount, 0, 1001)
+	items = append(items,
+		model.AStockAuctionAmount{Code: "603986", Name: "兆易创新", AuctionPrice: 612, AuctionVolume: 887457, AuctionAmount: 59381239201, Source: "eastmoney_clist", Status: "ok", FetchedAt: fetchedAt},
+		model.AStockAuctionAmount{Code: "000725", Name: "京东方Ａ", AuctionPrice: 7.59, AuctionVolume: 38046199, AuctionAmount: 30277260673.71, Source: "eastmoney_clist", Status: "ok", FetchedAt: fetchedAt},
+	)
+	for i := 0; i < 999; i++ {
+		items = append(items, model.AStockAuctionAmount{
+			Code:          fmt.Sprintf("30%04d", i),
+			Name:          fmt.Sprintf("测试股份%d", i),
+			AuctionPrice:  10,
+			AuctionVolume: 1400000,
+			AuctionAmount: 3500000000,
+			Source:        "eastmoney_clist",
+			Status:        "ok",
+			FetchedAt:     fetchedAt,
+		})
+	}
+
+	if _, err := store.UpsertAStockAuctionAmounts(ctx, "2026-07-10", items, true); err != nil {
+		t.Fatalf("UpsertAStockAuctionAmounts oversized snapshot error: %v", err)
+	}
+	list, err := store.ListAStockAuctionAmounts(ctx, model.AStockAuctionFilter{Date: "2026-07-10", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListAStockAuctionAmounts oversized snapshot error: %v", err)
+	}
+	if list.MaxItem == nil || list.MaxItem.Code != "603986" {
+		t.Fatalf("expected normalized max item, got %+v", list.MaxItem)
+	}
+	if list.MaxItem.AuctionVolume != 8874.57 || list.MaxItem.AuctionAmount != 593812392.01 {
+		t.Fatalf("expected 100x unit normalization, got %+v", list.MaxItem)
+	}
+	if list.TotalAmount >= 1000000000000 {
+		t.Fatalf("expected normalized daily total below overscaled threshold, got %.2f", list.TotalAmount)
 	}
 }
 
