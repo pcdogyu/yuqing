@@ -10183,7 +10183,7 @@ func TestAStockRepairStockNamesActionPersistsNamesFromLocalDictionary(t *testing
 		t.Fatalf("expected repaired names to be saved into backtests, got %+v", backtests)
 	}
 	decodedLocation, _ := url.QueryUnescape(rr.Header().Get("Location"))
-	if !strings.Contains(decodedLocation, "股票名称已从集合竞价名称库补齐 4 只") {
+	if !strings.Contains(decodedLocation, "上午推荐已修复：名称 4 只，乱码热点/理由 0 只") {
 		t.Fatalf("expected repair summary in redirect, got %q", decodedLocation)
 	}
 }
@@ -10283,7 +10283,7 @@ func TestAStockBacktestRepairStockNamesActionRepairsVisiblePeriods(t *testing.T)
 		t.Fatalf("expected afternoon backtest name repaired, got %+v", backtests)
 	}
 	decodedLocation, _ := url.QueryUnescape(rr.Header().Get("Location"))
-	if !strings.Contains(decodedLocation, "上午推荐股票名称已从集合竞价名称库补齐") || !strings.Contains(decodedLocation, "下午推荐股票名称已从集合竞价名称库补齐") {
+	if !strings.Contains(decodedLocation, "上午推荐已修复") || !strings.Contains(decodedLocation, "下午推荐已修复") {
 		t.Fatalf("expected both visible periods in repair summary, got %q", decodedLocation)
 	}
 }

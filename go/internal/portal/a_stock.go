@@ -1583,6 +1583,7 @@ func (s *Server) repairAStockActionRecommendationNamesPeriod(strategyDate string
 		return ctx.PeriodLabel + "暂无推荐股票可补名称。"
 	}
 	originalNames := aStockRecommendationNameMap(ctx.Recommendations)
+	originalTextRepairs := countAStockRecommendationTextRepairs(ctx.Recommendations)
 	recommendations, skipped := s.repairAStockPersistedRecommendationsForPeriodWithCache(ctx.Date, ctx.Period, ctx.Recommendations, cache)
 	if len(recommendations) == 0 {
 		return ctx.PeriodLabel + "未从集合竞价名称库找到可补齐的股票名称。"
@@ -1604,7 +1605,7 @@ func (s *Server) repairAStockActionRecommendationNamesPeriod(strategyDate string
 		return ctx.PeriodLabel + "股票名称补齐失败：" + err.Error()
 	}
 	changed := countAStockRecommendationNameChanges(originalNames, recommendations)
-	message := fmt.Sprintf("%s股票名称已从集合竞价名称库补齐 %d 只", ctx.PeriodLabel, changed)
+	message := fmt.Sprintf("%s已修复：名称 %d 只，乱码热点/理由 %d 只", ctx.PeriodLabel, changed, originalTextRepairs)
 	if skipped > 0 {
 		message = fmt.Sprintf("%s，跳过无有效名称股票 %d 只", message, skipped)
 	}
@@ -11401,6 +11402,16 @@ func countAStockRecommendationNameChanges(original map[string]string, recommenda
 			continue
 		}
 		if astockcode.DisplayName(code, rec.Name) != strings.TrimSpace(original[code]) {
+			changed++
+		}
+	}
+	return changed
+}
+
+func countAStockRecommendationTextRepairs(recommendations []aStockRecommendation) int {
+	changed := 0
+	for _, rec := range recommendations {
+		if aStockRecommendationNeedsTextRepair(rec) {
 			changed++
 		}
 	}
