@@ -3269,6 +3269,89 @@ func TestAStockReadOnlySnapshotWithNewsSummarySkipsArticleAPI(t *testing.T) {
 	}
 }
 
+func TestAStockReadOnlySnapshotDoesNotApplyOutputFilters(t *testing.T) {
+	recommendationsJSON, err := json.Marshal([]aStockRecommendation{
+		{Rank: 1, Hotspot: "金融券商", Code: "300475", Name: "香农芯创"},
+		{Rank: 2, Hotspot: "人工智能", Code: "002230", Name: "科大讯飞"},
+	})
+	if err != nil {
+		t.Fatalf("marshal recommendations: %v", err)
+	}
+	summaryJSON, err := json.Marshal(aStockSnapshotNewsSummary{
+		Articles: []model.Item{{
+			ID:          1,
+			SourceType:  "flash",
+			Title:       "人工智能新闻",
+			PublishTime: "2026-07-13 09:00:00",
+		}},
+		NewsArticles: []model.Item{{
+			ID:          1,
+			SourceType:  "flash",
+			Title:       "人工智能新闻",
+			PublishTime: "2026-07-13 09:00:00",
+		}},
+		Hotspots: []aStockHotspot{{Name: "人工智能", Score: 1, Evidence: 1}},
+	})
+	if err != nil {
+		t.Fatalf("marshal summary: %v", err)
+	}
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/articles" {
+			t.Fatalf("expected snapshot news_summary_json to avoid articles API, got %s", r.URL.String())
+		}
+		if r.URL.Path != "/api/v1/a-stock/recommendations" {
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+		writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{
+			Found:                 true,
+			StrategyDate:          "2026-07-13",
+			Period:                r.URL.Query().Get("period"),
+			RecommendationsJSON:   string(recommendationsJSON),
+			BacktestsJSON:         "[]",
+			NewsSummaryJSON:       string(summaryJSON),
+			BacktestStatus:        "已锁定推荐股票，已回测 0/2",
+			FundFlowFilterEnabled: true,
+		})
+	}))
+	defer content.Close()
+
+	dividendHits := 0
+	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		dividendHits++
+		if r.URL.Path != "/api/a-stock/dividend-events" {
+			t.Fatalf("unexpected akshare path: %s", r.URL.String())
+		}
+		writeEnvelope(w, http.StatusOK, "ok", aStockDividendEventResult{
+			Items: []aStockDividendEvent{
+				{Code: "002230", Name: "科大讯飞", ExDate: "2026-07-13", Description: "10派1元(含税)"},
+			},
+			Date: "2026-07-13",
+		})
+	}))
+	defer akshare.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL, AStockAuctionURL: akshare.URL})
+	ctx, ok := srv.loadAStockReadOnlySnapshotContextWithCache("2026-07-13", "morning", 1, false, false, false, false, newAStockRequestCache())
+	if !ok {
+		t.Fatal("expected snapshot context")
+	}
+	if dividendHits != 0 {
+		t.Fatalf("expected read-only snapshot to skip output filters, dividend hits=%d", dividendHits)
+	}
+	if len(ctx.Recommendations) != 2 {
+		t.Fatalf("expected snapshot recommendations to remain unchanged, got %+v", ctx.Recommendations)
+	}
+	if ctx.Recommendations[0].Code != "300475" || ctx.Recommendations[1].Code != "002230" {
+		t.Fatalf("expected original snapshot recommendation order, got %+v", ctx.Recommendations)
+	}
+	if ctx.ExDividendFiltered != 0 || ctx.SameDayMorningFiltered != 0 {
+		t.Fatalf("expected no read-time output filtering counters, got ex=%d daily=%d", ctx.ExDividendFiltered, ctx.SameDayMorningFiltered)
+	}
+	if strings.Contains(ctx.BacktestStatus, "除权除息过滤") || strings.Contains(ctx.BacktestStatus, "日内推荐上限") {
+		t.Fatalf("expected snapshot status without read-time filter suffix, got %q", ctx.BacktestStatus)
+	}
+}
+
 func TestAStockOldSnapshotMissingNewsSummaryUsesArticleWindowCache(t *testing.T) {
 	var mu sync.Mutex
 	articleHits := 0

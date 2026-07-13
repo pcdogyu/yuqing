@@ -3242,15 +3242,8 @@ func (s *Server) applyAStockBacktestSnapshotOnlyWithCache(ctx *aStockContext, ca
 		return false
 	}
 	ctx.Recommendations = rerankAStockRecommendations(recommendations)
-	exDividendFiltered, dailyLimitFiltered := s.applyAStockRecommendationOutputFiltersWithCache(ctx, cache)
 	ctx.Backtests = filterAStockBacktestsForSnapshotRecommendations(backtests, ctx.Recommendations)
 	ctx.BacktestStatus = nonEmpty(snapshot.BacktestStatus, "已读取推荐快照")
-	if exDividendFiltered > 0 {
-		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, formatAStockExDividendFilterStatus(exDividendFiltered))
-	}
-	if dailyLimitFiltered > 0 {
-		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, formatAStockDailyRecommendationLimitStatus(dailyLimitFiltered))
-	}
 	applyAStockSnapshotMetadata(ctx, snapshot)
 	ctx.EmptyReason = snapshot.EmptyReason
 	if ctx.EmptyReason == "" {
