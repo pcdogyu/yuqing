@@ -483,6 +483,7 @@ CREATE TABLE IF NOT EXISTS a_stock_auction_amounts (
 	updated_at TEXT NOT NULL,
 	PRIMARY KEY (trade_date, capture_slot, code)
 );
+ALTER TABLE a_stock_auction_amounts ADD COLUMN IF NOT EXISTS capture_slot TEXT NOT NULL DEFAULT '0930';
 
 CREATE TABLE IF NOT EXISTS a_stock_code_names (
 	code TEXT PRIMARY KEY,
