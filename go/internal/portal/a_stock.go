@@ -1225,7 +1225,7 @@ func (s *Server) refreshAStockCurrentBacktestPeriod(strategyDate string, periodK
 	}
 	previousRows := append([]aStockBacktestRow(nil), ctx.Backtests...)
 	previousByCode := aStockBacktestRowsByCode(previousRows)
-	repaired, skipped := s.repairAStockPersistedRecommendationsWithCache(ctx.Date, ctx.Recommendations, cache)
+	repaired, skipped := s.repairAStockPersistedRecommendationsForPeriodWithCache(ctx.Date, ctx.Period, ctx.Recommendations, cache)
 	ctx.Recommendations = repaired
 	if len(ctx.Recommendations) == 0 {
 		summary := ctx.PeriodLabel + "行情收益未补齐：当前推荐股票名称无效。"
@@ -1583,7 +1583,7 @@ func (s *Server) repairAStockActionRecommendationNamesPeriod(strategyDate string
 		return ctx.PeriodLabel + "暂无推荐股票可补名称。"
 	}
 	originalNames := aStockRecommendationNameMap(ctx.Recommendations)
-	recommendations, skipped := s.repairAStockPersistedRecommendationsWithCache(ctx.Date, ctx.Recommendations, cache)
+	recommendations, skipped := s.repairAStockPersistedRecommendationsForPeriodWithCache(ctx.Date, ctx.Period, ctx.Recommendations, cache)
 	if len(recommendations) == 0 {
 		return ctx.PeriodLabel + "未从集合竞价名称库找到可补齐的股票名称。"
 	}
@@ -3273,7 +3273,10 @@ func (s *Server) applyAStockBacktestSnapshotOnlyWithCache(ctx *aStockContext, ca
 	if len(recommendations) == 0 {
 		return false
 	}
-	ctx.Recommendations = rerankAStockRecommendations(recommendations)
+	ctx.Recommendations, _ = s.repairAStockPersistedRecommendationsForPeriodWithCache(ctx.Date, ctx.Period, recommendations, cache)
+	if len(ctx.Recommendations) == 0 {
+		return false
+	}
 	ctx.Backtests = filterAStockBacktestsForSnapshotRecommendations(backtests, ctx.Recommendations)
 	ctx.BacktestStatus = nonEmpty(snapshot.BacktestStatus, "已读取推荐快照")
 	applyAStockSnapshotMetadata(ctx, snapshot)
@@ -3685,7 +3688,7 @@ func (s *Server) applyAStockRecommendationSelectionsWithCache(ctx *aStockContext
 	if !ok || len(result.Items) == 0 {
 		return false
 	}
-	ctx.Recommendations, _ = s.repairAStockPersistedRecommendationsWithCache(ctx.Date, aStockRecommendationSelectionsToRecommendations(result.Items, ctx.Period), cache)
+	ctx.Recommendations, _ = s.repairAStockPersistedRecommendationsForPeriodWithCache(ctx.Date, ctx.Period, aStockRecommendationSelectionsToRecommendations(result.Items, ctx.Period), cache)
 	if exDividendSkipped, dailyLimitSkipped := s.applyAStockRecommendationOutputFiltersWithCache(ctx, cache); exDividendSkipped > 0 || dailyLimitSkipped > 0 {
 		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, formatAStockExDividendFilterStatus(exDividendSkipped))
 		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, formatAStockDailyRecommendationLimitStatus(dailyLimitSkipped))
@@ -3730,7 +3733,7 @@ func (s *Server) applyAStockRecommendationSnapshotRecommendationsWithCache(ctx *
 	if err := json.Unmarshal([]byte(normalizeAStockSnapshotJSONArray(snapshot.RecommendationsJSON)), &recommendations); err != nil || len(recommendations) == 0 {
 		return false
 	}
-	ctx.Recommendations, _ = s.repairAStockPersistedRecommendationsWithCache(ctx.Date, recommendations, cache)
+	ctx.Recommendations, _ = s.repairAStockPersistedRecommendationsForPeriodWithCache(ctx.Date, ctx.Period, recommendations, cache)
 	if exDividendSkipped, dailyLimitSkipped := s.applyAStockRecommendationOutputFiltersWithCache(ctx, cache); exDividendSkipped > 0 || dailyLimitSkipped > 0 {
 		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, formatAStockExDividendFilterStatus(exDividendSkipped))
 		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, formatAStockDailyRecommendationLimitStatus(dailyLimitSkipped))
@@ -3838,7 +3841,7 @@ func (s *Server) applyAStockRecommendationSnapshotWithFreshnessCache(ctx *aStock
 			return false
 		}
 	}
-	ctx.Recommendations, _ = s.repairAStockPersistedRecommendationsWithCache(ctx.Date, recommendations, cache)
+	ctx.Recommendations, _ = s.repairAStockPersistedRecommendationsForPeriodWithCache(ctx.Date, ctx.Period, recommendations, cache)
 	exDividendFiltered, dailyLimitFiltered := s.applyAStockRecommendationOutputFiltersWithCache(ctx, cache)
 	if len(ctx.Recommendations) == 0 {
 		return false
@@ -4144,7 +4147,7 @@ func (s *Server) saveAStockRecommendationSelections(ctx aStockContext) error {
 	if strings.TrimSpace(s.cfg.ContentURL) == "" {
 		return nil
 	}
-	recommendations, _ := s.repairAStockRecommendationsForPersistence(ctx.Date, ctx.Recommendations)
+	recommendations, _ := s.repairAStockRecommendationsForPersistence(ctx.Date, ctx.Period, ctx.Recommendations)
 	selectionSet := model.AStockRecommendationSelectionSet{
 		StrategyDate: ctx.Date,
 		Period:       ctx.Period,
@@ -4183,7 +4186,7 @@ func (s *Server) saveAStockRecommendationSnapshot(ctx aStockContext) error {
 }
 
 func (s *Server) buildAStockRecommendationSnapshot(ctx aStockContext) (model.AStockRecommendationSnapshot, error) {
-	recommendations, _ := s.repairAStockRecommendationsForPersistence(ctx.Date, ctx.Recommendations)
+	recommendations, _ := s.repairAStockRecommendationsForPersistence(ctx.Date, ctx.Period, ctx.Recommendations)
 	recommendationsJSON, err := json.Marshal(recommendations)
 	if err != nil {
 		return model.AStockRecommendationSnapshot{}, err
@@ -4816,7 +4819,7 @@ func (s *Server) buildAStockPreopenPopup(userID int64, strategyDate string) aSto
 func (s *Server) loadAStockPopupRecommendations(strategyDate string, period string) ([]aStockRecommendation, time.Time, bool) {
 	normalizedPeriod := normalizeAStockPeriod(period).Key
 	if result, ok := s.loadAStockRecommendationSelections(strategyDate, normalizedPeriod); ok && len(result.Items) > 0 {
-		recommendations, _ := s.repairAStockPersistedRecommendationsWithCache(strategyDate, aStockRecommendationSelectionsToRecommendations(result.Items, normalizedPeriod), nil)
+		recommendations, _ := s.repairAStockPersistedRecommendationsForPeriodWithCache(strategyDate, normalizedPeriod, aStockRecommendationSelectionsToRecommendations(result.Items, normalizedPeriod), nil)
 		if len(recommendations) == 0 {
 			return nil, time.Time{}, false
 		}
@@ -4830,7 +4833,7 @@ func (s *Server) loadAStockPopupRecommendations(strategyDate string, period stri
 	if err := json.Unmarshal([]byte(normalizeAStockSnapshotJSONArray(snapshot.RecommendationsJSON)), &recommendations); err != nil || len(recommendations) == 0 {
 		return nil, time.Time{}, false
 	}
-	recommendations, _ = s.repairAStockPersistedRecommendationsWithCache(strategyDate, recommendations, nil)
+	recommendations, _ = s.repairAStockPersistedRecommendationsForPeriodWithCache(strategyDate, normalizedPeriod, recommendations, nil)
 	if len(recommendations) == 0 {
 		return nil, time.Time{}, false
 	}
@@ -5518,7 +5521,7 @@ func (s *Server) loadPersistedAStockRecommendations(strategyDate string, period 
 func (s *Server) loadPersistedAStockRecommendationsWithCache(strategyDate string, period string, ignoreRecent bool, cache *aStockRequestCache) []aStockRecommendation {
 	if !ignoreRecent {
 		if result, ok := s.loadAStockRecommendationSelectionsWithCache(strategyDate, period, cache); ok && len(result.Items) > 0 {
-			recommendations, _ := s.repairAStockPersistedRecommendationsWithCache(strategyDate, aStockRecommendationSelectionsToRecommendations(result.Items, period), cache)
+			recommendations, _ := s.repairAStockPersistedRecommendationsForPeriodWithCache(strategyDate, period, aStockRecommendationSelectionsToRecommendations(result.Items, period), cache)
 			return recommendations
 		}
 	}
@@ -5530,7 +5533,7 @@ func (s *Server) loadPersistedAStockRecommendationsWithCache(strategyDate string
 	if err := json.Unmarshal([]byte(normalizeAStockSnapshotJSONArray(snapshot.RecommendationsJSON)), &recommendations); err != nil {
 		return nil
 	}
-	recommendations, _ = s.repairAStockPersistedRecommendationsWithCache(strategyDate, recommendations, cache)
+	recommendations, _ = s.repairAStockPersistedRecommendationsForPeriodWithCache(strategyDate, period, recommendations, cache)
 	return recommendations
 }
 
@@ -11543,6 +11546,10 @@ func filterBlockedAStockRecommendations(recommendations []aStockRecommendation) 
 }
 
 func (s *Server) repairAStockPersistedRecommendationsWithCache(strategyDate string, recommendations []aStockRecommendation, cache *aStockRequestCache) ([]aStockRecommendation, int) {
+	return s.repairAStockPersistedRecommendationsForPeriodWithCache(strategyDate, "", recommendations, cache)
+}
+
+func (s *Server) repairAStockPersistedRecommendationsForPeriodWithCache(strategyDate string, period string, recommendations []aStockRecommendation, cache *aStockRequestCache) ([]aStockRecommendation, int) {
 	if len(recommendations) == 0 {
 		return recommendations, 0
 	}
@@ -11568,9 +11575,215 @@ func (s *Server) repairAStockPersistedRecommendationsWithCache(strategyDate stri
 		}
 		rec.Code = code
 		rec.Name = name
+		if aStockRecommendationNeedsTextRepair(rec) {
+			rec = s.repairAStockRecommendationTextWithCache(strategyDate, period, rec, recommendations, cache)
+		}
 		filtered = append(filtered, rec)
 	}
 	return rerankAStockRecommendations(filtered), skipped
+}
+
+func (s *Server) repairAStockRecommendationTextWithCache(strategyDate string, period string, rec aStockRecommendation, recommendations []aStockRecommendation, cache *aStockRequestCache) aStockRecommendation {
+	baselineByCode := s.loadAStockRecommendationTextRepairBaselineWithCache(strategyDate, period, recommendations, cache)
+	if baseline, ok := baselineByCode[normalizeAStockCode(rec.Code)]; ok {
+		return mergeAStockRecommendationTextRepairBaseline(rec, baseline)
+	}
+	return sanitizeAStockGarbledRecommendationText(rec)
+}
+
+func (s *Server) loadAStockRecommendationTextRepairBaselineWithCache(strategyDate string, period string, recommendations []aStockRecommendation, cache *aStockRequestCache) map[string]aStockRecommendation {
+	period = inferAStockRecommendationRepairPeriod(period, recommendations)
+	if period == "" || strings.TrimSpace(s.cfg.ContentURL) == "" {
+		return nil
+	}
+	start, end := aStockWindow(strategyDate, period)
+	articles, err := s.loadAStockWindowArticlesWithCache(start, end, cache)
+	if err != nil || len(articles) == 0 {
+		return nil
+	}
+	settings, _ := astocknews.LoadSettings("")
+	articles = astocknews.FilterRecommendationItems(articles, settings)
+	if len(articles) == 0 {
+		return nil
+	}
+	candidates, _, _ := s.loadAStockMarketCandidatesWithStatusWithCache(strategyDate, cache)
+	if len(candidates) == 0 {
+		return nil
+	}
+	hotspots := buildAStockHotspots(articles)
+	if len(hotspots) == 0 {
+		return nil
+	}
+	sectorGate := s.loadAStockHotspotSectorGateWithCache(hotspots, cache)
+	rebuilt := buildAStockSnapshotRecommendationsWithPhaseAndLimitAndSectorGate(strategyDate, period, aStockRecommendationPhaseFinal, articles, candidates, aStockReplacementPoolLimit, aStockReplacementPerHotspot, sectorGate)
+	if len(rebuilt) == 0 {
+		rebuilt = buildAStockSnapshotReplacementRecommendations(strategyDate, period, aStockRecommendationPhaseFinal, articles, candidates)
+	}
+	baselineByCode := make(map[string]aStockRecommendation, len(rebuilt))
+	for _, baseline := range rebuilt {
+		code := normalizeAStockCode(baseline.Code)
+		if code == "" {
+			continue
+		}
+		if _, exists := baselineByCode[code]; !exists {
+			baselineByCode[code] = baseline
+		}
+	}
+	return baselineByCode
+}
+
+func inferAStockRecommendationRepairPeriod(period string, recommendations []aStockRecommendation) string {
+	normalized := strings.TrimSpace(period)
+	if normalized != "" {
+		return normalizeAStockPeriod(normalized).Key
+	}
+	for _, rec := range recommendations {
+		entry := aStockRecommendationEffectiveEntryTime(rec, "")
+		if strings.HasPrefix(entry, "13:") {
+			return "afternoon"
+		}
+	}
+	for _, rec := range recommendations {
+		entry := aStockRecommendationEffectiveEntryTime(rec, "")
+		if strings.HasPrefix(entry, "09:") {
+			return "morning"
+		}
+	}
+	return ""
+}
+
+func mergeAStockRecommendationTextRepairBaseline(rec aStockRecommendation, baseline aStockRecommendation) aStockRecommendation {
+	hotspotWasGarbled := isGarbledAStockText(rec.Hotspot)
+	reasonWasGarbled := isGarbledAStockText(rec.Reason)
+	breakdownWasGarbled := aStockScoreBreakdownHasGarbledText(rec.ScoreBreakdown)
+	if hotspotWasGarbled || strings.TrimSpace(rec.Hotspot) == "" {
+		rec.Hotspot = strings.TrimSpace(baseline.Hotspot)
+	}
+	if rec.HotspotScore == 0 || hotspotWasGarbled {
+		rec.HotspotScore = baseline.HotspotScore
+	}
+	if reasonWasGarbled || strings.TrimSpace(rec.Reason) == "" {
+		rec.Reason = strings.TrimSpace(baseline.Reason)
+	}
+	if len(rec.ScoreBreakdown) == 0 || breakdownWasGarbled || reasonWasGarbled || hotspotWasGarbled {
+		rec.ScoreBreakdown = mergeAStockRecommendationScoreBreakdown(baseline.ScoreBreakdown, rec.ScoreBreakdown)
+	}
+	baseReason := strings.TrimSpace(baseline.Reason)
+	for _, component := range rec.ScoreBreakdown {
+		if isGarbledAStockText(component.Label) || isGarbledAStockText(component.Detail) {
+			continue
+		}
+		if aStockScoreBreakdownContainsComponent(baseline.ScoreBreakdown, component) {
+			continue
+		}
+		if strings.TrimSpace(component.Detail) != "" {
+			rec.Reason = appendAStockReason(rec.Reason, component.Detail)
+		}
+	}
+	if strings.TrimSpace(rec.Reason) == "" {
+		rec.Reason = baseReason
+	}
+	return sanitizeAStockGarbledRecommendationText(rec)
+}
+
+func sanitizeAStockGarbledRecommendationText(rec aStockRecommendation) aStockRecommendation {
+	if isGarbledAStockText(rec.Hotspot) {
+		rec.Hotspot = ""
+	}
+	if isGarbledAStockText(rec.Reason) {
+		rec.Reason = aStockCleanReasonFromScoreBreakdown(rec.ScoreBreakdown)
+	}
+	if len(rec.ScoreBreakdown) > 0 {
+		clean := rec.ScoreBreakdown[:0]
+		for _, component := range rec.ScoreBreakdown {
+			if isGarbledAStockText(component.Label) || isGarbledAStockText(component.Detail) {
+				continue
+			}
+			clean = append(clean, component)
+		}
+		rec.ScoreBreakdown = clean
+	}
+	return rec
+}
+
+func aStockCleanReasonFromScoreBreakdown(components []aStockRecommendationScoreComponent) string {
+	reasons := make([]string, 0, len(components))
+	seen := make(map[string]struct{}, len(components))
+	for _, component := range components {
+		detail := strings.TrimSpace(component.Detail)
+		if detail == "" || isGarbledAStockText(detail) {
+			continue
+		}
+		if _, exists := seen[detail]; exists {
+			continue
+		}
+		seen[detail] = struct{}{}
+		reasons = append(reasons, detail)
+	}
+	return strings.Join(reasons, "，")
+}
+
+func mergeAStockRecommendationScoreBreakdown(base []aStockRecommendationScoreComponent, existing []aStockRecommendationScoreComponent) []aStockRecommendationScoreComponent {
+	merged := make([]aStockRecommendationScoreComponent, 0, len(base)+len(existing))
+	seen := make(map[string]struct{}, len(base)+len(existing))
+	appendClean := func(component aStockRecommendationScoreComponent) {
+		component.Label = strings.TrimSpace(component.Label)
+		component.Detail = strings.TrimSpace(component.Detail)
+		if component.Label == "" || isGarbledAStockText(component.Label) || isGarbledAStockText(component.Detail) {
+			return
+		}
+		key := aStockScoreComponentKey(component)
+		if _, exists := seen[key]; exists {
+			return
+		}
+		seen[key] = struct{}{}
+		merged = append(merged, component)
+	}
+	for _, component := range base {
+		appendClean(component)
+	}
+	for _, component := range existing {
+		appendClean(component)
+	}
+	return merged
+}
+
+func aStockScoreBreakdownContainsComponent(components []aStockRecommendationScoreComponent, target aStockRecommendationScoreComponent) bool {
+	targetKey := aStockScoreComponentKey(target)
+	for _, component := range components {
+		if aStockScoreComponentKey(component) == targetKey {
+			return true
+		}
+	}
+	return false
+}
+
+func aStockScoreComponentKey(component aStockRecommendationScoreComponent) string {
+	return strings.TrimSpace(component.Label) + "|" + strings.TrimSpace(component.Detail) + "|" + strconv.Itoa(component.Score)
+}
+
+func aStockRecommendationNeedsTextRepair(rec aStockRecommendation) bool {
+	return isGarbledAStockText(rec.Hotspot) || isGarbledAStockText(rec.Reason) || aStockScoreBreakdownHasGarbledText(rec.ScoreBreakdown)
+}
+
+func aStockScoreBreakdownHasGarbledText(components []aStockRecommendationScoreComponent) bool {
+	for _, component := range components {
+		if isGarbledAStockText(component.Label) || isGarbledAStockText(component.Detail) {
+			return true
+		}
+	}
+	return false
+}
+
+func isGarbledAStockText(text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
+	}
+	if strings.Contains(text, "\uFFFD") {
+		return true
+	}
+	return strings.Contains(text, "??")
 }
 
 func needsAStockMarketNameResolver(recommendations []aStockRecommendation, resolver map[string]string) bool {
@@ -11665,8 +11878,8 @@ func (s *Server) loadAStockRecommendationNameResolverWithCache(strategyDate stri
 	return resolver
 }
 
-func (s *Server) repairAStockRecommendationsForPersistence(strategyDate string, recommendations []aStockRecommendation) ([]aStockRecommendation, int) {
-	return s.repairAStockPersistedRecommendationsWithCache(strategyDate, recommendations, newAStockRequestCache())
+func (s *Server) repairAStockRecommendationsForPersistence(strategyDate string, period string, recommendations []aStockRecommendation) ([]aStockRecommendation, int) {
+	return s.repairAStockPersistedRecommendationsForPeriodWithCache(strategyDate, period, recommendations, newAStockRequestCache())
 }
 
 func filterBlockedAStockBacktests(rows []aStockBacktestRow) []aStockBacktestRow {

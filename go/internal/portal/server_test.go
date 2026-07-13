@@ -9951,6 +9951,152 @@ func TestAStockPersistedRecommendationsRepairNamesAndFilterBacktests(t *testing.
 	}
 }
 
+func TestAStockPersistedRecommendationsRepairGarbledHotspotAndReason(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/a-stock/code-names":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockCodeNameListResult{
+				Total: 1,
+				Items: []model.AStockCodeName{{Code: "600118", Name: "中国卫星", Source: "auction"}},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/articles":
+			writeEnvelope(w, http.StatusOK, "ok", model.ItemListResult{
+				Items: []model.Item{{
+					ID:          1,
+					SourceType:  "flash",
+					Title:       "军工航天卫星产业链走强",
+					Summary:     "中国卫星获资金关注",
+					PublishTime: "2026-07-13 09:00:00",
+					TagFlags:    "600118",
+					RawPayload:  `{"stocks":[{"code":"600118","name":"中国卫星"}]}`,
+					CapturedAt:  time.Date(2026, 7, 13, 9, 0, 0, 0, time.UTC),
+				}},
+				Page:     1,
+				PageSize: 20,
+				Total:    1,
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/a-stock/auction":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockAuctionListResult{
+				Date: "2026-07-13",
+				Items: []model.AStockAuctionAmount{{
+					TradeDate:     "2026-07-13",
+					Code:          "600118",
+					Name:          "中国卫星",
+					AuctionAmount: 100000000,
+					AuctionVolume: 1000000,
+				}},
+				Total:       1,
+				TotalAmount: 100000000,
+			})
+		default:
+			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	recommendations, skipped := srv.repairAStockPersistedRecommendationsForPeriodWithCache("2026-07-13", "morning", []aStockRecommendation{{
+		Rank:         1,
+		Hotspot:      "????",
+		Code:         "600118",
+		Name:         "中国卫星",
+		HotspotScore: 82,
+		MarketScore:  217,
+		Reason:       "?? ?????????????,???? 7 ?,??? 82;????????????,???? 2 ?,??? 100,??? 182,??? 09:27，5日主力资金净流入 +8.03亿，资金加分 25",
+		ScoreBreakdown: []aStockRecommendationScoreComponent{{
+			Label:     "资金动向",
+			Detail:    "5日主力资金净流入 +8.03亿，资金加分 25",
+			UnitValue: 25,
+			Score:     25,
+		}},
+	}}, newAStockRequestCache())
+
+	if skipped != 0 || len(recommendations) != 1 {
+		t.Fatalf("expected one repaired recommendation, skipped=%d recommendations=%+v", skipped, recommendations)
+	}
+	got := recommendations[0]
+	if got.Hotspot != "军工航天" || strings.Contains(got.Reason, "??") || strings.Contains(got.Hotspot, "??") {
+		t.Fatalf("expected garbled hotspot/reason repaired, got %+v", got)
+	}
+	if !strings.Contains(got.Reason, "命中") || !strings.Contains(got.Reason, "5日主力资金净流入") {
+		t.Fatalf("expected rebuilt base reason plus existing clean adjustment, got %q", got.Reason)
+	}
+	components := aStockRecommendationScoreBreakdown(got)
+	if !aStockScoreBreakdownContainsComponent(components, aStockRecommendationScoreComponent{Label: "资金动向", Detail: "5日主力资金净流入 +8.03亿，资金加分 25", Score: 25}) {
+		t.Fatalf("expected existing fund-flow component to be preserved, got %+v", components)
+	}
+	if !aStockScoreBreakdownContainsComponent(components, aStockRecommendationScoreComponent{Label: "新闻热度", Detail: "证据新闻 1 条", Score: 10}) {
+		t.Fatalf("expected rebuilt base score components, got %+v", components)
+	}
+}
+
+func TestAStockReadOnlySnapshotRepairsGarbledRecommendationText(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/a-stock/recommendations":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{
+				Found:                 true,
+				StrategyDate:          "2026-07-13",
+				Period:                "morning",
+				RecommendationsJSON:   mustAStockTestJSON(t, []aStockRecommendation{{Rank: 1, Hotspot: "????", Code: "600118", Name: "中国卫星", HotspotScore: 82, MarketScore: 217, Reason: "?? ?????????????,???? 7 ?,??? 82;??? 09:27"}}),
+				BacktestsJSON:         mustAStockTestJSON(t, []aStockBacktestRow{{Stock: "600118 中国卫星", EntryOpen: "93.50", T0Return: "-2.40%", Status: "等待T+1行情"}}),
+				BacktestStatus:        "已读取推荐快照",
+				GeneratedCount:        1,
+				FundFlowFilterEnabled: true,
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/a-stock/code-names":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockCodeNameListResult{
+				Total: 1,
+				Items: []model.AStockCodeName{{Code: "600118", Name: "中国卫星", Source: "auction"}},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/articles":
+			writeEnvelope(w, http.StatusOK, "ok", model.ItemListResult{
+				Items: []model.Item{{
+					ID:          1,
+					SourceType:  "flash",
+					Title:       "军工航天卫星产业链走强",
+					Summary:     "中国卫星获资金关注",
+					PublishTime: "2026-07-13 09:00:00",
+					TagFlags:    "600118",
+					RawPayload:  `{"stocks":[{"code":"600118","name":"中国卫星"}]}`,
+				}},
+				Page:     1,
+				PageSize: 20,
+				Total:    1,
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/a-stock/auction":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockAuctionListResult{
+				Date: "2026-07-13",
+				Items: []model.AStockAuctionAmount{{
+					TradeDate:     "2026-07-13",
+					Code:          "600118",
+					Name:          "中国卫星",
+					AuctionAmount: 100000000,
+					AuctionVolume: 1000000,
+				}},
+				Total:       1,
+				TotalAmount: 100000000,
+			})
+		default:
+			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	ctx, ok := srv.loadAStockReadOnlySnapshotContextWithCache("2026-07-13", "morning", 1, false, false, false, false, newAStockRequestCache())
+
+	if !ok || len(ctx.Recommendations) != 1 {
+		t.Fatalf("expected read-only snapshot recommendation, ok=%v ctx=%+v", ok, ctx)
+	}
+	got := ctx.Recommendations[0]
+	if got.Hotspot != "军工航天" || strings.Contains(got.Reason, "??") {
+		t.Fatalf("expected read-only snapshot to repair garbled text, got %+v", got)
+	}
+}
+
 func TestAStockRepairStockNamesActionPersistsNamesFromLocalDictionary(t *testing.T) {
 	var savedSnapshot model.AStockRecommendationSnapshot
 	var savedSelections model.AStockRecommendationSelectionSet
