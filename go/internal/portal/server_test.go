@@ -6881,7 +6881,7 @@ func TestAStockRecommendationFundFlowFilterScoresAndReplenishes(t *testing.T) {
 		{Rank: 2, Hotspot: "半导体", Code: "300007", Name: "正资金递补", HotspotScore: 49, MarketScore: 49, Reason: "replacement"},
 	}
 
-	result := srv.applyAStockRecommendationFundFlowFilterWithCache("2026-06-16", base, replacementPool, nil, len(base), newAStockRequestCache())
+	result := srv.applyAStockRecommendationFundFlowFilterWithCache("2026-06-16", base, replacementPool, nil, len(base), newAStockRequestCache(), false)
 	if result.Filtered != 2 || result.Replenished != 2 || result.Missing != 1 || result.Shortfall {
 		t.Fatalf("unexpected fund-flow filter result: %+v", result)
 	}
@@ -6914,6 +6914,48 @@ func TestAStockRecommendationFundFlowFilterScoresAndReplenishes(t *testing.T) {
 	missing := mustAStockRecommendationForTest(t, result.Recommendations, "300005")
 	if missing.FundFlow5D != "--" || missing.MarketScore != 60 {
 		t.Fatalf("expected missing fund flow data to keep stock without score change, got %+v", missing)
+	}
+}
+
+func TestAStockRecommendationFundFlowFilterAllowsAfternoonShortfallFallback(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/a-stock/stock-fund-flow-trend" {
+			if r.URL.Path == "/api/v1/a-stock/sector-fund-flows" {
+				writeEnvelope(w, http.StatusOK, "ok", model.AStockSectorFundFlowListResult{})
+				return
+			}
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+		code := normalizeAStockCode(r.URL.Query().Get("code"))
+		writeEnvelope(w, http.StatusOK, "ok", model.AStockStockFundFlowTrendResult{
+			Items: []model.AStockStockFundFlow{
+				{TradeDate: "2026-06-16", Indicator: "今日", Code: code, MainNetInflow: -15000000},
+				{TradeDate: "2026-06-15", Indicator: "今日", Code: code, MainNetInflow: -10000000},
+			},
+			Total:     2,
+			EndDate:   "2026-06-16",
+			Indicator: "今日",
+			Code:      code,
+			Days:      10,
+		})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	base := []aStockRecommendation{{Rank: 1, Hotspot: "机器人", Code: "300001", Name: "资金流出", HotspotScore: 100, MarketScore: 100}}
+
+	strict := srv.applyAStockRecommendationFundFlowFilterWithCache("2026-06-16", base, nil, nil, 1, newAStockRequestCache(), false)
+	if len(strict.Recommendations) != 0 || strict.Filtered != 1 || !strict.Shortfall {
+		t.Fatalf("expected strict fund-flow filter to drop hard-filtered candidate, got %+v", strict)
+	}
+
+	fallback := srv.applyAStockRecommendationFundFlowFilterWithCache("2026-06-16", base, nil, nil, 1, newAStockRequestCache(), true)
+	if len(fallback.Recommendations) != 1 || fallback.Recommendations[0].Code != "300001" || fallback.Filtered != 0 || fallback.Shortfall {
+		t.Fatalf("expected afternoon fallback to fill target with hard-filtered candidate, got %+v", fallback)
+	}
+	if fallback.Recommendations[0].FundFlow5D == "" || !strings.Contains(fallback.Recommendations[0].Reason, "资金") {
+		t.Fatalf("expected fallback recommendation to keep fund-flow scoring detail, got %+v", fallback.Recommendations[0])
 	}
 }
 

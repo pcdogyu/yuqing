@@ -3455,7 +3455,7 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 		ctx.Recommendations = s.applyAStockHoldingSummariesWithCache(ctx.Recommendations, cache)
 		fundFlowStatus := ""
 		if ctx.FundFlowFilterEnabled && len(ctx.Recommendations) > 0 {
-			result := s.applyAStockRecommendationFundFlowFilterWithCache(strategyDate, ctx.Recommendations, nil, nil, len(ctx.Recommendations), cache)
+			result := s.applyAStockRecommendationFundFlowFilterWithCache(strategyDate, ctx.Recommendations, nil, nil, len(ctx.Recommendations), cache, false)
 			ctx.Recommendations = result.Recommendations
 			ctx.FundFlowFiltered = result.Filtered
 			ctx.FundFlowMissingCount = result.Missing
@@ -3573,7 +3573,7 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 			fundFlowReplacementPool = withAStockRecommendationEntryTimes(fundFlowReplacementPool, period.Key, entryTimeOverride)
 			fundFlowReplacementPool = s.applyAStockHoldingSummariesWithCache(fundFlowReplacementPool, cache)
 		}
-		result := s.applyAStockRecommendationFundFlowFilterWithCache(strategyDate, ctx.Recommendations, fundFlowReplacementPool, recentCodes, recommendationTarget, cache)
+		result := s.applyAStockRecommendationFundFlowFilterWithCache(strategyDate, ctx.Recommendations, fundFlowReplacementPool, recentCodes, recommendationTarget, cache, period.Key == "afternoon")
 		ctx.Recommendations = result.Recommendations
 		ctx.FundFlowFiltered = result.Filtered
 		ctx.FundFlowMissingCount = result.Missing
@@ -5673,7 +5673,7 @@ func (s *Server) assessAStockRecommendationFundFlow5DWithCache(strategyDate stri
 	return assessment
 }
 
-func (s *Server) applyAStockRecommendationFundFlowFilterWithCache(strategyDate string, base []aStockRecommendation, replacementPool []aStockRecommendation, recentCodes map[string]struct{}, target int, cache *aStockRequestCache) aStockFundFlowRecommendationFilterResult {
+func (s *Server) applyAStockRecommendationFundFlowFilterWithCache(strategyDate string, base []aStockRecommendation, replacementPool []aStockRecommendation, recentCodes map[string]struct{}, target int, cache *aStockRequestCache, allowHardFilteredFallback bool) aStockFundFlowRecommendationFilterResult {
 	if target <= 0 {
 		target = len(base)
 	}
@@ -5687,6 +5687,13 @@ func (s *Server) applyAStockRecommendationFundFlowFilterWithCache(strategyDate s
 	baseHotspotCounts := make(map[string]int)
 	keptHotspotCounts := make(map[string]int)
 	kept := make([]aStockRecommendation, 0, minInt(len(base), target))
+	type hardFilteredFallback struct {
+		rec           aStockRecommendation
+		countFiltered bool
+		replenished   bool
+		used          bool
+	}
+	var hardFilteredFallbacks []hardFilteredFallback
 	isRecent := func(code string) bool {
 		if len(recentCodes) == 0 {
 			return false
@@ -5694,7 +5701,7 @@ func (s *Server) applyAStockRecommendationFundFlowFilterWithCache(strategyDate s
 		_, ok := recentCodes[normalizeAStockCode(code)]
 		return ok
 	}
-	appendRecommendation := func(rec aStockRecommendation, countFiltered bool, replenished bool) bool {
+	appendRecommendation := func(rec aStockRecommendation, countFiltered bool, replenished bool, allowHardFiltered bool) bool {
 		if len(kept) >= target {
 			return false
 		}
@@ -5716,7 +5723,12 @@ func (s *Server) applyAStockRecommendationFundFlowFilterWithCache(strategyDate s
 		if !assessment.Missing {
 			assessments[code] = assessment
 		}
-		if !assessment.Missing && isAStockFundFlowHardFiltered(assessment) {
+		if !assessment.Missing && isAStockFundFlowHardFiltered(assessment) && !allowHardFiltered {
+			if allowHardFilteredFallback {
+				rec = applyAStockFundFlow5DAssessmentToRecommendation(rec, assessment, true)
+				hardFilteredFallbacks = append(hardFilteredFallbacks, hardFilteredFallback{rec: rec, countFiltered: countFiltered, replenished: replenished})
+				return false
+			}
 			if countFiltered {
 				result.Filtered++
 			}
@@ -5740,7 +5752,7 @@ func (s *Server) applyAStockRecommendationFundFlowFilterWithCache(strategyDate s
 		if hotspot := normalizeAStockRecommendationHotspot(rec.Hotspot); hotspot != "" {
 			baseHotspotCounts[hotspot]++
 		}
-		appendRecommendation(rec, true, false)
+		appendRecommendation(rec, true, false, false)
 	}
 	if len(kept) < target && len(replacementPool) > 0 {
 		hotspotDeficits := make(map[string]int, len(baseHotspotCounts))
@@ -5755,7 +5767,7 @@ func (s *Server) applyAStockRecommendationFundFlowFilterWithCache(strategyDate s
 			if hotspot == "" || hotspotDeficits[hotspot] <= 0 {
 				continue
 			}
-			if appendRecommendation(rec, false, true) {
+			if appendRecommendation(rec, false, true, false) {
 				hotspotDeficits[hotspot]--
 			}
 			if len(kept) >= target {
@@ -5764,9 +5776,24 @@ func (s *Server) applyAStockRecommendationFundFlowFilterWithCache(strategyDate s
 		}
 		if len(kept) < target {
 			for _, rec := range candidates {
-				if appendRecommendation(rec, false, true) && len(kept) >= target {
+				if appendRecommendation(rec, false, true, false) && len(kept) >= target {
 					break
 				}
+			}
+		}
+	}
+	if len(kept) < target && allowHardFilteredFallback && len(hardFilteredFallbacks) > 0 {
+		for i := range hardFilteredFallbacks {
+			if appendRecommendation(hardFilteredFallbacks[i].rec, false, hardFilteredFallbacks[i].replenished, true) {
+				hardFilteredFallbacks[i].used = true
+			}
+			if len(kept) >= target {
+				break
+			}
+		}
+		for _, fallback := range hardFilteredFallbacks {
+			if fallback.countFiltered && !fallback.used {
+				result.Filtered++
 			}
 		}
 	}
