@@ -8133,6 +8133,130 @@ func TestAStockMarketBarsFilterTodayHighPctForMorningAndAfternoon(t *testing.T) 
 	}
 }
 
+func TestAStockMomentumTrendScoreBoostsMarketRanking(t *testing.T) {
+	trendCloses := make([]float64, 45)
+	for i := range trendCloses {
+		if i < 24 {
+			trendCloses[i] = 10 + float64((i%3)-1)*0.02
+			continue
+		}
+		trendCloses[i] = 10 + float64(i-23)*0.045
+	}
+	flatCloses := make([]float64, 45)
+	for i := range flatCloses {
+		flatCloses[i] = 10
+	}
+	bars := append(
+		aStockMomentumBarsForTest(t, "600100", "2026-06-16", trendCloses, aStockMomentumAmountsForTest(len(trendCloses), 220000000)),
+		aStockMomentumBarsForTest(t, "600101", "2026-06-16", flatCloses, nil)...,
+	)
+	recommendations := initializeAStockRecommendationMarket([]aStockRecommendation{
+		{Rank: 1, Hotspot: "人工智能", Code: "600101", Name: "震荡股", HotspotScore: 100, MarketScore: 100, Reason: "热度分 100"},
+		{Rank: 2, Hotspot: "人工智能", Code: "600100", Name: "趋势股", HotspotScore: 100, MarketScore: 100, Reason: "热度分 100"},
+	})
+
+	got, _, status, _, _ := applyAStockMarketBars("2026-06-16", "morning", recommendations, bars, false, false, 0)
+
+	if len(got) != 2 || got[0].Code != "600100" {
+		t.Fatalf("expected momentum stock to rank first, got %+v status=%q", got, status)
+	}
+	component := mustAStockScoreComponentForTest(t, got[0], "动能趋势")
+	if component.Score <= 0 || !strings.Contains(component.Detail, "ADX转强") || !strings.Contains(component.Detail, "放量确认") {
+		t.Fatalf("expected ADX and volume momentum score component, got %+v", component)
+	}
+	if got[0].MarketScore != 100+component.Score || !strings.Contains(got[0].Reason, "动能趋势加分") {
+		t.Fatalf("expected momentum score to be added to MarketScore and reason, got %+v", got[0])
+	}
+}
+
+func TestAStockMomentumTrendScoreDetectsBollingerBreakout(t *testing.T) {
+	closes := make([]float64, 70)
+	for i := range closes {
+		switch {
+		case i < 30:
+			if i%2 == 0 {
+				closes[i] = 10.45
+			} else {
+				closes[i] = 9.55
+			}
+		case i < len(closes)-1:
+			if i%2 == 0 {
+				closes[i] = 10.02
+			} else {
+				closes[i] = 9.98
+			}
+		default:
+			closes[i] = 10.16
+		}
+	}
+
+	_, signals := aStockMomentumTrendScore(aStockMomentumBarsForTest(t, "600200", "2026-06-16", closes, nil), "2026-06-16")
+
+	if !aStockMomentumHasSignalForTest(signals, "布林突破") {
+		t.Fatalf("expected bollinger breakout signal, got %+v", signals)
+	}
+}
+
+func TestAStockMomentumTrendScoreDetectsMACDStrength(t *testing.T) {
+	closes := make([]float64, 35)
+	for i := range closes {
+		if i < len(closes)-1 {
+			closes[i] = 10 - float64(i)*0.04
+			continue
+		}
+		closes[i] = 10
+	}
+
+	_, signals := aStockMomentumTrendScore(aStockMomentumBarsForTest(t, "600201", "2026-06-16", closes, nil), "2026-06-16")
+
+	if !aStockMomentumHasSignalForTest(signals, "MACD转强") {
+		t.Fatalf("expected MACD strength signal, got %+v", signals)
+	}
+}
+
+func TestAStockMomentumTrendScoreVolumeOnly(t *testing.T) {
+	closes := make([]float64, 35)
+	for i := range closes {
+		closes[i] = 10
+	}
+
+	score, signals := aStockMomentumTrendScore(aStockMomentumBarsForTest(t, "600202", "2026-06-16", closes, aStockMomentumAmountsForTest(len(closes), 200000000)), "2026-06-16")
+
+	if score != aStockMomentumVolumeScore || len(signals) != 1 || signals[0].Name != "放量确认" {
+		t.Fatalf("expected volume-only momentum score, score=%d signals=%+v", score, signals)
+	}
+}
+
+func TestAStockMomentumTrendScoreInsufficientBars(t *testing.T) {
+	closes := make([]float64, aStockMomentumMinBars-1)
+	for i := range closes {
+		closes[i] = 10 + float64(i)*0.1
+	}
+
+	score, signals := aStockMomentumTrendScore(aStockMomentumBarsForTest(t, "600203", "2026-06-16", closes, aStockMomentumAmountsForTest(len(closes), 300000000)), "2026-06-16")
+
+	if score != 0 || len(signals) != 0 {
+		t.Fatalf("expected insufficient bars to avoid momentum scoring, score=%d signals=%+v", score, signals)
+	}
+}
+
+func TestAStockMomentumDoesNotBypassTodayHighPctFilter(t *testing.T) {
+	closes := make([]float64, 35)
+	for i := range closes {
+		closes[i] = 10
+	}
+	closes[len(closes)-1] = 10.81
+	recommendations := initializeAStockRecommendationMarket([]aStockRecommendation{
+		{Rank: 1, Hotspot: "人工智能", Code: "600204", Name: "动能过热", HotspotScore: 100, MarketScore: 100, Reason: "热度分 100"},
+	})
+
+	got, _, status, _, _ := applyAStockMarketBars("2026-06-16", "morning", recommendations, aStockMomentumBarsForTest(t, "600204", "2026-06-16", closes, aStockMomentumAmountsForTest(len(closes), 300000000)), false, false, 0)
+
+	if len(got) != 0 || !strings.Contains(status, "过滤今日涨幅过高股票 1") {
+		t.Fatalf("expected today high-pct filter to run before momentum scoring, got %+v status=%q", got, status)
+	}
+}
+
 func TestAStockMarketViewFiltersLimitUpStocksForAfternoon(t *testing.T) {
 	recommendations := initializeAStockRecommendationMarket([]aStockRecommendation{
 		{Rank: 1, Hotspot: "黄金有色", Code: "600172", Name: "ST黄河", HotspotScore: 80, MarketScore: 80, Reason: "热度分 80"},

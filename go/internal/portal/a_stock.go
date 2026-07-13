@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -135,8 +136,12 @@ type aStockMarketBar struct {
 	Code                string
 	Date                string
 	Open                float64
+	High                float64
+	Low                 float64
 	Close               float64
 	Pct                 float64
+	Volume              float64
+	Amount              float64
 	EntryPrice          float64
 	AfternoonEntryPrice float64
 	SessionPrices       map[string]float64
@@ -422,6 +427,13 @@ const (
 	aStockPrevHighPctThreshold         = 8.0
 	aStockPrevHighPctPenalty           = 40
 	aStockTodayHighPctFilterThreshold  = 8.0
+	aStockMomentumMinBars              = 35
+	aStockMomentumMaxScore             = 60
+	aStockMomentumADXScore             = 25
+	aStockMomentumBollingerScore       = 20
+	aStockMomentumMACDScore            = 15
+	aStockMomentumMAScore              = 10
+	aStockMomentumVolumeScore          = 10
 	aStockLowOpenPenaltyThresholdPct   = -2.0
 	aStockLowOpenPenalty               = 80
 	aStockWeakEvidencePenalty          = 30
@@ -6989,6 +7001,365 @@ func applyAStockPreviousHighPctPenalty(rec aStockRecommendation, prevPct float64
 	return rec
 }
 
+type aStockMomentumSignal struct {
+	Name  string
+	Score int
+}
+
+func applyAStockMomentumTrendScore(rec aStockRecommendation, bars []aStockMarketBar, strategyDate string) aStockRecommendation {
+	score, signals := aStockMomentumTrendScore(bars, strategyDate)
+	if score <= 0 || len(signals) == 0 {
+		return rec
+	}
+	baseScore := rec.MarketScore
+	if baseScore == 0 {
+		baseScore = rec.HotspotScore
+	}
+	rec.MarketScore = baseScore + score
+	details := make([]string, 0, len(signals)+1)
+	names := make([]string, 0, len(signals))
+	for _, signal := range signals {
+		details = append(details, fmt.Sprintf("%s %d", signal.Name, signal.Score))
+		names = append(names, signal.Name)
+	}
+	if rawScore := aStockMomentumSignalScore(signals); rawScore > score {
+		details = append(details, fmt.Sprintf("上限 %d", score))
+	}
+	detail := strings.Join(details, "；")
+	appendAStockScoreComponentWithUnit(&rec, "动能趋势", detail, score, score)
+	rec.Reason = appendAStockReason(rec.Reason, fmt.Sprintf("动能趋势加分 %d（%s）", score, strings.Join(names, " + ")))
+	return rec
+}
+
+func aStockMomentumTrendScore(bars []aStockMarketBar, strategyDate string) (int, []aStockMomentumSignal) {
+	usable := aStockMomentumUsableBars(bars, strategyDate)
+	if len(usable) < aStockMomentumMinBars || usable[len(usable)-1].Date != normalizeAStockStrategyDate(strategyDate) {
+		return 0, nil
+	}
+	signals := make([]aStockMomentumSignal, 0, 5)
+	if aStockMomentumADXStarted(usable) {
+		signals = append(signals, aStockMomentumSignal{Name: "ADX转强", Score: aStockMomentumADXScore})
+	}
+	if aStockMomentumBollingerBreakout(usable) {
+		signals = append(signals, aStockMomentumSignal{Name: "布林突破", Score: aStockMomentumBollingerScore})
+	}
+	if aStockMomentumMACDStrengthened(usable) {
+		signals = append(signals, aStockMomentumSignal{Name: "MACD转强", Score: aStockMomentumMACDScore})
+	}
+	if aStockMomentumMAConfirmed(usable) {
+		signals = append(signals, aStockMomentumSignal{Name: "均线趋势", Score: aStockMomentumMAScore})
+	}
+	if aStockMomentumVolumeConfirmed(usable) {
+		signals = append(signals, aStockMomentumSignal{Name: "放量确认", Score: aStockMomentumVolumeScore})
+	}
+	score := aStockMomentumSignalScore(signals)
+	if score > aStockMomentumMaxScore {
+		score = aStockMomentumMaxScore
+	}
+	return score, signals
+}
+
+func aStockMomentumSignalScore(signals []aStockMomentumSignal) int {
+	score := 0
+	for _, signal := range signals {
+		score += signal.Score
+	}
+	return score
+}
+
+func aStockMomentumUsableBars(bars []aStockMarketBar, strategyDate string) []aStockMarketBar {
+	date := normalizeAStockStrategyDate(strategyDate)
+	usable := make([]aStockMarketBar, 0, len(bars))
+	for _, bar := range bars {
+		bar.Date = normalizeAStockMarketDate(bar.Date)
+		if bar.Date == "" || bar.Date > date || bar.Close <= 0 {
+			continue
+		}
+		if bar.Open <= 0 {
+			bar.Open = bar.Close
+		}
+		if bar.High <= 0 {
+			bar.High = maxFloat(bar.Open, bar.Close)
+		} else {
+			bar.High = maxFloat(bar.High, bar.Open, bar.Close)
+		}
+		if bar.Low <= 0 {
+			bar.Low = minPositiveFloat(bar.Open, bar.Close)
+		} else {
+			bar.Low = minPositiveFloat(bar.Low, bar.Open, bar.Close)
+		}
+		if bar.Amount <= 0 && bar.Volume > 0 {
+			bar.Amount = bar.Volume * bar.Close
+		}
+		usable = append(usable, bar)
+	}
+	sort.SliceStable(usable, func(i, j int) bool {
+		return usable[i].Date < usable[j].Date
+	})
+	return usable
+}
+
+func aStockMomentumADXStarted(bars []aStockMarketBar) bool {
+	adx, prevADX, plusDI, minusDI, ok := aStockADX(bars, 14)
+	if !ok || plusDI <= minusDI {
+		return false
+	}
+	return adx >= 20 || (prevADX < 20 && adx >= 18)
+}
+
+func aStockADX(bars []aStockMarketBar, period int) (float64, float64, float64, float64, bool) {
+	if period <= 0 || len(bars) < period*2+1 {
+		return 0, 0, 0, 0, false
+	}
+	trs := make([]float64, len(bars))
+	plusDMs := make([]float64, len(bars))
+	minusDMs := make([]float64, len(bars))
+	for i := 1; i < len(bars); i++ {
+		high := bars[i].High
+		low := bars[i].Low
+		prevHigh := bars[i-1].High
+		prevLow := bars[i-1].Low
+		prevClose := bars[i-1].Close
+		trs[i] = maxFloat(high-low, math.Abs(high-prevClose), math.Abs(low-prevClose))
+		upMove := high - prevHigh
+		downMove := prevLow - low
+		if upMove > downMove && upMove > 0 {
+			plusDMs[i] = upMove
+		}
+		if downMove > upMove && downMove > 0 {
+			minusDMs[i] = downMove
+		}
+	}
+	smoothedTR := 0.0
+	smoothedPlusDM := 0.0
+	smoothedMinusDM := 0.0
+	for i := 1; i <= period; i++ {
+		smoothedTR += trs[i]
+		smoothedPlusDM += plusDMs[i]
+		smoothedMinusDM += minusDMs[i]
+	}
+	dxs := make([]float64, 0, len(bars)-period)
+	plusDI, minusDI, dx := aStockDMIValues(smoothedTR, smoothedPlusDM, smoothedMinusDM)
+	dxs = append(dxs, dx)
+	adx := 0.0
+	prevADX := 0.0
+	for i := period + 1; i < len(bars); i++ {
+		smoothedTR = smoothedTR - smoothedTR/float64(period) + trs[i]
+		smoothedPlusDM = smoothedPlusDM - smoothedPlusDM/float64(period) + plusDMs[i]
+		smoothedMinusDM = smoothedMinusDM - smoothedMinusDM/float64(period) + minusDMs[i]
+		plusDI, minusDI, dx = aStockDMIValues(smoothedTR, smoothedPlusDM, smoothedMinusDM)
+		dxs = append(dxs, dx)
+		switch {
+		case len(dxs) == period:
+			adx = averageFloat64(dxs)
+			prevADX = adx
+		case len(dxs) > period:
+			prevADX = adx
+			adx = (adx*float64(period-1) + dx) / float64(period)
+		}
+	}
+	if len(dxs) < period || smoothedTR <= 0 {
+		return 0, 0, 0, 0, false
+	}
+	return adx, prevADX, plusDI, minusDI, true
+}
+
+func aStockDMIValues(smoothedTR float64, smoothedPlusDM float64, smoothedMinusDM float64) (float64, float64, float64) {
+	if smoothedTR <= 0 {
+		return 0, 0, 0
+	}
+	plusDI := 100 * smoothedPlusDM / smoothedTR
+	minusDI := 100 * smoothedMinusDM / smoothedTR
+	denominator := plusDI + minusDI
+	if denominator <= 0 {
+		return plusDI, minusDI, 0
+	}
+	return plusDI, minusDI, 100 * math.Abs(plusDI-minusDI) / denominator
+}
+
+func aStockMomentumBollingerBreakout(bars []aStockMarketBar) bool {
+	if len(bars) < aStockMomentumMinBars {
+		return false
+	}
+	n := len(bars)
+	prevEnd := n - 1
+	prevMA, prevStd, ok := aStockCloseMeanStd(bars, prevEnd-20, prevEnd)
+	if !ok || prevMA <= 0 {
+		return false
+	}
+	prevUpper := prevMA + 2*prevStd
+	prevHigh := aStockHighestHigh(bars, prevEnd-20, prevEnd)
+	lastClose := bars[n-1].Close
+	if lastClose <= prevUpper && lastClose <= prevHigh {
+		return false
+	}
+	bandwidths := make([]float64, 0, 60)
+	startEnd := prevEnd - 59
+	if startEnd < 20 {
+		startEnd = 20
+	}
+	for end := startEnd; end <= prevEnd; end++ {
+		ma, std, ok := aStockCloseMeanStd(bars, end-20, end)
+		if !ok || ma <= 0 {
+			continue
+		}
+		bandwidths = append(bandwidths, 4*std/ma)
+	}
+	if len(bandwidths) == 0 {
+		return false
+	}
+	prevBandwidth := 4 * prevStd / prevMA
+	minBandwidth := minFloat(bandwidths...)
+	avgBandwidth := averageFloat64(bandwidths)
+	return prevBandwidth <= minBandwidth*1.25 || prevBandwidth <= avgBandwidth*0.75
+}
+
+func aStockMomentumMACDStrengthened(bars []aStockMarketBar) bool {
+	if len(bars) < aStockMomentumMinBars {
+		return false
+	}
+	closes := aStockCloseValues(bars)
+	dif, dea, ok := aStockMACDValues(closes, 12, 26, 9)
+	if !ok || len(dif) < 2 || len(dea) < 2 {
+		return false
+	}
+	last := len(dif) - 1
+	prevHist := dif[last-1] - dea[last-1]
+	hist := dif[last] - dea[last]
+	return dif[last] > dea[last] && (dif[last-1] <= dea[last-1] || (prevHist <= 0 && hist > 0))
+}
+
+func aStockMACDValues(values []float64, fast int, slow int, signal int) ([]float64, []float64, bool) {
+	if len(values) < slow+signal || fast <= 0 || slow <= fast || signal <= 0 {
+		return nil, nil, false
+	}
+	fastEMA := aStockEMAValues(values, fast)
+	slowEMA := aStockEMAValues(values, slow)
+	dif := make([]float64, len(values))
+	for i := range values {
+		dif[i] = fastEMA[i] - slowEMA[i]
+	}
+	dea := aStockEMAValues(dif, signal)
+	return dif, dea, true
+}
+
+func aStockEMAValues(values []float64, period int) []float64 {
+	result := make([]float64, len(values))
+	if len(values) == 0 || period <= 0 {
+		return result
+	}
+	alpha := 2.0 / float64(period+1)
+	result[0] = values[0]
+	for i := 1; i < len(values); i++ {
+		result[i] = alpha*values[i] + (1-alpha)*result[i-1]
+	}
+	return result
+}
+
+func aStockMomentumMAConfirmed(bars []aStockMarketBar) bool {
+	if len(bars) < aStockMomentumMinBars {
+		return false
+	}
+	n := len(bars)
+	ma5, ok5 := aStockCloseAverage(bars, n-5, n)
+	ma10, ok10 := aStockCloseAverage(bars, n-10, n)
+	ma20, ok20 := aStockCloseAverage(bars, n-20, n)
+	prevMA20, okPrev := aStockCloseAverage(bars, n-21, n-1)
+	if !ok5 || !ok10 || !ok20 || !okPrev || bars[n-1].Close <= ma20 {
+		return false
+	}
+	return (ma5 > ma10 && ma10 > ma20) || ma20 > prevMA20
+}
+
+func aStockMomentumVolumeConfirmed(bars []aStockMarketBar) bool {
+	if len(bars) < aStockMomentumMinBars {
+		return false
+	}
+	n := len(bars)
+	lastAmount := aStockBarAmount(bars[n-1])
+	if lastAmount <= 0 {
+		return false
+	}
+	total := 0.0
+	count := 0
+	for i := n - 21; i < n-1; i++ {
+		amount := aStockBarAmount(bars[i])
+		if amount <= 0 {
+			continue
+		}
+		total += amount
+		count++
+	}
+	if count == 0 {
+		return false
+	}
+	return lastAmount > total/float64(count)*1.5
+}
+
+func aStockBarAmount(bar aStockMarketBar) float64 {
+	if bar.Amount > 0 {
+		return bar.Amount
+	}
+	if bar.Volume > 0 && bar.Close > 0 {
+		return bar.Volume * bar.Close
+	}
+	return 0
+}
+
+func aStockCloseValues(bars []aStockMarketBar) []float64 {
+	values := make([]float64, 0, len(bars))
+	for _, bar := range bars {
+		if bar.Close > 0 {
+			values = append(values, bar.Close)
+		}
+	}
+	return values
+}
+
+func aStockCloseAverage(bars []aStockMarketBar, start int, end int) (float64, bool) {
+	if start < 0 || end > len(bars) || start >= end {
+		return 0, false
+	}
+	total := 0.0
+	for i := start; i < end; i++ {
+		if bars[i].Close <= 0 {
+			return 0, false
+		}
+		total += bars[i].Close
+	}
+	return total / float64(end-start), true
+}
+
+func aStockCloseMeanStd(bars []aStockMarketBar, start int, end int) (float64, float64, bool) {
+	mean, ok := aStockCloseAverage(bars, start, end)
+	if !ok {
+		return 0, 0, false
+	}
+	variance := 0.0
+	for i := start; i < end; i++ {
+		diff := bars[i].Close - mean
+		variance += diff * diff
+	}
+	return mean, math.Sqrt(variance / float64(end-start)), true
+}
+
+func aStockHighestHigh(bars []aStockMarketBar, start int, end int) float64 {
+	highest := 0.0
+	for i := start; i < end && i < len(bars); i++ {
+		if i < 0 {
+			continue
+		}
+		value := bars[i].High
+		if value <= 0 {
+			value = bars[i].Close
+		}
+		if value > highest {
+			highest = value
+		}
+	}
+	return highest
+}
+
 func positiveAStockFundFlowScore(rec aStockRecommendation) int {
 	score := 0
 	for _, component := range aStockRecommendationScoreBreakdown(rec) {
@@ -8255,6 +8626,7 @@ func applyAStockMarketBars(strategyDate string, period string, recommendations [
 			filteredCount++
 			continue
 		}
+		recommendations[i] = applyAStockMomentumTrendScore(recommendations[i], codeBars, strategyDate)
 		filtered = append(filtered, recommendations[i])
 	}
 	recommendations = filtered
@@ -8866,8 +9238,11 @@ func decodeYahooAStockBars(body []byte, code string) ([]aStockMarketBar, error) 
 				Timestamp  []int64 `json:"timestamp"`
 				Indicators struct {
 					Quote []struct {
-						Open  []*float64 `json:"open"`
-						Close []*float64 `json:"close"`
+						Open   []*float64 `json:"open"`
+						High   []*float64 `json:"high"`
+						Low    []*float64 `json:"low"`
+						Close  []*float64 `json:"close"`
+						Volume []*float64 `json:"volume"`
 					} `json:"quote"`
 				} `json:"indicators"`
 			} `json:"result"`
@@ -8894,11 +9269,27 @@ func decodeYahooAStockBars(body []byte, code string) ([]aStockMarketBar, error) 
 		if open <= 0 || closeValue <= 0 {
 			continue
 		}
+		high := maxFloat(open, closeValue)
+		if i < len(quote.High) && quote.High[i] != nil && *quote.High[i] > 0 {
+			high = *quote.High[i]
+		}
+		low := minFloat(open, closeValue)
+		if i < len(quote.Low) && quote.Low[i] != nil && *quote.Low[i] > 0 {
+			low = *quote.Low[i]
+		}
+		volume := 0.0
+		if i < len(quote.Volume) && quote.Volume[i] != nil && *quote.Volume[i] > 0 {
+			volume = *quote.Volume[i]
+		}
 		bars = append(bars, aStockMarketBar{
-			Code:  code,
-			Date:  time.Unix(ts, 0).In(location).Format("2006-01-02"),
-			Open:  open,
-			Close: closeValue,
+			Code:   code,
+			Date:   time.Unix(ts, 0).In(location).Format("2006-01-02"),
+			Open:   open,
+			High:   high,
+			Low:    low,
+			Close:  closeValue,
+			Volume: volume,
+			Amount: volume * closeValue,
 		})
 	}
 	sort.SliceStable(bars, func(i, j int) bool {
@@ -8983,14 +9374,18 @@ func mapToAStockMarketBar(row map[string]any) (aStockMarketBar, bool) {
 	code := normalizeAStockCode(firstString(row, "code", "stock_code", "symbol", "ts_code"))
 	date := normalizeAStockMarketDate(firstString(row, "date", "trade_date", "day"))
 	open, _ := firstFloat(row, "open", "open_price")
+	high, _ := firstFloat(row, "high", "high_price")
+	low, _ := firstFloat(row, "low", "low_price")
 	closeValue, ok := firstFloat(row, "close", "close_price", "pre_close")
 	pct, _ := firstFloat(row, "pct", "pct_chg", "change_pct")
+	volume, _ := firstFloat(row, "volume", "vol")
+	amount, _ := firstFloat(row, "amount", "turnover", "turnover_amount")
 	entryPrice, _ := firstFloat(row, "entry_price", "entry", "open0930", "open_0930", "price0930", "price_0930", "minute0930", "minute_0930")
 	afternoonEntryPrice, _ := firstFloat(row, "afternoon_entry_price", "afternoon_entry", "afternoon_open", "afternoon_open_price", "open1300", "open_1300", "price1300", "price_1300", "minute1300", "minute_1300")
 	if code == "" || date == "" || !ok {
 		return aStockMarketBar{}, false
 	}
-	return aStockMarketBar{Code: code, Date: date, Open: open, Close: closeValue, Pct: pct, EntryPrice: entryPrice, AfternoonEntryPrice: afternoonEntryPrice}, true
+	return aStockMarketBar{Code: code, Date: date, Open: open, High: high, Low: low, Close: closeValue, Pct: pct, Volume: volume, Amount: amount, EntryPrice: entryPrice, AfternoonEntryPrice: afternoonEntryPrice}, true
 }
 
 func arrayToAStockMarketBar(row []any, fields []string) (aStockMarketBar, bool) {
@@ -9013,8 +9408,12 @@ func eastmoneyKlineToAStockMarketBar(raw string) (aStockMarketBar, bool) {
 	}
 	open := parseAStockFloat(parts[1])
 	closeValue := parseAStockFloat(parts[2])
+	high := parseAStockFloat(parts[3])
+	low := parseAStockFloat(parts[4])
+	volume := parseAStockFloat(parts[5])
+	amount := parseAStockFloat(parts[6])
 	pct := parseAStockFloat(parts[8])
-	return aStockMarketBar{Date: normalizeAStockMarketDate(parts[0]), Open: open, Close: closeValue, Pct: pct}, true
+	return aStockMarketBar{Date: normalizeAStockMarketDate(parts[0]), Open: open, High: high, Low: low, Close: closeValue, Pct: pct, Volume: volume, Amount: amount}, true
 }
 
 func decodeEastmoneyAStock0930Price(body []byte, strategyDate string) (float64, bool) {
@@ -9370,6 +9769,56 @@ func aStockFloat(value any) (float64, bool) {
 		}
 	}
 	return 0, false
+}
+
+func maxFloat(values ...float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	maxValue := values[0]
+	for _, value := range values[1:] {
+		if value > maxValue {
+			maxValue = value
+		}
+	}
+	return maxValue
+}
+
+func minFloat(values ...float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	minValue := values[0]
+	for _, value := range values[1:] {
+		if value < minValue {
+			minValue = value
+		}
+	}
+	return minValue
+}
+
+func minPositiveFloat(values ...float64) float64 {
+	minValue := 0.0
+	for _, value := range values {
+		if value <= 0 {
+			continue
+		}
+		if minValue == 0 || value < minValue {
+			minValue = value
+		}
+	}
+	return minValue
+}
+
+func averageFloat64(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	total := 0.0
+	for _, value := range values {
+		total += value
+	}
+	return total / float64(len(values))
 }
 
 func parseAStockFloat(raw string) float64 {
