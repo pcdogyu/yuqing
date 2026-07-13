@@ -2945,8 +2945,10 @@ func (s *Server) loadAStockFastReadOnlyContextWithCache(strategyDate string, per
 		}
 	}
 	exDividendStatus := ""
-	if skipped := s.applyAStockExDividendFilterWithCache(&ctx, cache); skipped > 0 {
-		exDividendStatus = formatAStockExDividendFilterStatus(skipped)
+	dailyLimitStatus := ""
+	if exDividendSkipped, dailyLimitSkipped := s.applyAStockRecommendationOutputFiltersWithCache(&ctx, cache); exDividendSkipped > 0 || dailyLimitSkipped > 0 {
+		exDividendStatus = formatAStockExDividendFilterStatus(exDividendSkipped)
+		dailyLimitStatus = formatAStockDailyRecommendationLimitStatus(dailyLimitSkipped)
 		recommendationTarget = len(ctx.Recommendations)
 	}
 	ctx.Recommendations = withAStockRecommendationEntryTimes(ctx.Recommendations, ctx.Period, "")
@@ -2958,6 +2960,9 @@ func (s *Server) loadAStockFastReadOnlyContextWithCache(strategyDate string, per
 	}
 	if exDividendStatus != "" {
 		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, exDividendStatus)
+	}
+	if dailyLimitStatus != "" {
+		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, dailyLimitStatus)
 	}
 	ctx.EmptyReason = aStockRecommendationEmptyReason(ctx)
 	ctx.LoadMessage = appendAStockLoadMessage(ctx.LoadMessage, "今日推荐使用只读快速结果，未写入推荐快照。")
@@ -3166,11 +3171,14 @@ func (s *Server) applyAStockBacktestSnapshotOnlyWithCache(ctx *aStockContext, ca
 		return false
 	}
 	ctx.Recommendations = rerankAStockRecommendations(recommendations)
-	exDividendFiltered := s.applyAStockExDividendFilterWithCache(ctx, cache)
+	exDividendFiltered, dailyLimitFiltered := s.applyAStockRecommendationOutputFiltersWithCache(ctx, cache)
 	ctx.Backtests = filterAStockBacktestsForSnapshotRecommendations(backtests, ctx.Recommendations)
 	ctx.BacktestStatus = nonEmpty(snapshot.BacktestStatus, "已读取推荐快照")
 	if exDividendFiltered > 0 {
 		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, formatAStockExDividendFilterStatus(exDividendFiltered))
+	}
+	if dailyLimitFiltered > 0 {
+		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, formatAStockDailyRecommendationLimitStatus(dailyLimitFiltered))
 	}
 	applyAStockSnapshotMetadata(ctx, snapshot)
 	ctx.EmptyReason = snapshot.EmptyReason
@@ -3425,6 +3433,7 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 	recentReplacementStatus := ""
 	fundFlowStatus := ""
 	exDividendStatus := ""
+	dailyLimitStatus := ""
 	if len(ctx.Hotspots) > 0 {
 		if marketCandidates == nil {
 			candidates, candidateStatus, auctionResult := s.loadAStockMarketCandidatesWithStatusWithCache(strategyDate, cache)
@@ -3482,8 +3491,9 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 		ctx.FundFlowMissingCount = result.Missing
 		fundFlowStatus = formatAStockFundFlowFilterStatus(result.Filtered, result.Replenished, result.Missing, result.Shortfall)
 	}
-	if skipped := s.applyAStockExDividendFilterWithCache(&ctx, cache); skipped > 0 {
-		exDividendStatus = formatAStockExDividendFilterStatus(skipped)
+	if exDividendSkipped, dailyLimitSkipped := s.applyAStockRecommendationOutputFiltersWithCache(&ctx, cache); exDividendSkipped > 0 || dailyLimitSkipped > 0 {
+		exDividendStatus = formatAStockExDividendFilterStatus(exDividendSkipped)
+		dailyLimitStatus = formatAStockDailyRecommendationLimitStatus(dailyLimitSkipped)
 		recommendationTarget = len(ctx.Recommendations)
 	}
 	ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus, ctx.LimitUpFiltered, ctx.NoTodayMarketCount = s.loadAStockMarketView(strategyDate, ctx.Period, ctx.Recommendations, ctx.LimitUpFilterEnabled, ctx.TodayMarketFilterEnabled, recommendationTarget)
@@ -3498,6 +3508,9 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 	}
 	if exDividendStatus != "" {
 		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, exDividendStatus)
+	}
+	if dailyLimitStatus != "" {
+		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, dailyLimitStatus)
 	}
 	if persist && shouldPersistAStockRecommendationSelectionsForDate(strategyDate, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, forceRecommendationRefresh) && (len(ctx.Recommendations) > 0 || rebuildRecommendations) {
 		if err := s.saveAStockRecommendationSelections(ctx); err != nil && ctx.LoadMessage == "" {
@@ -3561,8 +3574,9 @@ func (s *Server) applyAStockRecommendationSelectionsWithCache(ctx *aStockContext
 		return false
 	}
 	ctx.Recommendations, _ = s.repairAStockPersistedRecommendationsWithCache(ctx.Date, aStockRecommendationSelectionsToRecommendations(result.Items, ctx.Period), cache)
-	if skipped := s.applyAStockExDividendFilterWithCache(ctx, cache); skipped > 0 {
-		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, formatAStockExDividendFilterStatus(skipped))
+	if exDividendSkipped, dailyLimitSkipped := s.applyAStockRecommendationOutputFiltersWithCache(ctx, cache); exDividendSkipped > 0 || dailyLimitSkipped > 0 {
+		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, formatAStockExDividendFilterStatus(exDividendSkipped))
+		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, formatAStockDailyRecommendationLimitStatus(dailyLimitSkipped))
 	}
 	if len(ctx.Recommendations) == 0 {
 		return false
@@ -3605,8 +3619,9 @@ func (s *Server) applyAStockRecommendationSnapshotRecommendationsWithCache(ctx *
 		return false
 	}
 	ctx.Recommendations, _ = s.repairAStockPersistedRecommendationsWithCache(ctx.Date, recommendations, cache)
-	if skipped := s.applyAStockExDividendFilterWithCache(ctx, cache); skipped > 0 {
-		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, formatAStockExDividendFilterStatus(skipped))
+	if exDividendSkipped, dailyLimitSkipped := s.applyAStockRecommendationOutputFiltersWithCache(ctx, cache); exDividendSkipped > 0 || dailyLimitSkipped > 0 {
+		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, formatAStockExDividendFilterStatus(exDividendSkipped))
+		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, formatAStockDailyRecommendationLimitStatus(dailyLimitSkipped))
 	}
 	if len(ctx.Recommendations) == 0 {
 		return false
@@ -3712,7 +3727,7 @@ func (s *Server) applyAStockRecommendationSnapshotWithFreshnessCache(ctx *aStock
 		}
 	}
 	ctx.Recommendations, _ = s.repairAStockPersistedRecommendationsWithCache(ctx.Date, recommendations, cache)
-	exDividendFiltered := s.applyAStockExDividendFilterWithCache(ctx, cache)
+	exDividendFiltered, dailyLimitFiltered := s.applyAStockRecommendationOutputFiltersWithCache(ctx, cache)
 	if len(ctx.Recommendations) == 0 {
 		return false
 	}
@@ -3720,6 +3735,9 @@ func (s *Server) applyAStockRecommendationSnapshotWithFreshnessCache(ctx *aStock
 	ctx.BacktestStatus = nonEmpty(snapshot.BacktestStatus, "已读取推荐快照")
 	if exDividendFiltered > 0 {
 		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, formatAStockExDividendFilterStatus(exDividendFiltered))
+	}
+	if dailyLimitFiltered > 0 {
+		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, formatAStockDailyRecommendationLimitStatus(dailyLimitFiltered))
 	}
 	ctx.GeneratedRecommendationCount = snapshot.GeneratedCount
 	ctx.RecentFiltered = snapshot.RecentFiltered
@@ -10502,6 +10520,24 @@ func formatAStockExDividendFilterStatus(filtered int) string {
 		return ""
 	}
 	return fmt.Sprintf("除权除息过滤股票 %d", filtered)
+}
+
+func (s *Server) applyAStockRecommendationOutputFiltersWithCache(ctx *aStockContext, cache *aStockRequestCache) (int, int) {
+	exDividendFiltered := s.applyAStockExDividendFilterWithCache(ctx, cache)
+	dailyLimitFiltered := applyAStockRecommendationOutputDailyLimit(ctx)
+	return exDividendFiltered, dailyLimitFiltered
+}
+
+func applyAStockRecommendationOutputDailyLimit(ctx *aStockContext) int {
+	if ctx == nil || len(ctx.Recommendations) == 0 {
+		return 0
+	}
+	filtered, skipped := limitAStockRecommendationsByCount(ctx.Recommendations, aStockDailyRecommendationLimit)
+	if skipped > 0 {
+		ctx.Recommendations = filtered
+		ctx.SameDayMorningFiltered += skipped
+	}
+	return skipped
 }
 
 func (s *Server) applyAStockExDividendFilterWithCache(ctx *aStockContext, cache *aStockRequestCache) int {

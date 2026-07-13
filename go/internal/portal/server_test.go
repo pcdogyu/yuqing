@@ -8703,6 +8703,32 @@ func TestAStockRecommendationsFilterExDividendEvents(t *testing.T) {
 	}
 }
 
+func TestAStockRecommendationsOutputFiltersApplyDailyLimit(t *testing.T) {
+	ctx := aStockContext{
+		Date: "2026-07-13",
+		Recommendations: []aStockRecommendation{
+			{Rank: 1, Code: "600000", Name: "浦发银行"},
+			{Rank: 2, Code: "600001", Name: "邯郸钢铁"},
+			{Rank: 3, Code: "600002", Name: "齐鲁石化"},
+			{Rank: 4, Code: "600003", Name: "东北高速"},
+			{Rank: 5, Code: "600004", Name: "白云机场"},
+			{Rank: 6, Code: "600005", Name: "武钢股份"},
+		},
+	}
+
+	srv := NewServer(config.Config{})
+	exDividendFiltered, dailyLimitFiltered := srv.applyAStockRecommendationOutputFiltersWithCache(&ctx, newAStockRequestCache())
+	if exDividendFiltered != 0 || dailyLimitFiltered != 2 || ctx.SameDayMorningFiltered != 2 {
+		t.Fatalf("expected only daily limit to filter two recommendations, ex=%d daily=%d ctx=%+v", exDividendFiltered, dailyLimitFiltered, ctx)
+	}
+	if len(ctx.Recommendations) != aStockDailyRecommendationLimit {
+		t.Fatalf("expected final recommendations capped at %d, got %+v", aStockDailyRecommendationLimit, ctx.Recommendations)
+	}
+	if ctx.Recommendations[len(ctx.Recommendations)-1].Rank != aStockDailyRecommendationLimit {
+		t.Fatalf("expected recommendations to be reranked, got %+v", ctx.Recommendations)
+	}
+}
+
 func TestAStockRecommendationsDoNotInferFundMonitorTitleAsStockName(t *testing.T) {
 	hotspot := aStockHotspot{
 		Name:     "人工智能",
