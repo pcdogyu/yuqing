@@ -445,6 +445,17 @@ func aStockSnapshotHasRecommendations(snapshot model.AStockRecommendationSnapsho
 }
 
 func (w *Worker) runAStockAuctionCrawl(ctx context.Context) error {
+	status, err := w.loadAStockTradingDayStatus(ctx, "")
+	if err != nil {
+		return fmt.Errorf("a-stock auction crawl trading-day check failed: %w", err)
+	}
+	if !status.IsTradingDay {
+		message := strings.TrimSpace(status.Message)
+		if message == "" {
+			message = "A-share market is closed; auction crawl is disabled."
+		}
+		return jobSkippedError{message: fmt.Sprintf("a-stock auction crawl skipped for %s: %s", nonEmpty(status.Date, time.Now().In(aStockLocation()).Format("2006-01-02")), message)}
+	}
 	result, err := w.runAStockAuctionLatest(ctx)
 	if err != nil {
 		return err

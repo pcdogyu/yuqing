@@ -1857,8 +1857,16 @@ func TestRunAStockSectorFundFlowCrawlSkipsNonTradingDay(t *testing.T) {
 
 func TestRunAStockAuctionCrawlForcesLatestRefresh(t *testing.T) {
 	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/a-stock/auction" || r.URL.Query().Get("date") != "" || r.URL.Query().Get("limit") != "0" || r.URL.Query().Get("force") != "1" {
-			t.Fatalf("unexpected scheduled auction request: %s", r.URL.String())
+		switch r.URL.Path {
+		case "/api/a-stock/trading-day":
+			_ = json.NewEncoder(w).Encode(aStockTradingDayStatus{Date: r.URL.Query().Get("date"), IsTradingDay: true, Message: "open"})
+			return
+		case "/api/a-stock/auction":
+			if r.URL.Query().Get("date") != "" || r.URL.Query().Get("limit") != "0" || r.URL.Query().Get("force") != "1" {
+				t.Fatalf("unexpected scheduled auction request: %s", r.URL.String())
+			}
+		default:
+			t.Fatalf("unexpected akshare request: %s", r.URL.String())
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -1897,6 +1905,44 @@ func TestRunAStockAuctionCrawlForcesLatestRefresh(t *testing.T) {
 	}
 	if writeCount != 1 {
 		t.Fatalf("expected scheduled latest crawl to write once, got %d", writeCount)
+	}
+}
+
+func TestRunAStockAuctionCrawlSkipsNonTradingDay(t *testing.T) {
+	var auctionRequests int
+	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/a-stock/trading-day":
+			_ = json.NewEncoder(w).Encode(aStockTradingDayStatus{Date: r.URL.Query().Get("date"), IsTradingDay: false, Message: "weekend"})
+		case "/api/a-stock/auction":
+			auctionRequests++
+			t.Fatalf("scheduled auction crawl should not request latest auction on non-trading day")
+		default:
+			t.Fatalf("unexpected akshare request: %s", r.URL.String())
+		}
+	}))
+	defer akshare.Close()
+
+	var contentWrites int
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		contentWrites++
+		t.Fatalf("scheduled auction crawl should not write content on non-trading day")
+	}))
+	defer content.Close()
+
+	worker := NewWorker(config.Config{
+		AStockAuctionURL: akshare.URL,
+		ContentURL:       content.URL,
+		HTTPTimeout:      time.Second,
+		ServiceToken:     "secret-token",
+	})
+	err := worker.runAStockAuctionCrawl(context.Background())
+	var skipped jobSkippedError
+	if err == nil || !errors.As(err, &skipped) || !strings.Contains(err.Error(), "weekend") {
+		t.Fatalf("expected non-trading day skip error, got %v", err)
+	}
+	if auctionRequests != 0 || contentWrites != 0 {
+		t.Fatalf("expected no auction request or content write, got auction=%d content=%d", auctionRequests, contentWrites)
 	}
 }
 
