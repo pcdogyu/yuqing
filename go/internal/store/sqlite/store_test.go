@@ -540,6 +540,9 @@ func TestAStockAuctionAmountsKeepDualCaptureSlots(t *testing.T) {
 	if slot0925.CaptureSlot != "0925" || slot0925.Total != 1 || slot0925.Items[0].Code != "600000" || slot0925.TotalAmount != 3000000 {
 		t.Fatalf("expected replaced 0925 snapshot only, got %+v", slot0925)
 	}
+	if len(slot0925.Trend) != 1 || slot0925.Trend[0].CaptureSlot != "0930" || slot0925.Trend[0].TotalAmount != 2000000 {
+		t.Fatalf("expected 0925 detail query to keep 0930 history trend, got %+v", slot0925.Trend)
+	}
 	if len(defaultList.TrendSeries["0925"]) != 1 || len(defaultList.TrendSeries["0930"]) != 1 {
 		t.Fatalf("expected both trend series, got %+v", defaultList.TrendSeries)
 	}
@@ -560,6 +563,9 @@ func TestAStockAuctionAmountsDefaultFallsBackTo0925(t *testing.T) {
 	}
 	if list.CaptureSlot != "0925" || list.Total != 1 || len(list.Items) != 1 || list.Items[0].CaptureSlot != "0925" {
 		t.Fatalf("expected default query to fall back to 0925, got %+v", list)
+	}
+	if len(list.Trend) != 0 {
+		t.Fatalf("expected history trend to stay empty without 0930 data, got %+v", list.Trend)
 	}
 }
 

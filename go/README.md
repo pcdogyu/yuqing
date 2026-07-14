@@ -105,7 +105,7 @@ $env:YUQING_AKSHARE_PYTHON = "C:\Users\Administrator\AppData\Local\Programs\Pyth
 
 `akshare-service` 使用 Python/AKShare 作为底层数据源。若需要生成独立 exe，可执行 `go build -o .\bin\akshare-service.exe .\cmd\akshare-service`，再运行 `.\bin\akshare-service.exe --host 127.0.0.1 --port 8087`。`wechat-service` 默认使用 `8088`，`run.bat` 会同时构建并启动 `bin\wechat-service.exe`。
 
-适配服务全市场抓取时使用 AKShare `stock_zh_a_spot_em` 一次性读取东财沪深京 A 股行情，适合 scheduler 在 `09:26` 触发后入库；传入 `code=` 单股排查时使用 `stock_zh_a_hist_pre_min_em` 读取盘前分钟数据，并把 09:25 附近的成交价、成交量、成交额转换为系统的 `date/items` 契约。AKShare 盘前分钟接口只返回最近交易日数据，服务会缓存成功抓到的日期；未指定日期时服务会通过 AKShare 交易日历识别最新交易日并允许补抓，历史日期如果本地无可用缓存，将返回 422 并给出无法实时回抓的说明。
+适配服务全市场抓取时使用 AKShare `stock_zh_a_spot_em` 一次性读取东财沪深京 A 股行情，适合 scheduler 在 `09:26` 触发后入库；传入 `code=` 单股排查时使用 `stock_zh_a_hist_pre_min_em` 读取盘前分钟数据，并优先把 09:26 历史分钟行转换为系统的 `09:25` 快照，缺少 09:26 时回退到 09:25 附近数据。AKShare 盘前分钟接口只返回最近交易日数据，服务会缓存成功抓到的日期；未指定日期时服务会通过 AKShare 交易日历识别最新交易日并允许补抓，历史日期如果本地无可用缓存，将返回 422 并给出无法实时回抓的说明。
 
 快速联调：
 

@@ -229,9 +229,6 @@ func (s *Store) ListAStockAuctionAmounts(ctx context.Context, filter model.AStoc
 	}
 	result.TrendSeries = trendSeries
 	result.Trend = trendSeries[aStockAuctionCaptureSlot0930]
-	if len(result.Trend) == 0 {
-		result.Trend = trendSeries[aStockAuctionCaptureSlot0925]
-	}
 	result.LatestDate = ""
 	if len(dates) > 0 {
 		result.LatestDate = dates[0]

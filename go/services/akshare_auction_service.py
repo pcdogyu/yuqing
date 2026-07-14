@@ -25,6 +25,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import sys
 import threading
 import time
@@ -565,6 +566,17 @@ def row_time_text(row: Any) -> str:
     return text_value(value)
 
 
+def row_time_key(row: Any) -> str:
+    time_text = row_time_text(row)
+    match = re.search(r"\b(\d{1,2}):(\d{2})(?::(\d{2}))?", time_text)
+    if not match:
+        return time_text
+    hour = int(match.group(1))
+    minute = int(match.group(2))
+    second = int(match.group(3) or 0)
+    return f"{hour:02d}:{minute:02d}:{second:02d}"
+
+
 def select_auction_row(frame: Any) -> Any | None:
     if frame is None or getattr(frame, "empty", False):
         return None
@@ -574,10 +586,13 @@ def select_auction_row(frame: Any) -> Any | None:
     except Exception:
         return None
     for _, row in iterator:
-        time_text = row_time_text(row)
-        if "09:25" in time_text:
-            return row
-        rows.append((time_text, row))
+        rows.append((row_time_key(row), row))
+    fill_rows = [item for item in rows if item[0].startswith("09:26")]
+    if fill_rows:
+        return fill_rows[-1][1]
+    auction_rows = [item for item in rows if item[0].startswith("09:25")]
+    if auction_rows:
+        return auction_rows[-1][1]
     before_auction = [item for item in rows if item[0] <= "09:25:59"]
     if before_auction:
         return before_auction[-1][1]

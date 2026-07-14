@@ -234,6 +234,9 @@ func TestAStockAuctionAmountAPIUpsertsAndLists(t *testing.T) {
 	if envelope.Data.CaptureSlot != "0925" || envelope.Data.TotalAmount != 4000000 || envelope.Data.Items[0].CaptureSlot != "0925" {
 		t.Fatalf("expected 0925 auction list, got %+v", envelope.Data)
 	}
+	if len(envelope.Data.Trend) != 1 || envelope.Data.Trend[0].CaptureSlot != "0930" || envelope.Data.Trend[0].TotalAmount != 5876080 {
+		t.Fatalf("expected 0925 list response to keep 0930 history trend, got %+v", envelope.Data.Trend)
+	}
 }
 
 func TestAStockRecommendationSnapshotAPIUpsertsAndGets(t *testing.T) {

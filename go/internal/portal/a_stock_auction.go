@@ -174,7 +174,7 @@ func renderAStockAuctionActions(b *strings.Builder) {
 
 func renderAStockAuctionTrend(b *strings.Builder, ctx model.AStockAuctionListResult, trendDays int) {
 	trendDays = normalizeAStockAuctionTrendDays(trendDays)
-	points := aStockAuctionTrendWindow(ctx.Trend, trendDays)
+	points := aStockAuctionTrendTablePoints(ctx, trendDays)
 	trendSeries := ctx.TrendSeries
 	if len(trendSeries) == 0 && len(ctx.Trend) > 0 {
 		trendSeries = map[string][]model.AStockAuctionTrend{"0930": ctx.Trend}
@@ -189,7 +189,7 @@ func renderAStockAuctionTrend(b *strings.Builder, ctx model.AStockAuctionListRes
 		b.WriteString(`<div class="auction-empty">暂无趋势数据。请先点击“回溯近7天集合竞价”，或检查 YUQING_ASTOCK_AUCTION_URL 指向的 AKShare 业务服务。</div></section>`)
 		return
 	}
-	b.WriteString(`<p class="auction-muted">折线按每日集合竞价总成交额绘制，09:25 为绿色，09:30 为红色；明细表同步展示当前默认快照的总成交量，以及沪市、深市集合竞价金额最高的3只股票。</p>`)
+	b.WriteString(`<p class="auction-muted">折线按每日集合竞价总成交额绘制，09:25 为绿色，09:30 为红色；09:25 快照优先使用 09:26 历史分钟数据填充，历史明细表固定展示每天 09:30 采集点的总成交量，以及沪市、深市集合竞价金额最高的3只股票。</p>`)
 	b.WriteString(aStockAuctionTrendSVG(trendSeries, title, trendDays))
 	b.WriteString(`<div class="auction-scroll"><table class="auction-table auction-trend-table"><tr><th>日期</th><th>股票数</th><th>集合竞价总金额</th><th>成交量</th><th>最大金额股票</th><th class="auction-market-top">沪市金额前三</th><th class="auction-market-top">深市金额前三</th></tr>`)
 	for _, point := range points {
@@ -210,6 +210,13 @@ func renderAStockAuctionTrend(b *strings.Builder, ctx model.AStockAuctionListRes
 		b.WriteString(`</td></tr>`)
 	}
 	b.WriteString(`</table></div></section>`)
+}
+
+func aStockAuctionTrendTablePoints(ctx model.AStockAuctionListResult, days int) []model.AStockAuctionTrend {
+	if len(ctx.TrendSeries) > 0 {
+		return aStockAuctionTrendWindow(ctx.TrendSeries["0930"], days)
+	}
+	return aStockAuctionTrendWindow(ctx.Trend, days)
 }
 
 func renderAStockAuctionTrendPeriods(b *strings.Builder, ctx model.AStockAuctionListResult, current int) {

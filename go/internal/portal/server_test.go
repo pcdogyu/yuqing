@@ -725,6 +725,32 @@ func TestAStockAuctionPageSwitchesTrendPeriod(t *testing.T) {
 	}
 }
 
+func TestAStockAuctionTrendTablePointsPrefers0930Series(t *testing.T) {
+	points := aStockAuctionTrendTablePoints(model.AStockAuctionListResult{
+		Trend: []model.AStockAuctionTrend{{
+			Date:        "2026-07-14",
+			CaptureSlot: "0925",
+			TotalAmount: 925,
+		}},
+		TrendSeries: map[string][]model.AStockAuctionTrend{
+			"0925": {{
+				Date:        "2026-07-14",
+				CaptureSlot: "0925",
+				TotalAmount: 925,
+			}},
+			"0930": {{
+				Date:        "2026-07-14",
+				CaptureSlot: "0930",
+				TotalAmount: 930,
+			}},
+		},
+	}, 7)
+
+	if len(points) != 1 || points[0].CaptureSlot != "0930" || points[0].TotalAmount != 930 {
+		t.Fatalf("expected history table to use 0930 series, got %+v", points)
+	}
+}
+
 func TestAStockAuctionPagePostTriggersSchedulerJob(t *testing.T) {
 	var schedulerCalled bool
 	scheduler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
