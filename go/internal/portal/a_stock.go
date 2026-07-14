@@ -251,6 +251,7 @@ type aStockRequestCache struct {
 	holdingSummaries          map[string]aStockHoldingSummaryCacheEntry
 	stockFundFlowTrends       map[string]aStockStockFundFlowTrendCacheEntry
 	sectorFundFlows           map[string]aStockSectorFundFlowCacheEntry
+	sectorFundFlowTrends      map[string]aStockSectorFundFlowTrendCacheEntry
 	dividendEvents            map[string]aStockDividendEventCacheEntry
 	auctionResults            map[string]aStockAuctionResultCacheEntry
 	sectorConstituents        map[string]aStockSectorConstituentCodesCacheEntry
@@ -290,6 +291,11 @@ type aStockStockFundFlowTrendCacheEntry struct {
 
 type aStockSectorFundFlowCacheEntry struct {
 	result model.AStockSectorFundFlowListResult
+	err    error
+}
+
+type aStockSectorFundFlowTrendCacheEntry struct {
+	result model.AStockSectorFundFlowTrendResult
 	err    error
 }
 
@@ -411,59 +417,67 @@ type aStockPopupPayload struct {
 }
 
 const (
-	aStockDrawdownFilterThreshold      = -15.0
-	aStockSectorDrawdownPenalty        = 15
-	aStockFundFlowBonusThreshold       = 30000000.0
-	aStockFundFlowStrongBonusThreshold = 100000000.0
-	aStockFundFlowVeryStrongThreshold  = 500000000.0
-	aStockFundFlowExtremeThreshold     = 2000000000.0
-	aStockFundFlowScoreMin             = -50
-	aStockFundFlowScoreMax             = 50
-	aStockFundFlowRecentTurnThreshold  = 30000000.0
-	aStockOverheat30ThresholdPct       = 30.0
-	aStockOverheat60ThresholdPct       = 60.0
-	aStockNegativeNewsPenalty          = 30
-	aStockPrevLimitUpPenalty           = 50
-	aStockPrevHighPctThreshold         = 8.0
-	aStockPrevHighPctPenalty           = 40
-	aStockTodayHighPctFilterThreshold  = 8.0
-	aStockMomentumMinBars              = 35
-	aStockMomentumMaxScore             = 60
-	aStockMomentumADXScore             = 25
-	aStockMomentumBollingerScore       = 20
-	aStockMomentumMACDScore            = 15
-	aStockMomentumMAScore              = 10
-	aStockMomentumVolumeScore          = 10
-	aStockLowOpenPenaltyThresholdPct   = -2.0
-	aStockLowOpenPenalty               = 80
-	aStockWeakEvidencePenalty          = 30
-	aStockFundFlowMedianPenalty        = 30
-	aStockNewsPageSize                 = 10
-	aStockArticleFetchPageSize         = 1000
-	aStockArticleFetchMaxPages         = 100
-	aStockRecentLookbackDays           = 90
-	aStockFundFlowFilterCookieName     = "yuqing_astock_fund_flow_filter"
-	aStockFundFlowFilterCookieEnabled  = "enabled"
-	aStockFundFlowFilterCookieDisabled = "disabled"
-	aStockAuctionCandidateCacheTTL     = 5 * time.Minute
-	aStockMarketCandidateLimit         = 5000
-	aStockDailyRecommendationLimit     = 5
-	aStockRecommendationLimit          = aStockDailyRecommendationLimit
-	aStockReplacementPoolLimit         = 36
-	aStockReplacementPerHotspot        = 12
-	aStockHotspotTopStockLimit         = 9
-	aStockHotspotScoredCandidateLimit  = 240
-	aStockHotspotLimit                 = 3
-	aStockMarketRankScoreBase          = 200
-	aStockStocksPerHotspot             = 3
-	aStockExDividendWindowDays         = 3
-	aStockT1ShadowStrategyKey          = "t1_shadow_v1"
-	aStockT1ShadowRecommendationLimit  = aStockDailyRecommendationLimit
-	aStockT1ShadowStocksPerHotspot     = 2
-	aStockT1ShadowDrawdownThreshold    = -10.0
-	aStockRecommendationPhasePreopen   = "preopen"
-	aStockRecommendationPhaseFinal     = "final"
-	aStockRealtimeQuoteCacheTTL        = time.Minute
+	aStockDrawdownFilterThreshold                = -15.0
+	aStockSectorDrawdownPenalty                  = 15
+	aStockFundFlowBonusThreshold                 = 30000000.0
+	aStockFundFlowStrongBonusThreshold           = 100000000.0
+	aStockFundFlowVeryStrongThreshold            = 500000000.0
+	aStockFundFlowExtremeThreshold               = 2000000000.0
+	aStockFundFlowScoreMin                       = -50
+	aStockFundFlowScoreMax                       = 50
+	aStockFundFlowRecentTurnThreshold            = 30000000.0
+	aStockSectorFundTrendMinDays                 = 3
+	aStockSectorFundTrendScoreMin                = -40
+	aStockSectorFundTrendScoreMax                = 40
+	aStockSectorFundTrendTurnThreshold           = 30000000.0
+	aStockSectorTopStockResonanceInflowThreshold = 5000000000.0
+	aStockSectorTopStockResonanceScoreCap        = 25
+	aStockSectorTopStockResonanceOverheat30Cap   = 5
+	aStockSectorTopStockResonanceEffectiveDate   = "2026-07-14"
+	aStockOverheat30ThresholdPct                 = 30.0
+	aStockOverheat60ThresholdPct                 = 60.0
+	aStockNegativeNewsPenalty                    = 30
+	aStockPrevLimitUpPenalty                     = 50
+	aStockPrevHighPctThreshold                   = 8.0
+	aStockPrevHighPctPenalty                     = 40
+	aStockTodayHighPctFilterThreshold            = 8.0
+	aStockMomentumMinBars                        = 35
+	aStockMomentumMaxScore                       = 60
+	aStockMomentumADXScore                       = 25
+	aStockMomentumBollingerScore                 = 20
+	aStockMomentumMACDScore                      = 15
+	aStockMomentumMAScore                        = 10
+	aStockMomentumVolumeScore                    = 10
+	aStockLowOpenPenaltyThresholdPct             = -2.0
+	aStockLowOpenPenalty                         = 80
+	aStockWeakEvidencePenalty                    = 30
+	aStockFundFlowMedianPenalty                  = 30
+	aStockNewsPageSize                           = 10
+	aStockArticleFetchPageSize                   = 1000
+	aStockArticleFetchMaxPages                   = 100
+	aStockRecentLookbackDays                     = 90
+	aStockFundFlowFilterCookieName               = "yuqing_astock_fund_flow_filter"
+	aStockFundFlowFilterCookieEnabled            = "enabled"
+	aStockFundFlowFilterCookieDisabled           = "disabled"
+	aStockAuctionCandidateCacheTTL               = 5 * time.Minute
+	aStockMarketCandidateLimit                   = 5000
+	aStockDailyRecommendationLimit               = 5
+	aStockRecommendationLimit                    = aStockDailyRecommendationLimit
+	aStockReplacementPoolLimit                   = 36
+	aStockReplacementPerHotspot                  = 12
+	aStockHotspotTopStockLimit                   = 9
+	aStockHotspotScoredCandidateLimit            = 240
+	aStockHotspotLimit                           = 3
+	aStockMarketRankScoreBase                    = 200
+	aStockStocksPerHotspot                       = 3
+	aStockExDividendWindowDays                   = 3
+	aStockT1ShadowStrategyKey                    = "t1_shadow_v1"
+	aStockT1ShadowRecommendationLimit            = aStockDailyRecommendationLimit
+	aStockT1ShadowStocksPerHotspot               = 2
+	aStockT1ShadowDrawdownThreshold              = -10.0
+	aStockRecommendationPhasePreopen             = "preopen"
+	aStockRecommendationPhaseFinal               = "final"
+	aStockRealtimeQuoteCacheTTL                  = time.Minute
 )
 
 var (
@@ -2961,6 +2975,7 @@ func newAStockRequestCache() *aStockRequestCache {
 		holdingSummaries:          make(map[string]aStockHoldingSummaryCacheEntry),
 		stockFundFlowTrends:       make(map[string]aStockStockFundFlowTrendCacheEntry),
 		sectorFundFlows:           make(map[string]aStockSectorFundFlowCacheEntry),
+		sectorFundFlowTrends:      make(map[string]aStockSectorFundFlowTrendCacheEntry),
 		dividendEvents:            make(map[string]aStockDividendEventCacheEntry),
 		auctionResults:            make(map[string]aStockAuctionResultCacheEntry),
 		sectorConstituents:        make(map[string]aStockSectorConstituentCodesCacheEntry),
@@ -4443,6 +4458,7 @@ func (s *Server) applyAStockT1ShadowFundFlowWithCache(strategyDate string, recom
 		if assessment.Missing {
 			missingCount++
 			rec = applyAStockFundFlow5DAssessmentToRecommendation(rec, assessment, true)
+			rec = s.applyAStockSectorFundFlowTrendScoreWithCache(strategyDate, rec, cache)
 			filtered = append(filtered, rec)
 			continue
 		}
@@ -4451,6 +4467,7 @@ func (s *Server) applyAStockT1ShadowFundFlowWithCache(strategyDate string, recom
 			continue
 		}
 		rec = applyAStockFundFlow5DAssessmentToRecommendation(rec, assessment, true)
+		rec = s.applyAStockSectorFundFlowTrendScoreWithCache(strategyDate, rec, cache)
 		filtered = append(filtered, rec)
 	}
 	return sortAStockRecommendationsByScore(filtered), filteredCount, missingCount
@@ -5667,6 +5684,40 @@ type aStockFundFlow5DAssessment struct {
 	Missing          bool
 }
 
+type aStockSectorFundFlowTrendAssessment struct {
+	SectorType      string
+	SectorName      string
+	Total5D         float64
+	Total10D        float64
+	Recent2DTotal   float64
+	LatestNetInflow float64
+	LatestChangePct float64
+	LatestRank      int
+	InflowDays5D    int
+	OutflowDays5D   int
+	SignChanges5D   int
+	ScoreDelta      int
+	Status          string
+	ScoreReasons    []string
+	Missing         bool
+}
+
+type aStockSectorTopStockResonance struct {
+	Code                     string
+	Name                     string
+	SectorCount              int
+	PositiveSectorCount      int
+	SectorNames              []string
+	TotalSectorMainNetInflow float64
+	SourceTypes              []string
+	ScoreDelta               int
+}
+
+type aStockSectorTopStockCodeResolver struct {
+	codeByName   map[string]string
+	allowedCodes map[string]struct{}
+}
+
 type aStockFundFlowRecommendationFilterResult struct {
 	Recommendations []aStockRecommendation
 	Filtered        int
@@ -5777,6 +5828,7 @@ func (s *Server) applyAStockRecommendationFundFlowFilterWithCache(strategyDate s
 			return false
 		}
 		rec = applyAStockFundFlow5DAssessmentToRecommendation(rec, assessment, true)
+		rec = s.applyAStockSectorFundFlowTrendScoreWithCache(strategyDate, rec, cache)
 		seen[code] = struct{}{}
 		kept = append(kept, rec)
 		if assessment.Missing {
@@ -6181,6 +6233,266 @@ func (s *Server) loadAStockSectorFundFlowsWithCache(strategyDate string, alias a
 		cache.sectorFundFlows[cacheKey] = aStockSectorFundFlowCacheEntry{result: result, err: err}
 	}
 	return result, err
+}
+
+func (s *Server) applyAStockSectorFundFlowTrendScoreWithCache(strategyDate string, rec aStockRecommendation, cache *aStockRequestCache) aStockRecommendation {
+	if strings.TrimSpace(rec.Hotspot) == "" || aStockRecommendationHasScoreLabel(rec, "板块资金趋势") {
+		return rec
+	}
+	assessment := s.assessAStockRecommendationSectorFundFlowTrendWithCache(strategyDate, rec.Hotspot, cache)
+	return applyAStockSectorFundFlowTrendAssessmentToRecommendation(rec, assessment)
+}
+
+func (s *Server) assessAStockRecommendationSectorFundFlowTrendWithCache(strategyDate string, hotspot string, cache *aStockRequestCache) aStockSectorFundFlowTrendAssessment {
+	aliases := aStockHotspotSectorAliases(hotspot)
+	if len(aliases) == 0 || strings.TrimSpace(s.cfg.ContentURL) == "" {
+		return aStockSectorFundFlowTrendAssessment{Missing: true}
+	}
+	best := aStockSectorFundFlowTrendAssessment{Missing: true}
+	for _, alias := range aliases {
+		result, err := s.loadAStockSectorFundFlowTrendWithCache(strategyDate, alias, 10, cache)
+		if err != nil || len(result.Items) == 0 {
+			continue
+		}
+		assessment := scoreAStockSectorFundFlowTrendAssessment(alias, result.Items)
+		if betterAStockSectorFundFlowTrendAssessment(assessment, best) {
+			best = assessment
+		}
+	}
+	return best
+}
+
+func betterAStockSectorFundFlowTrendAssessment(candidate aStockSectorFundFlowTrendAssessment, current aStockSectorFundFlowTrendAssessment) bool {
+	if candidate.Missing {
+		return false
+	}
+	if current.Missing {
+		return true
+	}
+	if candidate.ScoreDelta > 0 || current.ScoreDelta > 0 {
+		if candidate.ScoreDelta != current.ScoreDelta {
+			return candidate.ScoreDelta > current.ScoreDelta
+		}
+		return math.Abs(candidate.Total5D) > math.Abs(current.Total5D)
+	}
+	if candidate.ScoreDelta != current.ScoreDelta {
+		return candidate.ScoreDelta < current.ScoreDelta
+	}
+	return math.Abs(candidate.Total5D) > math.Abs(current.Total5D)
+}
+
+func scoreAStockSectorFundFlowTrendAssessment(alias aStockHotspotSectorAlias, items []model.AStockSectorFundFlow) aStockSectorFundFlowTrendAssessment {
+	assessment := aStockSectorFundFlowTrendAssessment{
+		SectorType: normalizeSectorFundFlowSectorType(alias.SectorType),
+		SectorName: strings.TrimSpace(alias.SectorName),
+	}
+	if len(items) < aStockSectorFundTrendMinDays {
+		assessment.Missing = true
+		return assessment
+	}
+	sorted := append([]model.AStockSectorFundFlow(nil), items...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		return normalizeAStockStrategyDate(sorted[i].TradeDate) > normalizeAStockStrategyDate(sorted[j].TradeDate)
+	})
+	if assessment.SectorName == "" {
+		assessment.SectorName = strings.TrimSpace(sorted[0].Name)
+	}
+	limit10 := min(len(sorted), 10)
+	limit5 := min(len(sorted), 5)
+	gross5 := 0.0
+	previousSign := 0
+	for i := 0; i < limit10; i++ {
+		assessment.Total10D += sorted[i].MainNetInflow
+	}
+	for i := 0; i < limit5; i++ {
+		net := sorted[i].MainNetInflow
+		assessment.Total5D += net
+		gross5 += math.Abs(net)
+		sign := 0
+		switch {
+		case net > 0:
+			assessment.InflowDays5D++
+			sign = 1
+		case net < 0:
+			assessment.OutflowDays5D++
+			sign = -1
+		}
+		if sign != 0 {
+			if previousSign != 0 && sign != previousSign {
+				assessment.SignChanges5D++
+			}
+			previousSign = sign
+		}
+	}
+	if len(sorted) > 0 {
+		assessment.LatestNetInflow = sorted[0].MainNetInflow
+		assessment.LatestChangePct = sorted[0].ChangePct
+		assessment.LatestRank = sorted[0].Rank
+	}
+	if len(sorted) >= 2 {
+		assessment.Recent2DTotal = sorted[0].MainNetInflow + sorted[1].MainNetInflow
+	}
+
+	score := 0
+	reasons := make([]string, 0, 8)
+	consistency := 0.0
+	if gross5 > 0 {
+		consistency = math.Abs(assessment.Total5D) / gross5
+	}
+	switch {
+	case assessment.Total5D > 0 && assessment.InflowDays5D >= 4 && consistency >= 0.5:
+		assessment.Status = "连续流入"
+		score += 25
+		reasons = append(reasons, fmt.Sprintf("近5日净流入%d天", assessment.InflowDays5D))
+	case assessment.Total5D > 0 && assessment.InflowDays5D >= 3:
+		assessment.Status = "震荡偏流入"
+		score += 15
+		reasons = append(reasons, fmt.Sprintf("近5日净流入%d天", assessment.InflowDays5D))
+	case assessment.Total5D > 0:
+		assessment.Status = "弱流入"
+		score += 8
+	case assessment.Total5D < 0 && assessment.OutflowDays5D >= 4:
+		assessment.Status = "连续流出"
+		score -= 30
+		reasons = append(reasons, fmt.Sprintf("近5日净流出%d天", assessment.OutflowDays5D))
+	case assessment.Total5D < 0 && assessment.OutflowDays5D >= 3:
+		assessment.Status = "震荡偏流出"
+		score -= 20
+		reasons = append(reasons, fmt.Sprintf("近5日净流出%d天", assessment.OutflowDays5D))
+	case assessment.Total5D < 0:
+		assessment.Status = "弱流出"
+		score -= 8
+	default:
+		assessment.Status = "震荡"
+	}
+	if limit10 > limit5 && assessment.Total10D > 0 && assessment.Total5D > 0 && assessment.Total5D/assessment.Total10D >= 0.6 {
+		score += 10
+		reasons = append(reasons, "10日资金加速流入")
+	}
+	if limit10 > limit5 && assessment.Total10D < 0 && assessment.Total5D < 0 {
+		score -= 10
+		reasons = append(reasons, "10日与5日均净流出")
+	}
+	if len(sorted) >= 2 {
+		if sorted[0].MainNetInflow > 0 && sorted[1].MainNetInflow > 0 && assessment.Recent2DTotal > aStockSectorFundTrendTurnThreshold {
+			score += 5
+			reasons = append(reasons, "最近2日连续净流入")
+		} else if sorted[0].MainNetInflow < 0 && sorted[1].MainNetInflow < 0 {
+			score -= 5
+			reasons = append(reasons, "最近2日连续净流出")
+		}
+	}
+	switch {
+	case assessment.LatestRank > 0 && assessment.LatestRank <= 10:
+		score += 8
+		reasons = append(reasons, fmt.Sprintf("最新排名%d", assessment.LatestRank))
+	case assessment.LatestRank > 0 && assessment.LatestRank <= 30:
+		score += 4
+		reasons = append(reasons, fmt.Sprintf("最新排名%d", assessment.LatestRank))
+	}
+	if assessment.LatestNetInflow < 0 && assessment.LatestChangePct < 0 {
+		score -= 5
+		reasons = append(reasons, "当日净流出且板块下跌")
+	}
+	if assessment.SignChanges5D >= 3 && consistency < 0.35 {
+		score -= 5
+		reasons = append(reasons, "资金方向震荡")
+	}
+	assessment.ScoreDelta = clampAStockSectorFundFlowTrendScore(score)
+	assessment.ScoreReasons = reasons
+	return assessment
+}
+
+func clampAStockSectorFundFlowTrendScore(score int) int {
+	if score < aStockSectorFundTrendScoreMin {
+		return aStockSectorFundTrendScoreMin
+	}
+	if score > aStockSectorFundTrendScoreMax {
+		return aStockSectorFundTrendScoreMax
+	}
+	return score
+}
+
+func applyAStockSectorFundFlowTrendAssessmentToRecommendation(rec aStockRecommendation, assessment aStockSectorFundFlowTrendAssessment) aStockRecommendation {
+	if assessment.Missing || assessment.ScoreDelta == 0 {
+		return rec
+	}
+	baseScore := rec.MarketScore
+	if baseScore == 0 {
+		baseScore = rec.HotspotScore
+	}
+	rec.MarketScore = baseScore + assessment.ScoreDelta
+	reason := formatAStockSectorFundFlowTrendReason(assessment)
+	appendAStockScoreAdjustment(&rec, "板块资金趋势", reason, assessment.ScoreDelta)
+	rec.Reason = appendAStockReason(rec.Reason, reason)
+	return rec
+}
+
+func formatAStockSectorFundFlowTrendReason(assessment aStockSectorFundFlowTrendAssessment) string {
+	direction := "净流入"
+	if assessment.Total5D < 0 {
+		direction = "净流出"
+	}
+	action := "加分"
+	points := assessment.ScoreDelta
+	if assessment.ScoreDelta < 0 {
+		action = "减分"
+		points = -assessment.ScoreDelta
+	}
+	sectorName := nonEmptyText(assessment.SectorName, "板块")
+	status := nonEmptyText(assessment.Status, "震荡")
+	parts := []string{fmt.Sprintf("%s 5日主力资金%s %s，状态%s", sectorName, direction, formatSectorFundFlowMoney(assessment.Total5D), status)}
+	if assessment.Total10D != 0 {
+		parts = append(parts, fmt.Sprintf("10日主力资金%s", formatSectorFundFlowMoney(assessment.Total10D)))
+	}
+	parts = append(parts, assessment.ScoreReasons...)
+	parts = append(parts, fmt.Sprintf("板块资金趋势%s %d", action, points))
+	return strings.Join(parts, "，")
+}
+
+func (s *Server) loadAStockSectorFundFlowTrendWithCache(endDate string, alias aStockHotspotSectorAlias, days int, cache *aStockRequestCache) (model.AStockSectorFundFlowTrendResult, error) {
+	if strings.TrimSpace(s.cfg.ContentURL) == "" {
+		return model.AStockSectorFundFlowTrendResult{}, fmt.Errorf("content service url is empty")
+	}
+	endDate = normalizeAStockStrategyDate(endDate)
+	sectorType := normalizeSectorFundFlowSectorType(alias.SectorType)
+	sectorName := strings.TrimSpace(alias.SectorName)
+	if sectorName == "" {
+		return model.AStockSectorFundFlowTrendResult{}, fmt.Errorf("empty sector name")
+	}
+	if days <= 0 {
+		days = 10
+	}
+	cacheKey := strings.Join([]string{endDate, sectorType, sectorName, fmt.Sprint(days)}, "|")
+	if cache != nil {
+		if cache.sectorFundFlowTrends == nil {
+			cache.sectorFundFlowTrends = make(map[string]aStockSectorFundFlowTrendCacheEntry)
+		}
+		if entry, ok := cache.sectorFundFlowTrends[cacheKey]; ok {
+			return entry.result, entry.err
+		}
+	}
+	query := url.Values{}
+	query.Set("end_date", endDate)
+	query.Set("sector_type", sectorType)
+	query.Set("sector_name", sectorName)
+	query.Set("indicator", "今日")
+	query.Set("days", fmt.Sprint(days))
+	result := model.AStockSectorFundFlowTrendResult{}
+	err := s.getJSON(s.cfg.ContentURL+"/api/v1/a-stock/sector-fund-flow-trend?"+query.Encode(), &result)
+	if cache != nil {
+		cache.sectorFundFlowTrends[cacheKey] = aStockSectorFundFlowTrendCacheEntry{result: result, err: err}
+	}
+	return result, err
+}
+
+func aStockRecommendationHasScoreLabel(rec aStockRecommendation, label string) bool {
+	for _, component := range aStockRecommendationScoreBreakdown(rec) {
+		if component.Label == label {
+			return true
+		}
+	}
+	return false
 }
 
 func aStockHoldingScore(summary model.StockInstitutionHoldingSummary) int {

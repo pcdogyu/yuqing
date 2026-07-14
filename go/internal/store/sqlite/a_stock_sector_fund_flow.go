@@ -592,12 +592,16 @@ type aStockFundFlowAverageValue struct {
 }
 
 type aStockSectorFundFlowAverage struct {
-	item       model.AStockSectorFundFlow
-	fields     map[string]aStockFundFlowAverageValue
-	counts     map[string]int
-	sourceSet  map[string]struct{}
-	topNet     float64
-	topNetSeen bool
+	item      model.AStockSectorFundFlow
+	fields    map[string]aStockFundFlowAverageValue
+	counts    map[string]int
+	sourceSet map[string]struct{}
+	topStocks map[string]aStockSectorFundFlowTopStock
+}
+
+type aStockSectorFundFlowTopStock struct {
+	name string
+	net  float64
 }
 
 func (s *Store) recomputeAStockSectorFundFlowAverageTx(ctx context.Context, tx *Tx, tradeDate string, sectorType string, indicator string) error {
@@ -638,6 +642,7 @@ WHERE trade_date = ? AND sector_type = ? AND indicator = ?`, tradeDate, sectorTy
 				fields:    map[string]aStockFundFlowAverageValue{},
 				counts:    map[string]int{},
 				sourceSet: map[string]struct{}{},
+				topStocks: map[string]aStockSectorFundFlowTopStock{},
 			}
 			averages[name] = avg
 		}
@@ -659,11 +664,7 @@ WHERE trade_date = ? AND sector_type = ? AND indicator = ?`, tradeDate, sectorTy
 		addAStockFundFlowAverage(avg.fields, avg.counts, counts, "medium_net_inflow_pct", source.MediumNetInflowPct)
 		addAStockFundFlowAverage(avg.fields, avg.counts, counts, "small_net_inflow", source.SmallNetInflow)
 		addAStockFundFlowAverage(avg.fields, avg.counts, counts, "small_net_inflow_pct", source.SmallNetInflowPct)
-		if strings.TrimSpace(source.TopStock) != "" && (!avg.topNetSeen || source.MainNetInflow > avg.topNet) {
-			avg.item.TopStock = strings.TrimSpace(source.TopStock)
-			avg.topNet = source.MainNetInflow
-			avg.topNetSeen = true
-		}
+		addAStockSectorFundFlowTopStocks(avg, source.TopStock, source.MainNetInflow)
 	}
 	if err := rows.Err(); err != nil {
 		return err
@@ -791,6 +792,72 @@ func aStockFundFlowFieldAvailable(counts map[string]int, field string) bool {
 	return counts[field] > 0
 }
 
+func addAStockSectorFundFlowTopStocks(avg *aStockSectorFundFlowAverage, value string, net float64) {
+	if avg == nil {
+		return
+	}
+	if avg.topStocks == nil {
+		avg.topStocks = map[string]aStockSectorFundFlowTopStock{}
+	}
+	for _, name := range splitAStockSectorFundFlowTopStocks(value) {
+		current, ok := avg.topStocks[name]
+		if !ok || net > current.net {
+			avg.topStocks[name] = aStockSectorFundFlowTopStock{name: name, net: net}
+		}
+	}
+}
+
+func splitAStockSectorFundFlowTopStocks(value string) []string {
+	seen := map[string]struct{}{}
+	result := make([]string, 0, 3)
+	for _, part := range strings.FieldsFunc(value, func(r rune) bool {
+		switch r {
+		case '、', ',', '，', ';', '；', '\n', '\r', '\t':
+			return true
+		default:
+			return false
+		}
+	}) {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if _, ok := seen[part]; ok {
+			continue
+		}
+		seen[part] = struct{}{}
+		result = append(result, part)
+	}
+	return result
+}
+
+func formatAStockSectorFundFlowTopStocks(stocks map[string]aStockSectorFundFlowTopStock, limit int) string {
+	if len(stocks) == 0 {
+		return ""
+	}
+	if limit <= 0 {
+		limit = 3
+	}
+	items := make([]aStockSectorFundFlowTopStock, 0, len(stocks))
+	for _, stock := range stocks {
+		items = append(items, stock)
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].net == items[j].net {
+			return items[i].name < items[j].name
+		}
+		return items[i].net > items[j].net
+	})
+	if len(items) > limit {
+		items = items[:limit]
+	}
+	names := make([]string, 0, len(items))
+	for _, item := range items {
+		names = append(names, item.name)
+	}
+	return strings.Join(names, "、")
+}
+
 func applyAStockSectorFundFlowAverages(avg *aStockSectorFundFlowAverage) {
 	avg.item.ChangePct = aStockFundFlowAverage(avg.fields["change_pct"])
 	avg.item.MainNetInflow = aStockFundFlowAverage(avg.fields["main_net_inflow"])
@@ -806,6 +873,7 @@ func applyAStockSectorFundFlowAverages(avg *aStockSectorFundFlowAverage) {
 	avg.item.SourceCount = avg.counts["main_net_inflow"]
 	avg.item.SourceTypes = joinAStockFundFlowSourceTypes(avg.sourceSet)
 	avg.item.FieldCountsJSON = marshalAStockFundFlowFieldCounts(avg.counts)
+	avg.item.TopStock = formatAStockSectorFundFlowTopStocks(avg.topStocks, 3)
 	if avg.item.RawPayload == "" || avg.item.RawPayload == "{}" {
 		avg.item.RawPayload = `{"aggregation":"average"}`
 	}

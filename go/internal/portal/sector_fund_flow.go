@@ -91,8 +91,8 @@ body[data-page='sector-fund-flow'] section{width:100%;box-sizing:border-box}
 .sector-toolbar{display:grid;grid-template-columns:minmax(160px,.25fr) minmax(180px,.35fr) 110px;gap:10px;align-items:end;margin-top:10px}.sector-toolbar button{margin:0}
 .sector-date-list{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.sector-date{display:inline-flex;align-items:center;padding:7px 11px;border:1px solid #d6ccbb;border-radius:8px;background:#fff;color:#214e34;text-decoration:none}.sector-date.active{background:#214e34;color:#fff;border-color:#214e34}
 .sector-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}.sector-card{padding:16px;border:1px solid #ece7dc;border-radius:8px;background:#fff}.sector-card strong{display:block;font-size:20px;margin-top:6px}
-.sector-scroll{overflow:auto}.sector-table{min-width:1440px;width:100%;table-layout:fixed}.sector-table th,.sector-table td{vertical-align:middle;white-space:nowrap}.sector-table th{font-weight:700;text-align:left}.sector-table th:nth-child(1),.sector-table td:nth-child(1){width:54px;text-align:center}.sector-table th:nth-child(2),.sector-table td:nth-child(2){width:140px;text-align:left}.sector-table th:nth-child(3),.sector-table td:nth-child(3){width:70px;text-align:center}.sector-table th:nth-child(4),.sector-table th:nth-child(5),.sector-table th:nth-child(6),.sector-table th:nth-child(7),.sector-table th:nth-child(8),.sector-table th:nth-child(9),.sector-table th:nth-child(10),.sector-table th:nth-child(11),.sector-table th:nth-child(12){text-align:right}.sector-table th:nth-child(13),.sector-table td:nth-child(13){width:150px;text-align:left}.sector-table th:nth-child(14),.sector-table td:nth-child(14){width:150px;text-align:left}.sector-num{text-align:right;white-space:nowrap}.sector-positive{color:#d93025;font-weight:700}.sector-negative{color:#087333;font-weight:700}.sector-empty{padding:18px;border:1px dashed #d0c8b8;border-radius:8px;background:#fff;color:#6a6257}
-.sector-name-link,.sector-trend-link{color:#214e34;font-weight:700;text-decoration:none}.sector-name-link:hover,.sector-trend-link:hover{text-decoration:underline}.sector-name-link.active{color:#0b5cab}.sector-detail-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px}.sector-detail-head h3{margin:0}.sector-stock-table{min-width:1460px}.sector-stock-table th:nth-child(2),.sector-stock-table td:nth-child(2){width:90px}.sector-stock-table th:nth-child(3),.sector-stock-table td:nth-child(3){width:120px;text-align:left}.sector-stock-table td.sector-num{text-align:right}.sector-stock-note{margin-top:6px}.sector-trend-tabs{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0}
+.sector-scroll{overflow:auto}.sector-table{min-width:1240px;width:100%;table-layout:fixed}.sector-table th,.sector-table td{vertical-align:middle;white-space:nowrap}.sector-table th{font-weight:700;text-align:left}.sector-table th:nth-child(1),.sector-table td:nth-child(1){width:54px;text-align:center}.sector-table th:nth-child(2),.sector-table td:nth-child(2){width:140px;text-align:left}.sector-table th:nth-child(3),.sector-table td:nth-child(3){width:70px;text-align:center}.sector-table th:nth-child(4),.sector-table th:nth-child(5),.sector-table th:nth-child(6),.sector-table th:nth-child(7),.sector-table th:nth-child(8),.sector-table th:nth-child(9),.sector-table th:nth-child(10){text-align:right}.sector-table th:nth-child(11),.sector-table td:nth-child(11){width:210px;text-align:left}.sector-table th:nth-child(12),.sector-table td:nth-child(12){width:150px;text-align:left}.sector-num{text-align:right;white-space:nowrap}.sector-positive{color:#d93025;font-weight:700}.sector-negative{color:#087333;font-weight:700}.sector-empty{padding:18px;border:1px dashed #d0c8b8;border-radius:8px;background:#fff;color:#6a6257}
+.sector-name-link,.sector-trend-link{color:#214e34;font-weight:700;text-decoration:none}.sector-name-link:hover,.sector-trend-link:hover{text-decoration:underline}.sector-name-link.active{color:#0b5cab}.sector-detail-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px}.sector-detail-head h3{margin:0}.sector-stock-table{min-width:1240px}.sector-stock-table th:nth-child(2),.sector-stock-table td:nth-child(2){width:90px}.sector-stock-table th:nth-child(3),.sector-stock-table td:nth-child(3){width:120px;text-align:left}.sector-stock-table td.sector-num{text-align:right}.sector-stock-note{margin-top:6px}.sector-trend-tabs{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0}
 @media (max-width:760px){.sector-toolbar{grid-template-columns:1fr}.sector-head{display:block}}
 </style>`)
 	b.WriteString(`<section><div class="sector-head"><div><h2>版块资金</h2><p class="sector-muted">展示 AKShare 行业/概念版块资金流入流出，支持今日、5日、10日切换。</p></div>`)
@@ -396,7 +396,7 @@ func renderSectorFundFlowTable(b *strings.Builder, ctx model.AStockSectorFundFlo
 		b.WriteString(`<div class="sector-empty">暂无版块资金数据，请点击“刷新版块资金”，或等待交易时段自动抓取。</div></div></section>`)
 		return
 	}
-	b.WriteString(`<table class="sector-table"><tr><th>排名</th><th>版块名称</th><th>趋势</th><th>涨跌幅</th><th>主力净流入</th><th>主力净占比</th><th>超大单</th><th>大单</th><th>中单</th><th>小单</th><th>超大单占比</th><th>大单占比</th><th>主力净流入最大股</th><th>更新时间</th></tr>`)
+	b.WriteString(`<table class="sector-table"><tr><th>排名</th><th>版块名称</th><th>趋势</th><th>涨跌幅</th><th>主力净流入</th><th>主力净占比</th><th>超大单</th><th>大单</th><th>超大单占比</th><th>大单占比</th><th>主力净流入最大股</th><th>更新时间</th></tr>`)
 	for _, item := range ctx.Items {
 		b.WriteString(`<tr><td>`)
 		b.WriteString(fmt.Sprintf("%d", item.Rank))
@@ -431,12 +431,10 @@ func renderSectorFundFlowTable(b *strings.Builder, ctx model.AStockSectorFundFlo
 		writeSectorFundFlowPctCell(b, item.MainNetInflowPct)
 		writeSectorFundFlowMoneyCell(b, item.SuperLargeNetInflow)
 		writeSectorFundFlowMoneyCell(b, item.LargeNetInflow)
-		writeSectorFundFlowMoneyCell(b, item.MediumNetInflow)
-		writeSectorFundFlowMoneyCell(b, item.SmallNetInflow)
 		writeSectorFundFlowPctCell(b, item.SuperLargeNetInflowPct)
 		writeSectorFundFlowPctCell(b, item.LargeNetInflowPct)
 		b.WriteString(`<td>`)
-		b.WriteString(html.EscapeString(nonEmptyText(item.TopStock, "--")))
+		b.WriteString(html.EscapeString(formatSectorFundFlowTopStocks(item.TopStock)))
 		b.WriteString(`</td><td>`)
 		b.WriteString(html.EscapeString(item.FetchedAt.In(aStockLocation()).Format("2006-01-02 15:04:05")))
 		b.WriteString(`</td></tr>`)
@@ -596,7 +594,7 @@ func renderSectorFundFlowSectorTrendTable(b *strings.Builder, trendCtx sectorFun
 		b.WriteString(fmt.Sprintf("%d", len(items)))
 		b.WriteString(` 个交易日数据。</div>`)
 	}
-	b.WriteString(`<div class="sector-scroll"><table class="sector-table"><tr><th>日期</th><th>排名</th><th>版块名称</th><th>涨跌幅</th><th>主力净流入</th><th>主力净占比</th><th>超大单</th><th>大单</th><th>中单</th><th>小单</th><th>更新时间</th></tr>`)
+	b.WriteString(`<div class="sector-scroll"><table class="sector-table"><tr><th>日期</th><th>排名</th><th>版块名称</th><th>涨跌幅</th><th>主力净流入</th><th>主力净占比</th><th>超大单</th><th>大单</th><th>更新时间</th></tr>`)
 	for _, item := range items {
 		b.WriteString(`<tr><td>`)
 		b.WriteString(html.EscapeString(item.TradeDate))
@@ -610,8 +608,6 @@ func renderSectorFundFlowSectorTrendTable(b *strings.Builder, trendCtx sectorFun
 		writeSectorFundFlowPctCell(b, item.MainNetInflowPct)
 		writeSectorFundFlowMoneyCell(b, item.SuperLargeNetInflow)
 		writeSectorFundFlowMoneyCell(b, item.LargeNetInflow)
-		writeSectorFundFlowMoneyCell(b, item.MediumNetInflow)
-		writeSectorFundFlowMoneyCell(b, item.SmallNetInflow)
 		b.WriteString(`<td>`)
 		b.WriteString(html.EscapeString(item.FetchedAt.In(aStockLocation()).Format("2006-01-02 15:04:05")))
 		b.WriteString(`</td></tr>`)
@@ -630,7 +626,7 @@ func renderSectorFundFlowStockTrendTable(b *strings.Builder, trendCtx sectorFund
 		b.WriteString(fmt.Sprintf("%d", len(items)))
 		b.WriteString(` 个交易日数据。</div>`)
 	}
-	b.WriteString(`<div class="sector-scroll"><table class="sector-table sector-stock-table"><tr><th>日期</th><th>排名</th><th>代码</th><th>名称</th><th>最新价</th><th>涨跌幅</th><th>主力净流入</th><th>主力净占比</th><th>超大单</th><th>大单</th><th>中单</th><th>小单</th><th>更新时间</th></tr>`)
+	b.WriteString(`<div class="sector-scroll"><table class="sector-table sector-stock-table"><tr><th>日期</th><th>排名</th><th>代码</th><th>名称</th><th>最新价</th><th>涨跌幅</th><th>主力净流入</th><th>主力净占比</th><th>超大单</th><th>大单</th><th>更新时间</th></tr>`)
 	for _, item := range items {
 		b.WriteString(`<tr><td>`)
 		b.WriteString(html.EscapeString(item.TradeDate))
@@ -647,8 +643,6 @@ func renderSectorFundFlowStockTrendTable(b *strings.Builder, trendCtx sectorFund
 		writeSectorFundFlowPctCell(b, item.MainNetInflowPct)
 		writeSectorFundFlowMoneyCell(b, item.SuperLargeNetInflow)
 		writeSectorFundFlowMoneyCell(b, item.LargeNetInflow)
-		writeSectorFundFlowMoneyCell(b, item.MediumNetInflow)
-		writeSectorFundFlowMoneyCell(b, item.SmallNetInflow)
 		b.WriteString(`<td>`)
 		b.WriteString(html.EscapeString(item.FetchedAt.In(aStockLocation()).Format("2006-01-02 15:04:05")))
 		b.WriteString(`</td></tr>`)
@@ -684,7 +678,7 @@ func renderSectorFundFlowStockTable(b *strings.Builder, ctx model.AStockSectorFu
 		b.WriteString(`<div class="sector-empty">当前本地缓存没有匹配到该板块成分股资金流。请先刷新版块资金，或等待交易时段自动抓取个股资金流。</div></div></section>`)
 		return
 	}
-	b.WriteString(`<table class="sector-table sector-stock-table"><tr><th>排名</th><th>代码</th><th>名称</th><th>最新价</th><th>涨跌幅</th><th>主力净流入</th><th>主力净占比</th><th>超大单</th><th>大单</th><th>中单</th><th>小单</th><th>超大单占比</th><th>大单占比</th><th>更新时间</th></tr>`)
+	b.WriteString(`<table class="sector-table sector-stock-table"><tr><th>排名</th><th>代码</th><th>名称</th><th>最新价</th><th>涨跌幅</th><th>主力净流入</th><th>主力净占比</th><th>超大单</th><th>大单</th><th>超大单占比</th><th>大单占比</th><th>更新时间</th></tr>`)
 	for _, item := range stockCtx.Stocks.Items {
 		b.WriteString(`<tr><td>`)
 		b.WriteString(fmt.Sprintf("%d", item.Rank))
@@ -699,8 +693,6 @@ func renderSectorFundFlowStockTable(b *strings.Builder, ctx model.AStockSectorFu
 		writeSectorFundFlowPctCell(b, item.MainNetInflowPct)
 		writeSectorFundFlowMoneyCell(b, item.SuperLargeNetInflow)
 		writeSectorFundFlowMoneyCell(b, item.LargeNetInflow)
-		writeSectorFundFlowMoneyCell(b, item.MediumNetInflow)
-		writeSectorFundFlowMoneyCell(b, item.SmallNetInflow)
 		writeSectorFundFlowPctCell(b, item.SuperLargeNetInflowPct)
 		writeSectorFundFlowPctCell(b, item.LargeNetInflowPct)
 		b.WriteString(`<td>`)
@@ -726,7 +718,7 @@ func renderSectorFundFlowStockSearch(b *strings.Builder, ctx model.AStockSectorF
 	b.WriteString(`<section><div class="sector-detail-head"><div><h3>个股资金流搜索</h3><p class="sector-muted sector-stock-note">`)
 	b.WriteString(html.EscapeString(fmt.Sprintf("关键词 %s，命中 %d 只。", stockCtx.Keyword, stockCtx.Stocks.Total)))
 	b.WriteString(`</p></div></div><div class="sector-scroll">`)
-	b.WriteString(`<table class="sector-table sector-stock-table"><tr><th>排名</th><th>代码</th><th>名称</th><th>趋势</th><th>最新价</th><th>涨跌幅</th><th>主力净流入</th><th>主力净占比</th><th>超大单</th><th>大单</th><th>中单</th><th>小单</th><th>更新时间</th></tr>`)
+	b.WriteString(`<table class="sector-table sector-stock-table"><tr><th>排名</th><th>代码</th><th>名称</th><th>趋势</th><th>最新价</th><th>涨跌幅</th><th>主力净流入</th><th>主力净占比</th><th>超大单</th><th>大单</th><th>更新时间</th></tr>`)
 	for _, item := range stockCtx.Stocks.Items {
 		trendQuery := sectorFundFlowQuery(model.AStockSectorFundFlowFilter{Date: ctx.Date, SectorType: ctx.SectorType, Indicator: ctx.Indicator, Keyword: ctx.Keyword})
 		trendQuery.Set("trend", "stock")
@@ -747,8 +739,6 @@ func renderSectorFundFlowStockSearch(b *strings.Builder, ctx model.AStockSectorF
 		writeSectorFundFlowPctCell(b, item.MainNetInflowPct)
 		writeSectorFundFlowMoneyCell(b, item.SuperLargeNetInflow)
 		writeSectorFundFlowMoneyCell(b, item.LargeNetInflow)
-		writeSectorFundFlowMoneyCell(b, item.MediumNetInflow)
-		writeSectorFundFlowMoneyCell(b, item.SmallNetInflow)
 		b.WriteString(`<td>`)
 		b.WriteString(html.EscapeString(item.FetchedAt.In(aStockLocation()).Format("2006-01-02 15:04:05")))
 		b.WriteString(`</td></tr>`)
@@ -823,6 +813,41 @@ func writeSectorFundFlowNumberCell(b *strings.Builder, value float64, format str
 		b.WriteString(html.EscapeString(fmt.Sprintf(format, value)))
 	}
 	b.WriteString(`</td>`)
+}
+
+func formatSectorFundFlowTopStocks(value string) string {
+	parts := splitSectorFundFlowTopStocks(value)
+	if len(parts) == 0 {
+		return "--"
+	}
+	if len(parts) > 3 {
+		parts = parts[:3]
+	}
+	return strings.Join(parts, "、")
+}
+
+func splitSectorFundFlowTopStocks(value string) []string {
+	seen := map[string]struct{}{}
+	parts := make([]string, 0, 3)
+	for _, part := range strings.FieldsFunc(value, func(r rune) bool {
+		switch r {
+		case '、', ',', '，', ';', '；', '\n', '\r', '\t':
+			return true
+		default:
+			return false
+		}
+	}) {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if _, ok := seen[part]; ok {
+			continue
+		}
+		seen[part] = struct{}{}
+		parts = append(parts, part)
+	}
+	return parts
 }
 
 func formatSectorFundFlowMoney(value float64) string {

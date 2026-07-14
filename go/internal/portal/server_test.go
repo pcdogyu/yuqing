@@ -969,7 +969,7 @@ func TestSectorFundFlowPageLoadsFiltersRowsAndRefreshAction(t *testing.T) {
 						LargeNetInflowPct:      2.2,
 						MediumNetInflow:        -30000000,
 						SmallNetInflow:         -90000000,
-						TopStock:               "中科曙光",
+						TopStock:               "中科曙光；新易盛；寒武纪；第四名",
 						FetchedAt:              fetchedAt,
 					}},
 					Page:        1,
@@ -1084,9 +1084,14 @@ func TestSectorFundFlowPageLoadsFiltersRowsAndRefreshAction(t *testing.T) {
 		t.Fatalf("expected sector fund flow page 200, got %d body=%s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"版块资金", "人工智能", "中科曙光", "刷新版块资金", "行业资金流", "概念资金流", "今日", "5日", "10日", "+2.30亿", "+5.60%", "-3000.00万", "人工智能 个股资金流", "成分股 2 只，本地资金流命中 1 只", "300502", "新易盛", "+8.11亿", "sector_name", "趋势", "trend=sector", `href="/a-stock">A股</a><a href="/a-stock/backtest">回测</a><a href="/sector-fund-flow">版块资金</a><a href="/stock-research">研报调研</a>`, `body[data-page='sector-fund-flow'] main,body[data-page='sector-fund-flow'] .site-footer{max-width:none;width:100%;box-sizing:border-box}`, `.sector-table th:nth-child(1),.sector-table td:nth-child(1){width:54px;text-align:center}`, `.sector-name-link`} {
+	for _, want := range []string{"版块资金", "人工智能", "中科曙光、新易盛、寒武纪", "刷新版块资金", "行业资金流", "概念资金流", "今日", "5日", "10日", "+2.30亿", "+5.60%", "人工智能 个股资金流", "成分股 2 只，本地资金流命中 1 只", "300502", "新易盛", "+8.11亿", "sector_name", "趋势", "trend=sector", `href="/a-stock">A股</a><a href="/a-stock/backtest">回测</a><a href="/sector-fund-flow">版块资金</a><a href="/stock-research">研报调研</a>`, `body[data-page='sector-fund-flow'] main,body[data-page='sector-fund-flow'] .site-footer{max-width:none;width:100%;box-sizing:border-box}`, `.sector-table th:nth-child(1),.sector-table td:nth-child(1){width:54px;text-align:center}`, `.sector-name-link`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected sector fund flow page to contain %q, got %s", want, body)
+		}
+	}
+	for _, notWant := range []string{"<th>中单</th>", "<th>小单</th>", "第四名"} {
+		if strings.Contains(body, notWant) {
+			t.Fatalf("expected sector fund flow page not to contain %q, got %s", notWant, body)
 		}
 	}
 
@@ -4341,6 +4346,22 @@ func handleEmptyAStockAuctionTestEndpoint(w http.ResponseWriter, r *http.Request
 		})
 		return true
 	}
+	if r.URL.Path == "/api/v1/a-stock/sector-fund-flow-trend" {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    http.StatusOK,
+			"message": "ok",
+			"data": model.AStockSectorFundFlowTrendResult{
+				Items:      []model.AStockSectorFundFlow{},
+				Total:      0,
+				EndDate:    r.URL.Query().Get("end_date"),
+				SectorType: r.URL.Query().Get("sector_type"),
+				SectorName: r.URL.Query().Get("sector_name"),
+				Indicator:  r.URL.Query().Get("indicator"),
+				Days:       atoiAStockScorePart(r.URL.Query().Get("days")),
+			},
+		})
+		return true
+	}
 	if r.URL.Path != "/api/v1/a-stock/auction" {
 		return false
 	}
@@ -6915,6 +6936,10 @@ func TestAStockRecommendationFundFlowFilterScoresAndReplenishes(t *testing.T) {
 				writeEnvelope(w, http.StatusOK, "ok", model.AStockSectorFundFlowListResult{})
 				return
 			}
+			if r.URL.Path == "/api/v1/a-stock/sector-fund-flow-trend" {
+				writeEnvelope(w, http.StatusOK, "ok", model.AStockSectorFundFlowTrendResult{})
+				return
+			}
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
 		if r.URL.Query().Get("end_date") != "2026-06-16" || r.URL.Query().Get("indicator") != "今日" || r.URL.Query().Get("days") != "10" {
@@ -6997,6 +7022,10 @@ func TestAStockRecommendationFundFlowFilterAllowsAfternoonShortfallFallback(t *t
 		if r.URL.Path != "/api/v1/a-stock/stock-fund-flow-trend" {
 			if r.URL.Path == "/api/v1/a-stock/sector-fund-flows" {
 				writeEnvelope(w, http.StatusOK, "ok", model.AStockSectorFundFlowListResult{})
+				return
+			}
+			if r.URL.Path == "/api/v1/a-stock/sector-fund-flow-trend" {
+				writeEnvelope(w, http.StatusOK, "ok", model.AStockSectorFundFlowTrendResult{})
 				return
 			}
 			t.Fatalf("unexpected content path: %s", r.URL.String())
@@ -9461,6 +9490,77 @@ func TestAStockFundFlowScoreSectorWeakCapsBonus(t *testing.T) {
 	}
 }
 
+func TestAStockSectorFundFlowTrendScoreStrongInflowCapsAtForty(t *testing.T) {
+	assessment := scoreAStockSectorFundFlowTrendAssessment(aStockHotspotSectorAlias{SectorType: "概念资金流", SectorName: "人工智能"}, []model.AStockSectorFundFlow{
+		{TradeDate: "2026-07-10", Rank: 6, Name: "人工智能", MainNetInflow: 120000000, ChangePct: 1.2},
+		{TradeDate: "2026-07-09", Rank: 8, Name: "人工智能", MainNetInflow: 90000000, ChangePct: 0.8},
+		{TradeDate: "2026-07-08", Rank: 12, Name: "人工智能", MainNetInflow: 80000000, ChangePct: 0.4},
+		{TradeDate: "2026-07-07", Rank: 14, Name: "人工智能", MainNetInflow: -10000000, ChangePct: -0.2},
+		{TradeDate: "2026-07-06", Rank: 18, Name: "人工智能", MainNetInflow: 70000000, ChangePct: 0.6},
+		{TradeDate: "2026-07-03", Rank: 22, Name: "人工智能", MainNetInflow: 100000000, ChangePct: 0.3},
+	})
+	rec := applyAStockSectorFundFlowTrendAssessmentToRecommendation(aStockRecommendation{Hotspot: "人工智能", Code: "300001", HotspotScore: 100, MarketScore: 100, Reason: "base"}, assessment)
+
+	if assessment.ScoreDelta != 40 || assessment.Status != "连续流入" || rec.MarketScore != 140 {
+		t.Fatalf("expected strong sector trend to cap at +40, assessment=%+v rec=%+v", assessment, rec)
+	}
+	if !strings.Contains(rec.Reason, "板块资金趋势加分 40") || !strings.Contains(rec.Reason, "最近2日连续净流入") {
+		t.Fatalf("expected sector trend reason to be appended, got %+v", rec)
+	}
+	if len(rec.ScoreBreakdown) == 0 || rec.ScoreBreakdown[len(rec.ScoreBreakdown)-1].Label != "板块资金趋势" || rec.ScoreBreakdown[len(rec.ScoreBreakdown)-1].Score != 40 {
+		t.Fatalf("expected sector trend score breakdown, got %+v", rec.ScoreBreakdown)
+	}
+}
+
+func TestAStockSectorFundFlowTrendScoreContinuousOutflowCapsAtMinusForty(t *testing.T) {
+	assessment := scoreAStockSectorFundFlowTrendAssessment(aStockHotspotSectorAlias{SectorType: "行业资金流", SectorName: "半导体"}, []model.AStockSectorFundFlow{
+		{TradeDate: "2026-07-10", Rank: 90, Name: "半导体", MainNetInflow: -90000000, ChangePct: -1.2},
+		{TradeDate: "2026-07-09", Rank: 80, Name: "半导体", MainNetInflow: -80000000, ChangePct: -0.8},
+		{TradeDate: "2026-07-08", Rank: 70, Name: "半导体", MainNetInflow: -70000000, ChangePct: 0.2},
+		{TradeDate: "2026-07-07", Rank: 60, Name: "半导体", MainNetInflow: -60000000, ChangePct: -0.3},
+		{TradeDate: "2026-07-06", Rank: 50, Name: "半导体", MainNetInflow: -50000000, ChangePct: -0.4},
+		{TradeDate: "2026-07-03", Rank: 40, Name: "半导体", MainNetInflow: -40000000, ChangePct: -0.2},
+	})
+
+	if assessment.ScoreDelta != -40 || assessment.Status != "连续流出" {
+		t.Fatalf("expected continuous sector outflow to cap at -40, got %+v", assessment)
+	}
+	if reason := formatAStockSectorFundFlowTrendReason(assessment); !strings.Contains(reason, "板块资金趋势减分 40") || !strings.Contains(reason, "10日与5日均净流出") {
+		t.Fatalf("expected sector outflow reason, got %q", reason)
+	}
+}
+
+func TestAStockSectorFundFlowTrendScoreLoadsFromContent(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/a-stock/sector-fund-flow-trend" {
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+		sectorName := r.URL.Query().Get("sector_name")
+		if r.URL.Query().Get("end_date") != "2026-07-10" || r.URL.Query().Get("indicator") != "今日" || r.URL.Query().Get("days") != "10" {
+			t.Fatalf("unexpected sector trend query: %s", r.URL.RawQuery)
+		}
+		if sectorName != "人工智能" {
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockSectorFundFlowTrendResult{})
+			return
+		}
+		writeEnvelope(w, http.StatusOK, "ok", model.AStockSectorFundFlowTrendResult{
+			Items: []model.AStockSectorFundFlow{
+				{TradeDate: "2026-07-10", Rank: 6, Name: "人工智能", MainNetInflow: 120000000, ChangePct: 1.2},
+				{TradeDate: "2026-07-09", Rank: 8, Name: "人工智能", MainNetInflow: 90000000, ChangePct: 0.8},
+				{TradeDate: "2026-07-08", Rank: 12, Name: "人工智能", MainNetInflow: 80000000, ChangePct: 0.4},
+			},
+			Total: 3, EndDate: "2026-07-10", SectorType: "概念资金流", SectorName: "人工智能", Indicator: "今日", Days: 10,
+		})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	rec := srv.applyAStockSectorFundFlowTrendScoreWithCache("2026-07-10", aStockRecommendation{Hotspot: "人工智能", Code: "300001", HotspotScore: 100, MarketScore: 100, Reason: "base"}, newAStockRequestCache())
+	if rec.MarketScore <= 100 || !strings.Contains(rec.Reason, "人工智能 5日主力资金净流入") || !strings.Contains(rec.Reason, "板块资金趋势加分") {
+		t.Fatalf("expected content-loaded sector trend score, got %+v", rec)
+	}
+}
+
 func TestAStockFundFlowScoreRecentLargeOutflowSample(t *testing.T) {
 	assessment := scoreAStockFundFlowAssessment(aStockFundFlow5DAssessment{
 		Total5D:         -571000000,
@@ -9472,6 +9572,116 @@ func TestAStockFundFlowScoreRecentLargeOutflowSample(t *testing.T) {
 
 	if !assessment.HardFiltered || assessment.ScoreDelta != -50 {
 		t.Fatalf("expected 300475-like sample to be hard filtered and heavily penalized, got %+v", assessment)
+	}
+}
+
+func TestAStockSectorTopStockResonanceScoreLevelsAndCap(t *testing.T) {
+	resolver := newAStockSectorTopStockCodeResolver([]aStockRecommendation{
+		{Code: "600183", Name: "生益科技"},
+		{Code: "600000", Name: "浦发银行"},
+		{Code: "000001", Name: "平安银行"},
+	})
+	flows := []model.AStockSectorFundFlow{
+		{SectorType: "行业资金流", Name: "电子器件", ChangePct: 1.2, MainNetInflow: 4531569158.08, TopStock: "生益科技", SourceTypes: "sina"},
+		{SectorType: "行业资金流", Name: "元件", ChangePct: 0.8, MainNetInflow: 3862000000, TopStock: "生益科技", SourceTypes: "ths"},
+		{SectorType: "概念资金流", Name: "印制电路板", ChangePct: 0.5, MainNetInflow: 3611000000, TopStock: "600183 生益科技", SourceTypes: "eastmoney"},
+		{SectorType: "行业资金流", Name: "银行", ChangePct: 0.2, MainNetInflow: 1000000000, TopStock: "浦发银行"},
+		{SectorType: "概念资金流", Name: "央企银行", ChangePct: 0.1, MainNetInflow: 1000000000, TopStock: "平安银行"},
+		{SectorType: "概念资金流", Name: "金融科技", ChangePct: 0.1, MainNetInflow: 1000000000, TopStock: "平安银行"},
+	}
+
+	got := buildAStockSectorTopStockResonanceMap(flows, resolver)
+
+	if got["600000"].ScoreDelta != 8 {
+		t.Fatalf("expected one-sector resonance +8, got %+v", got["600000"])
+	}
+	if got["000001"].ScoreDelta != 15 {
+		t.Fatalf("expected two-sector resonance +15, got %+v", got["000001"])
+	}
+	shengyi := got["600183"]
+	if shengyi.ScoreDelta != 25 || shengyi.PositiveSectorCount != 3 || shengyi.TotalSectorMainNetInflow <= aStockSectorTopStockResonanceInflowThreshold {
+		t.Fatalf("expected Shengyi 3-sector resonance capped at +25, got %+v", shengyi)
+	}
+	if strings.Join(shengyi.SectorNames, "、") != "电子器件、元件、印制电路板" {
+		t.Fatalf("expected sector names to preserve source order, got %+v", shengyi.SectorNames)
+	}
+}
+
+func TestAStockSectorTopStockResonanceSkipsNegativeOrDownSectors(t *testing.T) {
+	resolver := newAStockSectorTopStockCodeResolver([]aStockRecommendation{{Code: "600183", Name: "生益科技"}})
+	flows := []model.AStockSectorFundFlow{
+		{SectorType: "行业资金流", Name: "电子器件", ChangePct: -0.1, MainNetInflow: 4531569158.08, TopStock: "生益科技"},
+		{SectorType: "行业资金流", Name: "元件", ChangePct: 0.8, MainNetInflow: -3862000000, TopStock: "生益科技"},
+		{SectorType: "概念资金流", Name: "未知主题", ChangePct: 1.1, MainNetInflow: 1000000000, TopStock: "不存在"},
+	}
+
+	got := buildAStockSectorTopStockResonanceMap(flows, resolver)
+
+	if len(got) != 0 {
+		t.Fatalf("expected negative/down/unresolved top stocks to be skipped, got %+v", got)
+	}
+}
+
+func TestAStockSectorTopStockResonanceOverheat30CapsBonus(t *testing.T) {
+	rec := aStockRecommendation{Code: "600183", Name: "生益科技", HotspotScore: 100, MarketScore: 100, Change30: "+44.00%", Reason: "base"}
+	resonance := aStockSectorTopStockResonance{
+		Code:                     "600183",
+		Name:                     "生益科技",
+		SectorNames:              []string{"电子器件", "元件", "印制电路板"},
+		PositiveSectorCount:      3,
+		TotalSectorMainNetInflow: 12000000000,
+		ScoreDelta:               25,
+	}
+
+	got := applyAStockSectorTopStockResonanceToRecommendation(rec, resonance)
+
+	if got.MarketScore != 105 || positiveAStockSectorTopStockResonanceScore(got) != 5 {
+		t.Fatalf("expected 30d overheated resonance bonus capped at +5, got %+v", got)
+	}
+	if !strings.Contains(got.Reason, "板块资金共振") || !strings.Contains(got.Reason, "板块共振加分 5") {
+		t.Fatalf("expected resonance reason with capped score, got %q", got.Reason)
+	}
+}
+
+func TestAStockSectorTopStockResonanceDoesNotOverrideFundFlowHardFilter(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/a-stock/stock-fund-flow-trend":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockStockFundFlowTrendResult{
+				Items: []model.AStockStockFundFlow{
+					{TradeDate: "2026-07-14", Code: "600183", Name: "生益科技", MainNetInflow: -100000000},
+					{TradeDate: "2026-07-13", Code: "600183", Name: "生益科技", MainNetInflow: -100000000},
+					{TradeDate: "2026-07-10", Code: "600183", Name: "生益科技", MainNetInflow: -100000000},
+					{TradeDate: "2026-07-09", Code: "600183", Name: "生益科技", MainNetInflow: -100000000},
+					{TradeDate: "2026-07-08", Code: "600183", Name: "生益科技", MainNetInflow: -100000000},
+				},
+			})
+		case "/api/v1/a-stock/sector-fund-flows":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockSectorFundFlowListResult{
+				Items: []model.AStockSectorFundFlow{
+					{TradeDate: "2026-07-14", SectorType: r.URL.Query().Get("sector_type"), Indicator: "今日", Name: "电子器件", ChangePct: 1.2, MainNetInflow: 4531569158.08, TopStock: "生益科技"},
+					{TradeDate: "2026-07-14", SectorType: r.URL.Query().Get("sector_type"), Indicator: "今日", Name: "元件", ChangePct: 0.8, MainNetInflow: 3862000000, TopStock: "生益科技"},
+					{TradeDate: "2026-07-14", SectorType: r.URL.Query().Get("sector_type"), Indicator: "今日", Name: "印制电路板", ChangePct: 0.5, MainNetInflow: 3611000000, TopStock: "生益科技"},
+				},
+			})
+		default:
+			t.Fatalf("unexpected request: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	result := srv.applyAStockRecommendationFundFlowFilterWithCache(
+		"2026-07-14",
+		[]aStockRecommendation{{Code: "600183", Name: "生益科技", Hotspot: "电子器件", HotspotScore: 100, MarketScore: 100}},
+		nil,
+		nil,
+		1,
+		newAStockRequestCache(),
+		false,
+	)
+
+	if len(result.Recommendations) != 0 || result.Filtered != 1 {
+		t.Fatalf("expected hard-filtered stock to stay removed despite sector resonance, got %+v", result)
 	}
 }
 

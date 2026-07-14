@@ -1282,8 +1282,9 @@ func TestAStockSectorFundFlowSourceRowsAverageAndSourceFilter(t *testing.T) {
 	fetchedAt := time.Date(2026, 7, 2, 2, 30, 0, 0, time.UTC)
 
 	if _, err := store.UpsertAStockSectorFundFlowSourceRows(ctx, "2026-07-02", []model.AStockSectorFundFlow{
-		{TradeDate: "2026-07-02", SectorType: "行业资金流", Indicator: "今日", SourceType: "eastmoney", Rank: 1, Name: "电机", MainNetInflow: 100, LargeNetInflow: 50, FieldCountsJSON: `{"main_net_inflow":1,"large_net_inflow":1}`, FetchedAt: fetchedAt},
-		{TradeDate: "2026-07-02", SectorType: "行业资金流", Indicator: "今日", SourceType: "ths", Rank: 2, Name: "电机", MainNetInflow: 200, LargeNetInflow: 0, FieldCountsJSON: `{"main_net_inflow":1}`, FetchedAt: fetchedAt.Add(time.Minute)},
+		{TradeDate: "2026-07-02", SectorType: "行业资金流", Indicator: "今日", SourceType: "eastmoney", Rank: 1, Name: "电机", MainNetInflow: 100, LargeNetInflow: 50, TopStock: "电机A", FieldCountsJSON: `{"main_net_inflow":1,"large_net_inflow":1}`, FetchedAt: fetchedAt},
+		{TradeDate: "2026-07-02", SectorType: "行业资金流", Indicator: "今日", SourceType: "ths", Rank: 2, Name: "电机", MainNetInflow: 200, LargeNetInflow: 0, TopStock: "电机B", FieldCountsJSON: `{"main_net_inflow":1}`, FetchedAt: fetchedAt.Add(time.Minute)},
+		{TradeDate: "2026-07-02", SectorType: "行业资金流", Indicator: "今日", SourceType: "sina", Rank: 3, Name: "电机", MainNetInflow: 300, LargeNetInflow: 0, TopStock: "电机C；电机D", FieldCountsJSON: `{"main_net_inflow":1}`, FetchedAt: fetchedAt.Add(2 * time.Minute)},
 	}, true); err != nil {
 		t.Fatalf("UpsertAStockSectorFundFlowSourceRows error: %v", err)
 	}
@@ -1296,11 +1297,11 @@ func TestAStockSectorFundFlowSourceRowsAverageAndSourceFilter(t *testing.T) {
 		t.Fatalf("unexpected average sector list: %+v", average)
 	}
 	item := average.Items[0]
-	if item.MainNetInflow != 150 || item.LargeNetInflow != 50 || item.SourceCount != 2 || item.SourceTypes != "eastmoney,ths" {
+	if item.MainNetInflow != 200 || item.LargeNetInflow != 50 || item.SourceCount != 3 || item.SourceTypes != "eastmoney,sina,ths" || item.TopStock != "电机C、电机D、电机B" {
 		t.Fatalf("unexpected averaged sector item: %+v", item)
 	}
 	counts := parseAStockFundFlowFieldCounts(item.FieldCountsJSON)
-	if counts["main_net_inflow"] != 2 || counts["large_net_inflow"] != 1 {
+	if counts["main_net_inflow"] != 3 || counts["large_net_inflow"] != 1 {
 		t.Fatalf("unexpected averaged sector field counts: %s", item.FieldCountsJSON)
 	}
 
