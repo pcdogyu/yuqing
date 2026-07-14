@@ -441,7 +441,7 @@ const (
 	aStockNewsPageSize                 = 10
 	aStockArticleFetchPageSize         = 1000
 	aStockArticleFetchMaxPages         = 100
-	aStockRecentLookbackDays           = 31
+	aStockRecentLookbackDays           = 90
 	aStockFundFlowFilterCookieName     = "yuqing_astock_fund_flow_filter"
 	aStockFundFlowFilterCookieEnabled  = "enabled"
 	aStockFundFlowFilterCookieDisabled = "disabled"
@@ -5388,13 +5388,13 @@ func (s *Server) loadRecentAStockRecommendationCodesWithCache(strategyDate strin
 		return nil
 	}
 	dateKey := normalizeAStockStrategyDate(strategyDate)
-	cacheKey := dateKey + "|" + fmt.Sprint(lookbackDays) + "|calendar"
+	cacheKey := dateKey + "|" + fmt.Sprint(lookbackDays) + "|trading"
 	if cache != nil {
 		if cached, ok := cache.recentCodes[cacheKey]; ok {
 			return cached
 		}
 	}
-	dates := recentAStockCalendarDates(dateKey, lookbackDays)
+	dates := s.recentAStockTradingDatesWithCache(dateKey, lookbackDays, cache)
 	result := make(map[string]struct{})
 	for _, date := range dates {
 		for _, period := range aStockPeriods() {
@@ -5409,16 +5409,38 @@ func (s *Server) loadRecentAStockRecommendationCodesWithCache(strategyDate strin
 	return result
 }
 
-func recentAStockCalendarDates(strategyDate string, lookbackDays int) []string {
+func (s *Server) recentAStockTradingDatesWithCache(strategyDate string, lookbackDays int, cache *aStockRequestCache) []string {
 	day, err := time.ParseInLocation("2006-01-02", normalizeAStockStrategyDate(strategyDate), aStockLocation())
 	if err != nil || lookbackDays <= 0 {
 		return nil
 	}
 	dates := make([]string, 0, lookbackDays)
-	for offset := 1; offset <= lookbackDays; offset++ {
-		dates = append(dates, day.AddDate(0, 0, -offset).Format("2006-01-02"))
+	maxScanDays := max(lookbackDays*3, lookbackDays+30)
+	for offset := 1; len(dates) < lookbackDays && offset <= maxScanDays; offset++ {
+		date := day.AddDate(0, 0, -offset).Format("2006-01-02")
+		if s.isAStockRecentLookbackTradingDayWithCache(date, cache) {
+			dates = append(dates, date)
+		}
 	}
 	return dates
+}
+
+func (s *Server) isAStockRecentLookbackTradingDayWithCache(date string, cache *aStockRequestCache) bool {
+	date = normalizeAStockStrategyDate(date)
+	if date == "" {
+		return false
+	}
+	if strings.TrimSpace(s.cfg.SchedulerURL) == "" {
+		return isLocalAStockTradingDay(date)
+	}
+	status, err := s.loadAStockTradingDayStatusWithCache(date, cache)
+	if err != nil {
+		return isLocalAStockTradingDay(date)
+	}
+	if strings.TrimSpace(status.Date) == "" {
+		status.Date = date
+	}
+	return status.IsTradingDay
 }
 
 func (s *Server) applyAStockAfternoonSameDayCaps(ctx *aStockContext, candidates []aStockMarketCandidate) {
@@ -12641,7 +12663,7 @@ func aStockFilterToggleLabel(ignoreRecent bool) string {
 }
 
 func aStockRecentLookbackLabel() string {
-	return fmt.Sprintf("%d日", aStockRecentLookbackDays)
+	return fmt.Sprintf("%d个交易日", aStockRecentLookbackDays)
 }
 
 func aStockRecentLookbackStatusPrefix() string {
