@@ -10,6 +10,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 
+	"github.com/pcdogyu/yuqing/go/internal/astockcalendar"
 	"github.com/pcdogyu/yuqing/go/internal/astockcode"
 	"github.com/pcdogyu/yuqing/go/internal/astocknews"
 	"github.com/pcdogyu/yuqing/go/internal/model"
@@ -1411,12 +1412,17 @@ func (w *Worker) aStockRecommendationCrawlSources() []string {
 
 func (w *Worker) loadAStockTradingDayStatus(ctx context.Context, strategyDate string) (aStockTradingDayStatus, error) {
 	baseURL := strings.TrimRight(strings.TrimSpace(w.cfg.AStockAuctionURL), "/")
-	if baseURL == "" {
-		return aStockTradingDayStatus{}, fmt.Errorf("YUQING_ASTOCK_AUCTION_URL not configured")
-	}
 	date := strings.TrimSpace(strategyDate)
 	if date == "" {
 		date = time.Now().In(aStockLocation()).Format("2006-01-02")
+	}
+	if baseURL == "" {
+		status := localAStockTradingDayStatus(date, "scheduler_local_calendar_fallback")
+		log.Warn().
+			Str("date", status.Date).
+			Bool("is_trading_day", status.IsTradingDay).
+			Msg("YUQING_ASTOCK_AUCTION_URL not configured; using local A-stock trading calendar fallback")
+		return status, nil
 	}
 	resp, err := w.crawlClient.R().
 		SetContext(ctx).
@@ -1440,6 +1446,30 @@ func (w *Worker) loadAStockTradingDayStatus(ctx context.Context, strategyDate st
 		status.Date = date
 	}
 	return status, nil
+}
+
+func localAStockTradingDayStatus(date string, source string) aStockTradingDayStatus {
+	date = strings.TrimSpace(date)
+	if date == "" {
+		date = time.Now().In(aStockLocation()).Format("2006-01-02")
+	}
+	isTradingDay := astockcalendar.IsTradingDay(date)
+	reason := "trading_day"
+	message := "A-share market is open."
+	if !isTradingDay {
+		reason = "market_closed"
+		message = "该日 A 股休市，不生成股票推荐。"
+	}
+	return aStockTradingDayStatus{
+		Date:               date,
+		IsTradingDay:       isTradingDay,
+		LatestTradingDay:   astockcalendar.AdjacentTradingDay(date, 0),
+		PreviousTradingDay: astockcalendar.AdjacentTradingDay(date, -1),
+		NextTradingDay:     astockcalendar.AdjacentTradingDay(date, 1),
+		Source:             source,
+		Reason:             reason,
+		Message:            message,
+	}
 }
 
 func decodeAStockTradingDayStatus(body []byte) (aStockTradingDayStatus, error) {

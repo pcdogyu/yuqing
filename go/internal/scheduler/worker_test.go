@@ -1558,6 +1558,91 @@ func TestRunAStockRecommendationFailsClosedWhenTradingCalendarUnavailable(t *tes
 	}
 }
 
+func TestRunAStockRecommendationFallsBackToLocalCalendarWhenAuctionURLMissing(t *testing.T) {
+	t.Setenv("YUQING_A_STOCK_NEWS_SOURCE_CONFIG", filepath.Join(t.TempDir(), "sources.json"))
+	var crawlerCalls int
+	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("start") != "2026-06-16 09:30:00" ||
+			r.URL.Query().Get("end") != "2026-06-16 13:00:59" ||
+			r.URL.Query().Get("time_field") != "publish_time" {
+			t.Fatalf("unexpected A股 fallback crawl window query: %s", r.URL.RawQuery)
+		}
+		crawlerCalls++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer crawler.Close()
+
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/articles" {
+			t.Fatalf("unexpected content request: %s", r.URL.String())
+		}
+		if r.URL.Query().Get("start") != "2026-06-16T01:30:00Z" || r.URL.Query().Get("end") != "2026-06-16T05:00:59Z" {
+			t.Fatalf("unexpected content query: %s", r.URL.RawQuery)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer content.Close()
+
+	var gatewayCalls int
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/internal/a-stock/recommendations/generate" {
+			t.Fatalf("unexpected gateway request: %s %s", r.Method, r.URL.String())
+		}
+		if r.URL.Query().Get("date") != "2026-06-16" || r.URL.Query().Get("period") != "afternoon" || r.URL.Query().Get("phase") != "final" {
+			t.Fatalf("unexpected gateway query: %s", r.URL.RawQuery)
+		}
+		gatewayCalls++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer gateway.Close()
+
+	worker := NewWorker(config.Config{
+		CrawlerURL:            crawler.URL,
+		ContentURL:            content.URL,
+		GatewayWebURL:         gateway.URL,
+		HTTPTimeout:           time.Second,
+		SchedulerCrawlTimeout: time.Second,
+		ServiceToken:          "secret-token",
+	})
+	status, err := worker.loadAStockTradingDayStatus(context.Background(), "2026-06-16")
+	if err != nil {
+		t.Fatalf("expected local calendar fallback without error, got %v", err)
+	}
+	if !status.IsTradingDay || status.Source != "scheduler_local_calendar_fallback" {
+		t.Fatalf("unexpected local calendar fallback status: %+v", status)
+	}
+	if err := worker.runAStockRecommendationForDate(context.Background(), "2026-06-16", "afternoon", "final"); err != nil {
+		t.Fatalf("expected recommendation to continue with local calendar fallback, got %v", err)
+	}
+	if crawlerCalls == 0 || gatewayCalls != 1 {
+		t.Fatalf("expected crawler and gateway calls with local fallback, crawler=%d gateway=%d", crawlerCalls, gatewayCalls)
+	}
+}
+
+func TestRunAStockRecommendationLocalCalendarFallbackSkipsHoliday(t *testing.T) {
+	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("crawler should not be called on local fallback holiday: %s", r.URL.String())
+	}))
+	defer crawler.Close()
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("gateway should not be called on local fallback holiday: %s", r.URL.String())
+	}))
+	defer gateway.Close()
+
+	worker := NewWorker(config.Config{
+		CrawlerURL:            crawler.URL,
+		GatewayWebURL:         gateway.URL,
+		HTTPTimeout:           time.Second,
+		SchedulerCrawlTimeout: time.Second,
+		ServiceToken:          "secret-token",
+	})
+	err := worker.runAStockRecommendationForDate(context.Background(), "2026-06-19", "morning", "final")
+	var skipped jobSkippedError
+	if !errors.As(err, &skipped) || !strings.Contains(skipped.Error(), "2026-06-19") {
+		t.Fatalf("expected local fallback holiday skip, got %v", err)
+	}
+}
+
 func TestSchedulerAStockTradingDayProxy(t *testing.T) {
 	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/a-stock/trading-day" || r.URL.Query().Get("date") != "2026-06-19" {
