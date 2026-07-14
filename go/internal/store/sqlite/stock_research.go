@@ -523,6 +523,31 @@ WHERE id = ?`,
 	return s.GetStockResearchSurvey(ctx, id)
 }
 
+func (s *Store) UpdateStockResearchNLP(ctx context.Context, id int64, update model.StockResearchNLPUpdate) (model.StockResearchSurvey, error) {
+	scoredAt := strings.TrimSpace(update.NLPScoredAt)
+	if scoredAt == "" {
+		scoredAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	res, err := s.db.ExecContext(ctx, `
+UPDATE stock_research_surveys
+SET nlp_score = ?, nlp_rating = ?, nlp_reason = ?, nlp_scored_at = ?, updated_at = ?
+WHERE id = ?`,
+		update.NLPScore,
+		strings.TrimSpace(update.NLPRating),
+		strings.TrimSpace(update.NLPReason),
+		scoredAt,
+		time.Now().UTC().Format(time.RFC3339),
+		id,
+	)
+	if err != nil {
+		return model.StockResearchSurvey{}, err
+	}
+	if rows, rowErr := res.RowsAffected(); rowErr == nil && rows == 0 {
+		return model.StockResearchSurvey{}, sql.ErrNoRows
+	}
+	return s.GetStockResearchSurvey(ctx, id)
+}
+
 func (s *Store) listStockResearchSources(ctx context.Context) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT source_type FROM stock_research_surveys WHERE source_type <> '' ORDER BY source_type ASC`)
 	if err != nil {

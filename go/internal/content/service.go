@@ -10,6 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -125,6 +127,7 @@ type Store interface {
 	GetStockResearchSurvey(rctx context.Context, id int64) (model.StockResearchSurvey, error)
 	UpdateStockResearchPDF(rctx context.Context, id int64, update model.StockResearchPDFUpdate) (model.StockResearchSurvey, error)
 	UpdateStockResearchSource(rctx context.Context, id int64, update model.StockResearchSourceUpdate) (model.StockResearchSurvey, error)
+	UpdateStockResearchNLP(rctx context.Context, id int64, update model.StockResearchNLPUpdate) (model.StockResearchSurvey, error)
 	UpsertStockInstitutionHoldings(rctx context.Context, items []model.StockInstitutionHolding) (model.StockInstitutionHoldingUpsertResult, error)
 	ListStockInstitutionHoldings(rctx context.Context, filter model.StockInstitutionHoldingFilter) (model.StockInstitutionHoldingListResult, error)
 	GetStockInstitutionHoldingSummary(rctx context.Context, code string, period string) (model.StockInstitutionHoldingSummary, error)
@@ -185,6 +188,7 @@ func (s *Service) Routes(r chi.Router) {
 	r.Get("/api/v1/articles", s.handleListArticles)
 	r.Get("/api/v1/articles/{id}", s.handleGetArticle)
 	r.Get("/api/v1/articles/{id}/related", s.handleGetRelatedArticles)
+	r.Get("/api/v1/hotspots/switching", s.handleHotspotSwitching)
 	r.Post("/api/v1/articles/{id}/emotion", s.handleSetArticleEmotion)
 	r.Put("/api/v1/articles/{id}/status", s.handleSetArticleStatus)
 	r.Delete("/api/v1/articles/{id}", s.handleDeleteArticle)
@@ -220,6 +224,7 @@ func (s *Service) Routes(r chi.Router) {
 	r.Post("/api/v1/internal/stock-research/batch", s.handleUpsertStockResearchSurveys)
 	r.Post("/api/v1/internal/stock-research/{id}/pdf", s.handleUpdateStockResearchPDF)
 	r.Post("/api/v1/internal/stock-research/{id}/source", s.handleUpdateStockResearchSource)
+	r.Post("/api/v1/internal/stock-research/{id}/nlp", s.handleUpdateStockResearchNLP)
 	r.Get("/api/v1/a-stock/holdings", s.handleListStockInstitutionHoldings)
 	r.Get("/api/v1/a-stock/holdings/summary", s.handleGetStockInstitutionHoldingSummary)
 	r.Get("/api/v1/a-stock/holdings/signals", s.handleListStockInstitutionHoldingSignals)
@@ -616,6 +621,393 @@ func (s *Service) handleListArticles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleHotspotSwitching(w http.ResponseWriter, r *http.Request) {
+	days := apiutil.IntQuery(r, "days", 14)
+	if days < 7 {
+		days = 7
+	}
+	if days > 30 {
+		days = 30
+	}
+	result, err := s.buildHotspotSwitching(r.Context(), days, time.Now())
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) buildHotspotSwitching(ctx context.Context, days int, now time.Time) (model.HotspotSwitchingResult, error) {
+	loc := shanghaiLocation()
+	end := now.In(loc)
+	endDate := end.Format("2006-01-02")
+	start := end.AddDate(0, 0, -days+1)
+	startDate := start.Format("2006-01-02")
+	items, err := s.listHotspotWindowItems(ctx, startDate, endDate)
+	if err != nil {
+		return model.HotspotSwitchingResult{}, err
+	}
+	recentDays := days / 2
+	prevDays := days - recentDays
+	recentStartDate := end.AddDate(0, 0, -recentDays+1).Format("2006-01-02")
+	dateKeys := make([]string, 0, days)
+	for i := 0; i < days; i++ {
+		dateKeys = append(dateKeys, start.AddDate(0, 0, i).Format("2006-01-02"))
+	}
+
+	stats := map[string]*hotspotKeywordStat{}
+	totalArticles := 0
+	for _, item := range items {
+		itemDate := hotspotItemDate(item, loc)
+		dateKey := itemDate.Format("2006-01-02")
+		if dateKey < startDate || dateKey > endDate {
+			continue
+		}
+		keywords := extractArticleHotspotKeywords(item)
+		if len(keywords) == 0 {
+			continue
+		}
+		totalArticles++
+		for keyword := range keywords {
+			stat := stats[keyword]
+			if stat == nil {
+				stat = &hotspotKeywordStat{keyword: keyword, daily: map[string]int{}}
+				stats[keyword] = stat
+			}
+			stat.total++
+			stat.daily[dateKey]++
+			if dateKey >= recentStartDate {
+				stat.recent++
+			} else {
+				stat.prev++
+			}
+			if dateKey == endDate {
+				stat.today++
+			}
+			if stat.first == "" || dateKey < stat.first {
+				stat.first = dateKey
+			}
+			if stat.last == "" || dateKey > stat.last {
+				stat.last = dateKey
+			}
+		}
+	}
+
+	all := make([]model.HotspotSwitchingItem, 0, len(stats))
+	for _, stat := range stats {
+		all = append(all, stat.toModel(dateKeys))
+	}
+	top := topHotspotItems(all, 30, func(a, b model.HotspotSwitchingItem) bool {
+		if a.Count14D != b.Count14D {
+			return a.Count14D > b.Count14D
+		}
+		return a.SwitchScore > b.SwitchScore
+	})
+	todayTop := topHotspotItems(all, 30, func(a, b model.HotspotSwitchingItem) bool {
+		if a.TodayCount != b.TodayCount {
+			return a.TodayCount > b.TodayCount
+		}
+		return a.Count14D > b.Count14D
+	})
+	rising := topHotspotItems(filterHotspotItems(all, func(item model.HotspotSwitchingItem) bool {
+		return item.CountRecent7D > item.CountPrev7D
+	}), 30, func(a, b model.HotspotSwitchingItem) bool {
+		if a.SwitchScore != b.SwitchScore {
+			return a.SwitchScore > b.SwitchScore
+		}
+		return a.CountRecent7D > b.CountRecent7D
+	})
+	cooling := topHotspotItems(filterHotspotItems(all, func(item model.HotspotSwitchingItem) bool {
+		return item.CountPrev7D > item.CountRecent7D
+	}), 30, func(a, b model.HotspotSwitchingItem) bool {
+		aDrop := a.CountPrev7D - a.CountRecent7D
+		bDrop := b.CountPrev7D - b.CountRecent7D
+		if aDrop != bDrop {
+			return aDrop > bDrop
+		}
+		return a.CountPrev7D > b.CountPrev7D
+	})
+	newItems := topHotspotItems(filterHotspotItems(all, func(item model.HotspotSwitchingItem) bool {
+		return item.CountPrev7D == 0 && item.CountRecent7D > 0
+	}), 30, func(a, b model.HotspotSwitchingItem) bool {
+		if a.CountRecent7D != b.CountRecent7D {
+			return a.CountRecent7D > b.CountRecent7D
+		}
+		return a.SwitchScore > b.SwitchScore
+	})
+	continuousRising := topHotspotItems(filterHotspotItems(all, isHotspotContinuouslyRising), 30, func(a, b model.HotspotSwitchingItem) bool {
+		if a.SwitchScore != b.SwitchScore {
+			return a.SwitchScore > b.SwitchScore
+		}
+		return a.CountRecent7D > b.CountRecent7D
+	})
+	daily := buildDailyHotspots(all, dateKeys)
+
+	return model.HotspotSwitchingResult{
+		Days:             days,
+		StartDate:        startDate,
+		EndDate:          endDate,
+		RecentDays:       recentDays,
+		PreviousDays:     prevDays,
+		TotalArticles:    totalArticles,
+		TodayTop:         todayTop,
+		Top:              top,
+		Rising:           rising,
+		Cooling:          cooling,
+		New:              newItems,
+		ContinuousRising: continuousRising,
+		Switches:         buildHotspotSwitches(all),
+		Daily:            daily,
+	}, nil
+}
+
+func (s *Service) listHotspotWindowItems(ctx context.Context, startDate, endDate string) ([]model.Item, error) {
+	const pageSize = 1000
+	items := make([]model.Item, 0)
+	for page := 1; ; page++ {
+		result, err := s.store.ListItems(ctx, model.ArticleFilter{
+			Page:      page,
+			PageSize:  pageSize,
+			Start:     startDate,
+			End:       endDate + "T23:59:59",
+			TimeField: "captured_at",
+			Sort:      "captured_at_desc",
+			Lite:      false,
+		})
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, result.Items...)
+		if len(result.Items) == 0 || len(items) >= result.Total {
+			break
+		}
+	}
+	return items, nil
+}
+
+type hotspotKeywordStat struct {
+	keyword string
+	total   int
+	recent  int
+	prev    int
+	today   int
+	first   string
+	last    string
+	daily   map[string]int
+}
+
+func (s hotspotKeywordStat) toModel(dateKeys []string) model.HotspotSwitchingItem {
+	trend := make([]model.HotspotDailyCount, 0, len(dateKeys))
+	activeDays := 0
+	for _, dateKey := range dateKeys {
+		count := s.daily[dateKey]
+		if count > 0 {
+			activeDays++
+		}
+		trend = append(trend, model.HotspotDailyCount{Date: dateKey, Count: count})
+	}
+	changeRate := 0.0
+	if s.prev == 0 {
+		if s.recent > 0 {
+			changeRate = float64(s.recent)
+		}
+	} else {
+		changeRate = float64(s.recent-s.prev) / float64(s.prev)
+	}
+	switchScore := float64(s.recent-s.prev)*2 + float64(s.recent)*1.2 + float64(activeDays) + float64(s.today)*1.5
+	return model.HotspotSwitchingItem{
+		Keyword:       s.keyword,
+		Count14D:      s.total,
+		CountRecent7D: s.recent,
+		CountPrev7D:   s.prev,
+		ChangeRate:    changeRate,
+		SwitchScore:   switchScore,
+		FirstSeenDate: s.first,
+		LastSeenDate:  s.last,
+		ActiveDays:    activeDays,
+		TodayCount:    s.today,
+		Trend:         trend,
+	}
+}
+
+var hotspotTitleTokenPattern = regexp.MustCompile(`[\p{Han}A-Za-z0-9]{2,12}`)
+
+var hotspotKeywordAliases = map[string][]string{
+	"AI":   {"AI", "人工智能", "大模型", "生成式AI", "AIGC"},
+	"半导体":  {"半导体", "芯片", "晶圆", "光刻机", "存储芯片", "先进封装"},
+	"算力":   {"算力", "数据中心", "服务器", "GPU", "英伟达", "液冷"},
+	"机器人":  {"机器人", "人形机器人", "工业机器人", "具身智能"},
+	"低空经济": {"低空经济", "无人机", "eVTOL", "飞行汽车"},
+	"商业航天": {"商业航天", "卫星", "火箭", "航天"},
+	"军工":   {"军工", "国防", "军贸", "军用"},
+	"新能源":  {"新能源", "光伏", "风电", "储能", "锂电", "固态电池", "钠电池"},
+	"电力":   {"电力", "智能电网", "特高压", "虚拟电厂"},
+	"汽车":   {"汽车", "新能源车", "智能驾驶", "车路云", "无人驾驶"},
+	"医药":   {"医药", "创新药", "CRO", "CXO", "医疗器械"},
+	"消费":   {"消费", "白酒", "食品饮料", "免税", "旅游"},
+	"金融":   {"金融", "银行", "证券", "保险", "券商"},
+	"房地产":  {"房地产", "地产", "楼市", "房贷"},
+	"黄金":   {"黄金", "金价", "贵金属"},
+	"有色金属": {"有色", "铜", "铝", "稀土", "锂矿"},
+	"港股":   {"港股", "恒生", "南向资金"},
+	"美股":   {"美股", "纳斯达克", "标普"},
+	"数字货币": {"数字货币", "比特币", "以太坊", "稳定币", "Crypto"},
+	"业绩":   {"业绩", "预增", "中报", "半年报", "盈利"},
+}
+
+var hotspotStopWords = map[string]struct{}{
+	"公司": {}, "股份": {}, "集团": {}, "公告": {}, "今日": {}, "昨日": {}, "最新": {}, "新闻": {}, "市场": {}, "行业": {}, "板块": {}, "投资": {}, "发展": {}, "相关": {}, "表示": {}, "记者": {}, "证券": {}, "中国": {}, "上海": {}, "深圳": {}, "北京": {}, "东方财富": {}, "财联社": {}, "新浪": {}, "金十": {}, "快讯": {}, "研报": {}, "万元": {}, "亿元": {},
+}
+
+func extractArticleHotspotKeywords(item model.Item) map[string]struct{} {
+	text := item.Title + "\n" + item.Summary + "\n" + item.Content
+	result := map[string]struct{}{}
+	for keyword, aliases := range hotspotKeywordAliases {
+		for _, alias := range aliases {
+			if strings.Contains(strings.ToLower(text), strings.ToLower(alias)) {
+				result[keyword] = struct{}{}
+				break
+			}
+		}
+	}
+	for _, token := range hotspotTitleTokenPattern.FindAllString(item.Title, -1) {
+		token = strings.TrimSpace(token)
+		if !isUsableHotspotTitleToken(token) {
+			continue
+		}
+		result[token] = struct{}{}
+		if len(result) >= 12 {
+			break
+		}
+	}
+	return result
+}
+
+func isUsableHotspotTitleToken(token string) bool {
+	if len([]rune(token)) < 2 || len([]rune(token)) > 8 {
+		return false
+	}
+	if _, ok := hotspotStopWords[token]; ok {
+		return false
+	}
+	for stop := range hotspotStopWords {
+		if strings.Contains(token, stop) {
+			return false
+		}
+	}
+	return true
+}
+
+func hotspotItemDate(item model.Item, loc *time.Location) time.Time {
+	if !item.CapturedAt.IsZero() {
+		return item.CapturedAt.In(loc)
+	}
+	if !item.CreatedAt.IsZero() {
+		return item.CreatedAt.In(loc)
+	}
+	return time.Now().In(loc)
+}
+
+func shanghaiLocation() *time.Location {
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		return time.FixedZone("Asia/Shanghai", 8*3600)
+	}
+	return loc
+}
+
+func topHotspotItems(items []model.HotspotSwitchingItem, limit int, less func(a, b model.HotspotSwitchingItem) bool) []model.HotspotSwitchingItem {
+	items = append([]model.HotspotSwitchingItem(nil), items...)
+	sort.SliceStable(items, func(i, j int) bool {
+		return less(items[i], items[j])
+	})
+	if limit > 0 && len(items) > limit {
+		items = items[:limit]
+	}
+	return items
+}
+
+func filterHotspotItems(items []model.HotspotSwitchingItem, keep func(model.HotspotSwitchingItem) bool) []model.HotspotSwitchingItem {
+	filtered := make([]model.HotspotSwitchingItem, 0, len(items))
+	for _, item := range items {
+		if keep(item) {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
+}
+
+func isHotspotContinuouslyRising(item model.HotspotSwitchingItem) bool {
+	if len(item.Trend) < 3 {
+		return false
+	}
+	trend := item.Trend[len(item.Trend)-3:]
+	return trend[0].Count > 0 && trend[1].Count >= trend[0].Count && trend[2].Count >= trend[1].Count && trend[2].Count > trend[0].Count
+}
+
+func buildDailyHotspots(items []model.HotspotSwitchingItem, dateKeys []string) []model.HotspotDailyHotspot {
+	result := make([]model.HotspotDailyHotspot, 0, len(dateKeys))
+	for _, dateKey := range dateKeys {
+		dayItems := filterHotspotItems(items, func(item model.HotspotSwitchingItem) bool {
+			for _, point := range item.Trend {
+				if point.Date == dateKey && point.Count > 0 {
+					return true
+				}
+			}
+			return false
+		})
+		dayItems = topHotspotItems(dayItems, 10, func(a, b model.HotspotSwitchingItem) bool {
+			aCount := hotspotCountOnDate(a, dateKey)
+			bCount := hotspotCountOnDate(b, dateKey)
+			if aCount != bCount {
+				return aCount > bCount
+			}
+			return a.Count14D > b.Count14D
+		})
+		result = append(result, model.HotspotDailyHotspot{Date: dateKey, Items: dayItems})
+	}
+	return result
+}
+
+func hotspotCountOnDate(item model.HotspotSwitchingItem, dateKey string) int {
+	for _, point := range item.Trend {
+		if point.Date == dateKey {
+			return point.Count
+		}
+	}
+	return 0
+}
+
+func buildHotspotSwitches(items []model.HotspotSwitchingItem) []model.HotspotSwitchingPair {
+	prevTop := topHotspotItems(filterHotspotItems(items, func(item model.HotspotSwitchingItem) bool {
+		return item.CountPrev7D > 0
+	}), 1, func(a, b model.HotspotSwitchingItem) bool {
+		if a.CountPrev7D != b.CountPrev7D {
+			return a.CountPrev7D > b.CountPrev7D
+		}
+		return a.Count14D > b.Count14D
+	})
+	recentTop := topHotspotItems(filterHotspotItems(items, func(item model.HotspotSwitchingItem) bool {
+		return item.CountRecent7D > 0
+	}), 1, func(a, b model.HotspotSwitchingItem) bool {
+		if a.CountRecent7D != b.CountRecent7D {
+			return a.CountRecent7D > b.CountRecent7D
+		}
+		return a.SwitchScore > b.SwitchScore
+	})
+	if len(prevTop) == 0 || len(recentTop) == 0 || prevTop[0].Keyword == recentTop[0].Keyword {
+		return []model.HotspotSwitchingPair{}
+	}
+	score := float64(recentTop[0].CountRecent7D-prevTop[0].CountRecent7D) + recentTop[0].SwitchScore
+	return []model.HotspotSwitchingPair{{
+		From:        prevTop[0].Keyword,
+		To:          recentTop[0].Keyword,
+		FromCount:   prevTop[0].CountPrev7D,
+		ToCount:     recentTop[0].CountRecent7D,
+		SwitchScore: score,
+	}}
 }
 
 func (s *Service) handleListAStockAuctionAmounts(w http.ResponseWriter, r *http.Request) {
@@ -1486,6 +1878,24 @@ func (s *Service) handleUpdateStockResearchSource(w http.ResponseWriter, r *http
 	apiutil.WriteJSON(w, http.StatusOK, "ok", item)
 }
 
+func (s *Service) handleUpdateStockResearchNLP(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	var payload model.StockResearchNLPUpdate
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid json", nil)
+		return
+	}
+	item, err := s.store.UpdateStockResearchNLP(r.Context(), int64(id), normalizeStockResearchNLPUpdate(payload))
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusNotFound, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", item)
+}
+
 func normalizeStockResearchSurvey(item model.StockResearchSurvey, now time.Time) model.StockResearchSurvey {
 	item.Code = strings.TrimSpace(item.Code)
 	item.Name = strings.TrimSpace(item.Name)
@@ -1563,6 +1973,13 @@ func normalizeStockResearchSourceUpdate(update model.StockResearchSourceUpdate) 
 	update.SourceFetchStatus = normalizeStockResearchSourceStatus(update.SourceFetchStatus)
 	update.SourceFetchError = strings.TrimSpace(update.SourceFetchError)
 	update.SourceFetchedAt = strings.TrimSpace(update.SourceFetchedAt)
+	return update
+}
+
+func normalizeStockResearchNLPUpdate(update model.StockResearchNLPUpdate) model.StockResearchNLPUpdate {
+	update.NLPRating = strings.TrimSpace(update.NLPRating)
+	update.NLPReason = strings.TrimSpace(update.NLPReason)
+	update.NLPScoredAt = strings.TrimSpace(update.NLPScoredAt)
 	return update
 }
 

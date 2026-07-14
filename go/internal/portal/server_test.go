@@ -262,7 +262,7 @@ func TestCryptoPageUsesSharedNavAndFriendlyFallback(t *testing.T) {
 	if strings.Contains(body, "500 Internal Server Error") {
 		t.Fatalf("expected friendly fallback, got %s", body)
 	}
-	if !strings.Contains(body, "/crawl-templates/manage") || !strings.Contains(body, "/crypto") {
+	if !strings.Contains(body, "/hotspots") || !strings.Contains(body, "/crypto") {
 		t.Fatalf("expected shared nav links in crypto page, got %s", body)
 	}
 }
@@ -1361,6 +1361,42 @@ func TestStockResearchPagePostTriggersPDFParse(t *testing.T) {
 	}
 	loc, _ := url.QueryUnescape(rr.Header().Get("Location"))
 	for _, want := range []string{"/stock-research?", "code=002230", "company=科大讯飞", "PDF 解析任务已触发"} {
+		if !strings.Contains(loc, want) {
+			t.Fatalf("expected redirect to keep filters and message %q, got %q", want, loc)
+		}
+	}
+}
+
+func TestStockResearchPagePostTriggersNLPParse(t *testing.T) {
+	var schedulerCalled bool
+	scheduler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		schedulerCalled = true
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/scheduler/stock-research/nlp/parse" {
+			t.Fatalf("unexpected scheduler request: %s %s", r.Method, r.URL.String())
+		}
+		if r.Header.Get("X-Service-Token") != "secret-token" {
+			t.Fatalf("expected service token header, got %q", r.Header.Get("X-Service-Token"))
+		}
+		if r.URL.Query().Get("id") != "4900" {
+			t.Fatalf("expected single item nlp parse id, got query: %s", r.URL.RawQuery)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"status": "triggered", "result": map[string]int{"total": 1, "scored": 1}}})
+	}))
+	defer scheduler.Close()
+
+	srv := NewServer(config.Config{SchedulerURL: scheduler.URL, ServiceToken: "secret-token"})
+	req := httptest.NewRequest(http.MethodPost, "/stock-research", strings.NewReader("action=parse_nlp_one&id=4900&code=600026&company=%E4%B8%AD%E8%BF%9C%E6%B5%B7%E8%83%BD"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	srv.handleStockResearchPage(rr, req, map[string]any{"id": 1})
+	if !schedulerCalled {
+		t.Fatal("expected scheduler nlp parse to be called")
+	}
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect after stock research nlp parse, got %d", rr.Code)
+	}
+	loc, _ := url.QueryUnescape(rr.Header().Get("Location"))
+	for _, want := range []string{"/stock-research?", "code=600026", "company=中远海能", "NLP 解析完成", "评分 1 条"} {
 		if !strings.Contains(loc, want) {
 			t.Fatalf("expected redirect to keep filters and message %q, got %q", want, loc)
 		}
@@ -12252,6 +12288,7 @@ func TestPortalPageTemplatesUseCommonFooter(t *testing.T) {
 		"rules":                   rulesTemplate,
 		"rule":                    ruleTemplate,
 		"articles":                articlesTemplate,
+		"hotspots":                hotspotsTemplate,
 		"article":                 articleTemplate,
 		"reports":                 reportsTemplate,
 		"report":                  reportTemplate,
@@ -12322,6 +12359,27 @@ func TestPortalNavPlacesLogoutAfterUpgrade(t *testing.T) {
 	}
 	if strings.Contains(portalUpgradeShellHTML, `状态检查`) {
 		t.Fatalf("expected upgrade shell to keep polling status out of console log")
+	}
+}
+
+func TestPortalNavMovesManagementLinksUnderSystemAndAddsHotspots(t *testing.T) {
+	if !strings.Contains(portalNavHTML, `<a href="/articles">文章</a><a href="/hotspots">热点</a><a href="/a-stock">A股</a>`) {
+		t.Fatalf("expected hotspots nav link immediately after articles, got %s", portalNavHTML)
+	}
+	for _, unexpected := range []string{
+		`<a href="/projects">项目</a>`,
+		`<a href="/monitor-rules">规则</a>`,
+		`<a href="/reports">报告</a>`,
+		`<a href="/crawl-templates">模板中心</a>`,
+		`<a href="/crawl-templates/manage">模板管理</a>`,
+	} {
+		if strings.Contains(portalNavHTML, unexpected) {
+			t.Fatalf("expected top nav to omit management link %q", unexpected)
+		}
+	}
+	systemPrefix := `<div class="tabs"><a href="/projects">项目</a><a href="/monitor-rules">规则</a><a href="/reports">报告</a><a href="/crawl-templates">模板中心</a><a href="/crawl-templates/manage">模板管理</a><a class="{{if eq .SectionKey "services"}}active{{end}}" href="/system?section=services">服务状态</a>`
+	if !strings.Contains(systemTemplate, systemPrefix) {
+		t.Fatalf("expected system tabs to place management links before services")
 	}
 }
 
@@ -12509,6 +12567,94 @@ func TestArticlesTemplateUsesSharedHeaderNavDirectly(t *testing.T) {
 	}
 }
 
+func TestHotspotsPageRendersSwitchingData(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/hotspots/switching" || r.URL.Query().Get("days") != "14" {
+			t.Fatalf("unexpected content request %s", r.URL.String())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    http.StatusOK,
+			"message": "ok",
+			"data": model.HotspotSwitchingResult{
+				Days:          14,
+				StartDate:     "2026-07-01",
+				EndDate:       "2026-07-14",
+				TotalArticles: 12,
+				TodayTop: []model.HotspotSwitchingItem{{
+					Keyword:    "AI",
+					TodayCount: 3,
+					Count14D:   8,
+					Trend:      []model.HotspotDailyCount{{Date: "2026-07-13", Count: 1}, {Date: "2026-07-14", Count: 3}},
+				}},
+				Top: []model.HotspotSwitchingItem{{
+					Keyword:       "AI",
+					Count14D:      8,
+					CountRecent7D: 6,
+					CountPrev7D:   2,
+					ChangeRate:    2,
+				}},
+				Rising: []model.HotspotSwitchingItem{{
+					Keyword:       "机器人",
+					CountRecent7D: 4,
+					CountPrev7D:   1,
+					ChangeRate:    3,
+					ActiveDays:    3,
+				}},
+				Cooling: []model.HotspotSwitchingItem{{
+					Keyword:       "黄金",
+					CountRecent7D: 1,
+					CountPrev7D:   5,
+					ChangeRate:    -0.8,
+					LastSeenDate:  "2026-07-11",
+				}},
+				New: []model.HotspotSwitchingItem{{
+					Keyword:       "低空经济",
+					CountRecent7D: 2,
+					FirstSeenDate: "2026-07-13",
+					LastSeenDate:  "2026-07-14",
+				}},
+				ContinuousRising: []model.HotspotSwitchingItem{{
+					Keyword:       "算力",
+					CountRecent7D: 5,
+					Count14D:      6,
+					SwitchScore:   18,
+				}},
+				Switches: []model.HotspotSwitchingPair{{From: "黄金", To: "AI", FromCount: 5, ToCount: 6, SwitchScore: 21}},
+				Daily:    []model.HotspotDailyHotspot{{Date: "2026-07-14", Items: []model.HotspotSwitchingItem{{Keyword: "AI"}}}},
+			},
+		})
+	}))
+	defer content.Close()
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/hotspots?days=14", nil)
+	srv.handleHotspots(rr, req, map[string]any{"id": int64(1), "username": "admin"})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected hotspots page 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, expected := range []string{
+		"热点切换监控",
+		"过去 14 天热点",
+		"热点切换",
+		"今日热点排行",
+		"升温热点",
+		"降温热点",
+		"新增热点",
+		"连续升温热点",
+		`href="/articles?keyword=AI"`,
+		`href="/articles?keyword=%E6%9C%BA%E5%99%A8%E4%BA%BA"`,
+		"黄金",
+		"低空经济",
+		"算力",
+	} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("expected hotspots page to include %q, got %s", expected, body)
+		}
+	}
+}
+
 func TestDashboardTemplateOmitsServiceStatusTable(t *testing.T) {
 	for _, unexpected := range []string{
 		`<h2>服务状态</h2>`,
@@ -12540,7 +12686,7 @@ func TestSystemTemplateIncludesServiceRestartActions(t *testing.T) {
 }
 
 func TestSystemTemplateGroupsRepeatedPanelsBySection(t *testing.T) {
-	serviceTab := `href="/system?section=services">服务状态</a><a class="{{if eq .SectionKey "legacy"}}active{{end}}" href="/system?section=legacy">Legacy注册表`
+	serviceTab := `href="/crawl-templates/manage">模板管理</a><a class="{{if eq .SectionKey "services"}}active{{end}}" href="/system?section=services">服务状态</a><a class="{{if eq .SectionKey "legacy"}}active{{end}}" href="/system?section=legacy">Legacy注册表`
 	newsStatsTab := `href="/system?section=operations">生产运行</a><a class="{{if eq .SectionKey "newsstats"}}active{{end}}" href="/system?section=newsstats">新闻统计`
 	opActionsTab := `href="/system?section=newsstats">新闻统计</a><a class="{{if eq .SectionKey "opactions"}}active{{end}}" href="/system?section=opactions">运营操作`
 	contractsTab := `href="/system?section=opactions">运营操作</a><a class="{{if eq .SectionKey "contracts"}}active{{end}}" href="/system?section=contracts">外部契约与审计`

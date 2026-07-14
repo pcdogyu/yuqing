@@ -1062,6 +1062,21 @@ func TestStockResearchSurveysUpsertAndFilter(t *testing.T) {
 	if forcedSource.SourceText != "新正文" || forcedSource.SourceFetchedAt != "2026-06-16T02:00:00Z" {
 		t.Fatalf("expected forced source update to overwrite text, got %+v", forcedSource)
 	}
+	nlpUpdated, err := store.UpdateStockResearchNLP(ctx, list.Items[0].ID, model.StockResearchNLPUpdate{
+		NLPScore:    82.5,
+		NLPRating:   "积极",
+		NLPReason:   "AI订单增长",
+		NLPScoredAt: "2026-06-16T04:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("UpdateStockResearchNLP error: %v", err)
+	}
+	if nlpUpdated.NLPScore != 82.5 || nlpUpdated.NLPRating != "积极" || nlpUpdated.NLPReason != "AI订单增长" || nlpUpdated.NLPScoredAt != "2026-06-16T04:00:00Z" {
+		t.Fatalf("expected nlp fields to update, got %+v", nlpUpdated)
+	}
+	if nlpUpdated.SourceText != "新正文" || nlpUpdated.PDFText != "科大讯飞研报正文" {
+		t.Fatalf("expected nlp update to preserve source and pdf text, got %+v", nlpUpdated)
+	}
 
 	sohuList, err := store.ListStockResearchSurveys(ctx, model.StockResearchFilter{Code: "300059", Page: 1, PageSize: 10})
 	if err != nil || len(sohuList.Items) != 1 {

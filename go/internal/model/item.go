@@ -152,6 +152,55 @@ type ArticleFilter struct {
 	Lite       bool   `json:"lite,omitempty"`
 }
 
+type HotspotSwitchingResult struct {
+	Days             int                    `json:"days"`
+	StartDate        string                 `json:"start_date"`
+	EndDate          string                 `json:"end_date"`
+	RecentDays       int                    `json:"recent_days"`
+	PreviousDays     int                    `json:"previous_days"`
+	TotalArticles    int                    `json:"total_articles"`
+	TodayTop         []HotspotSwitchingItem `json:"today_top"`
+	Top              []HotspotSwitchingItem `json:"top"`
+	Rising           []HotspotSwitchingItem `json:"rising"`
+	Cooling          []HotspotSwitchingItem `json:"cooling"`
+	New              []HotspotSwitchingItem `json:"new"`
+	ContinuousRising []HotspotSwitchingItem `json:"continuous_rising"`
+	Switches         []HotspotSwitchingPair `json:"switches"`
+	Daily            []HotspotDailyHotspot  `json:"daily"`
+}
+
+type HotspotSwitchingItem struct {
+	Keyword       string              `json:"keyword"`
+	Count14D      int                 `json:"count_14d"`
+	CountRecent7D int                 `json:"count_recent_7d"`
+	CountPrev7D   int                 `json:"count_prev_7d"`
+	ChangeRate    float64             `json:"change_rate"`
+	SwitchScore   float64             `json:"switch_score"`
+	FirstSeenDate string              `json:"first_seen_date"`
+	LastSeenDate  string              `json:"last_seen_date"`
+	ActiveDays    int                 `json:"active_days"`
+	TodayCount    int                 `json:"today_count"`
+	Trend         []HotspotDailyCount `json:"trend,omitempty"`
+}
+
+type HotspotDailyCount struct {
+	Date  string `json:"date"`
+	Count int    `json:"count"`
+}
+
+type HotspotDailyHotspot struct {
+	Date  string                 `json:"date"`
+	Items []HotspotSwitchingItem `json:"items"`
+}
+
+type HotspotSwitchingPair struct {
+	From        string  `json:"from"`
+	To          string  `json:"to"`
+	FromCount   int     `json:"from_count"`
+	ToCount     int     `json:"to_count"`
+	SwitchScore float64 `json:"switch_score"`
+}
+
 type SearchFacetBucket struct {
 	Value string `json:"value"`
 	Count int    `json:"count"`

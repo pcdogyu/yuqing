@@ -213,7 +213,7 @@ func (w *Worker) buildStockResearchPDFUpdate(ctx context.Context, item model.Sto
 		SourceFetchedAt:   sourceUpdate.SourceFetchedAt,
 		Force:             opts.Force,
 	}
-	if score, ok := w.scoreStockResearchPDF(ctx, item, text); ok {
+	if score, ok := w.scoreStockResearchText(ctx, item, text); ok {
 		update.NLPScore = score.Score
 		update.NLPRating = score.Rating
 		update.NLPReason = score.Reason
@@ -239,7 +239,7 @@ func stockResearchHasPDFSource(item model.StockResearchSurvey) bool {
 		strings.TrimSpace(item.SourceURL) != ""
 }
 
-func (w *Worker) scoreStockResearchPDF(ctx context.Context, item model.StockResearchSurvey, text string) (model.NLPStockScoreResponse, bool) {
+func (w *Worker) scoreStockResearchText(ctx context.Context, item model.StockResearchSurvey, text string) (model.NLPStockScoreResponse, bool) {
 	baseURL := strings.TrimRight(strings.TrimSpace(w.cfg.NLPURL), "/")
 	if baseURL == "" || strings.TrimSpace(text) == "" {
 		return model.NLPStockScoreResponse{}, false
@@ -387,6 +387,20 @@ func (w *Worker) writeStockResearchPDFUpdate(ctx context.Context, id int64, upda
 	}
 	if !resp.IsSuccess() {
 		return fmt.Errorf("content stock research pdf update failed: %s", resp.Status())
+	}
+	return nil
+}
+
+func (w *Worker) writeStockResearchNLPUpdate(ctx context.Context, id int64, update model.StockResearchNLPUpdate) error {
+	resp, err := w.stockResearchPDFContentRequest().
+		SetContext(ctx).
+		SetBody(update).
+		Post(fmt.Sprintf("%s/api/v1/internal/stock-research/%d/nlp", strings.TrimRight(w.cfg.ContentURL, "/"), id))
+	if err != nil {
+		return err
+	}
+	if !resp.IsSuccess() {
+		return fmt.Errorf("content stock research nlp update failed: %s", resp.Status())
 	}
 	return nil
 }

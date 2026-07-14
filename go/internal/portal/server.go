@@ -158,6 +158,7 @@ type pageData struct {
 	Rules                      []model.MonitorRule
 	CrawlTemplates             []model.CrawlTemplate
 	Articles                   model.ItemListResult
+	Hotspots                   model.HotspotSwitchingResult
 	Article                    model.Item
 	Related                    []model.Item
 	CrawlRuns                  []model.CrawlRun
@@ -321,6 +322,8 @@ func NewServer(cfg config.Config) *Server {
 		"formatArticlePublishTime": formatArticlePublishTime,
 		"formatArticleListTime":    formatArticleListTime,
 		"articleBodyText":          articleBodyText,
+		"formatHotspotChangeRate":  formatHotspotChangeRate,
+		"hotspotBarHeight":         hotspotBarHeight,
 	}
 	tpl := template.Must(template.New("layout").Funcs(funcMap).Parse(layoutTemplate))
 	template.Must(tpl.New("login").Parse(loginTemplate))
@@ -331,6 +334,7 @@ func NewServer(cfg config.Config) *Server {
 	template.Must(tpl.New("rule").Parse(ruleTemplate))
 	template.Must(tpl.New("crawl_templates").Parse(crawlTemplatesTemplate))
 	template.Must(tpl.New("articles").Parse(articlesRealtimeTemplate))
+	template.Must(tpl.New("hotspots").Parse(hotspotsTemplate))
 	template.Must(tpl.New("article").Parse(articleTemplate))
 	template.Must(tpl.New("reports").Parse(reportsTemplate))
 	template.Must(tpl.New("report").Parse(reportTemplate))
@@ -447,6 +451,7 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/crawl-templates", s.requireSession(s.handleCrawlTemplates))
 	mux.HandleFunc("/monitor-rules/", s.requireSession(s.handleRuleDetail))
 	mux.HandleFunc("/monitor-rules", s.requireSession(s.handleRules))
+	mux.HandleFunc("/hotspots", s.requireSession(s.handleHotspots))
 	mux.HandleFunc("/articles/", s.requireSession(s.handleArticleDetail))
 	mux.HandleFunc("/articles", s.requireSession(s.handleArticles))
 	mux.HandleFunc("/reports/", s.requireSession(s.handleReportDetail))
@@ -2632,6 +2637,27 @@ func (s *Server) handleArticles(w http.ResponseWriter, r *http.Request, user any
 	})
 }
 
+func (s *Server) handleHotspots(w http.ResponseWriter, r *http.Request, user any) {
+	days := parseIntDefault(r.URL.Query().Get("days"), 14)
+	if days < 7 {
+		days = 7
+	}
+	if days > 30 {
+		days = 30
+	}
+	result := model.HotspotSwitchingResult{Days: days}
+	err := s.getJSON(s.cfg.ContentURL+"/api/v1/hotspots/switching?days="+strconv.Itoa(days), &result)
+	data := pageData{
+		Title:    "热点切换监控",
+		User:     user,
+		Hotspots: result,
+	}
+	if err != nil {
+		data.Error = err.Error()
+	}
+	_ = s.render(w, "hotspots", data)
+}
+
 func (s *Server) handleArticleDetail(w http.ResponseWriter, r *http.Request, user any) {
 	id := strings.TrimPrefix(r.URL.Path, "/articles/")
 	if id == "" {
@@ -3893,6 +3919,24 @@ func formatShanghaiTime(ts time.Time) string {
 	return ts.In(loc).Format("2006-01-02 15:04")
 }
 
+func formatHotspotChangeRate(value float64) string {
+	if value == 0 {
+		return "0%"
+	}
+	return fmt.Sprintf("%+.0f%%", value*100)
+}
+
+func hotspotBarHeight(count int) int {
+	if count <= 0 {
+		return 2
+	}
+	height := 4 + count*4
+	if height > 26 {
+		return 26
+	}
+	return height
+}
+
 func formatArticleCaptureTime(item model.Item) string {
 	if item.CapturedAt.IsZero() {
 		return "--"
@@ -4918,7 +4962,7 @@ func collectLegacyLiveRoutes() []legacyRouteSpec {
 	return result
 }
 
-const portalNavHTML = `<nav><a href="/">总览</a><a href="/projects">项目</a><a href="/monitor-rules">规则</a><a href="/articles">文章</a><a href="/reports">报告</a><a href="/crawl-templates">模板中心</a><a href="/crawl-templates/manage">模板管理</a><a href="/a-stock">A股</a><a href="/a-stock/backtest">回测</a><a href="/sector-fund-flow">版块资金</a><a href="/stock-research">研报调研</a><a href="/a-stock/holdings">机构持仓</a><a href="/a-stock/auction">集合竞价</a><a href="/crypto">Crypto</a><a href="/system">系统</a><a href="/logs">日志</a><button id="portal-upgrade-button" class="portal-upgrade-button" type="button">升级</button><a class="logout-link" href="/logout">退出</a></nav>`
+const portalNavHTML = `<nav><a href="/">总览</a><a href="/articles">文章</a><a href="/hotspots">热点</a><a href="/a-stock">A股</a><a href="/a-stock/backtest">回测</a><a href="/sector-fund-flow">版块资金</a><a href="/stock-research">研报调研</a><a href="/a-stock/holdings">机构持仓</a><a href="/a-stock/auction">集合竞价</a><a href="/crypto">Crypto</a><a href="/system">系统</a><a href="/logs">日志</a><button id="portal-upgrade-button" class="portal-upgrade-button" type="button">升级</button><a class="logout-link" href="/logout">退出</a></nav>`
 const portalUpgradeShellHTML = `<div id="portal-upgrade-mask" class="portal-upgrade-mask" hidden><div class="portal-upgrade-panel" role="dialog" aria-modal="true" aria-labelledby="portal-upgrade-title"><div class="portal-upgrade-header"><div><h2 id="portal-upgrade-title">系统升级</h2><p id="portal-upgrade-status" class="portal-upgrade-status">等待执行</p></div><button id="portal-upgrade-close" class="portal-upgrade-close" type="button">关闭</button></div><div class="portal-upgrade-console-bar"><span id="portal-upgrade-console-state">等待</span><span id="portal-upgrade-console-clock">--</span></div><pre id="portal-upgrade-log" class="portal-upgrade-log">等待升级日志</pre></div></div><script>
 (function(){
 if(window.__portalUpgradeBound){return}
@@ -5006,6 +5050,10 @@ const loginTemplate = `
 
 const dashboardTemplate = `
 {{define "dashboard"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.metric{padding:16px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.metric strong{display:block;font-size:28px;margin-top:6px}.toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}.msg{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}.ok{color:#214e34;font-weight:700}.bad{color:#8f2d2d;font-weight:700}` + `</style></head><body><header><h1>总览</h1>{{template "nav" .}}</header><main>{{if .Message}}<div class="msg">{{.Message}}</div>{{end}}<section><div class="toolbar"><h2>核心指标</h2><form method="post"><button type="submit">手动刷新分析</button></form></div><div class="metric-grid"><div class="metric">文章数<strong>{{.Dashboard.Overview.ArticleCount}}</strong></div><div class="metric">项目数<strong>{{.Dashboard.Overview.ProjectCount}}</strong></div><div class="metric">报告数<strong>{{.Dashboard.Overview.ReportCount}}</strong></div><div class="metric">活跃规则<strong>{{.Dashboard.Overview.AlertRuleCount}}</strong></div></div></section><section><h2>近 7 日趋势</h2><table><tr><th>日期</th><th>文章数</th></tr>{{range .Dashboard.Trends}}<tr><td>{{.Label}}</td><td>{{.Count}}</td></tr>{{end}}</table></section><section><h2>来源分布</h2><table><tr><th>来源</th><th>数量</th></tr>{{range .Dashboard.Sources}}<tr><td>{{.SourceType}}</td><td>{{.Count}}</td></tr>{{end}}</table></section><section><h2>关键词热点</h2><table><tr><th>关键词</th><th>次数</th></tr>{{range .Dashboard.Keywords}}<tr><td>{{.Keyword}}</td><td>{{.Count}}</td></tr>{{end}}</table></section><section><h2>最近抓取</h2><table><tr><th>来源</th><th>状态</th><th>抓取数</th><th>入库数</th><th>开始时间</th></tr>{{range .CrawlRuns}}<tr><td>{{.SourceType}}</td><td>{{.Status}}</td><td>{{.FetchedCount}}</td><td>{{.InsertedCount}}</td><td>{{.StartedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="5">暂无抓取记录</td></tr>{{end}}</table></section><section><h2>系统公告</h2><table><tr><th>标题</th><th>时间</th></tr>{{range .Notices}}<tr><td>{{.Title}}</td><td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="2">暂无公告</td></tr>{{end}}</table></section><section><h2>最近任务</h2><table><tr><th>任务</th><th>状态</th><th>开始时间</th></tr>{{range .TaskRuns}}<tr><td>{{.TaskName}}</td><td>{{.Status}}</td><td>{{.StartedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="3">暂无任务记录</td></tr>{{end}}</table></section></main>{{template "footer" .}}</body></html>{{end}}
+`
+
+const hotspotsTemplate = `
+{{define "hotspots"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.hotspot-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.hotspot-tabs{display:flex;gap:8px;flex-wrap:wrap}.hotspot-tabs a{padding:8px 12px;border-radius:999px;border:1px solid #d0c8b8;background:#fff;color:#214e34;text-decoration:none}.hotspot-tabs a.active{background:#214e34;color:#fff}.hotspot-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.hotspot-kpi{border:1px solid #ece7dc;background:#faf8f2;border-radius:8px;padding:14px}.hotspot-kpi strong{display:block;margin-top:6px;font-size:24px;color:#214e34}.hotspot-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.hotspot-table th,.hotspot-table td{font-size:14px;vertical-align:top}.hotspot-keyword{font-weight:700;color:#214e34;text-decoration:none}.hotspot-up{color:#b3261e;font-weight:700}.hotspot-down{color:#007d3c;font-weight:700}.hotspot-muted{color:#6a6257;font-size:13px}.trend-mini{display:flex;gap:2px;align-items:flex-end;height:28px;min-width:84px}.trend-mini i{display:block;width:8px;background:#d8e7dd;border-radius:2px 2px 0 0}.error{padding:12px;border-radius:8px;background:#fdeaea;color:#8f2d2d}@media (max-width:1000px){.hotspot-grid{grid-template-columns:1fr}}` + `</style></head><body><header><h1>热点切换监控</h1>{{template "nav" .}}</header><main>{{if .Error}}<div class="error">{{.Error}}</div>{{end}}<section><div class="hotspot-toolbar"><div><h2>过去 {{.Hotspots.Days}} 天热点</h2><p class="hotspot-muted">{{.Hotspots.StartDate}} 至 {{.Hotspots.EndDate}}，按文章标题、摘要和正文关键词统计。</p></div><div class="hotspot-tabs"><a class="{{if eq .Hotspots.Days 14}}active{{end}}" href="/hotspots?days=14">最近14天</a><a class="{{if eq .Hotspots.Days 7}}active{{end}}" href="/hotspots?days=7">最近7天</a><a class="{{if eq .Hotspots.Days 30}}active{{end}}" href="/hotspots?days=30">最近30天</a></div></div><div class="hotspot-kpis"><div class="hotspot-kpi">统计文章<strong>{{.Hotspots.TotalArticles}}</strong></div><div class="hotspot-kpi">今日热点<strong>{{len .Hotspots.TodayTop}}</strong></div><div class="hotspot-kpi">新增热点<strong>{{len .Hotspots.New}}</strong></div><div class="hotspot-kpi">切换信号<strong>{{len .Hotspots.Switches}}</strong></div></div></section><section><h2>热点切换</h2><table class="hotspot-table"><tr><th>上一阶段主热点</th><th>当前阶段主热点</th><th>前期次数</th><th>近期次数</th><th>切换分</th><th>入口</th></tr>{{range .Hotspots.Switches}}<tr><td>{{.From}}</td><td><a class="hotspot-keyword" href="/articles?keyword={{urlquery .To}}">{{.To}}</a></td><td>{{.FromCount}}</td><td>{{.ToCount}}</td><td>{{printf "%.1f" .SwitchScore}}</td><td><a class="inline" href="/articles?keyword={{urlquery .To}}">相关文章</a></td></tr>{{else}}<tr><td colspan="6">暂无明显热点切换</td></tr>{{end}}</table></section><div class="hotspot-grid"><section><h2>今日热点排行</h2><table class="hotspot-table"><tr><th>热点</th><th>今日</th><th>14日</th><th>趋势</th><th>入口</th></tr>{{range .Hotspots.TodayTop}}<tr><td><a class="hotspot-keyword" href="/articles?keyword={{urlquery .Keyword}}">{{.Keyword}}</a></td><td>{{.TodayCount}}</td><td>{{.Count14D}}</td><td><div class="trend-mini">{{range .Trend}}<i style="height:{{hotspotBarHeight .Count}}px"></i>{{end}}</div></td><td><a class="inline" href="/articles?keyword={{urlquery .Keyword}}">文章</a></td></tr>{{else}}<tr><td colspan="5">暂无今日热点</td></tr>{{end}}</table></section><section><h2>14日热点排行</h2><table class="hotspot-table"><tr><th>热点</th><th>14日</th><th>近7日</th><th>前7日</th><th>变化</th></tr>{{range .Hotspots.Top}}<tr><td><a class="hotspot-keyword" href="/articles?keyword={{urlquery .Keyword}}">{{.Keyword}}</a></td><td>{{.Count14D}}</td><td>{{.CountRecent7D}}</td><td>{{.CountPrev7D}}</td><td>{{formatHotspotChangeRate .ChangeRate}}</td></tr>{{else}}<tr><td colspan="5">暂无热点数据</td></tr>{{end}}</table></section><section><h2>升温热点</h2><table class="hotspot-table"><tr><th>热点</th><th>近7日</th><th>前7日</th><th>变化</th><th>活跃天数</th></tr>{{range .Hotspots.Rising}}<tr><td><a class="hotspot-keyword" href="/articles?keyword={{urlquery .Keyword}}">{{.Keyword}}</a></td><td>{{.CountRecent7D}}</td><td>{{.CountPrev7D}}</td><td class="hotspot-up">{{formatHotspotChangeRate .ChangeRate}}</td><td>{{.ActiveDays}}</td></tr>{{else}}<tr><td colspan="5">暂无升温热点</td></tr>{{end}}</table></section><section><h2>降温热点</h2><table class="hotspot-table"><tr><th>热点</th><th>近7日</th><th>前7日</th><th>变化</th><th>最后出现</th></tr>{{range .Hotspots.Cooling}}<tr><td><a class="hotspot-keyword" href="/articles?keyword={{urlquery .Keyword}}">{{.Keyword}}</a></td><td>{{.CountRecent7D}}</td><td>{{.CountPrev7D}}</td><td class="hotspot-down">{{formatHotspotChangeRate .ChangeRate}}</td><td>{{.LastSeenDate}}</td></tr>{{else}}<tr><td colspan="5">暂无降温热点</td></tr>{{end}}</table></section><section><h2>新增热点</h2><table class="hotspot-table"><tr><th>热点</th><th>近7日</th><th>首次出现</th><th>最近出现</th><th>入口</th></tr>{{range .Hotspots.New}}<tr><td><a class="hotspot-keyword" href="/articles?keyword={{urlquery .Keyword}}">{{.Keyword}}</a></td><td>{{.CountRecent7D}}</td><td>{{.FirstSeenDate}}</td><td>{{.LastSeenDate}}</td><td><a class="inline" href="/articles?keyword={{urlquery .Keyword}}">文章</a></td></tr>{{else}}<tr><td colspan="5">暂无新增热点</td></tr>{{end}}</table></section><section><h2>连续升温热点</h2><table class="hotspot-table"><tr><th>热点</th><th>近7日</th><th>14日</th><th>切换分</th><th>入口</th></tr>{{range .Hotspots.ContinuousRising}}<tr><td><a class="hotspot-keyword" href="/articles?keyword={{urlquery .Keyword}}">{{.Keyword}}</a></td><td>{{.CountRecent7D}}</td><td>{{.Count14D}}</td><td>{{printf "%.1f" .SwitchScore}}</td><td><a class="inline" href="/articles?keyword={{urlquery .Keyword}}">文章</a></td></tr>{{else}}<tr><td colspan="5">暂无连续升温热点</td></tr>{{end}}</table></section></div><section><h2>近 {{.Hotspots.Days}} 日趋势</h2><table class="hotspot-table"><tr><th>日期</th><th>Top 热点</th></tr>{{range .Hotspots.Daily}}<tr><td>{{.Date}}</td><td>{{range .Items}}<a class="inline" href="/articles?keyword={{urlquery .Keyword}}">{{.Keyword}}</a> {{else}}<span class="hotspot-muted">暂无</span>{{end}}</td></tr>{{else}}<tr><td colspan="2">暂无趋势数据</td></tr>{{end}}</table></section></main>{{template "footer" .}}</body></html>{{end}}
 `
 
 const crawlTemplatesTemplate = `
@@ -5117,7 +5165,7 @@ func buildSystemTemplate() string {
 		`{{if eq .SectionKey "feedback"}}<section class="section-block"><h2>反馈建议</h2><form method="post"><input type="hidden" name="form_type" value="feedback"><input type="hidden" name="section" value="feedback"><input name="title" placeholder="标题"><textarea class="feedback-textarea" name="content" placeholder="问题描述或需求"></textarea><button type="submit">提交</button></form></section>{{end}}`,
 		`{{if eq .SectionKey "feedback"}}<section class="section-block"><h2>反馈建议</h2><form method="post"><input type="hidden" name="form_type" value="feedback"><input type="hidden" name="section" value="feedback"><input name="title" placeholder="标题"><textarea class="feedback-textarea" name="content" placeholder="问题描述或需求"></textarea><button type="submit">提交</button></form></section>{{end}}{{if eq .SectionKey "feedbacklist"}}<section class="section-block"><h2>建议列表</h2><div class="feedback-list">{{range .FeedbackItems}}<article class="feedback-item"><div class="feedback-item-head"><h3>{{.Title}}</h3><form method="post" class="feedback-delete-form" onsubmit="return confirm('确认删除这条建议？')"><input type="hidden" name="form_type" value="delete_feedback"><input type="hidden" name="section" value="feedbacklist"><input type="hidden" name="feedback_id" value="{{.ID}}"><button type="submit" class="feedback-delete-button">删除</button></form></div><div class="feedback-meta">用户 {{.UserID}} · {{.CreatedAt.Format "2006-01-02 15:04"}}</div><div class="feedback-content">{{.Content}}</div></article>{{else}}<p class="muted">暂无反馈建议</p>{{end}}</div></section>{{end}}`,
 		`<div class="tabs"><a class="{{if eq .SectionKey "account"}}active{{end}}" href="/system?section=account">账号安全</a><a class="{{if eq .SectionKey "preferences"}}active{{end}}" href="/system?section=preferences">偏好设置</a><a class="{{if eq .SectionKey "database"}}active{{end}}" href="/system?section=database">数据库配置</a><a class="{{if eq .SectionKey "favorites"}}active{{end}}" href="/system?section=favorites{{if .FavoriteProjectID}}&project_id={{.FavoriteProjectID}}{{end}}">收藏夹</a><a class="{{if eq .SectionKey "warningmsg"}}active{{end}}" href="/system?section=warningmsg{{if .WarningArticleProjectID}}&project_id={{.WarningArticleProjectID}}{{end}}{{if .WarningArticleKeyword}}&keyword={{.WarningArticleKeyword}}{{end}}">预警消息</a><a class="{{if eq .SectionKey "warning"}}active{{end}}" href="/system?section=warning{{if .WarningSetting.ProjectID}}&project_id={{.WarningSetting.ProjectID}}{{end}}">预警设置</a><a class="{{if eq .SectionKey "feedback"}}active{{end}}" href="/system?section=feedback">反馈建议</a><a class="{{if eq .SectionKey "operations"}}active{{end}}" href="/system?section=operations">生产运行</a></div>`,
-		`<div class="tabs"><a class="{{if eq .SectionKey "services"}}active{{end}}" href="/system?section=services">服务状态</a><a class="{{if eq .SectionKey "legacy"}}active{{end}}" href="/system?section=legacy">Legacy注册表</a><a class="{{if eq .SectionKey "account"}}active{{end}}" href="/system?section=account">账号安全</a><a class="{{if eq .SectionKey "preferences"}}active{{end}}" href="/system?section=preferences">偏好设置</a><a class="{{if eq .SectionKey "database"}}active{{end}}" href="/system?section=database">数据库配置</a><a class="{{if eq .SectionKey "release"}}active{{end}}" href="/system?section=release">软件发布</a><a class="{{if eq .SectionKey "stockrepair"}}active{{end}}" href="/system?section=stockrepair">推荐股票修复</a><a class="{{if eq .SectionKey "favorites"}}active{{end}}" href="/system?section=favorites{{if .FavoriteProjectID}}&project_id={{.FavoriteProjectID}}{{end}}">收藏夹</a><a class="{{if eq .SectionKey "warningmsg"}}active{{end}}" href="/system?section=warningmsg{{if .WarningArticleProjectID}}&project_id={{.WarningArticleProjectID}}{{end}}{{if .WarningArticleKeyword}}&keyword={{.WarningArticleKeyword}}{{end}}">预警消息</a><a class="{{if eq .SectionKey "warning"}}active{{end}}" href="/system?section=warning{{if .WarningSetting.ProjectID}}&project_id={{.WarningSetting.ProjectID}}{{end}}">预警设置</a><a class="{{if eq .SectionKey "feedback"}}active{{end}}" href="/system?section=feedback">反馈建议</a><a class="{{if eq .SectionKey "feedbacklist"}}active{{end}}" href="/system?section=feedbacklist">建议列表</a><a class="{{if eq .SectionKey "operations"}}active{{end}}" href="/system?section=operations">生产运行</a><a class="{{if eq .SectionKey "opactions"}}active{{end}}" href="/system?section=opactions">运营操作</a><a class="{{if eq .SectionKey "contracts"}}active{{end}}" href="/system?section=contracts">外部契约与审计</a><a class="{{if eq .SectionKey "announcements"}}active{{end}}" href="/system?section=announcements">公告与任务</a></div>`,
+		`<div class="tabs"><a href="/projects">项目</a><a href="/monitor-rules">规则</a><a href="/reports">报告</a><a href="/crawl-templates">模板中心</a><a href="/crawl-templates/manage">模板管理</a><a class="{{if eq .SectionKey "services"}}active{{end}}" href="/system?section=services">服务状态</a><a class="{{if eq .SectionKey "legacy"}}active{{end}}" href="/system?section=legacy">Legacy注册表</a><a class="{{if eq .SectionKey "account"}}active{{end}}" href="/system?section=account">账号安全</a><a class="{{if eq .SectionKey "preferences"}}active{{end}}" href="/system?section=preferences">偏好设置</a><a class="{{if eq .SectionKey "database"}}active{{end}}" href="/system?section=database">数据库配置</a><a class="{{if eq .SectionKey "release"}}active{{end}}" href="/system?section=release">软件发布</a><a class="{{if eq .SectionKey "stockrepair"}}active{{end}}" href="/system?section=stockrepair">推荐股票修复</a><a class="{{if eq .SectionKey "favorites"}}active{{end}}" href="/system?section=favorites{{if .FavoriteProjectID}}&project_id={{.FavoriteProjectID}}{{end}}">收藏夹</a><a class="{{if eq .SectionKey "warningmsg"}}active{{end}}" href="/system?section=warningmsg{{if .WarningArticleProjectID}}&project_id={{.WarningArticleProjectID}}{{end}}{{if .WarningArticleKeyword}}&keyword={{.WarningArticleKeyword}}{{end}}">预警消息</a><a class="{{if eq .SectionKey "warning"}}active{{end}}" href="/system?section=warning{{if .WarningSetting.ProjectID}}&project_id={{.WarningSetting.ProjectID}}{{end}}">预警设置</a><a class="{{if eq .SectionKey "feedback"}}active{{end}}" href="/system?section=feedback">反馈建议</a><a class="{{if eq .SectionKey "feedbacklist"}}active{{end}}" href="/system?section=feedbacklist">建议列表</a><a class="{{if eq .SectionKey "operations"}}active{{end}}" href="/system?section=operations">生产运行</a><a class="{{if eq .SectionKey "opactions"}}active{{end}}" href="/system?section=opactions">运营操作</a><a class="{{if eq .SectionKey "contracts"}}active{{end}}" href="/system?section=contracts">外部契约与审计</a><a class="{{if eq .SectionKey "announcements"}}active{{end}}" href="/system?section=announcements">公告与任务</a></div>`,
 		`</section><section><h2>服务状态</h2>`,
 		`</section>{{if eq .SectionKey "services"}}<section><h2>服务状态</h2>`,
 		`name="section" value="{{$.SectionKey}}"`,

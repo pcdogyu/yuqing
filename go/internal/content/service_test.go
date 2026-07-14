@@ -675,6 +675,22 @@ func TestStockResearchPDFAPIUpdatesDownloadsAndReadsText(t *testing.T) {
 		t.Fatalf("expected pdf force update to overwrite source text, got %+v", updateEnvelope.Data)
 	}
 
+	nlpReq := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/internal/stock-research/%d/nlp", itemID), strings.NewReader(`{"nlp_score":86.5,"nlp_rating":"积极","nlp_reason":"油运景气提升","nlp_scored_at":"2026-06-16T04:00:00Z"}`))
+	nlpRR := httptest.NewRecorder()
+	router.ServeHTTP(nlpRR, nlpReq)
+	if nlpRR.Code != http.StatusOK {
+		t.Fatalf("expected nlp update 200, got %d body=%s", nlpRR.Code, nlpRR.Body.String())
+	}
+	if err := json.Unmarshal(nlpRR.Body.Bytes(), &updateEnvelope); err != nil {
+		t.Fatalf("unmarshal nlp update response: %v", err)
+	}
+	if updateEnvelope.Data.NLPScore != 86.5 || updateEnvelope.Data.NLPRating != "积极" || updateEnvelope.Data.NLPReason != "油运景气提升" || updateEnvelope.Data.NLPScoredAt != "2026-06-16T04:00:00Z" {
+		t.Fatalf("expected nlp fields to update, got %+v", updateEnvelope.Data)
+	}
+	if updateEnvelope.Data.SourceText != "新版研报正文\n第二段" || updateEnvelope.Data.PDFText != "新版研报正文\n第二段" {
+		t.Fatalf("expected nlp update to preserve source and pdf text, got %+v", updateEnvelope.Data)
+	}
+
 	textReq := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/stock-research/%d/pdf/text", itemID), nil)
 	textRR := httptest.NewRecorder()
 	router.ServeHTTP(textRR, textReq)
@@ -2129,6 +2145,92 @@ func routeContextWithID(id int64) *chi.Context {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", strconv.FormatInt(id, 10))
 	return rctx
+}
+
+func TestHotspotSwitchingBuildsRisingCoolingAndSwitch(t *testing.T) {
+	ctx := context.Background()
+	store := newContentSearchTestStore(t)
+	svc := NewService(config.Config{}, store)
+	loc, _ := time.LoadLocation("Asia/Shanghai")
+	now := time.Date(2026, 7, 14, 12, 0, 0, 0, loc)
+	items := make([]model.Item, 0)
+	addItem := func(key string, dayOffset int, title, content string) {
+		ts := now.AddDate(0, 0, dayOffset)
+		items = append(items, model.Item{
+			SourceType: "headline",
+			SourceKey:  key,
+			Title:      title,
+			Content:    content,
+			Summary:    content,
+			SourceURL:  "https://example.com/" + key,
+			CapturedAt: ts,
+			CreatedAt:  ts,
+			UpdatedAt:  ts,
+		})
+	}
+	for i, offset := range []int{-13, -12, -11, -10} {
+		addItem(fmt.Sprintf("gold-prev-%d", i), offset, fmt.Sprintf("黄金%d", i), "黄金 金价 贵金属")
+	}
+	for i, offset := range []int{-4, -3, -2, -1, 0} {
+		addItem(fmt.Sprintf("ai-recent-%d", i), offset, fmt.Sprintf("AI%d", i), "人工智能 大模型 生成式AI")
+	}
+	for i, offset := range []int{-1, 0} {
+		addItem(fmt.Sprintf("robot-new-%d", i), offset, fmt.Sprintf("机器人%d", i), "人形机器人 具身智能")
+	}
+	if _, _, err := store.UpsertItems(ctx, items); err != nil {
+		t.Fatalf("UpsertItems error: %v", err)
+	}
+
+	result, err := svc.buildHotspotSwitching(ctx, 14, now)
+	if err != nil {
+		t.Fatalf("buildHotspotSwitching error: %v", err)
+	}
+	if result.Days != 14 || result.TotalArticles != len(items) {
+		t.Fatalf("unexpected hotspot window summary: %+v", result)
+	}
+	if got := hotspotItemByKeyword(result.Rising, "AI"); got == nil || got.CountRecent7D != 5 || got.CountPrev7D != 0 {
+		t.Fatalf("expected AI to be rising from recent articles, got %+v", got)
+	}
+	if got := hotspotItemByKeyword(result.Cooling, "黄金"); got == nil || got.CountPrev7D != 4 || got.CountRecent7D != 0 {
+		t.Fatalf("expected gold to be cooling from previous window, got %+v", got)
+	}
+	if got := hotspotItemByKeyword(result.New, "机器人"); got == nil || got.CountRecent7D != 2 {
+		t.Fatalf("expected robot to be new recent hotspot, got %+v", got)
+	}
+	if len(result.Switches) == 0 || result.Switches[0].From != "黄金" || result.Switches[0].To != "AI" {
+		t.Fatalf("expected hotspot switch from gold to AI, got %+v", result.Switches)
+	}
+}
+
+func TestHotspotSwitchingEndpointReturnsEmptyListsWithoutArticles(t *testing.T) {
+	store := newContentSearchTestStore(t)
+	svc := NewService(config.Config{}, store)
+	router := svc.Router()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/hotspots/switching?days=14", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected hotspot endpoint 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	var envelope struct {
+		Data model.HotspotSwitchingResult `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal hotspot response: %v", err)
+	}
+	if envelope.Data.Days != 14 || len(envelope.Data.Top) != 0 || len(envelope.Data.Rising) != 0 || len(envelope.Data.Cooling) != 0 {
+		t.Fatalf("expected empty hotspot lists, got %+v", envelope.Data)
+	}
+}
+
+func hotspotItemByKeyword(items []model.HotspotSwitchingItem, keyword string) *model.HotspotSwitchingItem {
+	for idx := range items {
+		if items[idx].Keyword == keyword {
+			return &items[idx]
+		}
+	}
+	return nil
 }
 
 func newContentSearchTestStore(t *testing.T) *sqlitestore.Store {

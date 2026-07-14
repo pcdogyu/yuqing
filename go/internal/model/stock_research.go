@@ -97,3 +97,10 @@ type StockResearchSourceUpdate struct {
 	SourceFetchedAt   string `json:"source_fetched_at"`
 	Force             bool   `json:"force"`
 }
+
+type StockResearchNLPUpdate struct {
+	NLPScore    float64 `json:"nlp_score"`
+	NLPRating   string  `json:"nlp_rating"`
+	NLPReason   string  `json:"nlp_reason"`
+	NLPScoredAt string  `json:"nlp_scored_at"`
+}

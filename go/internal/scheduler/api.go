@@ -27,6 +27,7 @@ func (w *Worker) Router() http.Handler {
 	r.Post("/api/v1/scheduler/stock-research/backfill", w.handleRunStockResearchBackfill)
 	r.Post("/api/v1/scheduler/stock-research/source/repair", w.handleRunStockResearchSourceRepair)
 	r.Post("/api/v1/scheduler/stock-research/pdf/parse", w.handleRunStockResearchPDFParse)
+	r.Post("/api/v1/scheduler/stock-research/nlp/parse", w.handleRunStockResearchNLPParse)
 	r.Post("/api/v1/scheduler/investor-relations/backfill", w.handleRunInvestorRelationsBackfill)
 	r.Post("/api/v1/scheduler/a-stock/auction/latest", w.handleRunAStockAuctionLatest)
 	r.Post("/api/v1/scheduler/a-stock/auction/backfill", w.handleRunAStockAuctionBackfill)
@@ -184,6 +185,47 @@ func (w *Worker) handleRunStockResearchPDFParse(wr http.ResponseWriter, r *http.
 		message = err.Error()
 	}
 	_ = w.recordTaskRun(r.Context(), "stock-research-pdf-parse", status, message, startedAt, &finishedAt)
+	if err != nil {
+		apiutil.WriteJSON(wr, http.StatusInternalServerError, err.Error(), result)
+		return
+	}
+	apiutil.WriteJSON(wr, http.StatusOK, "ok", map[string]any{"status": "triggered", "result": result})
+}
+
+func (w *Worker) handleRunStockResearchNLPParse(wr http.ResponseWriter, r *http.Request) {
+	if strings.TrimSpace(r.Header.Get("X-Service-Token")) != strings.TrimSpace(w.cfg.ServiceToken) {
+		apiutil.WriteJSON(wr, http.StatusUnauthorized, "unauthorized", nil)
+		return
+	}
+	var id int64
+	if rawID := strings.TrimSpace(r.URL.Query().Get("id")); rawID != "" {
+		parsedID, err := strconv.ParseInt(rawID, 10, 64)
+		if err != nil || parsedID <= 0 {
+			apiutil.WriteJSON(wr, http.StatusBadRequest, "invalid id", nil)
+			return
+		}
+		id = parsedID
+	}
+	opts := stockResearchNLPParseOptions{
+		ID:      id,
+		Code:    strings.TrimSpace(r.URL.Query().Get("code")),
+		Company: strings.TrimSpace(r.URL.Query().Get("company")),
+		Kind:    strings.TrimSpace(r.URL.Query().Get("kind")),
+		Source:  strings.TrimSpace(r.URL.Query().Get("source")),
+		Start:   strings.TrimSpace(r.URL.Query().Get("start")),
+		End:     strings.TrimSpace(r.URL.Query().Get("end")),
+		DryRun:  parseBoolQuery(r, "dry_run"),
+	}
+	startedAt := time.Now().UTC()
+	result, err := w.runStockResearchNLPParse(r.Context(), opts)
+	finishedAt := time.Now().UTC()
+	status := "success"
+	message := fmt.Sprintf("stock research nlp parse completed: total=%d scored=%d no_text=%d failed=%d dry_run=%t", result.Total, result.Scored, result.NoText, result.Failed, result.DryRun)
+	if err != nil {
+		status = "failed"
+		message = err.Error()
+	}
+	_ = w.recordTaskRun(r.Context(), "stock-research-nlp-parse", status, message, startedAt, &finishedAt)
 	if err != nil {
 		apiutil.WriteJSON(wr, http.StatusInternalServerError, err.Error(), result)
 		return

@@ -212,12 +212,22 @@ func (s *Server) renderStockResearchDetail(w http.ResponseWriter, r *http.Reques
 	b.WriteString(fmt.Sprintf("%d", item.ID))
 	b.WriteString(`"><input type="hidden" name="redirect_to" value="`)
 	b.WriteString(html.EscapeString(stockResearchDetailURL(item.ID, returnTo)))
-	b.WriteString(`"><button type="submit">重新抓取原文</button></form></div>`)
+	b.WriteString(`"><button type="submit">重新抓取原文</button></form>`)
+	b.WriteString(`<form method="post" action="/stock-research" class="research-action-form"><input type="hidden" name="action" value="parse_nlp_one"><input type="hidden" name="id" value="`)
+	b.WriteString(fmt.Sprintf("%d", item.ID))
+	b.WriteString(`"><input type="hidden" name="redirect_to" value="`)
+	b.WriteString(html.EscapeString(stockResearchDetailURL(item.ID, returnTo)))
+	b.WriteString(`"><button type="submit">用 NLP 解析文档</button></form></div>`)
 	b.WriteString(`<h2>`)
 	b.WriteString(html.EscapeString(cleanStockResearchTitle(item)))
 	b.WriteString(`</h2><p class="research-text-meta">`)
 	b.WriteString(html.EscapeString(stockResearchDetailMeta(item)))
 	b.WriteString(`</p></section>`)
+	if strings.TrimSpace(item.NLPScoredAt) != "" {
+		b.WriteString(`<section><h2>NLP 解析</h2><p class="research-muted">`)
+		b.WriteString(html.EscapeString(stockResearchNLPStatusText(item)))
+		b.WriteString(`</p></section>`)
+	}
 	text := strings.TrimSpace(item.SourceText)
 	heading := "原文正文"
 	if text == "" {
@@ -475,6 +485,9 @@ func renderStockResearchFilters(b *strings.Builder, ctx model.StockResearchListR
 	b.WriteString(`<form method="post" class="research-action-form"><input type="hidden" name="action" value="parse_pdf">`)
 	stockResearchHiddenFields(b, ctx)
 	b.WriteString(`<button type="submit">解析当前筛选研报PDF</button></form>`)
+	b.WriteString(`<form method="post" class="research-action-form"><input type="hidden" name="action" value="parse_nlp">`)
+	stockResearchHiddenFields(b, ctx)
+	b.WriteString(`<button type="submit">NLP解析当前筛选文档</button></form>`)
 	b.WriteString(`<form method="post" class="research-action-form"><input type="hidden" name="scope" value="investor_relations"><input type="hidden" name="action" value="backfill_year">`)
 	stockResearchHiddenFields(b, ctx)
 	b.WriteString(`<button type="submit">抓取投资者关系近一年并解析PDF</button></form>`)
@@ -569,11 +582,21 @@ func renderStockResearchTableWithOptions(b *strings.Builder, ctx model.StockRese
 			b.WriteString(html.EscapeString(stockResearchPDFStatusClass(displayStatus)))
 			b.WriteString(`">`)
 			b.WriteString(html.EscapeString(stockResearchPDFStatusLabel(displayStatus)))
-			b.WriteString(`</span><form method="post" class="research-action-form"><input type="hidden" name="action" value="parse_pdf_one"><input type="hidden" name="id" value="`)
+			parseAction := "parse_pdf_one"
+			parseLabel := "重新解析"
+			if stockResearchHasNLPText(item) {
+				parseAction = "parse_nlp_one"
+				parseLabel = "NLP解析"
+			}
+			b.WriteString(`</span><form method="post" class="research-action-form"><input type="hidden" name="action" value="`)
+			b.WriteString(html.EscapeString(parseAction))
+			b.WriteString(`"><input type="hidden" name="id" value="`)
 			b.WriteString(fmt.Sprintf("%d", item.ID))
 			b.WriteString(`">`)
 			stockResearchHiddenFields(b, ctx)
-			b.WriteString(`<button type="submit">重新解析</button></form>`)
+			b.WriteString(`<button type="submit">`)
+			b.WriteString(html.EscapeString(parseLabel))
+			b.WriteString(`</button></form>`)
 			b.WriteString(`<form method="post" class="research-action-form"><input type="hidden" name="action" value="fetch_source_one"><input type="hidden" name="id" value="`)
 			b.WriteString(fmt.Sprintf("%d", item.ID))
 			b.WriteString(`">`)
@@ -673,6 +696,15 @@ func (s *Server) handleStockResearchAction(w http.ResponseWriter, r *http.Reques
 		} else {
 			message = s.triggerStockResearchPDFParse(filter, id)
 		}
+	case "parse_nlp":
+		message = s.triggerStockResearchNLPParse(filter, 0)
+	case "parse_nlp_one":
+		id, err := strconv.ParseInt(strings.TrimSpace(r.FormValue("id")), 10, 64)
+		if err != nil || id <= 0 {
+			message = "研报 NLP 解析失败：无效记录 ID"
+		} else {
+			message = s.triggerStockResearchNLPParse(filter, id)
+		}
 	case "fetch_source_page":
 		preservePage = true
 		message = s.fetchStockResearchSourcePage(r.Context(), filter)
@@ -716,6 +748,15 @@ func (s *Server) handleInvestorRelationsAction(w http.ResponseWriter, r *http.Re
 			message = "投资者关系 PDF 解析失败：无效记录 ID"
 		} else {
 			message = s.triggerStockResearchPDFParse(filter, id)
+		}
+	case "parse_nlp":
+		message = s.triggerStockResearchNLPParse(filter, 0)
+	case "parse_nlp_one":
+		id, err := strconv.ParseInt(strings.TrimSpace(r.FormValue("id")), 10, 64)
+		if err != nil || id <= 0 {
+			message = "投资者关系 NLP 解析失败：无效记录 ID"
+		} else {
+			message = s.triggerStockResearchNLPParse(filter, id)
 		}
 	}
 	filter.Page = 1
@@ -929,6 +970,56 @@ func (s *Server) triggerStockResearchPDFParse(filter model.StockResearchFilter, 
 	return "研报 PDF 解析任务已触发，请稍后刷新查看。"
 }
 
+func (s *Server) triggerStockResearchNLPParse(filter model.StockResearchFilter, id int64) string {
+	query := url.Values{}
+	if id > 0 {
+		query.Set("id", fmt.Sprintf("%d", id))
+	} else {
+		if filter.Code != "" {
+			query.Set("code", filter.Code)
+		}
+		if filter.Company != "" {
+			query.Set("company", filter.Company)
+		}
+		if filter.Kind != "" {
+			query.Set("kind", filter.Kind)
+		}
+		if filter.Source != "" {
+			query.Set("source", filter.Source)
+		}
+		if filter.Start != "" {
+			query.Set("start", filter.Start)
+		}
+		if filter.End != "" {
+			query.Set("end", filter.End)
+		}
+	}
+	resp, err := s.client.R().
+		SetHeader("X-Service-Token", s.cfg.ServiceToken).
+		Post(s.cfg.SchedulerURL + "/api/v1/scheduler/stock-research/nlp/parse?" + query.Encode())
+	if err != nil {
+		return "研报 NLP 解析失败：" + err.Error()
+	}
+	if !resp.IsSuccess() {
+		return "研报 NLP 解析失败：" + stockResearchSchedulerError(resp.Body(), resp.String())
+	}
+	var envelope struct {
+		Data struct {
+			Result struct {
+				Total  int `json:"total"`
+				Scored int `json:"scored"`
+				NoText int `json:"no_text"`
+				Failed int `json:"failed"`
+			} `json:"result"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(resp.Body(), &envelope); err == nil && envelope.Data.Result.Total > 0 {
+		result := envelope.Data.Result
+		return fmt.Sprintf("研报 NLP 解析完成：共 %d 条，评分 %d 条，无文本 %d 条，失败 %d 条。", result.Total, result.Scored, result.NoText, result.Failed)
+	}
+	return "研报 NLP 解析任务已触发，请稍后刷新查看。"
+}
+
 func stockResearchSchedulerError(body []byte, fallback string) string {
 	var envelope struct {
 		Message string `json:"message"`
@@ -1029,6 +1120,24 @@ func stockResearchSourceStatusLabel(item model.StockResearchSurvey) string {
 		}
 		return "原文未入库"
 	}
+}
+
+func stockResearchHasNLPText(item model.StockResearchSurvey) bool {
+	return strings.TrimSpace(item.SourceText) != "" || strings.TrimSpace(item.PDFText) != "" || strings.TrimSpace(item.Summary) != ""
+}
+
+func stockResearchNLPStatusText(item model.StockResearchSurvey) string {
+	parts := []string{fmt.Sprintf("NLP %.2f", item.NLPScore)}
+	if rating := strings.TrimSpace(item.NLPRating); rating != "" {
+		parts = append(parts, rating)
+	}
+	if reason := strings.TrimSpace(item.NLPReason); reason != "" {
+		parts = append(parts, reason)
+	}
+	if scoredAt := strings.TrimSpace(item.NLPScoredAt); scoredAt != "" {
+		parts = append(parts, "时间："+scoredAt)
+	}
+	return strings.Join(parts, " ｜ ")
 }
 
 func stockResearchDetailMeta(item model.StockResearchSurvey) string {
