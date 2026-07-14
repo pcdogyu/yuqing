@@ -177,10 +177,23 @@ func FormatSourceBlocks(blocks []string) string {
 }
 
 func CleanSourceTextForURL(rawURL string, text string) string {
+	if IsEastMoneyReportURL(rawURL) {
+		return CleanEastMoneyReportText(text)
+	}
 	if IsSinaFinanceReportURL(rawURL) {
 		return CleanSinaFinanceReportText(text)
 	}
 	return NormalizePlainText(text)
+}
+
+func IsEastMoneyReportURL(rawURL string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	path := strings.ToLower(parsed.EscapedPath())
+	return host == "data.eastmoney.com" && strings.Contains(path, "/report/info/")
 }
 
 func IsSinaFinanceReportURL(rawURL string) bool {
@@ -206,6 +219,33 @@ func CleanSinaFinanceReportText(text string) string {
 		}
 	}
 	return FormatSourceBlocks(blocks)
+}
+
+func CleanEastMoneyReportText(text string) string {
+	normalized := NormalizePlainText(text)
+	if normalized == "" {
+		return ""
+	}
+	loc := eastMoneyReportInvestmentPointsPattern.FindStringIndex(normalized)
+	if loc == nil {
+		return normalized
+	}
+	cleaned := normalized[loc[0]:]
+	if cut := eastMoneyReportTailIndex(cleaned); cut >= 0 {
+		cleaned = cleaned[:cut]
+	}
+	return FormatSourceBlocks(sourceTextBlocks(cleaned))
+}
+
+func eastMoneyReportTailIndex(text string) int {
+	cut := -1
+	for _, marker := range eastMoneyReportTailMarkers {
+		idx := strings.Index(text, marker)
+		if idx >= 0 && (cut < 0 || idx < cut) {
+			cut = idx
+		}
+	}
+	return cut
 }
 
 func sourceTextBlocks(text string) []string {
@@ -240,6 +280,20 @@ var sinaFinanceReportLeadingNoise = map[string]bool{
 	"债券":    true,
 	"金融工程":  true,
 	"个股点评":  true,
+}
+
+var eastMoneyReportInvestmentPointsPattern = regexp.MustCompile(`[*\p{Han}A-Za-z0-9Ａ-Ｚａ-ｚ·-]+[（(]\d{6}[）)]\s*投资要点`)
+
+var eastMoneyReportTailMarkers = []string{
+	"调高投资评级",
+	"调低投资评级",
+	"首次评级股票",
+	"盈利预测排行",
+	"最新研究报告",
+	"买入评级个股",
+	"数据来源：东方财富Choice数据",
+	"郑重声明：东方财富网发布此信息",
+	"东方财富免费版",
 }
 
 func NormalizePlainText(raw string) string {

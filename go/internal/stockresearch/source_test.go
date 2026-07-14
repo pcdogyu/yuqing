@@ -70,6 +70,60 @@ func TestCleanSinaFinanceReportTextRemovesNavigationAndRecommendations(t *testin
 	}
 }
 
+func TestCleanEastMoneyReportTextRemovesNavigationAndTail(t *testing.T) {
+	raw := strings.Join([]string{
+		"财经 焦点 股票 新股 研报 个股研报 行业研报 盈利预测",
+		"电磁线领域领先龙头，行业高景气+全球化布局驱动新成长",
+		"宏远股份(920018) 投资要点",
+		"深耕高性能电磁线，全球化布局打开成长空间。",
+		"盈利预测与投资评级：预计公司业绩稳步增长。",
+		"风险提示：下游行业需求波动，原材料价格波动。",
+		"调高投资评级",
+		"调低投资评级",
+		"首次评级股票",
+		"盈利预测排行",
+		"最新研究报告",
+		"买入评级个股",
+		"东吴证券",
+		"国金证券",
+		"数据来源：东方财富Choice数据",
+		"郑重声明：东方财富网发布此信息",
+		"东方财富免费版",
+	}, "\n\n")
+
+	text := CleanEastMoneyReportText(raw)
+
+	if !strings.HasPrefix(text, "宏远股份(920018) 投资要点") {
+		t.Fatalf("expected eastmoney text to start at investment points anchor, got %q", text)
+	}
+	for _, unwanted := range []string{"财经 焦点 股票", "电磁线领域领先龙头", "调高投资评级", "调低投资评级", "首次评级股票", "数据来源：东方财富Choice数据", "郑重声明", "东方财富免费版"} {
+		if strings.Contains(text, unwanted) {
+			t.Fatalf("expected cleaned eastmoney text not to contain %q, got %q", unwanted, text)
+		}
+	}
+	for _, want := range []string{"深耕高性能电磁线", "盈利预测与投资评级", "风险提示：下游行业需求波动"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected cleaned eastmoney text to contain %q, got %q", want, text)
+		}
+	}
+}
+
+func TestCleanSourceTextForURLAppliesEastMoneyRules(t *testing.T) {
+	raw := "财经 焦点 股票\n\n宏远股份(920018) 投资要点\n\n正文内容\n\n数据来源：东方财富Choice数据\n\n尾部"
+
+	text := CleanSourceTextForURL("https://data.eastmoney.com/report/info/AP202607121826913867.html", raw)
+
+	if !strings.HasPrefix(text, "宏远股份(920018) 投资要点") {
+		t.Fatalf("expected eastmoney URL cleaner to trim leading navigation, got %q", text)
+	}
+	if strings.Contains(text, "财经 焦点 股票") || strings.Contains(text, "数据来源：东方财富Choice数据") || strings.Contains(text, "尾部") {
+		t.Fatalf("expected eastmoney URL cleaner to remove noise, got %q", text)
+	}
+	if !strings.Contains(text, "正文内容") {
+		t.Fatalf("expected eastmoney URL cleaner to keep body, got %q", text)
+	}
+}
+
 func TestCleanSourceTextForURLDoesNotApplySinaRulesToOtherSources(t *testing.T) {
 	raw := "研究报告\n\n正文\n\n数据推荐\n\n尾部"
 

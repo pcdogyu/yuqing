@@ -30,7 +30,7 @@ type stockResearchSourceRepairResult struct {
 
 func (w *Worker) runStockResearchSourceRepair(ctx context.Context, opts stockResearchSourceRepairOptions) (stockResearchSourceRepairResult, error) {
 	opts = normalizeStockResearchSourceRepairOptions(opts, stockResearchToday())
-	if opts.Source != "sina_finance_report" {
+	if !isSupportedStockResearchSourceRepair(opts.Source) {
 		return stockResearchSourceRepairResult{DryRun: opts.DryRun}, fmt.Errorf("unsupported source repair: %s", opts.Source)
 	}
 	items, err := w.loadStockResearchSourceRepairCandidates(ctx, opts)
@@ -88,6 +88,15 @@ func normalizeStockResearchSourceRepairOptions(opts stockResearchSourceRepairOpt
 		}
 	}
 	return opts
+}
+
+func isSupportedStockResearchSourceRepair(source string) bool {
+	switch strings.TrimSpace(source) {
+	case "sina_finance_report", "eastmoney_report":
+		return true
+	default:
+		return false
+	}
 }
 
 func stockResearchSourceRepairDefaultRange(now time.Time) (string, string) {

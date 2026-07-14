@@ -73,6 +73,45 @@ func TestRunStockResearchSourceRepairDryRunCountsAndSkipsWrites(t *testing.T) {
 	}
 }
 
+func TestRunStockResearchSourceRepairAcceptsEastMoneyReport(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/stock-research":
+			if r.URL.Query().Get("source") != "eastmoney_report" || r.URL.Query().Get("start") != "2026-07-12" || r.URL.Query().Get("end") != "2026-07-14" {
+				t.Fatalf("unexpected eastmoney source repair query: %s", r.URL.RawQuery)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockResearchListResult{
+				Page: 1, PageSize: 200, Total: 1,
+				Items: []model.StockResearchSurvey{{
+					ID:         4927,
+					SourceURL:  "https://data.eastmoney.com/report/info/AP202607121826913867.html",
+					SourceType: "eastmoney_report",
+				}},
+			}})
+		case r.Method == http.MethodPost:
+			t.Fatalf("dry run should not write eastmoney source update: %s", r.URL.Path)
+		default:
+			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	worker := NewWorker(config.Config{ContentURL: content.URL, HTTPTimeout: time.Second})
+	result, err := worker.runStockResearchSourceRepair(context.Background(), stockResearchSourceRepairOptions{
+		Source: "eastmoney_report",
+		Start:  "2026-07-12",
+		End:    "2026-07-14",
+		DryRun: true,
+	})
+	if err != nil {
+		t.Fatalf("run eastmoney source repair dry run: %v", err)
+	}
+	if !result.DryRun || result.Total != 1 || result.Repaired != 1 || result.Skipped != 0 || result.Failed != 0 {
+		t.Fatalf("unexpected eastmoney source repair result: %+v", result)
+	}
+}
+
 func TestRunStockResearchSourceRepairForceWritesCleanedSinaText(t *testing.T) {
 	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
