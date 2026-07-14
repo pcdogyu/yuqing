@@ -195,8 +195,8 @@ func TestAStockAuctionAmountAPIUpsertsAndLists(t *testing.T) {
 	if envelope.Data.Date != "2026-06-16" || envelope.Data.Total != 1 || len(envelope.Data.Items) != 1 || envelope.Data.Items[0].Code != "002230" {
 		t.Fatalf("unexpected auction list payload: %+v", envelope.Data)
 	}
-	if envelope.Data.CaptureSlot != "0930" || envelope.Data.Items[0].CaptureSlot != "0930" {
-		t.Fatalf("expected default 0930 capture slot, got %+v", envelope.Data)
+	if envelope.Data.CaptureSlot != "0929" || envelope.Data.Items[0].CaptureSlot != "0929" {
+		t.Fatalf("expected default 0929 capture slot, got %+v", envelope.Data)
 	}
 	if envelope.Data.TotalAmount != 5876080 || envelope.Data.MaxItem == nil || envelope.Data.MaxItem.Code != "002230" {
 		t.Fatalf("expected date summary independent of keyword filter, got %+v", envelope.Data)
@@ -204,8 +204,8 @@ func TestAStockAuctionAmountAPIUpsertsAndLists(t *testing.T) {
 	if len(envelope.Data.Trend) != 1 || envelope.Data.Trend[0].TotalAmount != 5876080 || envelope.Data.Trend[0].TotalVolume != 213400 {
 		t.Fatalf("expected auction trend totals, got %+v", envelope.Data.Trend)
 	}
-	if len(envelope.Data.TrendSeries["0930"]) != 1 {
-		t.Fatalf("expected 0930 trend series, got %+v", envelope.Data.TrendSeries)
+	if len(envelope.Data.TrendSeries["0929"]) != 1 {
+		t.Fatalf("expected 0929 trend series, got %+v", envelope.Data.TrendSeries)
 	}
 	if len(envelope.Data.Trend[0].MarketTop) != 2 ||
 		envelope.Data.Trend[0].MarketTop[0].Market != "沪市" ||
@@ -234,8 +234,8 @@ func TestAStockAuctionAmountAPIUpsertsAndLists(t *testing.T) {
 	if envelope.Data.CaptureSlot != "0925" || envelope.Data.TotalAmount != 4000000 || envelope.Data.Items[0].CaptureSlot != "0925" {
 		t.Fatalf("expected 0925 auction list, got %+v", envelope.Data)
 	}
-	if len(envelope.Data.Trend) != 1 || envelope.Data.Trend[0].CaptureSlot != "0930" || envelope.Data.Trend[0].TotalAmount != 5876080 {
-		t.Fatalf("expected 0925 list response to keep 0930 history trend, got %+v", envelope.Data.Trend)
+	if len(envelope.Data.Trend) != 1 || envelope.Data.Trend[0].CaptureSlot != "0929" || envelope.Data.Trend[0].TotalAmount != 5876080 {
+		t.Fatalf("expected 0925 list response to keep 0929 history trend, got %+v", envelope.Data.Trend)
 	}
 }
 

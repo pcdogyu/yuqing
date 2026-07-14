@@ -13,14 +13,16 @@ import (
 var aStockAuctionSHSZFilterSQL = astockcode.SQLWhere()
 
 const (
+	aStockAuctionCaptureSlot0920 = "0920"
 	aStockAuctionCaptureSlot0925 = "0925"
+	aStockAuctionCaptureSlot0929 = "0929"
 	aStockAuctionCaptureSlot0930 = "0930"
 )
 
 func (s *Store) UpsertAStockAuctionAmounts(ctx context.Context, tradeDate string, items []model.AStockAuctionAmount, replace bool) (model.AStockAuctionUpsertResult, error) {
 	tradeDate = strings.TrimSpace(tradeDate)
 	items = normalizeAStockAuctionSnapshotUnits(items)
-	defaultCaptureSlot := aStockAuctionCaptureSlot0930
+	defaultCaptureSlot := aStockAuctionCaptureSlot0929
 	for _, item := range items {
 		if slot := normalizeAStockAuctionCaptureSlot(item.CaptureSlot); slot != "" {
 			defaultCaptureSlot = slot
@@ -162,8 +164,12 @@ ON CONFLICT(trade_date, capture_slot, code) DO UPDATE SET
 
 func normalizeAStockAuctionCaptureSlot(value string) string {
 	switch strings.TrimSpace(value) {
+	case aStockAuctionCaptureSlot0920:
+		return aStockAuctionCaptureSlot0920
 	case aStockAuctionCaptureSlot0925:
 		return aStockAuctionCaptureSlot0925
+	case aStockAuctionCaptureSlot0929:
+		return aStockAuctionCaptureSlot0929
 	case aStockAuctionCaptureSlot0930:
 		return aStockAuctionCaptureSlot0930
 	default:
@@ -228,7 +234,10 @@ func (s *Store) ListAStockAuctionAmounts(ctx context.Context, filter model.AStoc
 		return result, err
 	}
 	result.TrendSeries = trendSeries
-	result.Trend = trendSeries[aStockAuctionCaptureSlot0930]
+	result.Trend = trendSeries[aStockAuctionCaptureSlot0929]
+	if len(result.Trend) == 0 {
+		result.Trend = trendSeries[aStockAuctionCaptureSlot0930]
+	}
 	result.LatestDate = ""
 	if len(dates) > 0 {
 		result.LatestDate = dates[0]
@@ -302,7 +311,7 @@ func (s *Store) resolveAStockAuctionCaptureSlot(ctx context.Context, date string
 	if requested != "" {
 		return requested, nil
 	}
-	for _, slot := range []string{aStockAuctionCaptureSlot0930, aStockAuctionCaptureSlot0925} {
+	for _, slot := range []string{aStockAuctionCaptureSlot0929, aStockAuctionCaptureSlot0930, aStockAuctionCaptureSlot0925, aStockAuctionCaptureSlot0920} {
 		var count int
 		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM a_stock_auction_amounts WHERE trade_date = ? AND capture_slot = ? AND `+aStockAuctionSHSZFilterSQL, date, slot).Scan(&count); err != nil {
 			return "", err
@@ -345,7 +354,7 @@ func (s *Store) latestAStockAuctionDates(ctx context.Context, limit int) ([]stri
 
 func (s *Store) listAStockAuctionTrendSeries(ctx context.Context, limit int) (map[string][]model.AStockAuctionTrend, error) {
 	out := map[string][]model.AStockAuctionTrend{}
-	for _, slot := range []string{aStockAuctionCaptureSlot0925, aStockAuctionCaptureSlot0930} {
+	for _, slot := range []string{aStockAuctionCaptureSlot0920, aStockAuctionCaptureSlot0925, aStockAuctionCaptureSlot0929, aStockAuctionCaptureSlot0930} {
 		trend, err := s.listAStockAuctionTrend(ctx, limit, slot)
 		if err != nil {
 			return nil, err
@@ -359,7 +368,7 @@ func (s *Store) listAStockAuctionTrend(ctx context.Context, limit int, captureSl
 	limit = max(limit, 1)
 	captureSlot = normalizeAStockAuctionCaptureSlot(captureSlot)
 	if captureSlot == "" {
-		captureSlot = aStockAuctionCaptureSlot0930
+		captureSlot = aStockAuctionCaptureSlot0929
 	}
 	rows, err := s.db.QueryContext(ctx, `
 WITH recent_dates AS (
@@ -426,7 +435,7 @@ func (s *Store) listAStockAuctionTrendMarketTop(ctx context.Context, limit int, 
 	limit = max(limit, 1)
 	captureSlot = normalizeAStockAuctionCaptureSlot(captureSlot)
 	if captureSlot == "" {
-		captureSlot = aStockAuctionCaptureSlot0930
+		captureSlot = aStockAuctionCaptureSlot0929
 	}
 	rows, err := s.db.QueryContext(ctx, `
 WITH recent_dates AS (

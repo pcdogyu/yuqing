@@ -543,11 +543,11 @@ func TestAStockPagePostClearsSameDateCaches(t *testing.T) {
 
 func TestAStockAuctionPageLoadsSummaryAndRows(t *testing.T) {
 	fetchedAt := time.Date(2026, 6, 16, 1, 30, 0, 0, time.UTC)
-	trend0930 := []model.AStockAuctionTrend{
-		{Date: "2026-06-15", CaptureSlot: "0930", StockCount: 2, TotalVolume: 180000, TotalAmount: 4500000, MaxStockCode: "600000", MaxStockName: "浦发银行"},
+	trend0929 := []model.AStockAuctionTrend{
+		{Date: "2026-06-15", CaptureSlot: "0929", StockCount: 2, TotalVolume: 180000, TotalAmount: 4500000, MaxStockCode: "600000", MaxStockName: "浦发银行"},
 		{
 			Date:         "2026-06-16",
-			CaptureSlot:  "0930",
+			CaptureSlot:  "0929",
 			StockCount:   2,
 			TotalVolume:  213400,
 			TotalAmount:  5876080,
@@ -577,6 +577,10 @@ func TestAStockAuctionPageLoadsSummaryAndRows(t *testing.T) {
 		{Date: "2026-06-15", CaptureSlot: "0925", StockCount: 2, TotalVolume: 170000, TotalAmount: 4000000, MaxStockCode: "600000", MaxStockName: "浦发银行"},
 		{Date: "2026-06-16", CaptureSlot: "0925", StockCount: 2, TotalVolume: 200000, TotalAmount: 5000000, MaxStockCode: "002230", MaxStockName: "科大讯飞"},
 	}
+	trend0920 := []model.AStockAuctionTrend{
+		{Date: "2026-06-15", CaptureSlot: "0920", StockCount: 2, TotalVolume: 160000, TotalAmount: 3900000, MaxStockCode: "600000", MaxStockName: "浦发银行"},
+		{Date: "2026-06-16", CaptureSlot: "0920", StockCount: 2, TotalVolume: 190000, TotalAmount: 4800000, MaxStockCode: "002230", MaxStockName: "科大讯飞"},
+	}
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/a-stock/auction" {
 			t.Fatalf("unexpected auction content path: %s", r.URL.String())
@@ -596,7 +600,7 @@ func TestAStockAuctionPageLoadsSummaryAndRows(t *testing.T) {
 			"message": "ok",
 			"data": model.AStockAuctionListResult{
 				Date:         "2026-06-16",
-				CaptureSlot:  "0930",
+				CaptureSlot:  "0929",
 				Keyword:      "科",
 				LatestDate:   "2026-06-16",
 				Dates:        []string{"2026-06-16", "2026-06-15"},
@@ -607,7 +611,7 @@ func TestAStockAuctionPageLoadsSummaryAndRows(t *testing.T) {
 				TotalAmount:  151000000,
 				MaxItem: &model.AStockAuctionAmount{
 					TradeDate:     "2026-06-16",
-					CaptureSlot:   "0930",
+					CaptureSlot:   "0929",
 					Code:          "002230",
 					Name:          "科大讯飞",
 					AuctionAmount: 100000000,
@@ -616,7 +620,7 @@ func TestAStockAuctionPageLoadsSummaryAndRows(t *testing.T) {
 				FetchedAt: &fetchedAt,
 				Items: []model.AStockAuctionAmount{{
 					TradeDate:     "2026-06-16",
-					CaptureSlot:   "0930",
+					CaptureSlot:   "0929",
 					Code:          "002230",
 					Name:          "科大讯飞",
 					AuctionPrice:  41.2,
@@ -626,8 +630,8 @@ func TestAStockAuctionPageLoadsSummaryAndRows(t *testing.T) {
 					Status:        "ok",
 					FetchedAt:     fetchedAt,
 				}},
-				Trend:       trend0930,
-				TrendSeries: map[string][]model.AStockAuctionTrend{"0925": trend0925, "0930": trend0930},
+				Trend:       trend0929,
+				TrendSeries: map[string][]model.AStockAuctionTrend{"0920": trend0920, "0925": trend0925, "0929": trend0929},
 			},
 		})
 	}))
@@ -641,7 +645,7 @@ func TestAStockAuctionPageLoadsSummaryAndRows(t *testing.T) {
 		t.Fatalf("expected auction page 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"集合竞价", "09:25:05", "09:30:05", "操作区", "获取最新交易日集合竞价金额", "回溯近7天集合竞价", "当日汇总", "当前快照", "0930", "近7日资金趋势", "最近7天", "最近2周", "最近30天", "沪市金额前三", "深市金额前三", "2026-06-16", "科大讯飞", "浦发银行", "股票数", "2", "1.51亿", "508.41万", "79.20万", "12.34万", "akshare_pre_min", `value="科"`, `<svg class="auction-chart"`} {
+	for _, want := range []string{"集合竞价", "09:20:00", "09:25:00", "09:29:59", "操作区", "获取最新交易日集合竞价金额", "回溯近7天集合竞价", "当日汇总", "当前快照", "0929", "近7日资金趋势", "最近7天", "最近2周", "最近30天", "沪市金额前三", "深市金额前三", "2026-06-16", "科大讯飞", "浦发银行", "股票数", "2", "1.51亿", "508.41万", "79.20万", "12.34万", "akshare_pre_min", `value="科"`, `<svg class="auction-chart"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected auction page to contain %q, got %s", want, body)
 		}
@@ -656,8 +660,9 @@ func TestAStockAuctionPageLoadsSummaryAndRows(t *testing.T) {
 		`class="auction-chart-label" x="1096.0" text-anchor="end" y="268">2026-06-16</text>`,
 		`class="auction-chart-label" text-anchor="end" x="48.0" y="28.0">587.61万</text>`,
 		`class="auction-chart-label" text-anchor="end" x="48.0" y="232.0">0</text>`,
+		`class="auction-chart-line auction-chart-line-0920"`,
 		`class="auction-chart-line auction-chart-line-0925"`,
-		`class="auction-chart-line auction-chart-line-0930"`,
+		`class="auction-chart-line auction-chart-line-0929"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected auction chart daily grid to contain %q, got %s", want, body)
@@ -725,7 +730,7 @@ func TestAStockAuctionPageSwitchesTrendPeriod(t *testing.T) {
 	}
 }
 
-func TestAStockAuctionTrendTablePointsPrefers0930Series(t *testing.T) {
+func TestAStockAuctionTrendTablePointsPrefers0929Series(t *testing.T) {
 	points := aStockAuctionTrendTablePoints(model.AStockAuctionListResult{
 		Trend: []model.AStockAuctionTrend{{
 			Date:        "2026-07-14",
@@ -738,6 +743,22 @@ func TestAStockAuctionTrendTablePointsPrefers0930Series(t *testing.T) {
 				CaptureSlot: "0925",
 				TotalAmount: 925,
 			}},
+			"0929": {{
+				Date:        "2026-07-14",
+				CaptureSlot: "0929",
+				TotalAmount: 929,
+			}},
+		},
+	}, 7)
+
+	if len(points) != 1 || points[0].CaptureSlot != "0929" || points[0].TotalAmount != 929 {
+		t.Fatalf("expected history table to use 0929 series, got %+v", points)
+	}
+}
+
+func TestAStockAuctionTrendTablePointsFallsBackToLegacy0930Series(t *testing.T) {
+	points := aStockAuctionTrendTablePoints(model.AStockAuctionListResult{
+		TrendSeries: map[string][]model.AStockAuctionTrend{
 			"0930": {{
 				Date:        "2026-07-14",
 				CaptureSlot: "0930",
@@ -747,7 +768,7 @@ func TestAStockAuctionTrendTablePointsPrefers0930Series(t *testing.T) {
 	}, 7)
 
 	if len(points) != 1 || points[0].CaptureSlot != "0930" || points[0].TotalAmount != 930 {
-		t.Fatalf("expected history table to use 0930 series, got %+v", points)
+		t.Fatalf("expected history table to fall back to legacy 0930 series, got %+v", points)
 	}
 }
 

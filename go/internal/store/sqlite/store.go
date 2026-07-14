@@ -560,7 +560,7 @@ CREATE TABLE IF NOT EXISTS crypto_insight_snapshots (
 
 CREATE TABLE IF NOT EXISTS a_stock_auction_amounts (
 	trade_date TEXT NOT NULL,
-	capture_slot TEXT NOT NULL DEFAULT '0930',
+	capture_slot TEXT NOT NULL DEFAULT '0929',
 	code TEXT NOT NULL,
 	name TEXT NOT NULL DEFAULT '',
 	auction_price REAL NOT NULL DEFAULT 0,
@@ -1074,7 +1074,7 @@ func (s *Store) migrateAStockAuctionCaptureSlot(ctx context.Context) error {
 BEGIN;
 CREATE TABLE IF NOT EXISTS a_stock_auction_amounts_new (
 	trade_date TEXT NOT NULL,
-	capture_slot TEXT NOT NULL DEFAULT '0930',
+	capture_slot TEXT NOT NULL DEFAULT '0929',
 	code TEXT NOT NULL,
 	name TEXT NOT NULL DEFAULT '',
 	auction_price REAL NOT NULL DEFAULT 0,

@@ -479,11 +479,11 @@ func (w *Worker) runAStockAuctionCrawlAt(ctx context.Context, now time.Time) err
 }
 
 func (w *Worker) runAStockAuctionLatest(ctx context.Context) (aStockAuctionCrawlResult, error) {
-	return w.runAStockAuctionCrawlForDateResult(ctx, "", "0930")
+	return w.runAStockAuctionCrawlForDateResult(ctx, "", "0929")
 }
 
 func (w *Worker) runAStockAuctionCrawlForDate(ctx context.Context, tradeDate string) error {
-	result, err := w.runAStockAuctionCrawlForDateResult(ctx, tradeDate, "0930")
+	result, err := w.runAStockAuctionCrawlForDateResult(ctx, tradeDate, "0929")
 	if err != nil {
 		return err
 	}
@@ -560,18 +560,30 @@ type aStockSectorFundFlowCrawlResult struct {
 
 func aStockAuctionCaptureSlotForTime(value time.Time) string {
 	local := value.In(aStockLocation())
-	if local.Hour() == 9 && local.Minute() < 30 {
+	if local.Hour() == 9 && local.Minute() == 20 {
+		return "0920"
+	}
+	if local.Hour() == 9 && local.Minute() == 25 {
 		return "0925"
 	}
-	return "0930"
+	if local.Hour() == 9 && local.Minute() == 29 {
+		return "0929"
+	}
+	return "0929"
 }
 
 func normalizeAStockAuctionCaptureSlot(value string) string {
 	switch strings.TrimSpace(value) {
+	case "0920":
+		return "0920"
 	case "0925":
 		return "0925"
-	default:
+	case "0929":
+		return "0929"
+	case "0930":
 		return "0930"
+	default:
+		return "0929"
 	}
 }
 
@@ -665,7 +677,7 @@ func (w *Worker) runAStockAuctionBackfill(ctx context.Context, days int, start s
 	dates := aStockAuctionBackfillDates(days, start, end, time.Now().In(aStockLocation()))
 	result := aStockAuctionBackfillResult{Days: len(dates), Results: make([]aStockAuctionCrawlResult, 0, len(dates))}
 	for _, date := range dates {
-		item, err := w.runAStockAuctionCrawlForDateResult(ctx, date, "0930")
+		item, err := w.runAStockAuctionCrawlForDateResult(ctx, date, "0929")
 		if err != nil {
 			result.Failed++
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", date, err))

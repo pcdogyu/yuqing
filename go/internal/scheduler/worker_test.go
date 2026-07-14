@@ -601,8 +601,8 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	if aStockExactSnapshotBackfillJob.Cron != "0 29 2 * * ?; 0 29 9 * * ?; 0 59 12 * * ?; 0 35 15 * * ?" || aStockExactSnapshotBackfillJob.NextRunAt == nil {
 		t.Fatalf("expected A股 exact snapshot backfill cron metadata, got %+v", aStockExactSnapshotBackfillJob)
 	}
-	if aStockAuctionJob.Cron != "5 25 9 * * ?; 5 30 9 * * ?" || aStockAuctionJob.Enabled {
-		t.Fatalf("expected A股 auction crawl disabled by default with dual cron, got %+v", aStockAuctionJob)
+	if aStockAuctionJob.Cron != "0 20 9 * * ?; 0 25 9 * * ?; 59 29 9 * * ?" || aStockAuctionJob.Enabled {
+		t.Fatalf("expected A股 auction crawl disabled by default with triple cron, got %+v", aStockAuctionJob)
 	}
 	if aStockSectorFundFlowJobCount != 1 {
 		t.Fatalf("expected one A股 sector fund flow job, got %d", aStockSectorFundFlowJobCount)
@@ -1991,14 +1991,17 @@ func TestRunAStockAuctionCrawlForcesLatestRefresh(t *testing.T) {
 		HTTPTimeout:      time.Second,
 		ServiceToken:     "secret-token",
 	})
-	if err := worker.runAStockAuctionCrawlAt(context.Background(), time.Date(2026, 6, 18, 9, 25, 5, 0, aStockLocation())); err != nil {
+	if err := worker.runAStockAuctionCrawlAt(context.Background(), time.Date(2026, 6, 18, 9, 20, 0, 0, aStockLocation())); err != nil {
+		t.Fatalf("runAStockAuctionCrawlAt 0920 error: %v", err)
+	}
+	if err := worker.runAStockAuctionCrawlAt(context.Background(), time.Date(2026, 6, 18, 9, 25, 0, 0, aStockLocation())); err != nil {
 		t.Fatalf("runAStockAuctionCrawlAt 0925 error: %v", err)
 	}
-	if err := worker.runAStockAuctionCrawlAt(context.Background(), time.Date(2026, 6, 18, 9, 30, 5, 0, aStockLocation())); err != nil {
-		t.Fatalf("runAStockAuctionCrawlAt 0930 error: %v", err)
+	if err := worker.runAStockAuctionCrawlAt(context.Background(), time.Date(2026, 6, 18, 9, 29, 59, 0, aStockLocation())); err != nil {
+		t.Fatalf("runAStockAuctionCrawlAt 0929 error: %v", err)
 	}
-	if len(writes) != 2 || writes[0] != "0925" || writes[1] != "0930" {
-		t.Fatalf("expected scheduled latest crawl to write 0925 then 0930, got %v", writes)
+	if len(writes) != 3 || writes[0] != "0920" || writes[1] != "0925" || writes[2] != "0929" {
+		t.Fatalf("expected scheduled latest crawl to write 0920, 0925, 0929, got %v", writes)
 	}
 }
 
@@ -2964,8 +2967,8 @@ func TestSchedulerAStockAuctionJobEnabledWhenEndpointConfigured(t *testing.T) {
 			break
 		}
 	}
-	if !auctionJob.Enabled || auctionJob.Cron != "5 25 9 * * ?; 5 30 9 * * ?" || auctionJob.NextRunAt == nil {
-		t.Fatalf("expected enabled A股 auction crawl with dual cron, got %+v", auctionJob)
+	if !auctionJob.Enabled || auctionJob.Cron != "0 20 9 * * ?; 0 25 9 * * ?; 59 29 9 * * ?" || auctionJob.NextRunAt == nil {
+		t.Fatalf("expected enabled A股 auction crawl with triple cron, got %+v", auctionJob)
 	}
 }
 

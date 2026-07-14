@@ -79,7 +79,7 @@ Invoke-WebRequest -Method Post "http://127.0.0.1:8083/api/v1/admin/tasks/crawl?s
 
 A 股策略工作台 `/a-stock` 默认按 `Asia/Shanghai` 增加 A 股新闻和推荐任务：`a-stock-morning-news-crawl` 每日 `09:05` 预抓上午 `08:00-09:26:59` 财经新闻；上午 `a-stock-morning-recommendation-preview` 每日 `09:27` 生成盘前快照并触发弹窗、`a-stock-morning-recommendation` 每日 `09:32` 做开盘后补全；下午 `a-stock-afternoon-recommendation-preview` 每日 `12:57` 生成盘前快照并触发弹窗、`a-stock-afternoon-recommendation` 每日 `13:02` 做开盘后补全。盘前生成使用 `phase=preopen`：上午窗口 `08:00-09:26:59` 标记生成点 `09:27`，下午窗口 `09:30-12:56:59` 标记生成点 `12:57`；补全使用默认 `phase=final`：上午按 `08:00-09:24` 与 `08:00-09:30` 两个快照合并去重，下午按 `09:30-13:00` 单窗口生成，并过滤当天上午已推荐股票。A 股新闻和推荐任务会触发 `flash`、`headline`、`jin10_full`、`eastmoney_kuaixun`、`wallstreetcn_a_stock`、`cls_telegraph`、`sina_finance_7x24` 新闻源，可用对应 `YUQING_SCHEDULER_<JOB_NAME>_CRON` 覆盖执行时间。
 
-集合竞价页面 `/a-stock/auction` 展示全市场 A 股 09:25 开盘集合竞价金额。`run.bat` 默认构建并启动仓库内 AKShare 适配服务 `bin\akshare-service.exe`，地址为 `http://127.0.0.1:8087`，并自动设置 `YUQING_ASTOCK_AUCTION_URL` 和 `YUQING_ASTOCK_HOLDING_URL`。`a-stock-auction-crawl` 会在每日 `09:26` 抓取 `/api/a-stock/auction?date=YYYY-MM-DD` 并通过 content-service 写入当前 `YUQING_DB_DRIVER` 对应的业务库；生产建议使用 PostgreSQL 配置。可用 `YUQING_SCHEDULER_A_STOCK_AUCTION_CRAWL_CRON` 覆盖执行时间。若 `09:26` 定时任务漏抓，门户“获取最新交易日集合竞价金额”会调用 scheduler 的 latest 接口，不带日期请求 AKShare 适配服务并按适配服务识别到的最新交易日写库；更早历史交易日仍依赖过去抓取形成的本地缓存或业务库记录。
+集合竞价页面 `/a-stock/auction` 展示全市场 A 股集合竞价金额。`run.bat` 默认构建并启动仓库内 AKShare 适配服务 `bin\akshare-service.exe`，地址为 `http://127.0.0.1:8087`，并自动设置 `YUQING_ASTOCK_AUCTION_URL` 和 `YUQING_ASTOCK_HOLDING_URL`。`a-stock-auction-crawl` 会在每日 `09:20:00`、`09:25:00`、`09:29:59` 抓取 `/api/a-stock/auction?date=YYYY-MM-DD` 并通过 content-service 分别写入 `0920`、`0925`、`0929` 快照；生产建议使用 PostgreSQL 配置。可用 `YUQING_SCHEDULER_A_STOCK_AUCTION_CRAWL_CRON` 覆盖执行时间。若最终快照定时任务漏抓，门户“获取最新交易日集合竞价金额”会调用 scheduler 的 latest 接口，不带日期请求 AKShare 适配服务并按 `0929` 快照写库；更早历史交易日仍依赖过去抓取形成的本地缓存或业务库记录。
 
 机构持仓页面 `/a-stock/holdings` 的“抓取全量股票历史持仓”按钮会触发 scheduler 的 `/api/v1/scheduler/a-stock/holdings/backfill`，不带股票代码时按最近 4 个报告期抓取全市场持仓。AKShare 适配服务提供 `/api/a-stock/holdings?period=YYYYMMDD&code=002230`，其中 `code` 可选；全市场抓取优先读取东方财富十大股东/十大流通股东，单股回补会叠加新浪机构持股和基金持股。
 
@@ -105,7 +105,7 @@ $env:YUQING_AKSHARE_PYTHON = "C:\Users\Administrator\AppData\Local\Programs\Pyth
 
 `akshare-service` 使用 Python/AKShare 作为底层数据源。若需要生成独立 exe，可执行 `go build -o .\bin\akshare-service.exe .\cmd\akshare-service`，再运行 `.\bin\akshare-service.exe --host 127.0.0.1 --port 8087`。`wechat-service` 默认使用 `8088`，`run.bat` 会同时构建并启动 `bin\wechat-service.exe`。
 
-适配服务全市场抓取时使用 AKShare `stock_zh_a_spot_em` 一次性读取东财沪深京 A 股行情，适合 scheduler 在 `09:26` 触发后入库；传入 `code=` 单股排查时使用 `stock_zh_a_hist_pre_min_em` 读取盘前分钟数据，并优先把 09:26 历史分钟行转换为系统的 `09:25` 快照，缺少 09:26 时回退到 09:25 附近数据。AKShare 盘前分钟接口只返回最近交易日数据，服务会缓存成功抓到的日期；未指定日期时服务会通过 AKShare 交易日历识别最新交易日并允许补抓，历史日期如果本地无可用缓存，将返回 422 并给出无法实时回抓的说明。
+适配服务全市场抓取时使用 AKShare `stock_zh_a_spot_em` 一次性读取东财沪深京 A 股行情，适合 scheduler 在三个集合竞价采集点触发后入库；传入 `code=` 单股排查时使用 `stock_zh_a_hist_pre_min_em` 读取盘前分钟数据，并优先把 09:26 历史分钟行转换为系统的 `09:25` 快照，缺少 09:26 时回退到 09:25 附近数据。AKShare 盘前分钟接口只返回最近交易日数据，服务会缓存成功抓到的日期；未指定日期时服务会通过 AKShare 交易日历识别最新交易日并允许补抓，历史日期如果本地无可用缓存，将返回 422 并给出无法实时回抓的说明。
 
 快速联调：
 
