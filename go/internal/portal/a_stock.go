@@ -60,6 +60,7 @@ type aStockContext struct {
 	FundFlowFiltered             int
 	FundFlowMissingCount         int
 	ExDividendFiltered           int
+	NegativeNoEvidenceFiltered   int
 	TodayMarketFilterEnabled     bool
 	NoTodayMarketCount           int
 	MarketCandidateStatus        string
@@ -442,6 +443,12 @@ const (
 	aStockPrevHighPctThreshold                   = 8.0
 	aStockPrevHighPctPenalty                     = 40
 	aStockTodayHighPctFilterThreshold            = 8.0
+	aStockHighOpenThreshold1Pct                  = 1.0
+	aStockHighOpenThreshold2Pct                  = 2.0
+	aStockHighOpenThreshold3Pct                  = 3.0
+	aStockHighOpenThreshold4Pct                  = 4.0
+	aStockHighOpenThreshold5Pct                  = 5.0
+	aStockHighOpenStrongThresholdPct             = 5.01
 	aStockMomentumMinBars                        = 35
 	aStockMomentumMaxScore                       = 60
 	aStockMomentumADXScore                       = 25
@@ -2986,16 +2993,19 @@ func (s *Server) loadAStockFastReadOnlyContextWithCache(strategyDate string, per
 		ctx.Hotspots = s.applyAStockHotspotRecommendationDatesWithCache(ctx.Hotspots, ctx.Date, ctx.Period, cache)
 	}
 	recommendationTarget := 0
-	var recentReplacementPool []aStockRecommendation
 	var recentCodes map[string]struct{}
 	recentReplacementStatus := ""
-	baseRecommendations := buildAStockSnapshotRecommendationsWithPhase(ctx.Date, ctx.Period, aStockRecommendationPhaseFinal, ctx.Articles, candidates)
-	recommendationTarget = len(baseRecommendations)
+	negativeFilteredCodes := make(map[string]struct{})
+	negativeFilterStatus := ""
+	baseRecommendations := buildAStockSnapshotRecommendationsWithPhaseAndLimit(ctx.Date, ctx.Period, aStockRecommendationPhaseFinal, ctx.Articles, candidates, aStockReplacementPoolLimit, aStockReplacementPerHotspot)
+	if filtered, skipped := filterAStockNegativeNoEvidenceRecommendations(baseRecommendations, negativeFilteredCodes); skipped > 0 {
+		baseRecommendations = filtered
+		ctx.NegativeNoEvidenceFiltered += skipped
+		negativeFilterStatus = formatAStockNegativeNoEvidenceFilterStatus(ctx.NegativeNoEvidenceFiltered)
+	}
+	recommendationTarget = minInt(aStockDailyRecommendationLimit, len(baseRecommendations))
 	ctx.GeneratedRecommendationCount = recommendationTarget
 	ctx.Recommendations = baseRecommendations
-	if ctx.Period == "morning" && !ctx.IgnoreRecent && recommendationTarget > 0 {
-		recentReplacementPool = buildAStockSnapshotReplacementRecommendations(ctx.Date, ctx.Period, aStockRecommendationPhaseFinal, ctx.Articles, candidates)
-	}
 	exDividendStatus := ""
 	dailyLimitStatus := ""
 	if ctx.Period == "afternoon" && len(ctx.Recommendations) > 0 {
@@ -3012,34 +3022,26 @@ func (s *Server) loadAStockFastReadOnlyContextWithCache(strategyDate string, per
 	}
 	if len(ctx.Recommendations) > 0 && !ctx.IgnoreRecent {
 		recentCodes = s.loadRecentAStockRecommendationCodesForPeriodWithCache(ctx.Date, ctx.Period, aStockRecentLookbackDays, cache)
-		if ctx.Period == "morning" && len(recentReplacementPool) > 0 && recommendationTarget > 0 {
-			result := filterRecentAStockRecommendationsWithReplenishment(ctx.Recommendations, recentReplacementPool, recentCodes, recommendationTarget)
-			ctx.Recommendations = result.Recommendations
-			ctx.RecentFiltered = result.Filtered
-			ctx.RecentReplenished = result.Replenished
-			ctx.RecentReplenishShortfall = result.Shortfall
-			recentReplacementStatus = formatAStockRecentReplenishmentStatus(result.Filtered, result.Replenished, result.Shortfall)
-		} else {
-			ctx.Recommendations, ctx.RecentFiltered = filterRecentAStockRecommendations(ctx.Recommendations, recentCodes)
-		}
+		ctx.Recommendations, ctx.RecentFiltered = filterRecentAStockRecommendations(ctx.Recommendations, recentCodes)
+		recentReplacementStatus = formatAStockRecentReplenishmentStatus(ctx.RecentFiltered, 0, false)
 	}
-	dailyLimitFilteredTotal := 0
-	if exDividendSkipped, dailyLimitSkipped := s.applyAStockRecommendationOutputFiltersWithCache(&ctx, cache); exDividendSkipped > 0 || dailyLimitSkipped > 0 {
+	if exDividendSkipped := s.applyAStockExDividendFilterWithCache(&ctx, cache); exDividendSkipped > 0 {
 		exDividendStatus = formatAStockExDividendFilterStatus(exDividendSkipped)
-		dailyLimitFilteredTotal += dailyLimitSkipped
-		recommendationTarget = len(ctx.Recommendations)
-	}
-	if ctx.Period == "afternoon" && len(ctx.Recommendations) > 0 {
-		dailyLimitFilteredTotal += s.applyAStockAfternoonDailyLimitOnlyWithCache(&ctx, cache)
 		recommendationTarget = minInt(recommendationTarget, len(ctx.Recommendations))
 	}
-	if dailyLimitFilteredTotal > 0 {
-		dailyLimitStatus = formatAStockDailyRecommendationLimitStatus(dailyLimitFilteredTotal)
+	if ctx.Period == "afternoon" && len(ctx.Recommendations) > 0 {
+		recommendationTarget = minInt(recommendationTarget, len(ctx.Recommendations))
+	}
+	if recommendationTarget > 0 {
+		ctx.Recommendations, _ = limitAStockRecommendationsByCount(ctx.Recommendations, recommendationTarget)
 	}
 	ctx.Recommendations = withAStockRecommendationEntryTimes(ctx.Recommendations, ctx.Period, "")
 	ctx.Recommendations = initializeAStockRecommendationMarket(ctx.Recommendations)
 	ctx.Backtests = buildAStockBacktestRows(ctx.Date, ctx.Period, ctx.Recommendations, nil)
 	ctx.BacktestStatus = "只读快速推荐，等待行情同步"
+	if negativeFilterStatus != "" {
+		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, negativeFilterStatus)
+	}
 	if recentReplacementStatus != "" {
 		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, recentReplacementStatus)
 	}
@@ -3508,13 +3510,14 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 		}
 	}
 	recommendationTarget := 0
-	var recentReplacementPool []aStockRecommendation
 	var fundFlowReplacementPool []aStockRecommendation
 	var recentCodes map[string]struct{}
 	recentReplacementStatus := ""
 	fundFlowStatus := ""
 	exDividendStatus := ""
 	dailyLimitStatus := ""
+	negativeFilteredCodes := make(map[string]struct{})
+	negativeFilterStatus := ""
 	if len(ctx.Hotspots) > 0 {
 		if marketCandidates == nil {
 			candidates, candidateStatus, auctionResult := s.loadAStockMarketCandidatesWithStatusWithCache(strategyDate, cache)
@@ -3527,18 +3530,30 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 		}
 		candidates := marketCandidates
 		sectorGate := s.loadAStockHotspotSectorGateWithCache(ctx.Hotspots, cache)
-		baseRecommendations := buildAStockSnapshotRecommendationsWithPhaseAndSectorGate(strategyDate, period.Key, phase, ctx.Articles, candidates, sectorGate)
-		recommendationTarget = len(baseRecommendations)
+		baseRecommendations := buildAStockSnapshotRecommendationsWithPhaseAndLimitAndSectorGate(strategyDate, period.Key, phase, ctx.Articles, candidates, aStockReplacementPoolLimit, aStockReplacementPerHotspot, sectorGate)
+		if filtered, skipped := filterAStockNegativeNoEvidenceRecommendations(baseRecommendations, negativeFilteredCodes); skipped > 0 {
+			baseRecommendations = filtered
+			ctx.NegativeNoEvidenceFiltered += skipped
+			negativeFilterStatus = formatAStockNegativeNoEvidenceFilterStatus(ctx.NegativeNoEvidenceFiltered)
+		}
+		recommendationTarget = minInt(aStockDailyRecommendationLimit, len(baseRecommendations))
 		ctx.GeneratedRecommendationCount = recommendationTarget
 		ctx.Recommendations = baseRecommendations
-		if period.Key == "morning" && !ctx.IgnoreRecent && recommendationTarget > 0 {
-			recentReplacementPool = buildAStockSnapshotReplacementRecommendationsWithSectorGate(strategyDate, period.Key, phase, ctx.Articles, candidates, sectorGate)
-		}
 		if ctx.FundFlowFilterEnabled && recommendationTarget > 0 {
 			fundFlowReplacementPool = buildAStockSnapshotReplacementRecommendationsWithSectorGate(strategyDate, period.Key, phase, ctx.Articles, candidates, sectorGate)
+			if filtered, skipped := filterAStockNegativeNoEvidenceRecommendations(fundFlowReplacementPool, negativeFilteredCodes); skipped > 0 {
+				fundFlowReplacementPool = filtered
+				ctx.NegativeNoEvidenceFiltered += skipped
+				negativeFilterStatus = formatAStockNegativeNoEvidenceFilterStatus(ctx.NegativeNoEvidenceFiltered)
+			}
 		}
 		if ctx.LimitUpFilterEnabled && recommendationTarget > 0 {
 			replacementPool := buildAStockSnapshotRecommendationsWithPhaseAndLimitAndSectorGate(strategyDate, period.Key, phase, ctx.Articles, candidates, aStockReplacementPoolLimit, aStockReplacementPerHotspot, sectorGate)
+			if filtered, skipped := filterAStockNegativeNoEvidenceRecommendations(replacementPool, negativeFilteredCodes); skipped > 0 {
+				replacementPool = filtered
+				ctx.NegativeNoEvidenceFiltered += skipped
+				negativeFilterStatus = formatAStockNegativeNoEvidenceFilterStatus(ctx.NegativeNoEvidenceFiltered)
+			}
 			ctx.Recommendations = mergeAStockLimitUpReplacementPool(ctx.Recommendations, replacementPool)
 		}
 		if period.Key == "afternoon" && len(ctx.Recommendations) > 0 {
@@ -3556,16 +3571,8 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 	}
 	if len(ctx.Recommendations) > 0 && !ctx.IgnoreRecent {
 		recentCodes = s.loadRecentAStockRecommendationCodesForPeriodWithCache(strategyDate, period.Key, aStockRecentLookbackDays, cache)
-		if period.Key == "morning" && len(recentReplacementPool) > 0 && recommendationTarget > 0 {
-			result := filterRecentAStockRecommendationsWithReplenishment(ctx.Recommendations, recentReplacementPool, recentCodes, recommendationTarget)
-			ctx.Recommendations = result.Recommendations
-			ctx.RecentFiltered = result.Filtered
-			ctx.RecentReplenished = result.Replenished
-			ctx.RecentReplenishShortfall = result.Shortfall
-			recentReplacementStatus = formatAStockRecentReplenishmentStatus(result.Filtered, result.Replenished, result.Shortfall)
-		} else {
-			ctx.Recommendations, ctx.RecentFiltered = filterRecentAStockRecommendations(ctx.Recommendations, recentCodes)
-		}
+		ctx.Recommendations, ctx.RecentFiltered = filterRecentAStockRecommendations(ctx.Recommendations, recentCodes)
+		recentReplacementStatus = formatAStockRecentReplenishmentStatus(ctx.RecentFiltered, 0, false)
 	}
 	ctx.Recommendations = withAStockRecommendationEntryTimes(ctx.Recommendations, period.Key, entryTimeOverride)
 	ctx.Recommendations = s.applyAStockHoldingSummariesWithCache(ctx.Recommendations, cache)
@@ -3574,28 +3581,25 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 			fundFlowReplacementPool = withAStockRecommendationEntryTimes(fundFlowReplacementPool, period.Key, entryTimeOverride)
 			fundFlowReplacementPool = s.applyAStockHoldingSummariesWithCache(fundFlowReplacementPool, cache)
 		}
-		result := s.applyAStockRecommendationFundFlowFilterWithCache(strategyDate, ctx.Recommendations, fundFlowReplacementPool, recentCodes, recommendationTarget, cache, period.Key == "afternoon")
+		result := s.applyAStockRecommendationFundFlowFilterWithCache(strategyDate, ctx.Recommendations, fundFlowReplacementPool, recentCodes, len(ctx.Recommendations), cache, false)
 		ctx.Recommendations = result.Recommendations
 		ctx.FundFlowFiltered = result.Filtered
 		ctx.FundFlowMissingCount = result.Missing
-		fundFlowStatus = formatAStockFundFlowFilterStatus(result.Filtered, result.Replenished, result.Missing, result.Shortfall)
+		fundFlowStatus = formatAStockFundFlowFilterStatus(result.Filtered, result.Replenished, result.Missing, false)
 	}
-	dailyLimitFilteredTotal := 0
-	if exDividendSkipped, dailyLimitSkipped := s.applyAStockRecommendationOutputFiltersWithCache(&ctx, cache); exDividendSkipped > 0 || dailyLimitSkipped > 0 {
+	if exDividendSkipped := s.applyAStockExDividendFilterWithCache(&ctx, cache); exDividendSkipped > 0 {
 		exDividendStatus = formatAStockExDividendFilterStatus(exDividendSkipped)
-		dailyLimitFilteredTotal += dailyLimitSkipped
-		recommendationTarget = len(ctx.Recommendations)
-	}
-	if period.Key == "afternoon" && len(ctx.Recommendations) > 0 {
-		dailyLimitFilteredTotal += s.applyAStockAfternoonDailyLimitOnlyWithCache(&ctx, cache)
 		recommendationTarget = minInt(recommendationTarget, len(ctx.Recommendations))
 	}
-	if dailyLimitFilteredTotal > 0 {
-		dailyLimitStatus = formatAStockDailyRecommendationLimitStatus(dailyLimitFilteredTotal)
+	if period.Key == "afternoon" && len(ctx.Recommendations) > 0 {
+		recommendationTarget = minInt(recommendationTarget, len(ctx.Recommendations))
 	}
 	ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus, ctx.LimitUpFiltered, ctx.NoTodayMarketCount = s.loadAStockMarketView(strategyDate, ctx.Period, ctx.Recommendations, ctx.LimitUpFilterEnabled, ctx.TodayMarketFilterEnabled, recommendationTarget)
 	if forceRecommendationRefresh {
 		s.restoreAStockBacktestsFromSnapshotWithCache(&ctx, cache)
+	}
+	if negativeFilterStatus != "" {
+		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, negativeFilterStatus)
 	}
 	if recentReplacementStatus != "" {
 		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, recentReplacementStatus)
@@ -5148,6 +5152,9 @@ func aStockRecommendationEmptyReason(ctx aStockContext) string {
 	}
 	if ctx.MarketCandidateStatus == "no_auction_candidates" || ctx.MarketCandidateStatus == "content_unconfigured" {
 		return fmt.Sprintf("暂无推荐股票：%s %s 有新闻和热点，但没有集合竞价候选数据。请点击“补录集合竞价”后重新生成推荐。", ctx.PeriodLabel, windowLabel)
+	}
+	if ctx.NegativeNoEvidenceFiltered > 0 && len(ctx.Recommendations) == 0 {
+		return fmt.Sprintf("暂无推荐股票：%s %s 已生成候选，但负面新闻且无个股有效证据过滤 %d 只。", ctx.PeriodLabel, windowLabel, ctx.NegativeNoEvidenceFiltered)
 	}
 	if ctx.GeneratedRecommendationCount == 0 {
 		if ctx.MarketCandidateStatus == "latest_auction_fallback" {
@@ -7254,6 +7261,60 @@ func sortAStockRecommendationsByScore(recommendations []aStockRecommendation) []
 	return rerankAStockRecommendations(result)
 }
 
+func filterAStockNegativeNoEvidenceRecommendations(recommendations []aStockRecommendation, counted map[string]struct{}) ([]aStockRecommendation, int) {
+	if len(recommendations) == 0 {
+		return recommendations, 0
+	}
+	filtered := make([]aStockRecommendation, 0, len(recommendations))
+	skipped := 0
+	for _, rec := range recommendations {
+		if isAStockNegativeNoEvidenceRecommendation(rec) {
+			code := normalizeAStockCode(rec.Code)
+			if counted != nil && code != "" {
+				if _, exists := counted[code]; exists {
+					continue
+				}
+				counted[code] = struct{}{}
+			}
+			skipped++
+			continue
+		}
+		filtered = append(filtered, rec)
+	}
+	return rerankAStockRecommendations(filtered), skipped
+}
+
+func isAStockNegativeNoEvidenceRecommendation(rec aStockRecommendation) bool {
+	hasNegative := false
+	hasEvidenceComponent := false
+	strongEvidenceScore := 0
+	for _, component := range aStockRecommendationScoreBreakdown(rec) {
+		switch strings.TrimSpace(component.Label) {
+		case "负面新闻":
+			if component.Score < 0 || strings.Contains(component.Detail, "负面新闻") {
+				hasNegative = true
+			}
+		case "个股证据":
+			hasEvidenceComponent = true
+			if component.Score > 0 {
+				strongEvidenceScore += component.Score
+			}
+		}
+	}
+	if hasNegative && hasEvidenceComponent && strongEvidenceScore <= 0 {
+		return true
+	}
+	reason := strings.TrimSpace(rec.Reason)
+	return hasNegative && !hasEvidenceComponent && strings.Contains(reason, "个股证据 0 条")
+}
+
+func formatAStockNegativeNoEvidenceFilterStatus(filtered int) string {
+	if filtered <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("过滤负面无个股证据股票 %d", filtered)
+}
+
 func formatAStockRecentReplenishmentStatus(filtered int, replenished int, shortfall bool) string {
 	if filtered <= 0 {
 		return ""
@@ -7570,6 +7631,76 @@ func applyAStockPreviousHighPctPenalty(rec aStockRecommendation, prevPct float64
 	appendAStockScoreComponentWithUnit(&rec, "昨日涨幅过高", detail, -aStockPrevHighPctPenalty, -aStockPrevHighPctPenalty)
 	rec.Reason = appendAStockReason(rec.Reason, detail)
 	return rec
+}
+
+func applyAStockHighOpenScore(rec aStockRecommendation, period string, entry aStockMarketBar, prev aStockMarketBar, hasPrev bool) aStockRecommendation {
+	normalizedPeriod := normalizeAStockPeriod(period).Key
+	entryPrice := aStockEntryPriceForRecommendation(entry, normalizedPeriod, rec)
+	if entryPrice <= 0 {
+		return rec
+	}
+	entryLabel := aStockDefaultRecommendationEntryTime(normalizedPeriod)
+	basePrice := 0.0
+	baseLabel := ""
+	if normalizedPeriod == "afternoon" {
+		entryLabel = aStockRecommendationEffectiveEntryTime(rec, "afternoon")
+		if entryLabel != "13:01" {
+			return rec
+		}
+		basePrice, baseLabel = aStockAfternoonHighOpenBasePrice(entry)
+	} else if hasPrev && prev.Close > 0 {
+		entryLabel = "09:30"
+		basePrice = prev.Close
+		baseLabel = "昨日收盘"
+	}
+	if basePrice <= 0 || baseLabel == "" {
+		return rec
+	}
+	openPct := (entryPrice/basePrice - 1) * 100
+	score := aStockHighOpenScore(openPct)
+	if score <= 0 {
+		return rec
+	}
+	baseScore := rec.MarketScore
+	if baseScore == 0 {
+		baseScore = rec.HotspotScore
+	}
+	rec.MarketScore = baseScore + score
+	detail := fmt.Sprintf("%s 较 %s 高开 %s", entryLabel, baseLabel, formatAStockPct(openPct))
+	appendAStockScoreComponentWithUnit(&rec, "当日高开", detail, score, score)
+	rec.Reason = appendAStockReason(rec.Reason, fmt.Sprintf("%s，高开加分 %d", detail, score))
+	return rec
+}
+
+func aStockAfternoonHighOpenBasePrice(entry aStockMarketBar) (float64, string) {
+	if entry.SessionPrices == nil {
+		return 0, ""
+	}
+	for _, session := range []string{"12:30", "11:30"} {
+		if price := entry.SessionPrices[session]; price > 0 {
+			return price, session
+		}
+	}
+	return 0, ""
+}
+
+func aStockHighOpenScore(openPct float64) int {
+	switch {
+	case openPct >= aStockHighOpenStrongThresholdPct:
+		return 65
+	case openPct >= aStockHighOpenThreshold5Pct:
+		return 50
+	case openPct >= aStockHighOpenThreshold4Pct:
+		return 40
+	case openPct >= aStockHighOpenThreshold3Pct:
+		return 30
+	case openPct >= aStockHighOpenThreshold2Pct:
+		return 20
+	case openPct >= aStockHighOpenThreshold1Pct:
+		return 10
+	default:
+		return 0
+	}
 }
 
 type aStockMomentumSignal struct {
@@ -8014,7 +8145,13 @@ func (s *Server) loadAStockMarketView(strategyDate string, period string, recomm
 	}
 	bars, err := s.loadAStockMarketBars(strategyDate, codes, endpoint)
 	if err != nil {
+		if maxRecommendations > 0 && len(recommendations) > maxRecommendations {
+			recommendations, _ = limitAStockRecommendationsByCount(recommendations, maxRecommendations)
+		}
 		return recommendations, buildAStockBacktestRows(strategyDate, period, recommendations, nil), "行情读取失败", 0, 0
+	}
+	if normalizeAStockPeriod(period).Key == "afternoon" {
+		s.enrichAStockMiddaySessionPrices(strategyDate, codes, bars)
 	}
 	s.enrichAStockRecommendationEntryPrices(strategyDate, period, recommendations, bars)
 	return applyAStockMarketBars(strategyDate, period, recommendations, bars, filterLimitUp, filterTodayMarket, maxRecommendations)
@@ -8341,6 +8478,63 @@ func (s *Server) enrichAStockSessionPrices(strategyDate string, codes []string, 
 			}
 		}
 	}
+}
+
+func (s *Server) enrichAStockMiddaySessionPrices(strategyDate string, codes []string, bars []aStockMarketBar) {
+	if len(bars) == 0 || len(codes) == 0 {
+		return
+	}
+	missingCodes := make([]string, 0, len(codes))
+	seen := make(map[string]struct{}, len(codes))
+	for i := range bars {
+		if bars[i].Date != strategyDate {
+			continue
+		}
+		code := normalizeAStockCode(bars[i].Code)
+		if code == "" {
+			continue
+		}
+		if bars[i].SessionPrices != nil && (bars[i].SessionPrices["12:30"] > 0 || bars[i].SessionPrices["11:30"] > 0) {
+			continue
+		}
+		if _, exists := seen[code]; exists {
+			continue
+		}
+		seen[code] = struct{}{}
+		missingCodes = append(missingCodes, code)
+	}
+	if len(missingCodes) == 0 {
+		return
+	}
+	fillSessionPrices := func(session string, prices map[string]float64) {
+		for i := range bars {
+			if bars[i].Date != strategyDate {
+				continue
+			}
+			code := normalizeAStockCode(bars[i].Code)
+			if code == "" || prices[code] <= 0 {
+				continue
+			}
+			if bars[i].SessionPrices == nil {
+				bars[i].SessionPrices = make(map[string]float64)
+			}
+			if bars[i].SessionPrices[session] <= 0 {
+				bars[i].SessionPrices[session] = prices[code]
+			}
+		}
+	}
+	price1230 := s.loadAStockSessionPrices(strategyDate, missingCodes, "12:30")
+	fillSessionPrices("12:30", price1230)
+	fallbackCodes := missingCodes[:0]
+	for _, code := range missingCodes {
+		if price1230[code] <= 0 {
+			fallbackCodes = append(fallbackCodes, code)
+		}
+	}
+	if len(fallbackCodes) == 0 {
+		return
+	}
+	fillSessionPrices("11:30", s.loadAStockSessionPrices(strategyDate, fallbackCodes, "11:30"))
 }
 
 func (s *Server) enrichAStockRecommendationEntryPrices(strategyDate string, period string, recommendations []aStockRecommendation, bars []aStockMarketBar) {
@@ -9157,7 +9351,8 @@ func applyAStockMarketBars(strategyDate string, period string, recommendations [
 			limitUpFilteredCount++
 			continue
 		}
-		if prev, ok := previousAStockBar(byCode[recommendations[i].Code], strategyDate); ok {
+		prev, hasPrev := previousAStockBar(byCode[recommendations[i].Code], strategyDate)
+		if hasPrev {
 			recommendations[i].PrevClose = formatAStockPrice(prev.Close)
 			recommendations[i].PrevPct = formatAStockPct(prev.Pct)
 			recommendations[i].PrevPctClass = aStockPctClass(prev.Pct)
@@ -9195,6 +9390,9 @@ func applyAStockMarketBars(strategyDate string, period string, recommendations [
 				}
 			}
 			withPrev++
+		}
+		if ok {
+			recommendations[i] = applyAStockHighOpenScore(recommendations[i], normalizedPeriod, entry, prev, hasPrev)
 		}
 		if blockedByOverheat {
 			overheatFilteredCount++
@@ -9968,7 +10166,17 @@ func mapToAStockMarketBar(row map[string]any) (aStockMarketBar, bool) {
 	if code == "" || date == "" || !ok {
 		return aStockMarketBar{}, false
 	}
-	return aStockMarketBar{Code: code, Date: date, Open: open, High: high, Low: low, Close: closeValue, Pct: pct, Volume: volume, Amount: amount, EntryPrice: entryPrice, AfternoonEntryPrice: afternoonEntryPrice}, true
+	sessionPrices := make(map[string]float64)
+	if price, ok := firstFloat(row, "price1230", "price_1230", "minute1230", "minute_1230", "midday_price", "midday"); ok && price > 0 {
+		sessionPrices["12:30"] = price
+	}
+	if price, ok := firstFloat(row, "price1130", "price_1130", "minute1130", "minute_1130"); ok && price > 0 {
+		sessionPrices["11:30"] = price
+	}
+	if len(sessionPrices) == 0 {
+		sessionPrices = nil
+	}
+	return aStockMarketBar{Code: code, Date: date, Open: open, High: high, Low: low, Close: closeValue, Pct: pct, Volume: volume, Amount: amount, EntryPrice: entryPrice, AfternoonEntryPrice: afternoonEntryPrice, SessionPrices: sessionPrices}, true
 }
 
 func arrayToAStockMarketBar(row []any, fields []string) (aStockMarketBar, bool) {
@@ -11130,15 +11338,23 @@ func buildAStockRecommendationsWithLimitAndSectorGate(hotspots []aStockHotspot, 
 				ScoreBreakdown: buildAStockRecommendationScoreBreakdown(hotspot, stock),
 			})
 			picked++
-			if picked >= maxPerHotspot || len(recommendations) >= maxRecommendations {
+			if picked >= maxPerHotspot {
 				break
 			}
 		}
-		if len(recommendations) >= maxRecommendations {
-			return recommendations
-		}
 	}
-	return recommendations
+	return limitAStockRecommendationsByScore(recommendations, maxRecommendations)
+}
+
+func limitAStockRecommendationsByScore(recommendations []aStockRecommendation, maxRecommendations int) []aStockRecommendation {
+	if len(recommendations) == 0 {
+		return recommendations
+	}
+	recommendations = sortAStockRecommendationsByScore(recommendations)
+	if maxRecommendations > 0 && len(recommendations) > maxRecommendations {
+		recommendations = recommendations[:maxRecommendations]
+	}
+	return rerankAStockRecommendations(recommendations)
 }
 
 func buildAStockRecommendationScoreBreakdown(hotspot aStockHotspot, stock aStockMarketCandidate) []aStockRecommendationScoreComponent {

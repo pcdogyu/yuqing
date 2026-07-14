@@ -5377,7 +5377,7 @@ func TestAStockRebuildRefiltersLockedMorningSelectionsAndClearsPersistedRows(t *
 	}
 }
 
-func TestAStockMorningRebuildReplenishesAfterRecentFilter(t *testing.T) {
+func TestAStockMorningRebuildUsesExpandedPoolAfterRecentFilter(t *testing.T) {
 	market := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		items := make([]map[string]any, 0)
@@ -5459,11 +5459,11 @@ func TestAStockMorningRebuildReplenishesAfterRecentFilter(t *testing.T) {
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
 	ctx := srv.loadAStockContextWithRecommendationPhasePersistenceMode("2026-06-16", "morning", 1, false, false, true, false, true, aStockRecommendationPhaseFinal, newAStockRequestCache(), false, true, aStockRecommendationRebuild)
-	if ctx.RecentFiltered != 3 || ctx.RecentReplenished != 1 || ctx.RecentReplenishShortfall {
-		t.Fatalf("expected recent stocks to be filtered and replenished without shortfall, got filtered=%d replenished=%d shortfall=%v recs=%+v", ctx.RecentFiltered, ctx.RecentReplenished, ctx.RecentReplenishShortfall, ctx.Recommendations)
+	if ctx.RecentFiltered != 3 || ctx.RecentReplenished != 0 || ctx.RecentReplenishShortfall {
+		t.Fatalf("expected recent stocks to be filtered from expanded pool without replenishment bookkeeping, got filtered=%d replenished=%d shortfall=%v recs=%+v", ctx.RecentFiltered, ctx.RecentReplenished, ctx.RecentReplenishShortfall, ctx.Recommendations)
 	}
 	if len(ctx.Recommendations) != 3 || len(savedSelections.Items) != 3 {
-		t.Fatalf("expected three replenished recommendations to be saved, ctx=%+v saved=%+v", ctx.Recommendations, savedSelections)
+		t.Fatalf("expected three non-recent recommendations from expanded pool to be saved, ctx=%+v saved=%+v", ctx.Recommendations, savedSelections)
 	}
 	gotCodes := aStockRecommendationCodeSet(ctx.Recommendations)
 	for _, code := range []string{"300024", "300857", "688327"} {
@@ -5476,11 +5476,11 @@ func TestAStockMorningRebuildReplenishesAfterRecentFilter(t *testing.T) {
 			t.Fatalf("expected recent code %s to stay filtered, got %+v", code, ctx.Recommendations)
 		}
 	}
-	if !strings.Contains(ctx.BacktestStatus, "90个交易日内重复过滤 3 只，递补 1 只") {
-		t.Fatalf("expected backtest status to mention replenishment, got %q", ctx.BacktestStatus)
+	if !strings.Contains(ctx.BacktestStatus, "90个交易日内重复过滤 3 只") || strings.Contains(ctx.BacktestStatus, "递补") {
+		t.Fatalf("expected backtest status to mention expanded-pool recent filtering without replenishment, got %q", ctx.BacktestStatus)
 	}
-	if savedSnapshot.RecentFiltered != 3 || !strings.Contains(savedSnapshot.BacktestStatus, "递补 1 只") {
-		t.Fatalf("expected saved snapshot to preserve replenishment status, got %+v", savedSnapshot)
+	if savedSnapshot.RecentFiltered != 3 || strings.Contains(savedSnapshot.BacktestStatus, "递补") {
+		t.Fatalf("expected saved snapshot to preserve expanded-pool recent filter status, got %+v", savedSnapshot)
 	}
 }
 
@@ -8087,7 +8087,7 @@ func TestAStockMarketViewFiltersDeepDrawdownsAndPenalizesSector(t *testing.T) {
 		{Code: "000002", Date: "2026-04-17", Close: 100},
 		{Code: "000002", Date: "2026-05-16", Close: 100},
 		{Code: "000002", Date: "2026-06-15", Close: 92, Pct: 1},
-		{Code: "000002", Date: "2026-06-16", Open: 93, Close: 94, Pct: 2},
+		{Code: "000002", Date: "2026-06-16", Open: 92, Close: 94, Pct: 2},
 		{Code: "000003", Date: "2026-04-17", Close: 100},
 		{Code: "000003", Date: "2026-05-16", Close: 100},
 		{Code: "000003", Date: "2026-06-15", Close: 98, Pct: 2},
@@ -8625,6 +8625,33 @@ func TestDecodeSinaAStockSessionPriceArbitraryMinute(t *testing.T) {
 	}
 }
 
+func TestMapToAStockMarketBarParsesMiddayPrices(t *testing.T) {
+	bar, ok := mapToAStockMarketBar(map[string]any{
+		"code":       "600011",
+		"date":       "2026-07-14",
+		"close":      10.50,
+		"price1230":  10.10,
+		"price_1130": 10.00,
+	})
+	if !ok {
+		t.Fatal("expected market bar to parse")
+	}
+	if bar.SessionPrices["12:30"] != 10.10 || bar.SessionPrices["11:30"] != 10.00 {
+		t.Fatalf("expected 12:30 and 11:30 session prices, got %+v", bar.SessionPrices)
+	}
+
+	bar, ok = mapToAStockMarketBar(map[string]any{
+		"code":         "600012",
+		"date":         "2026-07-14",
+		"close":        11.50,
+		"minute1230":   11.10,
+		"midday_price": 11.00,
+	})
+	if !ok || bar.SessionPrices["12:30"] != 11.10 {
+		t.Fatalf("expected minute1230 to populate 12:30 session price, ok=%v bar=%+v", ok, bar)
+	}
+}
+
 func TestAStockMarketBarsFallbackToEastmoneyWhenCustomEndpointEmpty(t *testing.T) {
 	custom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -9074,8 +9101,8 @@ func TestAStockRecommendationsUseTopThreeHotspotIndustries(t *testing.T) {
 	if len(recommendations) != aStockDailyRecommendationLimit {
 		t.Fatalf("expected %d recommendations by default, got %d", aStockDailyRecommendationLimit, len(recommendations))
 	}
-	if recommendations[0].Code != "600547" || recommendations[len(recommendations)-1].Code != "000725" {
-		t.Fatalf("expected default daily cap to keep first five ranked candidates, got %+v", recommendations)
+	if recommendations[0].Code != "600547" {
+		t.Fatalf("expected strongest global score to rank first, got %+v", recommendations)
 	}
 	for _, rec := range recommendations {
 		if rec.Hotspot == "医药生物" {
@@ -9145,6 +9172,20 @@ func TestAStockHotspotsApplyNegativeNewsPenalty(t *testing.T) {
 	}
 	if !strings.Contains(recommendations[0].Reason, "负面新闻 1 条，板块减分 30") {
 		t.Fatalf("expected recommendation reason to include negative news penalty, got %+v", recommendations[0])
+	}
+}
+
+func TestAStockRecommendationsGlobalSortBeforeLimit(t *testing.T) {
+	recommendations := buildAStockRecommendationsWithLimit([]aStockHotspot{
+		{Name: "低分热点", Keywords: []string{"低分"}, Score: 40, Evidence: 1},
+		{Name: "高分热点", Keywords: []string{"高分"}, Score: 160, Evidence: 8},
+	}, []aStockMarketCandidate{
+		{Code: "600001", Name: "低分股份", Rank: 1, AuctionAmount: 9000000},
+		{Code: "600002", Name: "高分股份", Rank: 80, AuctionAmount: 8000000},
+	}, 1, 1)
+
+	if len(recommendations) != 1 || recommendations[0].Code != "600002" {
+		t.Fatalf("expected full candidate pool to be sorted before final limit, got %+v", recommendations)
 	}
 }
 
@@ -9375,6 +9416,51 @@ func TestAStockRecommendationsExcludeNegativeOnlyStockEvidence(t *testing.T) {
 	}
 }
 
+func TestAStockRecommendationsFilterNegativeNewsWithoutStrongEvidence(t *testing.T) {
+	recommendations := []aStockRecommendation{
+		{
+			Rank:         1,
+			Code:         "601288",
+			Name:         "农业银行",
+			Hotspot:      "金融券商",
+			HotspotScore: 120,
+			MarketScore:  161,
+			ScoreBreakdown: []aStockRecommendationScoreComponent{
+				{Label: "新闻热度", Detail: "证据新闻 24 条", UnitValue: 10, Score: 240},
+				{Label: "负面新闻", Detail: "负面新闻 4 条", UnitValue: -120, Score: -120},
+				{Label: "个股证据", Detail: "有效证据 0 条 / 总证据 0 条", UnitValue: 25, Score: 0},
+			},
+		},
+		{
+			Rank:         2,
+			Code:         "300433",
+			Name:         "蓝思科技",
+			Hotspot:      "人工智能",
+			HotspotScore: 120,
+			MarketScore:  203,
+			ScoreBreakdown: []aStockRecommendationScoreComponent{
+				{Label: "新闻热度", Detail: "证据新闻 12 条", UnitValue: 10, Score: 120},
+				{Label: "负面新闻", Detail: "负面新闻 1 条", UnitValue: -30, Score: -30},
+				{Label: "个股证据", Detail: "有效证据 1 条 / 总证据 1 条", UnitValue: 25, Score: 25},
+			},
+		},
+	}
+
+	filtered, skipped := filterAStockNegativeNoEvidenceRecommendations(recommendations, nil)
+	if skipped != 1 {
+		t.Fatalf("expected one negative/no-evidence recommendation to be filtered, skipped=%d filtered=%+v", skipped, filtered)
+	}
+	if _, ok := aStockTestRecommendationsByCode(filtered)["601288"]; ok {
+		t.Fatalf("expected 农业银行 to be filtered, got %+v", filtered)
+	}
+	if len(filtered) != 1 || filtered[0].Code != "300433" || filtered[0].Rank != 1 {
+		t.Fatalf("expected negative stock with strong evidence to remain and rerank, got %+v", filtered)
+	}
+	if status := formatAStockNegativeNoEvidenceFilterStatus(skipped); !strings.Contains(status, "过滤负面无个股证据股票 1") {
+		t.Fatalf("expected negative filter status, got %q", status)
+	}
+}
+
 func TestAStockMarketBarsPenalizeMorningLowOpen(t *testing.T) {
 	recommendations := []aStockRecommendation{
 		{Rank: 1, Hotspot: "人工智能", Code: "002520", Name: "日发精机", HotspotScore: 100, MarketScore: 100, Reason: "弱盘口"},
@@ -9397,6 +9483,101 @@ func TestAStockMarketBarsPenalizeMorningLowOpen(t *testing.T) {
 	}
 	if !strings.Contains(status, "过滤低开股票 1") {
 		t.Fatalf("expected low-open hard filter status, got %q", status)
+	}
+}
+
+func TestAStockMarketBarsScoreMorningHighOpen(t *testing.T) {
+	recommendations := initializeAStockRecommendationMarket([]aStockRecommendation{
+		{Rank: 1, Hotspot: "人工智能", Code: "600001", Name: "边界下方", HotspotScore: 100, MarketScore: 100, Reason: "base"},
+		{Rank: 2, Hotspot: "人工智能", Code: "600002", Name: "一档高开", HotspotScore: 100, MarketScore: 100, Reason: "base"},
+		{Rank: 3, Hotspot: "人工智能", Code: "600003", Name: "二档高开", HotspotScore: 100, MarketScore: 100, Reason: "base"},
+		{Rank: 4, Hotspot: "人工智能", Code: "600004", Name: "三档高开", HotspotScore: 100, MarketScore: 100, Reason: "base"},
+		{Rank: 5, Hotspot: "人工智能", Code: "600005", Name: "四档高开", HotspotScore: 100, MarketScore: 100, Reason: "base"},
+		{Rank: 6, Hotspot: "人工智能", Code: "600006", Name: "五档高开", HotspotScore: 100, MarketScore: 100, Reason: "base"},
+		{Rank: 7, Hotspot: "人工智能", Code: "600007", Name: "强高开", HotspotScore: 100, MarketScore: 100, Reason: "base"},
+	})
+	entryPrices := map[string]float64{
+		"600001": 100.99,
+		"600002": 101.00,
+		"600003": 102.00,
+		"600004": 103.00,
+		"600005": 104.00,
+		"600006": 105.00,
+		"600007": 105.01,
+	}
+	bars := make([]aStockMarketBar, 0, len(recommendations)*2)
+	for _, rec := range recommendations {
+		bars = append(bars,
+			aStockMarketBar{Code: rec.Code, Date: "2026-07-13", Close: 100, Pct: 0},
+			aStockMarketBar{Code: rec.Code, Date: "2026-07-14", Open: entryPrices[rec.Code], EntryPrice: entryPrices[rec.Code], Close: entryPrices[rec.Code], Pct: 2},
+		)
+	}
+
+	got, _, _, _, _ := applyAStockMarketBars("2026-07-14", "morning", recommendations, bars, false, false, 0)
+	wantScores := map[string]int{
+		"600001": 100,
+		"600002": 110,
+		"600003": 120,
+		"600004": 130,
+		"600005": 140,
+		"600006": 150,
+		"600007": 165,
+	}
+	for code, want := range wantScores {
+		rec := mustAStockRecommendationForTest(t, got, code)
+		if rec.MarketScore != want {
+			t.Fatalf("expected %s score %d, got %+v", code, want, rec)
+		}
+		if code != "600001" {
+			component := mustAStockScoreComponentForTest(t, rec, "当日高开")
+			if component.Score != want-100 || !strings.Contains(component.Detail, "09:30 较 昨日收盘 高开") {
+				t.Fatalf("expected morning high-open score component for %s, got %+v", code, component)
+			}
+		}
+	}
+	if got[0].Code != "600007" {
+		t.Fatalf("expected strongest high-open stock to rank first, got %+v", got)
+	}
+	if aStockHighOpenScore(5.00) != 50 || aStockHighOpenScore(5.01) != 65 {
+		t.Fatalf("expected 5.00%% score 50 and 5.01%% score 65")
+	}
+}
+
+func TestAStockMarketBarsScoreAfternoonHighOpenFromMiddayBaseline(t *testing.T) {
+	recommendations := initializeAStockRecommendationMarket([]aStockRecommendation{
+		{Rank: 1, Hotspot: "人工智能", Code: "600011", Name: "午间基准", HotspotScore: 100, MarketScore: 100, Reason: "base"},
+		{Rank: 2, Hotspot: "人工智能", Code: "600012", Name: "午间回退", HotspotScore: 100, MarketScore: 100, Reason: "base"},
+		{Rank: 3, Hotspot: "人工智能", Code: "600013", Name: "无午间价", HotspotScore: 100, MarketScore: 100, Reason: "base"},
+	})
+	bars := []aStockMarketBar{
+		{Code: "600011", Date: "2026-07-13", Close: 99, Pct: 0},
+		{Code: "600011", Date: "2026-07-14", AfternoonEntryPrice: 102.13, Close: 102.50, Pct: 2.5, SessionPrices: map[string]float64{"12:30": 100}},
+		{Code: "600012", Date: "2026-07-13", Close: 99, Pct: 0},
+		{Code: "600012", Date: "2026-07-14", AfternoonEntryPrice: 105.01, Close: 105.20, Pct: 3.0, SessionPrices: map[string]float64{"11:30": 100}},
+		{Code: "600013", Date: "2026-07-13", Close: 99, Pct: 0},
+		{Code: "600013", Date: "2026-07-14", AfternoonEntryPrice: 106.00, Close: 106.10, Pct: 3.5},
+	}
+
+	got, _, _, _, _ := applyAStockMarketBars("2026-07-14", "afternoon", recommendations, bars, false, false, 0)
+	midday := mustAStockRecommendationForTest(t, got, "600011")
+	if midday.MarketScore != 120 {
+		t.Fatalf("expected 12:30 baseline high-open score +20, got %+v", midday)
+	}
+	middayComponent := mustAStockScoreComponentForTest(t, midday, "当日高开")
+	if middayComponent.Score != 20 || !strings.Contains(middayComponent.Detail, "13:01 较 12:30 高开 +2.13%") {
+		t.Fatalf("expected 12:30 high-open component, got %+v", middayComponent)
+	}
+	fallback := mustAStockRecommendationForTest(t, got, "600012")
+	if fallback.MarketScore != 165 {
+		t.Fatalf("expected 11:30 fallback high-open score +65, got %+v", fallback)
+	}
+	fallbackComponent := mustAStockScoreComponentForTest(t, fallback, "当日高开")
+	if fallbackComponent.Score != 65 || !strings.Contains(fallbackComponent.Detail, "13:01 较 11:30 高开") {
+		t.Fatalf("expected 11:30 fallback high-open component, got %+v", fallbackComponent)
+	}
+	noBase := mustAStockRecommendationForTest(t, got, "600013")
+	if noBase.MarketScore != 100 {
+		t.Fatalf("expected no midday baseline to skip high-open score, got %+v", noBase)
 	}
 }
 
