@@ -765,6 +765,7 @@ func (s *Service) buildHotspotSwitching(ctx context.Context, days int, now time.
 
 func (s *Service) listHotspotWindowItems(ctx context.Context, startDate, endDate string) ([]model.Item, error) {
 	const pageSize = 1000
+	const maxArticles = 5000
 	items := make([]model.Item, 0)
 	for page := 1; ; page++ {
 		result, err := s.store.ListItems(ctx, model.ArticleFilter{
@@ -774,15 +775,18 @@ func (s *Service) listHotspotWindowItems(ctx context.Context, startDate, endDate
 			End:       endDate + "T23:59:59",
 			TimeField: "captured_at",
 			Sort:      "captured_at_desc",
-			Lite:      false,
+			Lite:      true,
 		})
 		if err != nil {
 			return nil, err
 		}
 		items = append(items, result.Items...)
-		if len(result.Items) == 0 || len(items) >= result.Total {
+		if len(result.Items) == 0 || len(items) >= result.Total || len(items) >= maxArticles {
 			break
 		}
+	}
+	if len(items) > maxArticles {
+		items = items[:maxArticles]
 	}
 	return items, nil
 }
