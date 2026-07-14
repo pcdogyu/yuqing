@@ -2202,6 +2202,100 @@ func TestHotspotSwitchingBuildsRisingCoolingAndSwitch(t *testing.T) {
 	}
 }
 
+func TestExtractArticleHotspotKeywordsNormalizesMarketMoveFragments(t *testing.T) {
+	keywords := extractArticleHotspotKeywords(model.Item{Title: "新叶股份盘中快速上涨，5分钟内涨幅达2%，AI机器人活跃"})
+	for _, want := range []string{"涨幅", "AI", "机器人"} {
+		if _, ok := keywords[want]; !ok {
+			t.Fatalf("expected keyword %q in %+v", want, keywords)
+		}
+	}
+	for _, bad := range []string{"5分钟内涨幅达2", "涨幅达2", "幅达2", "达2"} {
+		if _, ok := keywords[bad]; ok {
+			t.Fatalf("did not expect numeric fragment %q in %+v", bad, keywords)
+		}
+	}
+
+	keywords = extractArticleHotspotKeywords(model.Item{Title: "风电板块回调，跌幅超过5%，资金观望"})
+	if _, ok := keywords["跌幅"]; !ok {
+		t.Fatalf("expected 跌幅 keyword in %+v", keywords)
+	}
+	for _, bad := range []string{"跌幅超过5", "幅超过5", "达5"} {
+		if _, ok := keywords[bad]; ok {
+			t.Fatalf("did not expect numeric fragment %q in %+v", bad, keywords)
+		}
+	}
+}
+
+func TestNormalizeHotspotTitleTokenHandlesMarketMoveFragments(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+		ok   bool
+	}{
+		{name: "simple rise phrase", in: "涨幅", want: "涨幅", ok: true},
+		{name: "simple fall phrase", in: "跌幅", want: "跌幅", ok: true},
+		{name: "rise numeric phrase", in: "涨幅达2", want: "涨幅", ok: true},
+		{name: "fall numeric phrase", in: "跌幅超过5", want: "跌幅", ok: true},
+		{name: "rise phrase in longer token", in: "5分钟内涨幅达2", want: "涨幅", ok: true},
+		{name: "broken suffix fragment", in: "幅达2", ok: false},
+		{name: "broken reach fragment", in: "达2", ok: false},
+		{name: "leading time fragment", in: "5分钟内", ok: false},
+		{name: "theme stays usable", in: "机器人", want: "机器人", ok: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := normalizeHotspotTitleToken(tc.in)
+			if ok != tc.ok || got != tc.want {
+				t.Fatalf("normalizeHotspotTitleToken(%q) = %q, %t; want %q, %t", tc.in, got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}
+
+func TestHotspotSwitchingFiltersMarketMoveFragmentsFromRankings(t *testing.T) {
+	ctx := context.Background()
+	store := newContentSearchTestStore(t)
+	svc := NewService(config.Config{}, store)
+	loc, _ := time.LoadLocation("Asia/Shanghai")
+	now := time.Date(2026, 7, 14, 12, 0, 0, 0, loc)
+	items := []model.Item{
+		{
+			SourceType: "headline",
+			SourceKey:  "rise-fragment",
+			Title:      "新叶股份盘中快速上涨5分钟内涨幅达2",
+			SourceURL:  "https://example.com/rise-fragment",
+			CapturedAt: now,
+			CreatedAt:  now,
+			UpdatedAt:  now,
+		},
+		{
+			SourceType: "headline",
+			SourceKey:  "fall-fragment",
+			Title:      "风电板块盘中回调跌幅达5",
+			SourceURL:  "https://example.com/fall-fragment",
+			CapturedAt: now,
+			CreatedAt:  now,
+			UpdatedAt:  now,
+		},
+	}
+	if _, _, err := store.UpsertItems(ctx, items); err != nil {
+		t.Fatalf("UpsertItems error: %v", err)
+	}
+
+	result, err := svc.buildHotspotSwitching(ctx, 14, now)
+	if err != nil {
+		t.Fatalf("buildHotspotSwitching error: %v", err)
+	}
+	if got := hotspotItemByKeyword(result.TodayTop, "涨幅"); got == nil || got.TodayCount == 0 {
+		t.Fatalf("expected normalized 涨幅 in today ranking, got %+v", result.TodayTop)
+	}
+	if got := hotspotItemByKeyword(result.TodayTop, "跌幅"); got == nil || got.TodayCount == 0 {
+		t.Fatalf("expected normalized 跌幅 in today ranking, got %+v", result.TodayTop)
+	}
+	assertHotspotResultMissingKeywords(t, result, []string{"5分钟内涨幅达2", "涨幅达2", "幅达2", "达2", "跌幅达5", "幅达5", "达5"})
+}
+
 func TestHotspotSwitchingEndpointReturnsEmptyListsWithoutArticles(t *testing.T) {
 	store := newContentSearchTestStore(t)
 	svc := NewService(config.Config{}, store)
@@ -2231,6 +2325,36 @@ func hotspotItemByKeyword(items []model.HotspotSwitchingItem, keyword string) *m
 		}
 	}
 	return nil
+}
+
+func assertHotspotResultMissingKeywords(t *testing.T, result model.HotspotSwitchingResult, badKeywords []string) {
+	t.Helper()
+	bad := make(map[string]struct{}, len(badKeywords))
+	for _, keyword := range badKeywords {
+		bad[keyword] = struct{}{}
+	}
+	collections := [][]model.HotspotSwitchingItem{
+		result.TodayTop,
+		result.Top,
+		result.Rising,
+		result.Cooling,
+		result.New,
+		result.ContinuousRising,
+	}
+	for _, collection := range collections {
+		for _, item := range collection {
+			if _, ok := bad[item.Keyword]; ok {
+				t.Fatalf("did not expect numeric fragment keyword %q in hotspot result: %+v", item.Keyword, result)
+			}
+		}
+	}
+	for _, day := range result.Daily {
+		for _, item := range day.Items {
+			if _, ok := bad[item.Keyword]; ok {
+				t.Fatalf("did not expect numeric fragment keyword %q in daily hotspot result: %+v", item.Keyword, result.Daily)
+			}
+		}
+	}
 }
 
 func newContentSearchTestStore(t *testing.T) *sqlitestore.Store {

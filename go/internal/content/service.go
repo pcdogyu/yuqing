@@ -838,6 +838,9 @@ func (s hotspotKeywordStat) toModel(dateKeys []string) model.HotspotSwitchingIte
 
 var hotspotTitleTokenPattern = regexp.MustCompile(`[\p{Han}A-Za-z0-9]{2,12}`)
 
+var hotspotBrokenNumericFragmentPattern = regexp.MustCompile(`^(?:幅)?(?:达|达到|超|超过)?[+-]?\d+(?:\.\d+)?(?:[%％点个百分万亿元倍只股]+)?$`)
+var hotspotLeadingNumericFragmentPattern = regexp.MustCompile(`^[+-]?\d+(?:\.\d+)?(?:分钟|日|天|个交易日|个月|季度|年)?(?:内)?(?:达|达到|超|超过)?[+-]?\d*(?:\.\d+)?(?:[%％点个百分万亿元倍只股]+)?$`)
+
 var hotspotKeywordAliases = map[string][]string{
 	"AI":   {"AI", "人工智能", "大模型", "生成式AI", "AIGC"},
 	"半导体":  {"半导体", "芯片", "晶圆", "光刻机", "存储芯片", "先进封装"},
@@ -877,8 +880,8 @@ func extractArticleHotspotKeywords(item model.Item) map[string]struct{} {
 		}
 	}
 	for _, token := range hotspotTitleTokenPattern.FindAllString(item.Title, -1) {
-		token = strings.TrimSpace(token)
-		if !isUsableHotspotTitleToken(token) {
+		token, ok := normalizeHotspotTitleToken(token)
+		if !ok {
 			continue
 		}
 		result[token] = struct{}{}
@@ -887,6 +890,34 @@ func extractArticleHotspotKeywords(item model.Item) map[string]struct{} {
 		}
 	}
 	return result
+}
+
+func normalizeHotspotTitleToken(token string) (string, bool) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return "", false
+	}
+	if strings.Contains(token, "涨幅") {
+		return "涨幅", true
+	}
+	if strings.Contains(token, "跌幅") {
+		return "跌幅", true
+	}
+	if isHotspotNumericFragment(token) {
+		return "", false
+	}
+	if !isUsableHotspotTitleToken(token) {
+		return "", false
+	}
+	return token, true
+}
+
+func isHotspotNumericFragment(token string) bool {
+	token = strings.Trim(token, " \t\r\n,，.。;；:：、()（）[]【】{}《》<>%％")
+	if token == "" {
+		return true
+	}
+	return hotspotBrokenNumericFragmentPattern.MatchString(token) || hotspotLeadingNumericFragmentPattern.MatchString(token)
 }
 
 func isUsableHotspotTitleToken(token string) bool {
