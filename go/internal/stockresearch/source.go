@@ -228,9 +228,14 @@ func CleanEastMoneyReportText(text string) string {
 	}
 	loc := eastMoneyReportInvestmentPointsPattern.FindStringIndex(normalized)
 	if loc == nil {
-		return normalized
+		cleaned := normalized
+		if cut := eastMoneyReportTailIndex(cleaned); cut >= 0 {
+			cleaned = cleaned[:cut]
+		}
+		return FormatSourceBlocks(sourceTextBlocks(cleaned))
 	}
 	cleaned := normalized[loc[0]:]
+	cleaned = eastMoneyReportInvestmentPointsAtStartPattern.ReplaceAllString(cleaned, `${1} 投资要点`)
 	if cut := eastMoneyReportTailIndex(cleaned); cut >= 0 {
 		cleaned = cleaned[:cut]
 	}
@@ -238,6 +243,9 @@ func CleanEastMoneyReportText(text string) string {
 }
 
 func eastMoneyReportTailIndex(text string) int {
+	if loc := eastMoneyReportTailPattern.FindStringIndex(text); loc != nil {
+		return loc[0]
+	}
 	cut := -1
 	for _, marker := range eastMoneyReportTailMarkers {
 		idx := strings.Index(text, marker)
@@ -283,6 +291,10 @@ var sinaFinanceReportLeadingNoise = map[string]bool{
 }
 
 var eastMoneyReportInvestmentPointsPattern = regexp.MustCompile(`[*\p{Han}A-Za-z0-9Ａ-Ｚａ-ｚ·-]+[（(]\d{6}[）)]\s*投资要点`)
+
+var eastMoneyReportInvestmentPointsAtStartPattern = regexp.MustCompile(`^([*\p{Han}A-Za-z0-9Ａ-Ｚａ-ｚ·-]+[（(]\d{6}[）)])\s*投资要点`)
+
+var eastMoneyReportTailPattern = regexp.MustCompile(`调\s*高\s*投\s*资\s*评\s*级|调\s*低\s*投\s*资\s*评\s*级|首\s*次\s*评\s*级\s*股\s*票|盈\s*利\s*预\s*测\s*排\s*行|最\s*新\s*研\s*究\s*报\s*告|买\s*入\s*评\s*级\s*个\s*股|数\s*据\s*来\s*源\s*：\s*东\s*方\s*财\s*富\s*Choice\s*数\s*据|郑\s*重\s*声\s*明\s*：\s*东\s*方\s*财\s*富\s*网\s*发\s*布\s*此\s*信\s*息|东\s*方\s*财\s*富\s*免\s*费\s*版`)
 
 var eastMoneyReportTailMarkers = []string{
 	"调高投资评级",

@@ -74,7 +74,8 @@ func TestCleanEastMoneyReportTextRemovesNavigationAndTail(t *testing.T) {
 	raw := strings.Join([]string{
 		"财经 焦点 股票 新股 研报 个股研报 行业研报 盈利预测",
 		"电磁线领域领先龙头，行业高景气+全球化布局驱动新成长",
-		"宏远股份(920018) 投资要点",
+		"宏远股份(920018)",
+		"投资要点",
 		"深耕高性能电磁线，全球化布局打开成长空间。",
 		"盈利预测与投资评级：预计公司业绩稳步增长。",
 		"风险提示：下游行业需求波动，原材料价格波动。",
@@ -109,7 +110,7 @@ func TestCleanEastMoneyReportTextRemovesNavigationAndTail(t *testing.T) {
 }
 
 func TestCleanSourceTextForURLAppliesEastMoneyRules(t *testing.T) {
-	raw := "财经 焦点 股票\n\n宏远股份(920018) 投资要点\n\n正文内容\n\n数据来源：东方财富Choice数据\n\n尾部"
+	raw := "财经 焦点 股票\n\n宏远股份(920018)\n\n投资要点\n\n正文内容\n\n首次\n\n评级股票\n\n数据来源：东方财富Choice数据\n\n尾部"
 
 	text := CleanSourceTextForURL("https://data.eastmoney.com/report/info/AP202607121826913867.html", raw)
 
@@ -121,6 +122,9 @@ func TestCleanSourceTextForURLAppliesEastMoneyRules(t *testing.T) {
 	}
 	if !strings.Contains(text, "正文内容") {
 		t.Fatalf("expected eastmoney URL cleaner to keep body, got %q", text)
+	}
+	if strings.Contains(text, "首次") || strings.Contains(text, "评级股票") {
+		t.Fatalf("expected eastmoney URL cleaner to remove split rating tail, got %q", text)
 	}
 }
 
