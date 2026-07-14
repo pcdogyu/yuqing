@@ -4447,6 +4447,7 @@ func (s *Server) applyAStockT1ShadowFundFlowWithCache(strategyDate string, recom
 	if len(recommendations) == 0 {
 		return recommendations, 0, 0
 	}
+	sectorTopStockResonance := s.loadAStockSectorTopStockResonanceWithCache(strategyDate, recommendations, cache)
 	filtered := make([]aStockRecommendation, 0, len(recommendations))
 	filteredCount := 0
 	missingCount := 0
@@ -4459,6 +4460,7 @@ func (s *Server) applyAStockT1ShadowFundFlowWithCache(strategyDate string, recom
 			missingCount++
 			rec = applyAStockFundFlow5DAssessmentToRecommendation(rec, assessment, true)
 			rec = s.applyAStockSectorFundFlowTrendScoreWithCache(strategyDate, rec, cache)
+			rec = applyAStockSectorTopStockResonanceToRecommendation(rec, sectorTopStockResonance[normalizeAStockCode(rec.Code)])
 			filtered = append(filtered, rec)
 			continue
 		}
@@ -4468,6 +4470,7 @@ func (s *Server) applyAStockT1ShadowFundFlowWithCache(strategyDate string, recom
 		}
 		rec = applyAStockFundFlow5DAssessmentToRecommendation(rec, assessment, true)
 		rec = s.applyAStockSectorFundFlowTrendScoreWithCache(strategyDate, rec, cache)
+		rec = applyAStockSectorTopStockResonanceToRecommendation(rec, sectorTopStockResonance[normalizeAStockCode(rec.Code)])
 		filtered = append(filtered, rec)
 	}
 	return sortAStockRecommendationsByScore(filtered), filteredCount, missingCount
@@ -5775,6 +5778,9 @@ func (s *Server) applyAStockRecommendationFundFlowFilterWithCache(strategyDate s
 		result.Recommendations = rerankAStockRecommendations(base)
 		return result
 	}
+	resonancePool := append([]aStockRecommendation(nil), base...)
+	resonancePool = append(resonancePool, replacementPool...)
+	sectorTopStockResonance := s.loadAStockSectorTopStockResonanceWithCache(strategyDate, resonancePool, cache)
 	seen := make(map[string]struct{}, len(base))
 	assessments := make(map[string]aStockFundFlow5DAssessment)
 	baseHotspotCounts := make(map[string]int)
@@ -5829,6 +5835,7 @@ func (s *Server) applyAStockRecommendationFundFlowFilterWithCache(strategyDate s
 		}
 		rec = applyAStockFundFlow5DAssessmentToRecommendation(rec, assessment, true)
 		rec = s.applyAStockSectorFundFlowTrendScoreWithCache(strategyDate, rec, cache)
+		rec = applyAStockSectorTopStockResonanceToRecommendation(rec, sectorTopStockResonance[code])
 		seen[code] = struct{}{}
 		kept = append(kept, rec)
 		if assessment.Missing {
@@ -6486,6 +6493,264 @@ func (s *Server) loadAStockSectorFundFlowTrendWithCache(endDate string, alias aS
 	return result, err
 }
 
+func (s *Server) loadAStockSectorFundFlowListWithCache(strategyDate string, sectorType string, indicator string, pageSize int, cache *aStockRequestCache) (model.AStockSectorFundFlowListResult, error) {
+	if strings.TrimSpace(s.cfg.ContentURL) == "" {
+		return model.AStockSectorFundFlowListResult{}, fmt.Errorf("content service url is empty")
+	}
+	strategyDate = normalizeAStockStrategyDate(strategyDate)
+	sectorType = normalizeSectorFundFlowSectorType(sectorType)
+	indicator = strings.TrimSpace(indicator)
+	if indicator == "" {
+		indicator = "今日"
+	}
+	if pageSize <= 0 {
+		pageSize = 500
+	}
+	cacheKey := strings.Join([]string{"list", strategyDate, sectorType, indicator, fmt.Sprint(pageSize)}, "|")
+	if cache != nil {
+		if cache.sectorFundFlows == nil {
+			cache.sectorFundFlows = make(map[string]aStockSectorFundFlowCacheEntry)
+		}
+		if entry, ok := cache.sectorFundFlows[cacheKey]; ok {
+			return entry.result, entry.err
+		}
+	}
+	query := url.Values{}
+	query.Set("date", strategyDate)
+	query.Set("sector_type", sectorType)
+	query.Set("indicator", indicator)
+	query.Set("page", "1")
+	query.Set("page_size", fmt.Sprint(pageSize))
+	result := model.AStockSectorFundFlowListResult{}
+	err := s.getJSON(s.cfg.ContentURL+"/api/v1/a-stock/sector-fund-flows?"+query.Encode(), &result)
+	if cache != nil {
+		cache.sectorFundFlows[cacheKey] = aStockSectorFundFlowCacheEntry{result: result, err: err}
+	}
+	return result, err
+}
+
+func (s *Server) loadAStockSectorTopStockResonanceWithCache(strategyDate string, recommendations []aStockRecommendation, cache *aStockRequestCache) map[string]aStockSectorTopStockResonance {
+	if normalizeAStockStrategyDate(strategyDate) < aStockSectorTopStockResonanceEffectiveDate {
+		return nil
+	}
+	resolver := newAStockSectorTopStockCodeResolver(recommendations)
+	if resolver.empty() || strings.TrimSpace(s.cfg.ContentURL) == "" {
+		return nil
+	}
+	flows := make([]model.AStockSectorFundFlow, 0, 256)
+	for _, sectorType := range []string{"行业资金流", "概念资金流"} {
+		result, err := s.loadAStockSectorFundFlowListWithCache(strategyDate, sectorType, "今日", 1000, cache)
+		if err != nil {
+			continue
+		}
+		flows = append(flows, result.Items...)
+	}
+	return buildAStockSectorTopStockResonanceMap(flows, resolver)
+}
+
+func newAStockSectorTopStockCodeResolver(recommendations []aStockRecommendation) aStockSectorTopStockCodeResolver {
+	resolver := aStockSectorTopStockCodeResolver{
+		codeByName:   make(map[string]string),
+		allowedCodes: make(map[string]struct{}),
+	}
+	for _, rec := range recommendations {
+		code := normalizeAStockCode(rec.Code)
+		name := astockcode.DisplayName(code, rec.Name)
+		if !astockcode.IsShanghaiShenzhen(code) || !hasResolvedAStockRecommendationName(code, name) {
+			continue
+		}
+		resolver.allowedCodes[code] = struct{}{}
+		for _, candidateName := range []string{name, rec.Name} {
+			key := normalizeAStockSectorTopStockName(candidateName)
+			if key != "" {
+				resolver.codeByName[key] = code
+			}
+		}
+	}
+	if len(resolver.allowedCodes) == 0 {
+		return aStockSectorTopStockCodeResolver{}
+	}
+	return resolver
+}
+
+func (resolver aStockSectorTopStockCodeResolver) empty() bool {
+	return len(resolver.allowedCodes) == 0
+}
+
+func (resolver aStockSectorTopStockCodeResolver) resolve(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || resolver.empty() {
+		return ""
+	}
+	if code := normalizeAStockCode(raw); code != "" {
+		if _, ok := resolver.allowedCodes[code]; ok {
+			return code
+		}
+	}
+	for _, token := range strings.Fields(raw) {
+		if code := normalizeAStockCode(token); code != "" {
+			if _, ok := resolver.allowedCodes[code]; ok {
+				return code
+			}
+		}
+	}
+	key := normalizeAStockSectorTopStockName(raw)
+	if code := resolver.codeByName[key]; code != "" {
+		return code
+	}
+	return ""
+}
+
+func normalizeAStockSectorTopStockName(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimPrefix(value, "XD")
+	value = strings.TrimPrefix(value, "XR")
+	value = strings.TrimPrefix(value, "DR")
+	value = strings.ReplaceAll(value, " ", "")
+	value = strings.ReplaceAll(value, "\t", "")
+	return value
+}
+
+func buildAStockSectorTopStockResonanceMap(flows []model.AStockSectorFundFlow, resolver aStockSectorTopStockCodeResolver) map[string]aStockSectorTopStockResonance {
+	if len(flows) == 0 || resolver.empty() {
+		return nil
+	}
+	result := make(map[string]aStockSectorTopStockResonance)
+	sectorSeenByCode := make(map[string]map[string]struct{})
+	sourceSeenByCode := make(map[string]map[string]struct{})
+	for _, flow := range flows {
+		if flow.MainNetInflow <= 0 || flow.ChangePct < 0 {
+			continue
+		}
+		code := resolver.resolve(flow.TopStock)
+		if code == "" {
+			continue
+		}
+		sectorName := strings.TrimSpace(flow.Name)
+		if sectorName == "" {
+			continue
+		}
+		sectorKey := normalizeSectorFundFlowSectorType(flow.SectorType) + "|" + sectorName
+		sectorSeen := sectorSeenByCode[code]
+		if sectorSeen == nil {
+			sectorSeen = make(map[string]struct{})
+			sectorSeenByCode[code] = sectorSeen
+		}
+		if _, exists := sectorSeen[sectorKey]; exists {
+			continue
+		}
+		sectorSeen[sectorKey] = struct{}{}
+		resonance := result[code]
+		resonance.Code = code
+		resonance.Name = normalizeAStockSectorTopStockName(flow.TopStock)
+		resonance.SectorNames = append(resonance.SectorNames, sectorName)
+		resonance.TotalSectorMainNetInflow += flow.MainNetInflow
+		sourceSeen := sourceSeenByCode[code]
+		if sourceSeen == nil {
+			sourceSeen = make(map[string]struct{})
+			sourceSeenByCode[code] = sourceSeen
+		}
+		for _, sourceType := range aStockSectorFundFlowSourceTypes(flow) {
+			if _, exists := sourceSeen[sourceType]; exists {
+				continue
+			}
+			sourceSeen[sourceType] = struct{}{}
+			resonance.SourceTypes = append(resonance.SourceTypes, sourceType)
+		}
+		resonance.PositiveSectorCount = len(resonance.SectorNames)
+		resonance.SectorCount = resonance.PositiveSectorCount
+		resonance.ScoreDelta = scoreAStockSectorTopStockResonance(resonance)
+		result[code] = resonance
+	}
+	for code, resonance := range result {
+		if resonance.ScoreDelta <= 0 {
+			delete(result, code)
+			continue
+		}
+		sort.Strings(resonance.SourceTypes)
+		result[code] = resonance
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+func aStockSectorFundFlowSourceTypes(flow model.AStockSectorFundFlow) []string {
+	raw := strings.TrimSpace(flow.SourceTypes)
+	if raw == "" {
+		raw = strings.TrimSpace(flow.SourceType)
+	}
+	if raw == "" {
+		return nil
+	}
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == '，' || r == '、' || r == '|' || r == ';' || r == '；'
+	})
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			result = append(result, part)
+		}
+	}
+	return result
+}
+
+func scoreAStockSectorTopStockResonance(resonance aStockSectorTopStockResonance) int {
+	count := resonance.PositiveSectorCount
+	if count <= 0 {
+		count = resonance.SectorCount
+	}
+	if count <= 0 {
+		return 0
+	}
+	if count > 3 {
+		count = 3
+	}
+	score := 0
+	switch count {
+	case 1:
+		score = 8
+	case 2:
+		score = 15
+	default:
+		score = 20
+	}
+	if resonance.TotalSectorMainNetInflow > aStockSectorTopStockResonanceInflowThreshold {
+		score += 5
+	}
+	if score > aStockSectorTopStockResonanceScoreCap {
+		score = aStockSectorTopStockResonanceScoreCap
+	}
+	return score
+}
+
+func applyAStockSectorTopStockResonanceToRecommendation(rec aStockRecommendation, resonance aStockSectorTopStockResonance) aStockRecommendation {
+	if resonance.ScoreDelta <= 0 {
+		return rec
+	}
+	scoreDelta := resonance.ScoreDelta
+	if change60, ok := parseAStockPctText(rec.Change60); ok && change60 > aStockOverheat60ThresholdPct {
+		return rec
+	}
+	if change30, ok := parseAStockPctText(rec.Change30); ok && change30 > aStockOverheat30ThresholdPct && scoreDelta > aStockSectorTopStockResonanceOverheat30Cap {
+		scoreDelta = aStockSectorTopStockResonanceOverheat30Cap
+	}
+	if scoreDelta <= 0 || aStockRecommendationHasScoreLabel(rec, "板块资金共振") {
+		return rec
+	}
+	baseScore := rec.MarketScore
+	if baseScore == 0 {
+		baseScore = rec.HotspotScore
+	}
+	rec.MarketScore = baseScore + scoreDelta
+	reason := formatAStockSectorTopStockResonanceReason(rec, resonance, scoreDelta)
+	appendAStockScoreAdjustment(&rec, "板块资金共振", reason, scoreDelta)
+	rec.Reason = appendAStockReason(rec.Reason, reason)
+	return rec
+}
+
 func aStockRecommendationHasScoreLabel(rec aStockRecommendation, label string) bool {
 	for _, component := range aStockRecommendationScoreBreakdown(rec) {
 		if component.Label == label {
@@ -6493,6 +6758,23 @@ func aStockRecommendationHasScoreLabel(rec aStockRecommendation, label string) b
 		}
 	}
 	return false
+}
+
+func formatAStockSectorTopStockResonanceReason(rec aStockRecommendation, resonance aStockSectorTopStockResonance, scoreDelta int) string {
+	name := astockcode.DisplayName(normalizeAStockCode(rec.Code), rec.Name)
+	if !hasResolvedAStockRecommendationName(rec.Code, name) {
+		name = nonEmpty(resonance.Name, rec.Code)
+	}
+	sectorNames := resonance.SectorNames
+	if len(sectorNames) > 3 {
+		sectorNames = sectorNames[:3]
+	}
+	detail := fmt.Sprintf("板块资金共振：%s为%s主力净流入代表股", name, strings.Join(sectorNames, "、"))
+	if resonance.TotalSectorMainNetInflow > 0 {
+		detail += "，板块合计主力净流入 " + formatSectorFundFlowMoney(resonance.TotalSectorMainNetInflow)
+	}
+	detail += fmt.Sprintf("，板块共振加分 %d", scoreDelta)
+	return detail
 }
 
 func aStockHoldingScore(summary model.StockInstitutionHoldingSummary) int {
@@ -7315,6 +7597,19 @@ func capAStockOverheatedFundFlowScore(rec aStockRecommendation, change30 float64
 	)
 }
 
+func capAStockOverheatedSectorTopStockResonanceScore(rec aStockRecommendation, change30 float64) aStockRecommendation {
+	resonanceBonus := positiveAStockSectorTopStockResonanceScore(rec)
+	if resonanceBonus <= aStockSectorTopStockResonanceOverheat30Cap {
+		return rec
+	}
+	penalty := resonanceBonus - aStockSectorTopStockResonanceOverheat30Cap
+	return applyAStockRecommendationScorePenalty(
+		rec,
+		penalty,
+		fmt.Sprintf("30日涨幅超过%s，板块共振加分上限%d，过热减分 %d", formatAStockPct(aStockOverheat30ThresholdPct), aStockSectorTopStockResonanceOverheat30Cap, penalty),
+	)
+}
+
 func applyAStockPreviousLimitUpPenalty(rec aStockRecommendation, prevPct float64) aStockRecommendation {
 	baseScore := rec.MarketScore
 	if baseScore == 0 {
@@ -7702,6 +7997,17 @@ func positiveAStockFundFlowScore(rec aStockRecommendation) int {
 	score := 0
 	for _, component := range aStockRecommendationScoreBreakdown(rec) {
 		if component.Label != "资金动向" || component.Score <= 0 {
+			continue
+		}
+		score += component.Score
+	}
+	return score
+}
+
+func positiveAStockSectorTopStockResonanceScore(rec aStockRecommendation) int {
+	score := 0
+	for _, component := range aStockRecommendationScoreBreakdown(rec) {
+		if component.Label != "板块资金共振" || component.Score <= 0 {
 			continue
 		}
 		score += component.Score
@@ -8937,6 +9243,7 @@ func applyAStockMarketBars(strategyDate string, period string, recommendations [
 				}
 				if change > aStockOverheat30ThresholdPct {
 					recommendations[i] = capAStockOverheatedFundFlowScore(recommendations[i], change)
+					recommendations[i] = capAStockOverheatedSectorTopStockResonanceScore(recommendations[i], change)
 				}
 			}
 			if change, ok := aStockLookbackChange(byCode[recommendations[i].Code], strategyDate, 60, prev.Close); ok {
