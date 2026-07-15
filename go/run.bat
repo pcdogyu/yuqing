@@ -213,17 +213,15 @@ if "%YUQING_RUN_GO_TEST%"=="1" (
 )
 
 echo [4/6] Stop existing service processes...
-for %%S in (%SERVICE_NAMES%) do (
-    call :kill_service %%S
-    if errorlevel 1 goto :fail
-)
+call :stop_services
+if errorlevel 1 goto :fail
 call :ensure_release_port
 if errorlevel 1 goto :fail
 
 echo [5/6] Build service binaries concurrently...
 if not exist "%BIN_DIR%" mkdir "%BIN_DIR%"
 if defined GO_BUILD_FLAGS echo Go build flags: %GO_BUILD_FLAGS%
-go build %GO_BUILD_FLAGS% -ldflags "%LDFLAGS%" -o "%BIN_DIR%\\" "./cmd/auth-service" "./cmd/wechat-service" "./cmd/content-service" "./cmd/crawler-service" "./cmd/analysis-service" "./cmd/nlp-service" "./cmd/gateway-web" "./cmd/akshare-service" "./cmd/scheduler-service" "./cmd/release-service"
+call :build_services
 if errorlevel 1 goto :fail
 
 echo [6/6] Start services with debug logging...
@@ -324,10 +322,8 @@ cd /d "%GO_DIR%"
 if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
 echo Restart services requested. Skipping git pull, build metadata, go test, and go build.
 echo [restartservices] Stop existing service processes...
-for %%S in (%SERVICE_NAMES%) do (
-    call :kill_service %%S
-    if errorlevel 1 goto :fail
-)
+call :stop_services
+if errorlevel 1 goto :fail
 call :ensure_release_port
 if errorlevel 1 goto :fail
 echo [restartservices] Start services with existing binaries...
@@ -378,6 +374,14 @@ echo Service status:
 call :print_service_status
 if errorlevel 1 echo WARNING: Failed to print service status.
 exit /b 0
+
+:stop_services
+powershell -NoProfile -ExecutionPolicy Bypass -File "%GO_DIR%\scripts\stop-services.ps1" -Root "%GO_DIR%" -Names "%SERVICE_NAMES%"
+exit /b %ERRORLEVEL%
+
+:build_services
+powershell -NoProfile -ExecutionPolicy Bypass -File "%GO_DIR%\scripts\build-services.ps1" -Root "%GO_DIR%" -BinDir "%BIN_DIR%" -Ldflags "%LDFLAGS%" -GoBuildFlags "%GO_BUILD_FLAGS%" -Services "%SERVICE_NAMES%"
+exit /b %ERRORLEVEL%
 
 :ensure_gateway_http_port80
 if defined YUQING_GATEWAY_TLS_CERT_FILE exit /b 0
