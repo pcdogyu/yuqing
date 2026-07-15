@@ -259,6 +259,8 @@ type aStockRequestCache struct {
 	sectorConstituents        map[string]aStockSectorConstituentCodesCacheEntry
 	codeNames                 map[string]map[string]string
 	sourceRuns                []aStockSourceRun
+	algorithmSettings         model.AStockRecommendationAlgorithmSettings
+	algorithmSettingsLoaded   bool
 }
 
 type aStockTradingDayCacheEntry struct {
@@ -2968,6 +2970,7 @@ func (s *Server) loadAStockFastReadOnlyContextWithCache(strategyDate string, per
 		ctx.LoadMessage = err.Error()
 		return ctx, false
 	}
+	settings := s.loadAStockAlgorithmSettingsWithCache(cache)
 	ctx.AuctionAmountLabel = s.loadAStockAuctionAmountLabelWithCache(ctx.Date, cache)
 	if blocked, message, reason := s.aStockRecommendationBlockedStatusWithCache(ctx.Date, cache); blocked {
 		ctx.TradingDayBlocked = true
@@ -2984,12 +2987,12 @@ func (s *Server) loadAStockFastReadOnlyContextWithCache(strategyDate string, per
 	}
 	candidates, candidateStatus, auctionResult := s.loadAStockMarketCandidatesWithStatusWithCache(ctx.Date, cache)
 	ctx.MarketCandidateStatus = candidateStatus
-	ctx.MarketCandidateCount = len(aStockRecommendationCandidatesForLimit(aStockRecommendationHotspotSlice(ctx.Hotspots), candidates, aStockRecommendationLimit, aStockStocksPerHotspot))
+	ctx.MarketCandidateCount = len(aStockRecommendationCandidatesForLimitWithSettings(aStockRecommendationHotspotSliceWithSettings(ctx.Hotspots, settings), candidates, settings.Auction.RecommendationLimit, settings.Auction.StocksPerHotspot, settings))
 	if auctionLabel := normalizeAStockAuctionSummaryLabel(formatAStockAuctionSummaryAmount(auctionResult)); auctionLabel != "" {
 		ctx.AuctionAmountLabel = auctionLabel
 	}
 	if includeHotspotTopStocks {
-		ctx.Hotspots = buildAStockHotspotsWithTopStocks(ctx.Hotspots, candidates, aStockHotspotTopStockLimit)
+		ctx.Hotspots = buildAStockHotspotsWithTopStocksWithSettings(ctx.Hotspots, candidates, settings.Auction.HotspotTopStockLimit, settings)
 		ctx.Hotspots = s.applyAStockHotspotRecommendationDatesWithCache(ctx.Hotspots, ctx.Date, ctx.Period, cache)
 	}
 	recommendationTarget := 0
@@ -2997,13 +3000,13 @@ func (s *Server) loadAStockFastReadOnlyContextWithCache(strategyDate string, per
 	recentReplacementStatus := ""
 	negativeFilteredCodes := make(map[string]struct{})
 	negativeFilterStatus := ""
-	baseRecommendations := buildAStockSnapshotRecommendationsWithPhaseAndLimit(ctx.Date, ctx.Period, aStockRecommendationPhaseFinal, ctx.Articles, candidates, aStockReplacementPoolLimit, aStockReplacementPerHotspot)
+	baseRecommendations := buildAStockSnapshotRecommendationsWithPhaseAndLimitAndSectorGateWithSettings(ctx.Date, ctx.Period, aStockRecommendationPhaseFinal, ctx.Articles, candidates, settings.Auction.ReplacementPoolLimit, settings.Auction.ReplacementPerHotspot, nil, settings)
 	if filtered, skipped := filterAStockNegativeNoEvidenceRecommendations(baseRecommendations, negativeFilteredCodes); skipped > 0 {
 		baseRecommendations = filtered
 		ctx.NegativeNoEvidenceFiltered += skipped
 		negativeFilterStatus = formatAStockNegativeNoEvidenceFilterStatus(ctx.NegativeNoEvidenceFiltered)
 	}
-	recommendationTarget = minInt(aStockDailyRecommendationLimit, len(baseRecommendations))
+	recommendationTarget = minInt(settings.Auction.RecommendationLimit, len(baseRecommendations))
 	ctx.GeneratedRecommendationCount = recommendationTarget
 	ctx.Recommendations = baseRecommendations
 	exDividendStatus := ""
@@ -3381,7 +3384,7 @@ func (s *Server) populateAStockContextArticleStatsWithCache(ctx *aStockContext, 
 	ctx.NewsTotal = len(ctx.NewsArticles)
 	ctx.RecommendationNewsTotal = len(ctx.Articles)
 	ctx.PagedArticles, ctx.NewsPage, ctx.NewsTotalPages = paginateAStockNews(ctx.NewsArticles, newsPage, aStockNewsPageSize)
-	ctx.Hotspots = buildAStockHotspots(ctx.Articles)
+	ctx.Hotspots = buildAStockHotspotsWithSettings(ctx.Articles, s.loadAStockAlgorithmSettingsWithCache(cache))
 	return nil
 }
 
@@ -3420,6 +3423,7 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 	phase := normalizeAStockRecommendationPhase(recommendationPhase)
 	strategyDate = normalizeAStockStrategyDate(strategyDate)
 	ctx := newAStockBaseContext(strategyDate, period.Key, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, phase)
+	settings := s.loadAStockAlgorithmSettingsWithCache(cache)
 	ctx.SourceRuns = s.loadAStockSourceRunsWithCache(cache)
 	if err := s.populateAStockContextArticleStatsWithCache(&ctx, newsPage, cache); err != nil {
 		ctx.LoadMessage = err.Error()
@@ -3430,10 +3434,10 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 	if len(ctx.Hotspots) > 0 && includeHotspotTopStocks {
 		candidates, candidateStatus, auctionResult := s.loadAStockMarketCandidatesWithStatusWithCache(strategyDate, cache)
 		marketCandidates = candidates
-		ctx.Hotspots = buildAStockHotspotsWithTopStocks(ctx.Hotspots, marketCandidates, aStockHotspotTopStockLimit)
+		ctx.Hotspots = buildAStockHotspotsWithTopStocksWithSettings(ctx.Hotspots, marketCandidates, settings.Auction.HotspotTopStockLimit, settings)
 		ctx.Hotspots = s.applyAStockHotspotRecommendationDatesWithCache(ctx.Hotspots, strategyDate, period.Key, cache)
 		ctx.MarketCandidateStatus = candidateStatus
-		ctx.MarketCandidateCount = len(aStockRecommendationCandidatesForLimit(aStockRecommendationHotspotSlice(ctx.Hotspots), marketCandidates, aStockRecommendationLimit, aStockStocksPerHotspot))
+		ctx.MarketCandidateCount = len(aStockRecommendationCandidatesForLimitWithSettings(aStockRecommendationHotspotSliceWithSettings(ctx.Hotspots, settings), marketCandidates, settings.Auction.RecommendationLimit, settings.Auction.StocksPerHotspot, settings))
 		if auctionLabel := normalizeAStockAuctionSummaryLabel(formatAStockAuctionSummaryAmount(auctionResult)); auctionLabel != "" {
 			ctx.AuctionAmountLabel = auctionLabel
 		}
@@ -3523,24 +3527,24 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 			candidates, candidateStatus, auctionResult := s.loadAStockMarketCandidatesWithStatusWithCache(strategyDate, cache)
 			marketCandidates = candidates
 			ctx.MarketCandidateStatus = candidateStatus
-			ctx.MarketCandidateCount = len(aStockRecommendationCandidatesForLimit(aStockRecommendationHotspotSlice(ctx.Hotspots), marketCandidates, aStockRecommendationLimit, aStockStocksPerHotspot))
+			ctx.MarketCandidateCount = len(aStockRecommendationCandidatesForLimitWithSettings(aStockRecommendationHotspotSliceWithSettings(ctx.Hotspots, settings), marketCandidates, settings.Auction.RecommendationLimit, settings.Auction.StocksPerHotspot, settings))
 			if auctionLabel := normalizeAStockAuctionSummaryLabel(formatAStockAuctionSummaryAmount(auctionResult)); auctionLabel != "" {
 				ctx.AuctionAmountLabel = auctionLabel
 			}
 		}
 		candidates := marketCandidates
 		sectorGate := s.loadAStockHotspotSectorGateWithCache(ctx.Hotspots, cache)
-		baseRecommendations := buildAStockSnapshotRecommendationsWithPhaseAndLimitAndSectorGate(strategyDate, period.Key, phase, ctx.Articles, candidates, aStockReplacementPoolLimit, aStockReplacementPerHotspot, sectorGate)
+		baseRecommendations := buildAStockSnapshotRecommendationsWithPhaseAndLimitAndSectorGateWithSettings(strategyDate, period.Key, phase, ctx.Articles, candidates, settings.Auction.ReplacementPoolLimit, settings.Auction.ReplacementPerHotspot, sectorGate, settings)
 		if filtered, skipped := filterAStockNegativeNoEvidenceRecommendations(baseRecommendations, negativeFilteredCodes); skipped > 0 {
 			baseRecommendations = filtered
 			ctx.NegativeNoEvidenceFiltered += skipped
 			negativeFilterStatus = formatAStockNegativeNoEvidenceFilterStatus(ctx.NegativeNoEvidenceFiltered)
 		}
-		recommendationTarget = minInt(aStockDailyRecommendationLimit, len(baseRecommendations))
+		recommendationTarget = minInt(settings.Auction.RecommendationLimit, len(baseRecommendations))
 		ctx.GeneratedRecommendationCount = recommendationTarget
 		ctx.Recommendations = baseRecommendations
 		if ctx.FundFlowFilterEnabled && recommendationTarget > 0 {
-			fundFlowReplacementPool = buildAStockSnapshotReplacementRecommendationsWithSectorGate(strategyDate, period.Key, phase, ctx.Articles, candidates, sectorGate)
+			fundFlowReplacementPool = buildAStockSnapshotReplacementRecommendationsWithSectorGateWithSettings(strategyDate, period.Key, phase, ctx.Articles, candidates, sectorGate, settings)
 			if filtered, skipped := filterAStockNegativeNoEvidenceRecommendations(fundFlowReplacementPool, negativeFilteredCodes); skipped > 0 {
 				fundFlowReplacementPool = filtered
 				ctx.NegativeNoEvidenceFiltered += skipped
@@ -3548,7 +3552,7 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 			}
 		}
 		if ctx.LimitUpFilterEnabled && recommendationTarget > 0 {
-			replacementPool := buildAStockSnapshotRecommendationsWithPhaseAndLimitAndSectorGate(strategyDate, period.Key, phase, ctx.Articles, candidates, aStockReplacementPoolLimit, aStockReplacementPerHotspot, sectorGate)
+			replacementPool := buildAStockSnapshotRecommendationsWithPhaseAndLimitAndSectorGateWithSettings(strategyDate, period.Key, phase, ctx.Articles, candidates, settings.Auction.ReplacementPoolLimit, settings.Auction.ReplacementPerHotspot, sectorGate, settings)
 			if filtered, skipped := filterAStockNegativeNoEvidenceRecommendations(replacementPool, negativeFilteredCodes); skipped > 0 {
 				replacementPool = filtered
 				ctx.NegativeNoEvidenceFiltered += skipped
@@ -4418,6 +4422,7 @@ func (s *Server) applyAStockT1ShadowFundFlowWithCache(strategyDate string, recom
 		return recommendations, 0, 0
 	}
 	sectorTopStockResonance := s.loadAStockSectorTopStockResonanceWithCache(strategyDate, recommendations, cache)
+	settings := s.loadAStockAlgorithmSettingsWithCache(cache)
 	filtered := make([]aStockRecommendation, 0, len(recommendations))
 	filteredCount := 0
 	missingCount := 0
@@ -4430,7 +4435,7 @@ func (s *Server) applyAStockT1ShadowFundFlowWithCache(strategyDate string, recom
 			missingCount++
 			rec = applyAStockFundFlow5DAssessmentToRecommendation(rec, assessment, true)
 			rec = s.applyAStockSectorFundFlowTrendScoreWithCache(strategyDate, rec, cache)
-			rec = applyAStockSectorTopStockResonanceToRecommendation(rec, sectorTopStockResonance[normalizeAStockCode(rec.Code)])
+			rec = applyAStockSectorTopStockResonanceToRecommendationWithSettings(rec, sectorTopStockResonance[normalizeAStockCode(rec.Code)], settings)
 			filtered = append(filtered, rec)
 			continue
 		}
@@ -4440,7 +4445,7 @@ func (s *Server) applyAStockT1ShadowFundFlowWithCache(strategyDate string, recom
 		}
 		rec = applyAStockFundFlow5DAssessmentToRecommendation(rec, assessment, true)
 		rec = s.applyAStockSectorFundFlowTrendScoreWithCache(strategyDate, rec, cache)
-		rec = applyAStockSectorTopStockResonanceToRecommendation(rec, sectorTopStockResonance[normalizeAStockCode(rec.Code)])
+		rec = applyAStockSectorTopStockResonanceToRecommendationWithSettings(rec, sectorTopStockResonance[normalizeAStockCode(rec.Code)], settings)
 		filtered = append(filtered, rec)
 	}
 	return sortAStockRecommendationsByScore(filtered), filteredCount, missingCount
@@ -5424,19 +5429,20 @@ func (s *Server) applyAStockAfternoonSameDayCapsWithCache(ctx *aStockContext, ca
 
 func (s *Server) applyAStockAfternoonSameDayDuplicateCapsWithCache(ctx *aStockContext, candidates []aStockMarketCandidate, cache *aStockRequestCache) int {
 	if ctx == nil || ctx.Period != "afternoon" || len(ctx.Recommendations) == 0 {
-		return aStockDailyRecommendationLimit
+		return s.loadAStockAlgorithmSettingsWithCache(cache).Auction.RecommendationLimit
 	}
+	settings := s.loadAStockAlgorithmSettingsWithCache(cache)
 	morningRecommendations := s.loadSameDayMorningAStockRecommendationsWithCache(ctx.Date, candidates, cache)
 	filtered := ctx.Recommendations
 	sameCodeFiltered := 0
 	hotspotQuotaFiltered := 0
 	if len(morningRecommendations) > 0 {
 		filtered, sameCodeFiltered = filterAStockRecommendationsByCodes(filtered, aStockRecommendationCodeSet(morningRecommendations))
-		filtered, hotspotQuotaFiltered = filterAStockRecommendationsByMorningHotspotQuota(filtered, aStockRecommendationHotspotCounts(morningRecommendations), aStockStocksPerHotspot)
+		filtered, hotspotQuotaFiltered = filterAStockRecommendationsByMorningHotspotQuota(filtered, aStockRecommendationHotspotCounts(morningRecommendations), settings.Auction.StocksPerHotspot)
 	}
 	ctx.Recommendations = filtered
 	ctx.SameDayMorningFiltered += sameCodeFiltered + hotspotQuotaFiltered
-	return remainingAStockDailyRecommendationLimit(len(morningRecommendations))
+	return remainingAStockDailyRecommendationLimitWithSettings(len(morningRecommendations), settings)
 }
 
 func (s *Server) applyAStockAfternoonDailyLimitOnlyWithCache(ctx *aStockContext, cache *aStockRequestCache) int {
@@ -5444,7 +5450,7 @@ func (s *Server) applyAStockAfternoonDailyLimitOnlyWithCache(ctx *aStockContext,
 		return 0
 	}
 	morningRecommendations := s.loadSameDayMorningAStockRecommendationsWithCache(ctx.Date, nil, cache)
-	filtered, dailyLimitFiltered := limitAStockRecommendationsByCount(ctx.Recommendations, remainingAStockDailyRecommendationLimit(len(morningRecommendations)))
+	filtered, dailyLimitFiltered := limitAStockRecommendationsByCount(ctx.Recommendations, remainingAStockDailyRecommendationLimitWithSettings(len(morningRecommendations), s.loadAStockAlgorithmSettingsWithCache(cache)))
 	ctx.Recommendations = filtered
 	ctx.SameDayMorningFiltered += dailyLimitFiltered
 	return dailyLimitFiltered
@@ -5687,6 +5693,7 @@ func (s *Server) assessAStockRecommendationFundFlow5DWithCache(strategyDate stri
 	sort.SliceStable(items, func(i, j int) bool {
 		return normalizeAStockStrategyDate(items[i].TradeDate) > normalizeAStockStrategyDate(items[j].TradeDate)
 	})
+	settings := s.loadAStockAlgorithmSettingsWithCache(cache)
 	assessment := aStockFundFlow5DAssessment{}
 	limit10 := min(len(items), 10)
 	limit5 := min(len(items), 5)
@@ -5710,7 +5717,7 @@ func (s *Server) assessAStockRecommendationFundFlow5DWithCache(strategyDate stri
 	}
 	assessment.Total = assessment.Total5D
 	assessment.NegativeDays = assessment.NegativeDays5D
-	assessment = scoreAStockFundFlowAssessment(assessment)
+	assessment = scoreAStockFundFlowAssessmentWithSettings(assessment, settings)
 	return assessment
 }
 
@@ -5718,6 +5725,7 @@ func (s *Server) applyAStockRecommendationFundFlowFilterWithCache(strategyDate s
 	if target <= 0 {
 		target = len(base)
 	}
+	settings := s.loadAStockAlgorithmSettingsWithCache(cache)
 	result := aStockFundFlowRecommendationFilterResult{}
 	if len(base) == 0 || target <= 0 {
 		result.Recommendations = rerankAStockRecommendations(base)
@@ -5780,7 +5788,7 @@ func (s *Server) applyAStockRecommendationFundFlowFilterWithCache(strategyDate s
 		}
 		rec = applyAStockFundFlow5DAssessmentToRecommendation(rec, assessment, true)
 		rec = s.applyAStockSectorFundFlowTrendScoreWithCache(strategyDate, rec, cache)
-		rec = applyAStockSectorTopStockResonanceToRecommendation(rec, sectorTopStockResonance[code])
+		rec = applyAStockSectorTopStockResonanceToRecommendationWithSettings(rec, sectorTopStockResonance[code], settings)
 		seen[code] = struct{}{}
 		kept = append(kept, rec)
 		if assessment.Missing {
@@ -5844,12 +5852,16 @@ func (s *Server) applyAStockRecommendationFundFlowFilterWithCache(strategyDate s
 		}
 	}
 	result.Shortfall = len(kept) < target
-	kept = applyAStockFundFlowMedianPenaltyToRecommendations(kept, assessments)
+	kept = applyAStockFundFlowMedianPenaltyToRecommendationsWithSettings(kept, assessments, settings)
 	result.Recommendations = sortAStockRecommendationsByScore(kept)
 	return result
 }
 
 func applyAStockFundFlowMedianPenaltyToRecommendations(recommendations []aStockRecommendation, assessments map[string]aStockFundFlow5DAssessment) []aStockRecommendation {
+	return applyAStockFundFlowMedianPenaltyToRecommendationsWithSettings(recommendations, assessments, defaultAStockAlgorithmSettings())
+}
+
+func applyAStockFundFlowMedianPenaltyToRecommendationsWithSettings(recommendations []aStockRecommendation, assessments map[string]aStockFundFlow5DAssessment, settings model.AStockRecommendationAlgorithmSettings) []aStockRecommendation {
 	if len(recommendations) == 0 || len(assessments) == 0 {
 		return recommendations
 	}
@@ -5894,8 +5906,8 @@ func applyAStockFundFlowMedianPenaltyToRecommendations(recommendations []aStockR
 		}
 		result[i] = applyAStockRecommendationScorePenalty(
 			result[i],
-			aStockFundFlowMedianPenalty,
-			fmt.Sprintf("5日资金低于同热点中位数 %s，资金强度减分 %d", formatSectorFundFlowMoney(median), aStockFundFlowMedianPenalty),
+			settings.Fund.MedianPenalty,
+			fmt.Sprintf("5日资金低于同热点中位数 %s，资金强度减分 %d", formatSectorFundFlowMoney(median), settings.Fund.MedianPenalty),
 		)
 	}
 	return result
@@ -5944,6 +5956,10 @@ func isAStockFundFlowHardFiltered(assessment aStockFundFlow5DAssessment) bool {
 }
 
 func scoreAStockFundFlowAssessment(assessment aStockFundFlow5DAssessment) aStockFundFlow5DAssessment {
+	return scoreAStockFundFlowAssessmentWithSettings(assessment, defaultAStockAlgorithmSettings())
+}
+
+func scoreAStockFundFlowAssessmentWithSettings(assessment aStockFundFlow5DAssessment, settings model.AStockRecommendationAlgorithmSettings) aStockFundFlow5DAssessment {
 	if assessment.Missing {
 		return assessment
 	}
@@ -5956,33 +5972,33 @@ func scoreAStockFundFlowAssessment(assessment aStockFundFlow5DAssessment) aStock
 	score := 0
 	reasons := make([]string, 0, 8)
 	switch {
-	case total5 >= aStockFundFlowExtremeThreshold:
-		score += 50
-	case total5 >= aStockFundFlowVeryStrongThreshold:
-		score += 40
-	case total5 >= aStockFundFlowStrongBonusThreshold:
-		score += 25
-	case total5 >= aStockFundFlowBonusThreshold:
-		score += 10
+	case total5 >= settings.Fund.ExtremeThreshold:
+		score += settings.Fund.ExtremeScore
+	case total5 >= settings.Fund.VeryStrongThreshold:
+		score += settings.Fund.VeryStrongScore
+	case total5 >= settings.Fund.StrongBonusThreshold:
+		score += settings.Fund.StrongBonusScore
+	case total5 >= settings.Fund.BonusThreshold:
+		score += settings.Fund.BonusScore
 	}
 	switch {
 	case assessment.NegativeDays5D >= 4:
-		score -= 50
-		reasons = append(reasons, fmt.Sprintf("近5日净流出%d天，资金连续性减分 50", assessment.NegativeDays5D))
+		score -= settings.Fund.NegativeDays4Penalty
+		reasons = append(reasons, fmt.Sprintf("近5日净流出%d天，资金连续性减分 %d", assessment.NegativeDays5D, settings.Fund.NegativeDays4Penalty))
 	case assessment.NegativeDays5D == 3:
-		score -= 35
-		reasons = append(reasons, "近5日净流出3天，资金连续性减分 35")
+		score -= settings.Fund.NegativeDays3Penalty
+		reasons = append(reasons, fmt.Sprintf("近5日净流出3天，资金连续性减分 %d", settings.Fund.NegativeDays3Penalty))
 	case assessment.NegativeDays5D == 2:
-		score -= 20
-		reasons = append(reasons, "近5日净流出2天，资金连续性减分 20")
+		score -= settings.Fund.NegativeDays2Penalty
+		reasons = append(reasons, fmt.Sprintf("近5日净流出2天，资金连续性减分 %d", settings.Fund.NegativeDays2Penalty))
 	}
-	if assessment.Total10D > 0 && total5 > 0 && total5/assessment.Total10D >= 0.6 {
-		score += 10
+	if assessment.Total10D > 0 && total5 > 0 && total5/assessment.Total10D >= settings.Fund.TenDayAccelerationRatio {
+		score += settings.Fund.TenDayAccelerationScore
 		reasons = append(reasons, "10日资金加速流入")
 	}
 	if assessment.Total10D > 0 && total5 < 0 {
-		score -= 30
-		reasons = append(reasons, "10日净流入但5日转净流出，资金退潮减分 30")
+		score -= settings.Fund.TenDayRetreatPenalty
+		reasons = append(reasons, fmt.Sprintf("10日净流入但5日转净流出，资金退潮减分 %d", settings.Fund.TenDayRetreatPenalty))
 	}
 	if assessment.Total10D < 0 && total5 < 0 {
 		assessment.HardFiltered = true
@@ -5990,42 +6006,46 @@ func scoreAStockFundFlowAssessment(assessment aStockFundFlow5DAssessment) aStock
 	}
 	if assessment.Total10D < 0 && total5 > 0 {
 		assessment.TenDayRepair = true
-		reasons = append(reasons, "10日净流出但5日转净流入，资金修复加分上限10")
+		reasons = append(reasons, fmt.Sprintf("10日净流出但5日转净流入，资金修复加分上限%d", settings.Fund.TenDayRepairCap))
 	}
-	if assessment.Recent2DInflow && assessment.Recent2DTotal > aStockFundFlowRecentTurnThreshold {
-		score += 10
-		reasons = append(reasons, "最近2日连续净流入，资金拐点加分 10")
+	if assessment.Recent2DInflow && assessment.Recent2DTotal > settings.Fund.RecentTurnThreshold {
+		score += settings.Fund.Recent2DInflowScore
+		reasons = append(reasons, fmt.Sprintf("最近2日连续净流入，资金拐点加分 %d", settings.Fund.Recent2DInflowScore))
 	}
 	if assessment.Recent2DOutflow {
-		score -= 20
-		reasons = append(reasons, "最近2日连续净流出，资金拐点减分 20")
+		score -= settings.Fund.Recent2DOutflowPenalty
+		reasons = append(reasons, fmt.Sprintf("最近2日连续净流出，资金拐点减分 %d", settings.Fund.Recent2DOutflowPenalty))
 	}
 	if assessment.LatestNetInflow < 0 && assessment.LatestChangePct < 0 {
-		score -= 20
-		reasons = append(reasons, "当日净流出且股价下跌，资金风险减分 20")
+		score -= settings.Fund.LatestOutflowDownPenalty
+		reasons = append(reasons, fmt.Sprintf("当日净流出且股价下跌，资金风险减分 %d", settings.Fund.LatestOutflowDownPenalty))
 	}
-	score = clampAStockFundFlowScore(score)
-	if assessment.TenDayRepair && score > 10 {
-		score = 10
+	score = clampAStockFundFlowScoreWithSettings(score, settings)
+	if assessment.TenDayRepair && score > settings.Fund.TenDayRepairCap {
+		score = settings.Fund.TenDayRepairCap
 	}
-	if assessment.SectorNetOutflow && score > 0 {
-		score = 0
-		reasons = append(reasons, "板块当日资金净流出，个股资金加分上限0")
-	} else if assessment.SectorWeak && score > 10 {
-		score = 10
-		reasons = append(reasons, "板块当天走弱，个股资金加分上限10")
+	if assessment.SectorNetOutflow && score > settings.Fund.SectorNetOutflowCap {
+		score = settings.Fund.SectorNetOutflowCap
+		reasons = append(reasons, fmt.Sprintf("板块当日资金净流出，个股资金加分上限%d", settings.Fund.SectorNetOutflowCap))
+	} else if assessment.SectorWeak && score > settings.Fund.SectorWeakCap {
+		score = settings.Fund.SectorWeakCap
+		reasons = append(reasons, fmt.Sprintf("板块当天走弱，个股资金加分上限%d", settings.Fund.SectorWeakCap))
 	}
-	assessment.ScoreDelta = clampAStockFundFlowScore(score)
+	assessment.ScoreDelta = clampAStockFundFlowScoreWithSettings(score, settings)
 	assessment.ScoreReasons = reasons
 	return assessment
 }
 
 func clampAStockFundFlowScore(score int) int {
-	if score < aStockFundFlowScoreMin {
-		return aStockFundFlowScoreMin
+	return clampAStockFundFlowScoreWithSettings(score, defaultAStockAlgorithmSettings())
+}
+
+func clampAStockFundFlowScoreWithSettings(score int, settings model.AStockRecommendationAlgorithmSettings) int {
+	if score < settings.Fund.ScoreMin {
+		return settings.Fund.ScoreMin
 	}
-	if score > aStockFundFlowScoreMax {
-		return aStockFundFlowScoreMax
+	if score > settings.Fund.ScoreMax {
+		return settings.Fund.ScoreMax
 	}
 	return score
 }
@@ -6116,7 +6136,7 @@ func (s *Server) applyAStockHotspotSectorFundFlowCap(strategyDate string, hotspo
 	}
 	assessment.SectorWeak = status.weak
 	assessment.SectorNetOutflow = status.netOutflow
-	return scoreAStockFundFlowAssessment(assessment)
+	return scoreAStockFundFlowAssessmentWithSettings(assessment, s.loadAStockAlgorithmSettingsWithCache(cache))
 }
 
 type aStockHotspotSectorFundFlowStatus struct {
@@ -6206,7 +6226,7 @@ func (s *Server) assessAStockRecommendationSectorFundFlowTrendWithCache(strategy
 		if err != nil || len(result.Items) == 0 {
 			continue
 		}
-		assessment := scoreAStockSectorFundFlowTrendAssessment(alias, result.Items)
+		assessment := scoreAStockSectorFundFlowTrendAssessmentWithSettings(alias, result.Items, s.loadAStockAlgorithmSettingsWithCache(cache))
 		if betterAStockSectorFundFlowTrendAssessment(assessment, best) {
 			best = assessment
 		}
@@ -6234,11 +6254,15 @@ func betterAStockSectorFundFlowTrendAssessment(candidate aStockSectorFundFlowTre
 }
 
 func scoreAStockSectorFundFlowTrendAssessment(alias aStockHotspotSectorAlias, items []model.AStockSectorFundFlow) aStockSectorFundFlowTrendAssessment {
+	return scoreAStockSectorFundFlowTrendAssessmentWithSettings(alias, items, defaultAStockAlgorithmSettings())
+}
+
+func scoreAStockSectorFundFlowTrendAssessmentWithSettings(alias aStockHotspotSectorAlias, items []model.AStockSectorFundFlow, settings model.AStockRecommendationAlgorithmSettings) aStockSectorFundFlowTrendAssessment {
 	assessment := aStockSectorFundFlowTrendAssessment{
 		SectorType: normalizeSectorFundFlowSectorType(alias.SectorType),
 		SectorName: strings.TrimSpace(alias.SectorName),
 	}
-	if len(items) < aStockSectorFundTrendMinDays {
+	if len(items) < settings.Sector.TrendMinDays {
 		assessment.Missing = true
 		return assessment
 	}
@@ -6294,73 +6318,77 @@ func scoreAStockSectorFundFlowTrendAssessment(alias aStockHotspotSectorAlias, it
 	switch {
 	case assessment.Total5D > 0 && assessment.InflowDays5D >= 4 && consistency >= 0.5:
 		assessment.Status = "连续流入"
-		score += 25
+		score += settings.Sector.TrendContinuousInflowScore
 		reasons = append(reasons, fmt.Sprintf("近5日净流入%d天", assessment.InflowDays5D))
 	case assessment.Total5D > 0 && assessment.InflowDays5D >= 3:
 		assessment.Status = "震荡偏流入"
-		score += 15
+		score += settings.Sector.TrendPartialInflowScore
 		reasons = append(reasons, fmt.Sprintf("近5日净流入%d天", assessment.InflowDays5D))
 	case assessment.Total5D > 0:
 		assessment.Status = "弱流入"
-		score += 8
+		score += settings.Sector.TrendWeakInflowScore
 	case assessment.Total5D < 0 && assessment.OutflowDays5D >= 4:
 		assessment.Status = "连续流出"
-		score -= 30
+		score -= settings.Sector.TrendContinuousOutflowPenalty
 		reasons = append(reasons, fmt.Sprintf("近5日净流出%d天", assessment.OutflowDays5D))
 	case assessment.Total5D < 0 && assessment.OutflowDays5D >= 3:
 		assessment.Status = "震荡偏流出"
-		score -= 20
+		score -= settings.Sector.TrendPartialOutflowPenalty
 		reasons = append(reasons, fmt.Sprintf("近5日净流出%d天", assessment.OutflowDays5D))
 	case assessment.Total5D < 0:
 		assessment.Status = "弱流出"
-		score -= 8
+		score -= settings.Sector.TrendWeakOutflowPenalty
 	default:
 		assessment.Status = "震荡"
 	}
 	if limit10 > limit5 && assessment.Total10D > 0 && assessment.Total5D > 0 && assessment.Total5D/assessment.Total10D >= 0.6 {
-		score += 10
+		score += settings.Sector.TrendTenDayAccelerationScore
 		reasons = append(reasons, "10日资金加速流入")
 	}
 	if limit10 > limit5 && assessment.Total10D < 0 && assessment.Total5D < 0 {
-		score -= 10
+		score -= settings.Sector.TrendTenDayOutflowPenalty
 		reasons = append(reasons, "10日与5日均净流出")
 	}
 	if len(sorted) >= 2 {
-		if sorted[0].MainNetInflow > 0 && sorted[1].MainNetInflow > 0 && assessment.Recent2DTotal > aStockSectorFundTrendTurnThreshold {
-			score += 5
+		if sorted[0].MainNetInflow > 0 && sorted[1].MainNetInflow > 0 && assessment.Recent2DTotal > settings.Sector.TrendTurnThreshold {
+			score += settings.Sector.TrendRecent2DInflowScore
 			reasons = append(reasons, "最近2日连续净流入")
 		} else if sorted[0].MainNetInflow < 0 && sorted[1].MainNetInflow < 0 {
-			score -= 5
+			score -= settings.Sector.TrendRecent2DOutflowPenalty
 			reasons = append(reasons, "最近2日连续净流出")
 		}
 	}
 	switch {
 	case assessment.LatestRank > 0 && assessment.LatestRank <= 10:
-		score += 8
+		score += settings.Sector.TrendRankTop10Score
 		reasons = append(reasons, fmt.Sprintf("最新排名%d", assessment.LatestRank))
 	case assessment.LatestRank > 0 && assessment.LatestRank <= 30:
-		score += 4
+		score += settings.Sector.TrendRankTop30Score
 		reasons = append(reasons, fmt.Sprintf("最新排名%d", assessment.LatestRank))
 	}
 	if assessment.LatestNetInflow < 0 && assessment.LatestChangePct < 0 {
-		score -= 5
+		score -= settings.Sector.TrendLatestOutflowDownPenalty
 		reasons = append(reasons, "当日净流出且板块下跌")
 	}
 	if assessment.SignChanges5D >= 3 && consistency < 0.35 {
-		score -= 5
+		score -= settings.Sector.TrendChoppyPenalty
 		reasons = append(reasons, "资金方向震荡")
 	}
-	assessment.ScoreDelta = clampAStockSectorFundFlowTrendScore(score)
+	assessment.ScoreDelta = clampAStockSectorFundFlowTrendScoreWithSettings(score, settings)
 	assessment.ScoreReasons = reasons
 	return assessment
 }
 
 func clampAStockSectorFundFlowTrendScore(score int) int {
-	if score < aStockSectorFundTrendScoreMin {
-		return aStockSectorFundTrendScoreMin
+	return clampAStockSectorFundFlowTrendScoreWithSettings(score, defaultAStockAlgorithmSettings())
+}
+
+func clampAStockSectorFundFlowTrendScoreWithSettings(score int, settings model.AStockRecommendationAlgorithmSettings) int {
+	if score < settings.Sector.TrendScoreMin {
+		return settings.Sector.TrendScoreMin
 	}
-	if score > aStockSectorFundTrendScoreMax {
-		return aStockSectorFundTrendScoreMax
+	if score > settings.Sector.TrendScoreMax {
+		return settings.Sector.TrendScoreMax
 	}
 	return score
 }
@@ -6490,7 +6518,7 @@ func (s *Server) loadAStockSectorTopStockResonanceWithCache(strategyDate string,
 		}
 		flows = append(flows, result.Items...)
 	}
-	return buildAStockSectorTopStockResonanceMap(flows, resolver)
+	return buildAStockSectorTopStockResonanceMapWithSettings(flows, resolver, s.loadAStockAlgorithmSettingsWithCache(cache))
 }
 
 func newAStockSectorTopStockCodeResolver(recommendations []aStockRecommendation) aStockSectorTopStockCodeResolver {
@@ -6557,6 +6585,10 @@ func normalizeAStockSectorTopStockName(value string) string {
 }
 
 func buildAStockSectorTopStockResonanceMap(flows []model.AStockSectorFundFlow, resolver aStockSectorTopStockCodeResolver) map[string]aStockSectorTopStockResonance {
+	return buildAStockSectorTopStockResonanceMapWithSettings(flows, resolver, defaultAStockAlgorithmSettings())
+}
+
+func buildAStockSectorTopStockResonanceMapWithSettings(flows []model.AStockSectorFundFlow, resolver aStockSectorTopStockCodeResolver, settings model.AStockRecommendationAlgorithmSettings) map[string]aStockSectorTopStockResonance {
 	if len(flows) == 0 || resolver.empty() {
 		return nil
 	}
@@ -6604,7 +6636,7 @@ func buildAStockSectorTopStockResonanceMap(flows []model.AStockSectorFundFlow, r
 		}
 		resonance.PositiveSectorCount = len(resonance.SectorNames)
 		resonance.SectorCount = resonance.PositiveSectorCount
-		resonance.ScoreDelta = scoreAStockSectorTopStockResonance(resonance)
+		resonance.ScoreDelta = scoreAStockSectorTopStockResonanceWithSettings(resonance, settings)
 		result[code] = resonance
 	}
 	for code, resonance := range result {
@@ -6643,6 +6675,10 @@ func aStockSectorFundFlowSourceTypes(flow model.AStockSectorFundFlow) []string {
 }
 
 func scoreAStockSectorTopStockResonance(resonance aStockSectorTopStockResonance) int {
+	return scoreAStockSectorTopStockResonanceWithSettings(resonance, defaultAStockAlgorithmSettings())
+}
+
+func scoreAStockSectorTopStockResonanceWithSettings(resonance aStockSectorTopStockResonance, settings model.AStockRecommendationAlgorithmSettings) int {
 	count := resonance.PositiveSectorCount
 	if count <= 0 {
 		count = resonance.SectorCount
@@ -6656,31 +6692,35 @@ func scoreAStockSectorTopStockResonance(resonance aStockSectorTopStockResonance)
 	score := 0
 	switch count {
 	case 1:
-		score = 8
+		score = settings.Sector.TopStockOneSectorScore
 	case 2:
-		score = 15
+		score = settings.Sector.TopStockTwoSectorScore
 	default:
-		score = 20
+		score = settings.Sector.TopStockThreeSectorScore
 	}
-	if resonance.TotalSectorMainNetInflow > aStockSectorTopStockResonanceInflowThreshold {
-		score += 5
+	if resonance.TotalSectorMainNetInflow > settings.Sector.TopStockLargeInflowThreshold {
+		score += settings.Sector.TopStockLargeInflowScore
 	}
-	if score > aStockSectorTopStockResonanceScoreCap {
-		score = aStockSectorTopStockResonanceScoreCap
+	if score > settings.Sector.TopStockScoreCap {
+		score = settings.Sector.TopStockScoreCap
 	}
 	return score
 }
 
 func applyAStockSectorTopStockResonanceToRecommendation(rec aStockRecommendation, resonance aStockSectorTopStockResonance) aStockRecommendation {
+	return applyAStockSectorTopStockResonanceToRecommendationWithSettings(rec, resonance, defaultAStockAlgorithmSettings())
+}
+
+func applyAStockSectorTopStockResonanceToRecommendationWithSettings(rec aStockRecommendation, resonance aStockSectorTopStockResonance, settings model.AStockRecommendationAlgorithmSettings) aStockRecommendation {
 	if resonance.ScoreDelta <= 0 {
 		return rec
 	}
 	scoreDelta := resonance.ScoreDelta
-	if change60, ok := parseAStockPctText(rec.Change60); ok && change60 > aStockOverheat60ThresholdPct {
+	if change60, ok := parseAStockPctText(rec.Change60); ok && change60 > settings.Volatility.Overheat60ThresholdPct {
 		return rec
 	}
-	if change30, ok := parseAStockPctText(rec.Change30); ok && change30 > aStockOverheat30ThresholdPct && scoreDelta > aStockSectorTopStockResonanceOverheat30Cap {
-		scoreDelta = aStockSectorTopStockResonanceOverheat30Cap
+	if change30, ok := parseAStockPctText(rec.Change30); ok && change30 > settings.Volatility.Overheat30ThresholdPct && scoreDelta > settings.Sector.TopStockOverheat30Cap {
+		scoreDelta = settings.Sector.TopStockOverheat30Cap
 	}
 	if scoreDelta <= 0 || aStockRecommendationHasScoreLabel(rec, "板块资金共振") {
 		return rec
@@ -7043,7 +7083,11 @@ func (s *Server) clearAStockAuctionCandidateCache(strategyDates ...string) {
 
 func (s *Server) fetchAStockMarketCandidateResult(strategyDate string) (model.AStockAuctionListResult, bool) {
 	var result model.AStockAuctionListResult
-	query := "/api/v1/a-stock/auction?page=1&page_size=" + fmt.Sprint(aStockMarketCandidateLimit)
+	limit := s.loadAStockAlgorithmSettings().Auction.MarketCandidateLimit
+	if limit <= 0 {
+		limit = aStockMarketCandidateLimit
+	}
+	query := "/api/v1/a-stock/auction?page=1&page_size=" + fmt.Sprint(limit)
 	if strings.TrimSpace(strategyDate) != "" {
 		query += "&date=" + url.QueryEscape(normalizeAStockStrategyDate(strategyDate))
 	}
@@ -7584,56 +7628,76 @@ func applyAStockRecommendationScorePenalty(rec aStockRecommendation, penalty int
 }
 
 func capAStockOverheatedFundFlowScore(rec aStockRecommendation, change30 float64) aStockRecommendation {
+	return capAStockOverheatedFundFlowScoreWithSettings(rec, change30, defaultAStockAlgorithmSettings())
+}
+
+func capAStockOverheatedFundFlowScoreWithSettings(rec aStockRecommendation, change30 float64, settings model.AStockRecommendationAlgorithmSettings) aStockRecommendation {
 	fundBonus := positiveAStockFundFlowScore(rec)
-	if fundBonus <= 10 {
+	if fundBonus <= settings.Fund.Overheat30Cap {
 		return rec
 	}
-	penalty := fundBonus - 10
+	penalty := fundBonus - settings.Fund.Overheat30Cap
 	return applyAStockRecommendationScorePenalty(
 		rec,
 		penalty,
-		fmt.Sprintf("30日涨幅超过%s，资金加分上限10，过热减分 %d", formatAStockPct(aStockOverheat30ThresholdPct), penalty),
+		fmt.Sprintf("30日涨幅超过%s，资金加分上限%d，过热减分 %d", formatAStockPct(settings.Volatility.Overheat30ThresholdPct), settings.Fund.Overheat30Cap, penalty),
 	)
 }
 
 func capAStockOverheatedSectorTopStockResonanceScore(rec aStockRecommendation, change30 float64) aStockRecommendation {
+	return capAStockOverheatedSectorTopStockResonanceScoreWithSettings(rec, change30, defaultAStockAlgorithmSettings())
+}
+
+func capAStockOverheatedSectorTopStockResonanceScoreWithSettings(rec aStockRecommendation, change30 float64, settings model.AStockRecommendationAlgorithmSettings) aStockRecommendation {
 	resonanceBonus := positiveAStockSectorTopStockResonanceScore(rec)
-	if resonanceBonus <= aStockSectorTopStockResonanceOverheat30Cap {
+	if resonanceBonus <= settings.Sector.TopStockOverheat30Cap {
 		return rec
 	}
-	penalty := resonanceBonus - aStockSectorTopStockResonanceOverheat30Cap
+	penalty := resonanceBonus - settings.Sector.TopStockOverheat30Cap
 	return applyAStockRecommendationScorePenalty(
 		rec,
 		penalty,
-		fmt.Sprintf("30日涨幅超过%s，板块共振加分上限%d，过热减分 %d", formatAStockPct(aStockOverheat30ThresholdPct), aStockSectorTopStockResonanceOverheat30Cap, penalty),
+		fmt.Sprintf("30日涨幅超过%s，板块共振加分上限%d，过热减分 %d", formatAStockPct(settings.Volatility.Overheat30ThresholdPct), settings.Sector.TopStockOverheat30Cap, penalty),
 	)
 }
 
 func applyAStockPreviousLimitUpPenalty(rec aStockRecommendation, prevPct float64) aStockRecommendation {
+	return applyAStockPreviousLimitUpPenaltyWithSettings(rec, prevPct, defaultAStockAlgorithmSettings())
+}
+
+func applyAStockPreviousLimitUpPenaltyWithSettings(rec aStockRecommendation, prevPct float64, settings model.AStockRecommendationAlgorithmSettings) aStockRecommendation {
 	baseScore := rec.MarketScore
 	if baseScore == 0 {
 		baseScore = rec.HotspotScore
 	}
-	rec.MarketScore = baseScore - aStockPrevLimitUpPenalty
-	detail := fmt.Sprintf("昨日涨停%s，风险扣分 %d", formatAStockPct(prevPct), aStockPrevLimitUpPenalty)
-	appendAStockScoreComponentWithUnit(&rec, "昨日涨停", detail, -aStockPrevLimitUpPenalty, -aStockPrevLimitUpPenalty)
+	rec.MarketScore = baseScore - settings.Volatility.PreviousLimitUpPenalty
+	detail := fmt.Sprintf("昨日涨停%s，风险扣分 %d", formatAStockPct(prevPct), settings.Volatility.PreviousLimitUpPenalty)
+	appendAStockScoreComponentWithUnit(&rec, "昨日涨停", detail, -settings.Volatility.PreviousLimitUpPenalty, -settings.Volatility.PreviousLimitUpPenalty)
 	rec.Reason = appendAStockReason(rec.Reason, detail)
 	return rec
 }
 
 func applyAStockPreviousHighPctPenalty(rec aStockRecommendation, prevPct float64) aStockRecommendation {
+	return applyAStockPreviousHighPctPenaltyWithSettings(rec, prevPct, defaultAStockAlgorithmSettings())
+}
+
+func applyAStockPreviousHighPctPenaltyWithSettings(rec aStockRecommendation, prevPct float64, settings model.AStockRecommendationAlgorithmSettings) aStockRecommendation {
 	baseScore := rec.MarketScore
 	if baseScore == 0 {
 		baseScore = rec.HotspotScore
 	}
-	rec.MarketScore = baseScore - aStockPrevHighPctPenalty
-	detail := fmt.Sprintf("昨日涨幅%s，追高风险扣分 %d", formatAStockPct(prevPct), aStockPrevHighPctPenalty)
-	appendAStockScoreComponentWithUnit(&rec, "昨日涨幅过高", detail, -aStockPrevHighPctPenalty, -aStockPrevHighPctPenalty)
+	rec.MarketScore = baseScore - settings.Volatility.PreviousHighPctPenalty
+	detail := fmt.Sprintf("昨日涨幅%s，追高风险扣分 %d", formatAStockPct(prevPct), settings.Volatility.PreviousHighPctPenalty)
+	appendAStockScoreComponentWithUnit(&rec, "昨日涨幅过高", detail, -settings.Volatility.PreviousHighPctPenalty, -settings.Volatility.PreviousHighPctPenalty)
 	rec.Reason = appendAStockReason(rec.Reason, detail)
 	return rec
 }
 
 func applyAStockHighOpenScore(rec aStockRecommendation, period string, entry aStockMarketBar, prev aStockMarketBar, hasPrev bool) aStockRecommendation {
+	return applyAStockHighOpenScoreWithSettings(rec, period, entry, prev, hasPrev, defaultAStockAlgorithmSettings())
+}
+
+func applyAStockHighOpenScoreWithSettings(rec aStockRecommendation, period string, entry aStockMarketBar, prev aStockMarketBar, hasPrev bool, settings model.AStockRecommendationAlgorithmSettings) aStockRecommendation {
 	normalizedPeriod := normalizeAStockPeriod(period).Key
 	entryPrice := aStockEntryPriceForRecommendation(entry, normalizedPeriod, rec)
 	if entryPrice <= 0 {
@@ -7657,7 +7721,7 @@ func applyAStockHighOpenScore(rec aStockRecommendation, period string, entry aSt
 		return rec
 	}
 	openPct := (entryPrice/basePrice - 1) * 100
-	score := aStockHighOpenScore(openPct)
+	score := aStockHighOpenScoreWithSettings(openPct, settings)
 	if score <= 0 {
 		return rec
 	}
@@ -7685,19 +7749,23 @@ func aStockAfternoonHighOpenBasePrice(entry aStockMarketBar) (float64, string) {
 }
 
 func aStockHighOpenScore(openPct float64) int {
+	return aStockHighOpenScoreWithSettings(openPct, defaultAStockAlgorithmSettings())
+}
+
+func aStockHighOpenScoreWithSettings(openPct float64, settings model.AStockRecommendationAlgorithmSettings) int {
 	switch {
-	case openPct >= aStockHighOpenStrongThresholdPct:
-		return 65
-	case openPct >= aStockHighOpenThreshold5Pct:
-		return 50
-	case openPct >= aStockHighOpenThreshold4Pct:
-		return 40
-	case openPct >= aStockHighOpenThreshold3Pct:
-		return 30
-	case openPct >= aStockHighOpenThreshold2Pct:
-		return 20
-	case openPct >= aStockHighOpenThreshold1Pct:
-		return 10
+	case openPct >= settings.Auction.HighOpenStrongThresholdPct:
+		return settings.Auction.HighOpenStrongScore
+	case openPct >= settings.Auction.HighOpenThreshold5Pct:
+		return settings.Auction.HighOpenScore5
+	case openPct >= settings.Auction.HighOpenThreshold4Pct:
+		return settings.Auction.HighOpenScore4
+	case openPct >= settings.Auction.HighOpenThreshold3Pct:
+		return settings.Auction.HighOpenScore3
+	case openPct >= settings.Auction.HighOpenThreshold2Pct:
+		return settings.Auction.HighOpenScore2
+	case openPct >= settings.Auction.HighOpenThreshold1Pct:
+		return settings.Auction.HighOpenScore1
 	default:
 		return 0
 	}
@@ -7709,7 +7777,11 @@ type aStockMomentumSignal struct {
 }
 
 func applyAStockMomentumTrendScore(rec aStockRecommendation, bars []aStockMarketBar, strategyDate string) aStockRecommendation {
-	score, signals := aStockMomentumTrendScore(bars, strategyDate)
+	return applyAStockMomentumTrendScoreWithSettings(rec, bars, strategyDate, defaultAStockAlgorithmSettings())
+}
+
+func applyAStockMomentumTrendScoreWithSettings(rec aStockRecommendation, bars []aStockMarketBar, strategyDate string, settings model.AStockRecommendationAlgorithmSettings) aStockRecommendation {
+	score, signals := aStockMomentumTrendScoreWithSettings(bars, strategyDate, settings)
 	if score <= 0 || len(signals) == 0 {
 		return rec
 	}
@@ -7734,29 +7806,33 @@ func applyAStockMomentumTrendScore(rec aStockRecommendation, bars []aStockMarket
 }
 
 func aStockMomentumTrendScore(bars []aStockMarketBar, strategyDate string) (int, []aStockMomentumSignal) {
+	return aStockMomentumTrendScoreWithSettings(bars, strategyDate, defaultAStockAlgorithmSettings())
+}
+
+func aStockMomentumTrendScoreWithSettings(bars []aStockMarketBar, strategyDate string, settings model.AStockRecommendationAlgorithmSettings) (int, []aStockMomentumSignal) {
 	usable := aStockMomentumUsableBars(bars, strategyDate)
-	if len(usable) < aStockMomentumMinBars || usable[len(usable)-1].Date != normalizeAStockStrategyDate(strategyDate) {
+	if len(usable) < settings.Volatility.MomentumMinBars || usable[len(usable)-1].Date != normalizeAStockStrategyDate(strategyDate) {
 		return 0, nil
 	}
 	signals := make([]aStockMomentumSignal, 0, 5)
 	if aStockMomentumADXStarted(usable) {
-		signals = append(signals, aStockMomentumSignal{Name: "ADX转强", Score: aStockMomentumADXScore})
+		signals = append(signals, aStockMomentumSignal{Name: "ADX转强", Score: settings.Volatility.MomentumADXScore})
 	}
 	if aStockMomentumBollingerBreakout(usable) {
-		signals = append(signals, aStockMomentumSignal{Name: "布林突破", Score: aStockMomentumBollingerScore})
+		signals = append(signals, aStockMomentumSignal{Name: "布林突破", Score: settings.Volatility.MomentumBollingerScore})
 	}
 	if aStockMomentumMACDStrengthened(usable) {
-		signals = append(signals, aStockMomentumSignal{Name: "MACD转强", Score: aStockMomentumMACDScore})
+		signals = append(signals, aStockMomentumSignal{Name: "MACD转强", Score: settings.Volatility.MomentumMACDScore})
 	}
 	if aStockMomentumMAConfirmed(usable) {
-		signals = append(signals, aStockMomentumSignal{Name: "均线趋势", Score: aStockMomentumMAScore})
+		signals = append(signals, aStockMomentumSignal{Name: "均线趋势", Score: settings.Volatility.MomentumMAScore})
 	}
 	if aStockMomentumVolumeConfirmed(usable) {
-		signals = append(signals, aStockMomentumSignal{Name: "放量确认", Score: aStockMomentumVolumeScore})
+		signals = append(signals, aStockMomentumSignal{Name: "放量确认", Score: settings.Volatility.MomentumVolumeScore})
 	}
 	score := aStockMomentumSignalScore(signals)
-	if score > aStockMomentumMaxScore {
-		score = aStockMomentumMaxScore
+	if score > settings.Volatility.MomentumMaxScore {
+		score = settings.Volatility.MomentumMaxScore
 	}
 	return score, signals
 }
@@ -8154,7 +8230,7 @@ func (s *Server) loadAStockMarketView(strategyDate string, period string, recomm
 		s.enrichAStockMiddaySessionPrices(strategyDate, codes, bars)
 	}
 	s.enrichAStockRecommendationEntryPrices(strategyDate, period, recommendations, bars)
-	return applyAStockMarketBars(strategyDate, period, recommendations, bars, filterLimitUp, filterTodayMarket, maxRecommendations)
+	return applyAStockMarketBarsWithSettings(strategyDate, period, recommendations, bars, filterLimitUp, filterTodayMarket, maxRecommendations, s.loadAStockAlgorithmSettings())
 }
 
 func (s *Server) loadAStockLockedMarketView(strategyDate string, period string, recommendations []aStockRecommendation) ([]aStockRecommendation, []aStockBacktestRow, string, int) {
@@ -9305,6 +9381,10 @@ func initializeAStockRecommendationMarket(recommendations []aStockRecommendation
 }
 
 func applyAStockMarketBars(strategyDate string, period string, recommendations []aStockRecommendation, bars []aStockMarketBar, filterLimitUp bool, filterTodayMarket bool, maxRecommendations int) ([]aStockRecommendation, []aStockBacktestRow, string, int, int) {
+	return applyAStockMarketBarsWithSettings(strategyDate, period, recommendations, bars, filterLimitUp, filterTodayMarket, maxRecommendations, defaultAStockAlgorithmSettings())
+}
+
+func applyAStockMarketBarsWithSettings(strategyDate string, period string, recommendations []aStockRecommendation, bars []aStockMarketBar, filterLimitUp bool, filterTodayMarket bool, maxRecommendations int, settings model.AStockRecommendationAlgorithmSettings) ([]aStockRecommendation, []aStockBacktestRow, string, int, int) {
 	byCode := groupAStockMarketBars(bars)
 	normalizedPeriod := normalizeAStockPeriod(period).Key
 	withPrev := 0
@@ -9343,7 +9423,7 @@ func applyAStockMarketBars(strategyDate string, period string, recommendations [
 			recommendations[i].TodayPct = formatAStockPct(entry.Pct)
 			recommendations[i].TodayPctClass = aStockPctClass(entry.Pct)
 		}
-		if ok && entry.Pct > aStockTodayHighPctFilterThreshold {
+		if ok && entry.Pct > settings.Volatility.TodayHighPctFilterThreshold {
 			todayHighPctFilteredCount++
 			continue
 		}
@@ -9357,42 +9437,42 @@ func applyAStockMarketBars(strategyDate string, period string, recommendations [
 			recommendations[i].PrevPct = formatAStockPct(prev.Pct)
 			recommendations[i].PrevPctClass = aStockPctClass(prev.Pct)
 			if isAStockLimitUpPct(recommendations[i].Code, recommendations[i].Name, prev.Pct) {
-				recommendations[i] = applyAStockPreviousLimitUpPenalty(recommendations[i], prev.Pct)
-			} else if prev.Pct > aStockPrevHighPctThreshold {
-				recommendations[i] = applyAStockPreviousHighPctPenalty(recommendations[i], prev.Pct)
+				recommendations[i] = applyAStockPreviousLimitUpPenaltyWithSettings(recommendations[i], prev.Pct, settings)
+			} else if prev.Pct > settings.Volatility.PreviousHighPctThreshold {
+				recommendations[i] = applyAStockPreviousHighPctPenaltyWithSettings(recommendations[i], prev.Pct, settings)
 			}
 			if normalizedPeriod == "morning" && entry.Close > 0 && prev.Close > 0 {
 				entryPrice := aStockEntryPriceForRecommendation(entry, normalizedPeriod, recommendations[i])
 				openPct := (entryPrice/prev.Close - 1) * 100
-				if entryPrice > 0 && openPct <= aStockLowOpenPenaltyThresholdPct {
+				if entryPrice > 0 && openPct <= settings.Auction.LowOpenPenaltyThresholdPct {
 					blockedByLowOpen = true
 				}
 			}
 			if change, ok := aStockLookbackChange(byCode[recommendations[i].Code], strategyDate, 30, prev.Close); ok {
 				recommendations[i].Change30 = formatAStockPct(change)
 				recommendations[i].Change30Class = aStockPctClass(change)
-				if change <= aStockDrawdownFilterThreshold {
+				if change <= settings.Volatility.DrawdownFilterThreshold {
 					blockedByDrawdown = true
 				}
-				if change > aStockOverheat30ThresholdPct {
-					recommendations[i] = capAStockOverheatedFundFlowScore(recommendations[i], change)
-					recommendations[i] = capAStockOverheatedSectorTopStockResonanceScore(recommendations[i], change)
+				if change > settings.Volatility.Overheat30ThresholdPct {
+					recommendations[i] = capAStockOverheatedFundFlowScoreWithSettings(recommendations[i], change, settings)
+					recommendations[i] = capAStockOverheatedSectorTopStockResonanceScoreWithSettings(recommendations[i], change, settings)
 				}
 			}
 			if change, ok := aStockLookbackChange(byCode[recommendations[i].Code], strategyDate, 60, prev.Close); ok {
 				recommendations[i].Change60 = formatAStockPct(change)
 				recommendations[i].Change60Class = aStockPctClass(change)
-				if change <= aStockDrawdownFilterThreshold {
+				if change <= settings.Volatility.DrawdownFilterThreshold {
 					blockedByDrawdown = true
 				}
-				if change > aStockOverheat60ThresholdPct {
+				if change > settings.Volatility.Overheat60ThresholdPct {
 					blockedByOverheat = true
 				}
 			}
 			withPrev++
 		}
 		if ok {
-			recommendations[i] = applyAStockHighOpenScore(recommendations[i], normalizedPeriod, entry, prev, hasPrev)
+			recommendations[i] = applyAStockHighOpenScoreWithSettings(recommendations[i], normalizedPeriod, entry, prev, hasPrev, settings)
 		}
 		if blockedByOverheat {
 			overheatFilteredCount++
@@ -9403,11 +9483,11 @@ func applyAStockMarketBars(strategyDate string, period string, recommendations [
 			continue
 		}
 		if blockedByDrawdown {
-			sectorPenalties[recommendations[i].Hotspot] += aStockSectorDrawdownPenalty
+			sectorPenalties[recommendations[i].Hotspot] += settings.Sector.DrawdownPenalty
 			filteredCount++
 			continue
 		}
-		recommendations[i] = applyAStockMomentumTrendScore(recommendations[i], codeBars, strategyDate)
+		recommendations[i] = applyAStockMomentumTrendScoreWithSettings(recommendations[i], codeBars, strategyDate, settings)
 		filtered = append(filtered, recommendations[i])
 	}
 	recommendations = filtered
@@ -11015,6 +11095,10 @@ type aStockHotspotMatchItem struct {
 }
 
 func buildAStockHotspots(items []model.Item) []aStockHotspot {
+	return buildAStockHotspotsWithSettings(items, defaultAStockAlgorithmSettings())
+}
+
+func buildAStockHotspotsWithSettings(items []model.Item, settings model.AStockRecommendationAlgorithmSettings) []aStockHotspot {
 	rules := aStockTopicRules()
 	hotspots := make([]aStockHotspot, 0, len(rules))
 	matchItems := make([]aStockHotspotMatchItem, 0, len(items))
@@ -11052,10 +11136,10 @@ func buildAStockHotspots(items []model.Item) []aStockHotspot {
 		}
 		sort.Strings(keywords)
 		negativeNewsCount := countAStockNegativeNewsItems(matches)
-		negativeNewsPenalty := negativeNewsCount * aStockNegativeNewsPenalty
-		score := len(matches)*10 + len(keywords)*3 - negativeNewsPenalty
-		if score < 1 {
-			score = 1
+		negativeNewsPenalty := negativeNewsCount * settings.Emotion.NegativeNewsPenalty
+		score := len(matches)*settings.Emotion.NewsEvidenceScore + len(keywords)*settings.Emotion.KeywordScore - negativeNewsPenalty
+		if score < settings.Emotion.HotspotMinScore {
+			score = settings.Emotion.HotspotMinScore
 		}
 		hotspots = append(hotspots, aStockHotspot{
 			Name:                rule.Name,
@@ -11073,8 +11157,8 @@ func buildAStockHotspots(items []model.Item) []aStockHotspot {
 		}
 		return hotspots[i].Score > hotspots[j].Score
 	})
-	if len(hotspots) > 8 {
-		return hotspots[:8]
+	if settings.Emotion.HotspotDisplayLimit > 0 && len(hotspots) > settings.Emotion.HotspotDisplayLimit {
+		return hotspots[:settings.Emotion.HotspotDisplayLimit]
 	}
 	return hotspots
 }
@@ -11126,18 +11210,22 @@ func formatAStockHotspotNegativeNewsPenaltyReason(hotspot aStockHotspot) string 
 }
 
 func buildAStockHotspotsWithTopStocks(hotspots []aStockHotspot, marketCandidates []aStockMarketCandidate, limit int) []aStockHotspot {
+	return buildAStockHotspotsWithTopStocksWithSettings(hotspots, marketCandidates, limit, defaultAStockAlgorithmSettings())
+}
+
+func buildAStockHotspotsWithTopStocksWithSettings(hotspots []aStockHotspot, marketCandidates []aStockMarketCandidate, limit int, settings model.AStockRecommendationAlgorithmSettings) []aStockHotspot {
 	if len(hotspots) == 0 {
 		return hotspots
 	}
 	if limit <= 0 {
-		limit = aStockHotspotTopStockLimit
+		limit = settings.Auction.HotspotTopStockLimit
 	}
-	candidates := aStockHotspotTopStockCandidates(hotspots, marketCandidates)
+	candidates := aStockHotspotTopStockCandidatesWithSettings(hotspots, marketCandidates, settings)
 	result := make([]aStockHotspot, len(hotspots))
 	copy(result, hotspots)
 	seen := make(map[string]struct{})
 	for i := range result {
-		result[i].TopStocks = buildAStockHotspotTopStocksWithSeen(result[i], candidates.scored, candidates.fallback, limit, seen)
+		result[i].TopStocks = buildAStockHotspotTopStocksWithSeenWithSettings(result[i], candidates.scored, candidates.fallback, limit, seen, settings)
 	}
 	return result
 }
@@ -11147,10 +11235,14 @@ func buildAStockHotspotTopStocks(hotspot aStockHotspot, candidates []aStockMarke
 }
 
 func buildAStockHotspotTopStocksWithSeen(hotspot aStockHotspot, scoredCandidates []aStockMarketCandidate, fallbackCandidates []aStockMarketCandidate, limit int, seen map[string]struct{}) []aStockHotspotStock {
+	return buildAStockHotspotTopStocksWithSeenWithSettings(hotspot, scoredCandidates, fallbackCandidates, limit, seen, defaultAStockAlgorithmSettings())
+}
+
+func buildAStockHotspotTopStocksWithSeenWithSettings(hotspot aStockHotspot, scoredCandidates []aStockMarketCandidate, fallbackCandidates []aStockMarketCandidate, limit int, seen map[string]struct{}, settings model.AStockRecommendationAlgorithmSettings) []aStockHotspotStock {
 	if limit <= 0 {
-		limit = aStockHotspotTopStockLimit
+		limit = settings.Auction.HotspotTopStockLimit
 	}
-	scored := scoreAStockMarketCandidates(hotspot, scoredCandidates)
+	scored := scoreAStockMarketCandidatesWithSettings(hotspot, scoredCandidates, nil, settings)
 	stocks := make([]aStockHotspotStock, 0, limit)
 	rowSeen := make(map[string]struct{})
 	for _, stock := range scored {
@@ -11163,7 +11255,7 @@ func buildAStockHotspotTopStocksWithSeen(hotspot aStockHotspot, scoredCandidates
 		if len(stocks) >= limit {
 			break
 		}
-		stocks = appendAStockHotspotTopStock(stocks, stock, hotspot.Score+aStockMarketRankScore(stock.Rank), limit, seen, rowSeen)
+		stocks = appendAStockHotspotTopStock(stocks, stock, hotspot.Score+aStockMarketRankScoreWithSettings(stock.Rank, settings), limit, seen, rowSeen)
 	}
 	return stocks
 }
@@ -11199,11 +11291,15 @@ func appendAStockHotspotTopStock(stocks []aStockHotspotStock, stock aStockMarket
 }
 
 func aStockHotspotTopStockCandidates(hotspots []aStockHotspot, marketCandidates []aStockMarketCandidate) aStockHotspotTopStockCandidateSet {
+	return aStockHotspotTopStockCandidatesWithSettings(hotspots, marketCandidates, defaultAStockAlgorithmSettings())
+}
+
+func aStockHotspotTopStockCandidatesWithSettings(hotspots []aStockHotspot, marketCandidates []aStockMarketCandidate, settings model.AStockRecommendationAlgorithmSettings) aStockHotspotTopStockCandidateSet {
 	newsCandidates := newsDerivedAStockMarketCandidates(hotspots)
 	fallbackCandidates := sortedAStockHotspotFallbackCandidates(marketCandidates)
 	nameResolver := newAStockRecommendationNameResolver(marketCandidates)
-	scoredCandidates := make([]aStockMarketCandidate, 0, len(newsCandidates)+minInt(aStockHotspotScoredCandidateLimit, len(fallbackCandidates)))
-	seen := make(map[string]struct{}, len(newsCandidates)+minInt(aStockHotspotScoredCandidateLimit, len(fallbackCandidates)))
+	scoredCandidates := make([]aStockMarketCandidate, 0, len(newsCandidates)+minInt(settings.Auction.HotspotScoredCandidateLimit, len(fallbackCandidates)))
+	seen := make(map[string]struct{}, len(newsCandidates)+minInt(settings.Auction.HotspotScoredCandidateLimit, len(fallbackCandidates)))
 	for _, candidate := range newsCandidates {
 		code := normalizeAStockCode(candidate.Code)
 		if code != "" {
@@ -11214,7 +11310,7 @@ func aStockHotspotTopStockCandidates(hotspots []aStockHotspot, marketCandidates 
 		}
 	}
 	for _, candidate := range fallbackCandidates {
-		if len(scoredCandidates) >= len(newsCandidates)+aStockHotspotScoredCandidateLimit {
+		if len(scoredCandidates) >= len(newsCandidates)+settings.Auction.HotspotScoredCandidateLimit {
 			break
 		}
 		code := candidate.Code
@@ -11272,23 +11368,27 @@ func buildAStockRecommendationsWithLimit(hotspots []aStockHotspot, candidates []
 }
 
 func buildAStockRecommendationsWithLimitAndSectorGate(hotspots []aStockHotspot, candidates []aStockMarketCandidate, maxRecommendations int, maxPerHotspot int, sectorGate *aStockHotspotSectorGate) []aStockRecommendation {
-	if len(hotspots) > aStockHotspotLimit {
-		hotspots = hotspots[:aStockHotspotLimit]
+	return buildAStockRecommendationsWithLimitAndSectorGateWithSettings(hotspots, candidates, maxRecommendations, maxPerHotspot, sectorGate, defaultAStockAlgorithmSettings())
+}
+
+func buildAStockRecommendationsWithLimitAndSectorGateWithSettings(hotspots []aStockHotspot, candidates []aStockMarketCandidate, maxRecommendations int, maxPerHotspot int, sectorGate *aStockHotspotSectorGate, settings model.AStockRecommendationAlgorithmSettings) []aStockRecommendation {
+	if settings.Auction.HotspotLimit > 0 && len(hotspots) > settings.Auction.HotspotLimit {
+		hotspots = hotspots[:settings.Auction.HotspotLimit]
 	}
 	if maxRecommendations <= 0 {
-		maxRecommendations = aStockRecommendationLimit
+		maxRecommendations = settings.Auction.RecommendationLimit
 	}
 	if maxPerHotspot <= 0 {
-		maxPerHotspot = aStockStocksPerHotspot
+		maxPerHotspot = settings.Auction.StocksPerHotspot
 	}
-	candidates = aStockRecommendationCandidatesForLimit(hotspots, candidates, maxRecommendations, maxPerHotspot)
+	candidates = aStockRecommendationCandidatesForLimitWithSettings(hotspots, candidates, maxRecommendations, maxPerHotspot, settings)
 	if len(candidates) == 0 {
 		return nil
 	}
 	recommendations := make([]aStockRecommendation, 0)
 	seen := make(map[string]struct{})
 	for _, hotspot := range hotspots {
-		stocks := scoreAStockMarketCandidatesWithSectorGate(hotspot, candidates, sectorGate)
+		stocks := scoreAStockMarketCandidatesWithSettings(hotspot, candidates, sectorGate, settings)
 		picked := 0
 		for _, stock := range stocks {
 			if _, exists := seen[stock.Code]; exists {
@@ -11335,7 +11435,7 @@ func buildAStockRecommendationsWithLimitAndSectorGate(hotspots []aStockHotspot, 
 				HotspotScore:   hotspot.Score,
 				MarketScore:    marketScore,
 				Reason:         reason,
-				ScoreBreakdown: buildAStockRecommendationScoreBreakdown(hotspot, stock),
+				ScoreBreakdown: buildAStockRecommendationScoreBreakdownWithSettings(hotspot, stock, settings),
 			})
 			picked++
 			if picked >= maxPerHotspot {
@@ -11358,9 +11458,13 @@ func limitAStockRecommendationsByScore(recommendations []aStockRecommendation, m
 }
 
 func buildAStockRecommendationScoreBreakdown(hotspot aStockHotspot, stock aStockMarketCandidate) []aStockRecommendationScoreComponent {
+	return buildAStockRecommendationScoreBreakdownWithSettings(hotspot, stock, defaultAStockAlgorithmSettings())
+}
+
+func buildAStockRecommendationScoreBreakdownWithSettings(hotspot aStockHotspot, stock aStockMarketCandidate, settings model.AStockRecommendationAlgorithmSettings) []aStockRecommendationScoreComponent {
 	components := make([]aStockRecommendationScoreComponent, 0, 8)
-	components = append(components, newAStockScoreComponent("新闻热度", fmt.Sprintf("证据新闻 %d 条", hotspot.Evidence), 10, hotspot.Evidence*10))
-	components = append(components, newAStockScoreComponent("热点关键词", fmt.Sprintf("命中关键词 %d 个", len(hotspot.Keywords)), 3, len(hotspot.Keywords)*3))
+	components = append(components, newAStockScoreComponent("新闻热度", fmt.Sprintf("证据新闻 %d 条", hotspot.Evidence), settings.Emotion.NewsEvidenceScore, hotspot.Evidence*settings.Emotion.NewsEvidenceScore))
+	components = append(components, newAStockScoreComponent("热点关键词", fmt.Sprintf("命中关键词 %d 个", len(hotspot.Keywords)), settings.Emotion.KeywordScore, len(hotspot.Keywords)*settings.Emotion.KeywordScore))
 	if hotspot.NegativeNewsPenalty > 0 {
 		components = append(components, newAStockScoreComponent("负面新闻", fmt.Sprintf("负面新闻 %d 条", hotspot.NegativeNewsCount), -hotspot.NegativeNewsPenalty, -hotspot.NegativeNewsPenalty))
 	}
@@ -11372,11 +11476,11 @@ func buildAStockRecommendationScoreBreakdown(hotspot aStockHotspot, stock aStock
 		delta := hotspot.Score - hotspotSum
 		components = append(components, newAStockScoreComponent("热度修正", fmt.Sprintf("展示热度分 %d", hotspot.Score), delta, delta))
 	}
-	rankScore := aStockMarketRankScore(stock.Rank)
+	rankScore := aStockMarketRankScoreWithSettings(stock.Rank, settings)
 	components = append(components, newAStockScoreComponent("行情排名", fmt.Sprintf("排名 %d", stock.Rank), rankScore, rankScore))
-	components = append(components, newAStockScoreComponent("个股证据", fmt.Sprintf("有效证据 %d 条 / 总证据 %d 条", stock.StrongEvidence, stock.Evidence), 25, stock.StrongEvidence*25))
+	components = append(components, newAStockScoreComponent("个股证据", fmt.Sprintf("有效证据 %d 条 / 总证据 %d 条", stock.StrongEvidence, stock.Evidence), settings.Emotion.StockEvidenceScore, stock.StrongEvidence*settings.Emotion.StockEvidenceScore))
 	if len(stock.Keywords) > 0 {
-		components = append(components, newAStockScoreComponent("股票名命中", fmt.Sprintf("命中关键词 %d 个", len(stock.Keywords)), 12, len(stock.Keywords)*12))
+		components = append(components, newAStockScoreComponent("股票名命中", fmt.Sprintf("命中关键词 %d 个", len(stock.Keywords)), settings.Emotion.StockNameKeywordScore, len(stock.Keywords)*settings.Emotion.StockNameKeywordScore))
 	}
 	if stock.WeakPenalty > 0 {
 		components = append(components, newAStockScoreComponent("弱证据", fmt.Sprintf("融资融券弱新闻 %d 条", stock.WeakEvidence), -stock.WeakPenalty, -stock.WeakPenalty))
@@ -11385,10 +11489,14 @@ func buildAStockRecommendationScoreBreakdown(hotspot aStockHotspot, stock aStock
 }
 
 func aStockRecommendationCandidatesForLimit(hotspots []aStockHotspot, marketCandidates []aStockMarketCandidate, maxRecommendations int, maxPerHotspot int) []aStockMarketCandidate {
+	return aStockRecommendationCandidatesForLimitWithSettings(hotspots, marketCandidates, maxRecommendations, maxPerHotspot, defaultAStockAlgorithmSettings())
+}
+
+func aStockRecommendationCandidatesForLimitWithSettings(hotspots []aStockHotspot, marketCandidates []aStockMarketCandidate, maxRecommendations int, maxPerHotspot int, settings model.AStockRecommendationAlgorithmSettings) []aStockMarketCandidate {
 	nameResolver := newAStockRecommendationNameResolver(marketCandidates)
 	newsCandidates := newsDerivedAStockMarketCandidates(hotspots)
-	candidates := make([]aStockMarketCandidate, 0, len(newsCandidates)+aStockHotspotScoredCandidateLimit)
-	seen := make(map[string]struct{}, len(newsCandidates)+aStockHotspotScoredCandidateLimit)
+	candidates := make([]aStockMarketCandidate, 0, len(newsCandidates)+settings.Auction.HotspotScoredCandidateLimit)
+	seen := make(map[string]struct{}, len(newsCandidates)+settings.Auction.HotspotScoredCandidateLimit)
 	appendCandidate := func(candidate aStockMarketCandidate) {
 		code := normalizeAStockCode(candidate.Code)
 		name := resolveAStockRecommendationName(code, candidate.Name, nameResolver)
@@ -11410,7 +11518,7 @@ func aStockRecommendationCandidatesForLimit(hotspots []aStockHotspot, marketCand
 		appendCandidate(candidate)
 	}
 	for _, candidate := range sortedAStockHotspotFallbackCandidates(marketCandidates) {
-		if len(candidates) >= len(newsCandidates)+aStockHotspotScoredCandidateLimit {
+		if len(candidates) >= len(newsCandidates)+settings.Auction.HotspotScoredCandidateLimit {
 			break
 		}
 		appendCandidate(candidate)
@@ -11524,8 +11632,12 @@ func isInvalidAStockRecommendationName(name string) bool {
 }
 
 func aStockRecommendationHotspotSlice(hotspots []aStockHotspot) []aStockHotspot {
-	if len(hotspots) > aStockHotspotLimit {
-		return hotspots[:aStockHotspotLimit]
+	return aStockRecommendationHotspotSliceWithSettings(hotspots, defaultAStockAlgorithmSettings())
+}
+
+func aStockRecommendationHotspotSliceWithSettings(hotspots []aStockHotspot, settings model.AStockRecommendationAlgorithmSettings) []aStockHotspot {
+	if settings.Auction.HotspotLimit > 0 && len(hotspots) > settings.Auction.HotspotLimit {
+		return hotspots[:settings.Auction.HotspotLimit]
 	}
 	return hotspots
 }
@@ -11565,15 +11677,23 @@ func buildAStockSnapshotReplacementRecommendationsWithSectorGate(strategyDate st
 }
 
 func buildAStockSnapshotRecommendationsWithPhaseAndLimitAndSectorGate(strategyDate string, periodKey string, phase string, articles []model.Item, candidates []aStockMarketCandidate, maxRecommendations int, maxPerHotspot int, sectorGate *aStockHotspotSectorGate) []aStockRecommendation {
+	return buildAStockSnapshotRecommendationsWithPhaseAndLimitAndSectorGateWithSettings(strategyDate, periodKey, phase, articles, candidates, maxRecommendations, maxPerHotspot, sectorGate, defaultAStockAlgorithmSettings())
+}
+
+func buildAStockSnapshotReplacementRecommendationsWithSectorGateWithSettings(strategyDate string, periodKey string, phase string, articles []model.Item, candidates []aStockMarketCandidate, sectorGate *aStockHotspotSectorGate, settings model.AStockRecommendationAlgorithmSettings) []aStockRecommendation {
+	return buildAStockSnapshotRecommendationsWithPhaseAndLimitAndSectorGateWithSettings(strategyDate, periodKey, phase, articles, candidates, settings.Auction.ReplacementPoolLimit, settings.Auction.ReplacementPerHotspot, sectorGate, settings)
+}
+
+func buildAStockSnapshotRecommendationsWithPhaseAndLimitAndSectorGateWithSettings(strategyDate string, periodKey string, phase string, articles []model.Item, candidates []aStockMarketCandidate, maxRecommendations int, maxPerHotspot int, sectorGate *aStockHotspotSectorGate, settings model.AStockRecommendationAlgorithmSettings) []aStockRecommendation {
 	snapshots := aStockRecommendationSnapshots(strategyDate, periodKey, phase)
 	if len(snapshots) == 0 {
-		return withAStockRecommendationEntryTimes(buildAStockRecommendationsWithLimitAndSectorGate(buildAStockHotspots(articles), candidates, maxRecommendations, maxPerHotspot, sectorGate), periodKey, "")
+		return withAStockRecommendationEntryTimes(buildAStockRecommendationsWithLimitAndSectorGateWithSettings(buildAStockHotspotsWithSettings(articles, settings), candidates, maxRecommendations, maxPerHotspot, sectorGate, settings), periodKey, "")
 	}
 	if maxRecommendations <= 0 {
-		maxRecommendations = aStockRecommendationLimit
+		maxRecommendations = settings.Auction.RecommendationLimit
 	}
 	if maxPerHotspot <= 0 {
-		maxPerHotspot = aStockStocksPerHotspot
+		maxPerHotspot = settings.Auction.StocksPerHotspot
 	}
 	combined := make([]aStockRecommendation, 0)
 	seen := make(map[string]struct{})
@@ -11583,7 +11703,7 @@ func buildAStockSnapshotRecommendationsWithPhaseAndLimitAndSectorGate(strategyDa
 		if len(snapshotArticles) == 0 {
 			continue
 		}
-		for _, rec := range buildAStockRecommendationsWithLimitAndSectorGate(buildAStockHotspots(snapshotArticles), candidates, maxRecommendations, maxPerHotspot, sectorGate) {
+		for _, rec := range buildAStockRecommendationsWithLimitAndSectorGateWithSettings(buildAStockHotspotsWithSettings(snapshotArticles, settings), candidates, maxRecommendations, maxPerHotspot, sectorGate, settings) {
 			code := normalizeAStockCode(rec.Code)
 			if code == "" {
 				continue
@@ -11593,7 +11713,7 @@ func buildAStockSnapshotRecommendationsWithPhaseAndLimitAndSectorGate(strategyDa
 			}
 			hotspotKey := normalizeAStockRecommendationHotspot(rec.Hotspot)
 			if hotspotKey != "" {
-				if _, exists := hotspotCounts[hotspotKey]; !exists && len(hotspotCounts) >= aStockHotspotLimit {
+				if _, exists := hotspotCounts[hotspotKey]; !exists && len(hotspotCounts) >= settings.Auction.HotspotLimit {
 					continue
 				}
 				if hotspotCounts[hotspotKey] >= maxPerHotspot {
@@ -11617,7 +11737,7 @@ func buildAStockSnapshotRecommendationsWithPhaseAndLimitAndSectorGate(strategyDa
 		}
 	}
 	if len(combined) == 0 && len(articles) > 0 {
-		return withAStockRecommendationEntryTimes(buildAStockRecommendationsWithLimitAndSectorGate(buildAStockHotspots(articles), candidates, maxRecommendations, maxPerHotspot, sectorGate), periodKey, "")
+		return withAStockRecommendationEntryTimes(buildAStockRecommendationsWithLimitAndSectorGateWithSettings(buildAStockHotspotsWithSettings(articles, settings), candidates, maxRecommendations, maxPerHotspot, sectorGate, settings), periodKey, "")
 	}
 	return combined
 }
@@ -12071,7 +12191,11 @@ func filterAStockRecommendationsByMorningHotspotQuota(recommendations []aStockRe
 }
 
 func remainingAStockDailyRecommendationLimit(morningCount int) int {
-	remaining := aStockDailyRecommendationLimit - morningCount
+	return remainingAStockDailyRecommendationLimitWithSettings(morningCount, defaultAStockAlgorithmSettings())
+}
+
+func remainingAStockDailyRecommendationLimitWithSettings(morningCount int, settings model.AStockRecommendationAlgorithmSettings) int {
+	remaining := settings.Auction.RecommendationLimit - morningCount
 	if remaining < 0 {
 		return 0
 	}
@@ -12222,15 +12346,19 @@ func formatAStockExDividendFilterStatus(filtered int) string {
 
 func (s *Server) applyAStockRecommendationOutputFiltersWithCache(ctx *aStockContext, cache *aStockRequestCache) (int, int) {
 	exDividendFiltered := s.applyAStockExDividendFilterWithCache(ctx, cache)
-	dailyLimitFiltered := applyAStockRecommendationOutputDailyLimit(ctx)
+	dailyLimitFiltered := applyAStockRecommendationOutputDailyLimitWithSettings(ctx, s.loadAStockAlgorithmSettingsWithCache(cache))
 	return exDividendFiltered, dailyLimitFiltered
 }
 
 func applyAStockRecommendationOutputDailyLimit(ctx *aStockContext) int {
+	return applyAStockRecommendationOutputDailyLimitWithSettings(ctx, defaultAStockAlgorithmSettings())
+}
+
+func applyAStockRecommendationOutputDailyLimitWithSettings(ctx *aStockContext, settings model.AStockRecommendationAlgorithmSettings) int {
 	if ctx == nil || len(ctx.Recommendations) == 0 {
 		return 0
 	}
-	filtered, skipped := limitAStockRecommendationsByCount(ctx.Recommendations, aStockDailyRecommendationLimit)
+	filtered, skipped := limitAStockRecommendationsByCount(ctx.Recommendations, settings.Auction.RecommendationLimit)
 	if skipped > 0 {
 		ctx.Recommendations = filtered
 		ctx.SameDayMorningFiltered += skipped
@@ -12296,9 +12424,10 @@ func (s *Server) loadAStockDividendEventsWithCache(strategyDate string, codes []
 	if len(normalizedCodes) == 0 {
 		return aStockDividendEventResult{}, fmt.Errorf("empty stock codes")
 	}
+	windowDays := s.loadAStockAlgorithmSettingsWithCache(cache).Volatility.ExDividendWindowDays
 	cacheKeyCodes := append([]string(nil), normalizedCodes...)
 	sort.Strings(cacheKeyCodes)
-	cacheKey := strings.Join([]string{date, fmt.Sprint(aStockExDividendWindowDays), strings.Join(cacheKeyCodes, ",")}, "|")
+	cacheKey := strings.Join([]string{date, fmt.Sprint(windowDays), strings.Join(cacheKeyCodes, ",")}, "|")
 	if cache != nil {
 		if entry, ok := cache.dividendEvents[cacheKey]; ok {
 			return entry.result, entry.err
@@ -12307,7 +12436,7 @@ func (s *Server) loadAStockDividendEventsWithCache(strategyDate string, codes []
 	query := url.Values{}
 	query.Set("date", date)
 	query.Set("codes", strings.Join(normalizedCodes, ","))
-	query.Set("window_days", fmt.Sprint(aStockExDividendWindowDays))
+	query.Set("window_days", fmt.Sprint(windowDays))
 	result := aStockDividendEventResult{}
 	resp, err := s.client.R().SetResult(&result).Get(baseURL + "/api/a-stock/dividend-events?" + query.Encode())
 	if err == nil && !resp.IsSuccess() {
@@ -13034,6 +13163,10 @@ func scoreAStockMarketCandidates(hotspot aStockHotspot, candidates []aStockMarke
 }
 
 func scoreAStockMarketCandidatesWithSectorGate(hotspot aStockHotspot, candidates []aStockMarketCandidate, sectorGate *aStockHotspotSectorGate) []aStockMarketCandidate {
+	return scoreAStockMarketCandidatesWithSettings(hotspot, candidates, sectorGate, defaultAStockAlgorithmSettings())
+}
+
+func scoreAStockMarketCandidatesWithSettings(hotspot aStockHotspot, candidates []aStockMarketCandidate, sectorGate *aStockHotspotSectorGate, settings model.AStockRecommendationAlgorithmSettings) []aStockMarketCandidate {
 	scored := make([]aStockMarketCandidate, 0, len(candidates))
 	evidenceIndex := newAStockStockEvidenceIndex(hotspot.MatchedItems)
 	for _, candidate := range candidates {
@@ -13050,7 +13183,7 @@ func scoreAStockMarketCandidatesWithSectorGate(hotspot aStockHotspot, candidates
 		effectiveEvidence := evidenceResult.Strong
 		weakPenalty := 0
 		if evidence > 0 && effectiveEvidence == 0 && evidenceResult.Weak > 0 {
-			weakPenalty = aStockWeakEvidencePenalty
+			weakPenalty = settings.Emotion.WeakEvidencePenalty
 		}
 		keywords := aStockCandidateKeywordMatches(candidate.Name, hotspot.Keywords)
 		if candidate.Fallback && len(keywords) == 0 {
@@ -13068,7 +13201,7 @@ func scoreAStockMarketCandidatesWithSectorGate(hotspot aStockHotspot, candidates
 		candidate.WeakPenalty = weakPenalty
 		candidate.BadEvidence = evidenceResult.Negative
 		candidate.Keywords = keywords
-		candidate.MatchedScore = aStockMarketRankScore(candidate.Rank) + effectiveEvidence*25 + len(keywords)*12 - weakPenalty
+		candidate.MatchedScore = aStockMarketRankScoreWithSettings(candidate.Rank, settings) + effectiveEvidence*settings.Emotion.StockEvidenceScore + len(keywords)*settings.Emotion.StockNameKeywordScore - weakPenalty
 		scored = append(scored, candidate)
 	}
 	sort.SliceStable(scored, func(i, j int) bool {
@@ -13119,10 +13252,14 @@ func intersectAStockKeywords(left []string, right []string) []string {
 }
 
 func aStockMarketRankScore(rank int) int {
+	return aStockMarketRankScoreWithSettings(rank, defaultAStockAlgorithmSettings())
+}
+
+func aStockMarketRankScoreWithSettings(rank int, settings model.AStockRecommendationAlgorithmSettings) int {
 	if rank <= 0 {
 		return 0
 	}
-	score := (aStockMarketRankScoreBase - rank + 1) / 5
+	score := (settings.Auction.MarketRankScoreBase - rank + 1) / settings.Auction.MarketRankScoreDivisor
 	if score < 1 {
 		return 1
 	}

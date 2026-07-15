@@ -1298,6 +1298,49 @@ func TestReleaseSettingsAPISavesServerPublishConfig(t *testing.T) {
 	}
 }
 
+func TestAStockRecommendationAlgorithmSettingsAPI(t *testing.T) {
+	store := newContentSearchTestStore(t)
+	svc := NewService(config.Config{HTTPTimeout: time.Second}, store)
+	router := svc.Router()
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/system/a-stock-recommendation-algorithm", nil)
+	getRR := httptest.NewRecorder()
+	router.ServeHTTP(getRR, getReq)
+	if getRR.Code != http.StatusOK || !strings.Contains(getRR.Body.String(), `"recommendation_limit":5`) || !strings.Contains(getRR.Body.String(), `"extreme_score":50`) {
+		t.Fatalf("expected default algorithm settings, got status=%d body=%s", getRR.Code, getRR.Body.String())
+	}
+
+	settings := model.DefaultAStockRecommendationAlgorithmSettings()
+	settings.Auction.RecommendationLimit = 4
+	settings.Fund.ExtremeScore = 45
+	raw, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatalf("marshal settings: %v", err)
+	}
+	saveReq := httptest.NewRequest(http.MethodPut, "/api/v1/system/a-stock-recommendation-algorithm", strings.NewReader(string(raw)))
+	saveReq.Header.Set("Content-Type", "application/json")
+	saveRR := httptest.NewRecorder()
+	router.ServeHTTP(saveRR, saveReq)
+	if saveRR.Code != http.StatusOK || !strings.Contains(saveRR.Body.String(), `"recommendation_limit":4`) || !strings.Contains(saveRR.Body.String(), `"extreme_score":45`) {
+		t.Fatalf("expected saved algorithm settings, got status=%d body=%s", saveRR.Code, saveRR.Body.String())
+	}
+
+	invalid := settings
+	invalid.Fund.ScoreMin = 10
+	invalid.Fund.ScoreMax = -10
+	raw, err = json.Marshal(invalid)
+	if err != nil {
+		t.Fatalf("marshal invalid settings: %v", err)
+	}
+	invalidReq := httptest.NewRequest(http.MethodPut, "/api/v1/system/a-stock-recommendation-algorithm", strings.NewReader(string(raw)))
+	invalidReq.Header.Set("Content-Type", "application/json")
+	invalidRR := httptest.NewRecorder()
+	router.ServeHTTP(invalidRR, invalidReq)
+	if invalidRR.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid settings 400, got status=%d body=%s", invalidRR.Code, invalidRR.Body.String())
+	}
+}
+
 func TestDatabaseSwitchAPISavesRuntimeConfig(t *testing.T) {
 	store := newContentSearchTestStore(t)
 	restartSubmitted := false

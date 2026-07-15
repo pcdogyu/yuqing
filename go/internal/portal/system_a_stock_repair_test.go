@@ -16,7 +16,11 @@ import (
 
 func TestSystemTemplateIncludesAStockRepairSection(t *testing.T) {
 	for _, snippet := range []string{
+		`href="/system?section=stockalgo">股票推荐算法</a><a class="{{if eq .SectionKey "stockrepair"}}active{{end}}" href="/system?section=stockrepair">推荐股票修复</a>`,
 		`href="/system?section=stockrepair">推荐股票修复</a>`,
+		`{{if eq .SectionKey "stockalgo"}}<section class="section-block"><h2>股票推荐算法</h2>`,
+		`name="form_type" value="astock_algorithm_save"`,
+		`value="astock_algorithm_reset"`,
 		`{{if eq .SectionKey "stockrepair"}}<section class="section-block"><h2>推荐股票修复</h2>`,
 		`name="form_type" value="astock_repair_selections_save"`,
 		`name="form_type" value="astock_repair_snapshot_save"`,
@@ -24,6 +28,35 @@ func TestSystemTemplateIncludesAStockRepairSection(t *testing.T) {
 	} {
 		if !strings.Contains(systemTemplate, snippet) {
 			t.Fatalf("expected system template to contain %q", snippet)
+		}
+	}
+}
+
+func TestSystemAStockAlgorithmSectionRendersFactorGroups(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/system/a-stock-recommendation-algorithm":
+			writeEnvelope(w, http.StatusOK, "ok", model.DefaultAStockRecommendationAlgorithmSettings())
+		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
+			writeEnvelope(w, http.StatusOK, "ok", nil)
+		}
+	}))
+	defer content.Close()
+	srv := NewServer(config.Config{ContentURL: content.URL})
+
+	req := httptest.NewRequest(http.MethodGet, "/system?section=stockalgo", nil)
+	rr := httptest.NewRecorder()
+	srv.handleSystem(rr, req, map[string]any{"id": int64(1), "username": "admin"})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected stock algorithm page 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, snippet := range []string{"股票推荐算法", "竞价因子", "情绪因子", "版块因子", "资金因子", "波动因子", "param.fund.extreme_score", "param.sector.top_stock_score_cap"} {
+		if !strings.Contains(body, snippet) {
+			t.Fatalf("expected stock algorithm page to contain %q, got %s", snippet, body)
 		}
 	}
 }

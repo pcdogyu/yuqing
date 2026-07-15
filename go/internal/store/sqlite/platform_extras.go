@@ -269,6 +269,54 @@ func normalizeReleaseSettings(settings model.ReleaseSettings) model.ReleaseSetti
 	return settings
 }
 
+func (s *Store) GetAStockRecommendationAlgorithmSettings(ctx context.Context) (model.AStockRecommendationAlgorithmSettings, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT settings_json, updated_at FROM a_stock_recommendation_algorithm_settings WHERE id = 1`)
+	settings := model.DefaultAStockRecommendationAlgorithmSettings()
+	var raw string
+	var updatedAt string
+	if err := row.Scan(&raw, &updatedAt); err != nil {
+		if err == sql.ErrNoRows {
+			return settings, nil
+		}
+		return model.AStockRecommendationAlgorithmSettings{}, err
+	}
+	if err := json.Unmarshal([]byte(raw), &settings); err != nil {
+		return model.AStockRecommendationAlgorithmSettings{}, err
+	}
+	if settings.Version <= 0 {
+		settings.Version = 1
+	}
+	settings.UpdatedAt = mustParseRFC3339(updatedAt)
+	return settings, nil
+}
+
+func (s *Store) UpsertAStockRecommendationAlgorithmSettings(ctx context.Context, settings model.AStockRecommendationAlgorithmSettings) (model.AStockRecommendationAlgorithmSettings, error) {
+	if settings.Version <= 0 {
+		settings.Version = 1
+	}
+	if err := model.ValidateAStockRecommendationAlgorithmSettings(settings); err != nil {
+		return model.AStockRecommendationAlgorithmSettings{}, err
+	}
+	settings.UpdatedAt = time.Now().UTC()
+	raw, err := json.Marshal(settings)
+	if err != nil {
+		return model.AStockRecommendationAlgorithmSettings{}, err
+	}
+	_, err = s.db.ExecContext(ctx, `
+INSERT INTO a_stock_recommendation_algorithm_settings (id, settings_json, updated_at)
+VALUES (1, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+	settings_json = excluded.settings_json,
+	updated_at = excluded.updated_at`,
+		string(raw),
+		settings.UpdatedAt.Format(time.RFC3339),
+	)
+	if err != nil {
+		return model.AStockRecommendationAlgorithmSettings{}, err
+	}
+	return s.GetAStockRecommendationAlgorithmSettings(ctx)
+}
+
 func (s *Store) GetWarningSetting(ctx context.Context, projectID int64) (model.WarningSetting, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT project_id, warning_setting_id, enabled, warning_status, warning_name, warning_word, warning_classify, warning_content, warning_similar, warning_match, warning_deduplication, warning_source, warning_receive_time, weekend_warning, warning_interval, channels, threshold, recipients, description, updated_at FROM warning_settings WHERE project_id = ?`, projectID)
 	var setting model.WarningSetting

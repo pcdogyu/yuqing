@@ -3486,6 +3486,9 @@ func TestAStockOldSnapshotMissingNewsSummaryUsesArticleWindowCache(t *testing.T)
 				Total:    1,
 			})
 		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
 	}))
@@ -3556,6 +3559,9 @@ func TestAStockEmptySnapshotNewsSummaryFallsBackToArticleWindow(t *testing.T) {
 				Total:    1,
 			})
 		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
 	}))
@@ -4330,6 +4336,9 @@ func handleAStockRecommendationSnapshotTestEndpoint(w http.ResponseWriter, r *ht
 }
 
 func handleEmptyAStockAuctionTestEndpoint(w http.ResponseWriter, r *http.Request) bool {
+	if handleAStockAlgorithmSettingsTestEndpoint(w, r) {
+		return true
+	}
 	if r.URL.Path == "/api/v1/a-stock/recommendation-performance" {
 		writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationPerformanceSummary{
 			Strategy:  r.URL.Query().Get("strategy"),
@@ -4361,41 +4370,34 @@ func handleEmptyAStockAuctionTestEndpoint(w http.ResponseWriter, r *http.Request
 				Total:     0,
 				EndDate:   r.URL.Query().Get("end_date"),
 				Indicator: r.URL.Query().Get("indicator"),
-				Code:      r.URL.Query().Get("code"),
-				Days:      atoiAStockScorePart(r.URL.Query().Get("days")),
+				Days:      parseIntDefault(r.URL.Query().Get("days"), 0),
 			},
 		})
+		return true
+	}
+	if r.URL.Path == "/api/v1/a-stock/sector-fund-flows" {
+		writeEnvelope(w, http.StatusOK, "ok", model.AStockSectorFundFlowListResult{})
 		return true
 	}
 	if r.URL.Path == "/api/v1/a-stock/sector-fund-flow-trend" {
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"code":    http.StatusOK,
-			"message": "ok",
-			"data": model.AStockSectorFundFlowTrendResult{
-				Items:      []model.AStockSectorFundFlow{},
-				Total:      0,
-				EndDate:    r.URL.Query().Get("end_date"),
-				SectorType: r.URL.Query().Get("sector_type"),
-				SectorName: r.URL.Query().Get("sector_name"),
-				Indicator:  r.URL.Query().Get("indicator"),
-				Days:       atoiAStockScorePart(r.URL.Query().Get("days")),
-			},
-		})
+		writeEnvelope(w, http.StatusOK, "ok", model.AStockSectorFundFlowTrendResult{})
 		return true
 	}
-	if r.URL.Path != "/api/v1/a-stock/auction" {
-		return false
+	if r.URL.Path == "/api/v1/a-stock/auction" {
+		writeEnvelope(w, http.StatusOK, "ok", model.AStockAuctionListResult{})
+		return true
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"code":    http.StatusOK,
-		"message": "ok",
-		"data": model.AStockAuctionListResult{
-			Date:  r.URL.Query().Get("date"),
-			Items: []model.AStockAuctionAmount{},
-		},
-	})
-	return true
+	return false
 }
+
+func handleAStockAlgorithmSettingsTestEndpoint(w http.ResponseWriter, r *http.Request) bool {
+	if r.URL.Path == "/api/v1/system/a-stock-recommendation-algorithm" {
+		writeEnvelope(w, http.StatusOK, "ok", model.DefaultAStockRecommendationAlgorithmSettings())
+		return true
+	}
+	return false
+}
+
 func mustAStockTestJSON(t *testing.T, value any) string {
 	t.Helper()
 	raw, err := json.Marshal(value)
@@ -5377,6 +5379,9 @@ func TestAStockRebuildRefiltersLockedMorningSelectionsAndClearsPersistedRows(t *
 		case "/api/v1/a-stock/holdings/summary":
 			writeEnvelope(w, http.StatusOK, "ok", model.StockInstitutionHoldingSummary{})
 		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
 	}))
@@ -5473,6 +5478,9 @@ func TestAStockMorningRebuildUsesExpandedPoolAfterRecentFilter(t *testing.T) {
 		case "/api/v1/a-stock/holdings/summary":
 			writeEnvelope(w, http.StatusOK, "ok", model.StockInstitutionHoldingSummary{})
 		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
 	}))
@@ -6497,6 +6505,9 @@ func TestAStockPopupShowsAndDismissesAfternoonRecommendations(t *testing.T) {
 			popupStates[popupStateMapKey(state.UserID, state.Key)] = state
 			writeEnvelope(w, http.StatusOK, "ok", state)
 		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
 		}
 	}))
@@ -6610,6 +6621,9 @@ func TestAStockPopupShowsMorningRecommendationsDuringPreopenWindow(t *testing.T)
 				UpdatedAt:           time.Date(2026, 6, 23, 1, 36, 0, 0, time.UTC),
 			})
 		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
 		}
 	}))
@@ -6673,6 +6687,9 @@ func TestAStockPopupDismissesMorningWithoutHidingAfternoon(t *testing.T) {
 			popupStates[popupStateMapKey(state.UserID, state.Key)] = state
 			writeEnvelope(w, http.StatusOK, "ok", state)
 		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
 		}
 	}))
@@ -6952,6 +6969,9 @@ func TestAStockRecommendationFundFlowFilterScoresAndReplenishes(t *testing.T) {
 	}
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if handleAStockAlgorithmSettingsTestEndpoint(w, r) {
+			return
+		}
 		if r.URL.Path != "/api/v1/a-stock/stock-fund-flow-trend" {
 			if r.URL.Path == "/api/v1/a-stock/sector-fund-flows" {
 				writeEnvelope(w, http.StatusOK, "ok", model.AStockSectorFundFlowListResult{})
@@ -7040,6 +7060,9 @@ func TestAStockRecommendationFundFlowFilterScoresAndReplenishes(t *testing.T) {
 func TestAStockRecommendationFundFlowFilterAllowsAfternoonShortfallFallback(t *testing.T) {
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if handleAStockAlgorithmSettingsTestEndpoint(w, r) {
+			return
+		}
 		if r.URL.Path != "/api/v1/a-stock/stock-fund-flow-trend" {
 			if r.URL.Path == "/api/v1/a-stock/sector-fund-flows" {
 				writeEnvelope(w, http.StatusOK, "ok", model.AStockSectorFundFlowListResult{})
@@ -7137,6 +7160,9 @@ func TestAStockRecommendationGenerateIgnoreFundFlowKeepsNegativeFundFlowRecommen
 		case "/api/v1/internal/a-stock/recommendation-shadow-snapshots":
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Inserted: 1})
 		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
 	}))
@@ -8010,6 +8036,9 @@ func TestAStockRecentRecommendationFilterUsesTradingDays(t *testing.T) {
 			}
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
 		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
 	}))
@@ -8077,6 +8106,9 @@ func TestAStockAfternoonRecentCodesIncludeSameDayMorningSelections(t *testing.T)
 			}
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{Found: false})
 		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
 	}))
@@ -9638,6 +9670,20 @@ func TestAStockFundFlowScoreStrongInflowCapsAtFifty(t *testing.T) {
 	}
 }
 
+func TestAStockFundFlowScoreUsesConfiguredScores(t *testing.T) {
+	settings := defaultAStockAlgorithmSettings()
+	settings.Fund.ExtremeScore = 42
+	settings.Fund.ScoreMax = 60
+	assessment := scoreAStockFundFlowAssessmentWithSettings(aStockFundFlow5DAssessment{
+		Total5D:  2100000000,
+		Total10D: 2100000000,
+	}, settings)
+
+	if assessment.ScoreDelta != 52 {
+		t.Fatalf("expected configured extreme score plus acceleration, got %+v", assessment)
+	}
+}
+
 func TestAStockFundFlowScoreContinuousOutflowCapsAtMinusFifty(t *testing.T) {
 	assessment := scoreAStockFundFlowAssessment(aStockFundFlow5DAssessment{
 		Total5D:        -10000000,
@@ -9646,6 +9692,30 @@ func TestAStockFundFlowScoreContinuousOutflowCapsAtMinusFifty(t *testing.T) {
 
 	if assessment.ScoreDelta != -50 || !strings.Contains(formatAStockFundFlowScoreReason(assessment), "近5日净流出4天") {
 		t.Fatalf("expected continuous outflow to cap at -50, got %+v", assessment)
+	}
+}
+
+func TestAStockSectorTopStockResonanceUsesConfiguredScores(t *testing.T) {
+	settings := defaultAStockAlgorithmSettings()
+	settings.Sector.TopStockThreeSectorScore = 18
+	settings.Sector.TopStockLargeInflowScore = 4
+	settings.Sector.TopStockScoreCap = 21
+	score := scoreAStockSectorTopStockResonanceWithSettings(aStockSectorTopStockResonance{
+		PositiveSectorCount:      3,
+		TotalSectorMainNetInflow: 6000000000,
+	}, settings)
+
+	if score != 21 {
+		t.Fatalf("expected configured resonance score capped at 21, got %d", score)
+	}
+}
+
+func TestAStockHighOpenScoreUsesConfiguredScores(t *testing.T) {
+	settings := defaultAStockAlgorithmSettings()
+	settings.Auction.HighOpenThreshold3Pct = 2.5
+	settings.Auction.HighOpenScore3 = 33
+	if score := aStockHighOpenScoreWithSettings(2.8, settings); score != 33 {
+		t.Fatalf("expected configured high-open score 33, got %d", score)
 	}
 }
 
@@ -9734,6 +9804,9 @@ func TestAStockSectorFundFlowTrendScoreContinuousOutflowCapsAtMinusForty(t *test
 
 func TestAStockSectorFundFlowTrendScoreLoadsFromContent(t *testing.T) {
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if handleAStockAlgorithmSettingsTestEndpoint(w, r) {
+			return
+		}
 		if r.URL.Path != "/api/v1/a-stock/sector-fund-flow-trend" {
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
@@ -9867,6 +9940,9 @@ func TestAStockSectorTopStockResonanceDoesNotOverrideFundFlowHardFilter(t *testi
 				},
 			})
 		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected request: %s", r.URL.String())
 		}
 	}))
@@ -10491,6 +10567,9 @@ func TestAStockPersistedRecommendationsRepairGarbledHotspotAndReason(t *testing.
 				TotalAmount: 100000000,
 			})
 		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
 		}
 	}))
@@ -10581,6 +10660,9 @@ func TestAStockReadOnlySnapshotRepairsGarbledRecommendationText(t *testing.T) {
 				TotalAmount: 100000000,
 			})
 		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
 		}
 	}))
@@ -11360,6 +11442,9 @@ func TestAStockSnapshotSaveRepairsNamesFromEastmoneyQuote(t *testing.T) {
 			}
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Updated: 1})
 		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
 		}
 	}))
@@ -11671,6 +11756,9 @@ func TestAStockAfternoonSameDayCapsUsePersistedMorningDailyTotal(t *testing.T) {
 		case "/api/v1/a-stock/recommendations":
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
 		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}
 	}))
@@ -11793,6 +11881,9 @@ func TestAStockMarketCandidateResultUsesServerCache(t *testing.T) {
 	auctionHits := 0
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if handleAStockAlgorithmSettingsTestEndpoint(w, r) {
+			return
+		}
 		if r.URL.Path != "/api/v1/a-stock/auction" {
 			t.Fatalf("unexpected content path: %s", r.URL.String())
 		}

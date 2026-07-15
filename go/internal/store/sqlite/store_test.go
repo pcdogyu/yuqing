@@ -1577,6 +1577,24 @@ func TestPreferencesPopupAndMailConfig(t *testing.T) {
 	if releaseSettings.ReleaseURL != "http://10.15.0.7:8100" || releaseSettings.ServerSharePath != `\\10.15.0.7\yuqing-release2` {
 		t.Fatalf("unexpected release settings: %+v", releaseSettings)
 	}
+
+	defaultAlgorithm, err := store.GetAStockRecommendationAlgorithmSettings(ctx)
+	if err != nil {
+		t.Fatalf("GetAStockRecommendationAlgorithmSettings error: %v", err)
+	}
+	if defaultAlgorithm.Auction.RecommendationLimit != 5 || defaultAlgorithm.Fund.ExtremeScore != 50 {
+		t.Fatalf("unexpected default A stock algorithm settings: %+v", defaultAlgorithm)
+	}
+	updatedAlgorithm := defaultAlgorithm
+	updatedAlgorithm.Auction.RecommendationLimit = 4
+	updatedAlgorithm.Fund.ExtremeScore = 45
+	savedAlgorithm, err := store.UpsertAStockRecommendationAlgorithmSettings(ctx, updatedAlgorithm)
+	if err != nil {
+		t.Fatalf("UpsertAStockRecommendationAlgorithmSettings error: %v", err)
+	}
+	if savedAlgorithm.Auction.RecommendationLimit != 4 || savedAlgorithm.Fund.ExtremeScore != 45 || savedAlgorithm.UpdatedAt.IsZero() {
+		t.Fatalf("unexpected saved A stock algorithm settings: %+v", savedAlgorithm)
+	}
 }
 
 func TestWarningAndOpinionConditions(t *testing.T) {

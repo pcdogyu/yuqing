@@ -81,6 +81,8 @@ type Store interface {
 	UpsertMailConfig(rctx context.Context, cfg model.MailConfig) (model.MailConfig, error)
 	GetReleaseSettings(rctx context.Context) (model.ReleaseSettings, error)
 	UpsertReleaseSettings(rctx context.Context, settings model.ReleaseSettings) (model.ReleaseSettings, error)
+	GetAStockRecommendationAlgorithmSettings(rctx context.Context) (model.AStockRecommendationAlgorithmSettings, error)
+	UpsertAStockRecommendationAlgorithmSettings(rctx context.Context, settings model.AStockRecommendationAlgorithmSettings) (model.AStockRecommendationAlgorithmSettings, error)
 	GetWarningSetting(rctx context.Context, projectID int64) (model.WarningSetting, error)
 	UpsertWarningSetting(rctx context.Context, setting model.WarningSetting) (model.WarningSetting, error)
 	GetOpinionCondition(rctx context.Context, projectID int64) (model.OpinionCondition, error)
@@ -288,6 +290,8 @@ func (s *Service) Routes(r chi.Router) {
 	r.Put("/api/v1/system/mail-config", s.handleUpdateMailConfig)
 	r.Get("/api/v1/system/release-settings", s.handleGetReleaseSettings)
 	r.Put("/api/v1/system/release-settings", s.handleUpdateReleaseSettings)
+	r.Get("/api/v1/system/a-stock-recommendation-algorithm", s.handleGetAStockRecommendationAlgorithmSettings)
+	r.Put("/api/v1/system/a-stock-recommendation-algorithm", s.handleUpdateAStockRecommendationAlgorithmSettings)
 	r.Get("/api/v1/system/warning-settings/{project_id}", s.handleGetWarningSetting)
 	r.Put("/api/v1/system/warning-settings/{project_id}", s.handleUpdateWarningSetting)
 	r.Get("/api/v1/system/opinion-conditions/{project_id}", s.handleGetOpinionCondition)
@@ -4447,6 +4451,32 @@ func (s *Service) handleUpdateReleaseSettings(w http.ResponseWriter, r *http.Req
 		return
 	}
 	updated, err := s.store.UpsertReleaseSettings(r.Context(), settings)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", updated)
+}
+
+func (s *Service) handleGetAStockRecommendationAlgorithmSettings(w http.ResponseWriter, r *http.Request) {
+	settings, err := s.store.GetAStockRecommendationAlgorithmSettings(r.Context())
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", settings)
+}
+
+func (s *Service) handleUpdateAStockRecommendationAlgorithmSettings(w http.ResponseWriter, r *http.Request) {
+	var settings model.AStockRecommendationAlgorithmSettings
+	if !decodeJSON(w, r, &settings) {
+		return
+	}
+	if err := model.ValidateAStockRecommendationAlgorithmSettings(settings); err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+	updated, err := s.store.UpsertAStockRecommendationAlgorithmSettings(r.Context(), settings)
 	if err != nil {
 		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
 		return

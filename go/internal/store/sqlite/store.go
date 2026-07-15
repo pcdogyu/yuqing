@@ -476,6 +476,12 @@ CREATE TABLE IF NOT EXISTS release_settings (
 	updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS a_stock_recommendation_algorithm_settings (
+	id INTEGER PRIMARY KEY CHECK (id = 1),
+	settings_json TEXT NOT NULL DEFAULT '{}',
+	updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS warning_settings (
 	project_id INTEGER PRIMARY KEY,
 	warning_setting_id INTEGER NOT NULL DEFAULT 0,
