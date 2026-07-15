@@ -1,10 +1,12 @@
 package portal
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -344,11 +346,15 @@ func runPortalUpgrade(parent context.Context, _ config.Config, progress portalUp
 		"-X github.com/pcdogyu/yuqing/go/internal/app.BuildTime=" + buildTime,
 		"-X github.com/pcdogyu/yuqing/go/internal/app.BranchName=" + branch,
 	}, " ")
-	args := []string{"build", "-ldflags", ldflags, "-o", binDir + string(os.PathSeparator)}
-	if err := runPortalUpgradeBuildPackages(ctx, &log, progress, goDir, binDir, args, portalUpgradeBuildPackages); err != nil {
+	prebuildDir := filepath.Join(goDir, ".upgrade-cache", "portal-upgrade-bin")
+	if err := os.MkdirAll(prebuildDir, 0o755); err != nil {
 		return finishPortalUpgrade(false, startedAt, log.String(), err)
 	}
-	appendUpgradeLog(&log, "升级构建完成。新二进制已写入 "+binDir)
+	if err := runPortalUpgradeBuildPackages(ctx, &log, progress, goDir, prebuildDir, ldflags, portalUpgradeBuildPackages); err != nil {
+		return finishPortalUpgrade(false, startedAt, log.String(), err)
+	}
+	appendUpgradeLog(&log, "升级预构建完成。预构建输出目录: "+prebuildDir)
+	appendUpgradeLog(&log, "实际服务二进制将在 run.bat 重启流程中写入 "+binDir)
 	return restartPortalUpgradeServices(goDir, repoRoot, startedAt, &log, progress)
 }
 
@@ -372,36 +378,36 @@ func restartPortalUpgradeServices(goDir string, repoRoot string, startedAt time.
 	}
 }
 
-func runPortalUpgradeBuildPackages(ctx context.Context, log *bytes.Buffer, progress portalUpgradeProgress, goDir string, binDir string, baseArgs []string, packages []string) error {
+func runPortalUpgradeBuildPackages(ctx context.Context, log *bytes.Buffer, progress portalUpgradeProgress, goDir string, binDir string, ldflags string, packages []string) error {
 	stageMessage := "阶段: 打包构建"
 	appendUpgradeLog(log, stageMessage)
 	appendUpgradeLog(log, fmt.Sprintf("debug: 构建输出目录: %s", binDir))
-	appendUpgradeLog(log, fmt.Sprintf("debug: 构建包数量: %d", len(packages)))
+	serviceNames := portalUpgradePackageServiceNames(packages)
+	appendUpgradeLog(log, fmt.Sprintf("debug: 构建服务数量: %d", len(serviceNames)))
 	appendUpgradeLog(log, "debug: go version: "+strings.TrimSpace(portalUpgradeCommandOutput(ctx, goDir, "go", "version")))
 	if progress != nil {
 		progress(stageMessage, strings.TrimRight(log.String(), "\r\n"))
 	}
-	for i, pkg := range packages {
-		startedAt := time.Now()
-		packageMessage := fmt.Sprintf("阶段: 打包构建 %d/%d %s", i+1, len(packages), pkg)
-		appendUpgradeLog(log, fmt.Sprintf("debug: 开始构建包 %d/%d: %s", i+1, len(packages), pkg))
-		if err := stopPortalUpgradePackageBeforeBuild(ctx, log, goDir, pkg); err != nil {
-			return err
-		}
-		if progress != nil {
-			progress(packageMessage, strings.TrimRight(log.String(), "\r\n"))
-		}
-		args := append([]string{}, baseArgs...)
-		args = append(args, pkg)
-		if err := runPortalUpgradeCommandWithProgress(ctx, log, goDir, false, progress, packageMessage, portalUpgradeCommandHeartbeat, "go", args...); err != nil {
-			return err
-		}
-		appendUpgradeLog(log, fmt.Sprintf("debug: 完成构建包 %d/%d: %s，耗时 %s", i+1, len(packages), pkg, time.Since(startedAt).Round(time.Second)))
-		if progress != nil {
-			progress(stageMessage, strings.TrimRight(log.String(), "\r\n"))
-		}
+	if len(serviceNames) == 0 {
+		return fmt.Errorf("没有可构建的服务")
 	}
-	return nil
+	buildScript := filepath.Join(goDir, "scripts", "build-services.ps1")
+	if _, err := os.Stat(buildScript); err != nil {
+		return fmt.Errorf("无法找到构建脚本 %s: %w", buildScript, err)
+	}
+	appendUpgradeLog(log, "debug: 构建脚本: "+buildScript)
+	args := []string{
+		"-NoProfile",
+		"-ExecutionPolicy", "Bypass",
+		"-File", buildScript,
+		"-Root", goDir,
+		"-BinDir", binDir,
+		"-Ldflags", ldflags,
+		"-GoBuildFlags", "",
+		"-GoCacheDir", portalUpgradeGoCacheDir(goDir),
+		"-Services", strings.Join(serviceNames, " "),
+	}
+	return runPortalUpgradeCommandWithProgress(ctx, log, goDir, false, progress, stageMessage, 2*time.Second, portalUpgradePowerShellCommand(), args...)
 }
 
 func stopPortalUpgradePackageBeforeBuild(ctx context.Context, log *bytes.Buffer, goDir string, pkg string) error {
@@ -431,6 +437,20 @@ func portalUpgradePackageServiceName(pkg string) string {
 		return ""
 	}
 	return strings.TrimSpace(strings.TrimPrefix(pkg, prefix))
+}
+
+func portalUpgradePackageServiceNames(packages []string) []string {
+	serviceNames := make([]string, 0, len(packages))
+	seen := map[string]bool{}
+	for _, pkg := range packages {
+		serviceName := portalUpgradePackageServiceName(pkg)
+		if serviceName == "" || seen[serviceName] {
+			continue
+		}
+		seen[serviceName] = true
+		serviceNames = append(serviceNames, serviceName)
+	}
+	return serviceNames
 }
 
 func finishPortalUpgrade(ok bool, startedAt time.Time, logText string, err error) portalUpgradeResult {
@@ -780,18 +800,6 @@ func runPortalUpgradeCommandWithProgress(ctx context.Context, log *bytes.Buffer,
 		appendUpgradeLog(log, line)
 		mu.Unlock()
 	}
-	appendBytes := func(output []byte) {
-		if len(output) == 0 || log == nil {
-			return
-		}
-		mu.Lock()
-		defer mu.Unlock()
-		log.Write(output)
-		if output[len(output)-1] != '\n' {
-			log.WriteByte('\n')
-		}
-	}
-
 	appendUpgradeLog(log, "$ "+shellQuoteCommand(name, args))
 	appendUpgradeLog(log, "debug: 工作目录: "+dir)
 	if isPortalUpgradeGoCommand(name) {
@@ -799,7 +807,6 @@ func runPortalUpgradeCommandWithProgress(ctx context.Context, log *bytes.Buffer,
 			appendUpgradeLog(log, "debug: GOCACHE: "+cacheDir)
 		}
 	}
-	publishSnapshot()
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	cmd.Env = portalUpgradeCommandEnv(name, dir)
@@ -820,9 +827,41 @@ func runPortalUpgradeCommandWithProgress(ctx context.Context, log *bytes.Buffer,
 			}
 		}()
 	}
-	output, err := cmd.CombinedOutput()
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		close(done)
+		return err
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		close(done)
+		return err
+	}
+	if err := cmd.Start(); err != nil {
+		close(done)
+		return err
+	}
+	publishSnapshot()
+	var wg sync.WaitGroup
+	scanOutput := func(reader io.Reader) {
+		defer wg.Done()
+		scanner := bufio.NewScanner(reader)
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		for scanner.Scan() {
+			appendLine(scanner.Text())
+			publishSnapshot()
+		}
+		if err := scanner.Err(); err != nil {
+			appendLine("debug: 读取命令输出失败: " + err.Error())
+			publishSnapshot()
+		}
+	}
+	wg.Add(2)
+	go scanOutput(stdout)
+	go scanOutput(stderr)
+	err = cmd.Wait()
 	close(done)
-	appendBytes(output)
+	wg.Wait()
 	appendLine(fmt.Sprintf("debug: 命令结束，耗时 %s", time.Since(startedAt).Round(time.Second)))
 	publishSnapshot()
 	if ctx.Err() != nil {
@@ -862,6 +901,13 @@ func portalUpgradeCommandEnv(name string, dir string) []string {
 func isPortalUpgradeGoCommand(name string) bool {
 	base := strings.TrimSuffix(strings.ToLower(filepath.Base(strings.TrimSpace(name))), ".exe")
 	return base == "go"
+}
+
+func portalUpgradePowerShellCommand() string {
+	if runtime.GOOS == "windows" {
+		return "powershell.exe"
+	}
+	return "pwsh"
 }
 
 func portalUpgradeGoCacheDir(dir string) string {

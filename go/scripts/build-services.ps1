@@ -3,6 +3,7 @@ param(
     [string]$BinDir = (Join-Path $Root "bin"),
     [string]$Ldflags = "",
     [string]$GoBuildFlags = "",
+    [string]$GoCacheDir = "",
     [Parameter(Mandatory = $true, ValueFromRemainingArguments = $true)]
     [string[]]$Services
 )
@@ -34,6 +35,13 @@ $BinDir = [System.IO.Path]::GetFullPath($BinDir)
 if (-not (Test-Path $BinDir)) {
     New-Item -ItemType Directory -Path $BinDir | Out-Null
 }
+if (-not [string]::IsNullOrWhiteSpace($GoCacheDir)) {
+    $GoCacheDir = [System.IO.Path]::GetFullPath($GoCacheDir)
+    if (-not (Test-Path $GoCacheDir)) {
+        New-Item -ItemType Directory -Path $GoCacheDir | Out-Null
+    }
+    Write-Host "[build] GOCACHE $GoCacheDir"
+}
 
 $serviceNames = @($Services | ForEach-Object { $_ -split '\s+' } | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 if ($serviceNames.Count -eq 0) {
@@ -49,16 +57,20 @@ $queued = 0
 foreach ($service in $serviceNames) {
     $queued++
     Write-Host "[build] queued $queued/$total $service"
-    $job = Start-Job -Name "build-$service" -ArgumentList $Root, $BinDir, $service, $Ldflags, $buildFlags -ScriptBlock {
+    $job = Start-Job -Name "build-$service" -ArgumentList $Root, $BinDir, $service, $Ldflags, $buildFlags, $GoCacheDir -ScriptBlock {
         param(
             [string]$JobRoot,
             [string]$JobBinDir,
             [string]$JobService,
             [string]$JobLdflags,
-            [string[]]$JobBuildFlags
+            [string[]]$JobBuildFlags,
+            [string]$JobGoCacheDir
         )
 
         Set-Location $JobRoot
+        if (-not [string]::IsNullOrWhiteSpace($JobGoCacheDir)) {
+            $env:GOCACHE = $JobGoCacheDir
+        }
         $outputPath = Join-Path $JobBinDir "$JobService.exe"
         $args = @("build")
         if ($JobBuildFlags -and $JobBuildFlags.Count -gt 0) {

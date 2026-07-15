@@ -92,6 +92,9 @@ func TestPortalUpgradeVersionHelpers(t *testing.T) {
 	if got := portalUpgradePackageServiceName("internal/content"); got != "" {
 		t.Fatalf("expected non-command package to have no service name, got %s", got)
 	}
+	if got := portalUpgradePackageServiceNames([]string{"./cmd/auth-service", "./cmd/gateway-web", "./cmd/auth-service", "internal/content"}); !equalStringSlices(got, []string{"auth-service", "gateway-web"}) {
+		t.Fatalf("unexpected service names: %+v", got)
+	}
 }
 
 func TestPortalUpgradeCommandEnvUsesIsolatedGoCache(t *testing.T) {
@@ -255,6 +258,75 @@ func TestRunPortalUpgradeCommandWithProgressPublishesHeartbeat(t *testing.T) {
 	}
 }
 
+func TestRunPortalUpgradeBuildPackagesUsesBuildServicesScript(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go is required for upgrade build script test")
+	}
+	if _, err := exec.LookPath(portalUpgradePowerShellCommand()); err != nil {
+		t.Skip("PowerShell is required for upgrade build script test")
+	}
+	goDir := t.TempDir()
+	scriptDir := filepath.Join(goDir, "scripts")
+	if err := os.MkdirAll(scriptDir, 0o755); err != nil {
+		t.Fatalf("create scripts dir: %v", err)
+	}
+	script := `param(
+    [string]$Root,
+    [string]$BinDir,
+    [string]$Ldflags,
+    [string]$GoBuildFlags,
+    [string]$GoCacheDir,
+    [string[]]$Services
+)
+Write-Host "[build] root $Root"
+Write-Host "[build] bin $BinDir"
+Write-Host "[build] ldflags $Ldflags"
+Write-Host "[build] cache $GoCacheDir"
+Write-Host "[build] services $($Services -join '|')"
+`
+	if err := os.WriteFile(filepath.Join(scriptDir, "build-services.ps1"), []byte(script), 0o644); err != nil {
+		t.Fatalf("write fake build script: %v", err)
+	}
+
+	var log bytes.Buffer
+	var snapshots []string
+	err := runPortalUpgradeBuildPackages(
+		context.Background(),
+		&log,
+		func(_ string, logText string) {
+			snapshots = append(snapshots, logText)
+		},
+		goDir,
+		filepath.Join(goDir, ".upgrade-cache", "portal-upgrade-bin"),
+		"test ldflags",
+		[]string{"./cmd/auth-service", "./cmd/gateway-web", "./cmd/auth-service", "internal/content"},
+	)
+	if err != nil {
+		t.Fatalf("runPortalUpgradeBuildPackages error: %v\n%s", err, log.String())
+	}
+	for _, want := range []string{
+		"阶段: 打包构建",
+		"debug: 构建服务数量: 2",
+		"build-services.ps1",
+		"[build] ldflags test ldflags",
+		"[build] services auth-service gateway-web",
+	} {
+		if !strings.Contains(log.String(), want) {
+			t.Fatalf("expected build log to include %q, got %s", want, log.String())
+		}
+	}
+	foundStreamingSnapshot := false
+	for _, snapshot := range snapshots {
+		if strings.Contains(snapshot, "[build] services auth-service gateway-web") {
+			foundStreamingSnapshot = true
+			break
+		}
+	}
+	if !foundStreamingSnapshot {
+		t.Fatalf("expected progress snapshots to include build script output, got %+v", snapshots)
+	}
+}
+
 func TestPortalUpgradeSleepHelper(t *testing.T) {
 	if os.Getenv("PORTAL_UPGRADE_SLEEP_HELPER") != "1" {
 		return
@@ -280,4 +352,16 @@ func containsString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func equalStringSlices(a []string, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
