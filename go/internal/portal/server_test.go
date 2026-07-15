@@ -9324,17 +9324,59 @@ func TestAStockRecommendationReasonRendersScoreBreakdownTable(t *testing.T) {
 	body := b.String()
 	for _, want := range []string{
 		`class="astock-score-table"`,
-		"<th>项目</th><th>组成</th><th>分值</th><th>得分</th>",
+		"<th>类别</th><th>项目</th><th>命中/依据</th><th>分值</th><th>小计</th>",
 		"总分",
 		"115 分",
+		"板块",
 		"新闻热度",
 		"证据新闻 3 条",
-		`class="astock-score-value">10</td><td>30 分`,
+		`class="astock-score-value">每条 10 分</td><td>30 分`,
+		"个股",
 		"个股证据",
-		"25 分",
+		"板块小计：36 分",
+		"个股小计：79 分",
+		"调整项小计：0 分",
+		"合计：115 分",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected rendered score breakdown to contain %q, got %s", want, body)
+		}
+	}
+}
+
+func TestAStockRecommendationReasonRendersTotal317Breakdown(t *testing.T) {
+	rec := aStockRecommendation{
+		Hotspot:     "半导体",
+		Code:        "002156",
+		Name:        "通富微电",
+		MarketScore: 317,
+		Reason:      "合成总分 317",
+		ScoreBreakdown: []aStockRecommendationScoreComponent{
+			{Label: "新闻热度", Detail: "证据新闻 15 条", UnitValue: 10, Score: 150},
+			{Label: "热点关键词", Detail: "命中关键词 4 个", UnitValue: 3, Score: 12},
+			{Label: "板块资金趋势", Detail: "最近2日连续净流入", UnitValue: 40, Score: 40},
+			{Label: "行情排名", Detail: "排名 1", UnitValue: 65, Score: 65},
+			{Label: "个股证据", Detail: "有效证据 1 条 / 总证据 1 条", UnitValue: 25, Score: 25},
+			{Label: "股票名命中", Detail: "命中关键词 1 个", UnitValue: 12, Score: 12},
+			{Label: "资金动向", Detail: "5日主力资金净流入 +41.56亿，资金加分 13", UnitValue: 13, Score: 13},
+		},
+	}
+	var b strings.Builder
+	writeAStockRecommendationReasonCell(&b, rec)
+	body := b.String()
+	for _, want := range []string{
+		"总分",
+		"317 分",
+		"每条 10 分",
+		"每个 3 分",
+		"每条 25 分",
+		"板块小计：202 分",
+		"个股小计：115 分",
+		"调整项小计：0 分",
+		"合计：317 分",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected 317 score breakdown to contain %q, got %s", want, body)
 		}
 	}
 }
@@ -9352,15 +9394,19 @@ func TestAStockRecommendationReasonParsesUnitValueForScoreBreakdownTable(t *test
 	body := b.String()
 	for _, want := range []string{
 		"172 分",
-		"<th>项目</th><th>组成</th><th>分值</th><th>得分</th>",
+		"<th>类别</th><th>项目</th><th>命中/依据</th><th>分值</th><th>小计</th>",
 		"证据新闻 12 条",
-		`class="astock-score-value">10</td><td>120 分`,
+		`class="astock-score-value">每条 10 分</td><td>120 分`,
 		"命中关键词 2 个",
-		`class="astock-score-value">3</td><td>6 分`,
+		`class="astock-score-value">每个 3 分</td><td>6 分`,
 		"排名 143",
-		`class="astock-score-value">11</td><td>11 分`,
+		`class="astock-score-value">11 分</td><td>11 分`,
 		"个股证据 1 条",
-		`class="astock-score-value">25</td><td>25 分`,
+		`class="astock-score-value">每条 25 分</td><td>25 分`,
+		"板块小计：126 分",
+		"个股小计：46 分",
+		"调整项小计：0 分",
+		"合计：172 分",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected rendered parsed score breakdown to contain %q, got %s", want, body)

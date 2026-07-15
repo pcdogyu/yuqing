@@ -616,8 +616,11 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-score-table th{background:#faf8f2;color:#554b40;font-weight:700;white-space:nowrap}
 		.astock-score-table td:first-child{white-space:nowrap}
 		.astock-score-table th:last-child,.astock-score-table td:last-child{text-align:right;white-space:nowrap;font-weight:700}
+		.astock-score-category{white-space:nowrap;color:#214e34;font-weight:700}
 		.astock-score-value{text-align:right;white-space:nowrap}
 		.astock-score-detail{white-space:normal}
+		.astock-score-summary{display:flex;flex-wrap:wrap;gap:8px 14px;margin-top:6px;color:#214e34;font-size:12px;font-weight:700;line-height:1.45}
+		.astock-score-summary span{white-space:nowrap}
 		.astock-score-reason{margin-top:6px;color:#6a6257;font-size:12px;line-height:1.45}
 		.astock-date-tabs{display:flex;gap:8px;flex-wrap:nowrap;margin:14px 0 18px;overflow-x:auto;padding-bottom:6px;scrollbar-width:thin}
 		.astock-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
@@ -2291,22 +2294,29 @@ func writeAStockRecommendationReasonCell(b *strings.Builder, rec aStockRecommend
 		b.WriteString(html.EscapeString(rec.Reason))
 		return
 	}
+	components = aStockRecommendationDisplayScoreBreakdown(rec, components)
 	total := aStockRecommendationScoreTotal(rec, components)
 	b.WriteString(`<div class="astock-score-total"><span>总分</span><span>`)
 	b.WriteString(fmt.Sprintf("%d 分", total))
-	b.WriteString(`</span></div><table class="astock-score-table"><tr><th>项目</th><th>组成</th><th>分值</th><th>得分</th></tr>`)
+	b.WriteString(`</span></div><table class="astock-score-table"><tr><th>类别</th><th>项目</th><th>命中/依据</th><th>分值</th><th>小计</th></tr>`)
+	summary := newAStockScoreCategorySummary()
 	for _, component := range components {
+		category := aStockScoreComponentCategoryFor(component)
+		summary.add(category, component.Score)
 		b.WriteString(`<tr><td>`)
+		b.WriteString(html.EscapeString(category.Label))
+		b.WriteString(`</td><td class="astock-score-category">`)
 		b.WriteString(html.EscapeString(component.Label))
 		b.WriteString(`</td><td class="astock-score-detail">`)
 		b.WriteString(html.EscapeString(component.Detail))
 		b.WriteString(`</td><td class="astock-score-value">`)
-		b.WriteString(html.EscapeString(formatAStockScoreComponentUnitValue(component)))
+		b.WriteString(html.EscapeString(formatAStockScoreComponentUnitValueText(component)))
 		b.WriteString(`</td><td>`)
 		b.WriteString(html.EscapeString(formatAStockScoreComponentScore(component.Score)))
 		b.WriteString(`</td></tr>`)
 	}
 	b.WriteString(`</table>`)
+	writeAStockScoreCategorySummary(b, summary, total)
 	if strings.TrimSpace(rec.Reason) != "" {
 		b.WriteString(`<div class="astock-score-reason">`)
 		b.WriteString(html.EscapeString(rec.Reason))
@@ -2316,6 +2326,101 @@ func writeAStockRecommendationReasonCell(b *strings.Builder, rec aStockRecommend
 
 func formatAStockScoreComponentScore(score int) string {
 	return fmt.Sprintf("%d 分", score)
+}
+
+type aStockScoreComponentCategory struct {
+	Key   string
+	Label string
+}
+
+type aStockScoreCategorySummary struct {
+	order  []aStockScoreComponentCategory
+	totals map[string]int
+}
+
+func newAStockScoreCategorySummary() aStockScoreCategorySummary {
+	return aStockScoreCategorySummary{
+		order: []aStockScoreComponentCategory{
+			{Key: "sector", Label: "板块"},
+			{Key: "stock", Label: "个股"},
+			{Key: "adjustment", Label: "调整项"},
+			{Key: "history", Label: "历史修正"},
+		},
+		totals: make(map[string]int, 4),
+	}
+}
+
+func (summary aStockScoreCategorySummary) add(category aStockScoreComponentCategory, score int) {
+	if summary.totals == nil {
+		return
+	}
+	summary.totals[category.Key] += score
+}
+
+func writeAStockScoreCategorySummary(b *strings.Builder, summary aStockScoreCategorySummary, total int) {
+	b.WriteString(`<div class="astock-score-summary">`)
+	for _, category := range summary.order {
+		value := summary.totals[category.Key]
+		if category.Key == "history" && value == 0 {
+			continue
+		}
+		b.WriteString(`<span>`)
+		b.WriteString(html.EscapeString(category.Label))
+		b.WriteString(`小计：`)
+		b.WriteString(html.EscapeString(formatAStockScoreComponentScore(value)))
+		b.WriteString(`</span>`)
+	}
+	b.WriteString(`<span>合计：`)
+	b.WriteString(html.EscapeString(formatAStockScoreComponentScore(total)))
+	b.WriteString(`</span></div>`)
+}
+
+func aStockRecommendationDisplayScoreBreakdown(rec aStockRecommendation, components []aStockRecommendationScoreComponent) []aStockRecommendationScoreComponent {
+	total := aStockRecommendationScoreTotal(rec, components)
+	if total == 0 {
+		return components
+	}
+	sum := 0
+	for _, component := range components {
+		sum += component.Score
+	}
+	if sum == total {
+		return components
+	}
+	display := make([]aStockRecommendationScoreComponent, 0, len(components)+1)
+	display = append(display, components...)
+	display = append(display, newAStockScoreComponent("总分修正", fmt.Sprintf("保存总分 %d", total), total-sum, total-sum))
+	return display
+}
+
+func aStockScoreComponentCategoryFor(component aStockRecommendationScoreComponent) aStockScoreComponentCategory {
+	switch strings.TrimSpace(component.Label) {
+	case "新闻热度", "热点关键词", "负面新闻", "热度修正", "热点热度", "板块资金趋势", "板块资金共振", "板块回撤":
+		return aStockScoreComponentCategory{Key: "sector", Label: "板块"}
+	case "行情排名", "个股证据", "股票名命中", "弱证据", "机构持仓", "资金动向", "资金强度", "开盘盘口", "当日高开", "昨日涨停", "昨日涨幅过高", "动能趋势":
+		return aStockScoreComponentCategory{Key: "stock", Label: "个股"}
+	case "扣分调整", "递补排序", "匹配修正":
+		return aStockScoreComponentCategory{Key: "adjustment", Label: "调整项"}
+	case "保存总分", "总分修正":
+		return aStockScoreComponentCategory{Key: "history", Label: "历史修正"}
+	default:
+		return aStockScoreComponentCategory{Key: "adjustment", Label: "调整项"}
+	}
+}
+
+func formatAStockScoreComponentUnitValueText(component aStockRecommendationScoreComponent) string {
+	value, ok := aStockScoreComponentUnitValue(component)
+	if !ok {
+		return "--"
+	}
+	switch strings.TrimSpace(component.Label) {
+	case "新闻热度", "个股证据":
+		return fmt.Sprintf("每条 %d 分", value)
+	case "热点关键词", "股票名命中":
+		return fmt.Sprintf("每个 %d 分", value)
+	default:
+		return formatAStockScoreComponentScore(value)
+	}
 }
 
 func formatAStockScoreComponentUnitValue(component aStockRecommendationScoreComponent) string {
