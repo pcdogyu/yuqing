@@ -59,6 +59,25 @@ func TestSystemAStockAlgorithmSectionRendersFactorGroups(t *testing.T) {
 			t.Fatalf("expected stock algorithm page to contain %q, got %s", snippet, body)
 		}
 	}
+	for _, snippet := range []string{
+		".stockalgo-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}",
+		".stockalgo-param{display:grid;grid-template-columns:minmax(150px,1.05fr) minmax(120px,.8fr) minmax(96px,.6fr) minmax(64px,.4fr) minmax(180px,1.15fr);gap:10px;align-items:center;",
+		".stockalgo-param-name,.stockalgo-param-current,.stockalgo-param-default,.stockalgo-param-unit,.stockalgo-param-desc{display:flex;align-items:center;min-height:42px}",
+		`class="stockalgo-grid"`,
+		`class="stockalgo-param-current"`,
+		`class="stockalgo-param-default"`,
+		`class="stockalgo-param-unit"`,
+		`class="stockalgo-param-desc"`,
+	} {
+		if !strings.Contains(body, snippet) {
+			t.Fatalf("expected stock algorithm layout to contain %q, got %s", snippet, body)
+		}
+	}
+	for _, snippet := range []string{`class="stockalgo-table"`, `<th>默认值</th>`, `<th>单位</th>`, `<th>说明</th>`} {
+		if strings.Contains(body, snippet) {
+			t.Fatalf("expected stock algorithm table layout to be removed, found %q in %s", snippet, body)
+		}
+	}
 }
 
 func TestSystemAStockRepairSectionRendersLayers(t *testing.T) {
