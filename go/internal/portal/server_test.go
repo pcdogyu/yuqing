@@ -350,8 +350,9 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		"资金过滤",
 		"启用资金过滤",
 		".astock-table th{white-space:nowrap}",
+		".astock-recommendation-table{width:100%;min-width:1460px;table-layout:fixed}",
 		".astock-recommendation-table th:nth-child(2),.astock-recommendation-table td:nth-child(2){width:7.5%;white-space:nowrap}",
-		".astock-recommendation-table th:last-child,.astock-recommendation-table td:last-child{width:36%}",
+		".astock-recommendation-table th:last-child,.astock-recommendation-table td:last-child{width:47%}",
 		"推荐窗口",
 		`colspan="12"`,
 		"抓取全部财经信息",
@@ -9425,10 +9426,45 @@ func TestAStockRecommendationReasonMergesSavedAndParsedBreakdown(t *testing.T) {
 	if strings.Contains(body, "保存总分 317</td><td class=\"astock-score-value\">277 分") {
 		t.Fatalf("expected stale saved total correction to be recalculated instead of rendered directly, got %s", body)
 	}
+	if strings.Contains(body, "<td>小计</td>") {
+		t.Fatalf("expected subtotal rows to stay out of score table, got %s", body)
+	}
 	positiveIndex := strings.Index(body, "新闻热度")
 	negativeIndex := strings.Index(body, "负面新闻")
 	if positiveIndex < 0 || negativeIndex < 0 || negativeIndex <= positiveIndex {
 		t.Fatalf("expected negative score rows after positive score rows, got %s", body)
+	}
+}
+
+func TestAStockRecommendationReasonParsesHighOpenAndMomentumBonuses(t *testing.T) {
+	rec := aStockRecommendation{
+		Hotspot:     "人工智能",
+		Code:        "600001",
+		Name:        "高开动能",
+		MarketScore: 195,
+		Reason:      "09:30 较 昨日收盘 高开 +8.00%，高开加分 65，动能趋势加分 30（布林突破 + 均线趋势）",
+		ScoreBreakdown: []aStockRecommendationScoreComponent{
+			{Label: "新闻热度", Detail: "证据新闻 10 条", UnitValue: 10, Score: 100},
+		},
+	}
+	var b strings.Builder
+	writeAStockRecommendationReasonCell(&b, rec)
+	body := b.String()
+	for _, want := range []string{
+		"当日高开",
+		"09:30 较 昨日收盘 高开 +8.00%",
+		"65 分",
+		"动能趋势",
+		"布林突破 + 均线趋势",
+		"30 分",
+		"合计：195 分",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected high-open/momentum score breakdown to contain %q, got %s", want, body)
+		}
+	}
+	if strings.Contains(body, "<td>小计</td>") {
+		t.Fatalf("expected subtotal rows to stay out of score table, got %s", body)
 	}
 }
 

@@ -606,10 +606,10 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-table{min-width:960px}
 		.astock-table th{white-space:nowrap}
 		.astock-scroll{width:100%;overflow:auto}
-		.astock-recommendation-table{width:100%;min-width:1280px;table-layout:fixed}
+		.astock-recommendation-table{width:100%;min-width:1460px;table-layout:fixed}
 		.astock-recommendation-table th,.astock-recommendation-table td{vertical-align:top}
 		.astock-recommendation-table th:nth-child(2),.astock-recommendation-table td:nth-child(2){width:7.5%;white-space:nowrap}
-		.astock-recommendation-table th:last-child,.astock-recommendation-table td:last-child{width:36%}
+		.astock-recommendation-table th:last-child,.astock-recommendation-table td:last-child{width:47%}
 		.astock-score-total{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px;color:#214e34;font-weight:700;line-height:1.25}
 		.astock-score-table{width:100%;min-width:0!important;table-layout:auto;border-collapse:collapse;font-size:12px;line-height:1.35}
 		.astock-score-table th,.astock-score-table td{padding:4px 6px;border:1px solid #ece7dc;vertical-align:top}
@@ -2318,7 +2318,7 @@ func writeAStockRecommendationReasonCell(b *strings.Builder, rec aStockRecommend
 		b.WriteString(`</td></tr>`)
 	}
 	b.WriteString(`</table>`)
-	writeAStockScoreCategorySummary(b, summary, total)
+	writeAStockScoreCategorySummary(b, summary, total, rec)
 	if strings.TrimSpace(rec.Reason) != "" {
 		b.WriteString(`<div class="astock-score-reason">`)
 		b.WriteString(html.EscapeString(rec.Reason))
@@ -2375,7 +2375,7 @@ func (summary aStockScoreCategorySummary) add(category aStockScoreComponentCateg
 	summary.totals[category.Key] += score
 }
 
-func writeAStockScoreCategorySummary(b *strings.Builder, summary aStockScoreCategorySummary, total int) {
+func writeAStockScoreCategorySummary(b *strings.Builder, summary aStockScoreCategorySummary, total int, rec aStockRecommendation) {
 	b.WriteString(`<div class="astock-score-summary">`)
 	for _, category := range summary.order {
 		value := summary.totals[category.Key]
@@ -2388,7 +2388,16 @@ func writeAStockScoreCategorySummary(b *strings.Builder, summary aStockScoreCate
 		b.WriteString(html.EscapeString(formatAStockScoreComponentScore(value)))
 		b.WriteString(`</span>`)
 	}
-	b.WriteString(`<span>合计：`)
+	for _, row := range aStockReasonStageSubtotalRows(rec.Reason) {
+		b.WriteString(`<span>`)
+		b.WriteString(html.EscapeString(row.Label))
+		b.WriteString(`：`)
+		b.WriteString(html.EscapeString(formatAStockScoreComponentScore(row.Score)))
+		b.WriteString(`</span>`)
+	}
+	b.WriteString(`<span>调整后合计：`)
+	b.WriteString(html.EscapeString(formatAStockScoreComponentScore(total)))
+	b.WriteString(`</span><span>合计：`)
 	b.WriteString(html.EscapeString(formatAStockScoreComponentScore(total)))
 	b.WriteString(`</span></div>`)
 }
@@ -2396,10 +2405,8 @@ func writeAStockScoreCategorySummary(b *strings.Builder, summary aStockScoreCate
 func aStockRecommendationScoreRows(rec aStockRecommendation, components []aStockRecommendationScoreComponent) []aStockScoreRow {
 	positive := make([]aStockScoreRow, 0, len(components))
 	negative := make([]aStockScoreRow, 0)
-	categoryTotals := make(map[string]int, 4)
 	for _, component := range components {
 		category := aStockScoreComponentCategoryFor(component)
-		categoryTotals[category.Key] += component.Score
 		row := aStockScoreRow{
 			Kind:     aStockScoreRowComponent,
 			Category: category,
@@ -2416,39 +2423,7 @@ func aStockRecommendationScoreRows(rec aStockRecommendation, components []aStock
 	}
 	rows := make([]aStockScoreRow, 0, len(components)+8)
 	rows = append(rows, positive...)
-	rows = append(rows, aStockScoreSubtotalRows(rec, categoryTotals)...)
 	rows = append(rows, negative...)
-	rows = append(rows, aStockScoreRow{
-		Kind:     aStockScoreRowSubtotal,
-		Category: aStockScoreComponentCategory{Key: "subtotal", Label: "小计"},
-		Label:    "调整后合计",
-		Detail:   "最终推荐总分",
-		Value:    "--",
-		Score:    aStockRecommendationScoreTotal(rec, components),
-	})
-	return rows
-}
-
-func aStockScoreSubtotalRows(rec aStockRecommendation, categoryTotals map[string]int) []aStockScoreRow {
-	subtotalCategory := aStockScoreComponentCategory{Key: "subtotal", Label: "小计"}
-	rows := make([]aStockScoreRow, 0, 7)
-	for _, category := range newAStockScoreCategorySummary().order {
-		value := categoryTotals[category.Key]
-		if category.Key == "history" && value == 0 {
-			continue
-		}
-		rows = append(rows, aStockScoreRow{
-			Kind:     aStockScoreRowSubtotal,
-			Category: subtotalCategory,
-			Label:    category.Label + "小计",
-			Detail:   category.Label + "明细合计",
-			Value:    "--",
-			Score:    value,
-		})
-	}
-	for _, row := range aStockReasonStageSubtotalRows(rec.Reason) {
-		rows = append(rows, row)
-	}
 	return rows
 }
 
@@ -7758,6 +7733,8 @@ var (
 	aStockReasonLowOpenPenaltyPattern      = regexp.MustCompile(`盘口减分\s*(\d+)`)
 	aStockReasonFundStrengthPenaltyPattern = regexp.MustCompile(`资金强度减分\s*(\d+)`)
 	aStockReasonSectorDrawdownPattern      = regexp.MustCompile(`板块回撤减分\s*(\d+)`)
+	aStockReasonHighOpenBonusPattern       = regexp.MustCompile(`(?:([^，；]*高开[^，；]*)，)?高开加分\s*(\d+)`)
+	aStockReasonMomentumBonusPattern       = regexp.MustCompile(`动能趋势加分\s*(\d+)(?:（([^）]+)）)?`)
 )
 
 func parseAStockRecommendationScoreBreakdown(rec aStockRecommendation) []aStockRecommendationScoreComponent {
@@ -7814,6 +7791,8 @@ func parseAStockRecommendationScoreBreakdown(rec aStockRecommendation) []aStockR
 	components = appendAStockParsedAdjustment(components, reason, aStockReasonLowOpenPenaltyPattern, "开盘盘口", "盘口减分", -1)
 	components = appendAStockParsedAdjustment(components, reason, aStockReasonFundStrengthPenaltyPattern, "资金强度", "资金强度减分", -1)
 	components = appendAStockParsedAdjustment(components, reason, aStockReasonSectorDrawdownPattern, "板块回撤", "板块回撤减分", -1)
+	components = appendAStockParsedHighOpenBonus(components, reason)
+	components = appendAStockParsedMomentumBonus(components, reason)
 	total := 0
 	for _, component := range components {
 		total += component.Score
@@ -7869,6 +7848,44 @@ func appendAStockParsedAdjustment(components []aStockRecommendationScoreComponen
 		}
 		score := sign * value
 		components = append(components, newAStockScoreComponent(label, fmt.Sprintf("%s %d", detailPrefix, value), score, score))
+	}
+	return components
+}
+
+func appendAStockParsedHighOpenBonus(components []aStockRecommendationScoreComponent, reason string) []aStockRecommendationScoreComponent {
+	matches := aStockReasonHighOpenBonusPattern.FindAllStringSubmatch(reason, -1)
+	for _, match := range matches {
+		if len(match) != 3 {
+			continue
+		}
+		value := atoiAStockScorePart(match[2])
+		if value == 0 {
+			continue
+		}
+		detail := strings.TrimSpace(match[1])
+		if detail == "" {
+			detail = fmt.Sprintf("高开加分 %d", value)
+		}
+		components = append(components, newAStockScoreComponent("当日高开", detail, value, value))
+	}
+	return components
+}
+
+func appendAStockParsedMomentumBonus(components []aStockRecommendationScoreComponent, reason string) []aStockRecommendationScoreComponent {
+	matches := aStockReasonMomentumBonusPattern.FindAllStringSubmatch(reason, -1)
+	for _, match := range matches {
+		if len(match) != 3 {
+			continue
+		}
+		value := atoiAStockScorePart(match[1])
+		if value == 0 {
+			continue
+		}
+		detail := strings.TrimSpace(match[2])
+		if detail == "" {
+			detail = fmt.Sprintf("动能趋势加分 %d", value)
+		}
+		components = append(components, newAStockScoreComponent("动能趋势", detail, value, value))
 	}
 	return components
 }
