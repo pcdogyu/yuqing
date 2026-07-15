@@ -1,6 +1,8 @@
 param(
     [string]$Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path,
     [int]$WaitMilliseconds = 5000,
+    [switch]$AutoElevate,
+    [switch]$NoAutoElevate,
     [Parameter(Mandatory = $true, ValueFromRemainingArguments = $true)]
     [string[]]$Names
 )
@@ -16,6 +18,45 @@ try {
 $taskkill = Join-Path $env:SystemRoot "System32\taskkill.exe"
 if (-not (Test-Path $taskkill)) {
     $taskkill = "taskkill.exe"
+}
+
+function Test-CurrentProcessElevated {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Quote-ProcessArgument([string]$value) {
+    if ($null -eq $value) {
+        return '""'
+    }
+    return '"' + $value.Replace('"', '\"') + '"'
+}
+
+function Invoke-ElevatedStopServices([string]$root, [int]$waitMilliseconds, [string[]]$serviceNames) {
+    if ([string]::IsNullOrWhiteSpace($PSCommandPath)) {
+        return 1
+    }
+    $args = @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", (Quote-ProcessArgument $PSCommandPath),
+        "-Root", (Quote-ProcessArgument $root),
+        "-WaitMilliseconds", $waitMilliseconds,
+        "-NoAutoElevate",
+        "-Names", (Quote-ProcessArgument ($serviceNames -join " "))
+    )
+    try {
+        Write-Host "Retrying service stop with administrator privileges. Accept the UAC prompt if it appears."
+        $process = Start-Process -FilePath "powershell.exe" -ArgumentList $args -Verb RunAs -Wait -PassThru -ErrorAction Stop
+        if ($null -eq $process) {
+            return 1
+        }
+        return $process.ExitCode
+    } catch {
+        Write-Host "Administrator stop retry was not started: $($_.Exception.Message)"
+        return 1
+    }
 }
 
 function Get-SameProcess($target) {
@@ -126,6 +167,15 @@ $deadline = [DateTime]::UtcNow.AddMilliseconds($WaitMilliseconds)
 $remainingTargets = Get-RemainingTargets $allTargets
 while (($remainingTargets.Count -gt 0) -and ([DateTime]::UtcNow -lt $deadline)) {
     Start-Sleep -Milliseconds 200
+    $remainingTargets = Get-RemainingTargets $allTargets
+}
+
+if (($remainingTargets.Count -gt 0) -and $AutoElevate -and (-not $NoAutoElevate) -and (-not (Test-CurrentProcessElevated))) {
+    $elevatedExit = Invoke-ElevatedStopServices $Root $WaitMilliseconds $serviceNames
+    if ($elevatedExit -eq 0) {
+        Write-Host "Stopped services after administrator retry."
+        exit 0
+    }
     $remainingTargets = Get-RemainingTargets $allTargets
 }
 

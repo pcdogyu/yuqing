@@ -376,7 +376,7 @@ if errorlevel 1 echo WARNING: Failed to print service status.
 exit /b 0
 
 :stop_services
-powershell -NoProfile -ExecutionPolicy Bypass -File "%GO_DIR%\scripts\stop-services.ps1" -Root "%GO_DIR%" -Names "%SERVICE_NAMES%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%GO_DIR%\scripts\stop-services.ps1" -Root "%GO_DIR%" -AutoElevate -Names "%SERVICE_NAMES%"
 exit /b %ERRORLEVEL%
 
 :build_services
