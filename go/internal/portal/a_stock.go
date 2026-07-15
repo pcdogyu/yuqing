@@ -2295,24 +2295,26 @@ func writeAStockRecommendationReasonCell(b *strings.Builder, rec aStockRecommend
 		return
 	}
 	components = aStockRecommendationDisplayScoreBreakdown(rec, components)
+	rows := aStockRecommendationScoreRows(rec, components)
 	total := aStockRecommendationScoreTotal(rec, components)
 	b.WriteString(`<div class="astock-score-total"><span>总分</span><span>`)
 	b.WriteString(fmt.Sprintf("%d 分", total))
 	b.WriteString(`</span></div><table class="astock-score-table"><tr><th>类别</th><th>项目</th><th>命中/依据</th><th>分值</th><th>小计</th></tr>`)
 	summary := newAStockScoreCategorySummary()
-	for _, component := range components {
-		category := aStockScoreComponentCategoryFor(component)
-		summary.add(category, component.Score)
+	for _, row := range rows {
+		if row.Kind == aStockScoreRowComponent {
+			summary.add(row.Category, row.Score)
+		}
 		b.WriteString(`<tr><td>`)
-		b.WriteString(html.EscapeString(category.Label))
+		b.WriteString(html.EscapeString(row.Category.Label))
 		b.WriteString(`</td><td class="astock-score-category">`)
-		b.WriteString(html.EscapeString(component.Label))
+		b.WriteString(html.EscapeString(row.Label))
 		b.WriteString(`</td><td class="astock-score-detail">`)
-		b.WriteString(html.EscapeString(component.Detail))
+		b.WriteString(html.EscapeString(row.Detail))
 		b.WriteString(`</td><td class="astock-score-value">`)
-		b.WriteString(html.EscapeString(formatAStockScoreComponentUnitValueText(component)))
+		b.WriteString(html.EscapeString(row.Value))
 		b.WriteString(`</td><td>`)
-		b.WriteString(html.EscapeString(formatAStockScoreComponentScore(component.Score)))
+		b.WriteString(html.EscapeString(formatAStockScoreComponentScore(row.Score)))
 		b.WriteString(`</td></tr>`)
 	}
 	b.WriteString(`</table>`)
@@ -2336,6 +2338,22 @@ type aStockScoreComponentCategory struct {
 type aStockScoreCategorySummary struct {
 	order  []aStockScoreComponentCategory
 	totals map[string]int
+}
+
+type aStockScoreRowKind int
+
+const (
+	aStockScoreRowComponent aStockScoreRowKind = iota
+	aStockScoreRowSubtotal
+)
+
+type aStockScoreRow struct {
+	Kind     aStockScoreRowKind
+	Category aStockScoreComponentCategory
+	Label    string
+	Detail   string
+	Value    string
+	Score    int
 }
 
 func newAStockScoreCategorySummary() aStockScoreCategorySummary {
@@ -2375,11 +2393,110 @@ func writeAStockScoreCategorySummary(b *strings.Builder, summary aStockScoreCate
 	b.WriteString(`</span></div>`)
 }
 
+func aStockRecommendationScoreRows(rec aStockRecommendation, components []aStockRecommendationScoreComponent) []aStockScoreRow {
+	positive := make([]aStockScoreRow, 0, len(components))
+	negative := make([]aStockScoreRow, 0)
+	categoryTotals := make(map[string]int, 4)
+	for _, component := range components {
+		category := aStockScoreComponentCategoryFor(component)
+		categoryTotals[category.Key] += component.Score
+		row := aStockScoreRow{
+			Kind:     aStockScoreRowComponent,
+			Category: category,
+			Label:    component.Label,
+			Detail:   component.Detail,
+			Value:    formatAStockScoreComponentUnitValueText(component),
+			Score:    component.Score,
+		}
+		if component.Score < 0 {
+			negative = append(negative, row)
+		} else {
+			positive = append(positive, row)
+		}
+	}
+	rows := make([]aStockScoreRow, 0, len(components)+8)
+	rows = append(rows, positive...)
+	rows = append(rows, aStockScoreSubtotalRows(rec, categoryTotals)...)
+	rows = append(rows, negative...)
+	rows = append(rows, aStockScoreRow{
+		Kind:     aStockScoreRowSubtotal,
+		Category: aStockScoreComponentCategory{Key: "subtotal", Label: "小计"},
+		Label:    "调整后合计",
+		Detail:   "最终推荐总分",
+		Value:    "--",
+		Score:    aStockRecommendationScoreTotal(rec, components),
+	})
+	return rows
+}
+
+func aStockScoreSubtotalRows(rec aStockRecommendation, categoryTotals map[string]int) []aStockScoreRow {
+	subtotalCategory := aStockScoreComponentCategory{Key: "subtotal", Label: "小计"}
+	rows := make([]aStockScoreRow, 0, 7)
+	for _, category := range newAStockScoreCategorySummary().order {
+		value := categoryTotals[category.Key]
+		if category.Key == "history" && value == 0 {
+			continue
+		}
+		rows = append(rows, aStockScoreRow{
+			Kind:     aStockScoreRowSubtotal,
+			Category: subtotalCategory,
+			Label:    category.Label + "小计",
+			Detail:   category.Label + "明细合计",
+			Value:    "--",
+			Score:    value,
+		})
+	}
+	for _, row := range aStockReasonStageSubtotalRows(rec.Reason) {
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+func aStockReasonStageSubtotalRows(reason string) []aStockScoreRow {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return nil
+	}
+	subtotalCategory := aStockScoreComponentCategory{Key: "subtotal", Label: "小计"}
+	rows := make([]aStockScoreRow, 0, 2)
+	if matches := aStockReasonMarketScorePattern.FindStringSubmatch(reason); len(matches) == 4 {
+		rows = append(rows, aStockScoreRow{
+			Kind:     aStockScoreRowSubtotal,
+			Category: subtotalCategory,
+			Label:    "行情分",
+			Detail:   "个股阶段小计",
+			Value:    "--",
+			Score:    atoiAStockScorePart(matches[3]),
+		})
+	} else if matches := aStockReasonMatchedScorePattern.FindStringSubmatch(reason); len(matches) == 3 {
+		rows = append(rows, aStockScoreRow{
+			Kind:     aStockScoreRowSubtotal,
+			Category: subtotalCategory,
+			Label:    "匹配分",
+			Detail:   "个股阶段小计",
+			Value:    "--",
+			Score:    atoiAStockScorePart(matches[2]),
+		})
+	}
+	if matches := aStockReasonComprehensiveScorePattern.FindStringSubmatch(reason); len(matches) == 2 {
+		rows = append(rows, aStockScoreRow{
+			Kind:     aStockScoreRowSubtotal,
+			Category: subtotalCategory,
+			Label:    "综合分",
+			Detail:   "基础阶段小计",
+			Value:    "--",
+			Score:    atoiAStockScorePart(matches[1]),
+		})
+	}
+	return rows
+}
+
 func aStockRecommendationDisplayScoreBreakdown(rec aStockRecommendation, components []aStockRecommendationScoreComponent) []aStockRecommendationScoreComponent {
 	total := aStockRecommendationScoreTotal(rec, components)
 	if total == 0 {
 		return components
 	}
+	components = mergeAStockRecommendationDisplayScoreComponents(components, parseAStockRecommendationScoreBreakdown(rec))
 	sum := 0
 	for _, component := range components {
 		sum += component.Score
@@ -2391,6 +2508,65 @@ func aStockRecommendationDisplayScoreBreakdown(rec aStockRecommendation, compone
 	display = append(display, components...)
 	display = append(display, newAStockScoreComponent("总分修正", fmt.Sprintf("保存总分 %d", total), total-sum, total-sum))
 	return display
+}
+
+func mergeAStockRecommendationDisplayScoreComponents(saved []aStockRecommendationScoreComponent, parsed []aStockRecommendationScoreComponent) []aStockRecommendationScoreComponent {
+	merged := make([]aStockRecommendationScoreComponent, 0, len(saved)+len(parsed))
+	seen := make(map[string]struct{}, len(saved)+len(parsed))
+	savedLabels := make(map[string]struct{}, len(saved))
+	appendComponent := func(component aStockRecommendationScoreComponent, fromSaved bool) {
+		label := strings.TrimSpace(component.Label)
+		if label == "" || label == "总分修正" {
+			return
+		}
+		component.Label = label
+		key := aStockScoreComponentKey(component)
+		if _, exists := seen[key]; exists {
+			return
+		}
+		seen[key] = struct{}{}
+		if fromSaved {
+			savedLabels[label] = struct{}{}
+		}
+		merged = append(merged, component)
+	}
+	for _, component := range saved {
+		appendComponent(component, true)
+	}
+	for _, component := range parsed {
+		label := strings.TrimSpace(component.Label)
+		if shouldSkipParsedAStockScoreComponent(label, savedLabels) {
+			continue
+		}
+		appendComponent(component, false)
+	}
+	return merged
+}
+
+func shouldSkipParsedAStockScoreComponent(label string, seenLabels map[string]struct{}) bool {
+	if _, exists := seenLabels[label]; !exists {
+		if label == "匹配修正" {
+			for _, sourceLabel := range []string{"行情排名", "个股证据", "股票名命中", "弱证据"} {
+				if _, sourceExists := seenLabels[sourceLabel]; sourceExists {
+					return true
+				}
+			}
+		}
+		if label == "热度修正" {
+			for _, sourceLabel := range []string{"新闻热度", "热点关键词", "热点热度"} {
+				if _, sourceExists := seenLabels[sourceLabel]; sourceExists {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	switch label {
+	case "新闻热度", "热点关键词", "负面新闻", "热度修正", "热点热度", "行情排名", "个股证据", "股票名命中", "弱证据", "匹配修正", "机构持仓", "资金动向", "资金强度", "开盘盘口", "当日高开", "昨日涨停", "昨日涨幅过高", "动能趋势", "板块资金趋势", "板块资金共振", "板块回撤":
+		return true
+	default:
+		return false
+	}
 }
 
 func aStockScoreComponentCategoryFor(component aStockRecommendationScoreComponent) aStockScoreComponentCategory {
@@ -7573,6 +7749,7 @@ var (
 	aStockReasonNegativePenaltyPattern     = regexp.MustCompile(`负面新闻\s*(\d+)\s*条，板块减分\s*(\d+)`)
 	aStockReasonMarketScorePattern         = regexp.MustCompile(`行情排名\s*(\d+)[^，；]*，成交额[^，；]*，个股证据\s*(\d+)\s*条，行情分\s*(-?\d+)`)
 	aStockReasonMatchedScorePattern        = regexp.MustCompile(`个股证据\s*(\d+)\s*条，匹配分\s*(-?\d+)`)
+	aStockReasonComprehensiveScorePattern  = regexp.MustCompile(`综合分\s*(-?\d+)`)
 	aStockReasonStockKeywordPattern        = regexp.MustCompile(`股票名命中\s*([^，；]+)`)
 	aStockReasonWeakPenaltyPattern         = regexp.MustCompile(`个股证据减分\s*(\d+)`)
 	aStockReasonHoldingBonusPattern        = regexp.MustCompile(`持仓加分\s*(\d+)`)

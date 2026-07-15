@@ -9381,6 +9381,57 @@ func TestAStockRecommendationReasonRendersTotal317Breakdown(t *testing.T) {
 	}
 }
 
+func TestAStockRecommendationReasonMergesSavedAndParsedBreakdown(t *testing.T) {
+	rec := aStockRecommendation{
+		Hotspot:     "半导体",
+		Code:        "002156",
+		Name:        "通富微电",
+		MarketScore: 317,
+		Reason:      "命中 半导体、存储、晶圆、芯片，证据新闻 17 条，热度分 152；行情排名 1，成交额 8.19亿，个股证据 1 条，行情分 65，综合分 217，负面新闻 1 条，板块减分 30，生成点 09:27，5日主力资金净流入 +41.56亿，板块资金趋势加分 15，板块共振加分 25",
+		ScoreBreakdown: []aStockRecommendationScoreComponent{
+			{Label: "板块资金趋势", Detail: "芯片概念 5日主力资金净流入 +154.25亿，板块资金趋势加分 15", UnitValue: 15, Score: 15},
+			{Label: "板块资金共振", Detail: "通富微电为电子、集成电路封测、科技风格主力净流入代表股，板块共振加分 25", UnitValue: 25, Score: 25},
+			{Label: "总分修正", Detail: "保存总分 317", UnitValue: 277, Score: 277},
+		},
+	}
+	var b strings.Builder
+	writeAStockRecommendationReasonCell(&b, rec)
+	body := b.String()
+	for _, want := range []string{
+		"总分",
+		"317 分",
+		"新闻热度",
+		"证据新闻 17 条",
+		"热点关键词",
+		"命中关键词 4 个",
+		"行情排名",
+		"排名 1",
+		"个股证据",
+		"个股证据 1 条",
+		"行情分",
+		"65 分",
+		"综合分",
+		"217 分",
+		"负面新闻",
+		"负面新闻 1 条",
+		"-30 分",
+		"调整后合计",
+		"合计：317 分",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected merged score breakdown to contain %q, got %s", want, body)
+		}
+	}
+	if strings.Contains(body, "保存总分 317</td><td class=\"astock-score-value\">277 分") {
+		t.Fatalf("expected stale saved total correction to be recalculated instead of rendered directly, got %s", body)
+	}
+	positiveIndex := strings.Index(body, "新闻热度")
+	negativeIndex := strings.Index(body, "负面新闻")
+	if positiveIndex < 0 || negativeIndex < 0 || negativeIndex <= positiveIndex {
+		t.Fatalf("expected negative score rows after positive score rows, got %s", body)
+	}
+}
+
 func TestAStockRecommendationReasonParsesUnitValueForScoreBreakdownTable(t *testing.T) {
 	rec := aStockRecommendation{
 		Hotspot:     "金融券商",
