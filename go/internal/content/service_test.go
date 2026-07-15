@@ -852,6 +852,29 @@ func TestAStockSectorFundFlowAPIUpsertsAndLists(t *testing.T) {
 		t.Fatalf("unexpected sector source list: %+v", sourceEnvelope.Data)
 	}
 
+	snapshotReq := httptest.NewRequest(http.MethodPost, "/api/v1/internal/a-stock/sector-fund-flow-intraday/snapshot", strings.NewReader(`{"date":"2026-07-01","capture_time":"09:30","sector_type":"行业资金流","indicator":"今日"}`))
+	snapshotReq.Header.Set("Content-Type", "application/json")
+	snapshotRR := httptest.NewRecorder()
+	router.ServeHTTP(snapshotRR, snapshotReq)
+	if snapshotRR.Code != http.StatusOK {
+		t.Fatalf("expected sector intraday snapshot 200, got %d body=%s", snapshotRR.Code, snapshotRR.Body.String())
+	}
+	intradayReq := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/sector-fund-flow-intraday?date=2026-07-01&sector_type=行业资金流&indicator=今日&limit=20", nil)
+	intradayRR := httptest.NewRecorder()
+	router.ServeHTTP(intradayRR, intradayReq)
+	if intradayRR.Code != http.StatusOK {
+		t.Fatalf("expected sector intraday list 200, got %d body=%s", intradayRR.Code, intradayRR.Body.String())
+	}
+	var intradayEnvelope struct {
+		Data model.AStockSectorFundFlowIntradayResult `json:"data"`
+	}
+	if err := json.Unmarshal(intradayRR.Body.Bytes(), &intradayEnvelope); err != nil {
+		t.Fatalf("decode sector intraday list: %v", err)
+	}
+	if intradayEnvelope.Data.LatestTime != "09:30" || len(intradayEnvelope.Data.Top) != 1 || intradayEnvelope.Data.Top[0].Name != "半导体" || len(intradayEnvelope.Data.Series) != 1 {
+		t.Fatalf("unexpected sector intraday list: %+v", intradayEnvelope.Data)
+	}
+
 	stockPayload := `{"date":"2026-07-02","indicator":"今日","source_type":"sina","replace":true,"items":[{"rank":1,"code":"sz300502","name":"新易盛","price":520,"main_net_inflow":200,"field_counts_json":"{\"price\":1,\"main_net_inflow\":1}"}]}`
 	stockPostReq := httptest.NewRequest(http.MethodPost, "/api/v1/internal/a-stock/stock-fund-flow-sources", strings.NewReader(stockPayload))
 	stockPostReq.Header.Set("Content-Type", "application/json")
@@ -2369,11 +2392,17 @@ func TestHotspotSwitchingFiltersMarketMoveFragmentsFromRankings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildHotspotSwitching error: %v", err)
 	}
-	if got := hotspotItemByKeyword(result.TodayTop, "涨幅"); got == nil || got.TodayCount == 0 {
-		t.Fatalf("expected normalized 涨幅 in today ranking, got %+v", result.TodayTop)
+	if got := hotspotItemByKeyword(result.TodayTop, "涨幅"); got != nil {
+		t.Fatalf("expected normalized 涨幅 to stay out of standard today ranking, got %+v", result.TodayTop)
 	}
-	if got := hotspotItemByKeyword(result.TodayTop, "跌幅"); got == nil || got.TodayCount == 0 {
-		t.Fatalf("expected normalized 跌幅 in today ranking, got %+v", result.TodayTop)
+	if got := hotspotItemByKeyword(result.TodayTop, "跌幅"); got != nil {
+		t.Fatalf("expected normalized 跌幅 to stay out of standard today ranking, got %+v", result.TodayTop)
+	}
+	if got := hotspotItemByKeyword(result.DiscoveryTodayTop, "涨幅"); got == nil || got.TodayCount == 0 {
+		t.Fatalf("expected normalized 涨幅 in discovery today ranking, got %+v", result.DiscoveryTodayTop)
+	}
+	if got := hotspotItemByKeyword(result.DiscoveryTodayTop, "跌幅"); got == nil || got.TodayCount == 0 {
+		t.Fatalf("expected normalized 跌幅 in discovery today ranking, got %+v", result.DiscoveryTodayTop)
 	}
 	assertHotspotResultMissingKeywords(t, result, []string{"5分钟内涨幅达2", "涨幅达2", "幅达2", "达2", "跌幅达5", "幅达5", "达5"})
 }
@@ -2419,6 +2448,9 @@ func assertHotspotResultMissingKeywords(t *testing.T, result model.HotspotSwitch
 		result.TodayTop,
 		result.Top,
 		result.Rising,
+		result.DiscoveryTodayTop,
+		result.DiscoveryTop,
+		result.DiscoveryRising,
 		result.Cooling,
 		result.New,
 		result.ContinuousRising,

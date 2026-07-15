@@ -615,6 +615,36 @@ CREATE TABLE IF NOT EXISTS a_stock_sector_fund_flow_source_rows (
 	PRIMARY KEY (trade_date, sector_type, indicator, source_type, name)
 );
 
+CREATE TABLE IF NOT EXISTS a_stock_sector_fund_flow_intraday_snapshots (
+	trade_date TEXT NOT NULL,
+	capture_time TEXT NOT NULL,
+	sector_type TEXT NOT NULL,
+	indicator TEXT NOT NULL,
+	rank INTEGER NOT NULL DEFAULT 0,
+	name TEXT NOT NULL,
+	change_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+	main_net_inflow DOUBLE PRECISION NOT NULL DEFAULT 0,
+	main_net_inflow_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+	super_large_net_inflow DOUBLE PRECISION NOT NULL DEFAULT 0,
+	super_large_net_inflow_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+	large_net_inflow DOUBLE PRECISION NOT NULL DEFAULT 0,
+	large_net_inflow_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+	medium_net_inflow DOUBLE PRECISION NOT NULL DEFAULT 0,
+	medium_net_inflow_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+	small_net_inflow DOUBLE PRECISION NOT NULL DEFAULT 0,
+	small_net_inflow_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+	top_stock TEXT NOT NULL DEFAULT '',
+	source_count INTEGER NOT NULL DEFAULT 1,
+	source_types TEXT NOT NULL DEFAULT '',
+	field_counts_json TEXT NOT NULL DEFAULT '{}',
+	source_type TEXT NOT NULL DEFAULT '',
+	raw_payload TEXT NOT NULL DEFAULT '{}',
+	fetched_at TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	PRIMARY KEY (trade_date, capture_time, sector_type, indicator, name)
+);
+
 CREATE TABLE IF NOT EXISTS a_stock_sector_constituents (
 	sector_type TEXT NOT NULL,
 	sector_name TEXT NOT NULL,
@@ -776,6 +806,8 @@ CREATE INDEX IF NOT EXISTS idx_a_stock_recommendation_selections_lookup ON a_sto
 CREATE INDEX IF NOT EXISTS idx_a_stock_sector_fund_flow_lookup ON a_stock_sector_fund_flows(trade_date DESC, sector_type, indicator, rank);
 CREATE INDEX IF NOT EXISTS idx_a_stock_sector_fund_flow_name ON a_stock_sector_fund_flows(name);
 CREATE INDEX IF NOT EXISTS idx_a_stock_sector_fund_flow_source_lookup ON a_stock_sector_fund_flow_source_rows(trade_date DESC, sector_type, indicator, source_type, rank);
+CREATE INDEX IF NOT EXISTS idx_a_stock_sector_fund_flow_intraday_time ON a_stock_sector_fund_flow_intraday_snapshots(trade_date DESC, sector_type, indicator, capture_time);
+CREATE INDEX IF NOT EXISTS idx_a_stock_sector_fund_flow_intraday_name ON a_stock_sector_fund_flow_intraday_snapshots(trade_date DESC, sector_type, indicator, name);
 CREATE INDEX IF NOT EXISTS idx_a_stock_sector_constituents_lookup ON a_stock_sector_constituents(sector_type, sector_name, code);
 CREATE INDEX IF NOT EXISTS idx_a_stock_sector_constituents_name ON a_stock_sector_constituents(name);
 CREATE INDEX IF NOT EXISTS idx_a_stock_stock_fund_flow_lookup ON a_stock_stock_fund_flows(trade_date DESC, indicator, rank);

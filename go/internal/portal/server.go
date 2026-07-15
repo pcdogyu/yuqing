@@ -161,6 +161,8 @@ type pageData struct {
 	CrawlTemplates             []model.CrawlTemplate
 	Articles                   model.ItemListResult
 	Hotspots                   model.HotspotSwitchingResult
+	SectorFundFlowIntraday     model.AStockSectorFundFlowIntradayResult
+	SectorFundFlowType         string
 	Article                    model.Item
 	Related                    []model.Item
 	CrawlRuns                  []model.CrawlRun
@@ -326,6 +328,8 @@ func NewServer(cfg config.Config) *Server {
 		"articleBodyText":          articleBodyText,
 		"formatHotspotChangeRate":  formatHotspotChangeRate,
 		"hotspotBarHeight":         hotspotBarHeight,
+		"toJSON":                   templateJSON,
+		"formatFundFlowMoney":      formatFundFlowMoney,
 	}
 	tpl := template.Must(template.New("layout").Funcs(funcMap).Parse(layoutTemplate))
 	template.Must(tpl.New("login").Parse(loginTemplate))
@@ -453,6 +457,7 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/crawl-templates", s.requireSession(s.handleCrawlTemplates))
 	mux.HandleFunc("/monitor-rules/", s.requireSession(s.handleRuleDetail))
 	mux.HandleFunc("/monitor-rules", s.requireSession(s.handleRules))
+	mux.HandleFunc("/api/v1/hotspots/sector-fund-flow-intraday", s.requireSessionJSON(s.handleHotspotsSectorFundFlowIntraday))
 	mux.HandleFunc("/hotspots", s.requireSession(s.handleHotspots))
 	mux.HandleFunc("/articles/", s.requireSession(s.handleArticleDetail))
 	mux.HandleFunc("/articles", s.requireSession(s.handleArticles))
@@ -2647,17 +2652,96 @@ func (s *Server) handleHotspots(w http.ResponseWriter, r *http.Request, user any
 	if days > 30 {
 		days = 30
 	}
+	sectorType := normalizePortalSectorFundFlowType(r.URL.Query().Get("sector_type"))
 	result := model.HotspotSwitchingResult{Days: days}
 	err := s.getJSON(s.cfg.ContentURL+"/api/v1/hotspots/switching?days="+strconv.Itoa(days), &result)
+	intraday, intradayErr := s.loadHotspotSectorFundFlowIntraday(r.Context(), model.AStockSectorFundFlowIntradayFilter{
+		Date:       strings.TrimSpace(r.URL.Query().Get("date")),
+		SectorType: sectorType,
+		Indicator:  "今日",
+		Limit:      20,
+	})
+	if intradayErr != nil {
+		intraday = model.AStockSectorFundFlowIntradayResult{
+			SectorType: sectorType,
+			Indicator:  "今日",
+			Times:      []string{},
+			Series:     []model.AStockSectorFundFlowIntradaySeries{},
+			Top:        []model.AStockSectorFundFlow{},
+		}
+	}
 	data := pageData{
-		Title:    "热点切换监控",
-		User:     user,
-		Hotspots: result,
+		Title:                  "热点切换监控",
+		User:                   user,
+		Hotspots:               result,
+		SectorFundFlowIntraday: intraday,
+		SectorFundFlowType:     sectorType,
 	}
 	if err != nil {
 		data.Error = err.Error()
 	}
 	_ = s.render(w, "hotspots", data)
+}
+
+func (s *Server) handleHotspotsSectorFundFlowIntraday(w http.ResponseWriter, r *http.Request, _ any) {
+	filter := model.AStockSectorFundFlowIntradayFilter{
+		Date:       strings.TrimSpace(r.URL.Query().Get("date")),
+		SectorType: normalizePortalSectorFundFlowType(r.URL.Query().Get("sector_type")),
+		Indicator:  "今日",
+		Limit:      parseIntDefault(r.URL.Query().Get("limit"), 20),
+	}
+	result, err := s.loadHotspotSectorFundFlowIntraday(r.Context(), filter)
+	if err != nil {
+		writeLegacyJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	writeLegacyJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Server) loadHotspotSectorFundFlowIntraday(ctx context.Context, filter model.AStockSectorFundFlowIntradayFilter) (model.AStockSectorFundFlowIntradayResult, error) {
+	sectorType := normalizePortalSectorFundFlowType(filter.SectorType)
+	indicator := strings.TrimSpace(filter.Indicator)
+	if indicator == "" {
+		indicator = "今日"
+	}
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	values := url.Values{}
+	if date := strings.TrimSpace(filter.Date); date != "" {
+		values.Set("date", date)
+	}
+	values.Set("sector_type", sectorType)
+	values.Set("indicator", indicator)
+	values.Set("limit", strconv.Itoa(limit))
+	var result model.AStockSectorFundFlowIntradayResult
+	err := s.getJSONWithContext(ctx, s.cfg.ContentURL+"/api/v1/a-stock/sector-fund-flow-intraday?"+values.Encode(), &result)
+	if result.SectorType == "" {
+		result.SectorType = sectorType
+	}
+	if result.Indicator == "" {
+		result.Indicator = indicator
+	}
+	if result.Times == nil {
+		result.Times = []string{}
+	}
+	if result.Series == nil {
+		result.Series = []model.AStockSectorFundFlowIntradaySeries{}
+	}
+	if result.Top == nil {
+		result.Top = []model.AStockSectorFundFlow{}
+	}
+	return result, err
+}
+
+func normalizePortalSectorFundFlowType(value string) string {
+	switch strings.TrimSpace(value) {
+	case "行业", "行业资金", "行业资金流":
+		return "行业资金流"
+	default:
+		return "概念资金流"
+	}
 }
 
 func (s *Server) handleArticleDetail(w http.ResponseWriter, r *http.Request, user any) {
@@ -3968,6 +4052,18 @@ func hotspotBarHeight(count int) int {
 	return height
 }
 
+func templateJSON(value any) template.JS {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return template.JS("null")
+	}
+	return template.JS(data)
+}
+
+func formatFundFlowMoney(value float64) string {
+	return fmt.Sprintf("%+.2f亿", value/100000000)
+}
+
 func formatArticleCaptureTime(item model.Item) string {
 	if item.CapturedAt.IsZero() {
 		return "--"
@@ -5086,6 +5182,120 @@ const dashboardTemplate = `
 `
 
 const hotspotsTemplate = `
+{{define "hotspots"}}<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>{{.Title}}</title>
+<style>` + baseStyles + `
+.hotspot-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.hotspot-tabs{display:flex;gap:8px;flex-wrap:wrap}
+.hotspot-tabs a{padding:8px 12px;border-radius:999px;border:1px solid #d0c8b8;background:#fff;color:#214e34;text-decoration:none}
+.hotspot-tabs a.active{background:#214e34;color:#fff}
+.hotspot-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+.hotspot-kpi{border:1px solid #ece7dc;background:#faf8f2;border-radius:8px;padding:14px}
+.hotspot-kpi strong{display:block;margin-top:6px;font-size:24px;color:#214e34}
+.hotspot-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.hotspot-table th,.hotspot-table td{font-size:14px;vertical-align:top}
+.hotspot-keyword{font-weight:700;color:#214e34;text-decoration:none}
+.hotspot-up{color:#b3261e;font-weight:700}
+.hotspot-down{color:#007d3c;font-weight:700}
+.hotspot-muted{color:#6a6257;font-size:13px}
+.trend-mini{display:flex;gap:2px;align-items:flex-end;height:28px;min-width:84px}
+.trend-mini i{display:block;width:8px;background:#d8e7dd;border-radius:2px 2px 0 0}
+.error{padding:12px;border-radius:8px;background:#fdeaea;color:#8f2d2d}
+.fundflow-panel{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:18px;align-items:start}
+.fundflow-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+.fundflow-chart-wrap{min-height:420px;border:1px solid #ece7dc;border-radius:8px;background:linear-gradient(180deg,#fff4f4 0%,#ffffff 45%,#f0fff5 100%);overflow:hidden}
+.fundflow-chart{width:100%;height:420px;display:block}
+.fundflow-rank{border:1px solid #ece7dc;border-radius:8px;overflow:hidden;background:#fff}
+.fundflow-rank h3{margin:0;padding:12px 14px;border-bottom:1px solid #ece7dc;font-size:18px}
+.fundflow-rank-list{max-height:420px;overflow:auto}
+.fundflow-rank-row{display:grid;grid-template-columns:24px minmax(0,1fr) auto;gap:8px;align-items:center;padding:9px 12px;border-bottom:1px solid #f0ebdf;font-size:14px}
+.fundflow-dot{width:10px;height:10px;border-radius:999px;display:inline-block}
+.fundflow-name{font-weight:700;color:#214e34;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fundflow-money{font-weight:700}
+.fundflow-empty{padding:36px 16px;color:#6a6257;text-align:center}
+@media (max-width:1100px){.hotspot-grid,.fundflow-panel{grid-template-columns:1fr}}
+` + `</style>
+</head>
+<body>
+<header><h1>热点切换监控</h1>{{template "nav" .}}</header>
+<main>
+{{if .Error}}<div class="error">{{.Error}}</div>{{end}}
+<section>
+<div class="hotspot-toolbar">
+<div><h2>过去 {{.Hotspots.Days}} 天热点</h2><p class="hotspot-muted">{{.Hotspots.StartDate}} 至 {{.Hotspots.EndDate}}，主榜只统计标准热点字典命中词；标题自由抽词单独进入发现词。</p></div>
+<div class="hotspot-tabs"><a class="{{if eq .Hotspots.Days 14}}active{{end}}" href="/hotspots?days=14&sector_type={{urlquery .SectorFundFlowType}}">最近14天</a><a class="{{if eq .Hotspots.Days 7}}active{{end}}" href="/hotspots?days=7&sector_type={{urlquery .SectorFundFlowType}}">最近7天</a><a class="{{if eq .Hotspots.Days 30}}active{{end}}" href="/hotspots?days=30&sector_type={{urlquery .SectorFundFlowType}}">最近30天</a></div>
+</div>
+<div class="hotspot-kpis"><div class="hotspot-kpi">统计文章<strong>{{.Hotspots.TotalArticles}}</strong></div><div class="hotspot-kpi">标准热点<strong>{{len .Hotspots.TodayTop}}</strong></div><div class="hotspot-kpi">发现词<strong>{{len .Hotspots.DiscoveryTodayTop}}</strong></div><div class="hotspot-kpi">切换信号<strong>{{len .Hotspots.Switches}}</strong></div></div>
+</section>
+<section>
+<div class="fundflow-head">
+<div><h2>当日板块资金流向</h2><p class="hotspot-muted">按“今日主力净流入”展示，后台交易时段每分钟抓取，页面每 60 秒刷新。最新时间：<span id="fundflow-latest-time">{{if .SectorFundFlowIntraday.LatestTime}}{{.SectorFundFlowIntraday.LatestTime}}{{else}}--{{end}}</span></p></div>
+<div class="hotspot-tabs"><a data-sector-type="概念资金流" class="{{if eq .SectorFundFlowType "概念资金流"}}active{{end}}" href="/hotspots?days={{.Hotspots.Days}}&sector_type=%E6%A6%82%E5%BF%B5%E8%B5%84%E9%87%91%E6%B5%81">概念资金流</a><a data-sector-type="行业资金流" class="{{if eq .SectorFundFlowType "行业资金流"}}active{{end}}" href="/hotspots?days={{.Hotspots.Days}}&sector_type=%E8%A1%8C%E4%B8%9A%E8%B5%84%E9%87%91%E6%B5%81">行业资金流</a></div>
+</div>
+<div class="fundflow-panel" id="hotspot-fundflow" data-sector-type="{{.SectorFundFlowType}}">
+<div class="fundflow-chart-wrap"><svg class="fundflow-chart" id="hotspot-fundflow-chart" viewBox="0 0 920 420" role="img" aria-label="当日板块资金流向折线图"></svg></div>
+<aside class="fundflow-rank"><h3>最新排行</h3><div class="fundflow-rank-list" id="hotspot-fundflow-rank">{{range .SectorFundFlowIntraday.Top}}<div class="fundflow-rank-row"><span>{{.Rank}}</span><span class="fundflow-name">{{.Name}}</span><span class="fundflow-money {{if ge .MainNetInflow 0.0}}hotspot-up{{else}}hotspot-down{{end}}">{{formatFundFlowMoney .MainNetInflow}}</span></div>{{else}}<div class="fundflow-empty">暂无日内资金快照</div>{{end}}</div></aside>
+</div>
+</section>
+<section>
+<h2>热点切换</h2>
+<table class="hotspot-table"><tr><th>上一阶段主热点</th><th>当前阶段主热点</th><th>前期次数</th><th>近期次数</th><th>切换分</th><th>入口</th></tr>{{range .Hotspots.Switches}}<tr><td>{{.From}}</td><td><a class="hotspot-keyword" href="/articles?keyword={{urlquery .To}}">{{.To}}</a></td><td>{{.FromCount}}</td><td>{{.ToCount}}</td><td>{{printf "%.1f" .SwitchScore}}</td><td><a class="inline" href="/articles?keyword={{urlquery .To}}">相关文章</a></td></tr>{{else}}<tr><td colspan="6">暂无明显热点切换</td></tr>{{end}}</table>
+</section>
+<div class="hotspot-grid">
+<section><h2>今日热点排行</h2><table class="hotspot-table"><tr><th>热点</th><th>今日</th><th>14日</th><th>趋势</th><th>入口</th></tr>{{range .Hotspots.TodayTop}}<tr><td><a class="hotspot-keyword" href="/articles?keyword={{urlquery .Keyword}}">{{.Keyword}}</a></td><td>{{.TodayCount}}</td><td>{{.Count14D}}</td><td><div class="trend-mini">{{range .Trend}}<i style="height:{{hotspotBarHeight .Count}}px"></i>{{end}}</div></td><td><a class="inline" href="/articles?keyword={{urlquery .Keyword}}">文章</a></td></tr>{{else}}<tr><td colspan="5">暂无今日热点</td></tr>{{end}}</table></section>
+<section><h2>14日热点排行</h2><table class="hotspot-table"><tr><th>热点</th><th>14日</th><th>近7日</th><th>前7日</th><th>变化</th></tr>{{range .Hotspots.Top}}<tr><td><a class="hotspot-keyword" href="/articles?keyword={{urlquery .Keyword}}">{{.Keyword}}</a></td><td>{{.Count14D}}</td><td>{{.CountRecent7D}}</td><td>{{.CountPrev7D}}</td><td>{{formatHotspotChangeRate .ChangeRate}}</td></tr>{{else}}<tr><td colspan="5">暂无热点数据</td></tr>{{end}}</table></section>
+<section><h2>升温热点</h2><table class="hotspot-table"><tr><th>热点</th><th>近7日</th><th>前7日</th><th>变化</th><th>活跃天数</th></tr>{{range .Hotspots.Rising}}<tr><td><a class="hotspot-keyword" href="/articles?keyword={{urlquery .Keyword}}">{{.Keyword}}</a></td><td>{{.CountRecent7D}}</td><td>{{.CountPrev7D}}</td><td class="hotspot-up">{{formatHotspotChangeRate .ChangeRate}}</td><td>{{.ActiveDays}}</td></tr>{{else}}<tr><td colspan="5">暂无升温热点</td></tr>{{end}}</table></section>
+<section><h2>发现词</h2><table class="hotspot-table"><tr><th>词</th><th>今日</th><th>14日</th><th>近7日</th><th>入口</th></tr>{{range .Hotspots.DiscoveryTodayTop}}<tr><td><a class="hotspot-keyword" href="/articles?keyword={{urlquery .Keyword}}">{{.Keyword}}</a></td><td>{{.TodayCount}}</td><td>{{.Count14D}}</td><td>{{.CountRecent7D}}</td><td><a class="inline" href="/articles?keyword={{urlquery .Keyword}}">文章</a></td></tr>{{else}}<tr><td colspan="5">暂无发现词</td></tr>{{end}}</table></section>
+<section><h2>降温热点</h2><table class="hotspot-table"><tr><th>热点</th><th>近7日</th><th>前7日</th><th>变化</th><th>最后出现</th></tr>{{range .Hotspots.Cooling}}<tr><td><a class="hotspot-keyword" href="/articles?keyword={{urlquery .Keyword}}">{{.Keyword}}</a></td><td>{{.CountRecent7D}}</td><td>{{.CountPrev7D}}</td><td class="hotspot-down">{{formatHotspotChangeRate .ChangeRate}}</td><td>{{.LastSeenDate}}</td></tr>{{else}}<tr><td colspan="5">暂无降温热点</td></tr>{{end}}</table></section>
+<section><h2>新增热点</h2><table class="hotspot-table"><tr><th>热点</th><th>近7日</th><th>首次出现</th><th>最近出现</th><th>入口</th></tr>{{range .Hotspots.New}}<tr><td><a class="hotspot-keyword" href="/articles?keyword={{urlquery .Keyword}}">{{.Keyword}}</a></td><td>{{.CountRecent7D}}</td><td>{{.FirstSeenDate}}</td><td>{{.LastSeenDate}}</td><td><a class="inline" href="/articles?keyword={{urlquery .Keyword}}">文章</a></td></tr>{{else}}<tr><td colspan="5">暂无新增热点</td></tr>{{end}}</table></section>
+<section><h2>连续升温热点</h2><table class="hotspot-table"><tr><th>热点</th><th>近7日</th><th>14日</th><th>切换分</th><th>入口</th></tr>{{range .Hotspots.ContinuousRising}}<tr><td><a class="hotspot-keyword" href="/articles?keyword={{urlquery .Keyword}}">{{.Keyword}}</a></td><td>{{.CountRecent7D}}</td><td>{{.Count14D}}</td><td>{{printf "%.1f" .SwitchScore}}</td><td><a class="inline" href="/articles?keyword={{urlquery .Keyword}}">文章</a></td></tr>{{else}}<tr><td colspan="5">暂无连续升温热点</td></tr>{{end}}</table></section>
+<section><h2>发现词升温</h2><table class="hotspot-table"><tr><th>词</th><th>近7日</th><th>前7日</th><th>变化</th><th>入口</th></tr>{{range .Hotspots.DiscoveryRising}}<tr><td><a class="hotspot-keyword" href="/articles?keyword={{urlquery .Keyword}}">{{.Keyword}}</a></td><td>{{.CountRecent7D}}</td><td>{{.CountPrev7D}}</td><td class="hotspot-up">{{formatHotspotChangeRate .ChangeRate}}</td><td><a class="inline" href="/articles?keyword={{urlquery .Keyword}}">文章</a></td></tr>{{else}}<tr><td colspan="5">暂无升温发现词</td></tr>{{end}}</table></section>
+</div>
+<section><h2>近 {{.Hotspots.Days}} 日趋势</h2><table class="hotspot-table"><tr><th>日期</th><th>Top 热点</th></tr>{{range .Hotspots.Daily}}<tr><td>{{.Date}}</td><td>{{range .Items}}<a class="inline" href="/articles?keyword={{urlquery .Keyword}}">{{.Keyword}}</a> {{else}}<span class="hotspot-muted">暂无</span>{{end}}</td></tr>{{else}}<tr><td colspan="2">暂无趋势数据</td></tr>{{end}}</table></section>
+</main>
+<script>
+(function(){
+var initialData = {{toJSON .SectorFundFlowIntraday}};
+var currentType = {{printf "%q" .SectorFundFlowType}};
+var colors = ["#d02b2b","#e95a42","#f29d38","#d6b327","#77bd4a","#21a585","#39a8dc","#4b7be5","#7e65d8","#b054c4","#8a9aa8","#2d7f46","#c95858","#5e9bff","#61c96f","#b08a00","#0f766e","#9854d8","#6b7280","#111827"];
+function moneyYi(value){var n=Number(value||0);return (n/100000000).toFixed(2)+"亿"}
+function rawYi(value){return (Number(value||0)/100000000)}
+function clear(node){while(node.firstChild){node.removeChild(node.firstChild)}}
+function svgEl(name, attrs){var el=document.createElementNS("http://www.w3.org/2000/svg",name);Object.keys(attrs||{}).forEach(function(key){el.setAttribute(key,attrs[key])});return el}
+function renderChart(data){
+ var svg=document.getElementById("hotspot-fundflow-chart"); if(!svg){return} clear(svg);
+ var series=(data&&data.series)||[]; var times=(data&&data.times)||[]; var latest=document.getElementById("fundflow-latest-time"); if(latest){latest.textContent=(data&&data.latest_time)||"--"}
+ if(!series.length||!times.length){svg.appendChild(svgEl("text",{x:"460",y:"210","text-anchor":"middle",fill:"#6a6257"})).textContent="暂无日内资金快照";return}
+ var width=920,height=420,left=70,right=130,top=24,bottom=48,plotW=width-left-right,plotH=height-top-bottom;
+ var values=[]; series.forEach(function(s){(s.points||[]).forEach(function(p){values.push(rawYi(p.main_net_inflow))})});
+ var min=Math.min.apply(Math,values), max=Math.max.apply(Math,values); if(!isFinite(min)||!isFinite(max)){min=-1;max=1} if(min===max){min-=1;max+=1}
+ var pad=(max-min)*0.08; min-=pad; max+=pad;
+ for(var i=0;i<6;i++){var y=top+plotH*i/5;var value=max-(max-min)*i/5;svg.appendChild(svgEl("line",{x1:left,y1:y,x2:width-right,y2:y,stroke:"#d8cfbf","stroke-width":"1"}));var label=svgEl("text",{x:left-10,y:y+4,"text-anchor":"end",fill:"#6a6257","font-size":"13"});label.textContent=value.toFixed(0)+"亿";svg.appendChild(label)}
+ times.forEach(function(t,idx){var x=left+(times.length===1?plotW/2:plotW*idx/(times.length-1));if(idx===0||idx===times.length-1||idx%30===0){var label=svgEl("text",{x:x,y:height-16,"text-anchor":"middle",fill:"#6a6257","font-size":"13"});label.textContent=t;svg.appendChild(label)}});
+ series.forEach(function(s,idx){var path=[];(s.points||[]).forEach(function(p){var ti=times.indexOf(p.time);if(ti<0){return}var x=left+(times.length===1?plotW/2:plotW*ti/(times.length-1));var y=top+(max-rawYi(p.main_net_inflow))/(max-min)*plotH;path.push((path.length?"L":"M")+x.toFixed(1)+" "+y.toFixed(1))});if(!path.length){return}var color=colors[idx%colors.length];svg.appendChild(svgEl("path",{d:path.join(" "),fill:"none",stroke:color,"stroke-width":"2.4","stroke-linejoin":"round","stroke-linecap":"round"}));var last=(s.points||[])[(s.points||[]).length-1];if(last){var ti=times.indexOf(last.time);var x=left+(times.length===1?plotW/2:plotW*ti/(times.length-1));var y=top+(max-rawYi(last.main_net_inflow))/(max-min)*plotH;svg.appendChild(svgEl("circle",{cx:x,cy:y,r:"3.5",fill:color}));var label=svgEl("text",{x:Math.min(x+8,width-118),y:y+4,fill:color,"font-size":"12","font-weight":"700"});label.textContent=s.name+" "+moneyYi(last.main_net_inflow);svg.appendChild(label)}})
+}
+function renderRank(data){
+ var box=document.getElementById("hotspot-fundflow-rank"); if(!box){return} clear(box); var top=(data&&data.top)||[]; if(!top.length){var empty=document.createElement("div");empty.className="fundflow-empty";empty.textContent="暂无日内资金快照";box.appendChild(empty);return}
+ top.forEach(function(item,idx){var row=document.createElement("div");row.className="fundflow-rank-row";var dot=document.createElement("span");dot.className="fundflow-dot";dot.style.backgroundColor=colors[idx%colors.length];var name=document.createElement("span");name.className="fundflow-name";name.textContent=item.name||"--";var money=document.createElement("span");money.className="fundflow-money "+(Number(item.main_net_inflow||0)>=0?"hotspot-up":"hotspot-down");money.textContent=moneyYi(item.main_net_inflow);row.appendChild(dot);row.appendChild(name);row.appendChild(money);box.appendChild(row)})
+}
+function render(data){renderChart(data);renderRank(data)}
+function refresh(){
+ var url="/api/v1/hotspots/sector-fund-flow-intraday?sector_type="+encodeURIComponent(currentType)+"&indicator="+encodeURIComponent("今日")+"&limit=20";
+ fetch(url,{credentials:"same-origin"}).then(function(resp){return resp.json()}).then(function(payload){if(payload&&payload.data){render(payload.data)}}).catch(function(){});
+}
+render(initialData);
+setInterval(refresh,60000);
+})();
+</script>
+{{template "footer" .}}
+</body>
+</html>{{end}}
+`
+
+const hotspotsTemplateLegacy = `
 {{define "hotspots"}}<!doctype html><html><head><meta charset="utf-8"><title>{{.Title}}</title><style>` + baseStyles + `.hotspot-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.hotspot-tabs{display:flex;gap:8px;flex-wrap:wrap}.hotspot-tabs a{padding:8px 12px;border-radius:999px;border:1px solid #d0c8b8;background:#fff;color:#214e34;text-decoration:none}.hotspot-tabs a.active{background:#214e34;color:#fff}.hotspot-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.hotspot-kpi{border:1px solid #ece7dc;background:#faf8f2;border-radius:8px;padding:14px}.hotspot-kpi strong{display:block;margin-top:6px;font-size:24px;color:#214e34}.hotspot-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.hotspot-table th,.hotspot-table td{font-size:14px;vertical-align:top}.hotspot-keyword{font-weight:700;color:#214e34;text-decoration:none}.hotspot-up{color:#b3261e;font-weight:700}.hotspot-down{color:#007d3c;font-weight:700}.hotspot-muted{color:#6a6257;font-size:13px}.trend-mini{display:flex;gap:2px;align-items:flex-end;height:28px;min-width:84px}.trend-mini i{display:block;width:8px;background:#d8e7dd;border-radius:2px 2px 0 0}.error{padding:12px;border-radius:8px;background:#fdeaea;color:#8f2d2d}@media (max-width:1000px){.hotspot-grid{grid-template-columns:1fr}}` + `</style></head><body><header><h1>热点切换监控</h1>{{template "nav" .}}</header><main>{{if .Error}}<div class="error">{{.Error}}</div>{{end}}<section><div class="hotspot-toolbar"><div><h2>过去 {{.Hotspots.Days}} 天热点</h2><p class="hotspot-muted">{{.Hotspots.StartDate}} 至 {{.Hotspots.EndDate}}，按文章标题、摘要和正文关键词统计。</p></div><div class="hotspot-tabs"><a class="{{if eq .Hotspots.Days 14}}active{{end}}" href="/hotspots?days=14">最近14天</a><a class="{{if eq .Hotspots.Days 7}}active{{end}}" href="/hotspots?days=7">最近7天</a><a class="{{if eq .Hotspots.Days 30}}active{{end}}" href="/hotspots?days=30">最近30天</a></div></div><div class="hotspot-kpis"><div class="hotspot-kpi">统计文章<strong>{{.Hotspots.TotalArticles}}</strong></div><div class="hotspot-kpi">今日热点<strong>{{len .Hotspots.TodayTop}}</strong></div><div class="hotspot-kpi">新增热点<strong>{{len .Hotspots.New}}</strong></div><div class="hotspot-kpi">切换信号<strong>{{len .Hotspots.Switches}}</strong></div></div></section><section><h2>热点切换</h2><table class="hotspot-table"><tr><th>上一阶段主热点</th><th>当前阶段主热点</th><th>前期次数</th><th>近期次数</th><th>切换分</th><th>入口</th></tr>{{range .Hotspots.Switches}}<tr><td>{{.From}}</td><td><a class="hotspot-keyword" href="/articles?keyword={{urlquery .To}}">{{.To}}</a></td><td>{{.FromCount}}</td><td>{{.ToCount}}</td><td>{{printf "%.1f" .SwitchScore}}</td><td><a class="inline" href="/articles?keyword={{urlquery .To}}">相关文章</a></td></tr>{{else}}<tr><td colspan="6">暂无明显热点切换</td></tr>{{end}}</table></section><div class="hotspot-grid"><section><h2>今日热点排行</h2><table class="hotspot-table"><tr><th>热点</th><th>今日</th><th>14日</th><th>趋势</th><th>入口</th></tr>{{range .Hotspots.TodayTop}}<tr><td><a class="hotspot-keyword" href="/articles?keyword={{urlquery .Keyword}}">{{.Keyword}}</a></td><td>{{.TodayCount}}</td><td>{{.Count14D}}</td><td><div class="trend-mini">{{range .Trend}}<i style="height:{{hotspotBarHeight .Count}}px"></i>{{end}}</div></td><td><a class="inline" href="/articles?keyword={{urlquery .Keyword}}">文章</a></td></tr>{{else}}<tr><td colspan="5">暂无今日热点</td></tr>{{end}}</table></section><section><h2>14日热点排行</h2><table class="hotspot-table"><tr><th>热点</th><th>14日</th><th>近7日</th><th>前7日</th><th>变化</th></tr>{{range .Hotspots.Top}}<tr><td><a class="hotspot-keyword" href="/articles?keyword={{urlquery .Keyword}}">{{.Keyword}}</a></td><td>{{.Count14D}}</td><td>{{.CountRecent7D}}</td><td>{{.CountPrev7D}}</td><td>{{formatHotspotChangeRate .ChangeRate}}</td></tr>{{else}}<tr><td colspan="5">暂无热点数据</td></tr>{{end}}</table></section><section><h2>升温热点</h2><table class="hotspot-table"><tr><th>热点</th><th>近7日</th><th>前7日</th><th>变化</th><th>活跃天数</th></tr>{{range .Hotspots.Rising}}<tr><td><a class="hotspot-keyword" href="/articles?keyword={{urlquery .Keyword}}">{{.Keyword}}</a></td><td>{{.CountRecent7D}}</td><td>{{.CountPrev7D}}</td><td class="hotspot-up">{{formatHotspotChangeRate .ChangeRate}}</td><td>{{.ActiveDays}}</td></tr>{{else}}<tr><td colspan="5">暂无升温热点</td></tr>{{end}}</table></section><section><h2>降温热点</h2><table class="hotspot-table"><tr><th>热点</th><th>近7日</th><th>前7日</th><th>变化</th><th>最后出现</th></tr>{{range .Hotspots.Cooling}}<tr><td><a class="hotspot-keyword" href="/articles?keyword={{urlquery .Keyword}}">{{.Keyword}}</a></td><td>{{.CountRecent7D}}</td><td>{{.CountPrev7D}}</td><td class="hotspot-down">{{formatHotspotChangeRate .ChangeRate}}</td><td>{{.LastSeenDate}}</td></tr>{{else}}<tr><td colspan="5">暂无降温热点</td></tr>{{end}}</table></section><section><h2>新增热点</h2><table class="hotspot-table"><tr><th>热点</th><th>近7日</th><th>首次出现</th><th>最近出现</th><th>入口</th></tr>{{range .Hotspots.New}}<tr><td><a class="hotspot-keyword" href="/articles?keyword={{urlquery .Keyword}}">{{.Keyword}}</a></td><td>{{.CountRecent7D}}</td><td>{{.FirstSeenDate}}</td><td>{{.LastSeenDate}}</td><td><a class="inline" href="/articles?keyword={{urlquery .Keyword}}">文章</a></td></tr>{{else}}<tr><td colspan="5">暂无新增热点</td></tr>{{end}}</table></section><section><h2>连续升温热点</h2><table class="hotspot-table"><tr><th>热点</th><th>近7日</th><th>14日</th><th>切换分</th><th>入口</th></tr>{{range .Hotspots.ContinuousRising}}<tr><td><a class="hotspot-keyword" href="/articles?keyword={{urlquery .Keyword}}">{{.Keyword}}</a></td><td>{{.CountRecent7D}}</td><td>{{.Count14D}}</td><td>{{printf "%.1f" .SwitchScore}}</td><td><a class="inline" href="/articles?keyword={{urlquery .Keyword}}">文章</a></td></tr>{{else}}<tr><td colspan="5">暂无连续升温热点</td></tr>{{end}}</table></section></div><section><h2>近 {{.Hotspots.Days}} 日趋势</h2><table class="hotspot-table"><tr><th>日期</th><th>Top 热点</th></tr>{{range .Hotspots.Daily}}<tr><td>{{.Date}}</td><td>{{range .Items}}<a class="inline" href="/articles?keyword={{urlquery .Keyword}}">{{.Keyword}}</a> {{else}}<span class="hotspot-muted">暂无</span>{{end}}</td></tr>{{else}}<tr><td colspan="2">暂无趋势数据</td></tr>{{end}}</table></section></main>{{template "footer" .}}</body></html>{{end}}
 `
 

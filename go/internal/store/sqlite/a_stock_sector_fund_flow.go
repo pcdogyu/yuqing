@@ -248,6 +248,337 @@ LIMIT ? OFFSET ?`, queryArgs...)
 	return result, nil
 }
 
+func (s *Store) SnapshotAStockSectorFundFlowIntraday(ctx context.Context, tradeDate string, captureTime string, sectorType string, indicator string) (model.AStockSectorFundFlowUpsertResult, error) {
+	tradeDate = strings.TrimSpace(tradeDate)
+	sectorType = normalizeAStockSectorFundFlowSectorType(sectorType)
+	indicator = normalizeAStockSectorFundFlowIndicator(indicator)
+	captureTime = normalizeAStockSectorFundFlowCaptureTime(captureTime)
+	result := model.AStockSectorFundFlowUpsertResult{Date: tradeDate}
+	if tradeDate == "" {
+		if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(trade_date), '') FROM a_stock_sector_fund_flows WHERE sector_type = ? AND indicator = ?`, sectorType, indicator).Scan(&tradeDate); err != nil {
+			return result, err
+		}
+		result.Date = tradeDate
+	}
+	if tradeDate == "" {
+		return result, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT trade_date, sector_type, indicator, rank, name, change_pct,
+	main_net_inflow, main_net_inflow_pct, super_large_net_inflow, super_large_net_inflow_pct,
+	large_net_inflow, large_net_inflow_pct, medium_net_inflow, medium_net_inflow_pct,
+	small_net_inflow, small_net_inflow_pct, top_stock, source_count, source_types, field_counts_json, source_type, raw_payload,
+	fetched_at, created_at, updated_at
+FROM a_stock_sector_fund_flows
+WHERE trade_date = ? AND sector_type = ? AND indicator = ?
+ORDER BY rank ASC, main_net_inflow DESC, name ASC`, tradeDate, sectorType, indicator)
+	if err != nil {
+		return result, err
+	}
+	defer rows.Close()
+	items := make([]model.AStockSectorFundFlow, 0, 128)
+	for rows.Next() {
+		item, scanErr := scanAStockSectorFundFlow(rows)
+		if scanErr != nil {
+			return result, scanErr
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return result, err
+	}
+	result.Total = len(items)
+	if len(items) == 0 {
+		return result, nil
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return result, err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	stmt, err := tx.PrepareContext(ctx, `
+INSERT INTO a_stock_sector_fund_flow_intraday_snapshots (
+	trade_date, capture_time, sector_type, indicator, rank, name, change_pct,
+	main_net_inflow, main_net_inflow_pct, super_large_net_inflow, super_large_net_inflow_pct,
+	large_net_inflow, large_net_inflow_pct, medium_net_inflow, medium_net_inflow_pct,
+	small_net_inflow, small_net_inflow_pct, top_stock, source_count, source_types, field_counts_json, source_type, raw_payload,
+	fetched_at, created_at, updated_at
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(trade_date, capture_time, sector_type, indicator, name) DO UPDATE SET
+	rank = excluded.rank,
+	change_pct = excluded.change_pct,
+	main_net_inflow = excluded.main_net_inflow,
+	main_net_inflow_pct = excluded.main_net_inflow_pct,
+	super_large_net_inflow = excluded.super_large_net_inflow,
+	super_large_net_inflow_pct = excluded.super_large_net_inflow_pct,
+	large_net_inflow = excluded.large_net_inflow,
+	large_net_inflow_pct = excluded.large_net_inflow_pct,
+	medium_net_inflow = excluded.medium_net_inflow,
+	medium_net_inflow_pct = excluded.medium_net_inflow_pct,
+	small_net_inflow = excluded.small_net_inflow,
+	small_net_inflow_pct = excluded.small_net_inflow_pct,
+	top_stock = excluded.top_stock,
+	source_count = excluded.source_count,
+	source_types = excluded.source_types,
+	field_counts_json = excluded.field_counts_json,
+	source_type = excluded.source_type,
+	raw_payload = excluded.raw_payload,
+	fetched_at = excluded.fetched_at,
+	updated_at = excluded.updated_at`)
+	if err != nil {
+		return result, err
+	}
+	defer stmt.Close()
+	now := time.Now().UTC()
+	for _, item := range items {
+		name := strings.TrimSpace(item.Name)
+		if name == "" {
+			continue
+		}
+		existed := false
+		if scanErr := tx.QueryRowContext(ctx, `SELECT 1 FROM a_stock_sector_fund_flow_intraday_snapshots WHERE trade_date = ? AND capture_time = ? AND sector_type = ? AND indicator = ? AND name = ?`, tradeDate, captureTime, sectorType, indicator, name).Scan(new(int)); scanErr == nil {
+			existed = true
+		} else if scanErr != sql.ErrNoRows {
+			err = scanErr
+			return result, err
+		}
+		fetchedAt := item.FetchedAt
+		if fetchedAt.IsZero() {
+			fetchedAt = now
+		}
+		createdAt := item.CreatedAt
+		if createdAt.IsZero() {
+			createdAt = now
+		}
+		updatedAt := item.UpdatedAt
+		if updatedAt.IsZero() {
+			updatedAt = now
+		}
+		if _, err = stmt.ExecContext(ctx,
+			tradeDate,
+			captureTime,
+			sectorType,
+			indicator,
+			item.Rank,
+			name,
+			item.ChangePct,
+			item.MainNetInflow,
+			item.MainNetInflowPct,
+			item.SuperLargeNetInflow,
+			item.SuperLargeNetInflowPct,
+			item.LargeNetInflow,
+			item.LargeNetInflowPct,
+			item.MediumNetInflow,
+			item.MediumNetInflowPct,
+			item.SmallNetInflow,
+			item.SmallNetInflowPct,
+			strings.TrimSpace(item.TopStock),
+			defaultPositiveInt(item.SourceCount, 1),
+			nonEmpty(strings.TrimSpace(item.SourceTypes), nonEmpty(strings.TrimSpace(item.SourceType), "average")),
+			nonEmpty(strings.TrimSpace(item.FieldCountsJSON), "{}"),
+			nonEmpty(strings.TrimSpace(item.SourceType), "average"),
+			nonEmpty(strings.TrimSpace(item.RawPayload), "{}"),
+			fetchedAt.UTC().Format(time.RFC3339),
+			createdAt.UTC().Format(time.RFC3339),
+			updatedAt.UTC().Format(time.RFC3339),
+		); err != nil {
+			return result, err
+		}
+		if existed {
+			result.Updated++
+		} else {
+			result.Inserted++
+		}
+	}
+	err = tx.Commit()
+	return result, err
+}
+
+func (s *Store) ListAStockSectorFundFlowIntraday(ctx context.Context, filter model.AStockSectorFundFlowIntradayFilter) (model.AStockSectorFundFlowIntradayResult, error) {
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 50 {
+		limit = 50
+	}
+	result := model.AStockSectorFundFlowIntradayResult{
+		Date:       strings.TrimSpace(filter.Date),
+		SectorType: normalizeAStockSectorFundFlowSectorType(filter.SectorType),
+		Indicator:  normalizeAStockSectorFundFlowIndicator(filter.Indicator),
+		Times:      []string{},
+		Series:     []model.AStockSectorFundFlowIntradaySeries{},
+		Top:        []model.AStockSectorFundFlow{},
+	}
+	if result.Date == "" {
+		if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(trade_date), '') FROM a_stock_sector_fund_flow_intraday_snapshots WHERE sector_type = ? AND indicator = ?`, result.SectorType, result.Indicator).Scan(&result.Date); err != nil {
+			return result, err
+		}
+	}
+	if result.Date == "" {
+		return result, nil
+	}
+	timeRows, err := s.db.QueryContext(ctx, `SELECT DISTINCT capture_time FROM a_stock_sector_fund_flow_intraday_snapshots WHERE trade_date = ? AND sector_type = ? AND indicator = ? ORDER BY capture_time ASC`, result.Date, result.SectorType, result.Indicator)
+	if err != nil {
+		return result, err
+	}
+	for timeRows.Next() {
+		var captureTime string
+		if scanErr := timeRows.Scan(&captureTime); scanErr != nil {
+			_ = timeRows.Close()
+			return result, scanErr
+		}
+		result.Times = append(result.Times, captureTime)
+	}
+	if err := timeRows.Close(); err != nil {
+		return result, err
+	}
+	if len(result.Times) == 0 {
+		return result, nil
+	}
+	result.LatestTime = result.Times[len(result.Times)-1]
+
+	rows, err := s.db.QueryContext(ctx, `
+SELECT trade_date, sector_type, indicator, rank, name, change_pct,
+	main_net_inflow, main_net_inflow_pct, super_large_net_inflow, super_large_net_inflow_pct,
+	large_net_inflow, large_net_inflow_pct, medium_net_inflow, medium_net_inflow_pct,
+	small_net_inflow, small_net_inflow_pct, top_stock, source_count, source_types, field_counts_json, source_type, raw_payload,
+	fetched_at, created_at, updated_at
+FROM a_stock_sector_fund_flow_intraday_snapshots
+WHERE trade_date = ? AND capture_time = ? AND sector_type = ? AND indicator = ?
+ORDER BY main_net_inflow DESC, rank ASC, name ASC`, result.Date, result.LatestTime, result.SectorType, result.Indicator)
+	if err != nil {
+		return result, err
+	}
+	latestRows := make([]model.AStockSectorFundFlow, 0, 128)
+	for rows.Next() {
+		item, scanErr := scanAStockSectorFundFlow(rows)
+		if scanErr != nil {
+			_ = rows.Close()
+			return result, scanErr
+		}
+		latestRows = append(latestRows, item)
+	}
+	if err := rows.Close(); err != nil {
+		return result, err
+	}
+	result.Total = len(latestRows)
+	topLimit := min(limit, len(latestRows))
+	if topLimit > 0 {
+		result.Top = append(result.Top, latestRows[:topLimit]...)
+	}
+
+	selectedNames := selectAStockSectorFundFlowIntradaySeriesNames(latestRows, limit)
+	if len(selectedNames) == 0 {
+		return result, nil
+	}
+	placeholders := make([]string, 0, len(selectedNames))
+	args := []any{result.Date, result.SectorType, result.Indicator}
+	for _, name := range selectedNames {
+		placeholders = append(placeholders, "?")
+		args = append(args, name)
+	}
+	query := `
+SELECT capture_time, name, rank, main_net_inflow
+FROM a_stock_sector_fund_flow_intraday_snapshots
+WHERE trade_date = ? AND sector_type = ? AND indicator = ? AND name IN (` + strings.Join(placeholders, ",") + `)
+ORDER BY capture_time ASC, name ASC`
+	pointRows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return result, err
+	}
+	pointsByName := map[string][]model.AStockSectorFundFlowIntradayPoint{}
+	for pointRows.Next() {
+		var point model.AStockSectorFundFlowIntradayPoint
+		var name string
+		if scanErr := pointRows.Scan(&point.Time, &name, &point.Rank, &point.MainNetInflow); scanErr != nil {
+			_ = pointRows.Close()
+			return result, scanErr
+		}
+		pointsByName[name] = append(pointsByName[name], point)
+	}
+	if err := pointRows.Close(); err != nil {
+		return result, err
+	}
+	latestByName := map[string]model.AStockSectorFundFlow{}
+	for _, item := range latestRows {
+		latestByName[item.Name] = item
+	}
+	for _, name := range selectedNames {
+		item := latestByName[name]
+		result.Series = append(result.Series, model.AStockSectorFundFlowIntradaySeries{
+			Name:                name,
+			LatestRank:          item.Rank,
+			LatestMainNetInflow: item.MainNetInflow,
+			Points:              pointsByName[name],
+		})
+	}
+	return result, nil
+}
+
+func normalizeAStockSectorFundFlowCaptureTime(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Now().In(aStockSectorFundFlowStoreLocation()).Format("15:04")
+	}
+	if len(value) == 4 && !strings.Contains(value, ":") {
+		return value[:2] + ":" + value[2:]
+	}
+	return value
+}
+
+func aStockSectorFundFlowStoreLocation() *time.Location {
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		return time.FixedZone("Asia/Shanghai", 8*3600)
+	}
+	return loc
+}
+
+func selectAStockSectorFundFlowIntradaySeriesNames(items []model.AStockSectorFundFlow, limit int) []string {
+	if limit <= 0 {
+		limit = 20
+	}
+	topCount := limit / 2
+	bottomCount := limit - topCount
+	names := make([]string, 0, limit)
+	seen := map[string]struct{}{}
+	addName := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return
+		}
+		if _, exists := seen[name]; exists {
+			return
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+	for i := 0; i < len(items) && i < topCount; i++ {
+		addName(items[i].Name)
+	}
+	bottom := append([]model.AStockSectorFundFlow(nil), items...)
+	sort.SliceStable(bottom, func(i, j int) bool {
+		if bottom[i].MainNetInflow != bottom[j].MainNetInflow {
+			return bottom[i].MainNetInflow < bottom[j].MainNetInflow
+		}
+		if bottom[i].Rank != bottom[j].Rank {
+			return bottom[i].Rank > bottom[j].Rank
+		}
+		return bottom[i].Name < bottom[j].Name
+	})
+	for i := 0; i < len(bottom) && i < bottomCount; i++ {
+		addName(bottom[i].Name)
+	}
+	return names
+}
+
 func normalizeAStockSectorFundFlowSectorType(value string) string {
 	switch strings.TrimSpace(value) {
 	case "概念", "概念资金", "概念资金流":

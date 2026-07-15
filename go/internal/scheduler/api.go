@@ -34,6 +34,7 @@ func (w *Worker) Router() http.Handler {
 	r.Get("/api/v1/scheduler/a-stock/trading-day", w.handleGetAStockTradingDay)
 	r.Post("/api/v1/scheduler/a-stock/holdings/backfill", w.handleRunAStockHoldingsBackfill)
 	r.Post("/api/v1/scheduler/a-stock/sector-fund-flow/latest", w.handleRunAStockSectorFundFlowLatest)
+	r.Post("/api/v1/scheduler/a-stock/sector-fund-flow/intraday/latest", w.handleRunAStockSectorFundFlowIntradayLatest)
 	return r
 }
 
@@ -356,6 +357,36 @@ func (w *Worker) handleRunAStockSectorFundFlowLatest(wr http.ResponseWriter, r *
 		message = err.Error()
 	}
 	_ = w.recordTaskRun(r.Context(), "a-stock-sector-fund-flow-latest", status, message, startedAt, &finishedAt)
+	if err != nil {
+		apiutil.WriteJSON(wr, http.StatusInternalServerError, err.Error(), result)
+		return
+	}
+	if result.Skipped {
+		apiutil.WriteJSON(wr, http.StatusUnprocessableEntity, message, result)
+		return
+	}
+	apiutil.WriteJSON(wr, http.StatusOK, "ok", map[string]any{"status": "completed", "result": result})
+}
+
+func (w *Worker) handleRunAStockSectorFundFlowIntradayLatest(wr http.ResponseWriter, r *http.Request) {
+	if strings.TrimSpace(r.Header.Get("X-Service-Token")) != strings.TrimSpace(w.cfg.ServiceToken) {
+		apiutil.WriteJSON(wr, http.StatusUnauthorized, "unauthorized", nil)
+		return
+	}
+	startedAt := time.Now().UTC()
+	result, err := w.runAStockSectorFundFlowIntradayLatest(r.Context(), false)
+	finishedAt := time.Now().UTC()
+	status := "success"
+	message := fmt.Sprintf("a-stock fund flow intraday completed: date=%s groups=%d items=%d snapshots=%d snapshot_items=%d", result.Date, result.Groups, result.Items, result.SnapshotGroups, result.SnapshotItems)
+	if result.Skipped {
+		status = "skipped"
+		message = result.Message
+	}
+	if err != nil {
+		status = "failed"
+		message = err.Error()
+	}
+	_ = w.recordTaskRun(r.Context(), "a-stock-sector-fund-flow-intraday-latest", status, message, startedAt, &finishedAt)
 	if err != nil {
 		apiutil.WriteJSON(wr, http.StatusInternalServerError, err.Error(), result)
 		return

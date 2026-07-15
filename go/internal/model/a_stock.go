@@ -280,6 +280,37 @@ type AStockSectorFundFlowUpsertResult struct {
 	Total    int    `json:"total"`
 }
 
+type AStockSectorFundFlowIntradayFilter struct {
+	Date       string `json:"date"`
+	SectorType string `json:"sector_type"`
+	Indicator  string `json:"indicator"`
+	Limit      int    `json:"limit"`
+}
+
+type AStockSectorFundFlowIntradayPoint struct {
+	Time          string  `json:"time"`
+	MainNetInflow float64 `json:"main_net_inflow"`
+	Rank          int     `json:"rank,omitempty"`
+}
+
+type AStockSectorFundFlowIntradaySeries struct {
+	Name                string                              `json:"name"`
+	LatestRank          int                                 `json:"latest_rank"`
+	LatestMainNetInflow float64                             `json:"latest_main_net_inflow"`
+	Points              []AStockSectorFundFlowIntradayPoint `json:"points"`
+}
+
+type AStockSectorFundFlowIntradayResult struct {
+	Date       string                               `json:"date"`
+	SectorType string                               `json:"sector_type"`
+	Indicator  string                               `json:"indicator"`
+	LatestTime string                               `json:"latest_time"`
+	Times      []string                             `json:"times"`
+	Series     []AStockSectorFundFlowIntradaySeries `json:"series"`
+	Top        []AStockSectorFundFlow               `json:"top"`
+	Total      int                                  `json:"total"`
+}
+
 type AStockStockFundFlow struct {
 	TradeDate              string    `json:"trade_date"`
 	Indicator              string    `json:"indicator"`

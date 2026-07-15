@@ -493,6 +493,16 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 			},
 		}, "AStockSectorFundFlowCrawl", "0 31 9 * * ?; 0 1 10-15 * * ?"),
 		withJobMeta(jobDefinition{
+			Name:        "a-stock-sector-fund-flow-intraday-crawl",
+			Group:       "a-stock",
+			Description: "A股版块资金日内：交易时段每分钟抓取行业/概念今日主力资金并写入日内快照",
+			Interval:    time.Minute,
+			Enabled:     strings.TrimSpace(w.cfg.AStockAuctionURL) != "",
+			Run: func(ctx context.Context) error {
+				return w.runAStockSectorFundFlowIntradayCrawl(ctx)
+			},
+		}, "AStockSectorFundFlowIntradayCrawl", "0 30-59 9 * * ?; 0 * 10 * * ?; 0 0-30 11 * * ?; 0 * 13-14 * * ?; 0 0 15 * * ?"),
+		withJobMeta(jobDefinition{
 			Name:        "stock-research-crawl",
 			Group:       "a-stock",
 			Description: "上市公司研报调研：抓取 AKShare/TuShare、东方财富、新浪财经、搜狐财经研报调研数据",

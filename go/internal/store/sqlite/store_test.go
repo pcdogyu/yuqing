@@ -1384,6 +1384,57 @@ func TestAStockSectorFundFlowsUpsertReplaceAndList(t *testing.T) {
 	}
 }
 
+func TestAStockSectorFundFlowIntradaySnapshotAndList(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	fetchedAt := time.Date(2026, 7, 14, 2, 30, 0, 0, time.UTC)
+
+	if _, err := store.UpsertAStockSectorFundFlows(ctx, "2026-07-14", []model.AStockSectorFundFlow{
+		{TradeDate: "2026-07-14", SectorType: "概念资金流", Indicator: "今日", Rank: 1, Name: "创新药", MainNetInflow: 1000000000, TopStock: "药企A", SourceType: "average", FetchedAt: fetchedAt},
+		{TradeDate: "2026-07-14", SectorType: "概念资金流", Indicator: "今日", Rank: 2, Name: "半导体", MainNetInflow: -2000000000, TopStock: "芯片A", SourceType: "average", FetchedAt: fetchedAt},
+	}, true); err != nil {
+		t.Fatalf("UpsertAStockSectorFundFlows first error: %v", err)
+	}
+	first, err := store.SnapshotAStockSectorFundFlowIntraday(ctx, "2026-07-14", "09:30", "概念资金流", "今日")
+	if err != nil {
+		t.Fatalf("SnapshotAStockSectorFundFlowIntraday first error: %v", err)
+	}
+	if first.Inserted != 2 || first.Updated != 0 || first.Total != 2 {
+		t.Fatalf("unexpected first intraday snapshot result: %+v", first)
+	}
+
+	if _, err := store.UpsertAStockSectorFundFlows(ctx, "2026-07-14", []model.AStockSectorFundFlow{
+		{TradeDate: "2026-07-14", SectorType: "概念资金流", Indicator: "今日", Rank: 1, Name: "创新药", MainNetInflow: 3000000000, TopStock: "药企A", SourceType: "average", FetchedAt: fetchedAt.Add(time.Minute)},
+		{TradeDate: "2026-07-14", SectorType: "概念资金流", Indicator: "今日", Rank: 2, Name: "半导体", MainNetInflow: -1000000000, TopStock: "芯片A", SourceType: "average", FetchedAt: fetchedAt.Add(time.Minute)},
+	}, true); err != nil {
+		t.Fatalf("UpsertAStockSectorFundFlows second error: %v", err)
+	}
+	second, err := store.SnapshotAStockSectorFundFlowIntraday(ctx, "2026-07-14", "09:30", "概念资金流", "今日")
+	if err != nil {
+		t.Fatalf("SnapshotAStockSectorFundFlowIntraday second error: %v", err)
+	}
+	if second.Inserted != 0 || second.Updated != 2 || second.Total != 2 {
+		t.Fatalf("unexpected second intraday snapshot result: %+v", second)
+	}
+	if _, err := store.SnapshotAStockSectorFundFlowIntraday(ctx, "2026-07-14", "13:11", "概念资金流", "今日"); err != nil {
+		t.Fatalf("SnapshotAStockSectorFundFlowIntraday 13:11 error: %v", err)
+	}
+
+	result, err := store.ListAStockSectorFundFlowIntraday(ctx, model.AStockSectorFundFlowIntradayFilter{Date: "2026-07-14", SectorType: "概念资金流", Indicator: "今日", Limit: 2})
+	if err != nil {
+		t.Fatalf("ListAStockSectorFundFlowIntraday error: %v", err)
+	}
+	if result.LatestTime != "13:11" || len(result.Times) != 2 || result.Times[0] != "09:30" || result.Times[1] != "13:11" {
+		t.Fatalf("unexpected intraday times: %+v", result)
+	}
+	if result.Total != 2 || len(result.Top) != 2 || result.Top[0].Name != "创新药" || result.Top[0].MainNetInflow != 3000000000 {
+		t.Fatalf("unexpected intraday top ranking: %+v", result)
+	}
+	if len(result.Series) != 2 || result.Series[0].Name != "创新药" || len(result.Series[0].Points) != 2 {
+		t.Fatalf("unexpected intraday series: %+v", result.Series)
+	}
+}
+
 func TestAStockSectorFundFlowSourceRowsAverageAndSourceFilter(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()

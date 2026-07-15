@@ -117,6 +117,8 @@ type Store interface {
 	UpsertAStockSectorFundFlows(rctx context.Context, tradeDate string, items []model.AStockSectorFundFlow, replace bool) (model.AStockSectorFundFlowUpsertResult, error)
 	UpsertAStockSectorFundFlowSourceRows(rctx context.Context, tradeDate string, items []model.AStockSectorFundFlow, replace bool) (model.AStockSectorFundFlowUpsertResult, error)
 	ListAStockSectorFundFlows(rctx context.Context, filter model.AStockSectorFundFlowFilter) (model.AStockSectorFundFlowListResult, error)
+	SnapshotAStockSectorFundFlowIntraday(rctx context.Context, tradeDate string, captureTime string, sectorType string, indicator string) (model.AStockSectorFundFlowUpsertResult, error)
+	ListAStockSectorFundFlowIntraday(rctx context.Context, filter model.AStockSectorFundFlowIntradayFilter) (model.AStockSectorFundFlowIntradayResult, error)
 	UpsertAStockSectorConstituents(rctx context.Context, sectorType string, sectorName string, items []model.AStockSectorConstituent, replace bool) (model.AStockSectorConstituentUpsertResult, error)
 	ListAStockSectorConstituents(rctx context.Context, filter model.AStockSectorConstituentFilter) (model.AStockSectorConstituentListResult, error)
 	ListAStockSectorFundFlowTrend(rctx context.Context, filter model.AStockFundFlowTrendFilter) (model.AStockSectorFundFlowTrendResult, error)
@@ -212,6 +214,8 @@ func (s *Service) Routes(r chi.Router) {
 	r.Get("/api/v1/a-stock/sector-fund-flows", s.handleListAStockSectorFundFlows)
 	r.Post("/api/v1/internal/a-stock/sector-fund-flows", s.handleUpsertAStockSectorFundFlows)
 	r.Post("/api/v1/internal/a-stock/sector-fund-flow-sources", s.handleUpsertAStockSectorFundFlowSourceRows)
+	r.Get("/api/v1/a-stock/sector-fund-flow-intraday", s.handleListAStockSectorFundFlowIntraday)
+	r.Post("/api/v1/internal/a-stock/sector-fund-flow-intraday/snapshot", s.handleSnapshotAStockSectorFundFlowIntraday)
 	r.Get("/api/v1/a-stock/sector-constituents", s.handleListAStockSectorConstituents)
 	r.Post("/api/v1/internal/a-stock/sector-constituents", s.handleUpsertAStockSectorConstituents)
 	r.Get("/api/v1/a-stock/sector-fund-flow-trend", s.handleListAStockSectorFundFlowTrend)
@@ -662,6 +666,7 @@ func (s *Service) buildHotspotSwitching(ctx context.Context, days int, now time.
 	}
 
 	stats := map[string]*hotspotKeywordStat{}
+	discoveryStats := map[string]*hotspotKeywordStat{}
 	totalArticles := 0
 	for _, item := range items {
 		itemDate := hotspotItemDate(item, loc)
@@ -669,40 +674,21 @@ func (s *Service) buildHotspotSwitching(ctx context.Context, days int, now time.
 		if dateKey < startDate || dateKey > endDate {
 			continue
 		}
-		keywords := extractArticleHotspotKeywords(item)
-		if len(keywords) == 0 {
+		keywords := extractArticleHotspotKeywordSets(item)
+		if len(keywords.Standard) == 0 && len(keywords.Discovery) == 0 {
 			continue
 		}
 		totalArticles++
-		for keyword := range keywords {
-			stat := stats[keyword]
-			if stat == nil {
-				stat = &hotspotKeywordStat{keyword: keyword, daily: map[string]int{}}
-				stats[keyword] = stat
-			}
-			stat.total++
-			stat.daily[dateKey]++
-			if dateKey >= recentStartDate {
-				stat.recent++
-			} else {
-				stat.prev++
-			}
-			if dateKey == endDate {
-				stat.today++
-			}
-			if stat.first == "" || dateKey < stat.first {
-				stat.first = dateKey
-			}
-			if stat.last == "" || dateKey > stat.last {
-				stat.last = dateKey
-			}
+		for keyword := range keywords.Standard {
+			addHotspotKeywordStat(stats, keyword, dateKey, endDate, recentStartDate)
+		}
+		for keyword := range keywords.Discovery {
+			addHotspotKeywordStat(discoveryStats, keyword, dateKey, endDate, recentStartDate)
 		}
 	}
 
-	all := make([]model.HotspotSwitchingItem, 0, len(stats))
-	for _, stat := range stats {
-		all = append(all, stat.toModel(dateKeys))
-	}
+	all := hotspotStatsToItems(stats, dateKeys)
+	discoveryAll := hotspotStatsToItems(discoveryStats, dateKeys)
 	top := topHotspotItems(all, 30, func(a, b model.HotspotSwitchingItem) bool {
 		if a.Count14D != b.Count14D {
 			return a.Count14D > b.Count14D
@@ -748,22 +734,45 @@ func (s *Service) buildHotspotSwitching(ctx context.Context, days int, now time.
 		return a.CountRecent7D > b.CountRecent7D
 	})
 	daily := buildDailyHotspots(all, dateKeys)
+	discoveryTop := topHotspotItems(discoveryAll, 30, func(a, b model.HotspotSwitchingItem) bool {
+		if a.Count14D != b.Count14D {
+			return a.Count14D > b.Count14D
+		}
+		return a.SwitchScore > b.SwitchScore
+	})
+	discoveryTodayTop := topHotspotItems(discoveryAll, 30, func(a, b model.HotspotSwitchingItem) bool {
+		if a.TodayCount != b.TodayCount {
+			return a.TodayCount > b.TodayCount
+		}
+		return a.Count14D > b.Count14D
+	})
+	discoveryRising := topHotspotItems(filterHotspotItems(discoveryAll, func(item model.HotspotSwitchingItem) bool {
+		return item.CountRecent7D > item.CountPrev7D
+	}), 30, func(a, b model.HotspotSwitchingItem) bool {
+		if a.SwitchScore != b.SwitchScore {
+			return a.SwitchScore > b.SwitchScore
+		}
+		return a.CountRecent7D > b.CountRecent7D
+	})
 
 	return model.HotspotSwitchingResult{
-		Days:             days,
-		StartDate:        startDate,
-		EndDate:          endDate,
-		RecentDays:       recentDays,
-		PreviousDays:     prevDays,
-		TotalArticles:    totalArticles,
-		TodayTop:         todayTop,
-		Top:              top,
-		Rising:           rising,
-		Cooling:          cooling,
-		New:              newItems,
-		ContinuousRising: continuousRising,
-		Switches:         buildHotspotSwitches(all),
-		Daily:            daily,
+		Days:              days,
+		StartDate:         startDate,
+		EndDate:           endDate,
+		RecentDays:        recentDays,
+		PreviousDays:      prevDays,
+		TotalArticles:     totalArticles,
+		TodayTop:          todayTop,
+		Top:               top,
+		Rising:            rising,
+		DiscoveryTodayTop: discoveryTodayTop,
+		DiscoveryTop:      discoveryTop,
+		DiscoveryRising:   discoveryRising,
+		Cooling:           cooling,
+		New:               newItems,
+		ContinuousRising:  continuousRising,
+		Switches:          buildHotspotSwitches(all),
+		Daily:             daily,
 	}, nil
 }
 
@@ -793,6 +802,38 @@ func (s *Service) listHotspotWindowItems(ctx context.Context, startDate, endDate
 		items = items[:maxArticles]
 	}
 	return items, nil
+}
+
+func addHotspotKeywordStat(stats map[string]*hotspotKeywordStat, keyword string, dateKey string, endDate string, recentStartDate string) {
+	stat := stats[keyword]
+	if stat == nil {
+		stat = &hotspotKeywordStat{keyword: keyword, daily: map[string]int{}}
+		stats[keyword] = stat
+	}
+	stat.total++
+	stat.daily[dateKey]++
+	if dateKey >= recentStartDate {
+		stat.recent++
+	} else {
+		stat.prev++
+	}
+	if dateKey == endDate {
+		stat.today++
+	}
+	if stat.first == "" || dateKey < stat.first {
+		stat.first = dateKey
+	}
+	if stat.last == "" || dateKey > stat.last {
+		stat.last = dateKey
+	}
+}
+
+func hotspotStatsToItems(stats map[string]*hotspotKeywordStat, dateKeys []string) []model.HotspotSwitchingItem {
+	all := make([]model.HotspotSwitchingItem, 0, len(stats))
+	for _, stat := range stats {
+		all = append(all, stat.toModel(dateKeys))
+	}
+	return all
 }
 
 type hotspotKeywordStat struct {
@@ -872,13 +913,33 @@ var hotspotStopWords = map[string]struct{}{
 	"公司": {}, "股份": {}, "集团": {}, "公告": {}, "今日": {}, "昨日": {}, "最新": {}, "新闻": {}, "市场": {}, "行业": {}, "板块": {}, "投资": {}, "发展": {}, "相关": {}, "表示": {}, "记者": {}, "证券": {}, "中国": {}, "上海": {}, "深圳": {}, "北京": {}, "东方财富": {}, "财联社": {}, "新浪": {}, "金十": {}, "快讯": {}, "研报": {}, "万元": {}, "亿元": {},
 }
 
+type hotspotKeywordSets struct {
+	Standard  map[string]struct{}
+	Discovery map[string]struct{}
+}
+
 func extractArticleHotspotKeywords(item model.Item) map[string]struct{} {
-	text := item.Title + "\n" + item.Summary + "\n" + item.Content
+	sets := extractArticleHotspotKeywordSets(item)
 	result := map[string]struct{}{}
+	for keyword := range sets.Standard {
+		result[keyword] = struct{}{}
+	}
+	for keyword := range sets.Discovery {
+		result[keyword] = struct{}{}
+	}
+	return result
+}
+
+func extractArticleHotspotKeywordSets(item model.Item) hotspotKeywordSets {
+	text := item.Title + "\n" + item.Summary + "\n" + item.Content
+	result := hotspotKeywordSets{
+		Standard:  map[string]struct{}{},
+		Discovery: map[string]struct{}{},
+	}
 	for keyword, aliases := range hotspotKeywordAliases {
 		for _, alias := range aliases {
 			if strings.Contains(strings.ToLower(text), strings.ToLower(alias)) {
-				result[keyword] = struct{}{}
+				result.Standard[keyword] = struct{}{}
 				break
 			}
 		}
@@ -888,12 +949,33 @@ func extractArticleHotspotKeywords(item model.Item) map[string]struct{} {
 		if !ok {
 			continue
 		}
-		result[token] = struct{}{}
-		if len(result) >= 12 {
+		if isStandardHotspotKeywordToken(token) {
+			continue
+		}
+		result.Discovery[token] = struct{}{}
+		if len(result.Discovery) >= 12 {
 			break
 		}
 	}
 	return result
+}
+
+func isStandardHotspotKeywordToken(token string) bool {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return false
+	}
+	for keyword, aliases := range hotspotKeywordAliases {
+		if strings.EqualFold(token, keyword) {
+			return true
+		}
+		for _, alias := range aliases {
+			if strings.EqualFold(token, alias) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func normalizeHotspotTitleToken(token string) (string, bool) {
@@ -1377,6 +1459,44 @@ func (s *Service) handleListAStockSectorFundFlows(w http.ResponseWriter, r *http
 		PageSize:   apiutil.IntQuery(r, "page_size", 100),
 	}
 	result, err := s.store.ListAStockSectorFundFlows(r.Context(), filter)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleListAStockSectorFundFlowIntraday(w http.ResponseWriter, r *http.Request) {
+	filter := model.AStockSectorFundFlowIntradayFilter{
+		Date:       strings.TrimSpace(r.URL.Query().Get("date")),
+		SectorType: strings.TrimSpace(r.URL.Query().Get("sector_type")),
+		Indicator:  strings.TrimSpace(r.URL.Query().Get("indicator")),
+		Limit:      apiutil.IntQuery(r, "limit", 20),
+	}
+	result, err := s.store.ListAStockSectorFundFlowIntraday(r.Context(), filter)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleSnapshotAStockSectorFundFlowIntraday(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		Date        string `json:"date"`
+		CaptureTime string `json:"capture_time"`
+		SectorType  string `json:"sector_type"`
+		Indicator   string `json:"indicator"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid json", nil)
+		return
+	}
+	payload.Date = strings.TrimSpace(payload.Date)
+	payload.CaptureTime = strings.TrimSpace(payload.CaptureTime)
+	payload.SectorType = normalizeAStockSectorFundFlowSectorType(payload.SectorType)
+	payload.Indicator = normalizeAStockSectorFundFlowIndicator(payload.Indicator)
+	result, err := s.store.SnapshotAStockSectorFundFlowIntraday(r.Context(), payload.Date, payload.CaptureTime, payload.SectorType, payload.Indicator)
 	if err != nil {
 		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
 		return

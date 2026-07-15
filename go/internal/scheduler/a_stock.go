@@ -544,18 +544,20 @@ type aStockAuctionBackfillResult struct {
 }
 
 type aStockSectorFundFlowCrawlResult struct {
-	Date         string   `json:"date"`
-	Groups       int      `json:"groups"`
-	Items        int      `json:"items"`
-	SectorGroups int      `json:"sector_groups"`
-	SectorItems  int      `json:"sector_items"`
-	StockGroups  int      `json:"stock_groups"`
-	StockItems   int      `json:"stock_items"`
-	SourceErrors []string `json:"source_errors,omitempty"`
-	Skipped      bool     `json:"skipped,omitempty"`
-	Message      string   `json:"message,omitempty"`
-	SectorType   string   `json:"sector_type,omitempty"`
-	Indicator    string   `json:"indicator,omitempty"`
+	Date           string   `json:"date"`
+	Groups         int      `json:"groups"`
+	Items          int      `json:"items"`
+	SectorGroups   int      `json:"sector_groups"`
+	SectorItems    int      `json:"sector_items"`
+	StockGroups    int      `json:"stock_groups"`
+	StockItems     int      `json:"stock_items"`
+	SnapshotGroups int      `json:"snapshot_groups"`
+	SnapshotItems  int      `json:"snapshot_items"`
+	SourceErrors   []string `json:"source_errors,omitempty"`
+	Skipped        bool     `json:"skipped,omitempty"`
+	Message        string   `json:"message,omitempty"`
+	SectorType     string   `json:"sector_type,omitempty"`
+	Indicator      string   `json:"indicator,omitempty"`
 }
 
 func aStockAuctionCaptureSlotForTime(value time.Time) string {
@@ -719,6 +721,24 @@ func (w *Worker) runAStockSectorFundFlowCrawl(ctx context.Context) error {
 	return nil
 }
 
+func (w *Worker) runAStockSectorFundFlowIntradayCrawl(ctx context.Context) error {
+	result, err := w.runAStockSectorFundFlowIntradayLatest(ctx, true)
+	if err != nil {
+		return err
+	}
+	if result.Skipped {
+		return jobSkippedError{message: result.Message}
+	}
+	log.Info().
+		Str("trade_date", result.Date).
+		Int("groups", result.Groups).
+		Int("items", result.Items).
+		Int("snapshots", result.SnapshotGroups).
+		Int("snapshot_items", result.SnapshotItems).
+		Msg("a-stock sector fund flow intraday crawled")
+	return nil
+}
+
 func (w *Worker) runAStockSectorFundFlowLatest(ctx context.Context, requireTradingSession bool) (aStockSectorFundFlowCrawlResult, error) {
 	now := time.Now().In(aStockLocation())
 	strategyDate := now.Format("2006-01-02")
@@ -783,6 +803,62 @@ func (w *Worker) runAStockSectorFundFlowLatest(ctx context.Context, requireTradi
 	}
 	if result.Groups == 0 && len(result.SourceErrors) > 0 {
 		return result, fmt.Errorf("a-stock fund flow crawl failed for all sources: %s", strings.Join(result.SourceErrors, "; "))
+	}
+	return result, nil
+}
+
+func (w *Worker) runAStockSectorFundFlowIntradayLatest(ctx context.Context, requireTradingSession bool) (aStockSectorFundFlowCrawlResult, error) {
+	now := time.Now().In(aStockLocation())
+	strategyDate := now.Format("2006-01-02")
+	tradingDay, err := w.loadAStockTradingDayStatus(ctx, strategyDate)
+	if err != nil {
+		return aStockSectorFundFlowCrawlResult{Date: strategyDate}, fmt.Errorf("a-stock sector fund flow intraday trading calendar unavailable for %s: %w", strategyDate, err)
+	}
+	tradeDate := nonEmpty(strings.TrimSpace(tradingDay.Date), strategyDate)
+	if !tradingDay.IsTradingDay {
+		message := strings.TrimSpace(tradingDay.Message)
+		if message == "" {
+			message = "A-share market is closed; sector fund flow intraday crawl is disabled."
+		}
+		return aStockSectorFundFlowCrawlResult{Date: tradeDate, Skipped: true, Message: fmt.Sprintf("a-stock sector fund flow intraday skipped for %s: %s", tradeDate, message)}, nil
+	}
+	if requireTradingSession && !isAStockSectorFundFlowTradingSession(now) {
+		return aStockSectorFundFlowCrawlResult{Date: tradeDate, Skipped: true, Message: fmt.Sprintf("a-stock sector fund flow intraday skipped for %s: outside trading session", tradeDate)}, nil
+	}
+
+	sectorTypes := []string{"行业资金流", "概念资金流"}
+	sectorSources := []string{"eastmoney", "ths", "sina"}
+	const indicator = "今日"
+	captureTime := now.Format("15:04")
+	result := aStockSectorFundFlowCrawlResult{Date: tradeDate, Indicator: indicator}
+	for _, sectorType := range sectorTypes {
+		for _, source := range sectorSources {
+			items, err := w.fetchExternalAStockSectorFundFlowSource(ctx, tradeDate, sectorType, indicator, source)
+			if err != nil {
+				result.SourceErrors = append(result.SourceErrors, fmt.Sprintf("sector %s/%s/%s: %v", sectorType, indicator, source, err))
+				continue
+			}
+			if err := w.writeAStockSectorFundFlowSource(ctx, tradeDate, sectorType, indicator, source, items); err != nil {
+				result.SourceErrors = append(result.SourceErrors, fmt.Sprintf("sector %s/%s/%s write: %v", sectorType, indicator, source, err))
+				continue
+			}
+			result.Groups++
+			result.Items += len(items)
+			result.SectorGroups++
+			result.SectorItems += len(items)
+		}
+		snapshot, err := w.writeAStockSectorFundFlowIntradaySnapshot(ctx, tradeDate, captureTime, sectorType, indicator)
+		if err != nil {
+			result.SourceErrors = append(result.SourceErrors, fmt.Sprintf("sector %s/%s snapshot: %v", sectorType, indicator, err))
+			continue
+		}
+		if snapshot.Total > 0 {
+			result.SnapshotGroups++
+			result.SnapshotItems += snapshot.Total
+		}
+	}
+	if result.Groups == 0 && len(result.SourceErrors) > 0 {
+		return result, fmt.Errorf("a-stock sector fund flow intraday crawl failed for all sources: %s", strings.Join(result.SourceErrors, "; "))
 	}
 	return result, nil
 }
@@ -871,6 +947,47 @@ func (w *Worker) writeAStockSectorFundFlowSource(ctx context.Context, tradeDate 
 		return fmt.Errorf("content sector fund flow source upsert failed for %s/%s/%s: %s", sectorType, indicator, source, message)
 	}
 	return nil
+}
+
+func (w *Worker) writeAStockSectorFundFlowIntradaySnapshot(ctx context.Context, tradeDate string, captureTime string, sectorType string, indicator string) (model.AStockSectorFundFlowUpsertResult, error) {
+	result := model.AStockSectorFundFlowUpsertResult{Date: tradeDate}
+	baseURL := strings.TrimRight(strings.TrimSpace(w.cfg.ContentURL), "/")
+	if baseURL == "" {
+		return result, fmt.Errorf("YUQING_CONTENT_URL not configured")
+	}
+	payload := map[string]any{
+		"date":         tradeDate,
+		"capture_time": captureTime,
+		"sector_type":  sectorType,
+		"indicator":    indicator,
+	}
+	resp, err := w.client.R().
+		SetContext(ctx).
+		SetBody(payload).
+		SetResult(&struct {
+			Data *model.AStockSectorFundFlowUpsertResult `json:"data"`
+		}{}).
+		Post(baseURL + "/api/v1/internal/a-stock/sector-fund-flow-intraday/snapshot")
+	if err != nil {
+		return result, err
+	}
+	if !resp.IsSuccess() {
+		message := decodeAStockAuctionEndpointMessage(resp.Body(), resp.String())
+		if message == "" {
+			message = resp.Status()
+		}
+		return result, fmt.Errorf("content sector fund flow intraday snapshot failed for %s/%s: %s", sectorType, indicator, message)
+	}
+	var envelope struct {
+		Data model.AStockSectorFundFlowUpsertResult `json:"data"`
+	}
+	if err := json.Unmarshal(resp.Body(), &envelope); err != nil {
+		return result, err
+	}
+	if envelope.Data.Date == "" {
+		envelope.Data.Date = tradeDate
+	}
+	return envelope.Data, nil
 }
 
 func (w *Worker) fetchExternalAStockStockFundFlowSource(ctx context.Context, tradeDate string, indicator string, source string) ([]model.AStockStockFundFlow, error) {

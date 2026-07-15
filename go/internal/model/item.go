@@ -153,20 +153,23 @@ type ArticleFilter struct {
 }
 
 type HotspotSwitchingResult struct {
-	Days             int                    `json:"days"`
-	StartDate        string                 `json:"start_date"`
-	EndDate          string                 `json:"end_date"`
-	RecentDays       int                    `json:"recent_days"`
-	PreviousDays     int                    `json:"previous_days"`
-	TotalArticles    int                    `json:"total_articles"`
-	TodayTop         []HotspotSwitchingItem `json:"today_top"`
-	Top              []HotspotSwitchingItem `json:"top"`
-	Rising           []HotspotSwitchingItem `json:"rising"`
-	Cooling          []HotspotSwitchingItem `json:"cooling"`
-	New              []HotspotSwitchingItem `json:"new"`
-	ContinuousRising []HotspotSwitchingItem `json:"continuous_rising"`
-	Switches         []HotspotSwitchingPair `json:"switches"`
-	Daily            []HotspotDailyHotspot  `json:"daily"`
+	Days              int                    `json:"days"`
+	StartDate         string                 `json:"start_date"`
+	EndDate           string                 `json:"end_date"`
+	RecentDays        int                    `json:"recent_days"`
+	PreviousDays      int                    `json:"previous_days"`
+	TotalArticles     int                    `json:"total_articles"`
+	TodayTop          []HotspotSwitchingItem `json:"today_top"`
+	Top               []HotspotSwitchingItem `json:"top"`
+	Rising            []HotspotSwitchingItem `json:"rising"`
+	DiscoveryTodayTop []HotspotSwitchingItem `json:"discovery_today_top"`
+	DiscoveryTop      []HotspotSwitchingItem `json:"discovery_top"`
+	DiscoveryRising   []HotspotSwitchingItem `json:"discovery_rising"`
+	Cooling           []HotspotSwitchingItem `json:"cooling"`
+	New               []HotspotSwitchingItem `json:"new"`
+	ContinuousRising  []HotspotSwitchingItem `json:"continuous_rising"`
+	Switches          []HotspotSwitchingPair `json:"switches"`
+	Daily             []HotspotDailyHotspot  `json:"daily"`
 }
 
 type HotspotSwitchingItem struct {

@@ -472,11 +472,12 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	if err := json.Unmarshal(listRR.Body.Bytes(), &listEnvelope); err != nil {
 		t.Fatalf("unmarshal jobs list: %v", err)
 	}
-	if len(listEnvelope.Data) != 43 {
-		t.Fatalf("expected 43 scheduler jobs, got %d", len(listEnvelope.Data))
+	if len(listEnvelope.Data) != 44 {
+		t.Fatalf("expected 44 scheduler jobs, got %d", len(listEnvelope.Data))
 	}
-	var heartbeatJob, hotJob, eastmoneyJob, eastmoneyFullJob, jin10FullJob, wallStreetCNJob, clsJob, sinaJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningNewsCrawlJob, aStockMorningPreviewJob, aStockMorningJob, aStockAfternoonPreviewJob, aStockMiddayNewsCrawlJob, aStockAfternoonJob, aStockAfternoonOpenRefreshJob, aStockDailyBacktestRefreshJob, aStockExactSnapshotBackfillJob, aStockAuctionJob, aStockSectorFundFlowJob, aStockHoldingsJob, stockResearchJob, investorRelationsJob Job
+	var heartbeatJob, hotJob, eastmoneyJob, eastmoneyFullJob, jin10FullJob, wallStreetCNJob, clsJob, sinaJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningNewsCrawlJob, aStockMorningPreviewJob, aStockMorningJob, aStockAfternoonPreviewJob, aStockMiddayNewsCrawlJob, aStockAfternoonJob, aStockAfternoonOpenRefreshJob, aStockDailyBacktestRefreshJob, aStockExactSnapshotBackfillJob, aStockAuctionJob, aStockSectorFundFlowJob, aStockSectorFundFlowIntradayJob, aStockHoldingsJob, stockResearchJob, investorRelationsJob Job
 	aStockSectorFundFlowJobCount := 0
+	aStockSectorFundFlowIntradayJobCount := 0
 	for _, job := range listEnvelope.Data {
 		switch job.Name {
 		case "crawl-link-heartbeat":
@@ -530,6 +531,9 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 		case "a-stock-sector-fund-flow-crawl":
 			aStockSectorFundFlowJobCount++
 			aStockSectorFundFlowJob = job
+		case "a-stock-sector-fund-flow-intraday-crawl":
+			aStockSectorFundFlowIntradayJobCount++
+			aStockSectorFundFlowIntradayJob = job
 		case "a-stock-holdings-crawl":
 			aStockHoldingsJob = job
 		case "stock-research-crawl":
@@ -609,6 +613,12 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	}
 	if aStockSectorFundFlowJob.Cron != "0 31 9 * * ?; 0 1 10-15 * * ?" || aStockSectorFundFlowJob.IntervalSec != 3600 || aStockSectorFundFlowJob.Enabled {
 		t.Fatalf("expected A股 sector fund flow crawl disabled by default with reduced cron metadata, got %+v", aStockSectorFundFlowJob)
+	}
+	if aStockSectorFundFlowIntradayJobCount != 1 {
+		t.Fatalf("expected one A股 sector fund flow intraday job, got %d", aStockSectorFundFlowIntradayJobCount)
+	}
+	if aStockSectorFundFlowIntradayJob.Cron != "0 30-59 9 * * ?; 0 * 10 * * ?; 0 0-30 11 * * ?; 0 * 13-14 * * ?; 0 0 15 * * ?" || aStockSectorFundFlowIntradayJob.IntervalSec != 60 || aStockSectorFundFlowIntradayJob.Enabled {
+		t.Fatalf("expected A股 sector fund flow intraday crawl disabled by default with minute cron metadata, got %+v", aStockSectorFundFlowIntradayJob)
 	}
 	if aStockHoldingsJob.Cron != "0 35 2 * * ?" || aStockHoldingsJob.Enabled {
 		t.Fatalf("expected A股 holdings crawl disabled by default with 02:35 cron, got %+v", aStockHoldingsJob)
@@ -1922,6 +1932,102 @@ func TestRunAStockSectorFundFlowLatestFetchesAllGroupsAndWritesContent(t *testin
 	}
 }
 
+func TestRunAStockSectorFundFlowIntradayLatestFetchesTodaySectorOnlyAndSnapshots(t *testing.T) {
+	requested := map[string]bool{}
+	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/a-stock/trading-day":
+			_ = json.NewEncoder(w).Encode(aStockTradingDayStatus{Date: "2026-07-01", IsTradingDay: true, Message: "open"})
+		case "/api/a-stock/sector-fund-flow":
+			sectorType := r.URL.Query().Get("sector_type")
+			indicator := r.URL.Query().Get("indicator")
+			source := r.URL.Query().Get("source")
+			requested["sector/"+sectorType+"/"+indicator+"/"+source] = true
+			if indicator != "今日" {
+				t.Fatalf("intraday should only request 今日, got %s", indicator)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"items": []model.AStockSectorFundFlow{{
+					TradeDate:     "2026-07-01",
+					SectorType:    sectorType,
+					Indicator:     indicator,
+					Rank:          1,
+					Name:          sectorType + source,
+					MainNetInflow: 100000000,
+					SourceType:    source,
+				}},
+			})
+		case "/api/a-stock/stock-fund-flow":
+			t.Fatalf("intraday should not request stock fund flow")
+		default:
+			t.Fatalf("unexpected akshare request: %s", r.URL.Path)
+		}
+	}))
+	defer akshare.Close()
+
+	var sectorWrites int
+	var snapshotWrites int
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.Path)
+		}
+		switch r.URL.Path {
+		case "/api/v1/internal/a-stock/sector-fund-flow-sources":
+			var payload struct {
+				Date       string                       `json:"date"`
+				SectorType string                       `json:"sector_type"`
+				Indicator  string                       `json:"indicator"`
+				SourceType string                       `json:"source_type"`
+				Items      []model.AStockSectorFundFlow `json:"items"`
+				Replace    bool                         `json:"replace"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode content sector payload: %v", err)
+			}
+			if payload.Indicator != "今日" || len(payload.Items) != 1 || !payload.Replace {
+				t.Fatalf("unexpected intraday sector payload: %+v", payload)
+			}
+			sectorWrites++
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusOK, "message": "ok", "data": map[string]any{"inserted": 1, "total": 1}})
+		case "/api/v1/internal/a-stock/sector-fund-flow-intraday/snapshot":
+			var payload struct {
+				Date        string `json:"date"`
+				CaptureTime string `json:"capture_time"`
+				SectorType  string `json:"sector_type"`
+				Indicator   string `json:"indicator"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode content snapshot payload: %v", err)
+			}
+			if payload.Date != "2026-07-01" || payload.CaptureTime == "" || payload.Indicator != "今日" || payload.SectorType == "" {
+				t.Fatalf("unexpected intraday snapshot payload: %+v", payload)
+			}
+			snapshotWrites++
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusOK, "message": "ok", "data": map[string]any{"date": payload.Date, "inserted": 1, "total": 1}})
+		default:
+			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer content.Close()
+
+	worker := NewWorker(config.Config{AStockAuctionURL: akshare.URL, ContentURL: content.URL, HTTPTimeout: 2 * time.Second})
+	result, err := worker.runAStockSectorFundFlowIntradayLatest(context.Background(), false)
+	if err != nil {
+		t.Fatalf("runAStockSectorFundFlowIntradayLatest error: %v", err)
+	}
+	if result.Date != "2026-07-01" || result.Groups != 6 || result.Items != 6 || result.SectorGroups != 6 || result.StockGroups != 0 || result.SnapshotGroups != 2 || result.SnapshotItems != 2 || sectorWrites != 6 || snapshotWrites != 2 {
+		t.Fatalf("unexpected intraday result=%+v sectorWrites=%d snapshotWrites=%d", result, sectorWrites, snapshotWrites)
+	}
+	for _, sectorType := range []string{"行业资金流", "概念资金流"} {
+		for _, source := range []string{"eastmoney", "ths", "sina"} {
+			key := "sector/" + sectorType + "/今日/" + source
+			if !requested[key] {
+				t.Fatalf("expected akshare request for %s, got %+v", key, requested)
+			}
+		}
+	}
+}
+
 func TestRunAStockSectorFundFlowCrawlSkipsNonTradingDay(t *testing.T) {
 	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/a-stock/trading-day" {
@@ -2982,19 +3088,30 @@ func TestSchedulerAStockSectorFundFlowJobEnabledWhenEndpointConfigured(t *testin
 		WechatCleanupInterval: time.Hour,
 		WechatPushInterval:    time.Hour,
 	})
-	var fundFlowJob Job
+	var fundFlowJob, intradayJob Job
 	fundFlowJobCount := 0
+	intradayJobCount := 0
 	for _, job := range worker.Jobs() {
-		if job.Name == "a-stock-sector-fund-flow-crawl" {
+		switch job.Name {
+		case "a-stock-sector-fund-flow-crawl":
 			fundFlowJob = job
 			fundFlowJobCount++
+		case "a-stock-sector-fund-flow-intraday-crawl":
+			intradayJob = job
+			intradayJobCount++
 		}
 	}
 	if fundFlowJobCount != 1 {
 		t.Fatalf("expected one enabled A股 sector fund flow job, got %d", fundFlowJobCount)
 	}
+	if intradayJobCount != 1 {
+		t.Fatalf("expected one enabled A股 sector fund flow intraday job, got %d", intradayJobCount)
+	}
 	if !fundFlowJob.Enabled || fundFlowJob.Cron != "0 31 9 * * ?; 0 1 10-15 * * ?" || fundFlowJob.IntervalSec != 3600 || fundFlowJob.NextRunAt == nil {
 		t.Fatalf("expected enabled A股 sector fund flow crawl with reduced cron metadata, got %+v", fundFlowJob)
+	}
+	if !intradayJob.Enabled || intradayJob.Cron != "0 30-59 9 * * ?; 0 * 10 * * ?; 0 0-30 11 * * ?; 0 * 13-14 * * ?; 0 0 15 * * ?" || intradayJob.IntervalSec != 60 || intradayJob.NextRunAt == nil {
+		t.Fatalf("expected enabled A股 sector fund flow intraday crawl with minute cron metadata, got %+v", intradayJob)
 	}
 }
 

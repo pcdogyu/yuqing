@@ -13233,10 +13233,37 @@ func TestArticlesTemplateUsesSharedHeaderNavDirectly(t *testing.T) {
 
 func TestHotspotsPageRendersSwitchingData(t *testing.T) {
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/v1/a-stock/sector-fund-flow-intraday" {
+			if r.URL.Query().Get("sector_type") != "概念资金流" || r.URL.Query().Get("indicator") != "今日" {
+				t.Fatalf("unexpected intraday query %s", r.URL.RawQuery)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    http.StatusOK,
+				"message": "ok",
+				"data": model.AStockSectorFundFlowIntradayResult{
+					Date:       "2026-07-14",
+					SectorType: "概念资金流",
+					Indicator:  "今日",
+					LatestTime: "13:11",
+					Times:      []string{"09:30", "13:11"},
+					Series: []model.AStockSectorFundFlowIntradaySeries{{
+						Name:                "创新药",
+						LatestRank:          1,
+						LatestMainNetInflow: 8005000000,
+						Points: []model.AStockSectorFundFlowIntradayPoint{
+							{Time: "09:30", MainNetInflow: 100000000, Rank: 1},
+							{Time: "13:11", MainNetInflow: 8005000000, Rank: 1},
+						},
+					}},
+					Top: []model.AStockSectorFundFlow{{TradeDate: "2026-07-14", SectorType: "概念资金流", Indicator: "今日", Rank: 1, Name: "创新药", MainNetInflow: 8005000000}},
+				},
+			})
+			return
+		}
 		if r.URL.Path != "/api/v1/hotspots/switching" || r.URL.Query().Get("days") != "14" {
 			t.Fatalf("unexpected content request %s", r.URL.String())
 		}
-		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"code":    http.StatusOK,
 			"message": "ok",
@@ -13264,6 +13291,17 @@ func TestHotspotsPageRendersSwitchingData(t *testing.T) {
 					CountPrev7D:   1,
 					ChangeRate:    3,
 					ActiveDays:    3,
+				}},
+				DiscoveryTodayTop: []model.HotspotSwitchingItem{{
+					Keyword:    "涨幅",
+					TodayCount: 2,
+					Count14D:   4,
+				}},
+				DiscoveryRising: []model.HotspotSwitchingItem{{
+					Keyword:       "订单",
+					CountRecent7D: 3,
+					CountPrev7D:   1,
+					ChangeRate:    2,
 				}},
 				Cooling: []model.HotspotSwitchingItem{{
 					Keyword:       "黄金",
@@ -13302,16 +13340,22 @@ func TestHotspotsPageRendersSwitchingData(t *testing.T) {
 		"热点切换监控",
 		"过去 14 天热点",
 		"热点切换",
+		"当日板块资金流向",
 		"今日热点排行",
+		"发现词",
 		"升温热点",
 		"降温热点",
 		"新增热点",
 		"连续升温热点",
+		"13:11",
+		"创新药",
 		`href="/articles?keyword=AI"`,
 		`href="/articles?keyword=%E6%9C%BA%E5%99%A8%E4%BA%BA"`,
+		`/api/v1/hotspots/sector-fund-flow-intraday`,
 		"黄金",
 		"低空经济",
 		"算力",
+		"涨幅",
 	} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("expected hotspots page to include %q, got %s", expected, body)
