@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"sort"
 	"strings"
 	"time"
 
@@ -233,11 +234,12 @@ func (s *Store) ListAStockAuctionAmounts(ctx context.Context, filter model.AStoc
 	if err != nil {
 		return result, err
 	}
-	result.TrendSeries = trendSeries
-	result.Trend = trendSeries[aStockAuctionCaptureSlot0929]
-	if len(result.Trend) == 0 {
-		result.Trend = trendSeries[aStockAuctionCaptureSlot0930]
+	finalTrend := mergeAStockAuctionFinalTrendSeries(trendSeries[aStockAuctionCaptureSlot0929], trendSeries[aStockAuctionCaptureSlot0930])
+	if len(finalTrend) > 0 {
+		trendSeries[aStockAuctionCaptureSlot0929] = finalTrend
 	}
+	result.TrendSeries = trendSeries
+	result.Trend = finalTrend
 	result.LatestDate = ""
 	if len(dates) > 0 {
 		result.LatestDate = dates[0]
@@ -309,11 +311,27 @@ LIMIT ? OFFSET ?`, queryArgs...)
 func (s *Store) resolveAStockAuctionCaptureSlot(ctx context.Context, date string, requested string) (string, error) {
 	requested = normalizeAStockAuctionCaptureSlot(requested)
 	if requested != "" {
+		if requested == aStockAuctionCaptureSlot0929 {
+			count, err := s.countAStockAuctionRows(ctx, date, aStockAuctionCaptureSlot0929)
+			if err != nil {
+				return "", err
+			}
+			if count > 0 {
+				return aStockAuctionCaptureSlot0929, nil
+			}
+			legacyCount, err := s.countAStockAuctionRows(ctx, date, aStockAuctionCaptureSlot0930)
+			if err != nil {
+				return "", err
+			}
+			if legacyCount > 0 {
+				return aStockAuctionCaptureSlot0930, nil
+			}
+		}
 		return requested, nil
 	}
 	for _, slot := range []string{aStockAuctionCaptureSlot0929, aStockAuctionCaptureSlot0930, aStockAuctionCaptureSlot0925, aStockAuctionCaptureSlot0920} {
-		var count int
-		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM a_stock_auction_amounts WHERE trade_date = ? AND capture_slot = ? AND `+aStockAuctionSHSZFilterSQL, date, slot).Scan(&count); err != nil {
+		count, err := s.countAStockAuctionRows(ctx, date, slot)
+		if err != nil {
 			return "", err
 		}
 		if count > 0 {
@@ -321,6 +339,41 @@ func (s *Store) resolveAStockAuctionCaptureSlot(ctx context.Context, date string
 		}
 	}
 	return "", nil
+}
+
+func (s *Store) countAStockAuctionRows(ctx context.Context, date string, captureSlot string) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM a_stock_auction_amounts WHERE trade_date = ? AND capture_slot = ? AND `+aStockAuctionSHSZFilterSQL, date, captureSlot).Scan(&count)
+	return count, err
+}
+
+func mergeAStockAuctionFinalTrendSeries(current0929 []model.AStockAuctionTrend, legacy0930 []model.AStockAuctionTrend) []model.AStockAuctionTrend {
+	byDate := make(map[string]model.AStockAuctionTrend, len(current0929)+len(legacy0930))
+	for _, point := range legacy0930 {
+		date := strings.TrimSpace(point.Date)
+		if date == "" {
+			continue
+		}
+		byDate[date] = point
+	}
+	for _, point := range current0929 {
+		date := strings.TrimSpace(point.Date)
+		if date == "" {
+			continue
+		}
+		byDate[date] = point
+	}
+	if len(byDate) == 0 {
+		return nil
+	}
+	out := make([]model.AStockAuctionTrend, 0, len(byDate))
+	for _, point := range byDate {
+		out = append(out, point)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Date < out[j].Date
+	})
+	return out
 }
 
 func normalizeAStockAuctionTrendDays(days int) int {

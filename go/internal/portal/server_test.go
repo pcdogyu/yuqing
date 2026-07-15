@@ -743,16 +743,44 @@ func TestAStockAuctionTrendTablePointsPrefers0929Series(t *testing.T) {
 				CaptureSlot: "0925",
 				TotalAmount: 925,
 			}},
-			"0929": {{
-				Date:        "2026-07-14",
-				CaptureSlot: "0929",
-				TotalAmount: 929,
-			}},
+			"0929": {
+				{
+					Date:        "2026-07-14",
+					CaptureSlot: "0929",
+					TotalAmount: 929,
+				},
+				{
+					Date:        "2026-07-15",
+					CaptureSlot: "0929",
+					TotalAmount: 92915,
+				},
+			},
+			"0930": {
+				{
+					Date:        "2026-07-13",
+					CaptureSlot: "0930",
+					TotalAmount: 93013,
+				},
+				{
+					Date:        "2026-07-14",
+					CaptureSlot: "0930",
+					TotalAmount: 93014,
+				},
+			},
 		},
 	}, 7)
 
-	if len(points) != 1 || points[0].CaptureSlot != "0929" || points[0].TotalAmount != 929 {
-		t.Fatalf("expected history table to use 0929 series, got %+v", points)
+	if len(points) != 3 {
+		t.Fatalf("expected history table to merge legacy 0930 and current 0929 series, got %+v", points)
+	}
+	if points[0].Date != "2026-07-13" || points[0].CaptureSlot != "0930" || points[0].TotalAmount != 93013 {
+		t.Fatalf("expected first merged point to come from legacy 0930, got %+v", points[0])
+	}
+	if points[1].Date != "2026-07-14" || points[1].CaptureSlot != "0929" || points[1].TotalAmount != 929 {
+		t.Fatalf("expected same-day 0929 point to override legacy 0930, got %+v", points[1])
+	}
+	if points[2].Date != "2026-07-15" || points[2].CaptureSlot != "0929" || points[2].TotalAmount != 92915 {
+		t.Fatalf("expected latest merged point to come from current 0929, got %+v", points[2])
 	}
 }
 

@@ -193,7 +193,7 @@ func renderAStockAuctionTrend(b *strings.Builder, ctx model.AStockAuctionListRes
 		b.WriteString(`<div class="auction-empty">暂无趋势数据。请先点击“回溯近7天集合竞价”，或检查 YUQING_ASTOCK_AUCTION_URL 指向的 AKShare 业务服务。</div></section>`)
 		return
 	}
-	b.WriteString(`<p class="auction-muted">折线按每日集合竞价总成交额绘制，09:20 为蓝色，09:25 为绿色，09:29:59 为红色；历史明细表默认展示每天最终采集点的总成交量，以及沪市、深市集合竞价金额最高的3只股票。</p>`)
+	b.WriteString(`<p class="auction-muted">折线按每日集合竞价总成交额绘制，09:20 为蓝色，09:25 为绿色，09:29:59 为红色；历史旧数据中的 09:30 按最终采集点并入 09:29:59 展示。历史明细表默认展示每天最终采集点的总成交量，以及沪市、深市集合竞价金额最高的3只股票。</p>`)
 	b.WriteString(aStockAuctionTrendSVG(trendSeries, title, trendDays))
 	b.WriteString(`<div class="auction-scroll"><table class="auction-table auction-trend-table"><tr><th>日期</th><th>股票数</th><th>集合竞价总金额</th><th>成交量</th><th>最大金额股票</th><th class="auction-market-top">沪市金额前三</th><th class="auction-market-top">深市金额前三</th></tr>`)
 	for _, point := range points {
@@ -218,13 +218,45 @@ func renderAStockAuctionTrend(b *strings.Builder, ctx model.AStockAuctionListRes
 
 func aStockAuctionTrendTablePoints(ctx model.AStockAuctionListResult, days int) []model.AStockAuctionTrend {
 	if len(ctx.TrendSeries) > 0 {
-		for _, slot := range []string{"0929", "0930", "0925", "0920"} {
+		if points := aStockAuctionTrendWindow(aStockAuctionMergedFinalTrendSeries(ctx.TrendSeries["0929"], ctx.TrendSeries["0930"]), days); len(points) > 0 {
+			return points
+		}
+		for _, slot := range []string{"0925", "0920"} {
 			if points := aStockAuctionTrendWindow(ctx.TrendSeries[slot], days); len(points) > 0 {
 				return points
 			}
 		}
 	}
 	return aStockAuctionTrendWindow(ctx.Trend, days)
+}
+
+func aStockAuctionMergedFinalTrendSeries(current0929 []model.AStockAuctionTrend, legacy0930 []model.AStockAuctionTrend) []model.AStockAuctionTrend {
+	byDate := make(map[string]model.AStockAuctionTrend, len(current0929)+len(legacy0930))
+	for _, point := range legacy0930 {
+		date := strings.TrimSpace(point.Date)
+		if date == "" {
+			continue
+		}
+		byDate[date] = point
+	}
+	for _, point := range current0929 {
+		date := strings.TrimSpace(point.Date)
+		if date == "" {
+			continue
+		}
+		byDate[date] = point
+	}
+	if len(byDate) == 0 {
+		return nil
+	}
+	out := make([]model.AStockAuctionTrend, 0, len(byDate))
+	for _, point := range byDate {
+		out = append(out, point)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Date < out[j].Date
+	})
+	return out
 }
 
 func renderAStockAuctionTrendPeriods(b *strings.Builder, ctx model.AStockAuctionListResult, current int) {
@@ -491,13 +523,11 @@ func aStockAuctionTrendSeriesHasData(series map[string][]model.AStockAuctionTren
 }
 
 func aStockAuctionTrendWindows(series map[string][]model.AStockAuctionTrend, days int) map[string][]model.AStockAuctionTrend {
+	finalTrend := aStockAuctionMergedFinalTrendSeries(series["0929"], series["0930"])
 	windows := map[string][]model.AStockAuctionTrend{
 		"0920": aStockAuctionTrendWindow(series["0920"], days),
 		"0925": aStockAuctionTrendWindow(series["0925"], days),
-		"0929": aStockAuctionTrendWindow(series["0929"], days),
-	}
-	if len(windows["0929"]) == 0 {
-		windows["0929"] = aStockAuctionTrendWindow(series["0930"], days)
+		"0929": aStockAuctionTrendWindow(finalTrend, days),
 	}
 	return windows
 }

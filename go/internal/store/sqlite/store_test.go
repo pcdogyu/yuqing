@@ -572,6 +572,90 @@ func TestAStockAuctionAmountsDefaultFallsBackToLegacy0930(t *testing.T) {
 	}
 }
 
+func TestAStockAuctionAmountsFinalTrendMergesLegacy0930(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	fetchedAt := time.Date(2026, 7, 15, 1, 30, 5, 0, time.UTC)
+
+	for _, snapshot := range []struct {
+		date   string
+		slot   string
+		code   string
+		amount float64
+	}{
+		{date: "2026-07-13", slot: "0930", code: "600000", amount: 1300000},
+		{date: "2026-07-14", slot: "0930", code: "600000", amount: 1400000},
+		{date: "2026-07-14", slot: "0929", code: "002230", amount: 1429000},
+		{date: "2026-07-15", slot: "0929", code: "002230", amount: 1529000},
+	} {
+		if _, err := store.UpsertAStockAuctionAmounts(ctx, snapshot.date, []model.AStockAuctionAmount{
+			{CaptureSlot: snapshot.slot, Code: snapshot.code, Name: "测试股份", AuctionVolume: 10000, AuctionAmount: snapshot.amount, Source: "eastmoney_clist", Status: "ok", FetchedAt: fetchedAt},
+		}, true); err != nil {
+			t.Fatalf("UpsertAStockAuctionAmounts %s %s error: %v", snapshot.date, snapshot.slot, err)
+		}
+	}
+
+	list, err := store.ListAStockAuctionAmounts(ctx, model.AStockAuctionFilter{Date: "2026-07-15", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListAStockAuctionAmounts merged final trend error: %v", err)
+	}
+	final := list.TrendSeries["0929"]
+	if len(final) != 3 {
+		t.Fatalf("expected merged final 0929 trend to include legacy and current dates, got %+v", final)
+	}
+	assertFinal := func(i int, date string, slot string, amount float64) {
+		t.Helper()
+		if final[i].Date != date || final[i].CaptureSlot != slot || final[i].TotalAmount != amount {
+			t.Fatalf("unexpected merged final point %d: got %+v want date=%s slot=%s amount=%.0f", i, final[i], date, slot, amount)
+		}
+	}
+	assertFinal(0, "2026-07-13", "0930", 1300000)
+	assertFinal(1, "2026-07-14", "0929", 1429000)
+	assertFinal(2, "2026-07-15", "0929", 1529000)
+	if len(list.Trend) != 3 || list.Trend[0].CaptureSlot != "0930" || list.Trend[1].CaptureSlot != "0929" {
+		t.Fatalf("expected Trend to use merged final snapshots, got %+v", list.Trend)
+	}
+	if rawLegacy := list.TrendSeries["0930"]; len(rawLegacy) != 2 {
+		t.Fatalf("expected raw legacy 0930 series to remain available, got %+v", rawLegacy)
+	}
+}
+
+func TestAStockAuctionAmountsRequested0929FallsBackToLegacy0930Only(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	fetchedAt := time.Date(2026, 7, 13, 1, 30, 5, 0, time.UTC)
+
+	if _, err := store.UpsertAStockAuctionAmounts(ctx, "2026-07-13", []model.AStockAuctionAmount{
+		{CaptureSlot: "0930", Code: "600000", Name: "浦发银行", AuctionVolume: 20000, AuctionAmount: 2000000, Source: "eastmoney_clist", Status: "ok", FetchedAt: fetchedAt},
+	}, true); err != nil {
+		t.Fatalf("UpsertAStockAuctionAmounts legacy 0930 error: %v", err)
+	}
+
+	finalList, err := store.ListAStockAuctionAmounts(ctx, model.AStockAuctionFilter{Date: "2026-07-13", CaptureSlot: "0929", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListAStockAuctionAmounts requested 0929 error: %v", err)
+	}
+	if finalList.CaptureSlot != "0930" || finalList.Total != 1 || len(finalList.Items) != 1 || finalList.Items[0].CaptureSlot != "0930" {
+		t.Fatalf("expected requested 0929 detail to fall back to legacy 0930, got %+v", finalList)
+	}
+
+	slot0925, err := store.ListAStockAuctionAmounts(ctx, model.AStockAuctionFilter{Date: "2026-07-13", CaptureSlot: "0925", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListAStockAuctionAmounts requested 0925 error: %v", err)
+	}
+	if slot0925.CaptureSlot != "0925" || slot0925.Total != 0 || len(slot0925.Items) != 0 {
+		t.Fatalf("expected requested 0925 to avoid legacy fallback, got %+v", slot0925)
+	}
+
+	slot0920, err := store.ListAStockAuctionAmounts(ctx, model.AStockAuctionFilter{Date: "2026-07-13", CaptureSlot: "0920", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListAStockAuctionAmounts requested 0920 error: %v", err)
+	}
+	if slot0920.CaptureSlot != "0920" || slot0920.Total != 0 || len(slot0920.Items) != 0 {
+		t.Fatalf("expected requested 0920 to avoid legacy fallback, got %+v", slot0920)
+	}
+}
+
 func TestAStockAuctionAmountsDefaultFallsBackTo0925(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()

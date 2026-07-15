@@ -237,6 +237,45 @@ func TestAStockAuctionAmountAPIUpsertsAndLists(t *testing.T) {
 	if len(envelope.Data.Trend) != 1 || envelope.Data.Trend[0].CaptureSlot != "0929" || envelope.Data.Trend[0].TotalAmount != 5876080 {
 		t.Fatalf("expected 0925 list response to keep 0929 history trend, got %+v", envelope.Data.Trend)
 	}
+
+	legacyPayload := `{"date":"2026-06-15","capture_slot":"0930","items":[{"code":"600000","name":"浦发银行","auction_price":8.8,"auction_volume":90000,"auction_amount":930000,"source":"eastmoney_clist","status":"ok"}],"replace":true}`
+	legacyPostReq := httptest.NewRequest(http.MethodPost, "/api/v1/admin/a-stock/auction", strings.NewReader(legacyPayload))
+	legacyPostRR := httptest.NewRecorder()
+	router.ServeHTTP(legacyPostRR, legacyPostReq)
+	if legacyPostRR.Code != http.StatusOK {
+		t.Fatalf("expected legacy 0930 auction upsert 200, got %d body=%s", legacyPostRR.Code, legacyPostRR.Body.String())
+	}
+	finalListReq := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/auction?date=2026-06-16&page=1&page_size=10", nil)
+	finalListRR := httptest.NewRecorder()
+	router.ServeHTTP(finalListRR, finalListReq)
+	if finalListRR.Code != http.StatusOK {
+		t.Fatalf("expected final auction list 200, got %d body=%s", finalListRR.Code, finalListRR.Body.String())
+	}
+	if err := json.Unmarshal(finalListRR.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal final auction list: %v", err)
+	}
+	if len(envelope.Data.Trend) != 2 || envelope.Data.Trend[0].CaptureSlot != "0930" || envelope.Data.Trend[1].CaptureSlot != "0929" {
+		t.Fatalf("expected Trend to merge legacy 0930 and current 0929, got %+v", envelope.Data.Trend)
+	}
+	if finalSeries := envelope.Data.TrendSeries["0929"]; len(finalSeries) != 2 || finalSeries[0].CaptureSlot != "0930" || finalSeries[1].CaptureSlot != "0929" {
+		t.Fatalf("expected 0929 trend series to expose merged final snapshots, got %+v", finalSeries)
+	}
+	if rawLegacy := envelope.Data.TrendSeries["0930"]; len(rawLegacy) != 1 || rawLegacy[0].CaptureSlot != "0930" {
+		t.Fatalf("expected raw 0930 series to remain available, got %+v", rawLegacy)
+	}
+
+	legacyDetailReq := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/auction?date=2026-06-15&capture_slot=0929&page=1&page_size=10", nil)
+	legacyDetailRR := httptest.NewRecorder()
+	router.ServeHTTP(legacyDetailRR, legacyDetailReq)
+	if legacyDetailRR.Code != http.StatusOK {
+		t.Fatalf("expected legacy detail fallback 200, got %d body=%s", legacyDetailRR.Code, legacyDetailRR.Body.String())
+	}
+	if err := json.Unmarshal(legacyDetailRR.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal legacy detail fallback: %v", err)
+	}
+	if envelope.Data.CaptureSlot != "0930" || envelope.Data.Total != 1 || envelope.Data.Items[0].CaptureSlot != "0930" {
+		t.Fatalf("expected requested 0929 detail to fall back to legacy 0930, got %+v", envelope.Data)
+	}
 }
 
 func TestAStockRecommendationSnapshotAPIUpsertsAndGets(t *testing.T) {
