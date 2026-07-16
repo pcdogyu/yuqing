@@ -1368,12 +1368,13 @@ func TestAStockRecommendationAlgorithmSettingsAPI(t *testing.T) {
 	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/system/a-stock-recommendation-algorithm", nil)
 	getRR := httptest.NewRecorder()
 	router.ServeHTTP(getRR, getReq)
-	if getRR.Code != http.StatusOK || !strings.Contains(getRR.Body.String(), `"recommendation_limit":5`) || !strings.Contains(getRR.Body.String(), `"extreme_score":50`) {
+	if getRR.Code != http.StatusOK || !strings.Contains(getRR.Body.String(), `"recommendation_limit":5`) || !strings.Contains(getRR.Body.String(), `"extreme_score":120`) || !strings.Contains(getRR.Body.String(), `"factor_score_cap":200`) || !strings.Contains(getRR.Body.String(), `"low_open_strong_penalty":65`) {
 		t.Fatalf("expected default algorithm settings, got status=%d body=%s", getRR.Code, getRR.Body.String())
 	}
 
 	settings := model.DefaultAStockRecommendationAlgorithmSettings()
 	settings.Auction.RecommendationLimit = 4
+	settings.Auction.LowOpenPenalty2 = 22
 	settings.Fund.ExtremeScore = 45
 	raw, err := json.Marshal(settings)
 	if err != nil {
@@ -1383,7 +1384,7 @@ func TestAStockRecommendationAlgorithmSettingsAPI(t *testing.T) {
 	saveReq.Header.Set("Content-Type", "application/json")
 	saveRR := httptest.NewRecorder()
 	router.ServeHTTP(saveRR, saveReq)
-	if saveRR.Code != http.StatusOK || !strings.Contains(saveRR.Body.String(), `"recommendation_limit":4`) || !strings.Contains(saveRR.Body.String(), `"extreme_score":45`) {
+	if saveRR.Code != http.StatusOK || !strings.Contains(saveRR.Body.String(), `"recommendation_limit":4`) || !strings.Contains(saveRR.Body.String(), `"low_open_penalty_2":22`) || !strings.Contains(saveRR.Body.String(), `"extreme_score":45`) {
 		t.Fatalf("expected saved algorithm settings, got status=%d body=%s", saveRR.Code, saveRR.Body.String())
 	}
 
@@ -1400,6 +1401,20 @@ func TestAStockRecommendationAlgorithmSettingsAPI(t *testing.T) {
 	router.ServeHTTP(invalidRR, invalidReq)
 	if invalidRR.Code != http.StatusBadRequest {
 		t.Fatalf("expected invalid settings 400, got status=%d body=%s", invalidRR.Code, invalidRR.Body.String())
+	}
+
+	invalid = settings
+	invalid.Emotion.FactorScoreCap = 0
+	raw, err = json.Marshal(invalid)
+	if err != nil {
+		t.Fatalf("marshal invalid cap settings: %v", err)
+	}
+	invalidCapReq := httptest.NewRequest(http.MethodPut, "/api/v1/system/a-stock-recommendation-algorithm", strings.NewReader(string(raw)))
+	invalidCapReq.Header.Set("Content-Type", "application/json")
+	invalidCapRR := httptest.NewRecorder()
+	router.ServeHTTP(invalidCapRR, invalidCapReq)
+	if invalidCapRR.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid factor cap 400, got status=%d body=%s", invalidCapRR.Code, invalidCapRR.Body.String())
 	}
 }
 

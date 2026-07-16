@@ -16,6 +16,7 @@ type AStockRecommendationAlgorithmSettings struct {
 }
 
 type AStockRecommendationAuctionFactor struct {
+	FactorScoreCap              int     `json:"factor_score_cap"`
 	RecommendationLimit         int     `json:"recommendation_limit"`
 	ReplacementPoolLimit        int     `json:"replacement_pool_limit"`
 	ReplacementPerHotspot       int     `json:"replacement_per_hotspot"`
@@ -38,11 +39,24 @@ type AStockRecommendationAuctionFactor struct {
 	HighOpenScore4              int     `json:"high_open_score_4"`
 	HighOpenScore5              int     `json:"high_open_score_5"`
 	HighOpenStrongScore         int     `json:"high_open_strong_score"`
+	LowOpenThreshold1Pct        float64 `json:"low_open_threshold_1_pct"`
+	LowOpenThreshold2Pct        float64 `json:"low_open_threshold_2_pct"`
+	LowOpenThreshold3Pct        float64 `json:"low_open_threshold_3_pct"`
+	LowOpenThreshold4Pct        float64 `json:"low_open_threshold_4_pct"`
+	LowOpenThreshold5Pct        float64 `json:"low_open_threshold_5_pct"`
+	LowOpenStrongThresholdPct   float64 `json:"low_open_strong_threshold_pct"`
+	LowOpenPenalty1             int     `json:"low_open_penalty_1"`
+	LowOpenPenalty2             int     `json:"low_open_penalty_2"`
+	LowOpenPenalty3             int     `json:"low_open_penalty_3"`
+	LowOpenPenalty4             int     `json:"low_open_penalty_4"`
+	LowOpenPenalty5             int     `json:"low_open_penalty_5"`
+	LowOpenStrongPenalty        int     `json:"low_open_strong_penalty"`
 	LowOpenPenaltyThresholdPct  float64 `json:"low_open_penalty_threshold_pct"`
 	LowOpenPenalty              int     `json:"low_open_penalty"`
 }
 
 type AStockRecommendationEmotionFactor struct {
+	FactorScoreCap        int `json:"factor_score_cap"`
 	NewsEvidenceScore     int `json:"news_evidence_score"`
 	KeywordScore          int `json:"keyword_score"`
 	NegativeNewsPenalty   int `json:"negative_news_penalty"`
@@ -54,6 +68,7 @@ type AStockRecommendationEmotionFactor struct {
 }
 
 type AStockRecommendationSectorFactor struct {
+	FactorScoreCap                int     `json:"factor_score_cap"`
 	TrendMinDays                  int     `json:"trend_min_days"`
 	TrendScoreMin                 int     `json:"trend_score_min"`
 	TrendScoreMax                 int     `json:"trend_score_max"`
@@ -84,6 +99,7 @@ type AStockRecommendationSectorFactor struct {
 }
 
 type AStockRecommendationFundFactor struct {
+	FactorScoreCap           int     `json:"factor_score_cap"`
 	BonusThreshold           float64 `json:"bonus_threshold"`
 	StrongBonusThreshold     float64 `json:"strong_bonus_threshold"`
 	VeryStrongThreshold      float64 `json:"very_strong_threshold"`
@@ -112,6 +128,7 @@ type AStockRecommendationFundFactor struct {
 }
 
 type AStockRecommendationVolatilityFactor struct {
+	FactorScoreCap              int     `json:"factor_score_cap"`
 	DrawdownFilterThreshold     float64 `json:"drawdown_filter_threshold"`
 	Overheat30ThresholdPct      float64 `json:"overheat_30_threshold_pct"`
 	Overheat60ThresholdPct      float64 `json:"overheat_60_threshold_pct"`
@@ -131,8 +148,9 @@ type AStockRecommendationVolatilityFactor struct {
 
 func DefaultAStockRecommendationAlgorithmSettings() AStockRecommendationAlgorithmSettings {
 	return AStockRecommendationAlgorithmSettings{
-		Version: 1,
+		Version: 3,
 		Auction: AStockRecommendationAuctionFactor{
+			FactorScoreCap:              200,
 			RecommendationLimit:         5,
 			ReplacementPoolLimit:        36,
 			ReplacementPerHotspot:       12,
@@ -140,8 +158,8 @@ func DefaultAStockRecommendationAlgorithmSettings() AStockRecommendationAlgorith
 			HotspotScoredCandidateLimit: 240,
 			HotspotLimit:                3,
 			MarketCandidateLimit:        5000,
-			MarketRankScoreBase:         200,
-			MarketRankScoreDivisor:      5,
+			MarketRankScoreBase:         400,
+			MarketRankScoreDivisor:      4,
 			StocksPerHotspot:            3,
 			HighOpenThreshold1Pct:       1.0,
 			HighOpenThreshold2Pct:       2.0,
@@ -149,99 +167,157 @@ func DefaultAStockRecommendationAlgorithmSettings() AStockRecommendationAlgorith
 			HighOpenThreshold4Pct:       4.0,
 			HighOpenThreshold5Pct:       5.0,
 			HighOpenStrongThresholdPct:  5.01,
-			HighOpenScore1:              10,
-			HighOpenScore2:              20,
-			HighOpenScore3:              30,
-			HighOpenScore4:              40,
-			HighOpenScore5:              50,
-			HighOpenStrongScore:         65,
+			HighOpenScore1:              15,
+			HighOpenScore2:              30,
+			HighOpenScore3:              45,
+			HighOpenScore4:              60,
+			HighOpenScore5:              80,
+			HighOpenStrongScore:         100,
+			LowOpenThreshold1Pct:        1.0,
+			LowOpenThreshold2Pct:        2.0,
+			LowOpenThreshold3Pct:        3.0,
+			LowOpenThreshold4Pct:        4.0,
+			LowOpenThreshold5Pct:        5.0,
+			LowOpenStrongThresholdPct:   5.01,
+			LowOpenPenalty1:             10,
+			LowOpenPenalty2:             20,
+			LowOpenPenalty3:             30,
+			LowOpenPenalty4:             40,
+			LowOpenPenalty5:             50,
+			LowOpenStrongPenalty:        65,
 			LowOpenPenaltyThresholdPct:  -2.0,
-			LowOpenPenalty:              80,
+			LowOpenPenalty:              60,
 		},
 		Emotion: AStockRecommendationEmotionFactor{
-			NewsEvidenceScore:     10,
-			KeywordScore:          3,
-			NegativeNewsPenalty:   30,
-			HotspotMinScore:       1,
+			FactorScoreCap:        200,
+			NewsEvidenceScore:     5,
+			KeywordScore:          4,
+			NegativeNewsPenalty:   40,
+			HotspotMinScore:       0,
 			HotspotDisplayLimit:   8,
-			StockEvidenceScore:    25,
-			StockNameKeywordScore: 12,
-			WeakEvidencePenalty:   30,
+			StockEvidenceScore:    20,
+			StockNameKeywordScore: 8,
+			WeakEvidencePenalty:   25,
 		},
 		Sector: AStockRecommendationSectorFactor{
+			FactorScoreCap:                200,
 			TrendMinDays:                  3,
-			TrendScoreMin:                 -40,
-			TrendScoreMax:                 40,
+			TrendScoreMin:                 -120,
+			TrendScoreMax:                 120,
 			TrendTurnThreshold:            30000000,
-			TrendContinuousInflowScore:    25,
-			TrendPartialInflowScore:       15,
-			TrendWeakInflowScore:          8,
-			TrendContinuousOutflowPenalty: 30,
-			TrendPartialOutflowPenalty:    20,
-			TrendWeakOutflowPenalty:       8,
-			TrendTenDayAccelerationScore:  10,
-			TrendTenDayOutflowPenalty:     10,
-			TrendRecent2DInflowScore:      5,
-			TrendRecent2DOutflowPenalty:   5,
-			TrendRankTop10Score:           8,
-			TrendRankTop30Score:           4,
-			TrendLatestOutflowDownPenalty: 5,
-			TrendChoppyPenalty:            5,
-			TopStockOneSectorScore:        8,
-			TopStockTwoSectorScore:        15,
-			TopStockThreeSectorScore:      20,
+			TrendContinuousInflowScore:    70,
+			TrendPartialInflowScore:       45,
+			TrendWeakInflowScore:          20,
+			TrendContinuousOutflowPenalty: 90,
+			TrendPartialOutflowPenalty:    60,
+			TrendWeakOutflowPenalty:       25,
+			TrendTenDayAccelerationScore:  25,
+			TrendTenDayOutflowPenalty:     35,
+			TrendRecent2DInflowScore:      20,
+			TrendRecent2DOutflowPenalty:   30,
+			TrendRankTop10Score:           25,
+			TrendRankTop30Score:           12,
+			TrendLatestOutflowDownPenalty: 30,
+			TrendChoppyPenalty:            20,
+			TopStockOneSectorScore:        25,
+			TopStockTwoSectorScore:        45,
+			TopStockThreeSectorScore:      65,
 			TopStockLargeInflowThreshold:  5000000000,
-			TopStockLargeInflowScore:      5,
-			TopStockScoreCap:              25,
-			TopStockOverheat30Cap:         5,
+			TopStockLargeInflowScore:      25,
+			TopStockScoreCap:              90,
+			TopStockOverheat30Cap:         20,
 			TopStockEffectiveDate:         "2026-07-14",
-			DrawdownPenalty:               15,
+			DrawdownPenalty:               40,
 		},
 		Fund: AStockRecommendationFundFactor{
+			FactorScoreCap:           200,
 			BonusThreshold:           30000000,
 			StrongBonusThreshold:     100000000,
 			VeryStrongThreshold:      500000000,
 			ExtremeThreshold:         2000000000,
-			BonusScore:               10,
-			StrongBonusScore:         25,
-			VeryStrongScore:          40,
-			ExtremeScore:             50,
-			NegativeDays2Penalty:     20,
-			NegativeDays3Penalty:     35,
-			NegativeDays4Penalty:     50,
+			BonusScore:               25,
+			StrongBonusScore:         55,
+			VeryStrongScore:          90,
+			ExtremeScore:             120,
+			NegativeDays2Penalty:     35,
+			NegativeDays3Penalty:     70,
+			NegativeDays4Penalty:     100,
 			TenDayAccelerationRatio:  0.6,
-			TenDayAccelerationScore:  10,
-			TenDayRetreatPenalty:     30,
-			TenDayRepairCap:          10,
+			TenDayAccelerationScore:  25,
+			TenDayRetreatPenalty:     70,
+			TenDayRepairCap:          20,
 			RecentTurnThreshold:      30000000,
-			Recent2DInflowScore:      10,
-			Recent2DOutflowPenalty:   20,
-			LatestOutflowDownPenalty: 20,
-			ScoreMin:                 -50,
-			ScoreMax:                 50,
-			SectorWeakCap:            10,
+			Recent2DInflowScore:      30,
+			Recent2DOutflowPenalty:   50,
+			LatestOutflowDownPenalty: 60,
+			ScoreMin:                 -150,
+			ScoreMax:                 150,
+			SectorWeakCap:            20,
 			SectorNetOutflowCap:      0,
-			MedianPenalty:            30,
-			Overheat30Cap:            10,
+			MedianPenalty:            50,
+			Overheat30Cap:            20,
 		},
 		Volatility: AStockRecommendationVolatilityFactor{
+			FactorScoreCap:              200,
 			DrawdownFilterThreshold:     -15,
 			Overheat30ThresholdPct:      30,
 			Overheat60ThresholdPct:      60,
-			PreviousLimitUpPenalty:      50,
+			PreviousLimitUpPenalty:      80,
 			PreviousHighPctThreshold:    8,
-			PreviousHighPctPenalty:      40,
+			PreviousHighPctPenalty:      60,
 			TodayHighPctFilterThreshold: 8,
 			MomentumMinBars:             35,
-			MomentumMaxScore:            60,
-			MomentumADXScore:            25,
-			MomentumBollingerScore:      20,
-			MomentumMACDScore:           15,
-			MomentumMAScore:             10,
+			MomentumMaxScore:            100,
+			MomentumADXScore:            30,
+			MomentumBollingerScore:      25,
+			MomentumMACDScore:           20,
+			MomentumMAScore:             15,
 			MomentumVolumeScore:         10,
 			ExDividendWindowDays:        3,
 		},
 	}
+}
+
+func NormalizeAStockRecommendationAlgorithmSettings(settings AStockRecommendationAlgorithmSettings) AStockRecommendationAlgorithmSettings {
+	defaults := DefaultAStockRecommendationAlgorithmSettings()
+	if settings.Version <= 0 {
+		settings.Version = defaults.Version
+	}
+	if settings.Auction.FactorScoreCap <= 0 {
+		settings.Auction.FactorScoreCap = defaults.Auction.FactorScoreCap
+	}
+	if settings.Emotion.FactorScoreCap <= 0 {
+		settings.Emotion.FactorScoreCap = defaults.Emotion.FactorScoreCap
+	}
+	if settings.Sector.FactorScoreCap <= 0 {
+		settings.Sector.FactorScoreCap = defaults.Sector.FactorScoreCap
+	}
+	if settings.Fund.FactorScoreCap <= 0 {
+		settings.Fund.FactorScoreCap = defaults.Fund.FactorScoreCap
+	}
+	if settings.Volatility.FactorScoreCap <= 0 {
+		settings.Volatility.FactorScoreCap = defaults.Volatility.FactorScoreCap
+	}
+	if settings.Auction.LowOpenThreshold1Pct <= 0 &&
+		settings.Auction.LowOpenThreshold2Pct <= 0 &&
+		settings.Auction.LowOpenThreshold3Pct <= 0 &&
+		settings.Auction.LowOpenThreshold4Pct <= 0 &&
+		settings.Auction.LowOpenThreshold5Pct <= 0 &&
+		settings.Auction.LowOpenStrongThresholdPct <= 0 {
+		settings.Auction.LowOpenThreshold1Pct = defaults.Auction.LowOpenThreshold1Pct
+		settings.Auction.LowOpenThreshold2Pct = defaults.Auction.LowOpenThreshold2Pct
+		settings.Auction.LowOpenThreshold3Pct = defaults.Auction.LowOpenThreshold3Pct
+		settings.Auction.LowOpenThreshold4Pct = defaults.Auction.LowOpenThreshold4Pct
+		settings.Auction.LowOpenThreshold5Pct = defaults.Auction.LowOpenThreshold5Pct
+		settings.Auction.LowOpenStrongThresholdPct = defaults.Auction.LowOpenStrongThresholdPct
+		settings.Auction.LowOpenPenalty1 = defaults.Auction.LowOpenPenalty1
+		settings.Auction.LowOpenPenalty2 = defaults.Auction.LowOpenPenalty2
+		settings.Auction.LowOpenPenalty3 = defaults.Auction.LowOpenPenalty3
+		settings.Auction.LowOpenPenalty4 = defaults.Auction.LowOpenPenalty4
+		settings.Auction.LowOpenPenalty5 = defaults.Auction.LowOpenPenalty5
+		settings.Auction.LowOpenStrongPenalty = defaults.Auction.LowOpenStrongPenalty
+	}
+	return settings
 }
 
 func ValidateAStockRecommendationAlgorithmSettings(settings AStockRecommendationAlgorithmSettings) error {
@@ -251,8 +327,50 @@ func ValidateAStockRecommendationAlgorithmSettings(settings AStockRecommendation
 	if settings.Auction.RecommendationLimit < 0 || settings.Auction.HotspotLimit < 0 || settings.Auction.StocksPerHotspot < 0 {
 		return errors.New("recommendation and hotspot limits cannot be negative")
 	}
+	for name, cap := range map[string]int{
+		"auction.factor_score_cap":    settings.Auction.FactorScoreCap,
+		"emotion.factor_score_cap":    settings.Emotion.FactorScoreCap,
+		"sector.factor_score_cap":     settings.Sector.FactorScoreCap,
+		"fund.factor_score_cap":       settings.Fund.FactorScoreCap,
+		"volatility.factor_score_cap": settings.Volatility.FactorScoreCap,
+	} {
+		if cap <= 0 {
+			return errors.New(name + " must be greater than 0")
+		}
+		if cap > 1000 {
+			return errors.New(name + " cannot exceed 1000")
+		}
+	}
 	if settings.Auction.MarketRankScoreDivisor <= 0 {
 		return errors.New("market_rank_score_divisor must be greater than 0")
+	}
+	lowOpenThresholds := []float64{
+		settings.Auction.LowOpenThreshold1Pct,
+		settings.Auction.LowOpenThreshold2Pct,
+		settings.Auction.LowOpenThreshold3Pct,
+		settings.Auction.LowOpenThreshold4Pct,
+		settings.Auction.LowOpenThreshold5Pct,
+		settings.Auction.LowOpenStrongThresholdPct,
+	}
+	for i, threshold := range lowOpenThresholds {
+		if threshold <= 0 {
+			return errors.New("low open thresholds must be greater than 0")
+		}
+		if i > 0 && threshold < lowOpenThresholds[i-1] {
+			return errors.New("low open thresholds must be ordered")
+		}
+	}
+	for _, penalty := range []int{
+		settings.Auction.LowOpenPenalty1,
+		settings.Auction.LowOpenPenalty2,
+		settings.Auction.LowOpenPenalty3,
+		settings.Auction.LowOpenPenalty4,
+		settings.Auction.LowOpenPenalty5,
+		settings.Auction.LowOpenStrongPenalty,
+	} {
+		if penalty < 0 {
+			return errors.New("low open penalties cannot be negative")
+		}
 	}
 	if settings.Fund.ScoreMin > settings.Fund.ScoreMax {
 		return errors.New("fund score_min cannot be greater than score_max")

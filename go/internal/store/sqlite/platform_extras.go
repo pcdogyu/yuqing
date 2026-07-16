@@ -283,16 +283,14 @@ func (s *Store) GetAStockRecommendationAlgorithmSettings(ctx context.Context) (m
 	if err := json.Unmarshal([]byte(raw), &settings); err != nil {
 		return model.AStockRecommendationAlgorithmSettings{}, err
 	}
-	if settings.Version <= 0 {
-		settings.Version = 1
-	}
+	settings = model.NormalizeAStockRecommendationAlgorithmSettings(settings)
 	settings.UpdatedAt = mustParseRFC3339(updatedAt)
 	return settings, nil
 }
 
 func (s *Store) UpsertAStockRecommendationAlgorithmSettings(ctx context.Context, settings model.AStockRecommendationAlgorithmSettings) (model.AStockRecommendationAlgorithmSettings, error) {
 	if settings.Version <= 0 {
-		settings.Version = 1
+		settings.Version = model.DefaultAStockRecommendationAlgorithmSettings().Version
 	}
 	if err := model.ValidateAStockRecommendationAlgorithmSettings(settings); err != nil {
 		return model.AStockRecommendationAlgorithmSettings{}, err

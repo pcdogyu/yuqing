@@ -1717,17 +1717,18 @@ func TestPreferencesPopupAndMailConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAStockRecommendationAlgorithmSettings error: %v", err)
 	}
-	if defaultAlgorithm.Auction.RecommendationLimit != 5 || defaultAlgorithm.Fund.ExtremeScore != 50 {
+	if defaultAlgorithm.Auction.RecommendationLimit != 5 || defaultAlgorithm.Fund.ExtremeScore != 120 || defaultAlgorithm.Emotion.FactorScoreCap != 200 || defaultAlgorithm.Auction.LowOpenStrongPenalty != 65 {
 		t.Fatalf("unexpected default A stock algorithm settings: %+v", defaultAlgorithm)
 	}
 	updatedAlgorithm := defaultAlgorithm
 	updatedAlgorithm.Auction.RecommendationLimit = 4
+	updatedAlgorithm.Auction.LowOpenPenalty2 = 22
 	updatedAlgorithm.Fund.ExtremeScore = 45
 	savedAlgorithm, err := store.UpsertAStockRecommendationAlgorithmSettings(ctx, updatedAlgorithm)
 	if err != nil {
 		t.Fatalf("UpsertAStockRecommendationAlgorithmSettings error: %v", err)
 	}
-	if savedAlgorithm.Auction.RecommendationLimit != 4 || savedAlgorithm.Fund.ExtremeScore != 45 || savedAlgorithm.UpdatedAt.IsZero() {
+	if savedAlgorithm.Auction.RecommendationLimit != 4 || savedAlgorithm.Auction.LowOpenPenalty2 != 22 || savedAlgorithm.Fund.ExtremeScore != 45 || savedAlgorithm.UpdatedAt.IsZero() {
 		t.Fatalf("unexpected saved A stock algorithm settings: %+v", savedAlgorithm)
 	}
 }

@@ -7070,11 +7070,11 @@ func TestAStockRecommendationFundFlowFilterScoresAndReplenishes(t *testing.T) {
 	}
 
 	strong := mustAStockRecommendationForTest(t, result.Recommendations, "300001")
-	if strong.MarketScore != 145 || !strings.Contains(strong.Reason, "资金加分 45") {
+	if strong.MarketScore != 210 || !strings.Contains(strong.Reason, "资金加分 110") {
 		t.Fatalf("expected strong inflow bonus, got %+v", strong)
 	}
 	inflow := mustAStockRecommendationForTest(t, result.Recommendations, "300002")
-	if inflow.MarketScore != 110 || !strings.Contains(inflow.Reason, "资金加分 20") {
+	if inflow.MarketScore != 140 || !strings.Contains(inflow.Reason, "资金加分 50") {
 		t.Fatalf("expected inflow bonus, got %+v", inflow)
 	}
 	zero := mustAStockRecommendationForTest(t, result.Recommendations, "300006")
@@ -8199,7 +8199,7 @@ func TestAStockMarketViewFiltersDeepDrawdownsAndPenalizesSector(t *testing.T) {
 	if filtered[0].CurrentPrice != "100.00" || filtered[0].TodayPct != "+1.00%" || filtered[0].TodayPctClass != "astock-up" {
 		t.Fatalf("expected current day market fields to be filled, got %+v", filtered[0])
 	}
-	if filtered[1].Code != "000002" || filtered[1].MarketScore != 65 || !strings.Contains(filtered[1].Reason, "板块回撤减分 15") {
+	if filtered[1].Code != "000002" || filtered[1].MarketScore != 40 || !strings.Contains(filtered[1].Reason, "板块回撤减分 40") {
 		t.Fatalf("expected remaining AI stock to carry sector penalty, got %+v", filtered[1])
 	}
 	if filtered[1].CurrentPrice != "94.00" || filtered[1].TodayPct != "+2.00%" || filtered[1].TodayPctClass != "astock-up" {
@@ -8270,22 +8270,22 @@ func TestAStockMarketBarsPenalizePreviousHighPctRisk(t *testing.T) {
 		t.Fatalf("expected previous high-pct stocks to remain with penalties, got %+v status=%q", filtered, status)
 	}
 	limitUp := mustAStockRecommendationForTest(t, filtered, "600001")
-	if limitUp.MarketScore != 50 || !strings.Contains(limitUp.Reason, "昨日涨停+9.90%，风险扣分 50") {
+	if limitUp.MarketScore != 20 || !strings.Contains(limitUp.Reason, "昨日涨停+9.90%，风险扣分 80") {
 		t.Fatalf("expected previous limit-up penalty only, got %+v", limitUp)
 	}
 	limitUpComponent := mustAStockScoreComponentForTest(t, limitUp, "昨日涨停")
-	if limitUpComponent.Score != -50 || !strings.Contains(limitUpComponent.Detail, "昨日涨停+9.90%") {
+	if limitUpComponent.Score != -80 || !strings.Contains(limitUpComponent.Detail, "昨日涨停+9.90%") {
 		t.Fatalf("expected previous limit-up score component, got %+v", limitUpComponent)
 	}
 	if highComponent := aStockRecommendationScoreBreakdown(limitUp); strings.Contains(fmt.Sprint(highComponent), "昨日涨幅过高") {
 		t.Fatalf("expected previous limit-up not to also get high-pct penalty, got %+v", highComponent)
 	}
 	highPct := mustAStockRecommendationForTest(t, filtered, "600002")
-	if highPct.MarketScore != 60 || !strings.Contains(highPct.Reason, "昨日涨幅+8.01%，追高风险扣分 40") {
+	if highPct.MarketScore != 40 || !strings.Contains(highPct.Reason, "昨日涨幅+8.01%，追高风险扣分 60") {
 		t.Fatalf("expected previous >8%% penalty, got %+v", highPct)
 	}
 	highPctComponent := mustAStockScoreComponentForTest(t, highPct, "昨日涨幅过高")
-	if highPctComponent.Score != -40 || !strings.Contains(highPctComponent.Detail, "昨日涨幅+8.01%") {
+	if highPctComponent.Score != -60 || !strings.Contains(highPctComponent.Detail, "昨日涨幅+8.01%") {
 		t.Fatalf("expected previous high-pct score component, got %+v", highPctComponent)
 	}
 	boundary := mustAStockRecommendationForTest(t, filtered, "600003")
@@ -9237,11 +9237,11 @@ func TestAStockHotspotsApplyNegativeNewsPenalty(t *testing.T) {
 	if semiconductor.Name == "" {
 		t.Fatalf("expected semiconductor hotspot, got %+v", hotspots)
 	}
-	if semiconductor.NegativeNewsCount != 1 || semiconductor.NegativeNewsPenalty != 30 {
+	if semiconductor.NegativeNewsCount != 1 || semiconductor.NegativeNewsPenalty != 40 {
 		t.Fatalf("expected one negative news penalty, got %+v", semiconductor)
 	}
-	if semiconductor.Score != 1 {
-		t.Fatalf("expected negative penalty to floor hotspot score at 1, got %+v", semiconductor)
+	if semiconductor.Score != 0 {
+		t.Fatalf("expected negative penalty to floor hotspot score at 0, got %+v", semiconductor)
 	}
 	if isAStockNegativeNewsItem(model.Item{Title: "半导体板块拉升", Summary: "芯片存储需求走强"}) {
 		t.Fatal("expected positive news text not to trigger negative penalty")
@@ -9253,7 +9253,7 @@ func TestAStockHotspotsApplyNegativeNewsPenalty(t *testing.T) {
 	if len(recommendations) == 0 {
 		t.Fatalf("expected semiconductor matched recommendation, got %+v", recommendations)
 	}
-	if !strings.Contains(recommendations[0].Reason, "负面新闻 1 条，板块减分 30") {
+	if !strings.Contains(recommendations[0].Reason, "负面新闻 1 条，情绪扣分 40") {
 		t.Fatalf("expected recommendation reason to include negative news penalty, got %+v", recommendations[0])
 	}
 }
@@ -9300,7 +9300,7 @@ func TestAStockRecommendationsPenalizeWeakFinancingEvidence(t *testing.T) {
 		t.Fatalf("expected strong evidence stock to outrank weak financing evidence, got %+v", recommendations)
 	}
 	weak := byCode["002520"]
-	if !strings.Contains(weak.Reason, "融资融券弱新闻 1 条，个股证据减分 30") {
+	if !strings.Contains(weak.Reason, "融资融券弱新闻 1 条，个股证据减分 25") {
 		t.Fatalf("expected weak financing evidence penalty reason, got %+v", weak)
 	}
 }
@@ -9328,17 +9328,17 @@ func TestAStockRecommendationReasonRendersScoreBreakdownTable(t *testing.T) {
 		`class="astock-score-table"`,
 		"<th>类别</th><th>项目</th><th>命中/依据</th><th>分值</th><th>小计</th>",
 		"总分",
-		"115 分",
-		"板块",
+		"115/1000 分",
+		"情绪因子",
 		"新闻热度",
 		"证据新闻 3 条",
 		`class="astock-score-value">每条 10 分</td><td>30 分`,
-		"个股",
+		"竞价因子",
 		"个股证据",
-		"板块小计：36 分",
-		"个股小计：79 分",
-		"调整项小计：0 分",
-		"合计：115 分",
+		"情绪因子：73/200 分",
+		"竞价因子：40/200 分",
+		"个股资金因子：2/200 分",
+		"合计：115/1000 分",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected rendered score breakdown to contain %q, got %s", want, body)
@@ -9368,14 +9368,15 @@ func TestAStockRecommendationReasonRendersTotal317Breakdown(t *testing.T) {
 	body := b.String()
 	for _, want := range []string{
 		"总分",
-		"317 分",
+		"317/1000 分",
 		"每条 10 分",
 		"每个 3 分",
 		"每条 25 分",
-		"板块小计：202 分",
-		"个股小计：115 分",
-		"调整项小计：0 分",
-		"合计：317 分",
+		"情绪因子：199/200 分",
+		"竞价因子：65/200 分",
+		"版块资金因子：40/200 分",
+		"个股资金因子：13/200 分",
+		"合计：317/1000 分",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected 317 score breakdown to contain %q, got %s", want, body)
@@ -9401,7 +9402,7 @@ func TestAStockRecommendationReasonMergesSavedAndParsedBreakdown(t *testing.T) {
 	body := b.String()
 	for _, want := range []string{
 		"总分",
-		"317 分",
+		"317/1000 分",
 		"新闻热度",
 		"证据新闻 17 条",
 		"热点关键词",
@@ -9410,15 +9411,13 @@ func TestAStockRecommendationReasonMergesSavedAndParsedBreakdown(t *testing.T) {
 		"排名 1",
 		"个股证据",
 		"个股证据 1 条",
-		"行情分",
-		"65 分",
-		"综合分",
-		"217 分",
 		"负面新闻",
 		"负面新闻 1 条",
 		"-30 分",
-		"调整后合计",
-		"合计：317 分",
+		"情绪因子",
+		"竞价因子",
+		"版块资金因子",
+		"合计：317/1000 分",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected merged score breakdown to contain %q, got %s", want, body)
@@ -9458,7 +9457,7 @@ func TestAStockRecommendationReasonParsesHighOpenAndMomentumBonuses(t *testing.T
 		"动能趋势",
 		"布林突破 + 均线趋势",
 		"30 分",
-		"合计：195 分",
+		"合计：195/1000 分",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected high-open/momentum score breakdown to contain %q, got %s", want, body)
@@ -9481,20 +9480,21 @@ func TestAStockRecommendationReasonParsesUnitValueForScoreBreakdownTable(t *test
 	writeAStockRecommendationReasonCell(&b, rec)
 	body := b.String()
 	for _, want := range []string{
-		"172 分",
+		"172/1000 分",
 		"<th>类别</th><th>项目</th><th>命中/依据</th><th>分值</th><th>小计</th>",
 		"证据新闻 12 条",
 		`class="astock-score-value">每条 10 分</td><td>120 分`,
 		"命中关键词 2 个",
 		`class="astock-score-value">每个 3 分</td><td>6 分`,
 		"排名 143",
-		`class="astock-score-value">11 分</td><td>11 分`,
+		`class="astock-score-value">64 分</td><td>64 分`,
 		"个股证据 1 条",
 		`class="astock-score-value">每条 25 分</td><td>25 分`,
-		"板块小计：126 分",
-		"个股小计：46 分",
-		"调整项小计：0 分",
-		"合计：172 分",
+		"情绪因子：151/200 分",
+		"竞价因子：64/200 分",
+		"个股资金因子：10/200 分",
+		"历史修正：-53 分",
+		"合计：172/1000 分",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected rendered parsed score breakdown to contain %q, got %s", want, body)
@@ -9515,18 +9515,15 @@ func TestAStockRecommendationReasonExplainsMatchedScoreDelta(t *testing.T) {
 	body := b.String()
 	for _, want := range []string{
 		"总分",
-		"475 分",
-		`<td>板块</td><td class="astock-score-category">热度分</td><td class="astock-score-detail">命中 保险、券商、证券、资本市场、银行；证据新闻 37 条；热度分 295</td><td class="astock-score-value">--</td><td>295 分</td>`,
-		`<td>个股</td><td class="astock-score-category">匹配分</td><td class="astock-score-detail">使用实时新闻明确提及股票，个股证据 3 条；匹配分 170</td><td class="astock-score-value">--</td><td>170 分</td>`,
-		`<td>个股</td><td class="astock-score-category">综合分</td><td class="astock-score-detail">热度分 295 + 匹配分 170 = 综合分 465</td><td class="astock-score-value">--</td><td>465 分</td>`,
-		`<td>板块</td><td class="astock-score-category">负面新闻</td><td class="astock-score-detail">负面新闻 3 条，板块减分 90</td><td class="astock-score-value">-90 分</td><td>-90 分</td>`,
-		"匹配差额",
-		"匹配分 170 - 已列个股明细 75 = 95",
-		"95 分",
-		"匹配分：170 分",
-		"综合分：465 分",
-		"调整后合计：475 分",
-		"合计：475 分",
+		"475/1000 分",
+		"情绪因子",
+		"新闻热度",
+		"证据新闻 37 条",
+		"负面新闻 3 条，板块减分 90",
+		"-90 分",
+		"情绪因子：200/200 分",
+		"历史修正：275 分",
+		"合计：475/1000 分",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected matched score delta explanation to contain %q, got %s", want, body)
@@ -9711,7 +9708,7 @@ func TestAStockRecommendationsFilterNegativeNewsWithoutStrongEvidence(t *testing
 	}
 }
 
-func TestAStockMarketBarsPenalizeMorningLowOpen(t *testing.T) {
+func TestAStockMarketBarsScoreMorningLowOpen(t *testing.T) {
 	recommendations := []aStockRecommendation{
 		{Rank: 1, Hotspot: "人工智能", Code: "002520", Name: "日发精机", HotspotScore: 100, MarketScore: 100, Reason: "弱盘口"},
 		{Rank: 2, Hotspot: "人工智能", Code: "603893", Name: "瑞芯微", HotspotScore: 100, MarketScore: 100, Reason: "正常盘口"},
@@ -9725,14 +9722,41 @@ func TestAStockMarketBarsPenalizeMorningLowOpen(t *testing.T) {
 
 	got, _, status, _, _ := applyAStockMarketBars("2026-07-08", "morning", recommendations, bars, false, false, 0)
 
-	if len(got) != 1 {
-		t.Fatalf("expected low-open recommendation to be filtered, got %+v", got)
+	if len(got) != 2 {
+		t.Fatalf("expected low-open recommendation to remain with penalty, got %+v", got)
 	}
-	if got[0].Code != "603893" {
-		t.Fatalf("expected normal stock to remain, got %+v", got)
+	weak := mustAStockRecommendationForTest(t, got, "002520")
+	if weak.MarketScore != 80 {
+		t.Fatalf("expected low-open stock to deduct 20 points, got %+v", weak)
 	}
-	if !strings.Contains(status, "过滤低开股票 1") {
-		t.Fatalf("expected low-open hard filter status, got %q", status)
+	component := mustAStockScoreComponentForTest(t, weak, "当日低开")
+	if component.Score != -20 || !strings.Contains(component.Detail, "09:30 较 昨日收盘 低开 -2.50%") {
+		t.Fatalf("expected low-open score component, got %+v", component)
+	}
+	if strings.Contains(status, "过滤低开股票") {
+		t.Fatalf("expected low-open hard filter to be disabled, got %q", status)
+	}
+}
+
+func TestAStockLowOpenPenaltyBoundaries(t *testing.T) {
+	tests := []struct {
+		openPct float64
+		want    int
+	}{
+		{-0.99, 0},
+		{-1.00, 10},
+		{-2.00, 20},
+		{-3.00, 30},
+		{-4.00, 40},
+		{-5.00, 50},
+		{-5.01, 65},
+		{-10.00, 65},
+		{-10.01, 65},
+	}
+	for _, tc := range tests {
+		if got := aStockLowOpenPenaltyScore(tc.openPct); got != tc.want {
+			t.Fatalf("expected low-open %.2f%% penalty %d, got %d", tc.openPct, tc.want, got)
+		}
 	}
 }
 
@@ -9766,12 +9790,12 @@ func TestAStockMarketBarsScoreMorningHighOpen(t *testing.T) {
 	got, _, _, _, _ := applyAStockMarketBars("2026-07-14", "morning", recommendations, bars, false, false, 0)
 	wantScores := map[string]int{
 		"600001": 100,
-		"600002": 110,
-		"600003": 120,
-		"600004": 130,
-		"600005": 140,
-		"600006": 150,
-		"600007": 165,
+		"600002": 100 + aStockHighOpenScore(1.00),
+		"600003": 100 + aStockHighOpenScore(2.00),
+		"600004": 100 + aStockHighOpenScore(3.00),
+		"600005": 100 + aStockHighOpenScore(4.00),
+		"600006": 100 + aStockHighOpenScore(5.00),
+		"600007": 100 + aStockHighOpenScore(5.01),
 	}
 	for code, want := range wantScores {
 		rec := mustAStockRecommendationForTest(t, got, code)
@@ -9788,8 +9812,9 @@ func TestAStockMarketBarsScoreMorningHighOpen(t *testing.T) {
 	if got[0].Code != "600007" {
 		t.Fatalf("expected strongest high-open stock to rank first, got %+v", got)
 	}
-	if aStockHighOpenScore(5.00) != 50 || aStockHighOpenScore(5.01) != 65 {
-		t.Fatalf("expected 5.00%% score 50 and 5.01%% score 65")
+	defaults := defaultAStockAlgorithmSettings()
+	if aStockHighOpenScore(5.00) != defaults.Auction.HighOpenScore5 || aStockHighOpenScore(5.01) != defaults.Auction.HighOpenStrongScore {
+		t.Fatalf("expected high-open boundary scores to use configured fifth and strong tiers")
 	}
 }
 
@@ -9810,24 +9835,62 @@ func TestAStockMarketBarsScoreAfternoonHighOpenFromMiddayBaseline(t *testing.T) 
 
 	got, _, _, _, _ := applyAStockMarketBars("2026-07-14", "afternoon", recommendations, bars, false, false, 0)
 	midday := mustAStockRecommendationForTest(t, got, "600011")
-	if midday.MarketScore != 120 {
-		t.Fatalf("expected 12:30 baseline high-open score +20, got %+v", midday)
+	if midday.MarketScore != 130 {
+		t.Fatalf("expected 12:30 baseline high-open score +30, got %+v", midday)
 	}
 	middayComponent := mustAStockScoreComponentForTest(t, midday, "当日高开")
-	if middayComponent.Score != 20 || !strings.Contains(middayComponent.Detail, "13:01 较 12:30 高开 +2.13%") {
+	if middayComponent.Score != 30 || !strings.Contains(middayComponent.Detail, "13:01 较 12:30 高开 +2.13%") {
 		t.Fatalf("expected 12:30 high-open component, got %+v", middayComponent)
 	}
 	fallback := mustAStockRecommendationForTest(t, got, "600012")
-	if fallback.MarketScore != 165 {
-		t.Fatalf("expected 11:30 fallback high-open score +65, got %+v", fallback)
+	if fallback.MarketScore != 200 {
+		t.Fatalf("expected 11:30 fallback high-open score +100, got %+v", fallback)
 	}
 	fallbackComponent := mustAStockScoreComponentForTest(t, fallback, "当日高开")
-	if fallbackComponent.Score != 65 || !strings.Contains(fallbackComponent.Detail, "13:01 较 11:30 高开") {
+	if fallbackComponent.Score != 100 || !strings.Contains(fallbackComponent.Detail, "13:01 较 11:30 高开") {
 		t.Fatalf("expected 11:30 fallback high-open component, got %+v", fallbackComponent)
 	}
 	noBase := mustAStockRecommendationForTest(t, got, "600013")
 	if noBase.MarketScore != 100 {
 		t.Fatalf("expected no midday baseline to skip high-open score, got %+v", noBase)
+	}
+}
+
+func TestAStockMarketBarsScoreAfternoonLowOpenFromMiddayBaseline(t *testing.T) {
+	recommendations := initializeAStockRecommendationMarket([]aStockRecommendation{
+		{Rank: 1, Hotspot: "人工智能", Code: "600021", Name: "午间低开", HotspotScore: 100, MarketScore: 100, Reason: "base"},
+		{Rank: 2, Hotspot: "人工智能", Code: "600022", Name: "低开回退", HotspotScore: 100, MarketScore: 100, Reason: "base"},
+		{Rank: 3, Hotspot: "人工智能", Code: "600023", Name: "无午间价", HotspotScore: 100, MarketScore: 100, Reason: "base"},
+	})
+	bars := []aStockMarketBar{
+		{Code: "600021", Date: "2026-07-13", Close: 99, Pct: 0},
+		{Code: "600021", Date: "2026-07-14", AfternoonEntryPrice: 97.87, Close: 98.20, Pct: -1.5, SessionPrices: map[string]float64{"12:30": 100}},
+		{Code: "600022", Date: "2026-07-13", Close: 99, Pct: 0},
+		{Code: "600022", Date: "2026-07-14", AfternoonEntryPrice: 94.99, Close: 95.20, Pct: -4.0, SessionPrices: map[string]float64{"11:30": 100}},
+		{Code: "600023", Date: "2026-07-13", Close: 99, Pct: 0},
+		{Code: "600023", Date: "2026-07-14", AfternoonEntryPrice: 94.00, Close: 94.10, Pct: -5.0},
+	}
+
+	got, _, _, _, _ := applyAStockMarketBars("2026-07-14", "afternoon", recommendations, bars, false, false, 0)
+	midday := mustAStockRecommendationForTest(t, got, "600021")
+	if midday.MarketScore != 80 {
+		t.Fatalf("expected 12:30 baseline low-open score -20, got %+v", midday)
+	}
+	middayComponent := mustAStockScoreComponentForTest(t, midday, "当日低开")
+	if middayComponent.Score != -20 || !strings.Contains(middayComponent.Detail, "13:01 较 12:30 低开 -2.13%") {
+		t.Fatalf("expected 12:30 low-open component, got %+v", middayComponent)
+	}
+	fallback := mustAStockRecommendationForTest(t, got, "600022")
+	if fallback.MarketScore != 35 {
+		t.Fatalf("expected 11:30 fallback low-open score -65, got %+v", fallback)
+	}
+	fallbackComponent := mustAStockScoreComponentForTest(t, fallback, "当日低开")
+	if fallbackComponent.Score != -65 || !strings.Contains(fallbackComponent.Detail, "13:01 较 11:30 低开") {
+		t.Fatalf("expected 11:30 fallback low-open component, got %+v", fallbackComponent)
+	}
+	noBase := mustAStockRecommendationForTest(t, got, "600023")
+	if noBase.MarketScore != 100 {
+		t.Fatalf("expected no midday baseline to skip low-open score, got %+v", noBase)
 	}
 }
 
@@ -9847,7 +9910,7 @@ func TestAStockFundFlowMedianPenaltyWithinHotspot(t *testing.T) {
 	byCode := aStockTestRecommendationsByCode(got)
 
 	weak := byCode["002520"]
-	if weak.MarketScore != 70 || !strings.Contains(weak.Reason, "5日资金低于同热点中位数 +3.00亿，资金强度减分 30") {
+	if weak.MarketScore != 50 || !strings.Contains(weak.Reason, "5日资金低于同热点中位数 +3.00亿，资金强度减分 50") {
 		t.Fatalf("expected below-median fund-flow penalty, got %+v", weak)
 	}
 	if byCode["603893"].MarketScore != 100 || byCode["688385"].MarketScore != 100 {
@@ -9862,8 +9925,8 @@ func TestAStockFundFlowScoreStrongInflowCapsAtFifty(t *testing.T) {
 	})
 	rec := applyAStockFundFlow5DAssessmentToRecommendation(aStockRecommendation{Code: "300001", HotspotScore: 100, MarketScore: 100, Reason: "base"}, assessment, true)
 
-	if assessment.ScoreDelta != 50 || rec.MarketScore != 150 || !strings.Contains(rec.Reason, "资金加分 50") {
-		t.Fatalf("expected strong inflow to cap at +50, assessment=%+v rec=%+v", assessment, rec)
+	if assessment.ScoreDelta != 145 || rec.MarketScore != 245 || !strings.Contains(rec.Reason, "资金加分 145") {
+		t.Fatalf("expected strong inflow to use new +145 fund score, assessment=%+v rec=%+v", assessment, rec)
 	}
 }
 
@@ -9876,7 +9939,7 @@ func TestAStockFundFlowScoreUsesConfiguredScores(t *testing.T) {
 		Total10D: 2100000000,
 	}, settings)
 
-	if assessment.ScoreDelta != 52 {
+	if assessment.ScoreDelta != 60 {
 		t.Fatalf("expected configured extreme score plus acceleration, got %+v", assessment)
 	}
 }
@@ -9887,8 +9950,8 @@ func TestAStockFundFlowScoreContinuousOutflowCapsAtMinusFifty(t *testing.T) {
 		NegativeDays5D: 4,
 	})
 
-	if assessment.ScoreDelta != -50 || !strings.Contains(formatAStockFundFlowScoreReason(assessment), "近5日净流出4天") {
-		t.Fatalf("expected continuous outflow to cap at -50, got %+v", assessment)
+	if assessment.ScoreDelta != -100 || !strings.Contains(formatAStockFundFlowScoreReason(assessment), "近5日净流出4天") {
+		t.Fatalf("expected continuous outflow to use new -100 penalty, got %+v", assessment)
 	}
 }
 
@@ -9916,6 +9979,15 @@ func TestAStockHighOpenScoreUsesConfiguredScores(t *testing.T) {
 	}
 }
 
+func TestAStockLowOpenPenaltyUsesConfiguredScores(t *testing.T) {
+	settings := defaultAStockAlgorithmSettings()
+	settings.Auction.LowOpenThreshold3Pct = 2.5
+	settings.Auction.LowOpenPenalty3 = 33
+	if penalty := aStockLowOpenPenaltyScoreWithSettings(-2.8, settings); penalty != 33 {
+		t.Fatalf("expected configured low-open penalty 33, got %d", penalty)
+	}
+}
+
 func TestAStockFundFlowScoreTenDayPositiveFiveDayOutflow(t *testing.T) {
 	assessment := scoreAStockFundFlowAssessment(aStockFundFlow5DAssessment{
 		Total5D:        -10000000,
@@ -9923,7 +9995,7 @@ func TestAStockFundFlowScoreTenDayPositiveFiveDayOutflow(t *testing.T) {
 		NegativeDays5D: 1,
 	})
 
-	if assessment.ScoreDelta != -30 || !strings.Contains(formatAStockFundFlowScoreReason(assessment), "资金退潮减分 30") {
+	if assessment.ScoreDelta != -70 || !strings.Contains(formatAStockFundFlowScoreReason(assessment), "资金退潮减分 70") {
 		t.Fatalf("expected 10d inflow but 5d outflow to be penalized, got %+v", assessment)
 	}
 }
@@ -9934,7 +10006,7 @@ func TestAStockFundFlowScoreTenDayOutflowFiveDayRepairCapsPositive(t *testing.T)
 		Total10D: -100000000,
 	})
 
-	if assessment.ScoreDelta != 10 || !strings.Contains(formatAStockFundFlowScoreReason(assessment), "资金修复加分上限10") {
+	if assessment.ScoreDelta != 20 || !strings.Contains(formatAStockFundFlowScoreReason(assessment), "资金修复加分上限20") {
 		t.Fatalf("expected 10d outflow but 5d repair to cap at +10, got %+v", assessment)
 	}
 }
@@ -9951,8 +10023,8 @@ func TestAStockFundFlowScoreSectorWeakCapsBonus(t *testing.T) {
 		SectorNetOutflow: true,
 	})
 
-	if weak.ScoreDelta != 10 {
-		t.Fatalf("expected weak sector to cap fund bonus at +10, got %+v", weak)
+	if weak.ScoreDelta != 20 {
+		t.Fatalf("expected weak sector to cap fund bonus at +20, got %+v", weak)
 	}
 	if outflow.ScoreDelta != 0 {
 		t.Fatalf("expected sector net outflow to cap fund bonus at 0, got %+v", outflow)
@@ -9970,13 +10042,13 @@ func TestAStockSectorFundFlowTrendScoreStrongInflowCapsAtForty(t *testing.T) {
 	})
 	rec := applyAStockSectorFundFlowTrendAssessmentToRecommendation(aStockRecommendation{Hotspot: "人工智能", Code: "300001", HotspotScore: 100, MarketScore: 100, Reason: "base"}, assessment)
 
-	if assessment.ScoreDelta != 40 || assessment.Status != "连续流入" || rec.MarketScore != 140 {
-		t.Fatalf("expected strong sector trend to cap at +40, assessment=%+v rec=%+v", assessment, rec)
+	if assessment.ScoreDelta != 120 || assessment.Status != "连续流入" || rec.MarketScore != 220 {
+		t.Fatalf("expected strong sector trend to cap at +120, assessment=%+v rec=%+v", assessment, rec)
 	}
-	if !strings.Contains(rec.Reason, "板块资金趋势加分 40") || !strings.Contains(rec.Reason, "最近2日连续净流入") {
+	if !strings.Contains(rec.Reason, "板块资金趋势加分 120") || !strings.Contains(rec.Reason, "最近2日连续净流入") {
 		t.Fatalf("expected sector trend reason to be appended, got %+v", rec)
 	}
-	if len(rec.ScoreBreakdown) == 0 || rec.ScoreBreakdown[len(rec.ScoreBreakdown)-1].Label != "板块资金趋势" || rec.ScoreBreakdown[len(rec.ScoreBreakdown)-1].Score != 40 {
+	if len(rec.ScoreBreakdown) == 0 || rec.ScoreBreakdown[len(rec.ScoreBreakdown)-1].Label != "板块资金趋势" || rec.ScoreBreakdown[len(rec.ScoreBreakdown)-1].Score != 120 {
 		t.Fatalf("expected sector trend score breakdown, got %+v", rec.ScoreBreakdown)
 	}
 }
@@ -9991,10 +10063,10 @@ func TestAStockSectorFundFlowTrendScoreContinuousOutflowCapsAtMinusForty(t *test
 		{TradeDate: "2026-07-03", Rank: 40, Name: "半导体", MainNetInflow: -40000000, ChangePct: -0.2},
 	})
 
-	if assessment.ScoreDelta != -40 || assessment.Status != "连续流出" {
-		t.Fatalf("expected continuous sector outflow to cap at -40, got %+v", assessment)
+	if assessment.ScoreDelta != -120 || assessment.Status != "连续流出" {
+		t.Fatalf("expected continuous sector outflow to cap at -120, got %+v", assessment)
 	}
-	if reason := formatAStockSectorFundFlowTrendReason(assessment); !strings.Contains(reason, "板块资金趋势减分 40") || !strings.Contains(reason, "10日与5日均净流出") {
+	if reason := formatAStockSectorFundFlowTrendReason(assessment); !strings.Contains(reason, "板块资金趋势减分 120") || !strings.Contains(reason, "10日与5日均净流出") {
 		t.Fatalf("expected sector outflow reason, got %q", reason)
 	}
 }
@@ -10042,7 +10114,7 @@ func TestAStockFundFlowScoreRecentLargeOutflowSample(t *testing.T) {
 		LatestChangePct: -11.44,
 	})
 
-	if !assessment.HardFiltered || assessment.ScoreDelta != -50 {
+	if !assessment.HardFiltered || assessment.ScoreDelta != -130 {
 		t.Fatalf("expected 300475-like sample to be hard filtered and heavily penalized, got %+v", assessment)
 	}
 }
@@ -10064,15 +10136,15 @@ func TestAStockSectorTopStockResonanceScoreLevelsAndCap(t *testing.T) {
 
 	got := buildAStockSectorTopStockResonanceMap(flows, resolver)
 
-	if got["600000"].ScoreDelta != 8 {
-		t.Fatalf("expected one-sector resonance +8, got %+v", got["600000"])
+	if got["600000"].ScoreDelta != 25 {
+		t.Fatalf("expected one-sector resonance +25, got %+v", got["600000"])
 	}
-	if got["000001"].ScoreDelta != 15 {
-		t.Fatalf("expected two-sector resonance +15, got %+v", got["000001"])
+	if got["000001"].ScoreDelta != 45 {
+		t.Fatalf("expected two-sector resonance +45, got %+v", got["000001"])
 	}
 	shengyi := got["600183"]
-	if shengyi.ScoreDelta != 25 || shengyi.PositiveSectorCount != 3 || shengyi.TotalSectorMainNetInflow <= aStockSectorTopStockResonanceInflowThreshold {
-		t.Fatalf("expected Shengyi 3-sector resonance capped at +25, got %+v", shengyi)
+	if shengyi.ScoreDelta != 90 || shengyi.PositiveSectorCount != 3 || shengyi.TotalSectorMainNetInflow <= aStockSectorTopStockResonanceInflowThreshold {
+		t.Fatalf("expected Shengyi 3-sector resonance capped at +90, got %+v", shengyi)
 	}
 	if strings.Join(shengyi.SectorNames, "、") != "电子器件、元件、印制电路板" {
 		t.Fatalf("expected sector names to preserve source order, got %+v", shengyi.SectorNames)
@@ -10102,15 +10174,15 @@ func TestAStockSectorTopStockResonanceOverheat30CapsBonus(t *testing.T) {
 		SectorNames:              []string{"电子器件", "元件", "印制电路板"},
 		PositiveSectorCount:      3,
 		TotalSectorMainNetInflow: 12000000000,
-		ScoreDelta:               25,
+		ScoreDelta:               90,
 	}
 
 	got := applyAStockSectorTopStockResonanceToRecommendation(rec, resonance)
 
-	if got.MarketScore != 105 || positiveAStockSectorTopStockResonanceScore(got) != 5 {
-		t.Fatalf("expected 30d overheated resonance bonus capped at +5, got %+v", got)
+	if got.MarketScore != 120 || positiveAStockSectorTopStockResonanceScore(got) != 20 {
+		t.Fatalf("expected 30d overheated resonance bonus capped at +20, got %+v", got)
 	}
-	if !strings.Contains(got.Reason, "板块资金共振") || !strings.Contains(got.Reason, "板块共振加分 5") {
+	if !strings.Contains(got.Reason, "板块资金共振") || !strings.Contains(got.Reason, "板块共振加分 20") {
 		t.Fatalf("expected resonance reason with capped score, got %q", got.Reason)
 	}
 }
@@ -10803,7 +10875,7 @@ func TestAStockPersistedRecommendationsRepairGarbledHotspotAndReason(t *testing.
 	if !aStockScoreBreakdownContainsComponent(components, aStockRecommendationScoreComponent{Label: "资金动向", Detail: "5日主力资金净流入 +8.03亿，资金加分 25", Score: 25}) {
 		t.Fatalf("expected existing fund-flow component to be preserved, got %+v", components)
 	}
-	if !aStockScoreBreakdownContainsComponent(components, aStockRecommendationScoreComponent{Label: "新闻热度", Detail: "证据新闻 1 条", Score: 10}) {
+	if !aStockScoreBreakdownContainsComponent(components, aStockRecommendationScoreComponent{Label: "新闻热度", Detail: "证据新闻 1 条", Score: 5}) {
 		t.Fatalf("expected rebuilt base score components, got %+v", components)
 	}
 }
@@ -12122,6 +12194,9 @@ func TestAStockMarketCandidateResultUsesServerCache(t *testing.T) {
 
 func TestAStockRecommendationsApplyHoldingSummaryBonus(t *testing.T) {
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if handleAStockAlgorithmSettingsTestEndpoint(w, r) {
+			return
+		}
 		if r.URL.Path != "/api/v1/a-stock/holdings/summary" || r.URL.Query().Get("code") != "002230" {
 			t.Fatalf("unexpected holdings summary request: %s", r.URL.String())
 		}

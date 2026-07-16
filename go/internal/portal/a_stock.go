@@ -128,11 +128,21 @@ type aStockRecommendation struct {
 }
 
 type aStockRecommendationScoreComponent struct {
+	Factor    string `json:",omitempty"`
 	Label     string
 	Detail    string
 	UnitValue int `json:",omitempty"`
 	Score     int
 }
+
+const (
+	aStockScoreFactorAuction    = "auction"
+	aStockScoreFactorEmotion    = "emotion"
+	aStockScoreFactorSector     = "sector"
+	aStockScoreFactorFund       = "fund"
+	aStockScoreFactorVolatility = "volatility"
+	aStockScoreFactorHistory    = "history"
+)
 
 type aStockMarketBar struct {
 	Code                string
@@ -2299,7 +2309,7 @@ func writeAStockRecommendationReasonCell(b *strings.Builder, rec aStockRecommend
 	rows := aStockRecommendationScoreRows(rec, components)
 	total := aStockRecommendationScoreTotal(rec, components)
 	b.WriteString(`<div class="astock-score-total"><span>总分</span><span>`)
-	b.WriteString(fmt.Sprintf("%d 分", total))
+	b.WriteString(fmt.Sprintf("%d/1000 分", total))
 	b.WriteString(`</span></div><table class="astock-score-table"><tr><th>类别</th><th>项目</th><th>命中/依据</th><th>分值</th><th>小计</th></tr>`)
 	summary := newAStockScoreCategorySummary()
 	for _, row := range rows {
@@ -2360,12 +2370,14 @@ type aStockScoreRow struct {
 func newAStockScoreCategorySummary() aStockScoreCategorySummary {
 	return aStockScoreCategorySummary{
 		order: []aStockScoreComponentCategory{
-			{Key: "sector", Label: "板块"},
-			{Key: "stock", Label: "个股"},
-			{Key: "adjustment", Label: "调整项"},
+			{Key: aStockScoreFactorAuction, Label: "竞价因子"},
+			{Key: aStockScoreFactorEmotion, Label: "情绪因子"},
+			{Key: aStockScoreFactorSector, Label: "版块资金因子"},
+			{Key: aStockScoreFactorFund, Label: "个股资金因子"},
+			{Key: aStockScoreFactorVolatility, Label: "波动因子"},
 			{Key: "history", Label: "历史修正"},
 		},
-		totals: make(map[string]int, 4),
+		totals: make(map[string]int, 6),
 	}
 }
 
@@ -2377,29 +2389,41 @@ func (summary aStockScoreCategorySummary) add(category aStockScoreComponentCateg
 }
 
 func writeAStockScoreCategorySummary(b *strings.Builder, summary aStockScoreCategorySummary, total int, rec aStockRecommendation) {
+	settings := defaultAStockAlgorithmSettings()
 	b.WriteString(`<div class="astock-score-summary">`)
+	calculatedTotal := 0
 	for _, category := range summary.order {
-		value := summary.totals[category.Key]
-		if category.Key == "history" && value == 0 {
+		rawValue := summary.totals[category.Key]
+		if category.Key == aStockScoreFactorHistory && rawValue == 0 {
 			continue
+		}
+		value := rawValue
+		suffix := ""
+		if isAStockPrimaryScoreFactor(category.Key) {
+			cap := aStockScoreFactorCapWithSettings(category.Key, settings)
+			value = clampAStockScoreFactorSubtotal(rawValue, cap)
+			calculatedTotal += value
+			suffix = fmt.Sprintf("/%d", cap)
 		}
 		b.WriteString(`<span>`)
 		b.WriteString(html.EscapeString(category.Label))
-		b.WriteString(`小计：`)
-		b.WriteString(html.EscapeString(formatAStockScoreComponentScore(value)))
-		b.WriteString(`</span>`)
-	}
-	for _, row := range aStockReasonStageSubtotalRows(rec.Reason) {
-		b.WriteString(`<span>`)
-		b.WriteString(html.EscapeString(row.Label))
 		b.WriteString(`：`)
-		b.WriteString(html.EscapeString(formatAStockScoreComponentScore(row.Score)))
+		if suffix != "" {
+			b.WriteString(html.EscapeString(fmt.Sprintf("%d%s 分", value, suffix)))
+		} else {
+			b.WriteString(html.EscapeString(formatAStockScoreComponentScore(value)))
+		}
 		b.WriteString(`</span>`)
 	}
-	b.WriteString(`<span>调整后合计：`)
-	b.WriteString(html.EscapeString(formatAStockScoreComponentScore(total)))
-	b.WriteString(`</span><span>合计：`)
-	b.WriteString(html.EscapeString(formatAStockScoreComponentScore(total)))
+	if calculatedTotal < 0 {
+		calculatedTotal = 0
+	}
+	if calculatedTotal > 1000 {
+		calculatedTotal = 1000
+	}
+	_ = rec
+	b.WriteString(`<span>合计：`)
+	b.WriteString(html.EscapeString(fmt.Sprintf("%d/1000 分", total)))
 	b.WriteString(`</span></div>`)
 }
 
@@ -2422,7 +2446,7 @@ func aStockRecommendationScoreRows(rec aStockRecommendation, components []aStock
 			positive = append(positive, row)
 		}
 	}
-	positive = insertAStockReasonStageTableRows(positive, aStockReasonStageTableRows(rec.Reason))
+	_ = rec
 	rows := make([]aStockScoreRow, 0, len(components)+8)
 	rows = append(rows, positive...)
 	rows = append(rows, negative...)
@@ -2605,17 +2629,24 @@ func aStockRecommendationDisplayScoreBreakdown(rec aStockRecommendation, compone
 		return components
 	}
 	components = mergeAStockRecommendationDisplayScoreComponents(components, parseAStockRecommendationScoreBreakdown(rec))
-	sum := 0
-	for _, component := range components {
-		sum += component.Score
-	}
-	if sum == total {
+	calculated := aStockRecommendationDisplayCalculatedTotal(components, defaultAStockAlgorithmSettings())
+	if calculated == total {
 		return components
 	}
 	display := make([]aStockRecommendationScoreComponent, 0, len(components)+1)
 	display = append(display, components...)
-	display = append(display, newAStockScoreComponent("总分修正", fmt.Sprintf("保存总分 %d", total), total-sum, total-sum))
+	display = append(display, newAStockScoreComponentWithFactor(aStockScoreFactorHistory, "总分修正", fmt.Sprintf("保存总分 %d", total), total-calculated, total-calculated))
 	return display
+}
+
+func aStockRecommendationDisplayCalculatedTotal(components []aStockRecommendationScoreComponent, settings model.AStockRecommendationAlgorithmSettings) int {
+	total := aStockRecommendationFactorScoreTotalWithSettings(components, settings)
+	for _, component := range components {
+		if aStockScoreComponentFactor(component) == aStockScoreFactorHistory {
+			total += component.Score
+		}
+	}
+	return total
 }
 
 func mergeAStockRecommendationDisplayScoreComponents(saved []aStockRecommendationScoreComponent, parsed []aStockRecommendationScoreComponent) []aStockRecommendationScoreComponent {
@@ -2678,18 +2709,109 @@ func shouldSkipParsedAStockScoreComponent(label string, seenLabels map[string]st
 }
 
 func aStockScoreComponentCategoryFor(component aStockRecommendationScoreComponent) aStockScoreComponentCategory {
-	switch strings.TrimSpace(component.Label) {
-	case "新闻热度", "热点关键词", "负面新闻", "热度修正", "热点热度", "板块资金趋势", "板块资金共振", "板块回撤":
-		return aStockScoreComponentCategory{Key: "sector", Label: "板块"}
-	case "行情排名", "个股证据", "股票名命中", "弱证据", "机构持仓", "资金动向", "资金强度", "开盘盘口", "当日高开", "昨日涨停", "昨日涨幅过高", "动能趋势":
-		return aStockScoreComponentCategory{Key: "stock", Label: "个股"}
-	case "扣分调整", "递补排序", "匹配修正", "匹配差额":
-		return aStockScoreComponentCategory{Key: "adjustment", Label: "调整项"}
-	case "保存总分", "总分修正":
-		return aStockScoreComponentCategory{Key: "history", Label: "历史修正"}
+	switch aStockScoreComponentFactor(component) {
+	case aStockScoreFactorAuction:
+		return aStockScoreComponentCategory{Key: aStockScoreFactorAuction, Label: "竞价因子"}
+	case aStockScoreFactorEmotion:
+		return aStockScoreComponentCategory{Key: aStockScoreFactorEmotion, Label: "情绪因子"}
+	case aStockScoreFactorSector:
+		return aStockScoreComponentCategory{Key: aStockScoreFactorSector, Label: "版块资金因子"}
+	case aStockScoreFactorFund:
+		return aStockScoreComponentCategory{Key: aStockScoreFactorFund, Label: "个股资金因子"}
+	case aStockScoreFactorVolatility:
+		return aStockScoreComponentCategory{Key: aStockScoreFactorVolatility, Label: "波动因子"}
+	case aStockScoreFactorHistory:
+		return aStockScoreComponentCategory{Key: aStockScoreFactorHistory, Label: "历史修正"}
 	default:
-		return aStockScoreComponentCategory{Key: "adjustment", Label: "调整项"}
+		return aStockScoreComponentCategory{Key: aStockScoreFactorHistory, Label: "历史修正"}
 	}
+}
+
+func aStockScoreComponentFactor(component aStockRecommendationScoreComponent) string {
+	if factor := normalizeAStockScoreFactor(component.Factor); factor != "" {
+		return factor
+	}
+	switch strings.TrimSpace(component.Label) {
+	case "行情排名", "开盘盘口", "当日高开", "当日低开":
+		return aStockScoreFactorAuction
+	case "新闻热度", "热点关键词", "负面新闻", "热度修正", "热点热度", "个股证据", "股票名命中", "弱证据", "机构持仓":
+		return aStockScoreFactorEmotion
+	case "板块资金趋势", "板块资金共振", "板块回撤":
+		return aStockScoreFactorSector
+	case "资金动向", "资金强度":
+		return aStockScoreFactorFund
+	case "昨日涨停", "昨日涨幅过高", "动能趋势", "30日过热", "60日过热", "回撤过滤":
+		return aStockScoreFactorVolatility
+	case "保存总分", "总分修正", "递补排序", "扣分调整", "匹配修正", "匹配差额":
+		return aStockScoreFactorHistory
+	default:
+		return aStockScoreFactorHistory
+	}
+}
+
+func normalizeAStockScoreFactor(factor string) string {
+	switch strings.TrimSpace(factor) {
+	case aStockScoreFactorAuction, "竞价因子":
+		return aStockScoreFactorAuction
+	case aStockScoreFactorEmotion, "情绪因子":
+		return aStockScoreFactorEmotion
+	case aStockScoreFactorSector, "sector_fund", "版块资金因子", "板块资金因子":
+		return aStockScoreFactorSector
+	case aStockScoreFactorFund, "stock_fund", "个股资金因子":
+		return aStockScoreFactorFund
+	case aStockScoreFactorVolatility, "波动因子":
+		return aStockScoreFactorVolatility
+	case aStockScoreFactorHistory, "历史修正":
+		return aStockScoreFactorHistory
+	default:
+		return ""
+	}
+}
+
+func isAStockPrimaryScoreFactor(factor string) bool {
+	switch factor {
+	case aStockScoreFactorAuction, aStockScoreFactorEmotion, aStockScoreFactorSector, aStockScoreFactorFund, aStockScoreFactorVolatility:
+		return true
+	default:
+		return false
+	}
+}
+
+func aStockScoreFactorCapWithSettings(factor string, settings model.AStockRecommendationAlgorithmSettings) int {
+	switch factor {
+	case aStockScoreFactorAuction:
+		return positiveOrDefaultInt(settings.Auction.FactorScoreCap, 200)
+	case aStockScoreFactorEmotion:
+		return positiveOrDefaultInt(settings.Emotion.FactorScoreCap, 200)
+	case aStockScoreFactorSector:
+		return positiveOrDefaultInt(settings.Sector.FactorScoreCap, 200)
+	case aStockScoreFactorFund:
+		return positiveOrDefaultInt(settings.Fund.FactorScoreCap, 200)
+	case aStockScoreFactorVolatility:
+		return positiveOrDefaultInt(settings.Volatility.FactorScoreCap, 200)
+	default:
+		return 0
+	}
+}
+
+func positiveOrDefaultInt(value int, fallback int) int {
+	if value > 0 {
+		return value
+	}
+	return fallback
+}
+
+func clampAStockScoreFactorSubtotal(value int, cap int) int {
+	if cap <= 0 {
+		return value
+	}
+	if value > cap {
+		return cap
+	}
+	if value < -cap {
+		return -cap
+	}
+	return value
 }
 
 func formatAStockScoreComponentUnitValueText(component aStockRecommendationScoreComponent) string {
@@ -4822,7 +4944,7 @@ func (s *Server) applyAStockT1ShadowFundFlowWithCache(strategyDate string, recom
 		}
 		if assessment.Missing {
 			missingCount++
-			rec = applyAStockFundFlow5DAssessmentToRecommendation(rec, assessment, true)
+			rec = applyAStockFundFlow5DAssessmentToRecommendationWithSettings(rec, assessment, true, settings)
 			rec = s.applyAStockSectorFundFlowTrendScoreWithCache(strategyDate, rec, cache)
 			rec = applyAStockSectorTopStockResonanceToRecommendationWithSettings(rec, sectorTopStockResonance[normalizeAStockCode(rec.Code)], settings)
 			filtered = append(filtered, rec)
@@ -4832,7 +4954,7 @@ func (s *Server) applyAStockT1ShadowFundFlowWithCache(strategyDate string, recom
 			filteredCount++
 			continue
 		}
-		rec = applyAStockFundFlow5DAssessmentToRecommendation(rec, assessment, true)
+		rec = applyAStockFundFlow5DAssessmentToRecommendationWithSettings(rec, assessment, true, settings)
 		rec = s.applyAStockSectorFundFlowTrendScoreWithCache(strategyDate, rec, cache)
 		rec = applyAStockSectorTopStockResonanceToRecommendationWithSettings(rec, sectorTopStockResonance[normalizeAStockCode(rec.Code)], settings)
 		filtered = append(filtered, rec)
@@ -5928,6 +6050,7 @@ func (s *Server) applyAStockHoldingSummariesWithCache(recommendations []aStockRe
 	if len(recommendations) == 0 {
 		return recommendations
 	}
+	settings := s.loadAStockAlgorithmSettingsWithCache(cache)
 	for i := range recommendations {
 		recommendations[i].HoldingSummary = "--"
 		recommendations[i].HoldingRatio = "--"
@@ -5943,9 +6066,10 @@ func (s *Server) applyAStockHoldingSummariesWithCache(recommendations []aStockRe
 			continue
 		}
 		bonus := aStockHoldingScore(summary)
-		recommendations[i].MarketScore += bonus
-		appendAStockScoreAdjustment(
+		applyAStockScoreDeltaWithSettings(
 			&recommendations[i],
+			settings,
+			aStockScoreFactorFund,
 			"机构持仓",
 			fmt.Sprintf("机构共持 %d 家，类型 %d 类", summary.HolderCount, summary.HolderTypeCount),
 			bonus,
@@ -6166,7 +6290,7 @@ func (s *Server) applyAStockRecommendationFundFlowFilterWithCache(strategyDate s
 		}
 		if !assessment.Missing && isAStockFundFlowHardFiltered(assessment) && !allowHardFiltered {
 			if allowHardFilteredFallback {
-				rec = applyAStockFundFlow5DAssessmentToRecommendation(rec, assessment, true)
+				rec = applyAStockFundFlow5DAssessmentToRecommendationWithSettings(rec, assessment, true, settings)
 				hardFilteredFallbacks = append(hardFilteredFallbacks, hardFilteredFallback{rec: rec, countFiltered: countFiltered, replenished: replenished})
 				return false
 			}
@@ -6175,7 +6299,7 @@ func (s *Server) applyAStockRecommendationFundFlowFilterWithCache(strategyDate s
 			}
 			return false
 		}
-		rec = applyAStockFundFlow5DAssessmentToRecommendation(rec, assessment, true)
+		rec = applyAStockFundFlow5DAssessmentToRecommendationWithSettings(rec, assessment, true, settings)
 		rec = s.applyAStockSectorFundFlowTrendScoreWithCache(strategyDate, rec, cache)
 		rec = applyAStockSectorTopStockResonanceToRecommendationWithSettings(rec, sectorTopStockResonance[code], settings)
 		seen[code] = struct{}{}
@@ -6293,11 +6417,9 @@ func applyAStockFundFlowMedianPenaltyToRecommendationsWithSettings(recommendatio
 		if !ok || assessment.Missing || aStockAssessmentFundFlow5DTotal(assessment) >= median {
 			continue
 		}
-		result[i] = applyAStockRecommendationScorePenalty(
-			result[i],
-			settings.Fund.MedianPenalty,
-			fmt.Sprintf("5日资金低于同热点中位数 %s，资金强度减分 %d", formatSectorFundFlowMoney(median), settings.Fund.MedianPenalty),
-		)
+		reason := fmt.Sprintf("5日资金低于同热点中位数 %s，资金强度减分 %d", formatSectorFundFlowMoney(median), settings.Fund.MedianPenalty)
+		applyAStockScoreDeltaWithSettings(&result[i], settings, aStockScoreFactorFund, "资金强度", reason, -settings.Fund.MedianPenalty)
+		result[i].Reason = appendAStockReason(result[i].Reason, reason)
 	}
 	return result
 }
@@ -6310,6 +6432,10 @@ func aStockAssessmentFundFlow5DTotal(assessment aStockFundFlow5DAssessment) floa
 }
 
 func applyAStockFundFlow5DAssessmentToRecommendation(rec aStockRecommendation, assessment aStockFundFlow5DAssessment, applyScore bool) aStockRecommendation {
+	return applyAStockFundFlow5DAssessmentToRecommendationWithSettings(rec, assessment, applyScore, defaultAStockAlgorithmSettings())
+}
+
+func applyAStockFundFlow5DAssessmentToRecommendationWithSettings(rec aStockRecommendation, assessment aStockFundFlow5DAssessment, applyScore bool, settings model.AStockRecommendationAlgorithmSettings) aStockRecommendation {
 	if assessment.Missing {
 		rec.FundFlow5D = "--"
 		rec.FundFlow5DClass = "astock-flat"
@@ -6325,13 +6451,8 @@ func applyAStockFundFlow5DAssessmentToRecommendation(rec aStockRecommendation, a
 	if scoreDelta == 0 {
 		return rec
 	}
-	baseScore := rec.MarketScore
-	if baseScore == 0 {
-		baseScore = rec.HotspotScore
-	}
-	rec.MarketScore = baseScore + scoreDelta
 	reason := formatAStockFundFlowScoreReason(assessment)
-	appendAStockScoreAdjustment(&rec, "资金动向", reason, scoreDelta)
+	applyAStockScoreDeltaWithSettings(&rec, settings, aStockScoreFactorFund, "资金动向", reason, scoreDelta)
 	rec.Reason = appendAStockReason(rec.Reason, reason)
 	return rec
 }
@@ -6600,8 +6721,9 @@ func (s *Server) applyAStockSectorFundFlowTrendScoreWithCache(strategyDate strin
 	if strings.TrimSpace(rec.Hotspot) == "" || aStockRecommendationHasScoreLabel(rec, "板块资金趋势") {
 		return rec
 	}
+	settings := s.loadAStockAlgorithmSettingsWithCache(cache)
 	assessment := s.assessAStockRecommendationSectorFundFlowTrendWithCache(strategyDate, rec.Hotspot, cache)
-	return applyAStockSectorFundFlowTrendAssessmentToRecommendation(rec, assessment)
+	return applyAStockSectorFundFlowTrendAssessmentToRecommendationWithSettings(rec, assessment, settings)
 }
 
 func (s *Server) assessAStockRecommendationSectorFundFlowTrendWithCache(strategyDate string, hotspot string, cache *aStockRequestCache) aStockSectorFundFlowTrendAssessment {
@@ -6783,16 +6905,15 @@ func clampAStockSectorFundFlowTrendScoreWithSettings(score int, settings model.A
 }
 
 func applyAStockSectorFundFlowTrendAssessmentToRecommendation(rec aStockRecommendation, assessment aStockSectorFundFlowTrendAssessment) aStockRecommendation {
+	return applyAStockSectorFundFlowTrendAssessmentToRecommendationWithSettings(rec, assessment, defaultAStockAlgorithmSettings())
+}
+
+func applyAStockSectorFundFlowTrendAssessmentToRecommendationWithSettings(rec aStockRecommendation, assessment aStockSectorFundFlowTrendAssessment, settings model.AStockRecommendationAlgorithmSettings) aStockRecommendation {
 	if assessment.Missing || assessment.ScoreDelta == 0 {
 		return rec
 	}
-	baseScore := rec.MarketScore
-	if baseScore == 0 {
-		baseScore = rec.HotspotScore
-	}
-	rec.MarketScore = baseScore + assessment.ScoreDelta
 	reason := formatAStockSectorFundFlowTrendReason(assessment)
-	appendAStockScoreAdjustment(&rec, "板块资金趋势", reason, assessment.ScoreDelta)
+	applyAStockScoreDeltaWithSettings(&rec, settings, aStockScoreFactorSector, "板块资金趋势", reason, assessment.ScoreDelta)
 	rec.Reason = appendAStockReason(rec.Reason, reason)
 	return rec
 }
@@ -7114,13 +7235,8 @@ func applyAStockSectorTopStockResonanceToRecommendationWithSettings(rec aStockRe
 	if scoreDelta <= 0 || aStockRecommendationHasScoreLabel(rec, "板块资金共振") {
 		return rec
 	}
-	baseScore := rec.MarketScore
-	if baseScore == 0 {
-		baseScore = rec.HotspotScore
-	}
-	rec.MarketScore = baseScore + scoreDelta
 	reason := formatAStockSectorTopStockResonanceReason(rec, resonance, scoreDelta)
-	appendAStockScoreAdjustment(&rec, "板块资金共振", reason, scoreDelta)
+	applyAStockScoreDeltaWithSettings(&rec, settings, aStockScoreFactorSector, "板块资金共振", reason, scoreDelta)
 	rec.Reason = appendAStockReason(rec.Reason, reason)
 	return rec
 }
@@ -7797,6 +7913,10 @@ func appendAStockScoreComponent(rec *aStockRecommendation, label string, detail 
 }
 
 func appendAStockScoreComponentWithUnit(rec *aStockRecommendation, label string, detail string, score int, unitValue int) {
+	appendAStockScoreComponentWithFactor(rec, "", label, detail, score, unitValue)
+}
+
+func appendAStockScoreComponentWithFactor(rec *aStockRecommendation, factor string, label string, detail string, score int, unitValue int) {
 	if rec == nil {
 		return
 	}
@@ -7805,11 +7925,16 @@ func appendAStockScoreComponentWithUnit(rec *aStockRecommendation, label string,
 	if label == "" {
 		return
 	}
+	component := newAStockScoreComponent(label, detail, unitValue, score)
+	if normalized := normalizeAStockScoreFactor(factor); normalized != "" {
+		component.Factor = normalized
+	}
 	rec.ScoreBreakdown = append(rec.ScoreBreakdown, aStockRecommendationScoreComponent{
-		Label:     label,
-		Detail:    detail,
-		UnitValue: unitValue,
-		Score:     score,
+		Factor:    component.Factor,
+		Label:     component.Label,
+		Detail:    component.Detail,
+		UnitValue: component.UnitValue,
+		Score:     component.Score,
 	})
 }
 
@@ -7824,15 +7949,45 @@ func appendAStockScoreAdjustment(rec *aStockRecommendation, label string, detail
 	appendAStockScoreComponentIfNonZero(rec, label, detail, scoreDelta)
 }
 
+func applyAStockScoreDeltaWithSettings(rec *aStockRecommendation, settings model.AStockRecommendationAlgorithmSettings, factor string, label string, detail string, scoreDelta int) {
+	if rec == nil || scoreDelta == 0 {
+		return
+	}
+	canRecalculate := canRecalculateAStockRecommendationScore(rec.ScoreBreakdown)
+	if !canRecalculate {
+		baseScore := rec.MarketScore
+		if baseScore == 0 {
+			baseScore = rec.HotspotScore
+		}
+		rec.MarketScore = baseScore + scoreDelta
+	}
+	appendAStockScoreComponentWithFactor(rec, factor, label, detail, scoreDelta, scoreDelta)
+	if canRecalculate {
+		recalculateAStockRecommendationScoreWithSettings(rec, settings)
+	}
+}
+
+func canRecalculateAStockRecommendationScore(components []aStockRecommendationScoreComponent) bool {
+	if len(components) == 0 {
+		return false
+	}
+	for _, component := range components {
+		factor := normalizeAStockScoreFactor(component.Factor)
+		if factor == "" && aStockScoreComponentFactor(component) != aStockScoreFactorHistory {
+			return false
+		}
+		if factor != "" && !isAStockPrimaryScoreFactor(factor) && factor != aStockScoreFactorHistory {
+			return false
+		}
+	}
+	return true
+}
+
 func aStockRecommendationScoreTotal(rec aStockRecommendation, components []aStockRecommendationScoreComponent) int {
 	if rec.MarketScore != 0 {
 		return rec.MarketScore
 	}
-	total := 0
-	for _, component := range components {
-		total += component.Score
-	}
-	return total
+	return aStockRecommendationFactorScoreTotalWithSettings(components, defaultAStockAlgorithmSettings())
 }
 
 func aStockRecommendationScoreBreakdown(rec aStockRecommendation) []aStockRecommendationScoreComponent {
@@ -7843,18 +7998,62 @@ func aStockRecommendationScoreBreakdown(rec aStockRecommendation) []aStockRecomm
 }
 
 func newAStockScoreComponent(label string, detail string, unitValue int, score int) aStockRecommendationScoreComponent {
-	return aStockRecommendationScoreComponent{
+	component := aStockRecommendationScoreComponent{
 		Label:     label,
 		Detail:    detail,
 		UnitValue: unitValue,
 		Score:     score,
 	}
+	component.Factor = aStockScoreComponentFactor(component)
+	return component
+}
+
+func newAStockScoreComponentWithFactor(factor string, label string, detail string, unitValue int, score int) aStockRecommendationScoreComponent {
+	component := newAStockScoreComponent(label, detail, unitValue, score)
+	if normalized := normalizeAStockScoreFactor(factor); normalized != "" {
+		component.Factor = normalized
+	}
+	return component
+}
+
+func aStockRecommendationFactorScoreTotalWithSettings(components []aStockRecommendationScoreComponent, settings model.AStockRecommendationAlgorithmSettings) int {
+	total := 0
+	for _, category := range newAStockScoreCategorySummary().order {
+		if !isAStockPrimaryScoreFactor(category.Key) {
+			continue
+		}
+		total += aStockRecommendationFactorSubtotalWithSettings(components, category.Key, settings)
+	}
+	if total < 0 {
+		return 0
+	}
+	if total > 1000 {
+		return 1000
+	}
+	return total
+}
+
+func aStockRecommendationFactorSubtotalWithSettings(components []aStockRecommendationScoreComponent, factor string, settings model.AStockRecommendationAlgorithmSettings) int {
+	raw := 0
+	for _, component := range components {
+		if aStockScoreComponentFactor(component) == factor {
+			raw += component.Score
+		}
+	}
+	return clampAStockScoreFactorSubtotal(raw, aStockScoreFactorCapWithSettings(factor, settings))
+}
+
+func recalculateAStockRecommendationScoreWithSettings(rec *aStockRecommendation, settings model.AStockRecommendationAlgorithmSettings) {
+	if rec == nil || len(rec.ScoreBreakdown) == 0 {
+		return
+	}
+	rec.MarketScore = aStockRecommendationFactorScoreTotalWithSettings(rec.ScoreBreakdown, settings)
 }
 
 var (
 	aStockReasonHotspotScorePattern        = regexp.MustCompile(`命中\s*([^，；]+)，证据新闻\s*(\d+)\s*条，热度分\s*(-?\d+)`)
 	aStockReasonSimpleHotspotScorePattern  = regexp.MustCompile(`热度分\s*(-?\d+)`)
-	aStockReasonNegativePenaltyPattern     = regexp.MustCompile(`负面新闻\s*(\d+)\s*条，板块减分\s*(\d+)`)
+	aStockReasonNegativePenaltyPattern     = regexp.MustCompile(`负面新闻\s*(\d+)\s*条，(?:板块减分|情绪扣分)\s*(\d+)`)
 	aStockReasonMarketScorePattern         = regexp.MustCompile(`行情排名\s*(\d+)[^，；]*，成交额[^，；]*，个股证据\s*(\d+)\s*条，行情分\s*(-?\d+)`)
 	aStockReasonMatchedScorePattern        = regexp.MustCompile(`个股证据\s*(\d+)\s*条，匹配分\s*(-?\d+)`)
 	aStockReasonComprehensiveScorePattern  = regexp.MustCompile(`综合分\s*(-?\d+)`)
@@ -7867,6 +8066,7 @@ var (
 	aStockReasonFundStrengthPenaltyPattern = regexp.MustCompile(`资金强度减分\s*(\d+)`)
 	aStockReasonSectorDrawdownPattern      = regexp.MustCompile(`板块回撤减分\s*(\d+)`)
 	aStockReasonHighOpenBonusPattern       = regexp.MustCompile(`(?:([^，；]*高开[^，；]*)，)?高开加分\s*(\d+)`)
+	aStockReasonLowOpenTierPenaltyPattern  = regexp.MustCompile(`(?:([^，；]*低开[^，；]*)，)?低开扣分\s*(\d+)`)
 	aStockReasonMomentumBonusPattern       = regexp.MustCompile(`动能趋势加分\s*(\d+)(?:（([^）]+)）)?`)
 )
 
@@ -7925,16 +8125,8 @@ func parseAStockRecommendationScoreBreakdown(rec aStockRecommendation) []aStockR
 	components = appendAStockParsedAdjustment(components, reason, aStockReasonFundStrengthPenaltyPattern, "资金强度", "资金强度减分", -1)
 	components = appendAStockParsedAdjustment(components, reason, aStockReasonSectorDrawdownPattern, "板块回撤", "板块回撤减分", -1)
 	components = appendAStockParsedHighOpenBonus(components, reason)
+	components = appendAStockParsedLowOpenPenalty(components, reason)
 	components = appendAStockParsedMomentumBonus(components, reason)
-	total := 0
-	for _, component := range components {
-		total += component.Score
-	}
-	finalScore := aStockRecommendationScoreTotal(rec, components)
-	if finalScore != 0 && total != finalScore {
-		delta := finalScore - total
-		components = append(components, newAStockScoreComponent("总分修正", fmt.Sprintf("保存总分 %d", finalScore), delta, delta))
-	}
 	return components
 }
 
@@ -7961,11 +8153,7 @@ func appendAStockParsedMatchComponents(components []aStockRecommendationScoreCom
 		evidenceUnitValue = 0
 	}
 	components = append(components, newAStockScoreComponent("个股证据", fmt.Sprintf("个股证据 %d 条", evidence), evidenceUnitValue, evidenceScore))
-	matchSum := rankScore + evidenceScore + keywordScore - weakPenalty
-	if matchSum != matchScore {
-		delta := matchScore - matchSum
-		components = append(components, newAStockScoreComponent("匹配差额", fmt.Sprintf("匹配分 %d - 已列个股明细 %d = %d", matchScore, matchSum, delta), delta, delta))
-	}
+	_ = matchScore
 	return components
 }
 
@@ -8000,6 +8188,25 @@ func appendAStockParsedHighOpenBonus(components []aStockRecommendationScoreCompo
 			detail = fmt.Sprintf("高开加分 %d", value)
 		}
 		components = append(components, newAStockScoreComponent("当日高开", detail, value, value))
+	}
+	return components
+}
+
+func appendAStockParsedLowOpenPenalty(components []aStockRecommendationScoreComponent, reason string) []aStockRecommendationScoreComponent {
+	matches := aStockReasonLowOpenTierPenaltyPattern.FindAllStringSubmatch(reason, -1)
+	for _, match := range matches {
+		if len(match) != 3 {
+			continue
+		}
+		value := atoiAStockScorePart(match[2])
+		if value == 0 {
+			continue
+		}
+		detail := strings.TrimSpace(match[1])
+		if detail == "" {
+			detail = fmt.Sprintf("低开扣分 %d", value)
+		}
+		components = append(components, newAStockScoreComponent("当日低开", detail, -value, -value))
 	}
 	return components
 }
@@ -8069,11 +8276,10 @@ func capAStockOverheatedFundFlowScoreWithSettings(rec aStockRecommendation, chan
 		return rec
 	}
 	penalty := fundBonus - settings.Fund.Overheat30Cap
-	return applyAStockRecommendationScorePenalty(
-		rec,
-		penalty,
-		fmt.Sprintf("30日涨幅超过%s，资金加分上限%d，过热减分 %d", formatAStockPct(settings.Volatility.Overheat30ThresholdPct), settings.Fund.Overheat30Cap, penalty),
-	)
+	reason := fmt.Sprintf("30日涨幅超过%s，资金加分上限%d，过热减分 %d", formatAStockPct(settings.Volatility.Overheat30ThresholdPct), settings.Fund.Overheat30Cap, penalty)
+	applyAStockScoreDeltaWithSettings(&rec, settings, aStockScoreFactorFund, "资金强度", reason, -penalty)
+	rec.Reason = appendAStockReason(rec.Reason, reason)
+	return rec
 }
 
 func capAStockOverheatedSectorTopStockResonanceScore(rec aStockRecommendation, change30 float64) aStockRecommendation {
@@ -8086,11 +8292,10 @@ func capAStockOverheatedSectorTopStockResonanceScoreWithSettings(rec aStockRecom
 		return rec
 	}
 	penalty := resonanceBonus - settings.Sector.TopStockOverheat30Cap
-	return applyAStockRecommendationScorePenalty(
-		rec,
-		penalty,
-		fmt.Sprintf("30日涨幅超过%s，板块共振加分上限%d，过热减分 %d", formatAStockPct(settings.Volatility.Overheat30ThresholdPct), settings.Sector.TopStockOverheat30Cap, penalty),
-	)
+	reason := fmt.Sprintf("30日涨幅超过%s，板块共振加分上限%d，过热减分 %d", formatAStockPct(settings.Volatility.Overheat30ThresholdPct), settings.Sector.TopStockOverheat30Cap, penalty)
+	applyAStockScoreDeltaWithSettings(&rec, settings, aStockScoreFactorSector, "板块资金共振", reason, -penalty)
+	rec.Reason = appendAStockReason(rec.Reason, reason)
+	return rec
 }
 
 func applyAStockPreviousLimitUpPenalty(rec aStockRecommendation, prevPct float64) aStockRecommendation {
@@ -8098,13 +8303,8 @@ func applyAStockPreviousLimitUpPenalty(rec aStockRecommendation, prevPct float64
 }
 
 func applyAStockPreviousLimitUpPenaltyWithSettings(rec aStockRecommendation, prevPct float64, settings model.AStockRecommendationAlgorithmSettings) aStockRecommendation {
-	baseScore := rec.MarketScore
-	if baseScore == 0 {
-		baseScore = rec.HotspotScore
-	}
-	rec.MarketScore = baseScore - settings.Volatility.PreviousLimitUpPenalty
 	detail := fmt.Sprintf("昨日涨停%s，风险扣分 %d", formatAStockPct(prevPct), settings.Volatility.PreviousLimitUpPenalty)
-	appendAStockScoreComponentWithUnit(&rec, "昨日涨停", detail, -settings.Volatility.PreviousLimitUpPenalty, -settings.Volatility.PreviousLimitUpPenalty)
+	applyAStockScoreDeltaWithSettings(&rec, settings, aStockScoreFactorVolatility, "昨日涨停", detail, -settings.Volatility.PreviousLimitUpPenalty)
 	rec.Reason = appendAStockReason(rec.Reason, detail)
 	return rec
 }
@@ -8114,13 +8314,8 @@ func applyAStockPreviousHighPctPenalty(rec aStockRecommendation, prevPct float64
 }
 
 func applyAStockPreviousHighPctPenaltyWithSettings(rec aStockRecommendation, prevPct float64, settings model.AStockRecommendationAlgorithmSettings) aStockRecommendation {
-	baseScore := rec.MarketScore
-	if baseScore == 0 {
-		baseScore = rec.HotspotScore
-	}
-	rec.MarketScore = baseScore - settings.Volatility.PreviousHighPctPenalty
 	detail := fmt.Sprintf("昨日涨幅%s，追高风险扣分 %d", formatAStockPct(prevPct), settings.Volatility.PreviousHighPctPenalty)
-	appendAStockScoreComponentWithUnit(&rec, "昨日涨幅过高", detail, -settings.Volatility.PreviousHighPctPenalty, -settings.Volatility.PreviousHighPctPenalty)
+	applyAStockScoreDeltaWithSettings(&rec, settings, aStockScoreFactorVolatility, "昨日涨幅过高", detail, -settings.Volatility.PreviousHighPctPenalty)
 	rec.Reason = appendAStockReason(rec.Reason, detail)
 	return rec
 }
@@ -8130,10 +8325,46 @@ func applyAStockHighOpenScore(rec aStockRecommendation, period string, entry aSt
 }
 
 func applyAStockHighOpenScoreWithSettings(rec aStockRecommendation, period string, entry aStockMarketBar, prev aStockMarketBar, hasPrev bool, settings model.AStockRecommendationAlgorithmSettings) aStockRecommendation {
+	entryPrice, entryLabel, basePrice, baseLabel, ok := aStockOpenScoreContext(period, entry, prev, hasPrev, rec)
+	if !ok {
+		return rec
+	}
+	openPct := (entryPrice/basePrice - 1) * 100
+	score := aStockHighOpenScoreWithSettings(openPct, settings)
+	if score <= 0 {
+		return rec
+	}
+	detail := fmt.Sprintf("%s 较 %s 高开 %s", entryLabel, baseLabel, formatAStockPct(openPct))
+	applyAStockScoreDeltaWithSettings(&rec, settings, aStockScoreFactorAuction, "当日高开", detail, score)
+	rec.Reason = appendAStockReason(rec.Reason, fmt.Sprintf("%s，高开加分 %d", detail, score))
+	return rec
+}
+
+func applyAStockLowOpenPenalty(rec aStockRecommendation, period string, entry aStockMarketBar, prev aStockMarketBar, hasPrev bool) aStockRecommendation {
+	return applyAStockLowOpenPenaltyWithSettings(rec, period, entry, prev, hasPrev, defaultAStockAlgorithmSettings())
+}
+
+func applyAStockLowOpenPenaltyWithSettings(rec aStockRecommendation, period string, entry aStockMarketBar, prev aStockMarketBar, hasPrev bool, settings model.AStockRecommendationAlgorithmSettings) aStockRecommendation {
+	entryPrice, entryLabel, basePrice, baseLabel, ok := aStockOpenScoreContext(period, entry, prev, hasPrev, rec)
+	if !ok {
+		return rec
+	}
+	openPct := (entryPrice/basePrice - 1) * 100
+	penalty := aStockLowOpenPenaltyScoreWithSettings(openPct, settings)
+	if penalty <= 0 {
+		return rec
+	}
+	detail := fmt.Sprintf("%s 较 %s 低开 %s", entryLabel, baseLabel, formatAStockPct(openPct))
+	applyAStockScoreDeltaWithSettings(&rec, settings, aStockScoreFactorAuction, "当日低开", detail, -penalty)
+	rec.Reason = appendAStockReason(rec.Reason, fmt.Sprintf("%s，低开扣分 %d", detail, penalty))
+	return rec
+}
+
+func aStockOpenScoreContext(period string, entry aStockMarketBar, prev aStockMarketBar, hasPrev bool, rec aStockRecommendation) (float64, string, float64, string, bool) {
 	normalizedPeriod := normalizeAStockPeriod(period).Key
 	entryPrice := aStockEntryPriceForRecommendation(entry, normalizedPeriod, rec)
 	if entryPrice <= 0 {
-		return rec
+		return 0, "", 0, "", false
 	}
 	entryLabel := aStockDefaultRecommendationEntryTime(normalizedPeriod)
 	basePrice := 0.0
@@ -8141,7 +8372,7 @@ func applyAStockHighOpenScoreWithSettings(rec aStockRecommendation, period strin
 	if normalizedPeriod == "afternoon" {
 		entryLabel = aStockRecommendationEffectiveEntryTime(rec, "afternoon")
 		if entryLabel != "13:01" {
-			return rec
+			return 0, "", 0, "", false
 		}
 		basePrice, baseLabel = aStockAfternoonHighOpenBasePrice(entry)
 	} else if hasPrev && prev.Close > 0 {
@@ -8150,22 +8381,9 @@ func applyAStockHighOpenScoreWithSettings(rec aStockRecommendation, period strin
 		baseLabel = "昨日收盘"
 	}
 	if basePrice <= 0 || baseLabel == "" {
-		return rec
+		return 0, "", 0, "", false
 	}
-	openPct := (entryPrice/basePrice - 1) * 100
-	score := aStockHighOpenScoreWithSettings(openPct, settings)
-	if score <= 0 {
-		return rec
-	}
-	baseScore := rec.MarketScore
-	if baseScore == 0 {
-		baseScore = rec.HotspotScore
-	}
-	rec.MarketScore = baseScore + score
-	detail := fmt.Sprintf("%s 较 %s 高开 %s", entryLabel, baseLabel, formatAStockPct(openPct))
-	appendAStockScoreComponentWithUnit(&rec, "当日高开", detail, score, score)
-	rec.Reason = appendAStockReason(rec.Reason, fmt.Sprintf("%s，高开加分 %d", detail, score))
-	return rec
+	return entryPrice, entryLabel, basePrice, baseLabel, true
 }
 
 func aStockAfternoonHighOpenBasePrice(entry aStockMarketBar) (float64, string) {
@@ -8203,6 +8421,30 @@ func aStockHighOpenScoreWithSettings(openPct float64, settings model.AStockRecom
 	}
 }
 
+func aStockLowOpenPenaltyScore(openPct float64) int {
+	return aStockLowOpenPenaltyScoreWithSettings(openPct, defaultAStockAlgorithmSettings())
+}
+
+func aStockLowOpenPenaltyScoreWithSettings(openPct float64, settings model.AStockRecommendationAlgorithmSettings) int {
+	dropPct := -openPct
+	switch {
+	case dropPct >= settings.Auction.LowOpenStrongThresholdPct:
+		return settings.Auction.LowOpenStrongPenalty
+	case dropPct >= settings.Auction.LowOpenThreshold5Pct:
+		return settings.Auction.LowOpenPenalty5
+	case dropPct >= settings.Auction.LowOpenThreshold4Pct:
+		return settings.Auction.LowOpenPenalty4
+	case dropPct >= settings.Auction.LowOpenThreshold3Pct:
+		return settings.Auction.LowOpenPenalty3
+	case dropPct >= settings.Auction.LowOpenThreshold2Pct:
+		return settings.Auction.LowOpenPenalty2
+	case dropPct >= settings.Auction.LowOpenThreshold1Pct:
+		return settings.Auction.LowOpenPenalty1
+	default:
+		return 0
+	}
+}
+
 type aStockMomentumSignal struct {
 	Name  string
 	Score int
@@ -8217,11 +8459,6 @@ func applyAStockMomentumTrendScoreWithSettings(rec aStockRecommendation, bars []
 	if score <= 0 || len(signals) == 0 {
 		return rec
 	}
-	baseScore := rec.MarketScore
-	if baseScore == 0 {
-		baseScore = rec.HotspotScore
-	}
-	rec.MarketScore = baseScore + score
 	details := make([]string, 0, len(signals)+1)
 	names := make([]string, 0, len(signals))
 	for _, signal := range signals {
@@ -8232,7 +8469,7 @@ func applyAStockMomentumTrendScoreWithSettings(rec aStockRecommendation, bars []
 		details = append(details, fmt.Sprintf("上限 %d", score))
 	}
 	detail := strings.Join(details, "；")
-	appendAStockScoreComponentWithUnit(&rec, "动能趋势", detail, score, score)
+	applyAStockScoreDeltaWithSettings(&rec, settings, aStockScoreFactorVolatility, "动能趋势", detail, score)
 	rec.Reason = appendAStockReason(rec.Reason, fmt.Sprintf("动能趋势加分 %d（%s）", score, strings.Join(names, " + ")))
 	return rec
 }
@@ -9823,7 +10060,6 @@ func applyAStockMarketBarsWithSettings(strategyDate string, period string, recom
 	sectorPenalties := make(map[string]int)
 	filteredCount := 0
 	overheatFilteredCount := 0
-	lowOpenFilteredCount := 0
 	todayHighPctFilteredCount := 0
 	limitUpFilteredCount := 0
 	noEntryPriceCount := 0
@@ -9832,7 +10068,6 @@ func applyAStockMarketBarsWithSettings(strategyDate string, period string, recom
 	for i := range recommendations {
 		blockedByDrawdown := false
 		blockedByOverheat := false
-		blockedByLowOpen := false
 		codeBars := byCode[recommendations[i].Code]
 		entry, ok := aStockEntryBar(codeBars, strategyDate, period, recommendations[i])
 		if !ok {
@@ -9873,13 +10108,6 @@ func applyAStockMarketBarsWithSettings(strategyDate string, period string, recom
 			} else if prev.Pct > settings.Volatility.PreviousHighPctThreshold {
 				recommendations[i] = applyAStockPreviousHighPctPenaltyWithSettings(recommendations[i], prev.Pct, settings)
 			}
-			if normalizedPeriod == "morning" && entry.Close > 0 && prev.Close > 0 {
-				entryPrice := aStockEntryPriceForRecommendation(entry, normalizedPeriod, recommendations[i])
-				openPct := (entryPrice/prev.Close - 1) * 100
-				if entryPrice > 0 && openPct <= settings.Auction.LowOpenPenaltyThresholdPct {
-					blockedByLowOpen = true
-				}
-			}
 			if change, ok := aStockLookbackChange(byCode[recommendations[i].Code], strategyDate, 30, prev.Close); ok {
 				recommendations[i].Change30 = formatAStockPct(change)
 				recommendations[i].Change30Class = aStockPctClass(change)
@@ -9905,13 +10133,10 @@ func applyAStockMarketBarsWithSettings(strategyDate string, period string, recom
 		}
 		if ok {
 			recommendations[i] = applyAStockHighOpenScoreWithSettings(recommendations[i], normalizedPeriod, entry, prev, hasPrev, settings)
+			recommendations[i] = applyAStockLowOpenPenaltyWithSettings(recommendations[i], normalizedPeriod, entry, prev, hasPrev, settings)
 		}
 		if blockedByOverheat {
 			overheatFilteredCount++
-			continue
-		}
-		if blockedByLowOpen {
-			lowOpenFilteredCount++
 			continue
 		}
 		if blockedByDrawdown {
@@ -9925,14 +10150,10 @@ func applyAStockMarketBarsWithSettings(strategyDate string, period string, recom
 	recommendations = filtered
 	for i := range recommendations {
 		penalty := sectorPenalties[recommendations[i].Hotspot]
-		baseScore := recommendations[i].MarketScore
-		if baseScore == 0 {
-			baseScore = recommendations[i].HotspotScore
-		}
-		recommendations[i].MarketScore = baseScore - penalty
 		if penalty > 0 {
-			recommendations[i].Reason = fmt.Sprintf("%s，板块回撤减分 %d，调整分 %d", recommendations[i].Reason, penalty, recommendations[i].MarketScore)
-			appendAStockScoreAdjustment(&recommendations[i], "板块回撤", fmt.Sprintf("板块回撤减分 %d", penalty), -penalty)
+			detail := fmt.Sprintf("板块回撤减分 %d", penalty)
+			applyAStockScoreDeltaWithSettings(&recommendations[i], settings, aStockScoreFactorSector, "板块回撤", detail, -penalty)
+			recommendations[i].Reason = fmt.Sprintf("%s，%s，调整分 %d", recommendations[i].Reason, detail, recommendations[i].MarketScore)
 		}
 	}
 	sort.SliceStable(recommendations, func(i, j int) bool {
@@ -9968,9 +10189,6 @@ func applyAStockMarketBarsWithSettings(strategyDate string, period string, recom
 	if overheatFilteredCount > 0 {
 		status = fmt.Sprintf("%s，过滤60日过热股票 %d", status, overheatFilteredCount)
 	}
-	if lowOpenFilteredCount > 0 {
-		status = fmt.Sprintf("%s，过滤低开股票 %d", status, lowOpenFilteredCount)
-	}
 	if todayHighPctFilteredCount > 0 {
 		status = fmt.Sprintf("%s，过滤今日涨幅过高股票 %d", status, todayHighPctFilteredCount)
 	}
@@ -9995,9 +10213,6 @@ func applyAStockMarketBarsWithSettings(strategyDate string, period string, recom
 	}
 	if len(recommendations) == 0 && overheatFilteredCount > 0 {
 		status = fmt.Sprintf("60日过热过滤后无推荐股票，过滤60日过热股票 %d", overheatFilteredCount)
-	}
-	if len(recommendations) == 0 && lowOpenFilteredCount > 0 {
-		status = fmt.Sprintf("低开过滤后无推荐股票，过滤低开股票 %d", lowOpenFilteredCount)
 	}
 	if len(recommendations) == 0 && todayHighPctFilteredCount > 0 {
 		status = fmt.Sprintf("今日涨幅过高过滤后无推荐股票，过滤今日涨幅过高股票 %d", todayHighPctFilteredCount)
@@ -11638,7 +11853,7 @@ func formatAStockHotspotNegativeNewsPenaltyReason(hotspot aStockHotspot) string 
 	if hotspot.NegativeNewsCount <= 0 || hotspot.NegativeNewsPenalty <= 0 {
 		return ""
 	}
-	return fmt.Sprintf("负面新闻 %d 条，板块减分 %d", hotspot.NegativeNewsCount, hotspot.NegativeNewsPenalty)
+	return fmt.Sprintf("负面新闻 %d 条，情绪扣分 %d", hotspot.NegativeNewsCount, hotspot.NegativeNewsPenalty)
 }
 
 func buildAStockHotspotsWithTopStocks(hotspots []aStockHotspot, marketCandidates []aStockMarketCandidate, limit int) []aStockHotspot {
@@ -11827,10 +12042,12 @@ func buildAStockRecommendationsWithLimitAndSectorGateWithSettings(hotspots []aSt
 				continue
 			}
 			seen[stock.Code] = struct{}{}
-			marketScore := hotspot.Score + stock.MatchedScore
-			reason := ""
+			scoreBreakdown := buildAStockRecommendationScoreBreakdownWithSettings(hotspot, stock, settings)
+			marketScore := aStockRecommendationFactorScoreTotalWithSettings(scoreBreakdown, settings)
+			reason := formatAStockFactorSummaryReason(scoreBreakdown, marketScore, settings)
+			evidenceReason := ""
 			if stock.Fallback {
-				reason = fmt.Sprintf(
+				evidenceReason = fmt.Sprintf(
 					"命中 %s，证据新闻 %d 条，热度分 %d；使用实时新闻明确提及股票，个股证据 %d 条，匹配分 %d，综合分 %d",
 					strings.Join(hotspot.Keywords, "、"),
 					hotspot.Evidence,
@@ -11840,7 +12057,7 @@ func buildAStockRecommendationsWithLimitAndSectorGateWithSettings(hotspots []aSt
 					marketScore,
 				)
 			} else {
-				reason = fmt.Sprintf(
+				evidenceReason = fmt.Sprintf(
 					"命中 %s，证据新闻 %d 条，热度分 %d；行情排名 %d，成交额 %s，个股证据 %d 条，行情分 %d，综合分 %d",
 					strings.Join(hotspot.Keywords, "、"),
 					hotspot.Evidence,
@@ -11852,6 +12069,7 @@ func buildAStockRecommendationsWithLimitAndSectorGateWithSettings(hotspots []aSt
 					marketScore,
 				)
 			}
+			reason = appendAStockReason(reason, evidenceReason)
 			if len(stock.Keywords) > 0 && !stock.Fallback {
 				reason = fmt.Sprintf("%s，股票名命中 %s", reason, strings.Join(stock.Keywords, "、"))
 			}
@@ -11867,7 +12085,7 @@ func buildAStockRecommendationsWithLimitAndSectorGateWithSettings(hotspots []aSt
 				HotspotScore:   hotspot.Score,
 				MarketScore:    marketScore,
 				Reason:         reason,
-				ScoreBreakdown: buildAStockRecommendationScoreBreakdownWithSettings(hotspot, stock, settings),
+				ScoreBreakdown: scoreBreakdown,
 			})
 			picked++
 			if picked >= maxPerHotspot {
@@ -11876,6 +12094,20 @@ func buildAStockRecommendationsWithLimitAndSectorGateWithSettings(hotspots []aSt
 		}
 	}
 	return limitAStockRecommendationsByScore(recommendations, maxRecommendations)
+}
+
+func formatAStockFactorSummaryReason(components []aStockRecommendationScoreComponent, total int, settings model.AStockRecommendationAlgorithmSettings) string {
+	parts := make([]string, 0, 6)
+	for _, category := range newAStockScoreCategorySummary().order {
+		if !isAStockPrimaryScoreFactor(category.Key) {
+			continue
+		}
+		cap := aStockScoreFactorCapWithSettings(category.Key, settings)
+		score := aStockRecommendationFactorSubtotalWithSettings(components, category.Key, settings)
+		parts = append(parts, fmt.Sprintf("%s %d/%d", category.Label, score, cap))
+	}
+	parts = append(parts, fmt.Sprintf("总分 %d/1000", total))
+	return strings.Join(parts, "，")
 }
 
 func limitAStockRecommendationsByScore(recommendations []aStockRecommendation, maxRecommendations int) []aStockRecommendation {
@@ -11895,27 +12127,19 @@ func buildAStockRecommendationScoreBreakdown(hotspot aStockHotspot, stock aStock
 
 func buildAStockRecommendationScoreBreakdownWithSettings(hotspot aStockHotspot, stock aStockMarketCandidate, settings model.AStockRecommendationAlgorithmSettings) []aStockRecommendationScoreComponent {
 	components := make([]aStockRecommendationScoreComponent, 0, 8)
-	components = append(components, newAStockScoreComponent("新闻热度", fmt.Sprintf("证据新闻 %d 条", hotspot.Evidence), settings.Emotion.NewsEvidenceScore, hotspot.Evidence*settings.Emotion.NewsEvidenceScore))
-	components = append(components, newAStockScoreComponent("热点关键词", fmt.Sprintf("命中关键词 %d 个", len(hotspot.Keywords)), settings.Emotion.KeywordScore, len(hotspot.Keywords)*settings.Emotion.KeywordScore))
+	components = append(components, newAStockScoreComponentWithFactor(aStockScoreFactorEmotion, "新闻热度", fmt.Sprintf("证据新闻 %d 条", hotspot.Evidence), settings.Emotion.NewsEvidenceScore, hotspot.Evidence*settings.Emotion.NewsEvidenceScore))
+	components = append(components, newAStockScoreComponentWithFactor(aStockScoreFactorEmotion, "热点关键词", fmt.Sprintf("命中关键词 %d 个", len(hotspot.Keywords)), settings.Emotion.KeywordScore, len(hotspot.Keywords)*settings.Emotion.KeywordScore))
 	if hotspot.NegativeNewsPenalty > 0 {
-		components = append(components, newAStockScoreComponent("负面新闻", fmt.Sprintf("负面新闻 %d 条", hotspot.NegativeNewsCount), -hotspot.NegativeNewsPenalty, -hotspot.NegativeNewsPenalty))
-	}
-	hotspotSum := 0
-	for _, component := range components {
-		hotspotSum += component.Score
-	}
-	if hotspotSum != hotspot.Score {
-		delta := hotspot.Score - hotspotSum
-		components = append(components, newAStockScoreComponent("热度修正", fmt.Sprintf("展示热度分 %d", hotspot.Score), delta, delta))
+		components = append(components, newAStockScoreComponentWithFactor(aStockScoreFactorEmotion, "负面新闻", fmt.Sprintf("负面新闻 %d 条，情绪扣分 %d", hotspot.NegativeNewsCount, hotspot.NegativeNewsPenalty), -hotspot.NegativeNewsPenalty, -hotspot.NegativeNewsPenalty))
 	}
 	rankScore := aStockMarketRankScoreWithSettings(stock.Rank, settings)
-	components = append(components, newAStockScoreComponent("行情排名", fmt.Sprintf("排名 %d", stock.Rank), rankScore, rankScore))
-	components = append(components, newAStockScoreComponent("个股证据", fmt.Sprintf("有效证据 %d 条 / 总证据 %d 条", stock.StrongEvidence, stock.Evidence), settings.Emotion.StockEvidenceScore, stock.StrongEvidence*settings.Emotion.StockEvidenceScore))
+	components = append(components, newAStockScoreComponentWithFactor(aStockScoreFactorAuction, "行情排名", fmt.Sprintf("排名 %d", stock.Rank), rankScore, rankScore))
+	components = append(components, newAStockScoreComponentWithFactor(aStockScoreFactorEmotion, "个股证据", fmt.Sprintf("有效证据 %d 条 / 总证据 %d 条", stock.StrongEvidence, stock.Evidence), settings.Emotion.StockEvidenceScore, stock.StrongEvidence*settings.Emotion.StockEvidenceScore))
 	if len(stock.Keywords) > 0 {
-		components = append(components, newAStockScoreComponent("股票名命中", fmt.Sprintf("命中关键词 %d 个", len(stock.Keywords)), settings.Emotion.StockNameKeywordScore, len(stock.Keywords)*settings.Emotion.StockNameKeywordScore))
+		components = append(components, newAStockScoreComponentWithFactor(aStockScoreFactorEmotion, "股票名命中", fmt.Sprintf("命中关键词 %d 个", len(stock.Keywords)), settings.Emotion.StockNameKeywordScore, len(stock.Keywords)*settings.Emotion.StockNameKeywordScore))
 	}
 	if stock.WeakPenalty > 0 {
-		components = append(components, newAStockScoreComponent("弱证据", fmt.Sprintf("融资融券弱新闻 %d 条", stock.WeakEvidence), -stock.WeakPenalty, -stock.WeakPenalty))
+		components = append(components, newAStockScoreComponentWithFactor(aStockScoreFactorEmotion, "弱证据", fmt.Sprintf("融资融券弱新闻 %d 条", stock.WeakEvidence), -stock.WeakPenalty, -stock.WeakPenalty))
 	}
 	return components
 }
