@@ -610,8 +610,8 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-recommendation-table th,.astock-recommendation-table td{vertical-align:top}
 		.astock-recommendation-table th:nth-child(2),.astock-recommendation-table td:nth-child(2){width:7.5%;white-space:nowrap}
 		.astock-recommendation-table th:last-child,.astock-recommendation-table td:last-child{width:47%}
-		.astock-score-total{display:flex;align-items:center;justify-content:space-between;gap:10px;width:120%;margin-left:-20%;margin-bottom:6px;color:#214e34;font-weight:700;line-height:1.25}
-		.astock-score-table{width:120%;margin-left:-20%;min-width:0!important;table-layout:auto;border-collapse:collapse;font-size:12px;line-height:1.35}
+		.astock-score-total{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px;color:#214e34;font-weight:700;line-height:1.25}
+		.astock-score-table{width:100%;min-width:0!important;table-layout:auto;border-collapse:collapse;font-size:12px;line-height:1.35}
 		.astock-score-table th,.astock-score-table td{padding:4px 6px;border:1px solid #ece7dc;vertical-align:top}
 		.astock-score-table th{background:#faf8f2;color:#554b40;font-weight:700;white-space:nowrap}
 		.astock-score-table td:first-child{white-space:nowrap}
@@ -619,7 +619,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-score-category{white-space:nowrap;color:#214e34;font-weight:700}
 		.astock-score-value{text-align:right;white-space:nowrap}
 		.astock-score-detail{white-space:normal}
-		.astock-score-summary{display:flex;flex-wrap:wrap;gap:8px 14px;width:120%;margin-left:-20%;margin-top:6px;color:#214e34;font-size:12px;font-weight:700;line-height:1.45}
+		.astock-score-summary{display:flex;flex-wrap:wrap;gap:8px 14px;margin-top:6px;color:#214e34;font-size:12px;font-weight:700;line-height:1.45}
 		.astock-score-summary span{white-space:nowrap}
 		.astock-score-reason{margin-top:6px;color:#6a6257;font-size:12px;line-height:1.45}
 		.astock-date-tabs{display:flex;gap:8px;flex-wrap:nowrap;margin:14px 0 18px;overflow-x:auto;padding-bottom:6px;scrollbar-width:thin}
