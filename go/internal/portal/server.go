@@ -5192,9 +5192,6 @@ const hotspotsTemplate = `
 .hotspot-tabs{display:flex;gap:8px;flex-wrap:wrap}
 .hotspot-tabs a{padding:8px 12px;border-radius:999px;border:1px solid #d0c8b8;background:#fff;color:#214e34;text-decoration:none}
 .hotspot-tabs a.active{background:#214e34;color:#fff}
-.hotspot-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
-.hotspot-kpi{border:1px solid #ece7dc;background:#faf8f2;border-radius:8px;padding:14px}
-.hotspot-kpi strong{display:block;margin-top:6px;font-size:24px;color:#214e34}
 .hotspot-keyword{font-weight:700;color:#214e34;text-decoration:none}
 .hotspot-up{color:#b3261e;font-weight:700}
 .hotspot-down{color:#007d3c;font-weight:700}
@@ -5227,7 +5224,6 @@ html,body{overflow-x:hidden}
 <div><h2>过去 {{.Hotspots.Days}} 天热点</h2><p class="hotspot-muted">{{.Hotspots.StartDate}} 至 {{.Hotspots.EndDate}}，主榜只统计标准热点字典命中词；标题自由抽词单独进入发现词。</p></div>
 <div class="hotspot-tabs"><a class="{{if eq .Hotspots.Days 14}}active{{end}}" href="/hotspots?days=14&sector_type={{urlquery .SectorFundFlowType}}">最近14天</a><a class="{{if eq .Hotspots.Days 7}}active{{end}}" href="/hotspots?days=7&sector_type={{urlquery .SectorFundFlowType}}">最近7天</a><a class="{{if eq .Hotspots.Days 30}}active{{end}}" href="/hotspots?days=30&sector_type={{urlquery .SectorFundFlowType}}">最近30天</a></div>
 </div>
-<div class="hotspot-kpis"><div class="hotspot-kpi">统计文章<strong>{{.Hotspots.TotalArticles}}</strong></div><div class="hotspot-kpi">标准热点<strong>{{len .Hotspots.TodayTop}}</strong></div><div class="hotspot-kpi">发现词<strong>{{len .Hotspots.DiscoveryTodayTop}}</strong></div><div class="hotspot-kpi">切换信号<strong>{{len .Hotspots.Switches}}</strong></div></div>
 </section>
 <section class="fundflow-section">
 <div class="fundflow-head">

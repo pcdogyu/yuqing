@@ -13443,6 +13443,12 @@ func TestHotspotsPageRendersSwitchingData(t *testing.T) {
 		`<h2>近 14 日趋势</h2>`,
 		`class="hotspot-table"`,
 		`class="hotspot-grid"`,
+		`class="hotspot-kpis"`,
+		`class="hotspot-kpi"`,
+		`统计文章<strong>`,
+		`标准热点<strong>`,
+		`发现词<strong>`,
+		`切换信号<strong>`,
 		`.fundflow-section{width:104.5vw`,
 		`[-1,-0.5,0,0.5,1].forEach`,
 	} {
