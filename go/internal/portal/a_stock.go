@@ -610,8 +610,8 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-recommendation-table th,.astock-recommendation-table td{vertical-align:top}
 		.astock-recommendation-table th:nth-child(2),.astock-recommendation-table td:nth-child(2){width:7.5%;white-space:nowrap}
 		.astock-recommendation-table th:last-child,.astock-recommendation-table td:last-child{width:47%}
-		.astock-score-total{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px;color:#214e34;font-weight:700;line-height:1.25}
-		.astock-score-table{width:100%;min-width:0!important;table-layout:auto;border-collapse:collapse;font-size:12px;line-height:1.35}
+		.astock-score-total{display:flex;align-items:center;justify-content:space-between;gap:10px;width:120%;margin-left:-20%;margin-bottom:6px;color:#214e34;font-weight:700;line-height:1.25}
+		.astock-score-table{width:120%;margin-left:-20%;min-width:0!important;table-layout:auto;border-collapse:collapse;font-size:12px;line-height:1.35}
 		.astock-score-table th,.astock-score-table td{padding:4px 6px;border:1px solid #ece7dc;vertical-align:top}
 		.astock-score-table th{background:#faf8f2;color:#554b40;font-weight:700;white-space:nowrap}
 		.astock-score-table td:first-child{white-space:nowrap}
@@ -619,7 +619,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-score-category{white-space:nowrap;color:#214e34;font-weight:700}
 		.astock-score-value{text-align:right;white-space:nowrap}
 		.astock-score-detail{white-space:normal}
-		.astock-score-summary{display:flex;flex-wrap:wrap;gap:8px 14px;margin-top:6px;color:#214e34;font-size:12px;font-weight:700;line-height:1.45}
+		.astock-score-summary{display:flex;flex-wrap:wrap;gap:8px 14px;width:120%;margin-left:-20%;margin-top:6px;color:#214e34;font-size:12px;font-weight:700;line-height:1.45}
 		.astock-score-summary span{white-space:nowrap}
 		.astock-score-reason{margin-top:6px;color:#6a6257;font-size:12px;line-height:1.45}
 		.astock-date-tabs{display:flex;gap:8px;flex-wrap:nowrap;margin:14px 0 18px;overflow-x:auto;padding-bottom:6px;scrollbar-width:thin}
@@ -2520,7 +2520,7 @@ func mergeAStockRecommendationDisplayScoreComponents(saved []aStockRecommendatio
 
 func shouldSkipParsedAStockScoreComponent(label string, seenLabels map[string]struct{}) bool {
 	if _, exists := seenLabels[label]; !exists {
-		if label == "匹配修正" {
+		if label == "匹配修正" || label == "匹配差额" {
 			for _, sourceLabel := range []string{"行情排名", "个股证据", "股票名命中", "弱证据"} {
 				if _, sourceExists := seenLabels[sourceLabel]; sourceExists {
 					return true
@@ -2537,7 +2537,7 @@ func shouldSkipParsedAStockScoreComponent(label string, seenLabels map[string]st
 		return false
 	}
 	switch label {
-	case "新闻热度", "热点关键词", "负面新闻", "热度修正", "热点热度", "行情排名", "个股证据", "股票名命中", "弱证据", "匹配修正", "机构持仓", "资金动向", "资金强度", "开盘盘口", "当日高开", "昨日涨停", "昨日涨幅过高", "动能趋势", "板块资金趋势", "板块资金共振", "板块回撤":
+	case "新闻热度", "热点关键词", "负面新闻", "热度修正", "热点热度", "行情排名", "个股证据", "股票名命中", "弱证据", "匹配修正", "匹配差额", "机构持仓", "资金动向", "资金强度", "开盘盘口", "当日高开", "昨日涨停", "昨日涨幅过高", "动能趋势", "板块资金趋势", "板块资金共振", "板块回撤":
 		return true
 	default:
 		return false
@@ -2550,7 +2550,7 @@ func aStockScoreComponentCategoryFor(component aStockRecommendationScoreComponen
 		return aStockScoreComponentCategory{Key: "sector", Label: "板块"}
 	case "行情排名", "个股证据", "股票名命中", "弱证据", "机构持仓", "资金动向", "资金强度", "开盘盘口", "当日高开", "昨日涨停", "昨日涨幅过高", "动能趋势":
 		return aStockScoreComponentCategory{Key: "stock", Label: "个股"}
-	case "扣分调整", "递补排序", "匹配修正":
+	case "扣分调整", "递补排序", "匹配修正", "匹配差额":
 		return aStockScoreComponentCategory{Key: "adjustment", Label: "调整项"}
 	case "保存总分", "总分修正":
 		return aStockScoreComponentCategory{Key: "history", Label: "历史修正"}
@@ -7831,7 +7831,7 @@ func appendAStockParsedMatchComponents(components []aStockRecommendationScoreCom
 	matchSum := rankScore + evidenceScore + keywordScore - weakPenalty
 	if matchSum != matchScore {
 		delta := matchScore - matchSum
-		components = append(components, newAStockScoreComponent("匹配修正", fmt.Sprintf("展示匹配分 %d", matchScore), delta, delta))
+		components = append(components, newAStockScoreComponent("匹配差额", fmt.Sprintf("匹配分 %d - 已列个股明细 %d = %d", matchScore, matchSum, delta), delta, delta))
 	}
 	return components
 }

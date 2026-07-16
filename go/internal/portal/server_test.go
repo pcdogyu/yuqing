@@ -353,6 +353,9 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		".astock-recommendation-table{width:100%;min-width:1460px;table-layout:fixed}",
 		".astock-recommendation-table th:nth-child(2),.astock-recommendation-table td:nth-child(2){width:7.5%;white-space:nowrap}",
 		".astock-recommendation-table th:last-child,.astock-recommendation-table td:last-child{width:47%}",
+		".astock-score-total{display:flex;align-items:center;justify-content:space-between;gap:10px;width:120%;margin-left:-20%",
+		".astock-score-table{width:120%;margin-left:-20%",
+		".astock-score-summary{display:flex;flex-wrap:wrap;gap:8px 14px;width:120%;margin-left:-20%",
 		"推荐窗口",
 		`colspan="12"`,
 		"抓取全部财经信息",
@@ -9498,6 +9501,37 @@ func TestAStockRecommendationReasonParsesUnitValueForScoreBreakdownTable(t *test
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected rendered parsed score breakdown to contain %q, got %s", want, body)
 		}
+	}
+}
+
+func TestAStockRecommendationReasonExplainsMatchedScoreDelta(t *testing.T) {
+	rec := aStockRecommendation{
+		Hotspot:     "金融券商",
+		Code:        "000166",
+		Name:        "申万宏源",
+		MarketScore: 475,
+		Reason:      "命中 保险、券商、证券、资本市场、银行，证据新闻 37 条，热度分 295；个股证据 3 条，匹配分 170，综合分 465，负面新闻 3 条，板块减分 90，生成点 12:57，银行 5日主力资金净流入 +13.78亿，板块资金趋势加分 5，银行 5日主力资金净流入 +13.62亿，状态震荡偏流入，10日主力资金+43.18亿，近5日净流入3天，当日净流出且板块下跌，资金方向震荡，板块资金趋势加分 5",
+	}
+	var b strings.Builder
+	writeAStockRecommendationReasonCell(&b, rec)
+	body := b.String()
+	for _, want := range []string{
+		"总分",
+		"475 分",
+		"匹配差额",
+		"匹配分 170 - 已列个股明细 75 = 95",
+		"95 分",
+		"匹配分：170 分",
+		"综合分：465 分",
+		"调整后合计：475 分",
+		"合计：475 分",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected matched score delta explanation to contain %q, got %s", want, body)
+		}
+	}
+	if strings.Contains(body, "展示匹配分 170") {
+		t.Fatalf("expected formula explanation instead of opaque matched score detail, got %s", body)
 	}
 }
 
