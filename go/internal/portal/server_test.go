@@ -13417,7 +13417,7 @@ func TestHotspotsPageRendersSwitchingData(t *testing.T) {
 		"endLabels.sort",
 		"labelGap=Math.max",
 		"latestPoint=latestFundFlowPoint(s.points)",
-		"rawYi(latestPoint.main_net_inflow)>0",
+		"rawYi(latestPoint.main_net_inflow)!==0",
 		"labelX:Math.min(Math.max(x+10,left+8),width-216)",
 		"zeroY=top+plotH/2",
 		`/api/v1/hotspots/sector-fund-flow-intraday`,
