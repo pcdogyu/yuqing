@@ -2422,9 +2422,141 @@ func aStockRecommendationScoreRows(rec aStockRecommendation, components []aStock
 			positive = append(positive, row)
 		}
 	}
+	positive = insertAStockReasonStageTableRows(positive, aStockReasonStageTableRows(rec.Reason))
 	rows := make([]aStockScoreRow, 0, len(components)+8)
 	rows = append(rows, positive...)
 	rows = append(rows, negative...)
+	return rows
+}
+
+func insertAStockReasonStageTableRows(rows []aStockScoreRow, stageRows []aStockScoreRow) []aStockScoreRow {
+	for _, stage := range stageRows {
+		switch stage.Label {
+		case "热度分":
+			rows = insertAStockScoreRowAfter(rows, stage, func(row aStockScoreRow) bool {
+				return isAStockHotspotScoreRow(row.Label)
+			})
+		case "匹配分", "行情分":
+			rows = insertAStockScoreRowAfter(rows, stage, func(row aStockScoreRow) bool {
+				return isAStockMatchScoreRow(row.Label)
+			})
+		case "综合分":
+			rows = insertAStockScoreRowAfter(rows, stage, func(row aStockScoreRow) bool {
+				return row.Label == "匹配分" || row.Label == "行情分" || isAStockMatchScoreRow(row.Label)
+			})
+		default:
+			rows = append(rows, stage)
+		}
+	}
+	return rows
+}
+
+func insertAStockScoreRowAfter(rows []aStockScoreRow, row aStockScoreRow, match func(aStockScoreRow) bool) []aStockScoreRow {
+	index := -1
+	for i, candidate := range rows {
+		if match(candidate) {
+			index = i
+		}
+	}
+	if index < 0 {
+		return append(rows, row)
+	}
+	rows = append(rows, aStockScoreRow{})
+	copy(rows[index+2:], rows[index+1:])
+	rows[index+1] = row
+	return rows
+}
+
+func isAStockHotspotScoreRow(label string) bool {
+	switch strings.TrimSpace(label) {
+	case "新闻热度", "热点关键词", "热度修正", "热点热度":
+		return true
+	default:
+		return false
+	}
+}
+
+func isAStockMatchScoreRow(label string) bool {
+	switch strings.TrimSpace(label) {
+	case "行情排名", "个股证据", "股票名命中", "弱证据", "匹配修正", "匹配差额":
+		return true
+	default:
+		return false
+	}
+}
+
+func aStockReasonStageTableRows(reason string) []aStockScoreRow {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return nil
+	}
+	sectorCategory := aStockScoreComponentCategory{Key: "sector-stage", Label: "板块"}
+	stockCategory := aStockScoreComponentCategory{Key: "stock-stage", Label: "个股"}
+	rows := make([]aStockScoreRow, 0, 3)
+	hotspotScore := 0
+	hasHotspotScore := false
+	if matches := aStockReasonHotspotScorePattern.FindStringSubmatch(reason); len(matches) == 4 {
+		keywords := strings.TrimSpace(matches[1])
+		newsCount := atoiAStockScorePart(matches[2])
+		hotspotScore = atoiAStockScorePart(matches[3])
+		hasHotspotScore = true
+		rows = append(rows, aStockScoreRow{
+			Kind:     aStockScoreRowSubtotal,
+			Category: sectorCategory,
+			Label:    "热度分",
+			Detail:   fmt.Sprintf("命中 %s；证据新闻 %d 条；热度分 %d", keywords, newsCount, hotspotScore),
+			Value:    "--",
+			Score:    hotspotScore,
+		})
+	}
+	matchLabel := ""
+	matchScore := 0
+	matchEvidence := 0
+	if matches := aStockReasonMarketScorePattern.FindStringSubmatch(reason); len(matches) == 4 {
+		rank := atoiAStockScorePart(matches[1])
+		matchEvidence = atoiAStockScorePart(matches[2])
+		matchScore = atoiAStockScorePart(matches[3])
+		matchLabel = "行情分"
+		rows = append(rows, aStockScoreRow{
+			Kind:     aStockScoreRowSubtotal,
+			Category: stockCategory,
+			Label:    matchLabel,
+			Detail:   fmt.Sprintf("行情排名 %d；个股证据 %d 条；行情分 %d", rank, matchEvidence, matchScore),
+			Value:    "--",
+			Score:    matchScore,
+		})
+	} else if matches := aStockReasonMatchedScorePattern.FindStringSubmatch(reason); len(matches) == 3 {
+		matchEvidence = atoiAStockScorePart(matches[1])
+		matchScore = atoiAStockScorePart(matches[2])
+		matchLabel = "匹配分"
+		detail := fmt.Sprintf("个股证据 %d 条；匹配分 %d", matchEvidence, matchScore)
+		if strings.Contains(reason, "使用实时新闻明确提及股票") {
+			detail = "使用实时新闻明确提及股票，" + detail
+		}
+		rows = append(rows, aStockScoreRow{
+			Kind:     aStockScoreRowSubtotal,
+			Category: stockCategory,
+			Label:    matchLabel,
+			Detail:   detail,
+			Value:    "--",
+			Score:    matchScore,
+		})
+	}
+	if matches := aStockReasonComprehensiveScorePattern.FindStringSubmatch(reason); len(matches) == 2 {
+		comprehensiveScore := atoiAStockScorePart(matches[1])
+		detail := fmt.Sprintf("综合分 %d", comprehensiveScore)
+		if hasHotspotScore && matchLabel != "" {
+			detail = fmt.Sprintf("热度分 %d + %s %d = 综合分 %d", hotspotScore, matchLabel, matchScore, comprehensiveScore)
+		}
+		rows = append(rows, aStockScoreRow{
+			Kind:     aStockScoreRowSubtotal,
+			Category: stockCategory,
+			Label:    "综合分",
+			Detail:   detail,
+			Value:    "--",
+			Score:    comprehensiveScore,
+		})
+	}
 	return rows
 }
 
@@ -7757,7 +7889,7 @@ func parseAStockRecommendationScoreBreakdown(rec aStockRecommendation) []aStockR
 			negativePenalty = atoiAStockScorePart(negativeMatches[2])
 			components = append(components, newAStockScoreComponent("新闻热度", fmt.Sprintf("证据新闻 %d 条", newsCount), 10, newsCount*10))
 			components = append(components, newAStockScoreComponent("热点关键词", fmt.Sprintf("命中关键词 %d 个", keywordCount), 3, keywordCount*3))
-			components = append(components, newAStockScoreComponent("负面新闻", fmt.Sprintf("负面新闻 %d 条", negativeCount), -negativePenalty, -negativePenalty))
+			components = append(components, newAStockScoreComponent("负面新闻", fmt.Sprintf("负面新闻 %d 条，板块减分 %d", negativeCount, negativePenalty), -negativePenalty, -negativePenalty))
 		} else {
 			components = append(components, newAStockScoreComponent("新闻热度", fmt.Sprintf("证据新闻 %d 条", newsCount), 10, newsCount*10))
 			components = append(components, newAStockScoreComponent("热点关键词", fmt.Sprintf("命中关键词 %d 个", keywordCount), 3, keywordCount*3))

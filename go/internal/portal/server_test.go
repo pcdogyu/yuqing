@@ -9508,7 +9508,7 @@ func TestAStockRecommendationReasonExplainsMatchedScoreDelta(t *testing.T) {
 		Code:        "000166",
 		Name:        "申万宏源",
 		MarketScore: 475,
-		Reason:      "命中 保险、券商、证券、资本市场、银行，证据新闻 37 条，热度分 295；个股证据 3 条，匹配分 170，综合分 465，负面新闻 3 条，板块减分 90，生成点 12:57，银行 5日主力资金净流入 +13.78亿，板块资金趋势加分 5，银行 5日主力资金净流入 +13.62亿，状态震荡偏流入，10日主力资金+43.18亿，近5日净流入3天，当日净流出且板块下跌，资金方向震荡，板块资金趋势加分 5",
+		Reason:      "命中 保险、券商、证券、资本市场、银行，证据新闻 37 条，热度分 295；使用实时新闻明确提及股票，个股证据 3 条，匹配分 170，综合分 465，负面新闻 3 条，板块减分 90，生成点 12:57，银行 5日主力资金净流入 +13.78亿，板块资金趋势加分 5，银行 5日主力资金净流入 +13.62亿，状态震荡偏流入，10日主力资金+43.18亿，近5日净流入3天，当日净流出且板块下跌，资金方向震荡，板块资金趋势加分 5",
 	}
 	var b strings.Builder
 	writeAStockRecommendationReasonCell(&b, rec)
@@ -9516,6 +9516,10 @@ func TestAStockRecommendationReasonExplainsMatchedScoreDelta(t *testing.T) {
 	for _, want := range []string{
 		"总分",
 		"475 分",
+		`<td>板块</td><td class="astock-score-category">热度分</td><td class="astock-score-detail">命中 保险、券商、证券、资本市场、银行；证据新闻 37 条；热度分 295</td><td class="astock-score-value">--</td><td>295 分</td>`,
+		`<td>个股</td><td class="astock-score-category">匹配分</td><td class="astock-score-detail">使用实时新闻明确提及股票，个股证据 3 条；匹配分 170</td><td class="astock-score-value">--</td><td>170 分</td>`,
+		`<td>个股</td><td class="astock-score-category">综合分</td><td class="astock-score-detail">热度分 295 + 匹配分 170 = 综合分 465</td><td class="astock-score-value">--</td><td>465 分</td>`,
+		`<td>板块</td><td class="astock-score-category">负面新闻</td><td class="astock-score-detail">负面新闻 3 条，板块减分 90</td><td class="astock-score-value">-90 分</td><td>-90 分</td>`,
 		"匹配差额",
 		"匹配分 170 - 已列个股明细 75 = 95",
 		"95 分",
