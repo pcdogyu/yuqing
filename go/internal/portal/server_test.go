@@ -353,6 +353,7 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		".astock-recommendation-table{width:100%;min-width:1460px;table-layout:fixed}",
 		".astock-recommendation-table th:nth-child(2),.astock-recommendation-table td:nth-child(2){width:7.5%;white-space:nowrap}",
 		".astock-recommendation-table th:last-child,.astock-recommendation-table td:last-child{width:47%}",
+		".astock-score-table th:nth-child(3),.astock-score-table td:nth-child(3){width:42%}",
 		"推荐窗口",
 		`colspan="12"`,
 		"抓取全部财经信息",

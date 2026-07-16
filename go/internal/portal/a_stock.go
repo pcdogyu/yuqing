@@ -615,6 +615,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-score-table th,.astock-score-table td{padding:4px 6px;border:1px solid #ece7dc;vertical-align:top}
 		.astock-score-table th{background:#faf8f2;color:#554b40;font-weight:700;white-space:nowrap}
 		.astock-score-table td:first-child{white-space:nowrap}
+		.astock-score-table th:nth-child(3),.astock-score-table td:nth-child(3){width:42%}
 		.astock-score-table th:last-child,.astock-score-table td:last-child{text-align:right;white-space:nowrap;font-weight:700}
 		.astock-score-category{white-space:nowrap;color:#214e34;font-weight:700}
 		.astock-score-value{text-align:right;white-space:nowrap}
