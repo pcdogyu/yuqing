@@ -5195,14 +5195,10 @@ const hotspotsTemplate = `
 .hotspot-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
 .hotspot-kpi{border:1px solid #ece7dc;background:#faf8f2;border-radius:8px;padding:14px}
 .hotspot-kpi strong{display:block;margin-top:6px;font-size:24px;color:#214e34}
-.hotspot-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
-.hotspot-table th,.hotspot-table td{font-size:14px;vertical-align:top}
 .hotspot-keyword{font-weight:700;color:#214e34;text-decoration:none}
 .hotspot-up{color:#b3261e;font-weight:700}
 .hotspot-down{color:#007d3c;font-weight:700}
 .hotspot-muted{color:#6a6257;font-size:13px}
-.trend-mini{display:flex;gap:2px;align-items:flex-end;height:28px;min-width:84px}
-.trend-mini i{display:block;width:8px;background:#d8e7dd;border-radius:2px 2px 0 0}
 .error{padding:12px;border-radius:8px;background:#fdeaea;color:#8f2d2d}
 main{max-width:1416px}
 .fundflow-section{width:calc(100vw - 32px);margin-left:calc(50% - 50vw + 16px);margin-right:calc(50% - 50vw + 16px);box-sizing:border-box}
@@ -5218,7 +5214,7 @@ main{max-width:1416px}
 .fundflow-name{font-weight:700;color:#214e34;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fundflow-money{font-weight:700}
 .fundflow-empty{padding:36px 16px;color:#6a6257;text-align:center}
-@media (max-width:1100px){.hotspot-grid,.fundflow-panel{grid-template-columns:1fr}}
+@media (max-width:1100px){.fundflow-panel{grid-template-columns:1fr}}
 ` + `</style>
 </head>
 <body>
@@ -5242,21 +5238,6 @@ main{max-width:1416px}
 <aside class="fundflow-rank"><h3>最新排行</h3><div class="fundflow-rank-list" id="hotspot-fundflow-rank">{{range .SectorFundFlowIntraday.Top}}<div class="fundflow-rank-row"><span>{{.Rank}}</span><span class="fundflow-name">{{.Name}}</span><span class="fundflow-money {{if ge .MainNetInflow 0.0}}hotspot-up{{else}}hotspot-down{{end}}">{{formatFundFlowMoney .MainNetInflow}}</span></div>{{else}}<div class="fundflow-empty">暂无日内资金快照</div>{{end}}</div></aside>
 </div>
 </section>
-<section>
-<h2>热点切换</h2>
-<table class="hotspot-table"><tr><th>上一阶段主热点</th><th>当前阶段主热点</th><th>前期次数</th><th>近期次数</th><th>切换分</th><th>入口</th></tr>{{range .Hotspots.Switches}}<tr><td>{{.From}}</td><td><a class="hotspot-keyword" href="/articles?keyword={{urlquery .To}}">{{.To}}</a></td><td>{{.FromCount}}</td><td>{{.ToCount}}</td><td>{{printf "%.1f" .SwitchScore}}</td><td><a class="inline" href="/articles?keyword={{urlquery .To}}">相关文章</a></td></tr>{{else}}<tr><td colspan="6">暂无明显热点切换</td></tr>{{end}}</table>
-</section>
-<div class="hotspot-grid">
-<section><h2>今日热点排行</h2><table class="hotspot-table"><tr><th>热点</th><th>今日</th><th>14日</th><th>趋势</th><th>入口</th></tr>{{range .Hotspots.TodayTop}}<tr><td><a class="hotspot-keyword" href="/articles?keyword={{urlquery .Keyword}}">{{.Keyword}}</a></td><td>{{.TodayCount}}</td><td>{{.Count14D}}</td><td><div class="trend-mini">{{range .Trend}}<i style="height:{{hotspotBarHeight .Count}}px"></i>{{end}}</div></td><td><a class="inline" href="/articles?keyword={{urlquery .Keyword}}">文章</a></td></tr>{{else}}<tr><td colspan="5">暂无今日热点</td></tr>{{end}}</table></section>
-<section><h2>14日热点排行</h2><table class="hotspot-table"><tr><th>热点</th><th>14日</th><th>近7日</th><th>前7日</th><th>变化</th></tr>{{range .Hotspots.Top}}<tr><td><a class="hotspot-keyword" href="/articles?keyword={{urlquery .Keyword}}">{{.Keyword}}</a></td><td>{{.Count14D}}</td><td>{{.CountRecent7D}}</td><td>{{.CountPrev7D}}</td><td>{{formatHotspotChangeRate .ChangeRate}}</td></tr>{{else}}<tr><td colspan="5">暂无热点数据</td></tr>{{end}}</table></section>
-<section><h2>升温热点</h2><table class="hotspot-table"><tr><th>热点</th><th>近7日</th><th>前7日</th><th>变化</th><th>活跃天数</th></tr>{{range .Hotspots.Rising}}<tr><td><a class="hotspot-keyword" href="/articles?keyword={{urlquery .Keyword}}">{{.Keyword}}</a></td><td>{{.CountRecent7D}}</td><td>{{.CountPrev7D}}</td><td class="hotspot-up">{{formatHotspotChangeRate .ChangeRate}}</td><td>{{.ActiveDays}}</td></tr>{{else}}<tr><td colspan="5">暂无升温热点</td></tr>{{end}}</table></section>
-<section><h2>发现词</h2><table class="hotspot-table"><tr><th>词</th><th>今日</th><th>14日</th><th>近7日</th><th>入口</th></tr>{{range .Hotspots.DiscoveryTodayTop}}<tr><td><a class="hotspot-keyword" href="/articles?keyword={{urlquery .Keyword}}">{{.Keyword}}</a></td><td>{{.TodayCount}}</td><td>{{.Count14D}}</td><td>{{.CountRecent7D}}</td><td><a class="inline" href="/articles?keyword={{urlquery .Keyword}}">文章</a></td></tr>{{else}}<tr><td colspan="5">暂无发现词</td></tr>{{end}}</table></section>
-<section><h2>降温热点</h2><table class="hotspot-table"><tr><th>热点</th><th>近7日</th><th>前7日</th><th>变化</th><th>最后出现</th></tr>{{range .Hotspots.Cooling}}<tr><td><a class="hotspot-keyword" href="/articles?keyword={{urlquery .Keyword}}">{{.Keyword}}</a></td><td>{{.CountRecent7D}}</td><td>{{.CountPrev7D}}</td><td class="hotspot-down">{{formatHotspotChangeRate .ChangeRate}}</td><td>{{.LastSeenDate}}</td></tr>{{else}}<tr><td colspan="5">暂无降温热点</td></tr>{{end}}</table></section>
-<section><h2>新增热点</h2><table class="hotspot-table"><tr><th>热点</th><th>近7日</th><th>首次出现</th><th>最近出现</th><th>入口</th></tr>{{range .Hotspots.New}}<tr><td><a class="hotspot-keyword" href="/articles?keyword={{urlquery .Keyword}}">{{.Keyword}}</a></td><td>{{.CountRecent7D}}</td><td>{{.FirstSeenDate}}</td><td>{{.LastSeenDate}}</td><td><a class="inline" href="/articles?keyword={{urlquery .Keyword}}">文章</a></td></tr>{{else}}<tr><td colspan="5">暂无新增热点</td></tr>{{end}}</table></section>
-<section><h2>连续升温热点</h2><table class="hotspot-table"><tr><th>热点</th><th>近7日</th><th>14日</th><th>切换分</th><th>入口</th></tr>{{range .Hotspots.ContinuousRising}}<tr><td><a class="hotspot-keyword" href="/articles?keyword={{urlquery .Keyword}}">{{.Keyword}}</a></td><td>{{.CountRecent7D}}</td><td>{{.Count14D}}</td><td>{{printf "%.1f" .SwitchScore}}</td><td><a class="inline" href="/articles?keyword={{urlquery .Keyword}}">文章</a></td></tr>{{else}}<tr><td colspan="5">暂无连续升温热点</td></tr>{{end}}</table></section>
-<section><h2>发现词升温</h2><table class="hotspot-table"><tr><th>词</th><th>近7日</th><th>前7日</th><th>变化</th><th>入口</th></tr>{{range .Hotspots.DiscoveryRising}}<tr><td><a class="hotspot-keyword" href="/articles?keyword={{urlquery .Keyword}}">{{.Keyword}}</a></td><td>{{.CountRecent7D}}</td><td>{{.CountPrev7D}}</td><td class="hotspot-up">{{formatHotspotChangeRate .ChangeRate}}</td><td><a class="inline" href="/articles?keyword={{urlquery .Keyword}}">文章</a></td></tr>{{else}}<tr><td colspan="5">暂无升温发现词</td></tr>{{end}}</table></section>
-</div>
-<section><h2>近 {{.Hotspots.Days}} 日趋势</h2><table class="hotspot-table"><tr><th>日期</th><th>Top 热点</th></tr>{{range .Hotspots.Daily}}<tr><td>{{.Date}}</td><td>{{range .Items}}<a class="inline" href="/articles?keyword={{urlquery .Keyword}}">{{.Keyword}}</a> {{else}}<span class="hotspot-muted">暂无</span>{{end}}</td></tr>{{else}}<tr><td colspan="2">暂无趋势数据</td></tr>{{end}}</table></section>
 </main>
 <script>
 (function(){

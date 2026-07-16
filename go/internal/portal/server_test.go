@@ -13339,29 +13339,34 @@ func TestHotspotsPageRendersSwitchingData(t *testing.T) {
 	for _, expected := range []string{
 		"热点切换监控",
 		"过去 14 天热点",
-		"热点切换",
 		"当日板块资金流向",
-		"今日热点排行",
-		"发现词",
-		"升温热点",
-		"降温热点",
-		"新增热点",
-		"连续升温热点",
 		"13:11",
 		"创新药",
 		`viewBox="0 0 1104 655"`,
 		"tradeStart=9*60+30",
 		"zeroY=top+plotH/2",
-		`href="/articles?keyword=AI"`,
-		`href="/articles?keyword=%E6%9C%BA%E5%99%A8%E4%BA%BA"`,
 		`/api/v1/hotspots/sector-fund-flow-intraday`,
-		"黄金",
-		"低空经济",
-		"算力",
-		"涨幅",
 	} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("expected hotspots page to include %q, got %s", expected, body)
+		}
+	}
+	for _, unexpected := range []string{
+		`<h2>热点切换</h2>`,
+		`<h2>今日热点排行</h2>`,
+		`<h2>14日热点排行</h2>`,
+		`<h2>升温热点</h2>`,
+		`<h2>发现词</h2>`,
+		`<h2>降温热点</h2>`,
+		`<h2>新增热点</h2>`,
+		`<h2>连续升温热点</h2>`,
+		`<h2>发现词升温</h2>`,
+		`<h2>近 14 日趋势</h2>`,
+		`class="hotspot-table"`,
+		`class="hotspot-grid"`,
+	} {
+		if strings.Contains(body, unexpected) {
+			t.Fatalf("expected hotspots page to omit %q, got %s", unexpected, body)
 		}
 	}
 }
