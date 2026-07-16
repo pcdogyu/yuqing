@@ -44,6 +44,9 @@ set "RELEASE_SERVICE_PORT=8099"
 set "YUQING_ASTOCK_AUCTION_URL_DEFAULTED=0"
 set "YUQING_ASTOCK_HOLDING_URL_DEFAULTED=0"
 set "YUQING_AKSHARE_AUCTION_STARTED=0"
+if not defined YUQING_SERVICE_START_TIMEOUT_SECONDS (
+    set "YUQING_SERVICE_START_TIMEOUT_SECONDS=30"
+)
 if not defined YUQING_RELEASE_ADDR (
     set "YUQING_RELEASE_ADDR=:%RELEASE_SERVICE_PORT%"
 )
@@ -225,21 +228,9 @@ call :build_services
 if errorlevel 1 goto :fail
 
 echo [6/6] Start services with debug logging...
-for %%S in (
-    auth-service
-    wechat-service
-    content-service
-    crawler-service
-    analysis-service
-    nlp-service
-    gateway-web
-    scheduler-service
-    release-service
-) do (
-    call :start_process_core %%S
-    if errorlevel 1 goto :fail
-)
-call :start_akshare_auction_service
+call :start_all_service_processes
+if errorlevel 1 goto :fail
+call :verify_services_started
 if errorlevel 1 goto :fail
 
 echo.
@@ -296,26 +287,11 @@ if not "%SERVICE_CHECK_EXIT%"=="2" (
     echo Service status check failed with exit code %SERVICE_CHECK_EXIT%.
     exit /b %SERVICE_CHECK_EXIT%
 )
-echo One or more services are not listening. Calling scripts\start-all.ps1...
-powershell -NoProfile -ExecutionPolicy Bypass -File "%GO_DIR%\scripts\start-all.ps1" -Root "%GO_DIR%"
-if errorlevel 1 (
-    echo start-all.ps1 failed with exit code %ERRORLEVEL%.
-    exit /b %ERRORLEVEL%
-)
-for /L %%I in (1,1,15) do (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%GO_DIR%\scripts\service-status.ps1" -LogDir "%LOG_DIR%" -FailOnMissing >nul
-    if not errorlevel 1 (
-        echo All services are listening after start-all.ps1.
-        echo Service status after start-all.ps1:
-        call :print_service_status
-        exit /b !ERRORLEVEL!
-    )
-    timeout /t 2 /nobreak >nul
-)
-echo Service status after start-all.ps1:
-call :print_service_status
-echo One or more services are still not listening after start-all.ps1.
-exit /b 1
+echo One or more services are not listening. Starting missing services with timeout...
+call :start_all_service_processes
+if errorlevel 1 exit /b %ERRORLEVEL%
+call :verify_services_started
+exit /b %ERRORLEVEL%
 
 :restart_services_only
 cd /d "%GO_DIR%"
@@ -327,21 +303,9 @@ if errorlevel 1 goto :fail
 call :ensure_release_port
 if errorlevel 1 goto :fail
 echo [restartservices] Start services with existing binaries...
-for %%S in (
-    auth-service
-    wechat-service
-    content-service
-    crawler-service
-    analysis-service
-    nlp-service
-    gateway-web
-    scheduler-service
-    release-service
-) do (
-    call :start_process_core %%S
-    if errorlevel 1 goto :fail
-)
-call :start_akshare_auction_service
+call :start_all_service_processes
+if errorlevel 1 goto :fail
+call :verify_services_started
 if errorlevel 1 goto :fail
 echo.
 echo Services restarted.
@@ -381,6 +345,88 @@ exit /b %ERRORLEVEL%
 
 :build_services
 powershell -NoProfile -ExecutionPolicy Bypass -File "%GO_DIR%\scripts\build-services.ps1" -Root "%GO_DIR%" -BinDir "%BIN_DIR%" -Ldflags "%LDFLAGS%" -GoBuildFlags "%GO_BUILD_FLAGS%" -Services "%SERVICE_NAMES%"
+exit /b %ERRORLEVEL%
+
+:start_all_service_processes
+for %%S in (
+    auth-service
+    wechat-service
+    content-service
+    crawler-service
+    analysis-service
+    nlp-service
+    gateway-web
+    scheduler-service
+    release-service
+) do (
+    call :start_process_if_missing %%S
+    if errorlevel 1 exit /b 1
+)
+call :start_akshare_auction_service_if_missing
+if errorlevel 1 exit /b 1
+exit /b 0
+
+:verify_services_started
+echo Checking whether all services are listening...
+call :wait_for_all_services
+if not errorlevel 1 (
+    echo All services are listening.
+    exit /b 0
+)
+echo One or more services did not start within %YUQING_SERVICE_START_TIMEOUT_SECONDS% seconds. Retrying missing services once...
+call :start_all_service_processes
+if errorlevel 1 exit /b 1
+call :wait_for_all_services
+if not errorlevel 1 (
+    echo All services are listening after retry.
+    exit /b 0
+)
+echo Service status after retry:
+call :print_service_status
+echo One or more services are still not listening after retry.
+exit /b 1
+
+:wait_for_all_services
+for /L %%I in (1,1,%YUQING_SERVICE_START_TIMEOUT_SECONDS%) do (
+    call :check_all_services_once >nul
+    if not errorlevel 1 exit /b 0
+    timeout /t 1 /nobreak >nul
+)
+exit /b 1
+
+:check_all_services_once
+if defined YUQING_ASTOCK_AUCTION_URL (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%GO_DIR%\scripts\service-status.ps1" -LogDir "%LOG_DIR%" -FailOnMissing
+) else (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%GO_DIR%\scripts\service-status.ps1" -LogDir "%LOG_DIR%" -FailOnMissing -SkipAkshare
+)
+exit /b %ERRORLEVEL%
+
+:start_process_if_missing
+set "TARGET_SERVICE=%~1"
+call :is_service_listening "%TARGET_SERVICE%"
+if not errorlevel 1 (
+    echo %TARGET_SERVICE% already listening; skip start.
+    exit /b 0
+)
+call :start_process_core "%TARGET_SERVICE%"
+exit /b %ERRORLEVEL%
+
+:is_service_listening
+set "TARGET_SERVICE=%~1"
+set "TARGET_PORT="
+if /I "%TARGET_SERVICE%"=="auth-service" set "TARGET_PORT=8081"
+if /I "%TARGET_SERVICE%"=="wechat-service" set "TARGET_PORT=%WECHAT_SERVICE_PORT%"
+if /I "%TARGET_SERVICE%"=="content-service" set "TARGET_PORT=8082"
+if /I "%TARGET_SERVICE%"=="crawler-service" set "TARGET_PORT=8083"
+if /I "%TARGET_SERVICE%"=="analysis-service" set "TARGET_PORT=8084"
+if /I "%TARGET_SERVICE%"=="nlp-service" set "TARGET_PORT=8085"
+if /I "%TARGET_SERVICE%"=="gateway-web" set "TARGET_PORT=%GATEWAY_WEB_PORT%"
+if /I "%TARGET_SERVICE%"=="scheduler-service" set "TARGET_PORT=8086"
+if /I "%TARGET_SERVICE%"=="release-service" set "TARGET_PORT=%RELEASE_SERVICE_PORT%"
+if /I "%TARGET_SERVICE%"=="akshare-service" set "TARGET_PORT=%AKSHARE_AUCTION_PORT%"
+if not defined TARGET_PORT exit /b 1
+powershell -NoProfile -ExecutionPolicy Bypass -Command "if (@(Get-NetTCPConnection -State Listen -LocalPort %TARGET_PORT% -ErrorAction SilentlyContinue).Count -gt 0) { exit 0 } else { exit 1 }"
 exit /b %ERRORLEVEL%
 
 :ensure_gateway_http_port80
@@ -471,8 +517,23 @@ set "ERR_LOG=%LOG_DIR%\%TARGET_SERVICE%.err.log"
 if exist "%OUT_LOG%" del /Q "%OUT_LOG%" >nul 2>nul
 if exist "%ERR_LOG%" del /Q "%ERR_LOG%" >nul 2>nul
 echo Starting %TARGET_SERVICE%...
-powershell -NoProfile -Command "$q=[char]34; $argsList = '--host '+$q+'%AKSHARE_AUCTION_HOST%'+$q+' --port '+$q+'%AKSHARE_AUCTION_PORT%'+$q+' --python '+$q+'%PYTHON_EXE%'+$q; if ('%PYTHON_LAUNCH_ARGS%' -ne '') { $argsList += ' --python-arg '+$q+'%PYTHON_LAUNCH_ARGS%'+$q }; $p = Start-Process -FilePath '%BIN_DIR%\%TARGET_SERVICE%.exe' -ArgumentList $argsList -WorkingDirectory '%GO_DIR%' -RedirectStandardOutput '%OUT_LOG%' -RedirectStandardError '%ERR_LOG%' -PassThru -WindowStyle Hidden; if ($null -eq $p) { exit 1 }"
-if errorlevel 1 (
+set "ARG_FILE=%TEMP%\yuqing-%TARGET_SERVICE%-args-%RANDOM%-%RANDOM%.txt"
+>"%ARG_FILE%" (
+    echo --host
+    echo %AKSHARE_AUCTION_HOST%
+    echo --port
+    echo %AKSHARE_AUCTION_PORT%
+    echo --python
+    echo %PYTHON_EXE%
+)
+if defined PYTHON_LAUNCH_ARGS (
+    >>"%ARG_FILE%" echo --python-arg
+    >>"%ARG_FILE%" echo %PYTHON_LAUNCH_ARGS%
+)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%GO_DIR%\scripts\start-service-binary.ps1" -ServiceName "%TARGET_SERVICE%" -Executable "%BIN_DIR%\%TARGET_SERVICE%.exe" -WorkingDirectory "%GO_DIR%" -OutLog "%OUT_LOG%" -ErrLog "%ERR_LOG%" -TimeoutSeconds "%YUQING_SERVICE_START_TIMEOUT_SECONDS%" -ArgumentFile "%ARG_FILE%"
+set "SERVICE_START_EXIT=%ERRORLEVEL%"
+del /Q "%ARG_FILE%" >nul 2>nul
+if not "%SERVICE_START_EXIT%"=="0" (
     echo WARNING: Failed to start %TARGET_SERVICE%.
     if "%YUQING_ASTOCK_AUCTION_URL_DEFAULTED%"=="1" set "YUQING_ASTOCK_AUCTION_URL="
     if "%YUQING_ASTOCK_HOLDING_URL_DEFAULTED%"=="1" set "YUQING_ASTOCK_HOLDING_URL="
@@ -484,6 +545,19 @@ if not defined YUQING_STOCK_RESEARCH_URL (
 )
 exit /b 0
 
+:start_akshare_auction_service_if_missing
+call :is_service_listening "akshare-service"
+if not errorlevel 1 (
+    echo akshare-service already listening; skip start.
+    set "YUQING_AKSHARE_AUCTION_STARTED=1"
+    if not defined YUQING_STOCK_RESEARCH_URL (
+        set "YUQING_STOCK_RESEARCH_URL=http://127.0.0.1:%AKSHARE_AUCTION_PORT%"
+    )
+    exit /b 0
+)
+call :start_akshare_auction_service
+exit /b %ERRORLEVEL%
+
 :start_process_core
 set "TARGET_SERVICE=%~1"
 set "OUT_LOG=%LOG_DIR%\%TARGET_SERVICE%.out.log"
@@ -491,7 +565,7 @@ set "ERR_LOG=%LOG_DIR%\%TARGET_SERVICE%.err.log"
 if exist "%OUT_LOG%" del /Q "%OUT_LOG%" >nul 2>nul
 if exist "%ERR_LOG%" del /Q "%ERR_LOG%" >nul 2>nul
 echo Starting %TARGET_SERVICE%...
-powershell -NoProfile -Command "$p = Start-Process -FilePath '%BIN_DIR%\%TARGET_SERVICE%.exe' -WorkingDirectory '%GO_DIR%' -RedirectStandardOutput '%OUT_LOG%' -RedirectStandardError '%ERR_LOG%' -PassThru -WindowStyle Hidden; if ($null -eq $p) { exit 1 }"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%GO_DIR%\scripts\start-service-binary.ps1" -ServiceName "%TARGET_SERVICE%" -Executable "%BIN_DIR%\%TARGET_SERVICE%.exe" -WorkingDirectory "%GO_DIR%" -OutLog "%OUT_LOG%" -ErrLog "%ERR_LOG%" -TimeoutSeconds "%YUQING_SERVICE_START_TIMEOUT_SECONDS%"
 if errorlevel 1 (
     echo Failed to start %TARGET_SERVICE%.
     exit /b 1

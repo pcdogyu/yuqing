@@ -1,6 +1,7 @@
 param(
     [string]$LogDir = "",
-    [switch]$FailOnMissing
+    [switch]$FailOnMissing,
+    [switch]$SkipAkshare
 )
 
 $ErrorActionPreference = "Stop"
@@ -47,6 +48,9 @@ $services = @(
     [pscustomobject]@{ Name = "release-service"; Port = $releasePort; Url = $releaseUrl },
     [pscustomobject]@{ Name = "akshare-service"; Port = 8087; Url = "http://127.0.0.1:8087" }
 )
+if ($SkipAkshare) {
+    $services = @($services | Where-Object { $_.Name -ne "akshare-service" })
+}
 
 $listeners = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue)
 $rows = foreach ($service in $services) {
