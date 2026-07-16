@@ -5201,7 +5201,7 @@ const hotspotsTemplate = `
 .hotspot-muted{color:#6a6257;font-size:13px}
 .error{padding:12px;border-radius:8px;background:#fdeaea;color:#8f2d2d}
 main{max-width:1416px}
-.fundflow-section{width:100vw;max-width:100vw;margin-left:calc(50% - 50vw);margin-right:calc(50% - 50vw);box-sizing:border-box}
+.fundflow-section{width:95vw;max-width:95vw;margin-left:calc(50% - 47.5vw);margin-right:calc(50% - 47.5vw);box-sizing:border-box}
 .fundflow-panel{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:18px;align-items:start}
 .fundflow-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:10px}
 .fundflow-chart-wrap{min-height:721px;border:1px solid #ece7dc;border-radius:8px;background:linear-gradient(180deg,#fff4f4 0%,#ffffff 50%,#f0fff5 100%);overflow:hidden}
@@ -5252,8 +5252,9 @@ function parseTradeMinute(value){var m=String(value||"").match(/(\d{1,2}):(\d{2}
 function renderChart(data){
  var svg=document.getElementById("hotspot-fundflow-chart"); if(!svg){return} clear(svg);
  var series=(data&&data.series)||[]; var times=(data&&data.times)||[]; var latest=document.getElementById("fundflow-latest-time"); if(latest){latest.textContent=(data&&data.latest_time)||"--"}
- if(!series.length||!times.length){svg.appendChild(svgEl("text",{x:"552",y:"361","text-anchor":"middle",fill:"#6a6257"})).textContent="暂无日内资金快照";return}
- var width=1104,height=721,left=78,right=156,top=38,bottom=86,plotW=width-left-right,plotH=height-top-bottom,zeroY=top+plotH/2;
+ var height=721,width=Math.max(1104,Math.round((svg.getBoundingClientRect&&svg.getBoundingClientRect().width)||svg.clientWidth||1104));svg.setAttribute("viewBox","0 0 "+width+" "+height);
+ if(!series.length||!times.length){svg.appendChild(svgEl("text",{x:String(width/2),y:"361","text-anchor":"middle",fill:"#6a6257"})).textContent="暂无日内资金快照";return}
+ var left=58,right=238,top=38,bottom=86,plotW=width-left-right,plotH=height-top-bottom,zeroY=top+plotH/2;
  var morningStart=9*60+30,morningEnd=11*60+30,afternoonStart=13*60,afternoonEnd=15*60,tradingDuration=(morningEnd-morningStart)+(afternoonEnd-afternoonStart);
  function tradeOffset(minute){minute=Math.max(morningStart,Math.min(afternoonEnd,minute));if(minute<=morningEnd){return minute-morningStart}if(minute<afternoonStart){return morningEnd-morningStart}return (morningEnd-morningStart)+(minute-afternoonStart)}
  function xForMinute(minute){return left+tradeOffset(minute)/tradingDuration*plotW}
@@ -5262,7 +5263,13 @@ function renderChart(data){
  var absMax=values.reduce(function(max,value){return Math.max(max,Math.abs(value))},0); if(!isFinite(absMax)||absMax<=0){absMax=1} absMax*=1.08;
  [-1,-0.5,0,0.5,1].forEach(function(ratio){var y=zeroY-ratio*plotH/2;var stroke=ratio===0?"#9a8f7d":"#d8cfbf";var strokeWidth=ratio===0?"1.6":"1";svg.appendChild(svgEl("line",{x1:left,y1:y,x2:width-right,y2:y,stroke:stroke,"stroke-width":strokeWidth}));var label=svgEl("text",{x:left-10,y:y+4,"text-anchor":"end",fill:"#6a6257","font-size":"13"});label.textContent=(absMax*ratio).toFixed(0)+"亿";svg.appendChild(label)});
  [["09:30",morningStart,height-18],["10:30",10*60+30,height-18],["11:30",morningEnd,height-30],["13:00",afternoonStart,height-14],["14:00",14*60,height-18],["15:00",afternoonEnd,height-18]].forEach(function(item){var x=xForMinute(item[1]);svg.appendChild(svgEl("line",{x1:x,y1:top,x2:x,y2:height-bottom,stroke:"#ece7dc","stroke-width":"1"}));var label=svgEl("text",{x:x,y:item[2],"text-anchor":"middle",fill:"#6a6257","font-size":"13"});label.textContent=item[0];svg.appendChild(label)});
- series.forEach(function(s,idx){var path=[];(s.points||[]).forEach(function(p){var x=xForTime(p.time);if(x===null){return}var y=zeroY-rawYi(p.main_net_inflow)/absMax*plotH/2;path.push((path.length?"L":"M")+x.toFixed(1)+" "+y.toFixed(1))});if(!path.length){return}var color=colors[idx%colors.length];svg.appendChild(svgEl("path",{d:path.join(" "),fill:"none",stroke:color,"stroke-width":"2.4","stroke-linejoin":"round","stroke-linecap":"round"}));var last=(s.points||[])[(s.points||[]).length-1];if(last){var x=xForTime(last.time);if(x===null){return}var y=zeroY-rawYi(last.main_net_inflow)/absMax*plotH/2;svg.appendChild(svgEl("circle",{cx:x,cy:y,r:"3.5",fill:color}));var label=svgEl("text",{x:Math.min(x+8,width-148),y:y+4,fill:color,"font-size":"12","font-weight":"700"});label.textContent=s.name+" "+moneyYi(last.main_net_inflow);svg.appendChild(label)}})
+ var endLabels=[];
+ series.forEach(function(s,idx){var path=[];(s.points||[]).forEach(function(p){var x=xForTime(p.time);if(x===null){return}var y=zeroY-rawYi(p.main_net_inflow)/absMax*plotH/2;path.push((path.length?"L":"M")+x.toFixed(1)+" "+y.toFixed(1))});if(!path.length){return}var color=colors[idx%colors.length];svg.appendChild(svgEl("path",{d:path.join(" "),fill:"none",stroke:color,"stroke-width":"2.4","stroke-linejoin":"round","stroke-linecap":"round"}));var last=(s.points||[])[(s.points||[]).length-1];if(last){var x=xForTime(last.time);if(x===null){return}var y=zeroY-rawYi(last.main_net_inflow)/absMax*plotH/2;svg.appendChild(svgEl("circle",{cx:x,cy:y,r:"3.5",fill:color}));endLabels.push({x:x,y:y,color:color,text:s.name+" "+moneyYi(last.main_net_inflow)})}});
+ endLabels.sort(function(a,b){return a.y-b.y});var minLabelY=top+12,maxLabelY=height-bottom-12,labelGap=Math.max(12,Math.min(18,(maxLabelY-minLabelY)/Math.max(endLabels.length-1,1)));
+ endLabels.forEach(function(item,idx){item.labelY=Math.max(item.y,idx===0?minLabelY:endLabels[idx-1].labelY+labelGap)});
+ if(endLabels.length){var overflow=endLabels[endLabels.length-1].labelY-maxLabelY;if(overflow>0){endLabels.forEach(function(item){item.labelY-=overflow})}endLabels.forEach(function(item,idx){item.labelY=Math.max(idx===0?minLabelY:endLabels[idx-1].labelY+labelGap,item.labelY)})}
+ var labelX=width-right+14;
+ endLabels.forEach(function(item){svg.appendChild(svgEl("path",{d:"M"+item.x.toFixed(1)+" "+item.y.toFixed(1)+" L"+(labelX-8).toFixed(1)+" "+item.labelY.toFixed(1),fill:"none",stroke:item.color,"stroke-width":"1","stroke-opacity":"0.45"}));var label=svgEl("text",{x:labelX,y:item.labelY+4,fill:item.color,"font-size":"12","font-weight":"700"});label.textContent=item.text;svg.appendChild(label)})
 }
 function renderRank(data){
  var box=document.getElementById("hotspot-fundflow-rank"); if(!box){return} clear(box); var top=(data&&data.top)||[]; if(!top.length){var empty=document.createElement("div");empty.className="fundflow-empty";empty.textContent="暂无日内资金快照";box.appendChild(empty);return}
