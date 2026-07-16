@@ -5201,7 +5201,8 @@ const hotspotsTemplate = `
 .hotspot-muted{color:#6a6257;font-size:13px}
 .error{padding:12px;border-radius:8px;background:#fdeaea;color:#8f2d2d}
 main{max-width:1416px}
-.fundflow-section{width:104.5vw;max-width:104.5vw;margin-left:calc(50% - 52.25vw);margin-right:calc(50% - 52.25vw);box-sizing:border-box}
+html,body{overflow-x:hidden}
+.fundflow-section{width:98vw;max-width:98vw;margin-left:calc(50% - 49vw);margin-right:calc(50% - 49vw);box-sizing:border-box}
 .fundflow-panel{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:18px;align-items:start}
 .fundflow-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:10px}
 .fundflow-chart-wrap{min-height:865px;border:1px solid #ece7dc;border-radius:8px;background:linear-gradient(180deg,#fff4f4 0%,#ffffff 50%,#f0fff5 100%);overflow:hidden}
@@ -5263,11 +5264,16 @@ function renderChart(data){
  function xForTime(t){var minute=parseTradeMinute(t);if(minute===null){return null}return xForMinute(minute)}
  var displaySeries=series.map(function(s){return {name:s.name,points:smoothSeriesPoints(s.points||[])}});
  var values=[]; displaySeries.forEach(function(s){(s.points||[]).forEach(function(p){values.push(rawYi(p.main_net_inflow))})});
- var absMax=values.reduce(function(max,value){return Math.max(max,Math.abs(value))},0); if(!isFinite(absMax)||absMax<=0){absMax=1} absMax*=1.08;
- [-1,-0.5,0,0.5,1].forEach(function(ratio){var y=zeroY-ratio*plotH/2;var stroke=ratio===0?"#9a8f7d":"#d8cfbf";var strokeWidth=ratio===0?"1.6":"1";svg.appendChild(svgEl("line",{x1:left,y1:y,x2:width-right,y2:y,stroke:stroke,"stroke-width":strokeWidth}));var label=svgEl("text",{x:left-10,y:y+4,"text-anchor":"end",fill:"#6a6257","font-size":"13"});label.textContent=(absMax*ratio).toFixed(0)+"亿";svg.appendChild(label)});
- [["09:30",morningStart,height-18],["10:30",10*60+30,height-18],["11:30",morningEnd,height-30],["13:00",afternoonStart,height-14],["14:00",14*60,height-18],["15:00",afternoonEnd,height-18]].forEach(function(item){var x=xForMinute(item[1]);svg.appendChild(svgEl("line",{x1:x,y1:top,x2:x,y2:height-bottom,stroke:"#ece7dc","stroke-width":"1"}));var label=svgEl("text",{x:x,y:item[2],"text-anchor":"middle",fill:"#6a6257","font-size":"13"});label.textContent=item[0];svg.appendChild(label)});
+ var maxInflow=values.reduce(function(max,value){return Math.max(max,value)},0);
+ var fallbackAbsMax=values.reduce(function(max,value){return Math.max(max,Math.abs(value))},0);
+ var yStep=10,yScaleSource=maxInflow>0?maxInflow:fallbackAbsMax,yMax=Math.ceil(Math.max(yScaleSource*1.10,yStep)/yStep)*yStep;
+ if(!isFinite(yMax)||yMax<=0){yMax=yStep}
+ function yForValue(value){var y=zeroY-rawYi(value)/yMax*plotH/2;return Math.max(top,Math.min(height-bottom,y))}
+ var labelEvery=yMax>120?50:(yMax>60?20:10);
+ for(var tick=-yMax;tick<=yMax+0.0001;tick+=yStep){var y=zeroY-tick/yMax*plotH/2;var isZero=Math.abs(tick)<0.0001;svg.appendChild(svgEl("line",{x1:left,y1:y,x2:width-right,y2:y,stroke:isZero?"#9a8f7d":"#d8cfbf","stroke-width":isZero?"1.6":"1","stroke-opacity":isZero?"1":"0.62"}));if(isZero||Math.abs(tick)===yMax||Math.abs(tick)%labelEvery===0){var label=svgEl("text",{x:left-10,y:y+4,"text-anchor":"end",fill:"#6a6257","font-size":"13"});label.textContent=tick.toFixed(0)+"亿";svg.appendChild(label)}}
+ var drawnXTicks={};[["09:30",morningStart,height-18],["10:00",10*60,height-18],["10:30",10*60+30,height-18],["11:00",11*60,height-18],["11:30",morningEnd,height-30],["13:00",afternoonStart,height-14],["13:30",13*60+30,height-18],["14:00",14*60,height-18],["14:30",14*60+30,height-18],["15:00",afternoonEnd,height-18]].forEach(function(item){var x=xForMinute(item[1]);var key=x.toFixed(1);if(!drawnXTicks[key]){svg.appendChild(svgEl("line",{x1:x,y1:top,x2:x,y2:height-bottom,stroke:"#ece7dc","stroke-width":"1"}));drawnXTicks[key]=true}var label=svgEl("text",{x:x,y:item[2],"text-anchor":"middle",fill:"#6a6257","font-size":"13"});label.textContent=item[0];svg.appendChild(label)});
  var endLabels=[];
- displaySeries.forEach(function(s,idx){var path=[];(s.points||[]).forEach(function(p){var x=xForTime(p.time);if(x===null){return}var y=zeroY-rawYi(p.main_net_inflow)/absMax*plotH/2;path.push((path.length?"L":"M")+x.toFixed(1)+" "+y.toFixed(1))});if(!path.length){return}var color=colors[idx%colors.length];svg.appendChild(svgEl("path",{d:path.join(" "),fill:"none",stroke:color,"stroke-width":"2.4","stroke-linejoin":"round","stroke-linecap":"round"}));var best=bestFundFlowPoint(s.points);if(best){var x=xForTime(best.time);if(x===null){return}var y=zeroY-rawYi(best.main_net_inflow)/absMax*plotH/2;svg.appendChild(svgEl("circle",{cx:x,cy:y,r:"3.5",fill:color}));endLabels.push({x:x,y:y,labelX:Math.min(x+10,width-216),color:color,text:s.name+" "+moneyYi(best.main_net_inflow)})}});
+ displaySeries.forEach(function(s,idx){var path=[];(s.points||[]).forEach(function(p){var x=xForTime(p.time);if(x===null){return}var y=yForValue(p.main_net_inflow);path.push((path.length?"L":"M")+x.toFixed(1)+" "+y.toFixed(1))});if(!path.length){return}var color=colors[idx%colors.length];svg.appendChild(svgEl("path",{d:path.join(" "),fill:"none",stroke:color,"stroke-width":"2.4","stroke-linejoin":"round","stroke-linecap":"round"}));var best=bestFundFlowPoint(s.points);if(best){var x=xForTime(best.time);if(x===null){return}var y=yForValue(best.main_net_inflow);svg.appendChild(svgEl("circle",{cx:x,cy:y,r:"3.5",fill:color}));endLabels.push({x:x,y:y,labelX:Math.min(Math.max(x+10,left+8),width-216),color:color,text:s.name+" "+moneyYi(best.main_net_inflow)})}});
  endLabels.sort(function(a,b){return a.y-b.y});var minLabelY=top+12,maxLabelY=height-bottom-12,labelGap=Math.max(12,Math.min(18,(maxLabelY-minLabelY)/Math.max(endLabels.length-1,1)));
  endLabels.forEach(function(item,idx){item.labelY=Math.max(item.y,idx===0?minLabelY:endLabels[idx-1].labelY+labelGap)});
  if(endLabels.length){var overflow=endLabels[endLabels.length-1].labelY-maxLabelY;if(overflow>0){endLabels.forEach(function(item){item.labelY-=overflow})}endLabels.forEach(function(item,idx){item.labelY=Math.max(idx===0?minLabelY:endLabels[idx-1].labelY+labelGap,item.labelY)})}
