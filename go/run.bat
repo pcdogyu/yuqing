@@ -12,10 +12,14 @@ if /I "%~1"=="--skip-pull" set "SKIP_PULL=1"
 set "AFTER_PULL=0"
 if /I "%~1"=="--after-pull" set "AFTER_PULL=1"
 set "FULL_RUN=0"
+set "FORCE_RUN=0"
 for %%A in (%*) do (
     if /I "%%~A"=="-full" set "FULL_RUN=1"
     if /I "%%~A"=="--full" set "FULL_RUN=1"
+    if /I "%%~A"=="-force" set "FORCE_RUN=1"
+    if /I "%%~A"=="--force" set "FORCE_RUN=1"
 )
+if "%FORCE_RUN%"=="1" set "SKIP_PULL=1"
 set "SCRIPT_PATH=%~f0"
 if "%AFTER_PULL%"=="1" if not "%~2"=="" set "SCRIPT_PATH=%~f2"
 

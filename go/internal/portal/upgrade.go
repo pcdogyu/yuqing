@@ -246,7 +246,7 @@ func stalePortalUpgradeRestartResult(result portalUpgradeResult, now time.Time) 
 		return result, false
 	}
 	waited := now.Sub(reference).Round(time.Second)
-	message := fmt.Sprintf("服务重启超时（已等待 %s），请在服务器检查 runtime-logs/%s 并手动执行 run.bat --skip-pull", waited, portalUpgradeRestartLogName)
+	message := fmt.Sprintf("服务重启超时（已等待 %s），请在服务器检查 runtime-logs/%s 并手动执行 run.bat -force", waited, portalUpgradeRestartLogName)
 	logText := strings.TrimRight(result.Log, "\r\n")
 	if logText != "" {
 		logText += "\n"
@@ -688,7 +688,7 @@ function Invoke-RunBatRestart {
     try { Remove-Item -Path $RestartLogPath -Force -ErrorAction SilentlyContinue } catch {}
     try { Remove-Item -Path $errPath -Force -ErrorAction SilentlyContinue } catch {}
     $cmdExe = if ($env:ComSpec) { $env:ComSpec } else { 'cmd.exe' }
-    $cmdArgs = '/d /c "' + $RunBat + '" --skip-pull'
+    $cmdArgs = '/d /c "' + $RunBat + '" -force'
     try {
         $proc = Start-Process -FilePath $cmdExe -ArgumentList $cmdArgs -WorkingDirectory $GoDir -RedirectStandardOutput $RestartLogPath -RedirectStandardError $errPath -PassThru -WindowStyle Hidden
     } catch {

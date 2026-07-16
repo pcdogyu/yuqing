@@ -166,7 +166,7 @@ func TestPortalUpgradeSnapshotMarksStaleRestartingFailed(t *testing.T) {
 	if result.OK || result.Status != "failed" || result.Running || !strings.Contains(result.Message, "服务重启超时") {
 		t.Fatalf("expected stale restarting status to fail, got %+v", result)
 	}
-	if !strings.Contains(result.Log, "run.bat --skip-pull") {
+	if !strings.Contains(result.Log, "run.bat -force") {
 		t.Fatalf("expected manual restart guidance in log, got %s", result.Log)
 	}
 	loaded, ok := loadPortalUpgradeStatus()
@@ -196,7 +196,7 @@ func TestPortalUpgradeRestartScriptRunsRunBatAndWritesEffectiveVersion(t *testin
 	for _, want := range []string{
 		`$RestartTimeoutSeconds = 600`,
 		`function Invoke-RunBatRestart`,
-		`$cmdArgs = '/d /c "' + $RunBat + '" --skip-pull'`,
+		`$cmdArgs = '/d /c "' + $RunBat + '" -force'`,
 		`run.bat restart timed out after `,
 		`http://127.0.0.1/healthz`,
 		`function Ensure-GatewayWeb`,
