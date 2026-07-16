@@ -5205,13 +5205,14 @@ const hotspotsTemplate = `
 .trend-mini i{display:block;width:8px;background:#d8e7dd;border-radius:2px 2px 0 0}
 .error{padding:12px;border-radius:8px;background:#fdeaea;color:#8f2d2d}
 main{max-width:1416px}
+.fundflow-section{width:calc(100vw - 32px);margin-left:calc(50% - 50vw + 16px);margin-right:calc(50% - 50vw + 16px);box-sizing:border-box}
 .fundflow-panel{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:18px;align-items:start}
 .fundflow-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:10px}
-.fundflow-chart-wrap{min-height:504px;border:1px solid #ece7dc;border-radius:8px;background:linear-gradient(180deg,#fff4f4 0%,#ffffff 50%,#f0fff5 100%);overflow:hidden}
-.fundflow-chart{width:100%;height:504px;display:block}
+.fundflow-chart-wrap{min-height:655px;border:1px solid #ece7dc;border-radius:8px;background:linear-gradient(180deg,#fff4f4 0%,#ffffff 50%,#f0fff5 100%);overflow:hidden}
+.fundflow-chart{width:100%;height:655px;display:block}
 .fundflow-rank{border:1px solid #ece7dc;border-radius:8px;overflow:hidden;background:#fff}
 .fundflow-rank h3{margin:0;padding:12px 14px;border-bottom:1px solid #ece7dc;font-size:18px}
-.fundflow-rank-list{max-height:504px;overflow:auto}
+.fundflow-rank-list{max-height:655px;overflow:auto}
 .fundflow-rank-row{display:grid;grid-template-columns:24px minmax(0,1fr) auto;gap:8px;align-items:center;padding:9px 12px;border-bottom:1px solid #f0ebdf;font-size:14px}
 .fundflow-dot{width:10px;height:10px;border-radius:999px;display:inline-block}
 .fundflow-name{font-weight:700;color:#214e34;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -5231,13 +5232,13 @@ main{max-width:1416px}
 </div>
 <div class="hotspot-kpis"><div class="hotspot-kpi">统计文章<strong>{{.Hotspots.TotalArticles}}</strong></div><div class="hotspot-kpi">标准热点<strong>{{len .Hotspots.TodayTop}}</strong></div><div class="hotspot-kpi">发现词<strong>{{len .Hotspots.DiscoveryTodayTop}}</strong></div><div class="hotspot-kpi">切换信号<strong>{{len .Hotspots.Switches}}</strong></div></div>
 </section>
-<section>
+<section class="fundflow-section">
 <div class="fundflow-head">
 <div><h2>当日板块资金流向</h2><p class="hotspot-muted">按“今日主力净流入”展示，后台交易时段每分钟抓取，页面每 60 秒刷新。最新时间：<span id="fundflow-latest-time">{{if .SectorFundFlowIntraday.LatestTime}}{{.SectorFundFlowIntraday.LatestTime}}{{else}}--{{end}}</span></p></div>
 <div class="hotspot-tabs"><a data-sector-type="概念资金流" class="{{if eq .SectorFundFlowType "概念资金流"}}active{{end}}" href="/hotspots?days={{.Hotspots.Days}}&sector_type=%E6%A6%82%E5%BF%B5%E8%B5%84%E9%87%91%E6%B5%81">概念资金流</a><a data-sector-type="行业资金流" class="{{if eq .SectorFundFlowType "行业资金流"}}active{{end}}" href="/hotspots?days={{.Hotspots.Days}}&sector_type=%E8%A1%8C%E4%B8%9A%E8%B5%84%E9%87%91%E6%B5%81">行业资金流</a></div>
 </div>
 <div class="fundflow-panel" id="hotspot-fundflow" data-sector-type="{{.SectorFundFlowType}}">
-<div class="fundflow-chart-wrap"><svg class="fundflow-chart" id="hotspot-fundflow-chart" viewBox="0 0 1104 504" role="img" aria-label="当日板块资金流向折线图"></svg></div>
+<div class="fundflow-chart-wrap"><svg class="fundflow-chart" id="hotspot-fundflow-chart" viewBox="0 0 1104 655" role="img" aria-label="当日板块资金流向折线图"></svg></div>
 <aside class="fundflow-rank"><h3>最新排行</h3><div class="fundflow-rank-list" id="hotspot-fundflow-rank">{{range .SectorFundFlowIntraday.Top}}<div class="fundflow-rank-row"><span>{{.Rank}}</span><span class="fundflow-name">{{.Name}}</span><span class="fundflow-money {{if ge .MainNetInflow 0.0}}hotspot-up{{else}}hotspot-down{{end}}">{{formatFundFlowMoney .MainNetInflow}}</span></div>{{else}}<div class="fundflow-empty">暂无日内资金快照</div>{{end}}</div></aside>
 </div>
 </section>
@@ -5270,8 +5271,8 @@ function parseTradeMinute(value){var m=String(value||"").match(/(\d{1,2}):(\d{2}
 function renderChart(data){
  var svg=document.getElementById("hotspot-fundflow-chart"); if(!svg){return} clear(svg);
  var series=(data&&data.series)||[]; var times=(data&&data.times)||[]; var latest=document.getElementById("fundflow-latest-time"); if(latest){latest.textContent=(data&&data.latest_time)||"--"}
- if(!series.length||!times.length){svg.appendChild(svgEl("text",{x:"552",y:"252","text-anchor":"middle",fill:"#6a6257"})).textContent="暂无日内资金快照";return}
- var width=1104,height=504,left=78,right=156,top=30,bottom=58,plotW=width-left-right,plotH=height-top-bottom,zeroY=top+plotH/2;
+ if(!series.length||!times.length){svg.appendChild(svgEl("text",{x:"552",y:"328","text-anchor":"middle",fill:"#6a6257"})).textContent="暂无日内资金快照";return}
+ var width=1104,height=655,left=78,right=156,top=38,bottom=72,plotW=width-left-right,plotH=height-top-bottom,zeroY=top+plotH/2;
  var tradeStart=9*60+30,tradeEnd=15*60;
  function xForTime(t){var minute=parseTradeMinute(t);if(minute===null){return null}minute=Math.max(tradeStart,Math.min(tradeEnd,minute));return left+(minute-tradeStart)/(tradeEnd-tradeStart)*plotW}
  var values=[]; series.forEach(function(s){(s.points||[]).forEach(function(p){values.push(rawYi(p.main_net_inflow))})});

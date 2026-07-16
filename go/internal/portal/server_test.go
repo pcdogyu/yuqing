@@ -13349,7 +13349,7 @@ func TestHotspotsPageRendersSwitchingData(t *testing.T) {
 		"连续升温热点",
 		"13:11",
 		"创新药",
-		`viewBox="0 0 1104 504"`,
+		`viewBox="0 0 1104 655"`,
 		"tradeStart=9*60+30",
 		"zeroY=top+plotH/2",
 		`href="/articles?keyword=AI"`,
