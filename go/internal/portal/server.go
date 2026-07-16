@@ -5204,13 +5204,14 @@ const hotspotsTemplate = `
 .trend-mini{display:flex;gap:2px;align-items:flex-end;height:28px;min-width:84px}
 .trend-mini i{display:block;width:8px;background:#d8e7dd;border-radius:2px 2px 0 0}
 .error{padding:12px;border-radius:8px;background:#fdeaea;color:#8f2d2d}
+main{max-width:1416px}
 .fundflow-panel{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:18px;align-items:start}
 .fundflow-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:10px}
-.fundflow-chart-wrap{min-height:420px;border:1px solid #ece7dc;border-radius:8px;background:linear-gradient(180deg,#fff4f4 0%,#ffffff 45%,#f0fff5 100%);overflow:hidden}
-.fundflow-chart{width:100%;height:420px;display:block}
+.fundflow-chart-wrap{min-height:504px;border:1px solid #ece7dc;border-radius:8px;background:linear-gradient(180deg,#fff4f4 0%,#ffffff 50%,#f0fff5 100%);overflow:hidden}
+.fundflow-chart{width:100%;height:504px;display:block}
 .fundflow-rank{border:1px solid #ece7dc;border-radius:8px;overflow:hidden;background:#fff}
 .fundflow-rank h3{margin:0;padding:12px 14px;border-bottom:1px solid #ece7dc;font-size:18px}
-.fundflow-rank-list{max-height:420px;overflow:auto}
+.fundflow-rank-list{max-height:504px;overflow:auto}
 .fundflow-rank-row{display:grid;grid-template-columns:24px minmax(0,1fr) auto;gap:8px;align-items:center;padding:9px 12px;border-bottom:1px solid #f0ebdf;font-size:14px}
 .fundflow-dot{width:10px;height:10px;border-radius:999px;display:inline-block}
 .fundflow-name{font-weight:700;color:#214e34;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -5236,7 +5237,7 @@ const hotspotsTemplate = `
 <div class="hotspot-tabs"><a data-sector-type="概念资金流" class="{{if eq .SectorFundFlowType "概念资金流"}}active{{end}}" href="/hotspots?days={{.Hotspots.Days}}&sector_type=%E6%A6%82%E5%BF%B5%E8%B5%84%E9%87%91%E6%B5%81">概念资金流</a><a data-sector-type="行业资金流" class="{{if eq .SectorFundFlowType "行业资金流"}}active{{end}}" href="/hotspots?days={{.Hotspots.Days}}&sector_type=%E8%A1%8C%E4%B8%9A%E8%B5%84%E9%87%91%E6%B5%81">行业资金流</a></div>
 </div>
 <div class="fundflow-panel" id="hotspot-fundflow" data-sector-type="{{.SectorFundFlowType}}">
-<div class="fundflow-chart-wrap"><svg class="fundflow-chart" id="hotspot-fundflow-chart" viewBox="0 0 920 420" role="img" aria-label="当日板块资金流向折线图"></svg></div>
+<div class="fundflow-chart-wrap"><svg class="fundflow-chart" id="hotspot-fundflow-chart" viewBox="0 0 1104 504" role="img" aria-label="当日板块资金流向折线图"></svg></div>
 <aside class="fundflow-rank"><h3>最新排行</h3><div class="fundflow-rank-list" id="hotspot-fundflow-rank">{{range .SectorFundFlowIntraday.Top}}<div class="fundflow-rank-row"><span>{{.Rank}}</span><span class="fundflow-name">{{.Name}}</span><span class="fundflow-money {{if ge .MainNetInflow 0.0}}hotspot-up{{else}}hotspot-down{{end}}">{{formatFundFlowMoney .MainNetInflow}}</span></div>{{else}}<div class="fundflow-empty">暂无日内资金快照</div>{{end}}</div></aside>
 </div>
 </section>
@@ -5265,17 +5266,19 @@ function moneyYi(value){var n=Number(value||0);return (n/100000000).toFixed(2)+"
 function rawYi(value){return (Number(value||0)/100000000)}
 function clear(node){while(node.firstChild){node.removeChild(node.firstChild)}}
 function svgEl(name, attrs){var el=document.createElementNS("http://www.w3.org/2000/svg",name);Object.keys(attrs||{}).forEach(function(key){el.setAttribute(key,attrs[key])});return el}
+function parseTradeMinute(value){var m=String(value||"").match(/(\d{1,2}):(\d{2})/);if(!m){return null}return Number(m[1])*60+Number(m[2])}
 function renderChart(data){
  var svg=document.getElementById("hotspot-fundflow-chart"); if(!svg){return} clear(svg);
  var series=(data&&data.series)||[]; var times=(data&&data.times)||[]; var latest=document.getElementById("fundflow-latest-time"); if(latest){latest.textContent=(data&&data.latest_time)||"--"}
- if(!series.length||!times.length){svg.appendChild(svgEl("text",{x:"460",y:"210","text-anchor":"middle",fill:"#6a6257"})).textContent="暂无日内资金快照";return}
- var width=920,height=420,left=70,right=130,top=24,bottom=48,plotW=width-left-right,plotH=height-top-bottom;
+ if(!series.length||!times.length){svg.appendChild(svgEl("text",{x:"552",y:"252","text-anchor":"middle",fill:"#6a6257"})).textContent="暂无日内资金快照";return}
+ var width=1104,height=504,left=78,right=156,top=30,bottom=58,plotW=width-left-right,plotH=height-top-bottom,zeroY=top+plotH/2;
+ var tradeStart=9*60+30,tradeEnd=15*60;
+ function xForTime(t){var minute=parseTradeMinute(t);if(minute===null){return null}minute=Math.max(tradeStart,Math.min(tradeEnd,minute));return left+(minute-tradeStart)/(tradeEnd-tradeStart)*plotW}
  var values=[]; series.forEach(function(s){(s.points||[]).forEach(function(p){values.push(rawYi(p.main_net_inflow))})});
- var min=Math.min.apply(Math,values), max=Math.max.apply(Math,values); if(!isFinite(min)||!isFinite(max)){min=-1;max=1} if(min===max){min-=1;max+=1}
- var pad=(max-min)*0.08; min-=pad; max+=pad;
- for(var i=0;i<6;i++){var y=top+plotH*i/5;var value=max-(max-min)*i/5;svg.appendChild(svgEl("line",{x1:left,y1:y,x2:width-right,y2:y,stroke:"#d8cfbf","stroke-width":"1"}));var label=svgEl("text",{x:left-10,y:y+4,"text-anchor":"end",fill:"#6a6257","font-size":"13"});label.textContent=value.toFixed(0)+"亿";svg.appendChild(label)}
- times.forEach(function(t,idx){var x=left+(times.length===1?plotW/2:plotW*idx/(times.length-1));if(idx===0||idx===times.length-1||idx%30===0){var label=svgEl("text",{x:x,y:height-16,"text-anchor":"middle",fill:"#6a6257","font-size":"13"});label.textContent=t;svg.appendChild(label)}});
- series.forEach(function(s,idx){var path=[];(s.points||[]).forEach(function(p){var ti=times.indexOf(p.time);if(ti<0){return}var x=left+(times.length===1?plotW/2:plotW*ti/(times.length-1));var y=top+(max-rawYi(p.main_net_inflow))/(max-min)*plotH;path.push((path.length?"L":"M")+x.toFixed(1)+" "+y.toFixed(1))});if(!path.length){return}var color=colors[idx%colors.length];svg.appendChild(svgEl("path",{d:path.join(" "),fill:"none",stroke:color,"stroke-width":"2.4","stroke-linejoin":"round","stroke-linecap":"round"}));var last=(s.points||[])[(s.points||[]).length-1];if(last){var ti=times.indexOf(last.time);var x=left+(times.length===1?plotW/2:plotW*ti/(times.length-1));var y=top+(max-rawYi(last.main_net_inflow))/(max-min)*plotH;svg.appendChild(svgEl("circle",{cx:x,cy:y,r:"3.5",fill:color}));var label=svgEl("text",{x:Math.min(x+8,width-118),y:y+4,fill:color,"font-size":"12","font-weight":"700"});label.textContent=s.name+" "+moneyYi(last.main_net_inflow);svg.appendChild(label)}})
+ var absMax=values.reduce(function(max,value){return Math.max(max,Math.abs(value))},0); if(!isFinite(absMax)||absMax<=0){absMax=1} absMax*=1.08;
+ [-1,-0.5,0,0.5,1].forEach(function(ratio){var y=zeroY-ratio*plotH/2;var stroke=ratio===0?"#9a8f7d":"#d8cfbf";var strokeWidth=ratio===0?"1.6":"1";svg.appendChild(svgEl("line",{x1:left,y1:y,x2:width-right,y2:y,stroke:stroke,"stroke-width":strokeWidth}));var label=svgEl("text",{x:left-10,y:y+4,"text-anchor":"end",fill:"#6a6257","font-size":"13"});label.textContent=(absMax*ratio).toFixed(0)+"亿";svg.appendChild(label)});
+ [["09:30",tradeStart],["10:30",10*60+30],["11:30",11*60+30],["13:00",13*60],["14:00",14*60],["15:00",tradeEnd]].forEach(function(item){var x=left+(item[1]-tradeStart)/(tradeEnd-tradeStart)*plotW;svg.appendChild(svgEl("line",{x1:x,y1:top,x2:x,y2:height-bottom,stroke:"#ece7dc","stroke-width":"1"}));var label=svgEl("text",{x:x,y:height-18,"text-anchor":"middle",fill:"#6a6257","font-size":"13"});label.textContent=item[0];svg.appendChild(label)});
+ series.forEach(function(s,idx){var path=[];(s.points||[]).forEach(function(p){var x=xForTime(p.time);if(x===null){return}var y=zeroY-rawYi(p.main_net_inflow)/absMax*plotH/2;path.push((path.length?"L":"M")+x.toFixed(1)+" "+y.toFixed(1))});if(!path.length){return}var color=colors[idx%colors.length];svg.appendChild(svgEl("path",{d:path.join(" "),fill:"none",stroke:color,"stroke-width":"2.4","stroke-linejoin":"round","stroke-linecap":"round"}));var last=(s.points||[])[(s.points||[]).length-1];if(last){var x=xForTime(last.time);if(x===null){return}var y=zeroY-rawYi(last.main_net_inflow)/absMax*plotH/2;svg.appendChild(svgEl("circle",{cx:x,cy:y,r:"3.5",fill:color}));var label=svgEl("text",{x:Math.min(x+8,width-148),y:y+4,fill:color,"font-size":"12","font-weight":"700"});label.textContent=s.name+" "+moneyYi(last.main_net_inflow);svg.appendChild(label)}})
 }
 function renderRank(data){
  var box=document.getElementById("hotspot-fundflow-rank"); if(!box){return} clear(box); var top=(data&&data.top)||[]; if(!top.length){var empty=document.createElement("div");empty.className="fundflow-empty";empty.textContent="暂无日内资金快照";box.appendChild(empty);return}
