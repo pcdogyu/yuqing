@@ -13068,11 +13068,18 @@ func TestSimplePageIncludesPortalUpgradeShell(t *testing.T) {
 type fakePortalUpgradeRunner struct {
 	called     chan struct{}
 	calledOnce sync.Once
+	done       chan struct{}
+	doneOnce   sync.Once
 	release    <-chan struct{}
 	result     portalUpgradeResult
 }
 
 func (f *fakePortalUpgradeRunner) Run(_ context.Context, _ config.Config, _ portalUpgradeProgress) portalUpgradeResult {
+	defer f.doneOnce.Do(func() {
+		if f.done != nil {
+			close(f.done)
+		}
+	})
 	f.calledOnce.Do(func() {
 		if f.called != nil {
 			close(f.called)
@@ -13089,7 +13096,7 @@ func TestSystemUpgradeEndpointStartsBackgroundRunnerAndStatusReturnsLog(t *testi
 	srv, cleanup := newPortalCompatServer(t)
 	defer cleanup()
 	release := make(chan struct{})
-	fake := &fakePortalUpgradeRunner{called: make(chan struct{}), release: release, result: portalUpgradeResult{
+	fake := &fakePortalUpgradeRunner{called: make(chan struct{}), done: make(chan struct{}), release: release, result: portalUpgradeResult{
 		OK:         true,
 		Status:     "success",
 		Message:    "升级完成",
@@ -13121,6 +13128,11 @@ func TestSystemUpgradeEndpointStartsBackgroundRunnerAndStatusReturnsLog(t *testi
 	}
 
 	close(release)
+	select {
+	case <-fake.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for fake upgrade runner to finish")
+	}
 	statusReq := httptest.NewRequest(http.MethodGet, "/system/upgrade/status", nil)
 	statusReq.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "session-admin"})
 	var statusResult portalUpgradeResult
