@@ -61,11 +61,11 @@ func TestSystemAStockAlgorithmSectionRendersFactorGroups(t *testing.T) {
 	}
 	for _, snippet := range []string{
 		".stockalgo-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}",
-		".stockalgo-param{display:grid;grid-template-columns:minmax(150px,1.05fr) minmax(120px,.8fr) minmax(96px,.6fr) minmax(64px,.4fr) minmax(180px,1.15fr);gap:10px;align-items:center;",
-		".stockalgo-param-name,.stockalgo-param-current,.stockalgo-param-default,.stockalgo-param-unit,.stockalgo-param-desc{display:flex;align-items:center;min-height:42px}",
+		".stockalgo-param{display:grid;grid-template-columns:minmax(150px,1.05fr) minmax(120px,.8fr) minmax(36px,max-content) minmax(180px,1.25fr);gap:8px;align-items:center;",
+		".stockalgo-param-name,.stockalgo-param-current,.stockalgo-param-unit,.stockalgo-param-desc{display:flex;align-items:center;min-height:42px}",
+		".stockalgo-param-unit{justify-content:flex-start;white-space:nowrap}",
 		`class="stockalgo-grid"`,
 		`class="stockalgo-param-current"`,
-		`class="stockalgo-param-default"`,
 		`class="stockalgo-param-unit"`,
 		`class="stockalgo-param-desc"`,
 	} {
@@ -77,6 +77,9 @@ func TestSystemAStockAlgorithmSectionRendersFactorGroups(t *testing.T) {
 		if strings.Contains(body, snippet) {
 			t.Fatalf("expected stock algorithm table layout to be removed, found %q in %s", snippet, body)
 		}
+	}
+	if strings.Contains(body, `class="stockalgo-param-default"`) {
+		t.Fatalf("expected stock algorithm default value column to be removed, got %s", body)
 	}
 }
 
