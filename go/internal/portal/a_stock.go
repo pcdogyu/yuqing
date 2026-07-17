@@ -3536,8 +3536,10 @@ func (s *Server) loadAStockFastReadOnlyContextWithCache(strategyDate string, per
 	}
 	if len(ctx.Recommendations) > 0 && !ctx.IgnoreRecent {
 		recentCodes = s.loadRecentAStockRecommendationCodesForPeriodWithCache(ctx.Date, ctx.Period, aStockRecentLookbackDays, cache)
-		ctx.Recommendations, ctx.RecentFiltered = filterRecentAStockRecommendations(ctx.Recommendations, recentCodes)
-		recentReplacementStatus = formatAStockRecentReplenishmentStatus(ctx.RecentFiltered, 0, false)
+		recentResult := filterRecentAStockRecommendationsWithReplenishment(ctx.Recommendations, nil, recentCodes, len(ctx.Recommendations))
+		ctx.Recommendations = recentResult.Recommendations
+		ctx.RecentFiltered = recentResult.Filtered
+		recentReplacementStatus = formatAStockRecentReplenishmentStatusWithStocks(ctx.RecentFiltered, recentResult.FilteredStocks, 0, false)
 	}
 	if exDividendSkipped := s.applyAStockExDividendFilterWithCache(&ctx, cache); exDividendSkipped > 0 {
 		exDividendStatus = formatAStockExDividendFilterStatus(exDividendSkipped)
@@ -3977,7 +3979,7 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 			ctx.Recommendations = result.Recommendations
 			ctx.FundFlowFiltered = result.Filtered
 			ctx.FundFlowMissingCount = result.Missing
-			fundFlowStatus = formatAStockFundFlowFilterStatus(result.Filtered, result.Replenished, result.Missing, result.Shortfall)
+			fundFlowStatus = formatAStockFundFlowFilterStatusWithStocks(result.Filtered, result.FilteredStocks, result.Replenished, result.Missing, result.Shortfall)
 		}
 		ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus, ctx.LimitUpFiltered = s.loadAStockLockedMarketView(strategyDate, ctx.Period, ctx.Recommendations)
 		if forceRecommendationRefresh {
@@ -4086,8 +4088,10 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 	}
 	if len(ctx.Recommendations) > 0 && !ctx.IgnoreRecent {
 		recentCodes = s.loadRecentAStockRecommendationCodesForPeriodWithCache(strategyDate, period.Key, aStockRecentLookbackDays, cache)
-		ctx.Recommendations, ctx.RecentFiltered = filterRecentAStockRecommendations(ctx.Recommendations, recentCodes)
-		recentReplacementStatus = formatAStockRecentReplenishmentStatus(ctx.RecentFiltered, 0, false)
+		recentResult := filterRecentAStockRecommendationsWithReplenishment(ctx.Recommendations, nil, recentCodes, len(ctx.Recommendations))
+		ctx.Recommendations = recentResult.Recommendations
+		ctx.RecentFiltered = recentResult.Filtered
+		recentReplacementStatus = formatAStockRecentReplenishmentStatusWithStocks(ctx.RecentFiltered, recentResult.FilteredStocks, 0, false)
 	}
 	ctx.Recommendations = withAStockRecommendationEntryTimes(ctx.Recommendations, period.Key, entryTimeOverride)
 	ctx.Recommendations = s.applyAStockHoldingSummariesWithCache(ctx.Recommendations, cache)
@@ -4100,7 +4104,7 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 		ctx.Recommendations = result.Recommendations
 		ctx.FundFlowFiltered = result.Filtered
 		ctx.FundFlowMissingCount = result.Missing
-		fundFlowStatus = formatAStockFundFlowFilterStatus(result.Filtered, result.Replenished, result.Missing, false)
+		fundFlowStatus = formatAStockFundFlowFilterStatusWithStocks(result.Filtered, result.FilteredStocks, result.Replenished, result.Missing, false)
 	}
 	if exDividendSkipped := s.applyAStockExDividendFilterWithCache(&ctx, cache); exDividendSkipped > 0 {
 		exDividendStatus = formatAStockExDividendFilterStatus(exDividendSkipped)
@@ -6188,6 +6192,7 @@ type aStockSectorTopStockCodeResolver struct {
 type aStockFundFlowRecommendationFilterResult struct {
 	Recommendations []aStockRecommendation
 	Filtered        int
+	FilteredStocks  []aStockRecommendation
 	Missing         int
 	Replenished     int
 	Shortfall       bool
@@ -6296,6 +6301,7 @@ func (s *Server) applyAStockRecommendationFundFlowFilterWithCache(strategyDate s
 			}
 			if countFiltered {
 				result.Filtered++
+				result.FilteredStocks = append(result.FilteredStocks, rec)
 			}
 			return false
 		}
@@ -6361,6 +6367,7 @@ func (s *Server) applyAStockRecommendationFundFlowFilterWithCache(strategyDate s
 		for _, fallback := range hardFilteredFallbacks {
 			if fallback.countFiltered && !fallback.used {
 				result.Filtered++
+				result.FilteredStocks = append(result.FilteredStocks, fallback.rec)
 			}
 		}
 	}
@@ -6585,13 +6592,64 @@ func formatAStockFundFlowScoreReason(assessment aStockFundFlow5DAssessment) stri
 	return strings.Join(parts, "，")
 }
 
+func formatAStockFilterCountWithStocks(label string, count int, unit string, stocks []aStockRecommendation) string {
+	if count <= 0 {
+		return ""
+	}
+	unit = strings.TrimSpace(unit)
+	status := fmt.Sprintf("%s %d", strings.TrimSpace(label), count)
+	if unit != "" {
+		status += " " + unit
+	}
+	if details := formatAStockFilteredStockList(stocks); details != "" {
+		status += details
+	}
+	return status
+}
+
+func formatAStockFilteredStockList(stocks []aStockRecommendation) string {
+	if len(stocks) == 0 {
+		return ""
+	}
+	seen := make(map[string]struct{}, len(stocks))
+	labels := make([]string, 0, len(stocks))
+	for _, stock := range stocks {
+		code := normalizeAStockCode(stock.Code)
+		name := strings.TrimSpace(stock.Name)
+		if code == "" && name == "" {
+			continue
+		}
+		key := code + "\x00" + name
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		switch {
+		case code == "":
+			labels = append(labels, name)
+		case name == "" || name == code:
+			labels = append(labels, code)
+		default:
+			labels = append(labels, code+" "+name)
+		}
+	}
+	if len(labels) == 0 {
+		return ""
+	}
+	return "（" + strings.Join(labels, "、") + "）"
+}
+
 func formatAStockFundFlowFilterStatus(filtered int, replenished int, missing int, shortfall bool) string {
+	return formatAStockFundFlowFilterStatusWithStocks(filtered, nil, replenished, missing, shortfall)
+}
+
+func formatAStockFundFlowFilterStatusWithStocks(filtered int, filteredStocks []aStockRecommendation, replenished int, missing int, shortfall bool) string {
 	if filtered <= 0 && missing <= 0 {
 		return ""
 	}
 	parts := make([]string, 0, 4)
 	if filtered > 0 {
-		parts = append(parts, fmt.Sprintf("资金过滤 %d 只", filtered))
+		parts = append(parts, formatAStockFilterCountWithStocks("资金过滤", filtered, "只", filteredStocks))
 	}
 	if replenished > 0 {
 		parts = append(parts, fmt.Sprintf("递补 %d 只", replenished))
@@ -7655,6 +7713,7 @@ func filterRecentAStockRecommendations(recommendations []aStockRecommendation, r
 type aStockRecentRecommendationFilterResult struct {
 	Recommendations []aStockRecommendation
 	Filtered        int
+	FilteredStocks  []aStockRecommendation
 	Replenished     int
 	Shortfall       bool
 }
@@ -7671,7 +7730,8 @@ func filterRecentAStockRecommendationsWithReplenishment(base []aStockRecommendat
 	}
 	result := aStockRecentRecommendationFilterResult{}
 	filteredCodes := make(map[string]struct{})
-	recordRecent := func(code string) {
+	recordRecent := func(rec aStockRecommendation) {
+		code := normalizeAStockCode(rec.Code)
 		code = normalizeAStockCode(code)
 		if code == "" {
 			return
@@ -7681,6 +7741,8 @@ func filterRecentAStockRecommendationsWithReplenishment(base []aStockRecommendat
 		}
 		filteredCodes[code] = struct{}{}
 		result.Filtered++
+		rec.Code = code
+		result.FilteredStocks = append(result.FilteredStocks, rec)
 	}
 	isRecent := func(code string) bool {
 		_, ok := recentCodes[normalizeAStockCode(code)]
@@ -7702,7 +7764,7 @@ func filterRecentAStockRecommendationsWithReplenishment(base []aStockRecommendat
 			baseHotspotCounts[hotspot]++
 		}
 		if isRecent(code) {
-			recordRecent(code)
+			recordRecent(rec)
 			continue
 		}
 		if _, exists := seen[code]; exists {
@@ -7742,7 +7804,7 @@ func filterRecentAStockRecommendationsWithReplenishment(base []aStockRecommendat
 			return false
 		}
 		if isRecent(code) {
-			recordRecent(code)
+			recordRecent(rec)
 			return false
 		}
 		seen[code] = struct{}{}
@@ -7865,10 +7927,14 @@ func formatAStockNegativeNoEvidenceFilterStatus(filtered int) string {
 }
 
 func formatAStockRecentReplenishmentStatus(filtered int, replenished int, shortfall bool) string {
+	return formatAStockRecentReplenishmentStatusWithStocks(filtered, nil, replenished, shortfall)
+}
+
+func formatAStockRecentReplenishmentStatusWithStocks(filtered int, filteredStocks []aStockRecommendation, replenished int, shortfall bool) string {
 	if filtered <= 0 {
 		return ""
 	}
-	parts := []string{fmt.Sprintf("%s过滤 %d 只", aStockRecentLookbackStatusPrefix(), filtered)}
+	parts := []string{formatAStockFilterCountWithStocks(aStockRecentLookbackStatusPrefix()+"过滤", filtered, "只", filteredStocks)}
 	if replenished > 0 {
 		parts = append(parts, fmt.Sprintf("递补 %d 只", replenished))
 	}
@@ -10064,6 +10130,11 @@ func applyAStockMarketBarsWithSettings(strategyDate string, period string, recom
 	limitUpFilteredCount := 0
 	noEntryPriceCount := 0
 	waitingEntryPriceCount := 0
+	drawdownFilteredStocks := make([]aStockRecommendation, 0)
+	overheatFilteredStocks := make([]aStockRecommendation, 0)
+	todayHighPctFilteredStocks := make([]aStockRecommendation, 0)
+	limitUpFilteredStocks := make([]aStockRecommendation, 0)
+	noEntryPriceFilteredStocks := make([]aStockRecommendation, 0)
 	filtered := make([]aStockRecommendation, 0, len(recommendations))
 	for i := range recommendations {
 		blockedByDrawdown := false
@@ -10082,6 +10153,7 @@ func applyAStockMarketBarsWithSettings(strategyDate string, period string, recom
 		if !ok {
 			noEntryPriceCount++
 			if filterTodayMarket {
+				noEntryPriceFilteredStocks = append(noEntryPriceFilteredStocks, recommendations[i])
 				continue
 			}
 		}
@@ -10092,10 +10164,12 @@ func applyAStockMarketBarsWithSettings(strategyDate string, period string, recom
 		}
 		if ok && entry.Pct > settings.Volatility.TodayHighPctFilterThreshold {
 			todayHighPctFilteredCount++
+			todayHighPctFilteredStocks = append(todayHighPctFilteredStocks, recommendations[i])
 			continue
 		}
 		if ok && filterLimitUp && isAStockLimitUpPct(recommendations[i].Code, recommendations[i].Name, entry.Pct) {
 			limitUpFilteredCount++
+			limitUpFilteredStocks = append(limitUpFilteredStocks, recommendations[i])
 			continue
 		}
 		prev, hasPrev := previousAStockBar(byCode[recommendations[i].Code], strategyDate)
@@ -10137,11 +10211,13 @@ func applyAStockMarketBarsWithSettings(strategyDate string, period string, recom
 		}
 		if blockedByOverheat {
 			overheatFilteredCount++
+			overheatFilteredStocks = append(overheatFilteredStocks, recommendations[i])
 			continue
 		}
 		if blockedByDrawdown {
 			sectorPenalties[recommendations[i].Hotspot] += settings.Sector.DrawdownPenalty
 			filteredCount++
+			drawdownFilteredStocks = append(drawdownFilteredStocks, recommendations[i])
 			continue
 		}
 		recommendations[i] = applyAStockMomentumTrendScoreWithSettings(recommendations[i], codeBars, strategyDate, settings)
@@ -10184,20 +10260,20 @@ func applyAStockMarketBarsWithSettings(strategyDate string, period string, recom
 	}
 	status := fmt.Sprintf("已回测 %d/%d", completed, len(rows))
 	if filteredCount > 0 {
-		status = fmt.Sprintf("%s，过滤回撤股票 %d", status, filteredCount)
+		status = fmt.Sprintf("%s，%s", status, formatAStockFilterCountWithStocks("过滤回撤股票", filteredCount, "", drawdownFilteredStocks))
 	}
 	if overheatFilteredCount > 0 {
-		status = fmt.Sprintf("%s，过滤60日过热股票 %d", status, overheatFilteredCount)
+		status = fmt.Sprintf("%s，%s", status, formatAStockFilterCountWithStocks("过滤60日过热股票", overheatFilteredCount, "", overheatFilteredStocks))
 	}
 	if todayHighPctFilteredCount > 0 {
-		status = fmt.Sprintf("%s，过滤今日涨幅过高股票 %d", status, todayHighPctFilteredCount)
+		status = fmt.Sprintf("%s，%s", status, formatAStockFilterCountWithStocks("过滤今日涨幅过高股票", todayHighPctFilteredCount, "", todayHighPctFilteredStocks))
 	}
 	if limitUpFilteredCount > 0 {
-		status = fmt.Sprintf("%s，过滤涨停股票 %d", status, limitUpFilteredCount)
+		status = fmt.Sprintf("%s，%s", status, formatAStockFilterCountWithStocks("过滤涨停股票", limitUpFilteredCount, "", limitUpFilteredStocks))
 	}
 	if noEntryPriceCount > 0 {
 		if filterTodayMarket {
-			status = fmt.Sprintf("%s，过滤无当日行情股票 %d", status, noEntryPriceCount)
+			status = fmt.Sprintf("%s，%s", status, formatAStockFilterCountWithStocks("过滤无当日行情股票", noEntryPriceCount, "", noEntryPriceFilteredStocks))
 		} else {
 			status = fmt.Sprintf("%s，缺少当日行情股票 %d", status, noEntryPriceCount)
 		}
@@ -10206,21 +10282,21 @@ func applyAStockMarketBarsWithSettings(strategyDate string, period string, recom
 		status = fmt.Sprintf("%s，等待下午开盘价股票 %d", status, waitingEntryPriceCount)
 	}
 	if len(recommendations) == 0 && limitUpFilteredCount > 0 {
-		status = fmt.Sprintf("涨停过滤后无推荐股票，过滤涨停股票 %d", limitUpFilteredCount)
+		status = fmt.Sprintf("涨停过滤后无推荐股票，%s", formatAStockFilterCountWithStocks("过滤涨停股票", limitUpFilteredCount, "", limitUpFilteredStocks))
 	}
 	if len(recommendations) == 0 && filteredCount > 0 {
-		status = fmt.Sprintf("回撤过滤后无推荐股票，过滤回撤股票 %d", filteredCount)
+		status = fmt.Sprintf("回撤过滤后无推荐股票，%s", formatAStockFilterCountWithStocks("过滤回撤股票", filteredCount, "", drawdownFilteredStocks))
 	}
 	if len(recommendations) == 0 && overheatFilteredCount > 0 {
-		status = fmt.Sprintf("60日过热过滤后无推荐股票，过滤60日过热股票 %d", overheatFilteredCount)
+		status = fmt.Sprintf("60日过热过滤后无推荐股票，%s", formatAStockFilterCountWithStocks("过滤60日过热股票", overheatFilteredCount, "", overheatFilteredStocks))
 	}
 	if len(recommendations) == 0 && todayHighPctFilteredCount > 0 {
-		status = fmt.Sprintf("今日涨幅过高过滤后无推荐股票，过滤今日涨幅过高股票 %d", todayHighPctFilteredCount)
+		status = fmt.Sprintf("今日涨幅过高过滤后无推荐股票，%s", formatAStockFilterCountWithStocks("过滤今日涨幅过高股票", todayHighPctFilteredCount, "", todayHighPctFilteredStocks))
 	}
 	if filterTodayMarket && len(recommendations) == 0 && noEntryPriceCount > 0 {
-		status = fmt.Sprintf("无当日行情可推荐，过滤无当日行情股票 %d", noEntryPriceCount)
+		status = fmt.Sprintf("无当日行情可推荐，%s", formatAStockFilterCountWithStocks("过滤无当日行情股票", noEntryPriceCount, "", noEntryPriceFilteredStocks))
 		if filteredCount > 0 {
-			status = fmt.Sprintf("%s，过滤回撤股票 %d", status, filteredCount)
+			status = fmt.Sprintf("%s，%s", status, formatAStockFilterCountWithStocks("过滤回撤股票", filteredCount, "", drawdownFilteredStocks))
 		}
 	}
 	if filterLimitUp && limitUpFilteredCount > 0 && maxRecommendations > 0 {

@@ -7055,6 +7055,9 @@ func TestAStockRecommendationFundFlowFilterScoresAndReplenishes(t *testing.T) {
 	if result.Filtered != 2 || result.Replenished != 2 || result.Missing != 1 || result.Shortfall {
 		t.Fatalf("unexpected fund-flow filter result: %+v", result)
 	}
+	if got := formatAStockFundFlowFilterStatusWithStocks(result.Filtered, result.FilteredStocks, result.Replenished, result.Missing, result.Shortfall); !strings.Contains(got, "资金过滤 2 只（300003 轻流出、300004 持续流出）") {
+		t.Fatalf("expected fund-flow status to include filtered stock details, got %q", got)
+	}
 	if len(result.Recommendations) != len(base) {
 		t.Fatalf("expected recommendations to be replenished to %d, got %+v", len(base), result.Recommendations)
 	}
@@ -7125,6 +7128,9 @@ func TestAStockRecommendationFundFlowFilterAllowsAfternoonShortfallFallback(t *t
 	strict := srv.applyAStockRecommendationFundFlowFilterWithCache("2026-06-16", base, nil, nil, 1, newAStockRequestCache(), false)
 	if len(strict.Recommendations) != 0 || strict.Filtered != 1 || !strict.Shortfall {
 		t.Fatalf("expected strict fund-flow filter to drop hard-filtered candidate, got %+v", strict)
+	}
+	if got := formatAStockFundFlowFilterStatusWithStocks(strict.Filtered, strict.FilteredStocks, strict.Replenished, strict.Missing, strict.Shortfall); !strings.Contains(got, "资金过滤 1 只（300001 资金流出）") {
+		t.Fatalf("expected strict fund-flow status to include filtered stock detail, got %q", got)
 	}
 
 	fallback := srv.applyAStockRecommendationFundFlowFilterWithCache("2026-06-16", base, nil, nil, 1, newAStockRequestCache(), true)
@@ -7668,6 +7674,29 @@ func TestAStockOverviewBacktestStatusIncludesFilterReasons(t *testing.T) {
 	for _, want := range []string{"已回测 3/3", "90个交易日内重复过滤股票 2", "过滤上午同股票/热点/日内名额 1", "涨停过滤股票 3"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected overview status to contain %q, got %q", want, got)
+		}
+	}
+}
+
+func TestAStockRecentFilterStatusIncludesFilteredStockDetails(t *testing.T) {
+	result := filterRecentAStockRecommendationsWithReplenishment(
+		[]aStockRecommendation{
+			{Rank: 1, Code: "000001", Name: "重复一号", Hotspot: "人工智能"},
+			{Rank: 2, Code: "000002", Name: "保留二号", Hotspot: "人工智能"},
+			{Rank: 3, Code: "000003", Name: "重复三号", Hotspot: "半导体"},
+		},
+		nil,
+		map[string]struct{}{"000001": {}, "000003": {}},
+		3,
+	)
+
+	if result.Filtered != 2 || len(result.Recommendations) != 1 {
+		t.Fatalf("expected two recent recommendations to be filtered, got %+v", result)
+	}
+	got := formatAStockRecentReplenishmentStatusWithStocks(result.Filtered, result.FilteredStocks, result.Replenished, result.Shortfall)
+	for _, want := range []string{"90个交易日内重复过滤 2 只", "（000001 重复一号、000003 重复三号）"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected recent filter status to contain %q, got %q", want, got)
 		}
 	}
 }
@@ -8221,6 +8250,37 @@ func TestAStockMarketViewFiltersDeepDrawdownsAndPenalizesSector(t *testing.T) {
 	if !strings.Contains(status, "过滤回撤股票 1") || !strings.Contains(status, "过滤无当日行情股票 1") {
 		t.Fatalf("expected status to mention drawdown and missing price filtering, got %q", status)
 	}
+	for _, want := range []string{"过滤回撤股票 1（000001 回撤过滤）", "过滤无当日行情股票 1（000004 停牌过滤）"} {
+		if !strings.Contains(status, want) {
+			t.Fatalf("expected status to include filtered stock detail %q, got %q", want, status)
+		}
+	}
+}
+
+func TestAStockMarketViewStatusIncludesOverheatFilteredStockDetails(t *testing.T) {
+	recommendations := initializeAStockRecommendationMarket([]aStockRecommendation{
+		{Rank: 1, Hotspot: "人工智能", Code: "000001", Name: "60日过热", HotspotScore: 80, MarketScore: 80, Reason: "热度分 80"},
+		{Rank: 2, Hotspot: "人工智能", Code: "000002", Name: "正常股票", HotspotScore: 70, MarketScore: 70, Reason: "热度分 70"},
+	})
+	bars := []aStockMarketBar{
+		{Code: "000001", Date: "2026-04-17", Close: 50},
+		{Code: "000001", Date: "2026-05-16", Close: 90},
+		{Code: "000001", Date: "2026-06-15", Close: 100, Pct: 1},
+		{Code: "000001", Date: "2026-06-16", Open: 100, Close: 101, Pct: 1},
+		{Code: "000002", Date: "2026-04-17", Close: 100},
+		{Code: "000002", Date: "2026-05-16", Close: 100},
+		{Code: "000002", Date: "2026-06-15", Close: 100, Pct: 1},
+		{Code: "000002", Date: "2026-06-16", Open: 100, Close: 101, Pct: 1},
+	}
+
+	filtered, _, status, _, _ := applyAStockMarketBars("2026-06-16", "morning", recommendations, bars, false, false, 0)
+
+	if len(filtered) != 1 || filtered[0].Code != "000002" {
+		t.Fatalf("expected 60-day overheated stock to be filtered, got recommendations=%+v status=%q", filtered, status)
+	}
+	if !strings.Contains(status, "过滤60日过热股票 1（000001 60日过热）") {
+		t.Fatalf("expected status to include overheat filtered stock detail, got %q", status)
+	}
 }
 
 func TestAStockMarketViewKeepsMissingTodayMarketByDefault(t *testing.T) {
@@ -8313,6 +8373,9 @@ func TestAStockMarketBarsFilterTodayHighPctForMorningAndAfternoon(t *testing.T) 
 	if !strings.Contains(status, "过滤今日涨幅过高股票 1") {
 		t.Fatalf("expected morning status to mention today high-pct filter, got %q", status)
 	}
+	if !strings.Contains(status, "过滤今日涨幅过高股票 1（600001 今日过高）") {
+		t.Fatalf("expected morning status to include today high-pct filtered stock detail, got %q", status)
+	}
 
 	afternoonBars := []aStockMarketBar{
 		{Code: "600001", Date: "2026-06-15", Close: 10.00, Pct: 1.00},
@@ -8326,6 +8389,9 @@ func TestAStockMarketBarsFilterTodayHighPctForMorningAndAfternoon(t *testing.T) 
 	}
 	if !strings.Contains(status, "过滤今日涨幅过高股票 1") {
 		t.Fatalf("expected afternoon status to mention today high-pct filter, got %q", status)
+	}
+	if !strings.Contains(status, "过滤今日涨幅过高股票 1（600001 今日过高）") {
+		t.Fatalf("expected afternoon status to include today high-pct filtered stock detail, got %q", status)
 	}
 
 	filtered, rows, status, _, _ = applyAStockMarketBars("2026-06-16", "morning", recommendations[:1], morningBars[:2], false, false, 0)
