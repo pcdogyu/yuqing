@@ -10970,6 +10970,8 @@ func TestAStockRecommendationReasonIncludesCandidateSources(t *testing.T) {
 		Rank:            1,
 		AuctionAmount:   90000000,
 		Sources:         []string{aStockCandidateSourceSector, aStockCandidateSourceAuction},
+		PreFundScore:    30,
+		PreFundDetail:   "机器人 5日主力资金净流入 +2.00亿",
 		PreSectorScore:  20,
 		PreSectorDetail: "人工智能 5日主力资金净流入 +10.00亿",
 	}}, 5, 3)
@@ -10978,6 +10980,12 @@ func TestAStockRecommendationReasonIncludesCandidateSources(t *testing.T) {
 	}
 	if !strings.Contains(recommendations[0].Reason, "候选来源 热点板块成分股、集合竞价确认") {
 		t.Fatalf("expected reason to include candidate sources, got %q", recommendations[0].Reason)
+	}
+	for _, component := range recommendations[0].ScoreBreakdown {
+		switch component.Label {
+		case "候选板块资金", "候选个股资金":
+			t.Fatalf("expected candidate pre-scores to stay out of final score breakdown, got %+v", recommendations[0].ScoreBreakdown)
+		}
 	}
 }
 

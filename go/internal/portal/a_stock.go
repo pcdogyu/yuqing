@@ -12969,20 +12969,6 @@ func buildAStockRecommendationScoreBreakdownWithSettings(hotspot aStockHotspot, 
 	}
 	rankScore := aStockMarketRankScoreWithSettings(stock.Rank, settings)
 	components = append(components, newAStockScoreComponentWithFactor(aStockScoreFactorAuction, "行情排名", fmt.Sprintf("排名 %d", stock.Rank), rankScore, rankScore))
-	if stock.PreSectorScore != 0 {
-		reason := strings.TrimSpace(stock.PreSectorDetail)
-		if reason == "" {
-			reason = "热点板块历史资金流"
-		}
-		components = append(components, newAStockScoreComponentWithFactor(aStockScoreFactorSector, "候选板块资金", reason, stock.PreSectorScore, stock.PreSectorScore))
-	}
-	if stock.PreFundScore != 0 {
-		reason := strings.TrimSpace(stock.PreFundDetail)
-		if reason == "" {
-			reason = "个股历史资金流"
-		}
-		components = append(components, newAStockScoreComponentWithFactor(aStockScoreFactorFund, "候选个股资金", reason, stock.PreFundScore, stock.PreFundScore))
-	}
 	components = append(components, newAStockScoreComponentWithFactor(aStockScoreFactorEmotion, "个股证据", fmt.Sprintf("有效证据 %d 条 / 总证据 %d 条", stock.StrongEvidence, stock.Evidence), settings.Emotion.StockEvidenceScore, stock.StrongEvidence*settings.Emotion.StockEvidenceScore))
 	if len(stock.Keywords) > 0 {
 		components = append(components, newAStockScoreComponentWithFactor(aStockScoreFactorEmotion, "股票名命中", fmt.Sprintf("命中关键词 %d 个", len(stock.Keywords)), settings.Emotion.StockNameKeywordScore, len(stock.Keywords)*settings.Emotion.StockNameKeywordScore))
