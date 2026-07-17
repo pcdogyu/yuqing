@@ -715,6 +715,7 @@ func (s *Server) handleAStockTestPage(w http.ResponseWriter, r *http.Request, us
 		body[data-page='a-stock-test'] .astock-recommendation-table th,body[data-page='a-stock-test'] .astock-recommendation-table td{vertical-align:top}
 		body[data-page='a-stock-test'] .astock-recommendation-table th:nth-child(-n+10),body[data-page='a-stock-test'] .astock-recommendation-table td:nth-child(-n+10){white-space:nowrap;word-break:keep-all}
 		body[data-page='a-stock-test'] .astock-score-table th:nth-child(3),body[data-page='a-stock-test'] .astock-score-table td:nth-child(3){width:33.6%}
+		body[data-page='a-stock-test'] [data-astock-simulation-form='1'] button[type='submit']:disabled{background:#9aa0a6;border-color:#8a8f96;color:#fff;cursor:wait;opacity:1;box-shadow:none}
 	</style>`)
 	b.WriteString(`<section><h2>A股模拟生成</h2><p class="astock-muted">模拟生成，不写快照/数据库。此页面只计算推荐、回测和过滤状态，不保存推荐快照、已选股票或T+1影子快照。</p>`)
 	b.WriteString(`<form method="get" action="/a-stock/test" class="astock-action-grid" data-astock-simulation-form="1">`)
@@ -780,7 +781,7 @@ func (s *Server) handleAStockTestPage(w http.ResponseWriter, r *http.Request, us
 }
 
 func writeAStockSimulationScript(b *strings.Builder) {
-	b.WriteString(`<script>(function(){var form=document.querySelector("[data-astock-simulation-form='1']");if(!form){return}form.addEventListener("submit",function(){var button=form.querySelector("button[type='submit']");if(button){button.disabled=true;button.setAttribute("aria-busy","true");button.textContent="模拟生成中..."}var status=document.getElementById("astock-simulation-status");if(status){status.hidden=false;status.textContent="正在模拟生成，可能需要1-2分钟，请不要重复点击。"}})})();</script>`)
+	b.WriteString(`<script>(function(){var form=document.querySelector("[data-astock-simulation-form='1']");if(!form){return}var button=form.querySelector("button[type='submit']");var originalText=button?button.textContent:"模拟生成";function setRunning(running){if(button){button.disabled=!!running;if(running){button.setAttribute("aria-busy","true");button.setAttribute("aria-disabled","true");button.textContent="模拟生成中..."}else{button.removeAttribute("aria-busy");button.removeAttribute("aria-disabled");button.textContent=originalText}}var status=document.getElementById("astock-simulation-status");if(status){status.hidden=!running;if(running){status.textContent="正在模拟生成，可能需要1-2分钟，请不要重复点击。"}}}form.addEventListener("submit",function(){setRunning(true)});window.addEventListener("pageshow",function(){setRunning(false)})})();</script>`)
 }
 
 func writeAStockSimulationCheckbox(b *strings.Builder, name string, label string, checked bool) {

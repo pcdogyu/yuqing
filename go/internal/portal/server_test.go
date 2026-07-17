@@ -7245,6 +7245,10 @@ func TestAStockTestPageRendersSimulationForm(t *testing.T) {
 		"body[data-page='a-stock-test'] section{width:100%;box-sizing:border-box}",
 		"body[data-page='a-stock-test'] .astock-recommendation-table th:nth-child(-n+10),body[data-page='a-stock-test'] .astock-recommendation-table td:nth-child(-n+10){white-space:nowrap;word-break:keep-all}",
 		"body[data-page='a-stock-test'] .astock-score-table th:nth-child(3),body[data-page='a-stock-test'] .astock-score-table td:nth-child(3){width:33.6%}",
+		"body[data-page='a-stock-test'] [data-astock-simulation-form='1'] button[type='submit']:disabled{background:#9aa0a6",
+		"模拟生成中...",
+		`button.setAttribute("aria-disabled","true")`,
+		`window.addEventListener("pageshow"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected test page to contain %q, got body=%s", want, body)
