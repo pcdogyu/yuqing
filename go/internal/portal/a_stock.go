@@ -623,6 +623,8 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-recommendation-table th:last-child,.astock-recommendation-table td:last-child{width:47%}
 		.astock-recommendation-detail-cell{white-space:normal}
 		.astock-recommendation-fundflow{margin-bottom:6px;font-weight:700;line-height:1.25;white-space:nowrap}
+		.astock-simulation-status{margin-top:10px;color:#214e34;font-weight:700;line-height:1.45}
+		.astock-simulation-status[hidden]{display:none}
 		.astock-score-total{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px;color:#214e34;font-weight:700;line-height:1.25}
 		.astock-score-table{width:100%;min-width:0!important;table-layout:auto;border-collapse:collapse;font-size:12px;line-height:1.35}
 		.astock-score-table th,.astock-score-table td{padding:4px 6px;border:1px solid #ece7dc;vertical-align:top}
@@ -685,7 +687,7 @@ func (s *Server) handleAStockTestPage(w http.ResponseWriter, r *http.Request, us
 
 	var b strings.Builder
 	b.WriteString(`<section><h2>A股模拟生成</h2><p class="astock-muted">模拟生成，不写快照/数据库。此页面只计算推荐、回测和过滤状态，不保存推荐快照、已选股票或T+1影子快照。</p>`)
-	b.WriteString(`<form method="get" action="/a-stock/test" class="astock-action-grid">`)
+	b.WriteString(`<form method="get" action="/a-stock/test" class="astock-action-grid" data-astock-simulation-form="1">`)
 	b.WriteString(`<label>策略日期<input type="date" name="date" value="`)
 	b.WriteString(html.EscapeString(strategyDate))
 	b.WriteString(`"></label>`)
@@ -715,7 +717,7 @@ func (s *Server) handleAStockTestPage(w http.ResponseWriter, r *http.Request, us
 	writeAStockSimulationCheckbox(&b, "ignore_limit_up", "忽略涨停过滤", ignoreLimitUp)
 	writeAStockSimulationCheckbox(&b, "ignore_fund_flow", "忽略资金过滤", ignoreFundFlow)
 	writeAStockSimulationCheckbox(&b, "filter_today_market", "过滤当日行情缺失", filterTodayMarket)
-	b.WriteString(`<input type="hidden" name="simulate" value="1"><button type="submit">模拟生成</button></form></section>`)
+	b.WriteString(`<input type="hidden" name="simulate" value="1"><button type="submit" name="simulate" value="1">模拟生成</button></form><div id="astock-simulation-status" class="astock-simulation-status" hidden>正在模拟生成，可能需要1-2分钟，请不要重复点击。</div></section>`)
 
 	if simulate {
 		ctx := s.loadAStockSimulationContext(strategyDate, period.Key, 1, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, phase, newAStockRequestCache())
@@ -743,7 +745,12 @@ func (s *Server) handleAStockTestPage(w http.ResponseWriter, r *http.Request, us
 		b.WriteString(`<section><h2>模拟结果</h2><div class="astock-empty">选择参数后点击模拟生成。</div></section>`)
 	}
 
+	writeAStockSimulationScript(&b)
 	_ = s.writeSimplePage(w, "a-stock-test", "A股模拟生成", b.String())
+}
+
+func writeAStockSimulationScript(b *strings.Builder) {
+	b.WriteString(`<script>(function(){var form=document.querySelector("[data-astock-simulation-form='1']");if(!form){return}form.addEventListener("submit",function(){var button=form.querySelector("button[type='submit']");if(button){button.disabled=true;button.setAttribute("aria-busy","true");button.textContent="模拟生成中..."}var status=document.getElementById("astock-simulation-status");if(status){status.hidden=false;status.textContent="正在模拟生成，可能需要1-2分钟，请不要重复点击。"}})})();</script>`)
 }
 
 func writeAStockSimulationCheckbox(b *strings.Builder, name string, label string, checked bool) {
