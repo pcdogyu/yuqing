@@ -2782,10 +2782,10 @@ func clearPreOpenHotspotSectorFundFlowIntraday(result model.AStockSectorFundFlow
 
 func normalizePortalSectorFundFlowType(value string) string {
 	switch strings.TrimSpace(value) {
-	case "行业", "行业资金", "行业资金流":
-		return "行业资金流"
-	default:
+	case "概念", "概念资金", "概念资金流":
 		return "概念资金流"
+	default:
+		return "行业资金流"
 	}
 }
 
@@ -5278,7 +5278,7 @@ html,body{overflow-x:hidden}
 <script>
 (function(){
 var initialData = {{toJSON .SectorFundFlowIntraday}};
-var currentType = {{printf "%q" .SectorFundFlowType}};
+var currentType = {{toJSON .SectorFundFlowType}};
 var colors = ["#d02b2b","#e95a42","#f29d38","#d6b327","#77bd4a","#21a585","#39a8dc","#4b7be5","#7e65d8","#b054c4","#8a9aa8","#2d7f46","#c95858","#5e9bff","#61c96f","#b08a00","#0f766e","#9854d8","#6b7280","#111827"];
 function moneyYi(value){var n=Number(value||0);return (n/100000000).toFixed(2)+"亿"}
 function rawYi(value){return (Number(value||0)/100000000)}
@@ -5324,8 +5324,9 @@ function renderRank(data){
 }
 function render(data){renderChart(data);renderRank(data)}
 function refresh(){
- var url="/api/v1/hotspots/sector-fund-flow-intraday?sector_type="+encodeURIComponent(currentType)+"&indicator="+encodeURIComponent("今日")+"&limit=20";
- fetch(url,{credentials:"same-origin"}).then(function(resp){return resp.json()}).then(function(payload){if(payload&&payload.data){render(payload.data)}}).catch(function(){});
+ var panel=document.getElementById("hotspot-fundflow"); var requestedType=(panel&&panel.getAttribute("data-sector-type"))||currentType; currentType=requestedType;
+ var url="/api/v1/hotspots/sector-fund-flow-intraday?sector_type="+encodeURIComponent(requestedType)+"&indicator="+encodeURIComponent("今日")+"&limit=20";
+ fetch(url,{credentials:"same-origin"}).then(function(resp){return resp.json()}).then(function(payload){var data=payload&&payload.data;if(data&&data.sector_type&&data.sector_type!==requestedType){return}if(data){render(data)}}).catch(function(){});
 }
 render(initialData);
 setInterval(refresh,60000);

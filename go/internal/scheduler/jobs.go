@@ -473,6 +473,16 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 			},
 		}, "AStockExactSnapshotBackfill", "0 29 2 * * ?; 0 29 9 * * ?; 0 59 12 * * ?; 0 35 15 * * ?"),
 		withJobMeta(jobDefinition{
+			Name:        "hotspot-switching-snapshot-refresh",
+			Group:       "content",
+			Description: "热点切换快照：每分钟刷新 7/14/30 天统计，页面切换直接读取快照",
+			Interval:    time.Minute,
+			Enabled:     strings.TrimSpace(w.cfg.ContentURL) != "",
+			Run: func(ctx context.Context) error {
+				return w.runHotspotSwitchingSnapshotRefresh(ctx)
+			},
+		}, "HotspotSwitchingSnapshotRefresh", "0 * * * * ?"),
+		withJobMeta(jobDefinition{
 			Name:        "a-stock-auction-crawl",
 			Group:       "a-stock",
 			Description: "A股集合竞价金额：09:20:00、09:25:00、09:29:59 通过 AKShare 抓取全市场集合竞价成交金额",

@@ -50,6 +50,8 @@ type Store interface {
 	UpdateCrawlTemplate(rctx context.Context, tpl model.CrawlTemplate) (model.CrawlTemplate, error)
 	DeleteCrawlTemplate(rctx context.Context, id int64) error
 	ListItems(rctx context.Context, filter model.ArticleFilter) (model.ItemListResult, error)
+	GetHotspotSwitchingSnapshot(rctx context.Context, days int) (model.HotspotSwitchingResult, bool, error)
+	UpsertHotspotSwitchingSnapshot(rctx context.Context, days int, result model.HotspotSwitchingResult, capturedAt time.Time) error
 	GetItem(rctx context.Context, id int64) (model.Item, error)
 	GetRelatedItems(rctx context.Context, id int64, limit int) ([]model.Item, error)
 	PopulateUserItemState(rctx context.Context, userID int64, items []model.Item) error
@@ -193,6 +195,7 @@ func (s *Service) Routes(r chi.Router) {
 	r.Get("/api/v1/articles/{id}", s.handleGetArticle)
 	r.Get("/api/v1/articles/{id}/related", s.handleGetRelatedArticles)
 	r.Get("/api/v1/hotspots/switching", s.handleHotspotSwitching)
+	r.Post("/api/v1/internal/hotspots/switching/snapshot", s.handleSnapshotHotspotSwitching)
 	r.Post("/api/v1/articles/{id}/emotion", s.handleSetArticleEmotion)
 	r.Put("/api/v1/articles/{id}/status", s.handleSetArticleStatus)
 	r.Delete("/api/v1/articles/{id}", s.handleDeleteArticle)
@@ -639,12 +642,90 @@ func (s *Service) handleHotspotSwitching(w http.ResponseWriter, r *http.Request)
 	if days > 30 {
 		days = 30
 	}
-	result, err := s.buildHotspotSwitching(r.Context(), days, time.Now())
+	result, found, err := s.store.GetHotspotSwitchingSnapshot(r.Context(), days)
 	if err != nil {
 		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
 		return
 	}
+	if !found {
+		result, err = s.refreshHotspotSwitchingSnapshot(r.Context(), days, time.Now())
+		if err != nil {
+			apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+			return
+		}
+	}
 	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleSnapshotHotspotSwitching(w http.ResponseWriter, r *http.Request) {
+	daysList := hotspotSwitchingSnapshotDays(r.URL.Query()["days"])
+	now := time.Now()
+	type refreshedSnapshot struct {
+		Days          int    `json:"days"`
+		StartDate     string `json:"start_date"`
+		EndDate       string `json:"end_date"`
+		TotalArticles int    `json:"total_articles"`
+	}
+	refreshed := make([]refreshedSnapshot, 0, len(daysList))
+	for _, days := range daysList {
+		result, err := s.refreshHotspotSwitchingSnapshot(r.Context(), days, now)
+		if err != nil {
+			apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+			return
+		}
+		refreshed = append(refreshed, refreshedSnapshot{
+			Days:          result.Days,
+			StartDate:     result.StartDate,
+			EndDate:       result.EndDate,
+			TotalArticles: result.TotalArticles,
+		})
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", map[string]any{
+		"refreshed": refreshed,
+		"total":     len(refreshed),
+	})
+}
+
+func hotspotSwitchingSnapshotDays(values []string) []int {
+	if len(values) == 0 {
+		return []int{7, 14, 30}
+	}
+	seen := map[int]struct{}{}
+	daysList := make([]int, 0, len(values))
+	for _, value := range values {
+		for _, part := range strings.Split(value, ",") {
+			days, err := strconv.Atoi(strings.TrimSpace(part))
+			if err != nil {
+				continue
+			}
+			if days < 7 {
+				days = 7
+			}
+			if days > 30 {
+				days = 30
+			}
+			if _, ok := seen[days]; ok {
+				continue
+			}
+			seen[days] = struct{}{}
+			daysList = append(daysList, days)
+		}
+	}
+	if len(daysList) == 0 {
+		return []int{14}
+	}
+	return daysList
+}
+
+func (s *Service) refreshHotspotSwitchingSnapshot(ctx context.Context, days int, now time.Time) (model.HotspotSwitchingResult, error) {
+	result, err := s.buildHotspotSwitching(ctx, days, now)
+	if err != nil {
+		return model.HotspotSwitchingResult{}, err
+	}
+	if err := s.store.UpsertHotspotSwitchingSnapshot(ctx, days, result, now); err != nil {
+		return model.HotspotSwitchingResult{}, err
+	}
+	return result, nil
 }
 
 func (s *Service) buildHotspotSwitching(ctx context.Context, days int, now time.Time) (model.HotspotSwitchingResult, error) {

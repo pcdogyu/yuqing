@@ -472,10 +472,10 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	if err := json.Unmarshal(listRR.Body.Bytes(), &listEnvelope); err != nil {
 		t.Fatalf("unmarshal jobs list: %v", err)
 	}
-	if len(listEnvelope.Data) != 44 {
-		t.Fatalf("expected 44 scheduler jobs, got %d", len(listEnvelope.Data))
+	if len(listEnvelope.Data) != 45 {
+		t.Fatalf("expected 45 scheduler jobs, got %d", len(listEnvelope.Data))
 	}
-	var heartbeatJob, hotJob, eastmoneyJob, eastmoneyFullJob, jin10FullJob, wallStreetCNJob, clsJob, sinaJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningNewsCrawlJob, aStockMorningPreviewJob, aStockMorningJob, aStockAfternoonPreviewJob, aStockMiddayNewsCrawlJob, aStockAfternoonJob, aStockAfternoonOpenRefreshJob, aStockDailyBacktestRefreshJob, aStockExactSnapshotBackfillJob, aStockAuctionJob, aStockSectorFundFlowJob, aStockSectorFundFlowIntradayJob, aStockHoldingsJob, stockResearchJob, investorRelationsJob Job
+	var heartbeatJob, hotJob, eastmoneyJob, eastmoneyFullJob, jin10FullJob, wallStreetCNJob, clsJob, sinaJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningNewsCrawlJob, aStockMorningPreviewJob, aStockMorningJob, aStockAfternoonPreviewJob, aStockMiddayNewsCrawlJob, aStockAfternoonJob, aStockAfternoonOpenRefreshJob, aStockDailyBacktestRefreshJob, aStockExactSnapshotBackfillJob, hotspotSwitchingSnapshotJob, aStockAuctionJob, aStockSectorFundFlowJob, aStockSectorFundFlowIntradayJob, aStockHoldingsJob, stockResearchJob, investorRelationsJob Job
 	aStockSectorFundFlowJobCount := 0
 	aStockSectorFundFlowIntradayJobCount := 0
 	for _, job := range listEnvelope.Data {
@@ -526,6 +526,8 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 			aStockDailyBacktestRefreshJob = job
 		case "a-stock-exact-snapshot-backfill":
 			aStockExactSnapshotBackfillJob = job
+		case "hotspot-switching-snapshot-refresh":
+			hotspotSwitchingSnapshotJob = job
 		case "a-stock-auction-crawl":
 			aStockAuctionJob = job
 		case "a-stock-sector-fund-flow-crawl":
@@ -604,6 +606,9 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	}
 	if aStockExactSnapshotBackfillJob.Cron != "0 29 2 * * ?; 0 29 9 * * ?; 0 59 12 * * ?; 0 35 15 * * ?" || aStockExactSnapshotBackfillJob.NextRunAt == nil {
 		t.Fatalf("expected A股 exact snapshot backfill cron metadata, got %+v", aStockExactSnapshotBackfillJob)
+	}
+	if hotspotSwitchingSnapshotJob.Cron != "0 * * * * ?" || hotspotSwitchingSnapshotJob.IntervalSec != 60 || !hotspotSwitchingSnapshotJob.Enabled {
+		t.Fatalf("expected hotspot switching snapshot refresh enabled with minute cron metadata, got %+v", hotspotSwitchingSnapshotJob)
 	}
 	if aStockAuctionJob.Cron != "0 20 9 * * ?; 0 25 9 * * ?; 59 29 9 * * ?" || aStockAuctionJob.Enabled {
 		t.Fatalf("expected A股 auction crawl disabled by default with triple cron, got %+v", aStockAuctionJob)

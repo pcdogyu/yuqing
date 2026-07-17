@@ -2444,6 +2444,74 @@ func TestHotspotSwitchingEndpointReturnsEmptyListsWithoutArticles(t *testing.T) 
 	}
 }
 
+func TestHotspotSwitchingEndpointUsesStoredSnapshot(t *testing.T) {
+	ctx := context.Background()
+	store := newContentSearchTestStore(t)
+	snapshot := model.HotspotSwitchingResult{
+		Days:          14,
+		StartDate:     "2026-07-01",
+		EndDate:       "2026-07-14",
+		TotalArticles: 123,
+		TodayTop:      []model.HotspotSwitchingItem{{Keyword: "AI", TodayCount: 9}},
+	}
+	if err := store.UpsertHotspotSwitchingSnapshot(ctx, 14, snapshot, time.Date(2026, 7, 14, 10, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("upsert hotspot switching snapshot: %v", err)
+	}
+	svc := NewService(config.Config{}, store)
+	router := svc.Router()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/hotspots/switching?days=14", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected hotspot endpoint 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	var envelope struct {
+		Data model.HotspotSwitchingResult `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal hotspot response: %v", err)
+	}
+	if envelope.Data.TotalArticles != 123 || len(envelope.Data.TodayTop) != 1 || envelope.Data.TodayTop[0].Keyword != "AI" {
+		t.Fatalf("expected stored hotspot snapshot, got %+v", envelope.Data)
+	}
+}
+
+func TestSnapshotHotspotSwitchingEndpointRefreshesSnapshot(t *testing.T) {
+	ctx := context.Background()
+	store := newContentSearchTestStore(t)
+	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	if _, _, err := store.UpsertItems(ctx, []model.Item{{
+		SourceType: "headline",
+		SourceKey:  "hotspot-snapshot-ai",
+		Title:      "AI算力持续升温",
+		Content:    "人工智能 大模型 算力",
+		Summary:    "人工智能 大模型 算力",
+		SourceURL:  "https://example.com/hotspot-snapshot-ai",
+		CapturedAt: now,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}}); err != nil {
+		t.Fatalf("UpsertItems error: %v", err)
+	}
+	svc := NewService(config.Config{}, store)
+	router := svc.Router()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/internal/hotspots/switching/snapshot?days=14", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected snapshot endpoint 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	snapshot, found, err := store.GetHotspotSwitchingSnapshot(ctx, 14)
+	if err != nil {
+		t.Fatalf("get hotspot switching snapshot: %v", err)
+	}
+	if !found || snapshot.Days != 14 || snapshot.TotalArticles != 1 {
+		t.Fatalf("expected refreshed hotspot snapshot, found=%v snapshot=%+v", found, snapshot)
+	}
+}
+
 func hotspotItemByKeyword(items []model.HotspotSwitchingItem, keyword string) *model.HotspotSwitchingItem {
 	for idx := range items {
 		if items[idx].Keyword == keyword {

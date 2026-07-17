@@ -13692,7 +13692,7 @@ func TestHotspotsPageRendersSwitchingData(t *testing.T) {
 		return time.Date(2026, 7, 14, 13, 12, 0, 0, time.FixedZone("UTC+8", 8*60*60))
 	}
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/hotspots?days=14", nil)
+	req := httptest.NewRequest(http.MethodGet, "/hotspots?days=14&sector_type=%E6%A6%82%E5%BF%B5%E8%B5%84%E9%87%91%E6%B5%81", nil)
 	srv.handleHotspots(rr, req, map[string]any{"id": int64(1), "username": "admin"})
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected hotspots page 200, got %d body=%s", rr.Code, rr.Body.String())
@@ -13769,6 +13769,58 @@ func TestHotspotsPageRendersSwitchingData(t *testing.T) {
 	} {
 		if strings.Contains(body, unexpected) {
 			t.Fatalf("expected hotspots page to omit %q, got %s", unexpected, body)
+		}
+	}
+}
+
+func TestHotspotsPageRefreshKeepsIndustrySectorType(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/v1/a-stock/sector-fund-flow-intraday" {
+			if r.URL.Query().Get("sector_type") != "行业资金流" || r.URL.Query().Get("indicator") != "今日" {
+				t.Fatalf("unexpected intraday query %s", r.URL.RawQuery)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":    http.StatusOK,
+				"message": "ok",
+				"data": model.AStockSectorFundFlowIntradayResult{
+					Date:       "2026-07-14",
+					SectorType: "行业资金流",
+					Indicator:  "今日",
+					LatestTime: "13:11",
+					Times:      []string{"13:11"},
+					Top:        []model.AStockSectorFundFlow{{TradeDate: "2026-07-14", SectorType: "行业资金流", Indicator: "今日", Rank: 1, Name: "半导体", MainNetInflow: 8005000000}},
+				},
+			})
+			return
+		}
+		if r.URL.Path != "/api/v1/hotspots/switching" || r.URL.Query().Get("days") != "14" {
+			t.Fatalf("unexpected content request %s", r.URL.String())
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code":    http.StatusOK,
+			"message": "ok",
+			"data":    model.HotspotSwitchingResult{Days: 14},
+		})
+	}))
+	defer content.Close()
+	srv := NewServer(config.Config{ContentURL: content.URL})
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/hotspots?days=14&sector_type=%E8%A1%8C%E4%B8%9A%E8%B5%84%E9%87%91%E6%B5%81", nil)
+	srv.handleHotspots(rr, req, map[string]any{"id": int64(1), "username": "admin"})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected hotspots page 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, expected := range []string{
+		`data-sector-type="行业资金流"`,
+		`var currentType = "行业资金流"`,
+		`getAttribute("data-sector-type")`,
+		`data&&data.sector_type&&data.sector_type!==requestedType`,
+	} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("expected hotspots page to include %q, got %s", expected, body)
 		}
 	}
 }

@@ -409,6 +409,14 @@ CREATE TABLE IF NOT EXISTS keyword_hotspots (
 	created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS hotspot_switching_snapshots (
+	days INTEGER PRIMARY KEY,
+	payload_json TEXT NOT NULL,
+	captured_at TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS source_breakdowns (
 	id INTEGER PRIMARY KEY,
 	scope TEXT NOT NULL DEFAULT 'system',
@@ -900,6 +908,7 @@ CREATE INDEX IF NOT EXISTS idx_platform_bindings_kind_updated ON platform_bindin
 CREATE INDEX IF NOT EXISTS idx_item_relations_project_id ON item_relations(project_id, item_id DESC);
 CREATE INDEX IF NOT EXISTS idx_trend_points_scope ON trend_points(scope, scope_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_keyword_hotspots_scope ON keyword_hotspots(scope, scope_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_hotspot_switching_snapshots_updated ON hotspot_switching_snapshots(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_source_breakdowns_scope ON source_breakdowns(scope, scope_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_popup_states_user_id ON popup_states(user_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_item_shares_item_id ON item_shares(item_id, created_at DESC);
