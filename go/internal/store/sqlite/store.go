@@ -600,6 +600,7 @@ CREATE TABLE IF NOT EXISTS a_stock_recommendation_snapshots (
 	period TEXT NOT NULL,
 	ignore_recent INTEGER NOT NULL DEFAULT 0,
 	recommendations_json TEXT NOT NULL DEFAULT '[]',
+	filtered_recommendations_json TEXT NOT NULL DEFAULT '[]',
 	backtests_json TEXT NOT NULL DEFAULT '[]',
 	news_summary_json TEXT NOT NULL DEFAULT '',
 	backtest_status TEXT NOT NULL DEFAULT '',
@@ -960,6 +961,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_action_created_at ON audit_logs(action
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN fund_flow_filtered INTEGER NOT NULL DEFAULT 0`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN fund_flow_missing_count INTEGER NOT NULL DEFAULT 0`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN news_summary_json TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN filtered_recommendations_json TEXT NOT NULL DEFAULT '[]'`)
 	if err := s.migrateAStockRecommendationSnapshotPrimaryKey(ctx); err != nil {
 		return err
 	}
@@ -1030,6 +1032,7 @@ CREATE TABLE IF NOT EXISTS a_stock_recommendation_snapshots_new (
 	period TEXT NOT NULL,
 	ignore_recent INTEGER NOT NULL DEFAULT 0,
 	recommendations_json TEXT NOT NULL DEFAULT '[]',
+	filtered_recommendations_json TEXT NOT NULL DEFAULT '[]',
 	backtests_json TEXT NOT NULL DEFAULT '[]',
 	news_summary_json TEXT NOT NULL DEFAULT '',
 	backtest_status TEXT NOT NULL DEFAULT '',
@@ -1052,14 +1055,14 @@ CREATE TABLE IF NOT EXISTS a_stock_recommendation_snapshots_new (
 	PRIMARY KEY (strategy_date, period, ignore_recent, limit_up_filter_enabled, today_market_filter_enabled, fund_flow_filter_enabled)
 );
 INSERT OR REPLACE INTO a_stock_recommendation_snapshots_new (
-	strategy_date, period, ignore_recent, recommendations_json, backtests_json, news_summary_json, backtest_status,
+	strategy_date, period, ignore_recent, recommendations_json, filtered_recommendations_json, backtests_json, news_summary_json, backtest_status,
 	generated_count, recent_filtered, same_day_morning_filtered, limit_up_filter_enabled,
 	limit_up_filtered, today_market_filter_enabled, no_today_market_count, fund_flow_filter_enabled,
 	fund_flow_filtered, fund_flow_missing_count, market_candidate_status,
 	market_candidate_count, auction_amount_label, empty_reason, created_at, updated_at
 )
 SELECT
-	strategy_date, period, ignore_recent, recommendations_json, backtests_json, news_summary_json, backtest_status,
+	strategy_date, period, ignore_recent, recommendations_json, filtered_recommendations_json, backtests_json, news_summary_json, backtest_status,
 	generated_count, recent_filtered, same_day_morning_filtered, limit_up_filter_enabled,
 	limit_up_filtered, today_market_filter_enabled, no_today_market_count, fund_flow_filter_enabled,
 	fund_flow_filtered, fund_flow_missing_count, market_candidate_status,
@@ -1187,6 +1190,9 @@ func (s *Store) migratePostgres(ctx context.Context) error {
 		return err
 	}
 	if _, err := s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN IF NOT EXISTS news_summary_json TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN IF NOT EXISTS filtered_recommendations_json TEXT NOT NULL DEFAULT '[]'`); err != nil {
 		return err
 	}
 	if err := s.migratePostgresAStockRecommendationSnapshotPrimaryKey(ctx); err != nil {

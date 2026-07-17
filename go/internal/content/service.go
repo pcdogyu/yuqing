@@ -1434,6 +1434,7 @@ func normalizeAStockRecommendationSnapshotJSON(snapshot *model.AStockRecommendat
 		return
 	}
 	snapshot.RecommendationsJSON = normalizeAStockRecommendationJSONArray(snapshot.RecommendationsJSON)
+	snapshot.FilteredRecommendationsJSON = normalizeAStockRecommendationJSONArray(snapshot.FilteredRecommendationsJSON)
 	snapshot.BacktestsJSON = normalizeAStockRecommendationJSONArray(snapshot.BacktestsJSON)
 }
 

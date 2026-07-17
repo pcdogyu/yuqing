@@ -283,7 +283,7 @@ func TestAStockRecommendationSnapshotAPIUpsertsAndGets(t *testing.T) {
 	svc := NewService(config.Config{}, store)
 	router := svc.Router()
 
-	payload := `{"strategy_date":"2026-06-22","period":"afternoon","ignore_recent":false,"recommendations_json":"[{\"Code\":\"600000\"}]","backtests_json":"null","backtest_status":"已回测 1/1","generated_count":1,"limit_up_filter_enabled":true,"limit_up_filtered":2,"today_market_filter_enabled":true,"no_today_market_count":4,"fund_flow_filter_enabled":true,"fund_flow_filtered":3,"fund_flow_missing_count":1,"market_candidate_count":9}`
+	payload := `{"strategy_date":"2026-06-22","period":"afternoon","ignore_recent":false,"recommendations_json":"[{\"Code\":\"600000\"}]","filtered_recommendations_json":"[{\"reason\":\"today_high_pct\",\"recommendation\":{\"Code\":\"600010\"}}]","backtests_json":"null","backtest_status":"已回测 1/1","generated_count":1,"limit_up_filter_enabled":true,"limit_up_filtered":2,"today_market_filter_enabled":true,"no_today_market_count":4,"fund_flow_filter_enabled":true,"fund_flow_filtered":3,"fund_flow_missing_count":1,"market_candidate_count":9}`
 	postReq := httptest.NewRequest(http.MethodPost, "/api/v1/internal/a-stock/recommendations", strings.NewReader(payload))
 	postRR := httptest.NewRecorder()
 	router.ServeHTTP(postRR, postReq)
@@ -328,6 +328,9 @@ func TestAStockRecommendationSnapshotAPIUpsertsAndGets(t *testing.T) {
 	if !strings.Contains(envelope.Data.RecommendationsJSON, "600000") {
 		t.Fatalf("expected enabled fund-flow exact snapshot, got %s", envelope.Data.RecommendationsJSON)
 	}
+	if !strings.Contains(envelope.Data.FilteredRecommendationsJSON, "600010") {
+		t.Fatalf("expected filtered recommendations json to round-trip, got %s", envelope.Data.FilteredRecommendationsJSON)
+	}
 
 	defaultGetReq := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/recommendations?date=2026-06-22&period=afternoon", nil)
 	defaultGetRR := httptest.NewRecorder()
@@ -341,7 +344,7 @@ func TestAStockRecommendationSnapshotAPIUpsertsAndGets(t *testing.T) {
 	if err := json.Unmarshal(defaultGetRR.Body.Bytes(), &defaultEnvelope); err != nil {
 		t.Fatalf("decode default snapshot response error: %v", err)
 	}
-	if !defaultEnvelope.Data.Found || !defaultEnvelope.Data.FundFlowFilterEnabled || !strings.Contains(defaultEnvelope.Data.RecommendationsJSON, "600001") {
+	if !defaultEnvelope.Data.Found || !defaultEnvelope.Data.FundFlowFilterEnabled || !strings.Contains(defaultEnvelope.Data.RecommendationsJSON, "600001") || defaultEnvelope.Data.FilteredRecommendationsJSON != "[]" {
 		t.Fatalf("expected default get to use fund-flow enabled snapshot, got %+v", defaultEnvelope.Data)
 	}
 

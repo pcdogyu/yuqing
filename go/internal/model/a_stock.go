@@ -87,30 +87,31 @@ type AStockAuctionMarketTop struct {
 }
 
 type AStockRecommendationSnapshot struct {
-	Found                    bool      `json:"found"`
-	StrategyDate             string    `json:"strategy_date"`
-	Period                   string    `json:"period"`
-	IgnoreRecent             bool      `json:"ignore_recent"`
-	RecommendationsJSON      string    `json:"recommendations_json"`
-	BacktestsJSON            string    `json:"backtests_json"`
-	NewsSummaryJSON          string    `json:"news_summary_json"`
-	BacktestStatus           string    `json:"backtest_status"`
-	GeneratedCount           int       `json:"generated_count"`
-	RecentFiltered           int       `json:"recent_filtered"`
-	SameDayMorningFiltered   int       `json:"same_day_morning_filtered"`
-	LimitUpFilterEnabled     bool      `json:"limit_up_filter_enabled"`
-	LimitUpFiltered          int       `json:"limit_up_filtered"`
-	TodayMarketFilterEnabled bool      `json:"today_market_filter_enabled"`
-	NoTodayMarketCount       int       `json:"no_today_market_count"`
-	FundFlowFilterEnabled    bool      `json:"fund_flow_filter_enabled"`
-	FundFlowFiltered         int       `json:"fund_flow_filtered"`
-	FundFlowMissingCount     int       `json:"fund_flow_missing_count"`
-	MarketCandidateStatus    string    `json:"market_candidate_status"`
-	MarketCandidateCount     int       `json:"market_candidate_count"`
-	AuctionAmountLabel       string    `json:"auction_amount_label"`
-	EmptyReason              string    `json:"empty_reason"`
-	CreatedAt                time.Time `json:"created_at"`
-	UpdatedAt                time.Time `json:"updated_at"`
+	Found                       bool      `json:"found"`
+	StrategyDate                string    `json:"strategy_date"`
+	Period                      string    `json:"period"`
+	IgnoreRecent                bool      `json:"ignore_recent"`
+	RecommendationsJSON         string    `json:"recommendations_json"`
+	FilteredRecommendationsJSON string    `json:"filtered_recommendations_json"`
+	BacktestsJSON               string    `json:"backtests_json"`
+	NewsSummaryJSON             string    `json:"news_summary_json"`
+	BacktestStatus              string    `json:"backtest_status"`
+	GeneratedCount              int       `json:"generated_count"`
+	RecentFiltered              int       `json:"recent_filtered"`
+	SameDayMorningFiltered      int       `json:"same_day_morning_filtered"`
+	LimitUpFilterEnabled        bool      `json:"limit_up_filter_enabled"`
+	LimitUpFiltered             int       `json:"limit_up_filtered"`
+	TodayMarketFilterEnabled    bool      `json:"today_market_filter_enabled"`
+	NoTodayMarketCount          int       `json:"no_today_market_count"`
+	FundFlowFilterEnabled       bool      `json:"fund_flow_filter_enabled"`
+	FundFlowFiltered            int       `json:"fund_flow_filtered"`
+	FundFlowMissingCount        int       `json:"fund_flow_missing_count"`
+	MarketCandidateStatus       string    `json:"market_candidate_status"`
+	MarketCandidateCount        int       `json:"market_candidate_count"`
+	AuctionAmountLabel          string    `json:"auction_amount_label"`
+	EmptyReason                 string    `json:"empty_reason"`
+	CreatedAt                   time.Time `json:"created_at"`
+	UpdatedAt                   time.Time `json:"updated_at"`
 }
 
 type AStockRecommendationSnapshotFilter struct {

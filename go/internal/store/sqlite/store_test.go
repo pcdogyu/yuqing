@@ -779,13 +779,14 @@ func TestAStockRecommendationSnapshotUpsertAndGet(t *testing.T) {
 	ctx := context.Background()
 
 	first, err := store.UpsertAStockRecommendationSnapshot(ctx, model.AStockRecommendationSnapshot{
-		StrategyDate:        "2026-06-22",
-		Period:              "afternoon",
-		RecommendationsJSON: `[{"Code":"600000"}]`,
-		BacktestsJSON:       `[]`,
-		NewsSummaryJSON:     `{"articles":[],"news_articles":[],"hotspots":[]}`,
-		BacktestStatus:      "已回测 1/1",
-		GeneratedCount:      1,
+		StrategyDate:                "2026-06-22",
+		Period:                      "afternoon",
+		RecommendationsJSON:         `[{"Code":"600000"}]`,
+		FilteredRecommendationsJSON: `[{"reason":"today_high_pct","recommendation":{"Code":"600010"}}]`,
+		BacktestsJSON:               `[]`,
+		NewsSummaryJSON:             `{"articles":[],"news_articles":[],"hotspots":[]}`,
+		BacktestStatus:              "已回测 1/1",
+		GeneratedCount:              1,
 	})
 	if err != nil {
 		t.Fatalf("UpsertAStockRecommendationSnapshot insert error: %v", err)
@@ -828,7 +829,7 @@ func TestAStockRecommendationSnapshotUpsertAndGet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAStockRecommendationSnapshotWithFilter default error: %v", err)
 	}
-	if !found || defaultSnapshot.RecommendationsJSON != `[{"Code":"600000"}]` || defaultSnapshot.GeneratedCount != 1 || defaultSnapshot.LimitUpFilterEnabled || defaultSnapshot.TodayMarketFilterEnabled || defaultSnapshot.FundFlowFilterEnabled {
+	if !found || defaultSnapshot.RecommendationsJSON != `[{"Code":"600000"}]` || !strings.Contains(defaultSnapshot.FilteredRecommendationsJSON, "600010") || defaultSnapshot.GeneratedCount != 1 || defaultSnapshot.LimitUpFilterEnabled || defaultSnapshot.TodayMarketFilterEnabled || defaultSnapshot.FundFlowFilterEnabled {
 		t.Fatalf("unexpected default snapshot: found=%v %+v", found, defaultSnapshot)
 	}
 
@@ -843,7 +844,7 @@ func TestAStockRecommendationSnapshotUpsertAndGet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAStockRecommendationSnapshotWithFilter exact error: %v", err)
 	}
-	if !found || snapshot.RecommendationsJSON != `[{"Code":"000001"}]` || snapshot.BacktestsJSON != `[]` || !strings.Contains(snapshot.NewsSummaryJSON, `"人工智能"`) || snapshot.GeneratedCount != 1 || !snapshot.LimitUpFilterEnabled || snapshot.LimitUpFiltered != 2 || !snapshot.TodayMarketFilterEnabled || snapshot.NoTodayMarketCount != 4 || !snapshot.FundFlowFilterEnabled || snapshot.FundFlowFiltered != 3 || snapshot.FundFlowMissingCount != 1 {
+	if !found || snapshot.RecommendationsJSON != `[{"Code":"000001"}]` || snapshot.FilteredRecommendationsJSON != `[]` || snapshot.BacktestsJSON != `[]` || !strings.Contains(snapshot.NewsSummaryJSON, `"人工智能"`) || snapshot.GeneratedCount != 1 || !snapshot.LimitUpFilterEnabled || snapshot.LimitUpFiltered != 2 || !snapshot.TodayMarketFilterEnabled || snapshot.NoTodayMarketCount != 4 || !snapshot.FundFlowFilterEnabled || snapshot.FundFlowFiltered != 3 || snapshot.FundFlowMissingCount != 1 {
 		t.Fatalf("unexpected exact snapshot: found=%v %+v", found, snapshot)
 	}
 }

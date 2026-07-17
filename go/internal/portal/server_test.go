@@ -5189,8 +5189,8 @@ func TestAStockContextRefreshKeepsPersistedRecommendationSelections(t *testing.T
 	if selectionGets == 0 {
 		t.Fatal("expected persisted selection lookup")
 	}
-	if afternoonSnapshotGets != 0 {
-		t.Fatalf("expected locked selection path to bypass afternoon snapshot reads, got %d", afternoonSnapshotGets)
+	if afternoonSnapshotGets != 1 {
+		t.Fatalf("expected locked selection path to read afternoon snapshot once for close recovery candidates, got %d", afternoonSnapshotGets)
 	}
 	if selectionPosts != 0 {
 		t.Fatalf("expected locked selection path to avoid rewriting selections, got %d", selectionPosts)
@@ -5266,6 +5266,145 @@ func TestAStockRecommendationGeneratePreserveLockedRefreshModeKeepsSelections(t 
 	}
 	if len(recommendations) != 1 || recommendations[0].Code != "603986" {
 		t.Fatalf("expected locked selection to be preserved in snapshot, got %+v", recommendations)
+	}
+}
+
+func TestAStockRecommendationGeneratePreserveLockedRecoversOpenedLimitUpAfterClose(t *testing.T) {
+	originalNow := aStockNow
+	aStockNow = func() time.Time {
+		return time.Date(2026, 6, 23, 15, 5, 0, 0, aStockLocation())
+	}
+	defer func() { aStockNow = originalNow }()
+
+	market := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		date := r.URL.Query().Get("date")
+		codes := strings.Split(r.URL.Query().Get("codes"), ",")
+		items := make([]map[string]any, 0, len(codes)*2)
+		for _, rawCode := range codes {
+			code := normalizeAStockCode(rawCode)
+			if code == "" {
+				continue
+			}
+			items = append(items, map[string]any{
+				"code":  code,
+				"date":  "2026-06-20",
+				"close": 10.00,
+				"pct":   0.00,
+			})
+			open := 10.00
+			low := 10.00
+			closePrice := 10.50
+			pct := 5.00
+			if code == "600162" {
+				open = 11.00
+				low = 10.50
+				closePrice = 11.00
+				pct = 10.00
+			}
+			items = append(items, map[string]any{
+				"code":        code,
+				"date":        date,
+				"open":        open,
+				"low":         low,
+				"close":       closePrice,
+				"pct":         pct,
+				"entry_price": open,
+			})
+		}
+		writeEnvelope(w, http.StatusOK, "ok", map[string]any{"items": items})
+	}))
+	defer market.Close()
+	t.Setenv("YUQING_ASTOCK_MARKET_URL", market.URL)
+
+	lockedSelections := []model.AStockRecommendationSelection{
+		{Rank: 1, Code: "600001", Name: "常规一", Hotspot: "热点A", MarketScore: 100, Reason: "locked-1"},
+		{Rank: 2, Code: "600002", Name: "常规二", Hotspot: "热点A", MarketScore: 99, Reason: "locked-2"},
+		{Rank: 3, Code: "600003", Name: "常规三", Hotspot: "热点B", MarketScore: 98, Reason: "locked-3"},
+		{Rank: 4, Code: "600004", Name: "常规四", Hotspot: "热点B", MarketScore: 97, Reason: "locked-4"},
+		{Rank: 5, Code: "600005", Name: "常规五", Hotspot: "热点C", MarketScore: 96, Reason: "locked-5"},
+	}
+	filtered := []aStockFilteredRecommendation{{
+		Reason: aStockFilteredReasonTodayHighPct,
+		Recommendation: aStockRecommendation{
+			Rank:         6,
+			Hotspot:      "地产",
+			Code:         "600162",
+			Name:         "香江控股",
+			HotspotScore: 90,
+			MarketScore:  95,
+			Reason:       "热度分 90",
+		},
+	}}
+	filteredJSON := mustAStockTestJSON(t, filtered)
+	var savedSnapshot model.AStockRecommendationSnapshot
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/articles":
+			writeEnvelope(w, http.StatusOK, "ok", model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0})
+		case "/api/v1/a-stock/recommendation-selections":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{
+				Found:        true,
+				StrategyDate: "2026-06-23",
+				Period:       "morning",
+				Items:        lockedSelections,
+			})
+		case "/api/v1/a-stock/recommendations":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{
+				Found:                       true,
+				StrategyDate:                "2026-06-23",
+				Period:                      "morning",
+				RecommendationsJSON:         mustAStockTestJSON(t, []aStockRecommendation{}),
+				FilteredRecommendationsJSON: filteredJSON,
+				BacktestsJSON:               `[]`,
+			})
+		case "/api/v1/internal/a-stock/recommendations":
+			if err := json.NewDecoder(r.Body).Decode(&savedSnapshot); err != nil {
+				t.Fatalf("decode saved snapshot: %v", err)
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Updated: 1})
+		case "/api/v1/internal/a-stock/recommendation-shadow-snapshots":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Updated: 1})
+		case "/api/v1/a-stock/holdings/summary":
+			writeEnvelope(w, http.StatusOK, "ok", model.StockInstitutionHoldingSummary{})
+		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	req := httptest.NewRequest(http.MethodPost, "/internal/a-stock/recommendations/generate?date=2026-06-23&period=morning&phase=final&refresh_mode=preserve_locked&ignore_fund_flow=1", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAStockRecommendationGenerate(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected generate 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	var response struct {
+		Data aStockRecommendationGenerateResult `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode generate response: %v", err)
+	}
+	if response.Data.RecoveredCount != 1 || response.Data.RecommendationCount != 6 {
+		t.Fatalf("expected one recovered recommendation beyond five regular picks, got %+v", response.Data)
+	}
+	var recommendations []aStockRecommendation
+	if err := json.Unmarshal([]byte(savedSnapshot.RecommendationsJSON), &recommendations); err != nil {
+		t.Fatalf("decode saved recommendations: %v", err)
+	}
+	if len(recommendations) != 6 || recommendations[5].Code != "600162" || !recommendations[5].Recovered || !strings.Contains(recommendations[5].RecoveryReason, "不占每日5只限制") {
+		t.Fatalf("expected recovered 600162 to be saved as rank 6, got %+v", recommendations)
+	}
+	if countAStockDailyLimitRecommendations(recommendations) != 5 {
+		t.Fatalf("expected recovered recommendation to be excluded from daily limit count, got %+v", recommendations)
+	}
+	if !strings.Contains(savedSnapshot.BacktestStatus, "收盘开板恢复股票 1") || !strings.Contains(savedSnapshot.FilteredRecommendationsJSON, "600162") {
+		t.Fatalf("expected saved snapshot to record recovery status and filtered candidates, got %+v", savedSnapshot)
 	}
 }
 
@@ -8499,7 +8638,7 @@ func TestAStockMarketBarsFilterTodayHighPctForMorningAndAfternoon(t *testing.T) 
 	})
 	morningBars := []aStockMarketBar{
 		{Code: "600001", Date: "2026-06-15", Close: 10.00, Pct: 1.00},
-		{Code: "600001", Date: "2026-06-16", Open: 10.80, Close: 10.81, Pct: 8.01},
+		{Code: "600001", Date: "2026-06-16", Open: 10.99, Low: 10.99, Close: 11.00, Pct: 10.00},
 		{Code: "600002", Date: "2026-06-15", Close: 10.00, Pct: 1.00},
 		{Code: "600002", Date: "2026-06-16", Open: 10.79, Close: 10.80, Pct: 8.00},
 	}
@@ -8517,7 +8656,7 @@ func TestAStockMarketBarsFilterTodayHighPctForMorningAndAfternoon(t *testing.T) 
 
 	afternoonBars := []aStockMarketBar{
 		{Code: "600001", Date: "2026-06-15", Close: 10.00, Pct: 1.00},
-		{Code: "600001", Date: "2026-06-16", Open: 10.80, AfternoonEntryPrice: 10.80, Close: 10.81, Pct: 8.01},
+		{Code: "600001", Date: "2026-06-16", Open: 10.99, Low: 10.99, AfternoonEntryPrice: 10.99, Close: 11.00, Pct: 10.00},
 		{Code: "600002", Date: "2026-06-15", Close: 10.00, Pct: 1.00},
 		{Code: "600002", Date: "2026-06-16", Open: 10.79, AfternoonEntryPrice: 10.79, Close: 10.80, Pct: 8.00},
 	}
@@ -8535,6 +8674,41 @@ func TestAStockMarketBarsFilterTodayHighPctForMorningAndAfternoon(t *testing.T) 
 	filtered, rows, status, _, _ = applyAStockMarketBars("2026-06-16", "morning", recommendations[:1], morningBars[:2], false, false, 0)
 	if len(filtered) != 0 || len(rows) != 0 || !strings.Contains(status, "今日涨幅过高过滤后无推荐股票") {
 		t.Fatalf("expected empty status when all stocks are filtered by today high-pct, recommendations=%+v rows=%+v status=%q", filtered, rows, status)
+	}
+}
+
+func TestAStockMarketBarsAllowOpenedLimitUpHighPct(t *testing.T) {
+	recommendations := initializeAStockRecommendationMarket([]aStockRecommendation{
+		{Rank: 1, Hotspot: "地产", Code: "600162", Name: "香江控股", HotspotScore: 100, MarketScore: 100, Reason: "热度分 100"},
+		{Rank: 2, Hotspot: "医疗", Code: "002432", Name: "九安医疗", HotspotScore: 90, MarketScore: 90, Reason: "热度分 90"},
+	})
+	bars := []aStockMarketBar{
+		{Code: "600162", Date: "2026-06-15", Close: 10.00, Pct: 0.00},
+		{Code: "600162", Date: "2026-06-16", Open: 10.50, Low: 10.50, Close: 11.00, Pct: 10.00, EntryPrice: 10.50, AfternoonEntryPrice: 10.90},
+		{Code: "002432", Date: "2026-06-15", Close: 20.00, Pct: 0.00},
+		{Code: "002432", Date: "2026-06-16", Open: 22.00, Low: 21.50, Close: 22.00, Pct: 10.00, EntryPrice: 22.00, AfternoonEntryPrice: 22.00},
+	}
+
+	result := applyAStockMarketBarsDetailedWithSettings("2026-06-16", "afternoon", recommendations, bars, true, false, 0, defaultAStockAlgorithmSettings())
+	if len(result.Recommendations) != 2 || result.LimitUpFiltered != 0 || len(result.FilteredRecommendations) != 0 {
+		t.Fatalf("expected open-board high-pct stocks to remain recommendable, result=%+v", result)
+	}
+	if strings.Contains(result.Status, "过滤今日涨幅过高股票") || strings.Contains(result.Status, "过滤涨停股票") {
+		t.Fatalf("expected no high-pct/limit-up status for opened stocks, got %q", result.Status)
+	}
+}
+
+func TestAStockMarketBarsKeepOldFilterWhenOpenBoardCannotBeConfirmed(t *testing.T) {
+	recommendations := initializeAStockRecommendationMarket([]aStockRecommendation{
+		{Rank: 1, Hotspot: "人工智能", Code: "600162", Name: "香江控股", HotspotScore: 100, MarketScore: 100, Reason: "热度分 100"},
+	})
+	bars := []aStockMarketBar{
+		{Code: "600162", Date: "2026-06-16", Open: 10.50, Low: 10.50, Close: 10.81, Pct: 8.10, EntryPrice: 10.50},
+	}
+
+	result := applyAStockMarketBarsDetailedWithSettings("2026-06-16", "morning", recommendations, bars, false, false, 0, defaultAStockAlgorithmSettings())
+	if len(result.Recommendations) != 0 || len(result.FilteredRecommendations) != 1 || result.FilteredRecommendations[0].Reason != aStockFilteredReasonTodayHighPct {
+		t.Fatalf("expected missing previous close to keep old high-pct filter, result=%+v", result)
 	}
 }
 
@@ -8655,7 +8829,14 @@ func TestAStockMomentumDoesNotBypassTodayHighPctFilter(t *testing.T) {
 		{Rank: 1, Hotspot: "人工智能", Code: "600204", Name: "动能过热", HotspotScore: 100, MarketScore: 100, Reason: "热度分 100"},
 	})
 
-	got, _, status, _, _ := applyAStockMarketBars("2026-06-16", "morning", recommendations, aStockMomentumBarsForTest(t, "600204", "2026-06-16", closes, aStockMomentumAmountsForTest(len(closes), 300000000)), false, false, 0)
+	bars := aStockMomentumBarsForTest(t, "600204", "2026-06-16", closes, aStockMomentumAmountsForTest(len(closes), 300000000))
+	last := len(bars) - 1
+	bars[last].Open = 10.99
+	bars[last].EntryPrice = 10.99
+	bars[last].Low = 10.99
+	bars[last].Close = 11.00
+	bars[last].Pct = 10.00
+	got, _, status, _, _ := applyAStockMarketBars("2026-06-16", "morning", recommendations, bars, false, false, 0)
 
 	if len(got) != 0 || !strings.Contains(status, "过滤今日涨幅过高股票 1") {
 		t.Fatalf("expected today high-pct filter to run before momentum scoring, got %+v status=%q", got, status)

@@ -51,18 +51,21 @@ func (s *Store) UpsertAStockRecommendationSnapshot(ctx context.Context, snapshot
 	}
 	recommendationsJSON := strings.TrimSpace(snapshot.RecommendationsJSON)
 	recommendationsJSON = normalizeAStockRecommendationJSONArray(recommendationsJSON)
+	filteredRecommendationsJSON := strings.TrimSpace(snapshot.FilteredRecommendationsJSON)
+	filteredRecommendationsJSON = normalizeAStockRecommendationJSONArray(filteredRecommendationsJSON)
 	backtestsJSON := strings.TrimSpace(snapshot.BacktestsJSON)
 	backtestsJSON = normalizeAStockRecommendationJSONArray(backtestsJSON)
 	_, err := s.db.ExecContext(ctx, `
 INSERT INTO a_stock_recommendation_snapshots (
-	strategy_date, period, ignore_recent, recommendations_json, backtests_json, news_summary_json, backtest_status,
+	strategy_date, period, ignore_recent, recommendations_json, filtered_recommendations_json, backtests_json, news_summary_json, backtest_status,
 	generated_count, recent_filtered, same_day_morning_filtered, limit_up_filter_enabled,
 	limit_up_filtered, today_market_filter_enabled, no_today_market_count, fund_flow_filter_enabled,
 	fund_flow_filtered, fund_flow_missing_count, market_candidate_status,
 	market_candidate_count, auction_amount_label, empty_reason, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(strategy_date, period, ignore_recent, limit_up_filter_enabled, today_market_filter_enabled, fund_flow_filter_enabled) DO UPDATE SET
 	recommendations_json = excluded.recommendations_json,
+	filtered_recommendations_json = excluded.filtered_recommendations_json,
 	backtests_json = excluded.backtests_json,
 	news_summary_json = excluded.news_summary_json,
 	backtest_status = excluded.backtest_status,
@@ -85,6 +88,7 @@ ON CONFLICT(strategy_date, period, ignore_recent, limit_up_filter_enabled, today
 		snapshot.Period,
 		ignoreRecent,
 		recommendationsJSON,
+		filteredRecommendationsJSON,
 		backtestsJSON,
 		strings.TrimSpace(snapshot.NewsSummaryJSON),
 		strings.TrimSpace(snapshot.BacktestStatus),
@@ -122,7 +126,7 @@ func (s *Store) GetAStockRecommendationSnapshot(ctx context.Context, strategyDat
 		ignoreRecentInt = 1
 	}
 	row := s.db.QueryRowContext(ctx, `
-SELECT strategy_date, period, ignore_recent, recommendations_json, backtests_json, backtest_status,
+	SELECT strategy_date, period, ignore_recent, recommendations_json, filtered_recommendations_json, backtests_json, backtest_status,
 	news_summary_json, generated_count, recent_filtered, same_day_morning_filtered, limit_up_filter_enabled,
 	limit_up_filtered, today_market_filter_enabled, no_today_market_count, fund_flow_filter_enabled,
 	fund_flow_filtered, fund_flow_missing_count, market_candidate_status,
@@ -167,7 +171,7 @@ func (s *Store) GetAStockRecommendationSnapshotWithFilter(ctx context.Context, s
 		fundFlowFilterEnabled = 1
 	}
 	row := s.db.QueryRowContext(ctx, `
-SELECT strategy_date, period, ignore_recent, recommendations_json, backtests_json, backtest_status,
+	SELECT strategy_date, period, ignore_recent, recommendations_json, filtered_recommendations_json, backtests_json, backtest_status,
 	news_summary_json, generated_count, recent_filtered, same_day_morning_filtered, limit_up_filter_enabled,
 	limit_up_filtered, today_market_filter_enabled, no_today_market_count, fund_flow_filter_enabled,
 	fund_flow_filtered, fund_flow_missing_count, market_candidate_status,
@@ -205,6 +209,7 @@ func scanAStockRecommendationSnapshot(scanner scanner) (model.AStockRecommendati
 		&snapshot.Period,
 		&ignoreRecent,
 		&snapshot.RecommendationsJSON,
+		&snapshot.FilteredRecommendationsJSON,
 		&snapshot.BacktestsJSON,
 		&snapshot.BacktestStatus,
 		&snapshot.NewsSummaryJSON,
@@ -229,6 +234,7 @@ func scanAStockRecommendationSnapshot(scanner scanner) (model.AStockRecommendati
 	}
 	snapshot.IgnoreRecent = ignoreRecent != 0
 	snapshot.RecommendationsJSON = normalizeAStockRecommendationJSONArray(snapshot.RecommendationsJSON)
+	snapshot.FilteredRecommendationsJSON = normalizeAStockRecommendationJSONArray(snapshot.FilteredRecommendationsJSON)
 	snapshot.BacktestsJSON = normalizeAStockRecommendationJSONArray(snapshot.BacktestsJSON)
 	snapshot.LimitUpFilterEnabled = limitUpFilterEnabled != 0
 	snapshot.TodayMarketFilterEnabled = todayMarketFilterEnabled != 0
