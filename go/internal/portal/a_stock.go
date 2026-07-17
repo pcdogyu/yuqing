@@ -2493,10 +2493,10 @@ type aStockScoreRow struct {
 func newAStockScoreCategorySummary() aStockScoreCategorySummary {
 	return aStockScoreCategorySummary{
 		order: []aStockScoreComponentCategory{
-			{Key: aStockScoreFactorAuction, Label: "竞价因子"},
-			{Key: aStockScoreFactorEmotion, Label: "情绪因子"},
 			{Key: aStockScoreFactorSector, Label: "版块资金因子"},
 			{Key: aStockScoreFactorFund, Label: "个股资金因子"},
+			{Key: aStockScoreFactorEmotion, Label: "情绪因子"},
+			{Key: aStockScoreFactorAuction, Label: "竞价因子"},
 			{Key: aStockScoreFactorVolatility, Label: "波动因子"},
 			{Key: "history", Label: "历史修正"},
 		},

@@ -9546,6 +9546,60 @@ func TestAStockRecommendationReasonRendersScoreBreakdownTable(t *testing.T) {
 	}
 }
 
+func assertContainsInOrder(t *testing.T, body string, wants ...string) {
+	t.Helper()
+	offset := 0
+	for _, want := range wants {
+		index := strings.Index(body[offset:], want)
+		if index < 0 {
+			t.Fatalf("expected %q after offset %d, got %s", want, offset, body)
+		}
+		offset += index + len(want)
+	}
+}
+
+func TestAStockRecommendationReasonUsesRequestedCategoryOrder(t *testing.T) {
+	rec := aStockRecommendation{
+		Hotspot:     "人工智能",
+		Code:        "688041",
+		Name:        "海光信息",
+		MarketScore: 100,
+		Reason:      "合成总分 100",
+		ScoreBreakdown: []aStockRecommendationScoreComponent{
+			{Factor: aStockScoreFactorEmotion, Label: "新闻热度", Detail: "证据新闻 2 条", UnitValue: 10, Score: 20},
+			{Factor: aStockScoreFactorAuction, Label: "行情排名", Detail: "排名 10", UnitValue: 30, Score: 30},
+			{Factor: aStockScoreFactorVolatility, Label: "动能趋势", Detail: "ADX转强", UnitValue: 5, Score: 5},
+			{Factor: aStockScoreFactorFund, Label: "资金动向", Detail: "资金加分 10", UnitValue: 10, Score: 10},
+			{Factor: aStockScoreFactorSector, Label: "板块资金趋势", Detail: "板块资金趋势加分 40", UnitValue: 40, Score: 40},
+			{Factor: aStockScoreFactorHistory, Label: "总分修正", Detail: "历史修正 -5", UnitValue: -5, Score: -5},
+		},
+	}
+	var b strings.Builder
+	writeAStockRecommendationReasonCell(&b, rec)
+	body := b.String()
+	assertContainsInOrder(t, body,
+		`<td>版块资金因子</td><td class="astock-score-category">板块资金趋势`,
+		`<td>个股资金因子</td><td class="astock-score-category">资金动向`,
+		`<td>情绪因子</td><td class="astock-score-category">新闻热度`,
+		`<td>竞价因子</td><td class="astock-score-category">行情排名`,
+		`<td>波动因子</td><td class="astock-score-category">动能趋势`,
+		`<td>历史修正</td><td class="astock-score-category">总分修正`,
+	)
+	summaryStart := strings.Index(body, `<div class="astock-score-summary">`)
+	if summaryStart < 0 {
+		t.Fatalf("expected score summary, got %s", body)
+	}
+	assertContainsInOrder(t, body[summaryStart:],
+		"版块资金因子：40/200 分",
+		"个股资金因子：10/200 分",
+		"情绪因子：20/200 分",
+		"竞价因子：30/200 分",
+		"波动因子：5/200 分",
+		"历史修正：-5 分",
+		"合计：100/1000 分",
+	)
+}
+
 func TestAStockRecommendationSubsectionMergesFundFlowAndReasonColumns(t *testing.T) {
 	ctx := aStockContext{
 		Period:      "morning",
@@ -9673,12 +9727,11 @@ func TestAStockRecommendationReasonMergesSavedAndParsedBreakdown(t *testing.T) {
 	if strings.Contains(body, "<td>小计</td>") {
 		t.Fatalf("expected subtotal rows to stay out of score table, got %s", body)
 	}
-	emotionPositiveIndex := strings.Index(body, "热点关键词")
-	negativeIndex := strings.Index(body, "负面新闻")
-	sectorIndex := strings.Index(body, "板块资金趋势")
-	if emotionPositiveIndex < 0 || negativeIndex < 0 || sectorIndex < 0 || negativeIndex <= emotionPositiveIndex || negativeIndex >= sectorIndex {
-		t.Fatalf("expected negative emotion score row to stay inside emotion group before sector rows, got %s", body)
-	}
+	assertContainsInOrder(t, body,
+		`<td>版块资金因子</td><td class="astock-score-category">板块资金趋势`,
+		`<td>情绪因子</td><td class="astock-score-category">热点关键词`,
+		`<td>情绪因子</td><td class="astock-score-category">负面新闻`,
+	)
 }
 
 func TestAStockRecommendationReasonParsesHighOpenAndMomentumBonuses(t *testing.T) {
