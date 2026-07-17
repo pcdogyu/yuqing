@@ -163,10 +163,17 @@ foreach ($target in $allTargets) {
     }
 }
 
-$deadline = [DateTime]::UtcNow.AddMilliseconds($WaitMilliseconds)
 $remainingTargets = Get-RemainingTargets $allTargets
+if ($remainingTargets.Count -gt 0) {
+    Write-Host "Stop requests were sent to $($allTargets.Count) process(es). Waiting for exit..."
+}
+
+$deadline = [DateTime]::UtcNow.AddMilliseconds($WaitMilliseconds)
 while (($remainingTargets.Count -gt 0) -and ([DateTime]::UtcNow -lt $deadline)) {
-    Start-Sleep -Milliseconds 200
+    $stopped = $allTargets.Count - $remainingTargets.Count
+    $remaining = @($remainingTargets | ForEach-Object { $_.Process.ProcessId } | Select-Object -Unique)
+    Write-Host "[stop] progress $stopped/$($allTargets.Count) stopped; running PIDs: $($remaining -join ', ')"
+    Start-Sleep -Seconds 1
     $remainingTargets = Get-RemainingTargets $allTargets
 }
 

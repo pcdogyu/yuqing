@@ -53,6 +53,17 @@ $job = Start-Job -ArgumentList $ServiceName, $Executable, $WorkingDirectory, $Ou
     )
 
     $ErrorActionPreference = "Stop"
+    function ConvertTo-ProcessArgumentString([string[]]$Arguments) {
+        return @($Arguments | ForEach-Object {
+            $arg = [string]$_
+            if ($arg -match '[\s"]') {
+                '"' + $arg.Replace('"', '\"') + '"'
+            } else {
+                $arg
+            }
+        }) -join " "
+    }
+
     $JobArgumentList = @()
     if (-not [string]::IsNullOrWhiteSpace($JobArgumentsJson)) {
         $parsedArguments = $JobArgumentsJson | ConvertFrom-Json
@@ -73,7 +84,7 @@ $job = Start-Job -ArgumentList $ServiceName, $Executable, $WorkingDirectory, $Ou
         ErrorAction = "Stop"
     }
     if ($JobArgumentList.Count -gt 0) {
-        $startArgs["ArgumentList"] = $JobArgumentList
+        $startArgs["ArgumentList"] = ConvertTo-ProcessArgumentString $JobArgumentList
     }
     $process = Start-Process @startArgs
     if ($null -eq $process) {

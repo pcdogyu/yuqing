@@ -51,6 +51,9 @@ set "YUQING_AKSHARE_AUCTION_STARTED=0"
 if not defined YUQING_SERVICE_START_TIMEOUT_SECONDS (
     set "YUQING_SERVICE_START_TIMEOUT_SECONDS=30"
 )
+if not defined YUQING_SERVICE_STOP_TIMEOUT_SECONDS (
+    set "YUQING_SERVICE_STOP_TIMEOUT_SECONDS=30"
+)
 if not defined YUQING_RELEASE_ADDR (
     set "YUQING_RELEASE_ADDR=:%RELEASE_SERVICE_PORT%"
 )
@@ -344,7 +347,8 @@ if errorlevel 1 echo WARNING: Failed to print service status.
 exit /b 0
 
 :stop_services
-powershell -NoProfile -ExecutionPolicy Bypass -File "%GO_DIR%\scripts\stop-services.ps1" -Root "%GO_DIR%" -AutoElevate -Names "%SERVICE_NAMES%"
+set /A YUQING_SERVICE_STOP_WAIT_MS=%YUQING_SERVICE_STOP_TIMEOUT_SECONDS% * 1000
+powershell -NoProfile -ExecutionPolicy Bypass -File "%GO_DIR%\scripts\stop-services.ps1" -Root "%GO_DIR%" -WaitMilliseconds "%YUQING_SERVICE_STOP_WAIT_MS%" -AutoElevate -Names "%SERVICE_NAMES%"
 exit /b %ERRORLEVEL%
 
 :build_services
@@ -352,22 +356,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%GO_DIR%\scripts\build-serv
 exit /b %ERRORLEVEL%
 
 :start_all_service_processes
-for %%S in (
-    auth-service
-    wechat-service
-    content-service
-    crawler-service
-    analysis-service
-    nlp-service
-    gateway-web
-    scheduler-service
-    release-service
-) do (
-    call :start_process_if_missing %%S
-    if errorlevel 1 exit /b 1
-)
-call :start_akshare_auction_service_if_missing
+set "START_SERVICE_NAMES=auth-service wechat-service content-service crawler-service analysis-service nlp-service gateway-web scheduler-service release-service"
+set "YUQING_AKSHARE_ARG_FILE="
+call :prepare_akshare_auction_service_start
 if errorlevel 1 exit /b 1
+if defined YUQING_ASTOCK_AUCTION_URL (
+    set "START_SERVICE_NAMES=%START_SERVICE_NAMES% akshare-service"
+)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%GO_DIR%\scripts\start-services.ps1" -Root "%GO_DIR%" -BinDir "%BIN_DIR%" -WorkingDirectory "%GO_DIR%" -LogDir "%LOG_DIR%" -TimeoutSeconds "%YUQING_SERVICE_START_TIMEOUT_SECONDS%" -AkshareArgumentFile "%YUQING_AKSHARE_ARG_FILE%" -Names "%START_SERVICE_NAMES%"
+set "SERVICE_START_EXIT=%ERRORLEVEL%"
+if defined YUQING_AKSHARE_ARG_FILE del /Q "%YUQING_AKSHARE_ARG_FILE%" >nul 2>nul
+if not "%SERVICE_START_EXIT%"=="0" exit /b %SERVICE_START_EXIT%
 exit /b 0
 
 :verify_services_started
@@ -391,12 +390,12 @@ echo One or more services are still not listening after retry.
 exit /b 1
 
 :wait_for_all_services
-for /L %%I in (1,1,%YUQING_SERVICE_START_TIMEOUT_SECONDS%) do (
-    call :check_all_services_once >nul
-    if not errorlevel 1 exit /b 0
-    timeout /t 1 /nobreak >nul
+if defined YUQING_ASTOCK_AUCTION_URL (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%GO_DIR%\scripts\wait-services.ps1" -LogDir "%LOG_DIR%" -TimeoutSeconds "%YUQING_SERVICE_START_TIMEOUT_SECONDS%"
+) else (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%GO_DIR%\scripts\wait-services.ps1" -LogDir "%LOG_DIR%" -TimeoutSeconds "%YUQING_SERVICE_START_TIMEOUT_SECONDS%" -SkipAkshare
 )
-exit /b 1
+exit /b %ERRORLEVEL%
 
 :check_all_services_once
 if defined YUQING_ASTOCK_AUCTION_URL (
@@ -561,6 +560,37 @@ if not errorlevel 1 (
 )
 call :start_akshare_auction_service
 exit /b %ERRORLEVEL%
+
+:prepare_akshare_auction_service_start
+call :is_service_listening "akshare-service"
+if not errorlevel 1 (
+    echo akshare-service already listening; skip start.
+    set "YUQING_AKSHARE_AUCTION_STARTED=1"
+    if not defined YUQING_STOCK_RESEARCH_URL (
+        set "YUQING_STOCK_RESEARCH_URL=http://127.0.0.1:%AKSHARE_AUCTION_PORT%"
+    )
+    exit /b 0
+)
+call :ensure_akshare_deps
+if errorlevel 1 (
+    if "%YUQING_ASTOCK_AUCTION_URL_DEFAULTED%"=="1" set "YUQING_ASTOCK_AUCTION_URL="
+    if "%YUQING_ASTOCK_HOLDING_URL_DEFAULTED%"=="1" set "YUQING_ASTOCK_HOLDING_URL="
+    exit /b 0
+)
+set "YUQING_AKSHARE_ARG_FILE=%TEMP%\yuqing-akshare-service-args-%RANDOM%-%RANDOM%.txt"
+>"%YUQING_AKSHARE_ARG_FILE%" (
+    echo --host
+    echo %AKSHARE_AUCTION_HOST%
+    echo --port
+    echo %AKSHARE_AUCTION_PORT%
+    echo --python
+    echo %PYTHON_EXE%
+)
+if defined PYTHON_LAUNCH_ARGS (
+    >>"%YUQING_AKSHARE_ARG_FILE%" echo --python-arg
+    >>"%YUQING_AKSHARE_ARG_FILE%" echo %PYTHON_LAUNCH_ARGS%
+)
+exit /b 0
 
 :start_process_core
 set "TARGET_SERVICE=%~1"
