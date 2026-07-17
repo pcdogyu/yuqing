@@ -353,6 +353,8 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		".astock-recommendation-table{width:100%;min-width:1460px;table-layout:fixed}",
 		".astock-recommendation-table th:nth-child(2),.astock-recommendation-table td:nth-child(2){width:7.5%;white-space:nowrap}",
 		".astock-recommendation-table th:last-child,.astock-recommendation-table td:last-child{width:47%}",
+		".astock-recommendation-detail-cell{white-space:normal}",
+		".astock-recommendation-fundflow{margin-bottom:6px;font-weight:700;line-height:1.25;white-space:nowrap}",
 		".astock-score-table th:nth-child(3),.astock-score-table td:nth-child(3){width:42%}",
 		"推荐窗口",
 		`colspan="12"`,
@@ -9535,6 +9537,50 @@ func TestAStockRecommendationReasonRendersScoreBreakdownTable(t *testing.T) {
 	}
 }
 
+func TestAStockRecommendationSubsectionMergesFundFlowAndReasonColumns(t *testing.T) {
+	ctx := aStockContext{
+		Period:      "morning",
+		PeriodLabel: "上午推荐",
+		Recommendations: []aStockRecommendation{{
+			Rank:            1,
+			Hotspot:         "人工智能",
+			Code:            "688041",
+			Name:            "海光信息",
+			PrevClose:       "320.40",
+			PrevPct:         "-1.14%",
+			PrevPctClass:    "astock-down",
+			Change30:        "+3.95%",
+			Change30Class:   "astock-up",
+			Change60:        "+5.52%",
+			Change60Class:   "astock-up",
+			CurrentPrice:    "310.20",
+			TodayPct:        "-3.18%",
+			TodayPctClass:   "astock-down",
+			FundFlow5D:      "+9.49亿",
+			FundFlow5DClass: "astock-up",
+			MarketScore:     129,
+			ScoreBreakdown: []aStockRecommendationScoreComponent{
+				{Factor: aStockScoreFactorEmotion, Label: "新闻热度", Detail: "证据新闻 16 条", UnitValue: 10, Score: 160},
+				{Factor: aStockScoreFactorFund, Label: "资金动向", Detail: "5日主力资金净流入 +9.49亿", UnitValue: 10, Score: 10},
+			},
+		}},
+	}
+	var b strings.Builder
+	renderAStockRecommendationSubsection(&b, ctx)
+	body := b.String()
+	for _, want := range []string{
+		"<th>5日资金动向</th><th>推荐理由</th>",
+		`class="astock-recommendation-detail-cell" colspan="2"`,
+		`class="astock-recommendation-fundflow"`,
+		"+9.49亿",
+		`class="astock-score-table"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected merged recommendation detail cell to contain %q, got %s", want, body)
+		}
+	}
+}
+
 func TestAStockRecommendationReasonRendersTotal317Breakdown(t *testing.T) {
 	rec := aStockRecommendation{
 		Hotspot:     "半导体",
@@ -9618,10 +9664,11 @@ func TestAStockRecommendationReasonMergesSavedAndParsedBreakdown(t *testing.T) {
 	if strings.Contains(body, "<td>小计</td>") {
 		t.Fatalf("expected subtotal rows to stay out of score table, got %s", body)
 	}
-	positiveIndex := strings.Index(body, "新闻热度")
+	emotionPositiveIndex := strings.Index(body, "热点关键词")
 	negativeIndex := strings.Index(body, "负面新闻")
-	if positiveIndex < 0 || negativeIndex < 0 || negativeIndex <= positiveIndex {
-		t.Fatalf("expected negative score rows after positive score rows, got %s", body)
+	sectorIndex := strings.Index(body, "板块资金趋势")
+	if emotionPositiveIndex < 0 || negativeIndex < 0 || sectorIndex < 0 || negativeIndex <= emotionPositiveIndex || negativeIndex >= sectorIndex {
+		t.Fatalf("expected negative emotion score row to stay inside emotion group before sector rows, got %s", body)
 	}
 }
 

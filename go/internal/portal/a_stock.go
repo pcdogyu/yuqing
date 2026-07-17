@@ -621,6 +621,8 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-recommendation-table th,.astock-recommendation-table td{vertical-align:top}
 		.astock-recommendation-table th:nth-child(2),.astock-recommendation-table td:nth-child(2){width:7.5%;white-space:nowrap}
 		.astock-recommendation-table th:last-child,.astock-recommendation-table td:last-child{width:47%}
+		.astock-recommendation-detail-cell{white-space:normal}
+		.astock-recommendation-fundflow{margin-bottom:6px;font-weight:700;line-height:1.25;white-space:nowrap}
 		.astock-score-total{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px;color:#214e34;font-weight:700;line-height:1.25}
 		.astock-score-table{width:100%;min-width:0!important;table-layout:auto;border-collapse:collapse;font-size:12px;line-height:1.35}
 		.astock-score-table th,.astock-score-table td{padding:4px 6px;border:1px solid #ece7dc;vertical-align:top}
@@ -2386,15 +2388,20 @@ func renderAStockRecommendationSubsection(b *strings.Builder, ctx aStockContext)
 		b.WriteString(`">`)
 		b.WriteString(html.EscapeString(rec.TodayPct))
 		b.WriteString(`</span>`)
-		b.WriteString(`</td><td><span class="`)
-		b.WriteString(html.EscapeString(rec.FundFlow5DClass))
-		b.WriteString(`">`)
-		b.WriteString(html.EscapeString(rec.FundFlow5D))
-		b.WriteString(`</span></td><td>`)
-		writeAStockRecommendationReasonCell(b, rec)
+		b.WriteString(`</td>`)
+		writeAStockRecommendationDetailCell(b, rec)
 		b.WriteString(`</td></tr>`)
 	}
 	b.WriteString(`</table></div>`)
+}
+
+func writeAStockRecommendationDetailCell(b *strings.Builder, rec aStockRecommendation) {
+	b.WriteString(`<td class="astock-recommendation-detail-cell" colspan="2"><div class="astock-recommendation-fundflow"><span class="`)
+	b.WriteString(html.EscapeString(rec.FundFlow5DClass))
+	b.WriteString(`">`)
+	b.WriteString(html.EscapeString(rec.FundFlow5D))
+	b.WriteString(`</span></div>`)
+	writeAStockRecommendationReasonCell(b, rec)
 }
 
 func writeAStockRecommendationReasonCell(b *strings.Builder, rec aStockRecommendation) {
@@ -2526,8 +2533,8 @@ func writeAStockScoreCategorySummary(b *strings.Builder, summary aStockScoreCate
 }
 
 func aStockRecommendationScoreRows(rec aStockRecommendation, components []aStockRecommendationScoreComponent) []aStockScoreRow {
-	positive := make([]aStockScoreRow, 0, len(components))
-	negative := make([]aStockScoreRow, 0)
+	grouped := make(map[string][]aStockScoreRow, len(components))
+	other := make([]aStockScoreRow, 0)
 	for _, component := range components {
 		category := aStockScoreComponentCategoryFor(component)
 		row := aStockScoreRow{
@@ -2538,16 +2545,22 @@ func aStockRecommendationScoreRows(rec aStockRecommendation, components []aStock
 			Value:    formatAStockScoreComponentUnitValueText(component),
 			Score:    component.Score,
 		}
-		if component.Score < 0 {
-			negative = append(negative, row)
+		if category.Key == "" {
+			other = append(other, row)
 		} else {
-			positive = append(positive, row)
+			grouped[category.Key] = append(grouped[category.Key], row)
 		}
 	}
 	_ = rec
 	rows := make([]aStockScoreRow, 0, len(components)+8)
-	rows = append(rows, positive...)
-	rows = append(rows, negative...)
+	for _, category := range newAStockScoreCategorySummary().order {
+		rows = append(rows, grouped[category.Key]...)
+		delete(grouped, category.Key)
+	}
+	for _, categoryRows := range grouped {
+		rows = append(rows, categoryRows...)
+	}
+	rows = append(rows, other...)
 	return rows
 }
 
