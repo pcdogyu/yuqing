@@ -7225,6 +7225,129 @@ func TestAStockRecommendationGenerateIgnoreFundFlowKeepsNegativeFundFlowRecommen
 	}
 }
 
+func TestAStockTestPageRendersSimulationForm(t *testing.T) {
+	srv := NewServer(config.Config{})
+	req := httptest.NewRequest(http.MethodGet, "/a-stock/test", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAStockTestPage(rr, req, map[string]any{"id": 1})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected test page 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"模拟生成，不写快照/数据库", `name="simulate" value="1"`, "模拟结果", "/a-stock/test"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected test page to contain %q, got body=%s", want, body)
+		}
+	}
+}
+
+func TestAStockTestPageSimulationDoesNotWriteRecommendationData(t *testing.T) {
+	market := httptest.NewServer(http.HandlerFunc(writeAStockTestMarketBars))
+	defer market.Close()
+	t.Setenv("YUQING_ASTOCK_MARKET_URL", market.URL)
+
+	writeCount := 0
+	content := newAStockSimulationContentServerForTest(t, &writeCount)
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	req := httptest.NewRequest(http.MethodGet, "/a-stock/test?date=2026-06-16&period=morning&phase=final&simulate=1&ignore_recent=1&ignore_fund_flow=1", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAStockTestPage(rr, req, map[string]any{"id": 1})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected simulated test page 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"模拟生成，不写快照/数据库", "推荐股票", "002230", "科大讯飞"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected simulated test page to contain %q, got body=%s", want, body)
+		}
+	}
+	if writeCount != 0 {
+		t.Fatalf("expected simulation page not to write recommendation data, got %d writes", writeCount)
+	}
+}
+
+func TestAStockRecommendationGenerateDryRunDoesNotWriteRecommendationData(t *testing.T) {
+	market := httptest.NewServer(http.HandlerFunc(writeAStockTestMarketBars))
+	defer market.Close()
+	t.Setenv("YUQING_ASTOCK_MARKET_URL", market.URL)
+
+	writeCount := 0
+	content := newAStockSimulationContentServerForTest(t, &writeCount)
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	req := httptest.NewRequest(http.MethodPost, "/internal/a-stock/recommendations/generate?date=2026-06-16&period=morning&phase=final&ignore_recent=1&ignore_fund_flow=1&dry_run=1", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAStockRecommendationGenerate(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected dry-run generate 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	var envelope struct {
+		Data aStockRecommendationGenerateResult `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode dry-run generate response: %v", err)
+	}
+	if !envelope.Data.DryRun {
+		t.Fatalf("expected dry_run=true in response, got %+v", envelope.Data)
+	}
+	if envelope.Data.RecommendationCount == 0 {
+		t.Fatalf("expected dry-run generate recommendation, got %+v", envelope.Data)
+	}
+	if writeCount != 0 {
+		t.Fatalf("expected dry-run generate not to write recommendation data, got %d writes", writeCount)
+	}
+}
+
+func newAStockSimulationContentServerForTest(t *testing.T, writeCount *int) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/articles":
+			if r.URL.Query().Get("time_field") == "captured_at" {
+				writeEnvelope(w, http.StatusOK, "ok", model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0})
+				return
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.ItemListResult{
+				Items: []model.Item{{
+					ID:          9901,
+					SourceType:  "flash",
+					Title:       "科大讯飞盘前活跃",
+					Summary:     "AI 人工智能算力需求增长",
+					PublishTime: "2026-06-16 09:26:30",
+					TagFlags:    "0.002230",
+					CapturedAt:  time.Date(2026, 6, 16, 1, 26, 30, 0, time.UTC),
+				}},
+				Page: 1, PageSize: 200, Total: 1,
+			})
+		case "/api/v1/a-stock/auction":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockAuctionListResult{
+				Date:  "2026-06-16",
+				Items: []model.AStockAuctionAmount{{TradeDate: "2026-06-16", Code: "002230", Name: "科大讯飞", AuctionAmount: 10000000, AuctionVolume: 1000000}},
+			})
+		case "/api/v1/a-stock/recommendations":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
+		case "/api/v1/a-stock/recommendation-selections":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{Found: false})
+		case "/api/v1/a-stock/recommendation-latest-dates":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationLatestDateListResult{Items: []model.AStockRecommendationLatestDate{}})
+		case "/api/v1/a-stock/holdings/summary":
+			writeEnvelope(w, http.StatusOK, "ok", model.StockInstitutionHoldingSummary{})
+		case "/api/v1/internal/a-stock/recommendations", "/api/v1/internal/a-stock/recommendation-selections", "/api/v1/internal/a-stock/recommendation-shadow-snapshots":
+			*writeCount++
+			writeEnvelope(w, http.StatusOK, "ok", map[string]any{"updated": 1})
+		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+	}))
+}
+
 func mustAStockRecommendationForTest(t *testing.T, recommendations []aStockRecommendation, code string) aStockRecommendation {
 	t.Helper()
 	code = normalizeAStockCode(code)

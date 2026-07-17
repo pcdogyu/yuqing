@@ -389,6 +389,7 @@ type aStockRecommendationGenerateResult struct {
 	StrategyDate             string `json:"strategy_date"`
 	Period                   string `json:"period"`
 	Phase                    string `json:"phase"`
+	DryRun                   bool   `json:"dry_run"`
 	RecommendationCount      int    `json:"recommendation_count"`
 	GeneratedCount           int    `json:"generated_count"`
 	BacktestStatus           string `json:"backtest_status"`
@@ -664,6 +665,103 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 	b.WriteString(payload.HTML)
 
 	_ = s.writeSimplePage(w, "a-stock", "A股", b.String())
+}
+
+func (s *Server) handleAStockTestPage(w http.ResponseWriter, r *http.Request, user any) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	strategyDate := normalizeAStockStrategyDate(r.URL.Query().Get("date"))
+	period := normalizeAStockPeriod(r.URL.Query().Get("period"))
+	phase := normalizeAStockRecommendationPhase(r.URL.Query().Get("phase"))
+	ignoreRecent := normalizeAStockBool(r.URL.Query().Get("ignore_recent"))
+	ignoreLimitUp := normalizeAStockBool(r.URL.Query().Get("ignore_limit_up"))
+	ignoreFundFlow := normalizeAStockBool(r.URL.Query().Get("ignore_fund_flow"))
+	filterTodayMarket := normalizeAStockBool(r.URL.Query().Get("filter_today_market"))
+	simulate := normalizeAStockBool(r.URL.Query().Get("simulate"))
+
+	var b strings.Builder
+	b.WriteString(`<section><h2>A股模拟生成</h2><p class="astock-muted">模拟生成，不写快照/数据库。此页面只计算推荐、回测和过滤状态，不保存推荐快照、已选股票或T+1影子快照。</p>`)
+	b.WriteString(`<form method="get" action="/a-stock/test" class="astock-action-grid">`)
+	b.WriteString(`<label>策略日期<input type="date" name="date" value="`)
+	b.WriteString(html.EscapeString(strategyDate))
+	b.WriteString(`"></label>`)
+	b.WriteString(`<label>推荐窗口<select name="period">`)
+	for _, option := range []aStockPeriod{normalizeAStockPeriod("morning"), normalizeAStockPeriod("afternoon")} {
+		b.WriteString(`<option value="`)
+		b.WriteString(html.EscapeString(option.Key))
+		b.WriteString(`"`)
+		if option.Key == period.Key {
+			b.WriteString(` selected`)
+		}
+		b.WriteString(`>`)
+		b.WriteString(html.EscapeString(option.Label))
+		b.WriteString(`</option>`)
+	}
+	b.WriteString(`</select></label>`)
+	b.WriteString(`<label>生成阶段<select name="phase"><option value="final"`)
+	if phase == aStockRecommendationPhaseFinal {
+		b.WriteString(` selected`)
+	}
+	b.WriteString(`>正式窗口</option><option value="preopen"`)
+	if phase == aStockRecommendationPhasePreopen {
+		b.WriteString(` selected`)
+	}
+	b.WriteString(`>盘前窗口</option></select></label>`)
+	writeAStockSimulationCheckbox(&b, "ignore_recent", "忽略90个交易日内过滤", ignoreRecent)
+	writeAStockSimulationCheckbox(&b, "ignore_limit_up", "忽略涨停过滤", ignoreLimitUp)
+	writeAStockSimulationCheckbox(&b, "ignore_fund_flow", "忽略资金过滤", ignoreFundFlow)
+	writeAStockSimulationCheckbox(&b, "filter_today_market", "过滤当日行情缺失", filterTodayMarket)
+	b.WriteString(`<input type="hidden" name="simulate" value="1"><button type="submit">模拟生成</button></form></section>`)
+
+	if simulate {
+		ctx := s.loadAStockSimulationContext(strategyDate, period.Key, 1, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, phase, newAStockRequestCache())
+		if strings.TrimSpace(ctx.LoadMessage) != "" {
+			b.WriteString(`<section><p style="color:#8a4b16">`)
+			b.WriteString(html.EscapeString(ctx.LoadMessage))
+			b.WriteString(`</p></section>`)
+		}
+		b.WriteString(`<section><h2>模拟结果</h2><table class="astock-overview"><tr>`)
+		writeAStockSimulationMetric(&b, "策略日期", ctx.Date)
+		writeAStockSimulationMetric(&b, "推荐窗口", ctx.PeriodLabel)
+		writeAStockSimulationMetric(&b, "候选热点数", fmt.Sprint(ctx.MarketCandidateCount))
+		writeAStockSimulationMetric(&b, "生成数量", fmt.Sprintf("%d/%d", len(ctx.Recommendations), ctx.GeneratedRecommendationCount))
+		writeAStockSimulationMetric(&b, "回测状态", nonEmpty(ctx.BacktestStatus, "无"))
+		b.WriteString(`</tr><tr>`)
+		writeAStockSimulationMetric(&b, aStockRecentLookbackLabel()+"内过滤", fmt.Sprint(ctx.RecentFiltered))
+		writeAStockSimulationMetric(&b, "涨停过滤", fmt.Sprint(ctx.LimitUpFiltered))
+		writeAStockSimulationMetric(&b, "当日行情过滤", fmt.Sprint(ctx.NoTodayMarketCount))
+		writeAStockSimulationMetric(&b, "资金过滤", fmt.Sprint(ctx.FundFlowFiltered))
+		writeAStockSimulationMetric(&b, "资金缺失", fmt.Sprint(ctx.FundFlowMissingCount))
+		b.WriteString(`</tr></table></section><section><h2>推荐股票</h2>`)
+		renderAStockRecommendationSubsection(&b, ctx)
+		b.WriteString(`</section>`)
+	} else {
+		b.WriteString(`<section><h2>模拟结果</h2><div class="astock-empty">选择参数后点击模拟生成。</div></section>`)
+	}
+
+	_ = s.writeSimplePage(w, "a-stock-test", "A股模拟生成", b.String())
+}
+
+func writeAStockSimulationCheckbox(b *strings.Builder, name string, label string, checked bool) {
+	b.WriteString(`<label><input type="checkbox" name="`)
+	b.WriteString(html.EscapeString(name))
+	b.WriteString(`" value="1"`)
+	if checked {
+		b.WriteString(` checked`)
+	}
+	b.WriteString(`>`)
+	b.WriteString(html.EscapeString(label))
+	b.WriteString(`</label>`)
+}
+
+func writeAStockSimulationMetric(b *strings.Builder, label string, value string) {
+	b.WriteString(`<td><span class="astock-muted">`)
+	b.WriteString(html.EscapeString(label))
+	b.WriteString(`</span><strong>`)
+	b.WriteString(html.EscapeString(value))
+	b.WriteString(`</strong></td>`)
 }
 
 func (s *Server) buildAStockPageFragment(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, fundFlowExplicit bool, filterTodayMarket bool, forceRecommendationRefresh bool, message string) aStockPartialPayload {
@@ -3368,12 +3466,18 @@ func (s *Server) handleAStockRecommendationGenerate(w http.ResponseWriter, r *ht
 	ignoreLimitUp := normalizeAStockBool(r.URL.Query().Get("ignore_limit_up"))
 	ignoreFundFlow := normalizeAStockBool(r.URL.Query().Get("ignore_fund_flow"))
 	filterTodayMarket := normalizeAStockBool(r.URL.Query().Get("filter_today_market"))
+	dryRun := normalizeAStockBool(r.URL.Query().Get("dry_run"))
 	refreshMode := aStockRecommendationRebuild
 	if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("refresh_mode")), string(aStockRecommendationPreserveLocked)) {
 		refreshMode = aStockRecommendationPreserveLocked
 	}
-	ctx := s.loadAStockContextWithRecommendationPhasePersistenceMode(strategyDate, period.Key, 1, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, true, phase, newAStockRequestCache(), true, true, refreshMode)
-	_ = s.saveAStockT1ShadowRecommendationSnapshot(ctx)
+	ctx := aStockContext{}
+	if dryRun {
+		ctx = s.loadAStockSimulationContext(strategyDate, period.Key, 1, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, phase, newAStockRequestCache())
+	} else {
+		ctx = s.loadAStockContextWithRecommendationPhasePersistenceMode(strategyDate, period.Key, 1, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, true, phase, newAStockRequestCache(), true, true, refreshMode)
+		_ = s.saveAStockT1ShadowRecommendationSnapshot(ctx)
+	}
 	writeRawJSON(w, http.StatusOK, map[string]any{
 		"code":    http.StatusOK,
 		"message": "ok",
@@ -3381,6 +3485,7 @@ func (s *Server) handleAStockRecommendationGenerate(w http.ResponseWriter, r *ht
 			StrategyDate:             ctx.Date,
 			Period:                   ctx.Period,
 			Phase:                    phase,
+			DryRun:                   dryRun,
 			RecommendationCount:      len(ctx.Recommendations),
 			GeneratedCount:           ctx.GeneratedRecommendationCount,
 			BacktestStatus:           ctx.BacktestStatus,
@@ -3825,6 +3930,10 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistence(strategyDat
 
 func (s *Server) loadAStockContextWithRecommendationPhasePersistenceMode(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool, forceRecommendationRefresh bool, recommendationPhase string, cache *aStockRequestCache, includeHotspotTopStocks bool, persist bool, refreshMode aStockRecommendationRefreshMode) aStockContext {
 	return s.loadAStockContextWithRecommendationPhasePersistenceModeEntryTime(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, forceRecommendationRefresh, recommendationPhase, cache, includeHotspotTopStocks, persist, refreshMode, "")
+}
+
+func (s *Server) loadAStockSimulationContext(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool, recommendationPhase string, cache *aStockRequestCache) aStockContext {
+	return s.loadAStockContextWithRecommendationPhasePersistenceModeEntryTime(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, true, recommendationPhase, cache, true, false, aStockRecommendationRebuild, "")
 }
 
 func newAStockBaseContext(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool, recommendationPhase string) aStockContext {
