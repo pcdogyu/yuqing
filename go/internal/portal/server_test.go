@@ -13452,6 +13452,9 @@ func TestHotspotsPageRendersSwitchingData(t *testing.T) {
 	}))
 	defer content.Close()
 	srv := NewServer(config.Config{ContentURL: content.URL})
+	srv.now = func() time.Time {
+		return time.Date(2026, 7, 14, 13, 12, 0, 0, time.FixedZone("UTC+8", 8*60*60))
+	}
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/hotspots?days=14", nil)
 	srv.handleHotspots(rr, req, map[string]any{"id": int64(1), "username": "admin"})
@@ -13461,7 +13464,6 @@ func TestHotspotsPageRendersSwitchingData(t *testing.T) {
 	body := rr.Body.String()
 	for _, expected := range []string{
 		"热点切换监控",
-		"过去 14 天热点",
 		"当日板块资金流向",
 		"13:11",
 		"创新药",
@@ -13516,6 +13518,8 @@ func TestHotspotsPageRendersSwitchingData(t *testing.T) {
 		`<h2>连续升温热点</h2>`,
 		`<h2>发现词升温</h2>`,
 		`<h2>近 14 日趋势</h2>`,
+		`过去 14 天热点`,
+		`最近14天`,
 		`class="hotspot-table"`,
 		`class="hotspot-grid"`,
 		`class="hotspot-kpis"`,
@@ -13530,6 +13534,61 @@ func TestHotspotsPageRendersSwitchingData(t *testing.T) {
 		if strings.Contains(body, unexpected) {
 			t.Fatalf("expected hotspots page to omit %q, got %s", unexpected, body)
 		}
+	}
+}
+
+func TestHotspotSectorFundFlowIntradayClearsYesterdayValuesBeforeOpen(t *testing.T) {
+	loc := time.FixedZone("UTC+8", 8*60*60)
+	result := model.AStockSectorFundFlowIntradayResult{
+		Date:       "2026-07-16",
+		SectorType: "行业资金流",
+		Indicator:  "今日",
+		LatestTime: "15:00",
+		Times:      []string{"09:30", "15:00"},
+		Series: []model.AStockSectorFundFlowIntradaySeries{{
+			Name:                "机器人",
+			LatestRank:          1,
+			LatestMainNetInflow: 3273000000,
+			Points:              []model.AStockSectorFundFlowIntradayPoint{{Time: "15:00", MainNetInflow: 3273000000, Rank: 1}},
+		}},
+		Top: []model.AStockSectorFundFlow{{
+			TradeDate:              "2026-07-16",
+			SectorType:             "行业资金流",
+			Indicator:              "今日",
+			Rank:                   1,
+			Name:                   "机器人",
+			MainNetInflow:          3273000000,
+			MainNetInflowPct:       9.1,
+			SuperLargeNetInflow:    100,
+			SuperLargeNetInflowPct: 1,
+			LargeNetInflow:         200,
+			LargeNetInflowPct:      2,
+			MediumNetInflow:        300,
+			MediumNetInflowPct:     3,
+			SmallNetInflow:         400,
+			SmallNetInflowPct:      4,
+		}},
+	}
+	cleared := clearPreOpenHotspotSectorFundFlowIntraday(result, time.Date(2026, 7, 17, 9, 1, 0, 0, loc))
+	if cleared.Date != "2026-07-17" || cleared.LatestTime != "" || len(cleared.Times) != 0 || len(cleared.Series) != 0 {
+		t.Fatalf("expected stale intraday chart values to be cleared, got %+v", cleared)
+	}
+	if len(cleared.Top) != 1 || cleared.Top[0].Name != "机器人" || cleared.Top[0].MainNetInflow != 0 || cleared.Top[0].LargeNetInflow != 0 || cleared.Top[0].SmallNetInflowPct != 0 {
+		t.Fatalf("expected ranking rows to remain with zeroed values, got %+v", cleared.Top)
+	}
+}
+
+func TestHotspotSectorFundFlowIntradayKeepsValuesAtOpen(t *testing.T) {
+	loc := time.FixedZone("UTC+8", 8*60*60)
+	result := model.AStockSectorFundFlowIntradayResult{
+		Date:       "2026-07-16",
+		LatestTime: "15:00",
+		Times:      []string{"15:00"},
+		Top:        []model.AStockSectorFundFlow{{Name: "机器人", MainNetInflow: 3273000000}},
+	}
+	kept := clearPreOpenHotspotSectorFundFlowIntraday(result, time.Date(2026, 7, 17, 9, 30, 0, 0, loc))
+	if kept.LatestTime != "15:00" || len(kept.Times) != 1 || kept.Top[0].MainNetInflow != 3273000000 {
+		t.Fatalf("expected intraday values to be kept at 09:30, got %+v", kept)
 	}
 }
 

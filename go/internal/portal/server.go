@@ -127,6 +127,7 @@ type Server struct {
 	upgradeRunner   portalUpgradeRunner
 	upgradeMu       sync.Mutex
 	upgradeState    portalUpgradeResult
+	now             func() time.Time
 	mu              sync.Mutex
 	captchas        map[string]string
 	mobileQRs       map[string]mobileQRCodeState
@@ -358,6 +359,7 @@ func NewServer(cfg config.Config) *Server {
 			SetHeader("X-Service-Token", cfg.ServiceToken),
 		templates:       tpl,
 		upgradeRunner:   defaultPortalUpgradeRunner{},
+		now:             time.Now,
 		captchas:        map[string]string{},
 		mobileQRs:       map[string]mobileQRCodeState{},
 		aStockAuctions:  map[string]aStockServerAuctionCacheEntry{},
@@ -2732,7 +2734,49 @@ func (s *Server) loadHotspotSectorFundFlowIntraday(ctx context.Context, filter m
 	if result.Top == nil {
 		result.Top = []model.AStockSectorFundFlow{}
 	}
+	if strings.TrimSpace(filter.Date) == "" {
+		now := time.Now
+		if s.now != nil {
+			now = s.now
+		}
+		result = clearPreOpenHotspotSectorFundFlowIntraday(result, now())
+	}
 	return result, err
+}
+
+func clearPreOpenHotspotSectorFundFlowIntraday(result model.AStockSectorFundFlowIntradayResult, now time.Time) model.AStockSectorFundFlowIntradayResult {
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		loc = time.FixedZone("UTC+8", 8*60*60)
+	}
+	current := now.In(loc)
+	minute := current.Hour()*60 + current.Minute()
+	if minute < 9*60 || minute >= 9*60+30 {
+		return result
+	}
+	today := current.Format("2006-01-02")
+	if strings.TrimSpace(result.Date) == today {
+		return result
+	}
+	result.Date = today
+	result.LatestTime = ""
+	result.Times = []string{}
+	result.Series = []model.AStockSectorFundFlowIntradaySeries{}
+	for i := range result.Top {
+		result.Top[i].TradeDate = today
+		result.Top[i].MainNetInflow = 0
+		result.Top[i].MainNetInflowPct = 0
+		result.Top[i].SuperLargeNetInflow = 0
+		result.Top[i].SuperLargeNetInflowPct = 0
+		result.Top[i].LargeNetInflow = 0
+		result.Top[i].LargeNetInflowPct = 0
+		result.Top[i].MediumNetInflow = 0
+		result.Top[i].MediumNetInflowPct = 0
+		result.Top[i].SmallNetInflow = 0
+		result.Top[i].SmallNetInflowPct = 0
+	}
+	result.Total = len(result.Top)
+	return result
 }
 
 func normalizePortalSectorFundFlowType(value string) string {
@@ -5219,12 +5263,6 @@ html,body{overflow-x:hidden}
 <header><h1>热点切换监控</h1>{{template "nav" .}}</header>
 <main>
 {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
-<section>
-<div class="hotspot-toolbar">
-<div><h2>过去 {{.Hotspots.Days}} 天热点</h2><p class="hotspot-muted">{{.Hotspots.StartDate}} 至 {{.Hotspots.EndDate}}，主榜只统计标准热点字典命中词；标题自由抽词单独进入发现词。</p></div>
-<div class="hotspot-tabs"><a class="{{if eq .Hotspots.Days 14}}active{{end}}" href="/hotspots?days=14&sector_type={{urlquery .SectorFundFlowType}}">最近14天</a><a class="{{if eq .Hotspots.Days 7}}active{{end}}" href="/hotspots?days=7&sector_type={{urlquery .SectorFundFlowType}}">最近7天</a><a class="{{if eq .Hotspots.Days 30}}active{{end}}" href="/hotspots?days=30&sector_type={{urlquery .SectorFundFlowType}}">最近30天</a></div>
-</div>
-</section>
 <section class="fundflow-section">
 <div class="fundflow-head">
 <div><h2>当日板块资金流向</h2><p class="hotspot-muted">按“今日主力净流入”展示，后台交易时段每分钟抓取，页面每 60 秒刷新。最新时间：<span id="fundflow-latest-time">{{if .SectorFundFlowIntraday.LatestTime}}{{.SectorFundFlowIntraday.LatestTime}}{{else}}--{{end}}</span></p></div>
