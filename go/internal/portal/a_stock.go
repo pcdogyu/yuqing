@@ -686,6 +686,13 @@ func (s *Server) handleAStockTestPage(w http.ResponseWriter, r *http.Request, us
 	simulate := normalizeAStockBool(r.URL.Query().Get("simulate"))
 
 	var b strings.Builder
+	b.WriteString(`<style>
+		body[data-page='a-stock-test'] main{max-width:none;width:98vw;box-sizing:border-box;padding-left:12px;padding-right:12px}
+		body[data-page='a-stock-test'] .site-footer{max-width:none;width:98vw;box-sizing:border-box}
+		body[data-page='a-stock-test'] section{width:100%;box-sizing:border-box}
+		body[data-page='a-stock-test'] table{width:100%;min-width:100%;font-size:13px}
+		body[data-page='a-stock-test'] .astock-scroll{width:100%;overflow:auto}
+	</style>`)
 	b.WriteString(`<section><h2>A股模拟生成</h2><p class="astock-muted">模拟生成，不写快照/数据库。此页面只计算推荐、回测和过滤状态，不保存推荐快照、已选股票或T+1影子快照。</p>`)
 	b.WriteString(`<form method="get" action="/a-stock/test" class="astock-action-grid" data-astock-simulation-form="1">`)
 	b.WriteString(`<label>策略日期<input type="date" name="date" value="`)

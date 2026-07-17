@@ -7236,7 +7236,14 @@ func TestAStockTestPageRendersSimulationForm(t *testing.T) {
 		t.Fatalf("expected test page 200, got %d body=%s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"模拟生成，不写快照/数据库", `name="simulate" value="1"`, "模拟结果", "/a-stock/test"} {
+	for _, want := range []string{
+		"模拟生成，不写快照/数据库",
+		`name="simulate" value="1"`,
+		"模拟结果",
+		"/a-stock/test",
+		"body[data-page='a-stock-test'] main{max-width:none;width:98vw;box-sizing:border-box",
+		"body[data-page='a-stock-test'] section{width:100%;box-sizing:border-box}",
+	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected test page to contain %q, got body=%s", want, body)
 		}
