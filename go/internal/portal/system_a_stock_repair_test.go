@@ -54,7 +54,7 @@ func TestSystemAStockAlgorithmSectionRendersFactorGroups(t *testing.T) {
 		t.Fatalf("expected stock algorithm page 200, got %d body=%s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	for _, snippet := range []string{"股票推荐算法", "竞价因子", "情绪因子", "版块资金因子", "个股资金因子", "波动因子", "param.fund.extreme_score", "param.sector.top_stock_score_cap", "param.auction.low_open_threshold_1_pct", "param.auction.low_open_strong_penalty"} {
+	for _, snippet := range []string{"股票推荐算法", "竞价因子", "候选生成", "情绪因子", "版块资金因子", "个股资金因子", "波动因子", "param.candidate.require_hotspot_link", "param.fund.extreme_score", "param.sector.top_stock_score_cap", "param.auction.low_open_threshold_1_pct", "param.auction.low_open_strong_penalty"} {
 		if !strings.Contains(body, snippet) {
 			t.Fatalf("expected stock algorithm page to contain %q, got %s", snippet, body)
 		}

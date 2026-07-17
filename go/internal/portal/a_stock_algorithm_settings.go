@@ -61,7 +61,7 @@ func (s *Server) loadAStockAlgorithmSettingsWithCache(cache *aStockRequestCache)
 
 func buildAStockAlgorithmParamGroups(settings model.AStockRecommendationAlgorithmSettings) []aStockAlgorithmParamGroupView {
 	defaults := defaultAStockAlgorithmSettings()
-	groups := make([]aStockAlgorithmParamGroupView, 0, 5)
+	groups := make([]aStockAlgorithmParamGroupView, 0, 6)
 	groupIndex := map[string]int{}
 	for _, def := range aStockAlgorithmParamDefs() {
 		idx, ok := groupIndex[def.Group]
@@ -145,6 +145,12 @@ func aStockAlgorithmParamDefs() []aStockAlgorithmParamDef {
 		{Group: "auction", GroupLabel: "竞价因子", Key: "auction.low_open_penalty_5", Label: "低开五档扣分", Unit: "分", Description: "达到五档低开阈值的扣分"},
 		{Group: "auction", GroupLabel: "竞价因子", Key: "auction.low_open_strong_threshold_pct", Label: "强低开阈值", Unit: "%", Step: "0.01", Description: "强低开扣分阈值"},
 		{Group: "auction", GroupLabel: "竞价因子", Key: "auction.low_open_strong_penalty", Label: "强低开扣分", Unit: "分", Description: "达到强低开阈值的扣分"},
+
+		{Group: "candidate", GroupLabel: "候选生成", Key: "candidate.require_hotspot_link", Label: "要求热点关联", InputType: "text", Description: "true 时纯集合竞价股票不得直接入池"},
+		{Group: "candidate", GroupLabel: "候选生成", Key: "candidate.auction_fallback_per_hotspot", Label: "单热点竞价确认数", Unit: "个", Description: "每个热点最多给多少板块候选附加集合竞价确认"},
+		{Group: "candidate", GroupLabel: "候选生成", Key: "candidate.sector_candidate_limit_per_hotspot", Label: "单热点板块候选数", Unit: "个", Description: "每个热点最多收集的板块成分股候选"},
+		{Group: "candidate", GroupLabel: "候选生成", Key: "candidate.stock_fund_flow_candidate_limit", Label: "个股资金候选数", Unit: "个", Description: "从5日/10日个股资金流中收集的候选上限"},
+		{Group: "candidate", GroupLabel: "候选生成", Key: "candidate.max_stocks_per_hotspot_soft", Label: "单热点软上限", Unit: "个", Description: "优先保证单一热点最多推荐数量，不足时可递补放宽"},
 
 		{Group: "emotion", GroupLabel: "情绪因子", Key: "emotion.factor_score_cap", Label: "因子封顶", Unit: "分", Description: "情绪因子正向最高分"},
 		{Group: "emotion", GroupLabel: "情绪因子", Key: "emotion.news_evidence_score", Label: "单条新闻热度分", Unit: "分", Description: "每条证据新闻贡献的热点分"},

@@ -1368,7 +1368,7 @@ func TestAStockRecommendationAlgorithmSettingsAPI(t *testing.T) {
 	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/system/a-stock-recommendation-algorithm", nil)
 	getRR := httptest.NewRecorder()
 	router.ServeHTTP(getRR, getReq)
-	if getRR.Code != http.StatusOK || !strings.Contains(getRR.Body.String(), `"recommendation_limit":5`) || !strings.Contains(getRR.Body.String(), `"extreme_score":120`) || !strings.Contains(getRR.Body.String(), `"factor_score_cap":200`) || !strings.Contains(getRR.Body.String(), `"low_open_strong_penalty":65`) {
+	if getRR.Code != http.StatusOK || !strings.Contains(getRR.Body.String(), `"recommendation_limit":5`) || !strings.Contains(getRR.Body.String(), `"extreme_score":120`) || !strings.Contains(getRR.Body.String(), `"factor_score_cap":300`) || !strings.Contains(getRR.Body.String(), `"require_hotspot_link":true`) || !strings.Contains(getRR.Body.String(), `"low_open_strong_penalty":65`) {
 		t.Fatalf("expected default algorithm settings, got status=%d body=%s", getRR.Code, getRR.Body.String())
 	}
 

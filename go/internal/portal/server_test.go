@@ -9409,10 +9409,10 @@ func TestAStockRecommendationsUseTopThreeHotspotIndustries(t *testing.T) {
 	}
 	wantCodes := map[string]struct{}{
 		"600547": {},
-		"601899": {},
 		"600111": {},
 		"002475": {},
 		"000725": {},
+		"300274": {},
 	}
 	for _, rec := range recommendations {
 		if _, ok := wantCodes[rec.Code]; !ok {
@@ -9535,9 +9535,9 @@ func TestAStockRecommendationReasonRendersScoreBreakdownTable(t *testing.T) {
 		`class="astock-score-value">每条 10 分</td><td>30 分`,
 		"竞价因子",
 		"个股证据",
-		"情绪因子：73/200 分",
-		"竞价因子：40/200 分",
-		"个股资金因子：2/200 分",
+		"情绪因子：73/300 分",
+		"竞价因子：40/120 分",
+		"个股资金因子：2/220 分",
 		"合计：115/1000 分",
 	} {
 		if !strings.Contains(body, want) {
@@ -9590,11 +9590,11 @@ func TestAStockRecommendationReasonUsesRequestedCategoryOrder(t *testing.T) {
 		t.Fatalf("expected score summary, got %s", body)
 	}
 	assertContainsInOrder(t, body[summaryStart:],
-		"版块资金因子：40/200 分",
-		"个股资金因子：10/200 分",
-		"情绪因子：20/200 分",
-		"竞价因子：30/200 分",
-		"波动因子：5/200 分",
+		"版块资金因子：40/220 分",
+		"个股资金因子：10/220 分",
+		"情绪因子：20/300 分",
+		"竞价因子：30/120 分",
+		"波动因子：5/140 分",
 		"历史修正：-5 分",
 		"合计：100/1000 分",
 	)
@@ -9670,10 +9670,10 @@ func TestAStockRecommendationReasonRendersTotal317Breakdown(t *testing.T) {
 		"每条 10 分",
 		"每个 3 分",
 		"每条 25 分",
-		"情绪因子：199/200 分",
-		"竞价因子：65/200 分",
-		"版块资金因子：40/200 分",
-		"个股资金因子：13/200 分",
+		"情绪因子：199/300 分",
+		"竞价因子：65/120 分",
+		"版块资金因子：40/220 分",
+		"个股资金因子：13/220 分",
 		"合计：317/1000 分",
 	} {
 		if !strings.Contains(body, want) {
@@ -9788,9 +9788,9 @@ func TestAStockRecommendationReasonParsesUnitValueForScoreBreakdownTable(t *test
 		`class="astock-score-value">64 分</td><td>64 分`,
 		"个股证据 1 条",
 		`class="astock-score-value">每条 25 分</td><td>25 分`,
-		"情绪因子：151/200 分",
-		"竞价因子：64/200 分",
-		"个股资金因子：10/200 分",
+		"情绪因子：151/300 分",
+		"竞价因子：64/120 分",
+		"个股资金因子：10/220 分",
 		"历史修正：-53 分",
 		"合计：172/1000 分",
 	} {
@@ -9819,8 +9819,8 @@ func TestAStockRecommendationReasonExplainsMatchedScoreDelta(t *testing.T) {
 		"证据新闻 37 条",
 		"负面新闻 3 条，板块减分 90",
 		"-90 分",
-		"情绪因子：200/200 分",
-		"历史修正：275 分",
+		"情绪因子：300/300 分",
+		"历史修正：175 分",
 		"合计：475/1000 分",
 	} {
 		if !strings.Contains(body, want) {
@@ -10866,7 +10866,122 @@ func TestAStockRecommendationsUseNewsMentionedStocksWhenAuctionCandidatesEmpty(t
 	}
 }
 
-func TestAStockRecommendationsRequireSectorMatchForNewsDerivedCandidates(t *testing.T) {
+func TestAStockRecommendationCandidatesExcludePureAuctionLargeCap(t *testing.T) {
+	hotspots := []aStockHotspot{{
+		Name:     "人工智能",
+		Keywords: []string{"AI", "机器人"},
+		Score:    80,
+		Evidence: 1,
+	}}
+	candidates := aStockRecommendationCandidatesForLimitWithSettings(hotspots, []aStockMarketCandidate{
+		{Code: "601988", Name: "中国银行", Rank: 1, AuctionAmount: 900000000},
+		{Code: "300024", Name: "机器人", Rank: 998, AuctionAmount: 30000000},
+	}, 5, 3, defaultAStockAlgorithmSettings())
+	got := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		got[normalizeAStockCode(candidate.Code)] = struct{}{}
+	}
+	if _, ok := got["601988"]; ok {
+		t.Fatalf("expected pure auction large cap 601988 to be excluded, got %+v", candidates)
+	}
+	if _, ok := got["300024"]; !ok {
+		t.Fatalf("expected hotspot-linked auction candidate 300024 to remain, got %+v", candidates)
+	}
+}
+
+func TestAStockRecommendationsIncludeNewsMentionedLowAuctionRank(t *testing.T) {
+	recommendations := buildAStockRecommendations([]aStockHotspot{{
+		Name:     "人工智能",
+		Keywords: []string{"AI", "算力"},
+		Score:    90,
+		Evidence: 1,
+		MatchedItems: []model.Item{{
+			SourceType: "flash",
+			Title:      "算力产业链走强，协创数据获资金关注",
+			Summary:    "AI应用需求升温",
+			TagFlags:   "0.300857",
+		}},
+	}}, []aStockMarketCandidate{
+		{Code: "601988", Name: "中国银行", Rank: 1, AuctionAmount: 900000000},
+		{Code: "300857", Name: "协创数据", Rank: 1500, AuctionAmount: 1000000},
+	})
+	got := aStockTestRecommendationsByCode(recommendations)
+	if _, ok := got["300857"]; !ok {
+		t.Fatalf("expected news-mentioned low-auction-rank stock 300857 to enter recommendations, got %+v", recommendations)
+	}
+	if _, ok := got["601988"]; ok {
+		t.Fatalf("expected unrelated pure auction stock 601988 to be excluded, got %+v", recommendations)
+	}
+}
+
+func TestAStockPriorityCandidatePoolBlocksAuctionWhenSectorTrendOutflows(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/system/a-stock-recommendation-algorithm":
+			writeEnvelope(w, http.StatusOK, "ok", model.DefaultAStockRecommendationAlgorithmSettings())
+		case "/api/v1/a-stock/sector-fund-flow-trend":
+			items := make([]model.AStockSectorFundFlow, 0, 10)
+			for i := 0; i < 10; i++ {
+				items = append(items, model.AStockSectorFundFlow{
+					TradeDate:     fmt.Sprintf("2026-07-%02d", 17-i),
+					SectorType:    r.URL.Query().Get("sector_type"),
+					Name:          r.URL.Query().Get("sector_name"),
+					Indicator:     "今日",
+					Rank:          80 + i,
+					MainNetInflow: -100000000,
+				})
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockSectorFundFlowTrendResult{Items: items})
+		case "/api/v1/a-stock/stock-fund-flows":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockStockFundFlowListResult{})
+		default:
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL, AStockAuctionURL: "enabled"})
+	sectorGate := newAStockHotspotSectorGate()
+	sectorGate.addCodes("人工智能", map[string]struct{}{"300024": {}})
+	pool := srv.buildAStockPriorityCandidatePoolWithCache("2026-07-17", []aStockHotspot{{
+		Name:     "人工智能",
+		Keywords: []string{"AI", "机器人"},
+		Score:    80,
+		Evidence: 1,
+	}}, []aStockMarketCandidate{
+		{Code: "300024", Name: "机器人", Rank: 1, AuctionAmount: 90000000},
+	}, sectorGate, newAStockRequestCache())
+	for _, candidate := range pool {
+		if normalizeAStockCode(candidate.Code) == "300024" {
+			t.Fatalf("expected sector 5D/10D outflow to block auction-only sector candidate, got %+v", pool)
+		}
+	}
+}
+
+func TestAStockRecommendationReasonIncludesCandidateSources(t *testing.T) {
+	recommendations := buildAStockRecommendationsWithLimit([]aStockHotspot{{
+		Name:     "人工智能",
+		Keywords: []string{"机器人"},
+		Score:    60,
+		Evidence: 1,
+	}}, []aStockMarketCandidate{{
+		Code:            "300024",
+		Name:            "机器人",
+		Rank:            1,
+		AuctionAmount:   90000000,
+		Sources:         []string{aStockCandidateSourceSector, aStockCandidateSourceAuction},
+		PreSectorScore:  20,
+		PreSectorDetail: "人工智能 5日主力资金净流入 +10.00亿",
+	}}, 5, 3)
+	if len(recommendations) == 0 {
+		t.Fatal("expected source-linked recommendation")
+	}
+	if !strings.Contains(recommendations[0].Reason, "候选来源 热点板块成分股、集合竞价确认") {
+		t.Fatalf("expected reason to include candidate sources, got %q", recommendations[0].Reason)
+	}
+}
+
+func TestAStockRecommendationsKeepNewsDerivedCandidatesThroughSectorGate(t *testing.T) {
 	hotspot := aStockHotspot{
 		Name:     "黄金有色",
 		Keywords: []string{"有色", "稀土", "贵金属", "铜", "黄金"},
@@ -10899,8 +11014,8 @@ func TestAStockRecommendationsRequireSectorMatchForNewsDerivedCandidates(t *test
 	})
 	withGate := buildAStockRecommendationsWithLimitAndSectorGate([]aStockHotspot{hotspot}, candidates, aStockReplacementPoolLimit, aStockReplacementPerHotspot, sectorGate)
 	got := aStockTestRecommendationsByCode(withGate)
-	if _, ok := got["000566"]; ok {
-		t.Fatalf("expected sector gate to filter 000566 海南海药 from 黄金有色, got %+v", withGate)
+	if rec, ok := got["000566"]; !ok || rec.Name != "海南海药" {
+		t.Fatalf("expected news-derived 000566 海南海药 to bypass sector gate, got %+v", withGate)
 	}
 	if rec, ok := got["000630"]; !ok || rec.Name != "铜陵有色" {
 		t.Fatalf("expected matched nonferrous candidate 000630 铜陵有色 to remain, got %+v", withGate)
@@ -10910,8 +11025,8 @@ func TestAStockRecommendationsRequireSectorMatchForNewsDerivedCandidates(t *test
 	emptySectorGate.addHotspot("黄金有色")
 	withEmptyGate := buildAStockRecommendationsWithLimitAndSectorGate([]aStockHotspot{hotspot}, candidates, aStockReplacementPoolLimit, aStockReplacementPerHotspot, emptySectorGate)
 	gotEmpty := aStockTestRecommendationsByCode(withEmptyGate)
-	if _, ok := gotEmpty["000566"]; ok {
-		t.Fatalf("expected empty sector data to block news-derived 000566 instead of fail-open, got %+v", withEmptyGate)
+	if rec, ok := gotEmpty["000566"]; !ok || rec.Name != "海南海药" {
+		t.Fatalf("expected empty sector data to keep news-derived 000566, got %+v", withEmptyGate)
 	}
 	if rec, ok := gotEmpty["000630"]; !ok || rec.Name != "铜陵有色" {
 		t.Fatalf("expected empty sector data to keep name-matched nonferrous candidate 000630, got %+v", withEmptyGate)

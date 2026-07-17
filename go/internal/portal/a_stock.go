@@ -191,20 +191,25 @@ type aStockTopicRule struct {
 }
 
 type aStockMarketCandidate struct {
-	Code           string
-	Name           string
-	TradeDate      string
-	Rank           int
-	AuctionAmount  float64
-	AuctionVolume  float64
-	MatchedScore   int
-	Evidence       int
-	StrongEvidence int
-	WeakEvidence   int
-	WeakPenalty    int
-	BadEvidence    int
-	Keywords       []string
-	Fallback       bool
+	Code            string
+	Name            string
+	TradeDate       string
+	Rank            int
+	AuctionAmount   float64
+	AuctionVolume   float64
+	MatchedScore    int
+	Evidence        int
+	StrongEvidence  int
+	WeakEvidence    int
+	WeakPenalty     int
+	BadEvidence     int
+	Keywords        []string
+	Fallback        bool
+	Sources         []string
+	PreFundScore    int
+	PreFundDetail   string
+	PreSectorScore  int
+	PreSectorDetail string
 }
 
 type aStockDividendEvent struct {
@@ -262,6 +267,7 @@ type aStockRequestCache struct {
 	selections                map[string]aStockRecommendationSelectionCacheEntry
 	holdingSummaries          map[string]aStockHoldingSummaryCacheEntry
 	stockFundFlowTrends       map[string]aStockStockFundFlowTrendCacheEntry
+	stockFundFlows            map[string]aStockStockFundFlowListCacheEntry
 	sectorFundFlows           map[string]aStockSectorFundFlowCacheEntry
 	sectorFundFlowTrends      map[string]aStockSectorFundFlowTrendCacheEntry
 	dividendEvents            map[string]aStockDividendEventCacheEntry
@@ -303,6 +309,11 @@ type aStockStockFundFlowTrendCacheEntry struct {
 	err    error
 }
 
+type aStockStockFundFlowListCacheEntry struct {
+	result model.AStockStockFundFlowListResult
+	err    error
+}
+
 type aStockSectorFundFlowCacheEntry struct {
 	result model.AStockSectorFundFlowListResult
 	err    error
@@ -325,6 +336,7 @@ type aStockAuctionResultCacheEntry struct {
 
 type aStockSectorConstituentCodesCacheEntry struct {
 	codes map[string]struct{}
+	names map[string]string
 	found bool
 }
 
@@ -410,6 +422,13 @@ type aStockRecommendationRefreshMode string
 const (
 	aStockRecommendationPreserveLocked aStockRecommendationRefreshMode = "preserve_locked"
 	aStockRecommendationRebuild        aStockRecommendationRefreshMode = "rebuild"
+)
+
+const (
+	aStockCandidateSourceNews    = "新闻点名"
+	aStockCandidateSourceSector  = "热点板块成分股"
+	aStockCandidateSourceFund    = "个股资金流入池"
+	aStockCandidateSourceAuction = "集合竞价确认"
 )
 
 type aStockPopupRecommendation struct {
@@ -3596,6 +3615,7 @@ func newAStockRequestCache() *aStockRequestCache {
 		selections:                make(map[string]aStockRecommendationSelectionCacheEntry),
 		holdingSummaries:          make(map[string]aStockHoldingSummaryCacheEntry),
 		stockFundFlowTrends:       make(map[string]aStockStockFundFlowTrendCacheEntry),
+		stockFundFlows:            make(map[string]aStockStockFundFlowListCacheEntry),
 		sectorFundFlows:           make(map[string]aStockSectorFundFlowCacheEntry),
 		sectorFundFlowTrends:      make(map[string]aStockSectorFundFlowTrendCacheEntry),
 		dividendEvents:            make(map[string]aStockDividendEventCacheEntry),
@@ -3634,7 +3654,6 @@ func (s *Server) loadAStockFastReadOnlyContextWithCache(strategyDate string, per
 	}
 	candidates, candidateStatus, auctionResult := s.loadAStockMarketCandidatesWithStatusWithCache(ctx.Date, cache)
 	ctx.MarketCandidateStatus = candidateStatus
-	ctx.MarketCandidateCount = len(aStockRecommendationCandidatesForLimitWithSettings(aStockRecommendationHotspotSliceWithSettings(ctx.Hotspots, settings), candidates, settings.Auction.RecommendationLimit, settings.Auction.StocksPerHotspot, settings))
 	if auctionLabel := normalizeAStockAuctionSummaryLabel(formatAStockAuctionSummaryAmount(auctionResult)); auctionLabel != "" {
 		ctx.AuctionAmountLabel = auctionLabel
 	}
@@ -3642,12 +3661,15 @@ func (s *Server) loadAStockFastReadOnlyContextWithCache(strategyDate string, per
 		ctx.Hotspots = buildAStockHotspotsWithTopStocksWithSettings(ctx.Hotspots, candidates, settings.Auction.HotspotTopStockLimit, settings)
 		ctx.Hotspots = s.applyAStockHotspotRecommendationDatesWithCache(ctx.Hotspots, ctx.Date, ctx.Period, cache)
 	}
+	sectorGate := s.loadAStockHotspotSectorGateWithCache(ctx.Hotspots, cache)
+	recommendationCandidates := s.buildAStockPriorityCandidatePoolWithCache(ctx.Date, ctx.Hotspots, candidates, sectorGate, cache)
+	ctx.MarketCandidateCount = len(recommendationCandidates)
 	recommendationTarget := 0
 	var recentCodes map[string]struct{}
 	recentReplacementStatus := ""
 	negativeFilteredCodes := make(map[string]struct{})
 	negativeFilterStatus := ""
-	baseRecommendations := buildAStockSnapshotRecommendationsWithPhaseAndLimitAndSectorGateWithSettings(ctx.Date, ctx.Period, aStockRecommendationPhaseFinal, ctx.Articles, candidates, settings.Auction.ReplacementPoolLimit, settings.Auction.ReplacementPerHotspot, nil, settings)
+	baseRecommendations := buildAStockSnapshotRecommendationsWithPhaseAndLimitAndSectorGateWithSettings(ctx.Date, ctx.Period, aStockRecommendationPhaseFinal, ctx.Articles, recommendationCandidates, settings.Auction.ReplacementPoolLimit, settings.Auction.ReplacementPerHotspot, sectorGate, settings)
 	if filtered, skipped := filterAStockNegativeNoEvidenceRecommendations(baseRecommendations, negativeFilteredCodes); skipped > 0 {
 		baseRecommendations = filtered
 		ctx.NegativeNoEvidenceFiltered += skipped
@@ -3659,7 +3681,7 @@ func (s *Server) loadAStockFastReadOnlyContextWithCache(strategyDate string, per
 	exDividendStatus := ""
 	dailyLimitStatus := ""
 	if ctx.Period == "afternoon" && len(ctx.Recommendations) > 0 {
-		remaining := s.applyAStockAfternoonSameDayDuplicateCapsWithCache(&ctx, candidates, cache)
+		remaining := s.applyAStockAfternoonSameDayDuplicateCapsWithCache(&ctx, recommendationCandidates, cache)
 		if remaining <= 0 {
 			_, skipped := limitAStockRecommendationsByCount(ctx.Recommendations, 0)
 			ctx.Recommendations = nil
@@ -3685,7 +3707,8 @@ func (s *Server) loadAStockFastReadOnlyContextWithCache(strategyDate string, per
 		recommendationTarget = minInt(recommendationTarget, len(ctx.Recommendations))
 	}
 	if recommendationTarget > 0 {
-		ctx.Recommendations, _ = limitAStockRecommendationsByCount(ctx.Recommendations, recommendationTarget)
+		ctx.Recommendations = limitAStockRecommendationsByScoreWithSettings(ctx.Recommendations, recommendationTarget, settings)
+		recommendationTarget = minInt(recommendationTarget, len(ctx.Recommendations))
 	}
 	ctx.Recommendations = withAStockRecommendationEntryTimes(ctx.Recommendations, ctx.Period, "")
 	ctx.Recommendations = initializeAStockRecommendationMarket(ctx.Recommendations)
@@ -4090,7 +4113,6 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 		ctx.Hotspots = buildAStockHotspotsWithTopStocksWithSettings(ctx.Hotspots, marketCandidates, settings.Auction.HotspotTopStockLimit, settings)
 		ctx.Hotspots = s.applyAStockHotspotRecommendationDatesWithCache(ctx.Hotspots, strategyDate, period.Key, cache)
 		ctx.MarketCandidateStatus = candidateStatus
-		ctx.MarketCandidateCount = len(aStockRecommendationCandidatesForLimitWithSettings(aStockRecommendationHotspotSliceWithSettings(ctx.Hotspots, settings), marketCandidates, settings.Auction.RecommendationLimit, settings.Auction.StocksPerHotspot, settings))
 		if auctionLabel := normalizeAStockAuctionSummaryLabel(formatAStockAuctionSummaryAmount(auctionResult)); auctionLabel != "" {
 			ctx.AuctionAmountLabel = auctionLabel
 		}
@@ -4180,13 +4202,13 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 			candidates, candidateStatus, auctionResult := s.loadAStockMarketCandidatesWithStatusWithCache(strategyDate, cache)
 			marketCandidates = candidates
 			ctx.MarketCandidateStatus = candidateStatus
-			ctx.MarketCandidateCount = len(aStockRecommendationCandidatesForLimitWithSettings(aStockRecommendationHotspotSliceWithSettings(ctx.Hotspots, settings), marketCandidates, settings.Auction.RecommendationLimit, settings.Auction.StocksPerHotspot, settings))
 			if auctionLabel := normalizeAStockAuctionSummaryLabel(formatAStockAuctionSummaryAmount(auctionResult)); auctionLabel != "" {
 				ctx.AuctionAmountLabel = auctionLabel
 			}
 		}
-		candidates := marketCandidates
 		sectorGate := s.loadAStockHotspotSectorGateWithCache(ctx.Hotspots, cache)
+		candidates := s.buildAStockPriorityCandidatePoolWithCache(strategyDate, ctx.Hotspots, marketCandidates, sectorGate, cache)
+		ctx.MarketCandidateCount = len(candidates)
 		baseRecommendations := buildAStockSnapshotRecommendationsWithPhaseAndLimitAndSectorGateWithSettings(strategyDate, period.Key, phase, ctx.Articles, candidates, settings.Auction.ReplacementPoolLimit, settings.Auction.ReplacementPerHotspot, sectorGate, settings)
 		if filtered, skipped := filterAStockNegativeNoEvidenceRecommendations(baseRecommendations, negativeFilteredCodes); skipped > 0 {
 			baseRecommendations = filtered
@@ -4251,6 +4273,10 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 		recommendationTarget = minInt(recommendationTarget, len(ctx.Recommendations))
 	}
 	if period.Key == "afternoon" && len(ctx.Recommendations) > 0 {
+		recommendationTarget = minInt(recommendationTarget, len(ctx.Recommendations))
+	}
+	if recommendationTarget > 0 {
+		ctx.Recommendations = limitAStockRecommendationsByScoreWithSettings(ctx.Recommendations, recommendationTarget, settings)
 		recommendationTarget = minInt(recommendationTarget, len(ctx.Recommendations))
 	}
 	ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus, ctx.LimitUpFiltered, ctx.NoTodayMarketCount = s.loadAStockMarketView(strategyDate, ctx.Period, ctx.Recommendations, ctx.LimitUpFilterEnabled, ctx.TodayMarketFilterEnabled, recommendationTarget)
@@ -6830,6 +6856,40 @@ func (s *Server) loadAStockStockFundFlowTrendWithCache(endDate string, code stri
 	err := s.getJSON(s.cfg.ContentURL+"/api/v1/a-stock/stock-fund-flow-trend?"+query.Encode(), &result)
 	if cache != nil {
 		cache.stockFundFlowTrends[cacheKey] = aStockStockFundFlowTrendCacheEntry{result: result, err: err}
+	}
+	return result, err
+}
+
+func (s *Server) loadAStockStockFundFlowListWithCache(strategyDate string, indicator string, pageSize int, cache *aStockRequestCache) (model.AStockStockFundFlowListResult, error) {
+	if strings.TrimSpace(s.cfg.ContentURL) == "" {
+		return model.AStockStockFundFlowListResult{}, fmt.Errorf("content service url is empty")
+	}
+	strategyDate = normalizeAStockStrategyDate(strategyDate)
+	indicator = strings.TrimSpace(indicator)
+	if indicator == "" {
+		indicator = "5日"
+	}
+	if pageSize <= 0 {
+		pageSize = 300
+	}
+	cacheKey := strings.Join([]string{strategyDate, indicator, fmt.Sprint(pageSize)}, "|")
+	if cache != nil {
+		if cache.stockFundFlows == nil {
+			cache.stockFundFlows = make(map[string]aStockStockFundFlowListCacheEntry)
+		}
+		if entry, ok := cache.stockFundFlows[cacheKey]; ok {
+			return entry.result, entry.err
+		}
+	}
+	query := url.Values{}
+	query.Set("date", strategyDate)
+	query.Set("indicator", indicator)
+	query.Set("page", "1")
+	query.Set("page_size", fmt.Sprint(pageSize))
+	result := model.AStockStockFundFlowListResult{}
+	err := s.getJSON(s.cfg.ContentURL+"/api/v1/a-stock/stock-fund-flows?"+query.Encode(), &result)
+	if cache != nil {
+		cache.stockFundFlows[cacheKey] = aStockStockFundFlowListCacheEntry{result: result, err: err}
 	}
 	return result, err
 }
@@ -12222,6 +12282,518 @@ func sortedAStockHotspotFallbackCandidates(candidates []aStockMarketCandidate) [
 	return fallback
 }
 
+func markAStockCandidateSource(candidate *aStockMarketCandidate, source string) {
+	if candidate == nil {
+		return
+	}
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return
+	}
+	for _, existing := range candidate.Sources {
+		if existing == source {
+			return
+		}
+	}
+	candidate.Sources = append(candidate.Sources, source)
+}
+
+func hasAStockCandidateSource(candidate aStockMarketCandidate, source string) bool {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return false
+	}
+	for _, existing := range candidate.Sources {
+		if existing == source {
+			return true
+		}
+	}
+	return false
+}
+
+func hasAnyAStockCandidateSource(candidate aStockMarketCandidate) bool {
+	for _, source := range candidate.Sources {
+		if strings.TrimSpace(source) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func formatAStockCandidateSources(candidate aStockMarketCandidate) string {
+	if len(candidate.Sources) == 0 {
+		return ""
+	}
+	sourceSet := make(map[string]struct{}, len(candidate.Sources))
+	for _, source := range candidate.Sources {
+		source = strings.TrimSpace(source)
+		if source != "" {
+			sourceSet[source] = struct{}{}
+		}
+	}
+	if len(sourceSet) == 0 {
+		return ""
+	}
+	ordered := make([]string, 0, len(sourceSet))
+	for _, source := range []string{
+		aStockCandidateSourceNews,
+		aStockCandidateSourceSector,
+		aStockCandidateSourceFund,
+		aStockCandidateSourceAuction,
+	} {
+		if _, ok := sourceSet[source]; ok {
+			ordered = append(ordered, source)
+			delete(sourceSet, source)
+		}
+	}
+	extra := make([]string, 0, len(sourceSet))
+	for source := range sourceSet {
+		extra = append(extra, source)
+	}
+	sort.Strings(extra)
+	ordered = append(ordered, extra...)
+	return strings.Join(ordered, "、")
+}
+
+func mergeAStockPriorityCandidate(current aStockMarketCandidate, incoming aStockMarketCandidate) aStockMarketCandidate {
+	incoming.Code = normalizeAStockCode(incoming.Code)
+	if current.Code == "" {
+		current.Code = incoming.Code
+	}
+	if shouldUseResolvedAStockRecommendationName(current.Code, current.Name, incoming.Name) {
+		current.Name = incoming.Name
+	}
+	if current.TradeDate == "" {
+		current.TradeDate = incoming.TradeDate
+	}
+	if incoming.Rank > 0 && (current.Rank <= 0 || incoming.Rank < current.Rank) {
+		current.Rank = incoming.Rank
+	}
+	if incoming.AuctionAmount > current.AuctionAmount {
+		current.AuctionAmount = incoming.AuctionAmount
+	}
+	if incoming.AuctionVolume > current.AuctionVolume {
+		current.AuctionVolume = incoming.AuctionVolume
+	}
+	if incoming.MatchedScore > current.MatchedScore {
+		current.MatchedScore = incoming.MatchedScore
+	}
+	if incoming.Evidence > current.Evidence {
+		current.Evidence = incoming.Evidence
+	}
+	if incoming.StrongEvidence > current.StrongEvidence {
+		current.StrongEvidence = incoming.StrongEvidence
+	}
+	if incoming.WeakEvidence > current.WeakEvidence {
+		current.WeakEvidence = incoming.WeakEvidence
+	}
+	if incoming.WeakPenalty > current.WeakPenalty {
+		current.WeakPenalty = incoming.WeakPenalty
+	}
+	if incoming.BadEvidence > current.BadEvidence {
+		current.BadEvidence = incoming.BadEvidence
+	}
+	current.Keywords = mergeAStockStringSet(current.Keywords, incoming.Keywords)
+	if incoming.Fallback {
+		current.Fallback = true
+	}
+	current.Sources = mergeAStockStringSet(current.Sources, incoming.Sources)
+	if incoming.PreFundScore != 0 && (current.PreFundScore == 0 || incoming.PreFundScore > current.PreFundScore) {
+		current.PreFundScore = incoming.PreFundScore
+		current.PreFundDetail = incoming.PreFundDetail
+	}
+	if incoming.PreSectorScore != 0 && (current.PreSectorScore == 0 || incoming.PreSectorScore > current.PreSectorScore) {
+		current.PreSectorScore = incoming.PreSectorScore
+		current.PreSectorDetail = incoming.PreSectorDetail
+	}
+	return current
+}
+
+func mergeAStockStringSet(left []string, right []string) []string {
+	if len(left) == 0 && len(right) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(left)+len(right))
+	merged := make([]string, 0, len(left)+len(right))
+	for _, values := range [][]string{left, right} {
+		for _, value := range values {
+			value = strings.TrimSpace(value)
+			if value == "" {
+				continue
+			}
+			if _, ok := seen[value]; ok {
+				continue
+			}
+			seen[value] = struct{}{}
+			merged = append(merged, value)
+		}
+	}
+	return merged
+}
+
+func (s *Server) buildAStockPriorityCandidatePoolWithCache(strategyDate string, hotspots []aStockHotspot, marketCandidates []aStockMarketCandidate, sectorGate *aStockHotspotSectorGate, cache *aStockRequestCache) []aStockMarketCandidate {
+	settings := s.loadAStockAlgorithmSettingsWithCache(cache)
+	hotspots = aStockRecommendationHotspotSliceWithSettings(hotspots, settings)
+	if !s.aStockPriorityExternalSignalsEnabled() {
+		return aStockRecommendationCandidatesForLimitWithSettings(hotspots, marketCandidates, settings.Auction.RecommendationLimit, settings.Auction.StocksPerHotspot, settings)
+	}
+	if sectorGate == nil {
+		sectorGate = s.loadAStockHotspotSectorGateWithCache(hotspots, cache)
+	}
+	return s.buildAStockPriorityCandidatePoolWithSettings(strategyDate, hotspots, marketCandidates, sectorGate, cache, settings)
+}
+
+func (s *Server) aStockPriorityExternalSignalsEnabled() bool {
+	return strings.TrimSpace(s.cfg.AStockAuctionURL) != ""
+}
+
+func (s *Server) buildAStockPriorityCandidatePoolWithSettings(strategyDate string, hotspots []aStockHotspot, marketCandidates []aStockMarketCandidate, sectorGate *aStockHotspotSectorGate, cache *aStockRequestCache, settings model.AStockRecommendationAlgorithmSettings) []aStockMarketCandidate {
+	if len(hotspots) == 0 {
+		return nil
+	}
+	nameResolver := newAStockRecommendationNameResolver(marketCandidates)
+	auctionByCode := make(map[string]aStockMarketCandidate)
+	for _, candidate := range sortedAStockHotspotFallbackCandidates(marketCandidates) {
+		if _, exists := auctionByCode[candidate.Code]; !exists {
+			auctionByCode[candidate.Code] = candidate
+		}
+	}
+	candidatesByCode := make(map[string]aStockMarketCandidate)
+	appendCandidate := func(candidate aStockMarketCandidate, sources ...string) {
+		code := normalizeAStockCode(candidate.Code)
+		name := resolveAStockRecommendationName(code, candidate.Name, nameResolver)
+		if !astockcode.IsShanghaiShenzhen(code) || !hasResolvedAStockRecommendationName(code, name) {
+			return
+		}
+		if isBlockedAStockRecommendationStock(code, name) {
+			return
+		}
+		candidate.Code = code
+		candidate.Name = name
+		for _, source := range sources {
+			markAStockCandidateSource(&candidate, source)
+		}
+		if current, exists := candidatesByCode[code]; exists {
+			candidatesByCode[code] = mergeAStockPriorityCandidate(current, candidate)
+			return
+		}
+		candidatesByCode[code] = candidate
+	}
+
+	newsCodes := make(map[string]struct{})
+	for _, candidate := range newsDerivedAStockMarketCandidates(hotspots) {
+		code := normalizeAStockCode(candidate.Code)
+		if auction, ok := auctionByCode[code]; ok {
+			candidate = mergeAStockPriorityCandidate(candidate, auction)
+			markAStockCandidateSource(&candidate, aStockCandidateSourceAuction)
+		}
+		markAStockCandidateSource(&candidate, aStockCandidateSourceNews)
+		appendCandidate(candidate)
+		if code != "" {
+			newsCodes[code] = struct{}{}
+		}
+	}
+
+	sectorAssessments := make(map[string]aStockSectorFundFlowTrendAssessment)
+	for _, hotspot := range hotspots {
+		hotspotName := normalizeAStockRecommendationHotspot(hotspot.Name)
+		if hotspotName == "" {
+			continue
+		}
+		assessment := s.assessAStockRecommendationSectorFundFlowTrendWithCache(strategyDate, hotspotName, cache)
+		sectorAssessments[hotspotName] = assessment
+		if aStockSectorFundFlowTrendBlocksAuction(assessment) {
+			continue
+		}
+		sectorCandidates := s.aStockHotspotSectorConstituentCandidatesWithCache(hotspot, sectorGate, auctionByCode, cache, settings)
+		auctionConfirmations := 0
+		for _, candidate := range sectorCandidates {
+			if assessment.ScoreDelta != 0 {
+				candidate.PreSectorScore = assessment.ScoreDelta
+				candidate.PreSectorDetail = formatAStockSectorFundFlowTrendReason(assessment)
+			}
+			markAStockCandidateSource(&candidate, aStockCandidateSourceSector)
+			if auction, ok := auctionByCode[normalizeAStockCode(candidate.Code)]; ok && auctionConfirmations < settings.Candidate.AuctionFallbackPerHotspot {
+				candidate = mergeAStockPriorityCandidate(candidate, auction)
+				markAStockCandidateSource(&candidate, aStockCandidateSourceAuction)
+				auctionConfirmations++
+			} else if !hasAStockCandidateSource(candidate, aStockCandidateSourceAuction) {
+				candidate.Rank = 0
+				candidate.AuctionAmount = 0
+				candidate.AuctionVolume = 0
+			}
+			appendCandidate(candidate)
+		}
+	}
+
+	s.appendAStockFundFlowPriorityCandidates(strategyDate, hotspots, candidatesByCode, auctionByCode, newsCodes, sectorGate, sectorAssessments, nameResolver, cache, settings)
+
+	candidates := make([]aStockMarketCandidate, 0, len(candidatesByCode))
+	for _, candidate := range candidatesByCode {
+		if settings.Candidate.RequireHotspotLink && !aStockCandidateHasHotspotLink(hotspots, candidate, sectorGate) {
+			continue
+		}
+		if hasAnyAStockCandidateSource(candidate) {
+			candidates = append(candidates, candidate)
+		}
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		leftRank := aStockPriorityCandidateSourceRank(candidates[i])
+		rightRank := aStockPriorityCandidateSourceRank(candidates[j])
+		if leftRank != rightRank {
+			return leftRank < rightRank
+		}
+		if candidates[i].PreFundScore != candidates[j].PreFundScore {
+			return candidates[i].PreFundScore > candidates[j].PreFundScore
+		}
+		if candidates[i].PreSectorScore != candidates[j].PreSectorScore {
+			return candidates[i].PreSectorScore > candidates[j].PreSectorScore
+		}
+		if candidates[i].Rank != candidates[j].Rank {
+			if candidates[i].Rank <= 0 {
+				return false
+			}
+			if candidates[j].Rank <= 0 {
+				return true
+			}
+			return candidates[i].Rank < candidates[j].Rank
+		}
+		if candidates[i].AuctionAmount != candidates[j].AuctionAmount {
+			return candidates[i].AuctionAmount > candidates[j].AuctionAmount
+		}
+		return candidates[i].Code < candidates[j].Code
+	})
+	return candidates
+}
+
+func aStockPriorityCandidateSourceRank(candidate aStockMarketCandidate) int {
+	switch {
+	case hasAStockCandidateSource(candidate, aStockCandidateSourceNews):
+		return 0
+	case hasAStockCandidateSource(candidate, aStockCandidateSourceFund):
+		return 1
+	case hasAStockCandidateSource(candidate, aStockCandidateSourceSector):
+		return 2
+	case hasAStockCandidateSource(candidate, aStockCandidateSourceAuction):
+		return 3
+	default:
+		return 4
+	}
+}
+
+func (s *Server) aStockHotspotSectorConstituentCandidatesWithCache(hotspot aStockHotspot, sectorGate *aStockHotspotSectorGate, auctionByCode map[string]aStockMarketCandidate, cache *aStockRequestCache, settings model.AStockRecommendationAlgorithmSettings) []aStockMarketCandidate {
+	aliases := aStockHotspotSectorAliases(hotspot.Name)
+	if len(aliases) == 0 {
+		return nil
+	}
+	names := make(map[string]string)
+	for _, alias := range aliases {
+		for code, name := range s.loadAStockSectorConstituentCodeNamesWithCache(alias, cache) {
+			if _, exists := names[code]; !exists {
+				names[code] = name
+			}
+		}
+	}
+	if len(names) == 0 && sectorGate != nil {
+		if codes := sectorGate.codesByHotspot[normalizeAStockRecommendationHotspot(hotspot.Name)]; len(codes) > 0 {
+			for code := range codes {
+				if auction, ok := auctionByCode[code]; ok {
+					names[code] = auction.Name
+				}
+			}
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	candidates := make([]aStockMarketCandidate, 0, len(names))
+	for code, name := range names {
+		candidate := aStockMarketCandidate{Code: code, Name: name}
+		if auction, ok := auctionByCode[code]; ok {
+			candidate.Rank = auction.Rank
+			candidate.TradeDate = auction.TradeDate
+			candidate.AuctionAmount = auction.AuctionAmount
+			candidate.AuctionVolume = auction.AuctionVolume
+		}
+		candidates = append(candidates, candidate)
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].Rank != candidates[j].Rank {
+			if candidates[i].Rank <= 0 {
+				return false
+			}
+			if candidates[j].Rank <= 0 {
+				return true
+			}
+			return candidates[i].Rank < candidates[j].Rank
+		}
+		return candidates[i].Code < candidates[j].Code
+	})
+	if settings.Candidate.SectorCandidateLimitPerHotspot > 0 && len(candidates) > settings.Candidate.SectorCandidateLimitPerHotspot {
+		candidates = candidates[:settings.Candidate.SectorCandidateLimitPerHotspot]
+	}
+	return candidates
+}
+
+func (s *Server) appendAStockFundFlowPriorityCandidates(strategyDate string, hotspots []aStockHotspot, candidatesByCode map[string]aStockMarketCandidate, auctionByCode map[string]aStockMarketCandidate, newsCodes map[string]struct{}, sectorGate *aStockHotspotSectorGate, sectorAssessments map[string]aStockSectorFundFlowTrendAssessment, nameResolver map[string]string, cache *aStockRequestCache, settings model.AStockRecommendationAlgorithmSettings) {
+	if settings.Candidate.StockFundFlowCandidateLimit <= 0 {
+		return
+	}
+	seen := make(map[string]struct{})
+	addItem := func(item model.AStockStockFundFlow) {
+		if item.MainNetInflow <= 0 {
+			return
+		}
+		code := normalizeAStockCode(item.Code)
+		name := resolveAStockRecommendationName(code, item.Name, nameResolver)
+		if !astockcode.IsShanghaiShenzhen(code) || !hasResolvedAStockRecommendationName(code, name) {
+			return
+		}
+		if _, exists := seen[code]; exists {
+			return
+		}
+		mentioned := false
+		if _, ok := newsCodes[code]; ok {
+			mentioned = true
+		}
+		candidate := aStockMarketCandidate{
+			Code:      code,
+			Name:      name,
+			TradeDate: item.TradeDate,
+		}
+		if !mentioned && !aStockCandidateMatchesAnyHotspotSector(hotspots, candidate, sectorGate) && !aStockCandidateMatchesAnyHotspot(hotspots, candidate) {
+			return
+		}
+		assessment := s.assessAStockRecommendationFundFlow5DWithCache(strategyDate, code, cache)
+		if !mentioned && isAStockFundFlowHardFiltered(assessment) {
+			return
+		}
+		if !assessment.Missing {
+			candidate.PreFundScore = assessment.ScoreDelta
+			if assessment.ScoreDelta != 0 {
+				candidate.PreFundDetail = formatAStockFundFlowScoreReason(assessment)
+			}
+		} else {
+			candidate.PreFundScore = scoreAStockFundFlowListCandidateWithSettings(item, settings)
+			if candidate.PreFundScore != 0 {
+				candidate.PreFundDetail = fmt.Sprintf("历史资金流%s主力净流入%s，排名%d", strings.TrimSpace(item.Indicator), formatAStockAuctionMoney(item.MainNetInflow), item.Rank)
+			}
+		}
+		for _, hotspot := range hotspots {
+			if !aStockCandidateInHotspotSector(sectorGate, hotspot, candidate) {
+				continue
+			}
+			if assessment, ok := sectorAssessments[normalizeAStockRecommendationHotspot(hotspot.Name)]; ok && assessment.ScoreDelta != 0 {
+				candidate.PreSectorScore = assessment.ScoreDelta
+				candidate.PreSectorDetail = formatAStockSectorFundFlowTrendReason(assessment)
+			}
+			break
+		}
+		if auction, ok := auctionByCode[code]; ok {
+			candidate = mergeAStockPriorityCandidate(candidate, auction)
+			markAStockCandidateSource(&candidate, aStockCandidateSourceAuction)
+		}
+		markAStockCandidateSource(&candidate, aStockCandidateSourceFund)
+		if current, exists := candidatesByCode[code]; exists {
+			candidatesByCode[code] = mergeAStockPriorityCandidate(current, candidate)
+		} else {
+			candidatesByCode[code] = candidate
+		}
+		seen[code] = struct{}{}
+	}
+	for _, indicator := range []string{"5日", "10日"} {
+		result, err := s.loadAStockStockFundFlowListWithCache(strategyDate, indicator, settings.Candidate.StockFundFlowCandidateLimit, cache)
+		if err != nil {
+			continue
+		}
+		for _, item := range result.Items {
+			if len(seen) >= settings.Candidate.StockFundFlowCandidateLimit {
+				return
+			}
+			addItem(item)
+		}
+	}
+}
+
+func scoreAStockFundFlowListCandidateWithSettings(item model.AStockStockFundFlow, settings model.AStockRecommendationAlgorithmSettings) int {
+	score := 0
+	switch {
+	case item.MainNetInflow >= settings.Fund.ExtremeThreshold:
+		score += settings.Fund.ExtremeScore
+	case item.MainNetInflow >= settings.Fund.VeryStrongThreshold:
+		score += settings.Fund.VeryStrongScore
+	case item.MainNetInflow >= settings.Fund.StrongBonusThreshold:
+		score += settings.Fund.StrongBonusScore
+	case item.MainNetInflow >= settings.Fund.BonusThreshold:
+		score += settings.Fund.BonusScore
+	}
+	switch {
+	case item.Rank > 0 && item.Rank <= 10:
+		score += 20
+	case item.Rank > 0 && item.Rank <= 30:
+		score += 12
+	case item.Rank > 0 && item.Rank <= 100:
+		score += 6
+	}
+	if item.MainNetInflowPct >= 8 {
+		score += 15
+	} else if item.MainNetInflowPct >= 3 {
+		score += 8
+	}
+	return clampAStockFundFlowScoreWithSettings(score, settings)
+}
+
+func aStockSectorFundFlowTrendBlocksAuction(assessment aStockSectorFundFlowTrendAssessment) bool {
+	return !assessment.Missing && assessment.Total5D < 0 && assessment.Total10D < 0
+}
+
+func aStockCandidateHasHotspotLink(hotspots []aStockHotspot, candidate aStockMarketCandidate, sectorGate *aStockHotspotSectorGate) bool {
+	if hasAStockCandidateSource(candidate, aStockCandidateSourceNews) ||
+		hasAStockCandidateSource(candidate, aStockCandidateSourceSector) ||
+		hasAStockCandidateSource(candidate, aStockCandidateSourceFund) {
+		return true
+	}
+	return aStockCandidateMatchesAnyHotspotSector(hotspots, candidate, sectorGate) || aStockCandidateMatchesAnyHotspot(hotspots, candidate)
+}
+
+func aStockCandidateMatchesAnyHotspotSector(hotspots []aStockHotspot, candidate aStockMarketCandidate, sectorGate *aStockHotspotSectorGate) bool {
+	for _, hotspot := range hotspots {
+		if aStockCandidateInHotspotSector(sectorGate, hotspot, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func aStockCandidateMatchesAnyHotspot(hotspots []aStockHotspot, candidate aStockMarketCandidate) bool {
+	for _, hotspot := range hotspots {
+		if aStockCandidateMatchesHotspot(hotspot, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func aStockCandidateMatchesHotspot(hotspot aStockHotspot, candidate aStockMarketCandidate) bool {
+	return len(aStockCandidateKeywordMatches(candidate.Name, hotspot.Keywords)) > 0 || len(intersectAStockKeywords(candidate.Keywords, hotspot.Keywords)) > 0
+}
+
+func aStockCandidateInHotspotSector(sectorGate *aStockHotspotSectorGate, hotspot aStockHotspot, candidate aStockMarketCandidate) bool {
+	if sectorGate == nil {
+		return false
+	}
+	hotspotName := normalizeAStockRecommendationHotspot(hotspot.Name)
+	if _, gated := sectorGate.gatedHotspots[hotspotName]; !gated {
+		return false
+	}
+	codes := sectorGate.codesByHotspot[hotspotName]
+	if len(codes) == 0 {
+		return len(aStockCandidateKeywordMatches(candidate.Name, hotspot.Keywords)) > 0 || len(intersectAStockKeywords(candidate.Keywords, hotspot.Keywords)) > 0
+	}
+	_, ok := codes[normalizeAStockCode(candidate.Code)]
+	return ok
+}
+
 func buildAStockRecommendations(hotspots []aStockHotspot, candidates []aStockMarketCandidate) []aStockRecommendation {
 	return buildAStockRecommendationsWithLimit(hotspots, candidates, aStockRecommendationLimit, aStockStocksPerHotspot)
 }
@@ -12286,6 +12858,9 @@ func buildAStockRecommendationsWithLimitAndSectorGateWithSettings(hotspots []aSt
 				)
 			}
 			reason = appendAStockReason(reason, evidenceReason)
+			if sources := formatAStockCandidateSources(stock); sources != "" {
+				reason = appendAStockReason(reason, "候选来源 "+sources)
+			}
 			if len(stock.Keywords) > 0 && !stock.Fallback {
 				reason = fmt.Sprintf("%s，股票名命中 %s", reason, strings.Join(stock.Keywords, "、"))
 			}
@@ -12309,7 +12884,7 @@ func buildAStockRecommendationsWithLimitAndSectorGateWithSettings(hotspots []aSt
 			}
 		}
 	}
-	return limitAStockRecommendationsByScore(recommendations, maxRecommendations)
+	return limitAStockRecommendationsByScoreWithSettings(recommendations, maxRecommendations, settings)
 }
 
 func formatAStockFactorSummaryReason(components []aStockRecommendationScoreComponent, total int, settings model.AStockRecommendationAlgorithmSettings) string {
@@ -12327,10 +12902,51 @@ func formatAStockFactorSummaryReason(components []aStockRecommendationScoreCompo
 }
 
 func limitAStockRecommendationsByScore(recommendations []aStockRecommendation, maxRecommendations int) []aStockRecommendation {
+	return limitAStockRecommendationsByScoreWithSettings(recommendations, maxRecommendations, defaultAStockAlgorithmSettings())
+}
+
+func limitAStockRecommendationsByScoreWithSettings(recommendations []aStockRecommendation, maxRecommendations int, settings model.AStockRecommendationAlgorithmSettings) []aStockRecommendation {
 	if len(recommendations) == 0 {
 		return recommendations
 	}
 	recommendations = sortAStockRecommendationsByScore(recommendations)
+	softLimit := settings.Candidate.MaxStocksPerHotspotSoft
+	if maxRecommendations > 0 && maxRecommendations <= settings.Auction.RecommendationLimit && softLimit > 0 && softLimit < maxRecommendations {
+		selected := make([]aStockRecommendation, 0, minInt(maxRecommendations, len(recommendations)))
+		counts := make(map[string]int)
+		used := make([]bool, len(recommendations))
+		for i, rec := range recommendations {
+			hotspot := normalizeAStockRecommendationHotspot(rec.Hotspot)
+			if hotspot != "" && counts[hotspot] >= softLimit {
+				continue
+			}
+			selected = append(selected, rec)
+			used[i] = true
+			if hotspot != "" {
+				counts[hotspot]++
+			}
+			if len(selected) >= maxRecommendations {
+				return rerankAStockRecommendations(selected)
+			}
+		}
+		for i, rec := range recommendations {
+			if used[i] {
+				continue
+			}
+			hotspot := normalizeAStockRecommendationHotspot(rec.Hotspot)
+			if hotspot != "" && counts[hotspot] >= softLimit+1 {
+				continue
+			}
+			selected = append(selected, rec)
+			if hotspot != "" {
+				counts[hotspot]++
+			}
+			if len(selected) >= maxRecommendations {
+				return rerankAStockRecommendations(selected)
+			}
+		}
+		return rerankAStockRecommendations(selected)
+	}
 	if maxRecommendations > 0 && len(recommendations) > maxRecommendations {
 		recommendations = recommendations[:maxRecommendations]
 	}
@@ -12345,11 +12961,28 @@ func buildAStockRecommendationScoreBreakdownWithSettings(hotspot aStockHotspot, 
 	components := make([]aStockRecommendationScoreComponent, 0, 8)
 	components = append(components, newAStockScoreComponentWithFactor(aStockScoreFactorEmotion, "新闻热度", fmt.Sprintf("证据新闻 %d 条", hotspot.Evidence), settings.Emotion.NewsEvidenceScore, hotspot.Evidence*settings.Emotion.NewsEvidenceScore))
 	components = append(components, newAStockScoreComponentWithFactor(aStockScoreFactorEmotion, "热点关键词", fmt.Sprintf("命中关键词 %d 个", len(hotspot.Keywords)), settings.Emotion.KeywordScore, len(hotspot.Keywords)*settings.Emotion.KeywordScore))
+	if hasAStockCandidateSource(stock, aStockCandidateSourceNews) {
+		components = append(components, newAStockScoreComponentWithFactor(aStockScoreFactorEmotion, "候选来源", aStockCandidateSourceNews, 80, 80))
+	}
 	if hotspot.NegativeNewsPenalty > 0 {
 		components = append(components, newAStockScoreComponentWithFactor(aStockScoreFactorEmotion, "负面新闻", fmt.Sprintf("负面新闻 %d 条，情绪扣分 %d", hotspot.NegativeNewsCount, hotspot.NegativeNewsPenalty), -hotspot.NegativeNewsPenalty, -hotspot.NegativeNewsPenalty))
 	}
 	rankScore := aStockMarketRankScoreWithSettings(stock.Rank, settings)
 	components = append(components, newAStockScoreComponentWithFactor(aStockScoreFactorAuction, "行情排名", fmt.Sprintf("排名 %d", stock.Rank), rankScore, rankScore))
+	if stock.PreSectorScore != 0 {
+		reason := strings.TrimSpace(stock.PreSectorDetail)
+		if reason == "" {
+			reason = "热点板块历史资金流"
+		}
+		components = append(components, newAStockScoreComponentWithFactor(aStockScoreFactorSector, "候选板块资金", reason, stock.PreSectorScore, stock.PreSectorScore))
+	}
+	if stock.PreFundScore != 0 {
+		reason := strings.TrimSpace(stock.PreFundDetail)
+		if reason == "" {
+			reason = "个股历史资金流"
+		}
+		components = append(components, newAStockScoreComponentWithFactor(aStockScoreFactorFund, "候选个股资金", reason, stock.PreFundScore, stock.PreFundScore))
+	}
 	components = append(components, newAStockScoreComponentWithFactor(aStockScoreFactorEmotion, "个股证据", fmt.Sprintf("有效证据 %d 条 / 总证据 %d 条", stock.StrongEvidence, stock.Evidence), settings.Emotion.StockEvidenceScore, stock.StrongEvidence*settings.Emotion.StockEvidenceScore))
 	if len(stock.Keywords) > 0 {
 		components = append(components, newAStockScoreComponentWithFactor(aStockScoreFactorEmotion, "股票名命中", fmt.Sprintf("命中关键词 %d 个", len(stock.Keywords)), settings.Emotion.StockNameKeywordScore, len(stock.Keywords)*settings.Emotion.StockNameKeywordScore))
@@ -12367,8 +13000,19 @@ func aStockRecommendationCandidatesForLimit(hotspots []aStockHotspot, marketCand
 func aStockRecommendationCandidatesForLimitWithSettings(hotspots []aStockHotspot, marketCandidates []aStockMarketCandidate, maxRecommendations int, maxPerHotspot int, settings model.AStockRecommendationAlgorithmSettings) []aStockMarketCandidate {
 	nameResolver := newAStockRecommendationNameResolver(marketCandidates)
 	newsCandidates := newsDerivedAStockMarketCandidates(hotspots)
-	candidates := make([]aStockMarketCandidate, 0, len(newsCandidates)+settings.Auction.HotspotScoredCandidateLimit)
-	seen := make(map[string]struct{}, len(newsCandidates)+settings.Auction.HotspotScoredCandidateLimit)
+	sourceLinkedPool := false
+	for _, candidate := range marketCandidates {
+		if hasAnyAStockCandidateSource(candidate) {
+			sourceLinkedPool = true
+			break
+		}
+	}
+	capacity := len(newsCandidates) + settings.Auction.HotspotScoredCandidateLimit
+	if sourceLinkedPool {
+		capacity = len(newsCandidates) + len(marketCandidates)
+	}
+	candidates := make([]aStockMarketCandidate, 0, capacity)
+	seen := make(map[string]struct{}, capacity)
 	appendCandidate := func(candidate aStockMarketCandidate) {
 		code := normalizeAStockCode(candidate.Code)
 		name := resolveAStockRecommendationName(code, candidate.Name, nameResolver)
@@ -12386,12 +13030,25 @@ func aStockRecommendationCandidatesForLimitWithSettings(hotspots []aStockHotspot
 		candidates = append(candidates, candidate)
 		seen[code] = struct{}{}
 	}
+	if sourceLinkedPool {
+		for _, candidate := range marketCandidates {
+			if !hasAnyAStockCandidateSource(candidate) {
+				continue
+			}
+			appendCandidate(candidate)
+		}
+		return candidates
+	}
 	for _, candidate := range newsCandidates {
+		markAStockCandidateSource(&candidate, aStockCandidateSourceNews)
 		appendCandidate(candidate)
 	}
 	for _, candidate := range sortedAStockHotspotFallbackCandidates(marketCandidates) {
 		if len(candidates) >= len(newsCandidates)+settings.Auction.HotspotScoredCandidateLimit {
 			break
+		}
+		if settings.Candidate.RequireHotspotLink && !aStockCandidateHasHotspotLink(hotspots, candidate, nil) {
+			continue
 		}
 		appendCandidate(candidate)
 	}
@@ -12687,7 +13344,7 @@ func (g *aStockHotspotSectorGate) empty() bool {
 }
 
 func (g *aStockHotspotSectorGate) Allows(hotspot aStockHotspot, candidate aStockMarketCandidate) bool {
-	if g == nil || !candidate.Fallback {
+	if g == nil || !candidate.Fallback || hasAStockCandidateSource(candidate, aStockCandidateSourceNews) {
 		return true
 	}
 	hotspotName := normalizeAStockRecommendationHotspot(hotspot.Name)
@@ -12820,10 +13477,18 @@ func (s *Server) loadAStockHotspotSectorGateWithCache(hotspots []aStockHotspot, 
 }
 
 func (s *Server) loadAStockSectorConstituentCodesWithCache(alias aStockHotspotSectorAlias, cache *aStockRequestCache) map[string]struct{} {
+	return s.loadAStockSectorConstituentEntryWithCache(alias, cache).codes
+}
+
+func (s *Server) loadAStockSectorConstituentCodeNamesWithCache(alias aStockHotspotSectorAlias, cache *aStockRequestCache) map[string]string {
+	return s.loadAStockSectorConstituentEntryWithCache(alias, cache).names
+}
+
+func (s *Server) loadAStockSectorConstituentEntryWithCache(alias aStockHotspotSectorAlias, cache *aStockRequestCache) aStockSectorConstituentCodesCacheEntry {
 	sectorType := normalizeSectorFundFlowSectorType(alias.SectorType)
 	sectorName := strings.TrimSpace(alias.SectorName)
 	if sectorName == "" {
-		return nil
+		return aStockSectorConstituentCodesCacheEntry{}
 	}
 	key := sectorType + "|" + sectorName
 	if cache != nil {
@@ -12831,26 +13496,37 @@ func (s *Server) loadAStockSectorConstituentCodesWithCache(alias aStockHotspotSe
 			cache.sectorConstituents = make(map[string]aStockSectorConstituentCodesCacheEntry)
 		}
 		if entry, ok := cache.sectorConstituents[key]; ok && entry.found {
-			return entry.codes
+			return entry
 		}
 	}
-	codes := s.loadAStockCachedSectorConstituentCodes(sectorType, sectorName)
-	if len(codes) == 0 {
-		items, _, err := s.refreshSectorFundFlowConstituents(model.AStockSectorFundFlowListResult{
+	items := s.loadAStockCachedSectorConstituents(sectorType, sectorName)
+	if len(items) == 0 {
+		refreshed, _, err := s.refreshSectorFundFlowConstituents(model.AStockSectorFundFlowListResult{
 			SectorType: sectorType,
 			Indicator:  "今日",
 		}, sectorName)
-		if err == nil {
-			codes = aStockSectorConstituentCodes(items)
+		if err != nil {
+			items = nil
+		} else {
+			items = refreshed
 		}
 	}
-	if cache != nil {
-		cache.sectorConstituents[key] = aStockSectorConstituentCodesCacheEntry{codes: codes, found: true}
+	entry := aStockSectorConstituentCodesCacheEntry{
+		codes: aStockSectorConstituentCodes(items),
+		names: aStockSectorConstituentCodeNames(items),
+		found: true,
 	}
-	return codes
+	if cache != nil {
+		cache.sectorConstituents[key] = entry
+	}
+	return entry
 }
 
 func (s *Server) loadAStockCachedSectorConstituentCodes(sectorType string, sectorName string) map[string]struct{} {
+	return aStockSectorConstituentCodes(s.loadAStockCachedSectorConstituents(sectorType, sectorName))
+}
+
+func (s *Server) loadAStockCachedSectorConstituents(sectorType string, sectorName string) []model.AStockSectorConstituent {
 	if strings.TrimSpace(s.cfg.ContentURL) == "" {
 		return nil
 	}
@@ -12862,7 +13538,7 @@ func (s *Server) loadAStockCachedSectorConstituentCodes(sectorType string, secto
 	if err := s.getJSON(s.cfg.ContentURL+"/api/v1/a-stock/sector-constituents?"+query.Encode(), &result); err != nil {
 		return nil
 	}
-	return aStockSectorConstituentCodes(result.Items)
+	return result.Items
 }
 
 func aStockSectorConstituentCodes(items []model.AStockSectorConstituent) map[string]struct{} {
@@ -12880,6 +13556,24 @@ func aStockSectorConstituentCodes(items []model.AStockSectorConstituent) map[str
 		return nil
 	}
 	return codes
+}
+
+func aStockSectorConstituentCodeNames(items []model.AStockSectorConstituent) map[string]string {
+	if len(items) == 0 {
+		return nil
+	}
+	names := make(map[string]string, len(items))
+	for _, item := range items {
+		code := normalizeAStockCode(item.Code)
+		name := astockcode.DisplayName(code, item.Name)
+		if astockcode.IsShanghaiShenzhen(code) && hasResolvedAStockRecommendationName(code, name) {
+			names[code] = name
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	return names
 }
 
 func aStockRecommendationSnapshots(strategyDate string, periodKey string, phase string) []aStockRecommendationSnapshot {
@@ -14061,7 +14755,12 @@ func scoreAStockMarketCandidatesWithSettings(hotspot aStockHotspot, candidates [
 		if candidate.Fallback && len(keywords) == 0 {
 			keywords = intersectAStockKeywords(candidate.Keywords, hotspot.Keywords)
 		}
-		if effectiveEvidence == 0 && evidenceResult.Weak == 0 && len(keywords) == 0 {
+		sourceLinked := hasAnyAStockCandidateSource(candidate)
+		sourceMatchesHotspot := sourceLinked && (len(keywords) > 0 || aStockCandidateInHotspotSector(sectorGate, hotspot, candidate))
+		if hasAStockCandidateSource(candidate, aStockCandidateSourceNews) && (evidence > 0 || len(keywords) > 0) {
+			sourceMatchesHotspot = true
+		}
+		if effectiveEvidence == 0 && evidenceResult.Weak == 0 && len(keywords) == 0 && !sourceMatchesHotspot {
 			continue
 		}
 		if !sectorGate.Allows(hotspot, candidate) {
@@ -14073,7 +14772,7 @@ func scoreAStockMarketCandidatesWithSettings(hotspot aStockHotspot, candidates [
 		candidate.WeakPenalty = weakPenalty
 		candidate.BadEvidence = evidenceResult.Negative
 		candidate.Keywords = keywords
-		candidate.MatchedScore = aStockMarketRankScoreWithSettings(candidate.Rank, settings) + effectiveEvidence*settings.Emotion.StockEvidenceScore + len(keywords)*settings.Emotion.StockNameKeywordScore - weakPenalty
+		candidate.MatchedScore = aStockMarketRankScoreWithSettings(candidate.Rank, settings) + effectiveEvidence*settings.Emotion.StockEvidenceScore + len(keywords)*settings.Emotion.StockNameKeywordScore + candidate.PreFundScore + candidate.PreSectorScore - weakPenalty
 		scored = append(scored, candidate)
 	}
 	sort.SliceStable(scored, func(i, j int) bool {

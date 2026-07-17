@@ -8,6 +8,7 @@ import (
 type AStockRecommendationAlgorithmSettings struct {
 	Version    int                                  `json:"version"`
 	Auction    AStockRecommendationAuctionFactor    `json:"auction"`
+	Candidate  AStockRecommendationCandidateFactor  `json:"candidate"`
 	Emotion    AStockRecommendationEmotionFactor    `json:"emotion"`
 	Sector     AStockRecommendationSectorFactor     `json:"sector"`
 	Fund       AStockRecommendationFundFactor       `json:"fund"`
@@ -53,6 +54,14 @@ type AStockRecommendationAuctionFactor struct {
 	LowOpenStrongPenalty        int     `json:"low_open_strong_penalty"`
 	LowOpenPenaltyThresholdPct  float64 `json:"low_open_penalty_threshold_pct"`
 	LowOpenPenalty              int     `json:"low_open_penalty"`
+}
+
+type AStockRecommendationCandidateFactor struct {
+	RequireHotspotLink             bool `json:"require_hotspot_link"`
+	AuctionFallbackPerHotspot      int  `json:"auction_fallback_per_hotspot"`
+	SectorCandidateLimitPerHotspot int  `json:"sector_candidate_limit_per_hotspot"`
+	StockFundFlowCandidateLimit    int  `json:"stock_fund_flow_candidate_limit"`
+	MaxStocksPerHotspotSoft        int  `json:"max_stocks_per_hotspot_soft"`
 }
 
 type AStockRecommendationEmotionFactor struct {
@@ -148,9 +157,9 @@ type AStockRecommendationVolatilityFactor struct {
 
 func DefaultAStockRecommendationAlgorithmSettings() AStockRecommendationAlgorithmSettings {
 	return AStockRecommendationAlgorithmSettings{
-		Version: 3,
+		Version: 4,
 		Auction: AStockRecommendationAuctionFactor{
-			FactorScoreCap:              200,
+			FactorScoreCap:              120,
 			RecommendationLimit:         5,
 			ReplacementPoolLimit:        36,
 			ReplacementPerHotspot:       12,
@@ -188,8 +197,15 @@ func DefaultAStockRecommendationAlgorithmSettings() AStockRecommendationAlgorith
 			LowOpenPenaltyThresholdPct:  -2.0,
 			LowOpenPenalty:              60,
 		},
+		Candidate: AStockRecommendationCandidateFactor{
+			RequireHotspotLink:             true,
+			AuctionFallbackPerHotspot:      50,
+			SectorCandidateLimitPerHotspot: 300,
+			StockFundFlowCandidateLimit:    300,
+			MaxStocksPerHotspotSoft:        2,
+		},
 		Emotion: AStockRecommendationEmotionFactor{
-			FactorScoreCap:        200,
+			FactorScoreCap:        300,
 			NewsEvidenceScore:     5,
 			KeywordScore:          4,
 			NegativeNewsPenalty:   40,
@@ -200,7 +216,7 @@ func DefaultAStockRecommendationAlgorithmSettings() AStockRecommendationAlgorith
 			WeakEvidencePenalty:   25,
 		},
 		Sector: AStockRecommendationSectorFactor{
-			FactorScoreCap:                200,
+			FactorScoreCap:                220,
 			TrendMinDays:                  3,
 			TrendScoreMin:                 -120,
 			TrendScoreMax:                 120,
@@ -230,7 +246,7 @@ func DefaultAStockRecommendationAlgorithmSettings() AStockRecommendationAlgorith
 			DrawdownPenalty:               40,
 		},
 		Fund: AStockRecommendationFundFactor{
-			FactorScoreCap:           200,
+			FactorScoreCap:           220,
 			BonusThreshold:           30000000,
 			StrongBonusThreshold:     100000000,
 			VeryStrongThreshold:      500000000,
@@ -258,7 +274,7 @@ func DefaultAStockRecommendationAlgorithmSettings() AStockRecommendationAlgorith
 			Overheat30Cap:            20,
 		},
 		Volatility: AStockRecommendationVolatilityFactor{
-			FactorScoreCap:              200,
+			FactorScoreCap:              140,
 			DrawdownFilterThreshold:     -15,
 			Overheat30ThresholdPct:      30,
 			Overheat60ThresholdPct:      60,
@@ -280,8 +296,17 @@ func DefaultAStockRecommendationAlgorithmSettings() AStockRecommendationAlgorith
 
 func NormalizeAStockRecommendationAlgorithmSettings(settings AStockRecommendationAlgorithmSettings) AStockRecommendationAlgorithmSettings {
 	defaults := DefaultAStockRecommendationAlgorithmSettings()
+	loadedVersion := settings.Version
 	if settings.Version <= 0 {
 		settings.Version = defaults.Version
+	}
+	if loadedVersion > 0 && loadedVersion < defaults.Version {
+		settings.Version = defaults.Version
+		settings.Auction.FactorScoreCap = defaults.Auction.FactorScoreCap
+		settings.Emotion.FactorScoreCap = defaults.Emotion.FactorScoreCap
+		settings.Sector.FactorScoreCap = defaults.Sector.FactorScoreCap
+		settings.Fund.FactorScoreCap = defaults.Fund.FactorScoreCap
+		settings.Volatility.FactorScoreCap = defaults.Volatility.FactorScoreCap
 	}
 	if settings.Auction.FactorScoreCap <= 0 {
 		settings.Auction.FactorScoreCap = defaults.Auction.FactorScoreCap
@@ -297,6 +322,21 @@ func NormalizeAStockRecommendationAlgorithmSettings(settings AStockRecommendatio
 	}
 	if settings.Volatility.FactorScoreCap <= 0 {
 		settings.Volatility.FactorScoreCap = defaults.Volatility.FactorScoreCap
+	}
+	if loadedVersion < defaults.Version || emptyAStockRecommendationCandidateFactor(settings.Candidate) {
+		settings.Candidate.RequireHotspotLink = defaults.Candidate.RequireHotspotLink
+	}
+	if settings.Candidate.AuctionFallbackPerHotspot <= 0 {
+		settings.Candidate.AuctionFallbackPerHotspot = defaults.Candidate.AuctionFallbackPerHotspot
+	}
+	if settings.Candidate.SectorCandidateLimitPerHotspot <= 0 {
+		settings.Candidate.SectorCandidateLimitPerHotspot = defaults.Candidate.SectorCandidateLimitPerHotspot
+	}
+	if settings.Candidate.StockFundFlowCandidateLimit <= 0 {
+		settings.Candidate.StockFundFlowCandidateLimit = defaults.Candidate.StockFundFlowCandidateLimit
+	}
+	if settings.Candidate.MaxStocksPerHotspotSoft <= 0 {
+		settings.Candidate.MaxStocksPerHotspotSoft = defaults.Candidate.MaxStocksPerHotspotSoft
 	}
 	if settings.Auction.LowOpenThreshold1Pct <= 0 &&
 		settings.Auction.LowOpenThreshold2Pct <= 0 &&
@@ -320,12 +360,26 @@ func NormalizeAStockRecommendationAlgorithmSettings(settings AStockRecommendatio
 	return settings
 }
 
+func emptyAStockRecommendationCandidateFactor(candidate AStockRecommendationCandidateFactor) bool {
+	return !candidate.RequireHotspotLink &&
+		candidate.AuctionFallbackPerHotspot == 0 &&
+		candidate.SectorCandidateLimitPerHotspot == 0 &&
+		candidate.StockFundFlowCandidateLimit == 0 &&
+		candidate.MaxStocksPerHotspotSoft == 0
+}
+
 func ValidateAStockRecommendationAlgorithmSettings(settings AStockRecommendationAlgorithmSettings) error {
 	if settings.Version <= 0 {
 		return errors.New("version required")
 	}
 	if settings.Auction.RecommendationLimit < 0 || settings.Auction.HotspotLimit < 0 || settings.Auction.StocksPerHotspot < 0 {
 		return errors.New("recommendation and hotspot limits cannot be negative")
+	}
+	if settings.Candidate.AuctionFallbackPerHotspot < 0 ||
+		settings.Candidate.SectorCandidateLimitPerHotspot < 0 ||
+		settings.Candidate.StockFundFlowCandidateLimit < 0 ||
+		settings.Candidate.MaxStocksPerHotspotSoft < 0 {
+		return errors.New("candidate limits cannot be negative")
 	}
 	for name, cap := range map[string]int{
 		"auction.factor_score_cap":    settings.Auction.FactorScoreCap,

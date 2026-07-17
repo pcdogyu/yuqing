@@ -1717,7 +1717,7 @@ func TestPreferencesPopupAndMailConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAStockRecommendationAlgorithmSettings error: %v", err)
 	}
-	if defaultAlgorithm.Auction.RecommendationLimit != 5 || defaultAlgorithm.Fund.ExtremeScore != 120 || defaultAlgorithm.Emotion.FactorScoreCap != 200 || defaultAlgorithm.Auction.LowOpenStrongPenalty != 65 {
+	if defaultAlgorithm.Auction.RecommendationLimit != 5 || defaultAlgorithm.Fund.ExtremeScore != 120 || defaultAlgorithm.Emotion.FactorScoreCap != 300 || !defaultAlgorithm.Candidate.RequireHotspotLink || defaultAlgorithm.Auction.LowOpenStrongPenalty != 65 {
 		t.Fatalf("unexpected default A stock algorithm settings: %+v", defaultAlgorithm)
 	}
 	updatedAlgorithm := defaultAlgorithm
