@@ -7243,6 +7243,8 @@ func TestAStockTestPageRendersSimulationForm(t *testing.T) {
 		"/a-stock/test",
 		"body[data-page='a-stock-test'] main{max-width:none;width:98vw;box-sizing:border-box",
 		"body[data-page='a-stock-test'] section{width:100%;box-sizing:border-box}",
+		"body[data-page='a-stock-test'] .astock-recommendation-table th:nth-child(-n+10),body[data-page='a-stock-test'] .astock-recommendation-table td:nth-child(-n+10){white-space:nowrap;word-break:keep-all}",
+		"body[data-page='a-stock-test'] .astock-score-table th:nth-child(3),body[data-page='a-stock-test'] .astock-score-table td:nth-child(3){width:33.6%}",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected test page to contain %q, got body=%s", want, body)

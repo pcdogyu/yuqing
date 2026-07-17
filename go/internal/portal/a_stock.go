@@ -692,6 +692,10 @@ func (s *Server) handleAStockTestPage(w http.ResponseWriter, r *http.Request, us
 		body[data-page='a-stock-test'] section{width:100%;box-sizing:border-box}
 		body[data-page='a-stock-test'] table{width:100%;min-width:100%;font-size:13px}
 		body[data-page='a-stock-test'] .astock-scroll{width:100%;overflow:auto}
+		body[data-page='a-stock-test'] .astock-recommendation-table{min-width:1800px;table-layout:auto}
+		body[data-page='a-stock-test'] .astock-recommendation-table th,body[data-page='a-stock-test'] .astock-recommendation-table td{vertical-align:top}
+		body[data-page='a-stock-test'] .astock-recommendation-table th:nth-child(-n+10),body[data-page='a-stock-test'] .astock-recommendation-table td:nth-child(-n+10){white-space:nowrap;word-break:keep-all}
+		body[data-page='a-stock-test'] .astock-score-table th:nth-child(3),body[data-page='a-stock-test'] .astock-score-table td:nth-child(3){width:33.6%}
 	</style>`)
 	b.WriteString(`<section><h2>A股模拟生成</h2><p class="astock-muted">模拟生成，不写快照/数据库。此页面只计算推荐、回测和过滤状态，不保存推荐快照、已选股票或T+1影子快照。</p>`)
 	b.WriteString(`<form method="get" action="/a-stock/test" class="astock-action-grid" data-astock-simulation-form="1">`)
