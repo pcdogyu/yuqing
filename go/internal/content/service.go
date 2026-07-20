@@ -73,6 +73,7 @@ type Store interface {
 	ListFeedback(rctx context.Context, limit int) ([]model.Feedback, error)
 	DeleteFeedback(rctx context.Context, id int64) error
 	ListTaskRuns(rctx context.Context, limit int) ([]model.TaskRun, error)
+	RecordTaskRun(rctx context.Context, name, status, message string, startedAt time.Time, finishedAt *time.Time) error
 	CreateAuditLog(rctx context.Context, entry model.AuditLog) (model.AuditLog, error)
 	ListAuditLogs(rctx context.Context, limit int, userID int64, action string) ([]model.AuditLog, error)
 	GetUserPreference(rctx context.Context, userID int64) (model.UserPreference, error)
@@ -279,6 +280,7 @@ func (s *Service) Routes(r chi.Router) {
 	r.Post("/api/v1/system/feedback", s.handleCreateFeedback)
 	r.Delete("/api/v1/system/feedback/{id}", s.handleDeleteFeedback)
 	r.Get("/api/v1/system/task-runs", s.handleListTaskRuns)
+	r.Post("/api/v1/internal/system/task-runs", s.handleRecordTaskRun)
 	r.Get("/api/v1/system/audit-logs", s.handleListAuditLogs)
 	r.Post("/api/v1/system/audit-logs", s.handleCreateAuditLog)
 	r.Get("/api/v1/system/operations", s.handleOperations)
@@ -3906,6 +3908,40 @@ func (s *Service) handleListTaskRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	apiutil.WriteJSON(w, http.StatusOK, "ok", runs)
+}
+
+func (s *Service) handleRecordTaskRun(w http.ResponseWriter, r *http.Request) {
+	if strings.TrimSpace(r.Header.Get("X-Service-Token")) != strings.TrimSpace(s.cfg.ServiceToken) {
+		apiutil.WriteJSON(w, http.StatusUnauthorized, "unauthorized", nil)
+		return
+	}
+	var run model.TaskRun
+	if !decodeJSON(w, r, &run) {
+		return
+	}
+	run.TaskName = strings.TrimSpace(run.TaskName)
+	run.Status = strings.TrimSpace(run.Status)
+	run.Message = strings.TrimSpace(run.Message)
+	if run.TaskName == "" {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "task_name required", nil)
+		return
+	}
+	if run.Status == "" {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "status required", nil)
+		return
+	}
+	startedAt := run.StartedAt
+	if startedAt.IsZero() {
+		startedAt = time.Now().UTC()
+	}
+	if err := s.store.RecordTaskRun(r.Context(), run.TaskName, run.Status, run.Message, startedAt, run.FinishedAt); err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusCreated, "ok", map[string]any{
+		"task_name": run.TaskName,
+		"status":    run.Status,
+	})
 }
 
 func (s *Service) handleListAuditLogs(w http.ResponseWriter, r *http.Request) {

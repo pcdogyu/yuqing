@@ -6641,6 +6641,7 @@ func TestAStockPopupShowsAndDismissesAfternoonRecommendations(t *testing.T) {
 	setAStockNowForTest(t, time.Date(2026, 6, 23, 12, 57, 0, 0, time.FixedZone("CST", 8*3600)))
 
 	popupStates := map[string]model.PopupState{}
+	taskRuns := []model.TaskRun{}
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -6675,6 +6676,17 @@ func TestAStockPopupShowsAndDismissesAfternoonRecommendations(t *testing.T) {
 			}
 			popupStates[popupStateMapKey(state.UserID, state.Key)] = state
 			writeEnvelope(w, http.StatusOK, "ok", state)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/internal/system/task-runs":
+			if r.Header.Get("X-Service-Token") != "test-token" {
+				t.Fatalf("expected service token for task run write, got %q", r.Header.Get("X-Service-Token"))
+			}
+			var run model.TaskRun
+			if err := json.NewDecoder(r.Body).Decode(&run); err != nil {
+				writeEnvelope(w, http.StatusBadRequest, err.Error(), nil)
+				return
+			}
+			taskRuns = append(taskRuns, run)
+			writeEnvelope(w, http.StatusCreated, "ok", map[string]string{"task_name": run.TaskName})
 		default:
 			if handleEmptyAStockAuctionTestEndpoint(w, r) {
 				return
@@ -6719,6 +6731,9 @@ func TestAStockPopupShowsAndDismissesAfternoonRecommendations(t *testing.T) {
 	router.ServeHTTP(dismissRR, dismissReq)
 	if dismissRR.Code != http.StatusOK {
 		t.Fatalf("expected dismiss 200, got %d body=%s", dismissRR.Code, dismissRR.Body.String())
+	}
+	if len(taskRuns) != 1 || taskRuns[0].TaskName != "a-stock-popup-dismiss:afternoon" || taskRuns[0].Status != "success" || !strings.Contains(taskRuns[0].Message, popup.Key) {
+		t.Fatalf("expected popup dismiss task run, got %+v", taskRuns)
 	}
 
 	reqAfter := httptest.NewRequest(http.MethodGet, "/a-stock/popup?date=2026-06-23", nil)
@@ -6898,6 +6913,8 @@ func TestAStockPopupDismissesMorningWithoutHidingAfternoon(t *testing.T) {
 			}
 			popupStates[popupStateMapKey(state.UserID, state.Key)] = state
 			writeEnvelope(w, http.StatusOK, "ok", state)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/internal/system/task-runs":
+			writeEnvelope(w, http.StatusCreated, "ok", map[string]string{"task_name": "a-stock-popup-dismiss:morning"})
 		default:
 			if handleEmptyAStockAuctionTestEndpoint(w, r) {
 				return
@@ -14344,6 +14361,7 @@ func TestSystemTemplateGroupsRepeatedPanelsBySection(t *testing.T) {
 		`name="section" value="opactions"`,
 		`{{if eq .SectionKey "contracts"}}<section class="section-block"><h2>外部契约与审计</h2>`,
 		`{{if eq .SectionKey "announcements"}}<section class="section-block"><h2>公告与任务</h2>`,
+		`<h3>任务记录</h3><table><tr><th>任务</th><th>状态</th><th>说明</th><th>开始时间</th></tr>`,
 		`href="/system?section=release">软件发布</a>`,
 		`{{if eq .SectionKey "release"}}<section class="section-block"><h2>软件发布</h2>`,
 		`name="form_type" value="release"`,
@@ -14374,6 +14392,9 @@ func TestSystemTemplateGroupsRepeatedPanelsBySection(t *testing.T) {
 	}
 	if strings.Contains(systemTemplate, `</section><section class="section-block"><h2>外部契约与审计</h2>`) {
 		t.Fatal("expected external contract audit panel to move out of operations section")
+	}
+	if strings.Contains(systemTemplate, `<div><h3>公告</h3><table><tr><th>标题</th><th>时间</th></tr>{{range .Notices}}`) {
+		t.Fatal("expected announcements section to omit notice table")
 	}
 }
 

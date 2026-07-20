@@ -23,6 +23,30 @@ const (
 	aStockIncrementalNewsLookahead = 2 * time.Minute
 )
 
+type aStockRecommendationCrawlSummary struct {
+	TotalSources  int
+	SuccessCount  int
+	FailedSources []string
+}
+
+type aStockRecommendationGenerateResult struct {
+	StrategyDate             string `json:"strategy_date"`
+	Period                   string `json:"period"`
+	Phase                    string `json:"phase"`
+	RecommendationCount      int    `json:"recommendation_count"`
+	GeneratedCount           int    `json:"generated_count"`
+	BacktestStatus           string `json:"backtest_status"`
+	RecentFiltered           int    `json:"recent_filtered"`
+	SameDayMorningFiltered   int    `json:"same_day_morning_filtered"`
+	LimitUpFiltered          int    `json:"limit_up_filtered"`
+	TodayMarketFilterEnabled bool   `json:"today_market_filter_enabled"`
+	NoTodayMarketCount       int    `json:"no_today_market_count"`
+	FundFlowFilterEnabled    bool   `json:"fund_flow_filter_enabled"`
+	FundFlowFiltered         int    `json:"fund_flow_filtered"`
+	FundFlowMissingCount     int    `json:"fund_flow_missing_count"`
+	LoadMessage              string `json:"load_message"`
+}
+
 func (w *Worker) runAStockRecommendation(ctx context.Context, period string, phase string) error {
 	location, err := time.LoadLocation("Asia/Shanghai")
 	if err != nil {
@@ -1375,7 +1399,8 @@ func (w *Worker) runAStockRecommendationForDate(ctx context.Context, strategyDat
 	if err != nil {
 		return err
 	}
-	if err := w.crawlAStockRecommendationSources(ctx, strategyDate, period, normalizedPhase, start, end, "a-stock recommendation"); err != nil {
+	crawlSummary, err := w.crawlAStockRecommendationSources(ctx, strategyDate, period, normalizedPhase, start, end, "a-stock recommendation")
+	if err != nil {
 		return err
 	}
 	resp, err := w.client.R().
@@ -1395,8 +1420,15 @@ func (w *Worker) runAStockRecommendationForDate(ctx context.Context, strategyDat
 	if normalizeAStockRecommendationPeriod(period) == "morning" && normalizedPhase == "final" {
 		refreshMode = "preserve_locked"
 	}
-	if err := w.generateAStockRecommendationSnapshotWithMode(ctx, strategyDate, period, normalizedPhase, refreshMode); err != nil {
+	generationStarted := time.Now().UTC()
+	generateResult, err := w.generateAStockRecommendationSnapshotWithModeResult(ctx, strategyDate, period, normalizedPhase, refreshMode)
+	generationFinished := time.Now().UTC()
+	if err != nil {
 		return err
+	}
+	w.recordAStockRecommendationGenerateResult(ctx, strategyDate, period, normalizedPhase, label, crawlSummary, generateResult, generationStarted, generationFinished)
+	if normalizedPhase == "preopen" {
+		w.recordAStockPopupReadyResult(ctx, strategyDate, period, normalizedPhase, generateResult, generationFinished)
 	}
 	log.Info().
 		Str("strategy_date", strategyDate).
@@ -1424,7 +1456,11 @@ func (w *Worker) runAStockWindowNewsCrawlForDate(ctx context.Context, strategyDa
 	if err != nil {
 		return err
 	}
-	if err := w.crawlAStockRecommendationSources(ctx, strategyDate, period, normalizedPhase, start, end, "a-stock window news crawl"); err != nil {
+	startedAt := time.Now().UTC()
+	crawlSummary, err := w.crawlAStockRecommendationSources(ctx, strategyDate, period, normalizedPhase, start, end, "a-stock window news crawl")
+	finishedAt := time.Now().UTC()
+	w.recordAStockWindowNewsResult(ctx, strategyDate, period, normalizedPhase, label, crawlSummary, err, startedAt, finishedAt)
+	if err != nil {
 		return err
 	}
 	log.Info().
@@ -1436,17 +1472,20 @@ func (w *Worker) runAStockWindowNewsCrawlForDate(ctx context.Context, strategyDa
 	return nil
 }
 
-func (w *Worker) crawlAStockRecommendationSources(ctx context.Context, strategyDate string, period string, phase string, start time.Time, end time.Time, label string) error {
+func (w *Worker) crawlAStockRecommendationSources(ctx context.Context, strategyDate string, period string, phase string, start time.Time, end time.Time, label string) (aStockRecommendationCrawlSummary, error) {
 	crawlOptions := model.CrawlOptions{
 		Start:     formatAStockRecommendationCrawlTime(start),
 		End:       formatAStockRecommendationCrawlTime(end),
 		TimeField: "publish_time",
 	}
-	failedSources := make([]string, 0)
-	successCount := 0
-	for _, sourceType := range w.aStockRecommendationCrawlSources() {
+	sources := w.aStockRecommendationCrawlSources()
+	summary := aStockRecommendationCrawlSummary{
+		TotalSources:  len(sources),
+		FailedSources: make([]string, 0),
+	}
+	for _, sourceType := range sources {
 		if err := w.runCrawlWithOptions(ctx, sourceType, crawlOptions); err != nil {
-			failedSources = append(failedSources, sourceType+": "+err.Error())
+			summary.FailedSources = append(summary.FailedSources, sourceType+": "+err.Error())
 			log.Warn().
 				Err(err).
 				Str("source_type", sourceType).
@@ -1457,16 +1496,88 @@ func (w *Worker) crawlAStockRecommendationSources(ctx context.Context, strategyD
 				Msg("a-stock crawl source failed")
 			continue
 		}
-		successCount++
+		summary.SuccessCount++
 	}
-	if successCount == 0 && len(failedSources) > 0 {
-		return fmt.Errorf("%s failed for all sources: %s", label, strings.Join(failedSources, "; "))
+	if summary.SuccessCount == 0 && len(summary.FailedSources) > 0 {
+		return summary, fmt.Errorf("%s failed for all sources: %s", label, strings.Join(summary.FailedSources, "; "))
 	}
-	return nil
+	return summary, nil
 }
 
 func formatAStockRecommendationCrawlTime(value time.Time) string {
 	return value.In(aStockLocation()).Format("2006-01-02 15:04:05")
+}
+
+func (w *Worker) recordAStockWindowNewsResult(ctx context.Context, strategyDate string, period string, phase string, windowLabel string, summary aStockRecommendationCrawlSummary, runErr error, startedAt time.Time, finishedAt time.Time) {
+	status := "success"
+	if runErr != nil {
+		status = "failed"
+	}
+	message := fmt.Sprintf("date=%s window=%s sources=%d success=%d failed=%d",
+		normalizeAStockRecommendationDate(strategyDate),
+		windowLabel,
+		summary.TotalSources,
+		summary.SuccessCount,
+		len(summary.FailedSources),
+	)
+	if len(summary.FailedSources) > 0 {
+		message += " failures=" + strings.Join(summary.FailedSources, "; ")
+	}
+	if runErr != nil && len(summary.FailedSources) == 0 {
+		message += " error=" + runErr.Error()
+	}
+	finished := finishedAt
+	taskName := fmt.Sprintf("a-stock-window-news:%s:%s", normalizeAStockRecommendationPeriod(period), normalizeAStockRecommendationPhase(phase))
+	if err := w.recordTaskRun(ctx, taskName, status, message, startedAt, &finished); err != nil {
+		log.Warn().Err(err).Str("task", taskName).Msg("record a-stock window news task run failed")
+	}
+}
+
+func (w *Worker) recordAStockRecommendationGenerateResult(ctx context.Context, strategyDate string, period string, phase string, windowLabel string, crawlSummary aStockRecommendationCrawlSummary, result aStockRecommendationGenerateResult, startedAt time.Time, finishedAt time.Time) {
+	message := fmt.Sprintf("date=%s window=%s recommendations=%d generated=%d recent_filtered=%d same_day_morning_filtered=%d limit_up_filtered=%d no_today_market=%d fund_flow_filtered=%d fund_flow_missing=%d backtest=%s news_sources=%d/%d",
+		nonEmpty(result.StrategyDate, normalizeAStockRecommendationDate(strategyDate)),
+		windowLabel,
+		result.RecommendationCount,
+		result.GeneratedCount,
+		result.RecentFiltered,
+		result.SameDayMorningFiltered,
+		result.LimitUpFiltered,
+		result.NoTodayMarketCount,
+		result.FundFlowFiltered,
+		result.FundFlowMissingCount,
+		nonEmpty(result.BacktestStatus, "unknown"),
+		crawlSummary.SuccessCount,
+		crawlSummary.TotalSources,
+	)
+	if loadMessage := strings.TrimSpace(result.LoadMessage); loadMessage != "" {
+		message += " load_message=" + loadMessage
+	}
+	finished := finishedAt
+	taskName := fmt.Sprintf("a-stock-recommendation-generate:%s:%s", normalizeAStockRecommendationPeriod(period), normalizeAStockRecommendationPhase(phase))
+	if err := w.recordTaskRun(ctx, taskName, "success", message, startedAt, &finished); err != nil {
+		log.Warn().Err(err).Str("task", taskName).Msg("record a-stock recommendation generate task run failed")
+	}
+}
+
+func (w *Worker) recordAStockPopupReadyResult(ctx context.Context, strategyDate string, period string, phase string, result aStockRecommendationGenerateResult, eventTime time.Time) {
+	status := "success"
+	ready := true
+	if result.RecommendationCount <= 0 {
+		status = "skipped"
+		ready = false
+	}
+	message := fmt.Sprintf("date=%s period=%s phase=%s popup_ready=%t recommendations=%d",
+		nonEmpty(result.StrategyDate, normalizeAStockRecommendationDate(strategyDate)),
+		normalizeAStockRecommendationPeriod(period),
+		normalizeAStockRecommendationPhase(phase),
+		ready,
+		result.RecommendationCount,
+	)
+	finished := eventTime
+	taskName := fmt.Sprintf("a-stock-popup-ready:%s", normalizeAStockRecommendationPeriod(period))
+	if err := w.recordTaskRun(ctx, taskName, status, message, eventTime, &finished); err != nil {
+		log.Warn().Err(err).Str("task", taskName).Msg("record a-stock popup ready task run failed")
+	}
 }
 
 func (w *Worker) generateAStockRecommendationSnapshot(ctx context.Context, strategyDate string, period string, phase string) error {
@@ -1478,16 +1589,30 @@ func (w *Worker) refreshAStockRecommendationBacktestSnapshot(ctx context.Context
 }
 
 func (w *Worker) generateAStockRecommendationSnapshotWithMode(ctx context.Context, strategyDate string, period string, phase string, refreshMode string) error {
-	return w.generateAStockRecommendationSnapshotWithModeAndFundFlow(ctx, strategyDate, period, phase, refreshMode, false)
+	_, err := w.generateAStockRecommendationSnapshotWithModeResult(ctx, strategyDate, period, phase, refreshMode)
+	return err
 }
 
 func (w *Worker) generateAStockRecommendationSnapshotWithModeAndFundFlow(ctx context.Context, strategyDate string, period string, phase string, refreshMode string, ignoreFundFlow bool) error {
+	_, err := w.generateAStockRecommendationSnapshotWithModeAndFundFlowResult(ctx, strategyDate, period, phase, refreshMode, ignoreFundFlow)
+	return err
+}
+
+func (w *Worker) generateAStockRecommendationSnapshotWithModeResult(ctx context.Context, strategyDate string, period string, phase string, refreshMode string) (aStockRecommendationGenerateResult, error) {
+	return w.generateAStockRecommendationSnapshotWithModeAndFundFlowResult(ctx, strategyDate, period, phase, refreshMode, false)
+}
+
+func (w *Worker) generateAStockRecommendationSnapshotWithModeAndFundFlowResult(ctx context.Context, strategyDate string, period string, phase string, refreshMode string, ignoreFundFlow bool) (aStockRecommendationGenerateResult, error) {
 	baseURL := strings.TrimRight(strings.TrimSpace(w.cfg.GatewayWebURL), "/")
 	if baseURL == "" {
-		return fmt.Errorf("YUQING_GATEWAY_URL not configured")
+		return aStockRecommendationGenerateResult{}, fmt.Errorf("YUQING_GATEWAY_URL not configured")
+	}
+	var envelope struct {
+		Data aStockRecommendationGenerateResult `json:"data"`
 	}
 	req := w.crawlClient.R().
 		SetContext(ctx).
+		SetResult(&envelope).
 		SetQueryParam("date", normalizeAStockRecommendationDate(strategyDate)).
 		SetQueryParam("period", normalizeAStockRecommendationPeriod(period)).
 		SetQueryParam("phase", normalizeAStockRecommendationPhase(phase))
@@ -1499,12 +1624,22 @@ func (w *Worker) generateAStockRecommendationSnapshotWithModeAndFundFlow(ctx con
 	}
 	resp, err := req.Post(baseURL + "/internal/a-stock/recommendations/generate")
 	if err != nil {
-		return err
+		return aStockRecommendationGenerateResult{}, err
 	}
 	if !resp.IsSuccess() {
-		return fmt.Errorf("a-stock recommendation generate failed: %s", resp.Status())
+		return aStockRecommendationGenerateResult{}, fmt.Errorf("a-stock recommendation generate failed: %s", resp.Status())
 	}
-	return nil
+	result := envelope.Data
+	if result.StrategyDate == "" {
+		result.StrategyDate = normalizeAStockRecommendationDate(strategyDate)
+	}
+	if result.Period == "" {
+		result.Period = normalizeAStockRecommendationPeriod(period)
+	}
+	if result.Phase == "" {
+		result.Phase = normalizeAStockRecommendationPhase(phase)
+	}
+	return result, nil
 }
 
 func normalizeAStockRecommendationDate(strategyDate string) string {

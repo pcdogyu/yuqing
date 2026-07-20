@@ -1163,6 +1163,49 @@ func TestOperationsAndAlertsAPI(t *testing.T) {
 	}
 }
 
+func TestRecordTaskRunInternalAPI(t *testing.T) {
+	store := newContentSearchTestStore(t)
+	svc := NewService(config.Config{ServiceToken: "secret"}, store)
+	router := svc.Router()
+	started := time.Date(2026, 7, 20, 9, 27, 0, 0, time.UTC)
+	finished := started.Add(2 * time.Second)
+	body := fmt.Sprintf(`{"task_name":"a-stock-recommendation-generate:morning:preopen","status":"success","message":"generated=9","started_at":%q,"finished_at":%q}`,
+		started.Format(time.RFC3339),
+		finished.Format(time.RFC3339),
+	)
+
+	unauthorizedReq := httptest.NewRequest(http.MethodPost, "/api/v1/internal/system/task-runs", strings.NewReader(body))
+	unauthorizedRR := httptest.NewRecorder()
+	router.ServeHTTP(unauthorizedRR, unauthorizedReq)
+	if unauthorizedRR.Code != http.StatusUnauthorized {
+		t.Fatalf("expected unauthorized without service token, got %d body=%s", unauthorizedRR.Code, unauthorizedRR.Body.String())
+	}
+
+	postReq := httptest.NewRequest(http.MethodPost, "/api/v1/internal/system/task-runs", strings.NewReader(body))
+	postReq.Header.Set("X-Service-Token", "secret")
+	postRR := httptest.NewRecorder()
+	router.ServeHTTP(postRR, postReq)
+	if postRR.Code != http.StatusCreated {
+		t.Fatalf("expected task run create 201, got %d body=%s", postRR.Code, postRR.Body.String())
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/system/task-runs?limit=1", nil)
+	listRR := httptest.NewRecorder()
+	router.ServeHTTP(listRR, listReq)
+	if listRR.Code != http.StatusOK {
+		t.Fatalf("expected task run list 200, got %d body=%s", listRR.Code, listRR.Body.String())
+	}
+	var envelope struct {
+		Data []model.TaskRun `json:"data"`
+	}
+	if err := json.Unmarshal(listRR.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal task runs: %v", err)
+	}
+	if len(envelope.Data) != 1 || envelope.Data[0].TaskName != "a-stock-recommendation-generate:morning:preopen" || envelope.Data[0].Status != "success" || envelope.Data[0].Message != "generated=9" {
+		t.Fatalf("unexpected task runs: %+v", envelope.Data)
+	}
+}
+
 func TestAndroidBootstrapModulesAndDashboard(t *testing.T) {
 	ctx := context.Background()
 	store := newContentSearchTestStore(t)

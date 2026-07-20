@@ -1634,6 +1634,130 @@ func TestRunAStockRecommendationFallsBackToLocalCalendarWhenAuctionURLMissing(t 
 	}
 }
 
+func TestRunAStockWindowNewsCrawlRecordsSourceSummary(t *testing.T) {
+	t.Setenv("YUQING_A_STOCK_NEWS_SOURCE_CONFIG", filepath.Join(t.TempDir(), "sources.json"))
+	previousSources := aStockRecommendationSources
+	aStockRecommendationSources = []string{provider.SourceTypeFlash, provider.SourceTypeHeadline}
+	t.Cleanup(func() { aStockRecommendationSources = previousSources })
+	dbPath := filepath.Join(t.TempDir(), "scheduler-window-news.db")
+	store, err := sqlitestore.New(dbPath)
+	if err != nil {
+		t.Fatalf("New store error: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Query().Get("source_type") {
+		case provider.SourceTypeFlash:
+			w.WriteHeader(http.StatusOK)
+		case provider.SourceTypeHeadline:
+			http.Error(w, "temporary failed", http.StatusBadGateway)
+		default:
+			t.Fatalf("unexpected source: %s", r.URL.RawQuery)
+		}
+	}))
+	defer crawler.Close()
+
+	worker := NewWorker(config.Config{
+		DatabasePath:          dbPath,
+		CrawlerURL:            crawler.URL,
+		HTTPTimeout:           time.Second,
+		SchedulerCrawlTimeout: time.Second,
+		ServiceToken:          "secret-token",
+	})
+	defer func() { _ = worker.Close() }()
+
+	if err := worker.runAStockWindowNewsCrawlForDate(context.Background(), "2026-06-16", "morning", "preopen"); err != nil {
+		t.Fatalf("expected partial source failure to keep window news crawl successful, got %v", err)
+	}
+	runs, err := store.ListTaskRuns(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("ListTaskRuns error: %v", err)
+	}
+	if len(runs) != 1 || runs[0].TaskName != "a-stock-window-news:morning:preopen" || runs[0].Status != "success" || !strings.Contains(runs[0].Message, "success=1 failed=1") {
+		t.Fatalf("expected window news summary task run, got %+v", runs)
+	}
+}
+
+func TestRunAStockRecommendationRecordsGenerateAndPopupReady(t *testing.T) {
+	t.Setenv("YUQING_A_STOCK_NEWS_SOURCE_CONFIG", filepath.Join(t.TempDir(), "sources.json"))
+	previousSources := aStockRecommendationSources
+	aStockRecommendationSources = []string{provider.SourceTypeFlash}
+	t.Cleanup(func() { aStockRecommendationSources = previousSources })
+	dbPath := filepath.Join(t.TempDir(), "scheduler-generate.db")
+	store, err := sqlitestore.New(dbPath)
+	if err != nil {
+		t.Fatalf("New store error: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("source_type") != provider.SourceTypeFlash {
+			t.Fatalf("unexpected crawler query: %s", r.URL.RawQuery)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer crawler.Close()
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/articles" {
+			t.Fatalf("unexpected content request: %s", r.URL.String())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusOK, "message": "ok", "data": model.ItemListResult{}})
+	}))
+	defer content.Close()
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/internal/a-stock/recommendations/generate" {
+			t.Fatalf("unexpected gateway request: %s %s", r.Method, r.URL.String())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusOK, "message": "ok", "data": map[string]any{
+			"strategy_date":           "2026-06-16",
+			"period":                  "morning",
+			"phase":                   "preopen",
+			"recommendation_count":    2,
+			"generated_count":         9,
+			"recent_filtered":         1,
+			"limit_up_filtered":       0,
+			"fund_flow_filtered":      3,
+			"fund_flow_missing_count": 4,
+			"backtest_status":         "pending",
+		}})
+	}))
+	defer gateway.Close()
+
+	worker := NewWorker(config.Config{
+		DatabasePath:          dbPath,
+		CrawlerURL:            crawler.URL,
+		ContentURL:            content.URL,
+		GatewayWebURL:         gateway.URL,
+		HTTPTimeout:           time.Second,
+		SchedulerCrawlTimeout: time.Second,
+		ServiceToken:          "secret-token",
+	})
+	defer func() { _ = worker.Close() }()
+
+	if err := worker.runAStockRecommendationForDate(context.Background(), "2026-06-16", "morning", "preopen"); err != nil {
+		t.Fatalf("expected preopen recommendation to succeed, got %v", err)
+	}
+	runs, err := store.ListTaskRuns(context.Background(), 5)
+	if err != nil {
+		t.Fatalf("ListTaskRuns error: %v", err)
+	}
+	byName := map[string]model.TaskRun{}
+	for _, run := range runs {
+		byName[run.TaskName] = run
+	}
+	generateRun, ok := byName["a-stock-recommendation-generate:morning:preopen"]
+	if !ok || generateRun.Status != "success" || !strings.Contains(generateRun.Message, "recommendations=2 generated=9") || !strings.Contains(generateRun.Message, "news_sources=1/1") {
+		t.Fatalf("expected recommendation generate task run, got %+v", byName)
+	}
+	popupRun, ok := byName["a-stock-popup-ready:morning"]
+	if !ok || popupRun.Status != "success" || !strings.Contains(popupRun.Message, "popup_ready=true recommendations=2") {
+		t.Fatalf("expected popup ready task run, got %+v", byName)
+	}
+}
+
 func TestRunAStockRecommendationLocalCalendarFallbackSkipsHoliday(t *testing.T) {
 	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatalf("crawler should not be called on local fallback holiday: %s", r.URL.String())

@@ -3628,7 +3628,33 @@ func (s *Server) handleAStockPopupDismiss(w http.ResponseWriter, r *http.Request
 		writeRawJSON(w, http.StatusBadGateway, map[string]any{"message": err.Error()})
 		return
 	}
+	s.recordAStockPopupDismissTask(r.Context(), userID, key, updated.Count)
 	writeRawJSON(w, http.StatusOK, map[string]any{"ok": true, "key": key, "dismissed": updated.Dismissed})
+}
+
+func (s *Server) recordAStockPopupDismissTask(ctx context.Context, userID int64, key string, count int) {
+	eventTime := time.Now().UTC()
+	finishedAt := eventTime
+	period := aStockPopupPeriodFromKey(key)
+	_ = s.recordSystemTaskRun(ctx, model.TaskRun{
+		TaskName:   "a-stock-popup-dismiss:" + period,
+		Status:     "success",
+		Message:    fmt.Sprintf("key=%s user_id=%d dismiss_count=%d", key, userID, count),
+		StartedAt:  eventTime,
+		FinishedAt: &finishedAt,
+	})
+}
+
+func aStockPopupPeriodFromKey(key string) string {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	switch {
+	case strings.Contains(normalized, "-morning-"):
+		return "morning"
+	case strings.Contains(normalized, "-afternoon-"):
+		return "afternoon"
+	default:
+		return "unknown"
+	}
 }
 
 func newAStockRequestCache() *aStockRequestCache {

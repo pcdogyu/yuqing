@@ -3886,6 +3886,27 @@ func (s *Server) getJSONWithContext(ctx context.Context, url string, target any)
 	return json.NewDecoder(bytes.NewReader(envelope.Data)).Decode(target)
 }
 
+func (s *Server) recordSystemTaskRun(ctx context.Context, run model.TaskRun) error {
+	if strings.TrimSpace(s.cfg.ContentURL) == "" {
+		return errors.New("YUQING_CONTENT_URL not configured")
+	}
+	if run.StartedAt.IsZero() {
+		run.StartedAt = time.Now().UTC()
+	}
+	resp, err := s.client.R().
+		SetContext(ctx).
+		SetHeader("X-Service-Token", s.cfg.ServiceToken).
+		SetBody(run).
+		Post(strings.TrimRight(s.cfg.ContentURL, "/") + "/api/v1/internal/system/task-runs")
+	if err != nil {
+		return err
+	}
+	if !resp.IsSuccess() {
+		return errors.New(resp.Status())
+	}
+	return nil
+}
+
 func (s *Server) loadServiceLog(serviceName string) (string, string) {
 	var envelope struct {
 		Data json.RawMessage `json:"data"`
@@ -5484,6 +5505,11 @@ func buildSystemTemplate() string {
 	template = strings.Replace(template,
 		`{{end}}{{if eq .SectionKey "database"}}<section class="section-block"><h2>数据库配置</h2>`,
 		`{{end}}{{if eq .SectionKey "newsstats"}}<section class="section-block astock-newsstats-section"><form class="newsstats-filter inline" method="get" action="/system"><input type="hidden" name="section" value="newsstats"><label>策略日期 <input type="date" name="strategy_date" value="{{.AStockNewsStatsDate}}"></label><button type="submit">刷新新闻统计</button></form>{{.AStockNewsStatsHTML}}</section>{{end}}{{if eq .SectionKey "database"}}<section class="section-block"><h2>数据库配置</h2>`,
+		1,
+	)
+	template = strings.Replace(template,
+		`{{if eq .SectionKey "announcements"}}<section class="section-block"><h2>公告与任务</h2><div class="grid"><div><h3>公告</h3><table><tr><th>标题</th><th>时间</th></tr>{{range .Notices}}<tr><td>{{.Title}}</td><td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="2">暂无公告</td></tr>{{end}}</table></div><div><h3>任务记录</h3><table><tr><th>任务</th><th>状态</th><th>说明</th></tr>{{range .TaskRuns}}<tr><td>{{.TaskName}}</td><td>{{.Status}}</td><td>{{.Message}}</td></tr>{{else}}<tr><td colspan="3">暂无任务记录</td></tr>{{end}}</table></div><div><h3>抓取记录</h3><table><tr><th>来源</th><th>状态</th><th>抓取数</th><th>入库数</th><th>开始时间</th></tr>{{range .CrawlRuns}}<tr><td>{{.SourceType}}</td><td>{{.Status}}</td><td>{{.FetchedCount}}</td><td>{{.InsertedCount}}</td><td>{{.StartedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="5">暂无抓取记录</td></tr>{{end}}</table></div></div></section>{{end}}`,
+		`{{if eq .SectionKey "announcements"}}<section class="section-block"><h2>公告与任务</h2><div class="grid"><div><h3>任务记录</h3><table><tr><th>任务</th><th>状态</th><th>说明</th><th>开始时间</th></tr>{{range .TaskRuns}}<tr><td>{{.TaskName}}</td><td>{{.Status}}</td><td>{{.Message}}</td><td>{{.StartedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="4">暂无任务记录</td></tr>{{end}}</table></div><div><h3>抓取记录</h3><table><tr><th>来源</th><th>状态</th><th>抓取数</th><th>入库数</th><th>开始时间</th></tr>{{range .CrawlRuns}}<tr><td>{{.SourceType}}</td><td>{{.Status}}</td><td>{{.FetchedCount}}</td><td>{{.InsertedCount}}</td><td>{{.StartedAt.Format "2006-01-02 15:04"}}</td></tr>{{else}}<tr><td colspan="5">暂无抓取记录</td></tr>{{end}}</table></div></div></section>{{end}}`,
 		1,
 	)
 	template = strings.Replace(template,
