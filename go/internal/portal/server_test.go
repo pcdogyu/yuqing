@@ -6720,7 +6720,7 @@ func TestAStockPopupShowsAndDismissesAfternoonRecommendations(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &popup); err != nil {
 		t.Fatalf("unmarshal popup payload: %v", err)
 	}
-	if !popup.Show || popup.Key != "a-stock-afternoon-preopen-recommendation-2026-06-23" || popup.Period != "afternoon" || len(popup.Recommendations) != 2 {
+	if !popup.Show || popup.Key != "a-stock-afternoon-preopen-recommendation-1257-2026-06-23" || popup.Period != "afternoon" || len(popup.Recommendations) != 2 {
 		t.Fatalf("expected popup to show afternoon recommendations, got %+v", popup)
 	}
 
@@ -6783,7 +6783,7 @@ func TestAStockPopupWaitsUntilAfternoonPreopenWindow(t *testing.T) {
 }
 
 func TestAStockPopupShowsMorningRecommendationsDuringPreopenWindow(t *testing.T) {
-	setAStockNowForTest(t, time.Date(2026, 6, 23, 9, 20, 0, 0, time.FixedZone("CST", 8*3600)))
+	setAStockNowForTest(t, time.Date(2026, 6, 23, 9, 27, 0, 0, time.FixedZone("CST", 8*3600)))
 
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -6817,7 +6817,7 @@ func TestAStockPopupShowsMorningRecommendationsDuringPreopenWindow(t *testing.T)
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
 	popup := srv.buildAStockPreopenPopup(1, "2026-06-23")
-	if !popup.Show || popup.Key != "a-stock-morning-preopen-recommendation-2026-06-23" || popup.Period != "morning" || len(popup.Recommendations) != 1 {
+	if !popup.Show || popup.Key != "a-stock-morning-preopen-recommendation-0927-2026-06-23" || popup.Period != "morning" || len(popup.Recommendations) != 1 {
 		t.Fatalf("expected morning preopen popup to show during configured window, got %+v", popup)
 	}
 }
@@ -6858,7 +6858,7 @@ func TestAStockPopupShowsMorningRecommendationsAfterSlowPreviewGeneration(t *tes
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
 	popup := srv.buildAStockPreopenPopup(1, "2026-06-23")
-	if !popup.Show || popup.Key != "a-stock-morning-preopen-recommendation-2026-06-23" || popup.Period != "morning" || len(popup.Recommendations) != 1 {
+	if !popup.Show || popup.Key != "a-stock-morning-preopen-recommendation-0931-2026-06-23" || popup.Period != "morning" || len(popup.Recommendations) != 1 {
 		t.Fatalf("expected delayed morning preopen popup to show, got %+v", popup)
 	}
 }
@@ -6949,7 +6949,7 @@ func TestAStockPopupDismissesMorningWithoutHidingAfternoon(t *testing.T) {
 	}
 
 	morningPopup := getPopup()
-	if !morningPopup.Show || morningPopup.Key != "a-stock-morning-preopen-recommendation-2026-06-23" || morningPopup.Period != "morning" {
+	if !morningPopup.Show || morningPopup.Key != "a-stock-morning-preopen-recommendation-0927-2026-06-23" || morningPopup.Period != "morning" {
 		t.Fatalf("expected morning preopen popup, got %+v", morningPopup)
 	}
 	dismissReq := httptest.NewRequest(http.MethodPost, "/a-stock/popup/dismiss", strings.NewReader(`{"key":"`+morningPopup.Key+`"}`))
@@ -6964,10 +6964,22 @@ func TestAStockPopupDismissesMorningWithoutHidingAfternoon(t *testing.T) {
 		t.Fatalf("expected morning popup hidden after dismiss, got %+v", popupAfterDismiss)
 	}
 
+	current = time.Date(2026, 6, 23, 9, 31, 0, 0, time.FixedZone("CST", 8*3600))
+	secondMorningPopup := getPopup()
+	if !secondMorningPopup.Show || secondMorningPopup.Key != "a-stock-morning-preopen-recommendation-0931-2026-06-23" || secondMorningPopup.Period != "morning" {
+		t.Fatalf("expected second morning preopen popup to show independently, got %+v", secondMorningPopup)
+	}
+
 	current = time.Date(2026, 6, 23, 12, 57, 0, 0, time.FixedZone("CST", 8*3600))
 	afternoonPopup := getPopup()
-	if !afternoonPopup.Show || afternoonPopup.Key != "a-stock-afternoon-preopen-recommendation-2026-06-23" || afternoonPopup.Period != "afternoon" {
+	if !afternoonPopup.Show || afternoonPopup.Key != "a-stock-afternoon-preopen-recommendation-1257-2026-06-23" || afternoonPopup.Period != "afternoon" {
 		t.Fatalf("expected afternoon preopen popup to show independently, got %+v", afternoonPopup)
+	}
+
+	current = time.Date(2026, 6, 23, 13, 1, 0, 0, time.FixedZone("CST", 8*3600))
+	secondAfternoonPopup := getPopup()
+	if !secondAfternoonPopup.Show || secondAfternoonPopup.Key != "a-stock-afternoon-preopen-recommendation-1301-2026-06-23" || secondAfternoonPopup.Period != "afternoon" {
+		t.Fatalf("expected second afternoon preopen popup to show independently, got %+v", secondAfternoonPopup)
 	}
 }
 

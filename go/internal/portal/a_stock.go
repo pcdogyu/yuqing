@@ -1855,7 +1855,7 @@ func writeAStockPageScript(b *strings.Builder, strategyDate string) {
 	b.WriteString(`function showPopup(data){var mask=popupMask();if(!mask||!data||!data.show){return;}if(popupVisible&&popupKey===data.key){return;}var title=document.getElementById("astock-popup-title");var meta=document.getElementById("astock-popup-meta");if(title){title.textContent=data.title||"盘前推荐股票";}if(meta){meta.textContent=data.meta||"";}renderPopupRows(data.recommendations||[]);popupKey=data.key||"";mask.hidden=false;popupVisible=true;}`)
 	b.WriteString(`function fetchPopup(){if(!popupEligible||!popupDate){return;}fetch("/a-stock/popup?date="+encodeURIComponent(popupDate),{credentials:"same-origin"}).then(function(resp){if(!resp.ok){return null;}return resp.json();}).then(function(data){if(!data){return;}if(data.show){showPopup(data);return;}if(!data.show&&popupVisible){hidePopup();}}).catch(function(){});}`)
 	b.WriteString(`function clearPopupTimers(){if(popupTimer){window.clearInterval(popupTimer);popupTimer=0;}popupExactTimers.forEach(function(timer){window.clearTimeout(timer);});popupExactTimers=[];}`)
-	b.WriteString(`function schedulePopupChecks(){clearPopupTimers();fetchPopup();if(!popupEligible){return;}popupTimer=window.setInterval(fetchPopup,5000);var now=new Date();[[9,15],[9,27],[12,45],[12,57]].forEach(function(parts){var target=new Date();target.setHours(parts[0],parts[1],0,0);if(now<target){popupExactTimers.push(window.setTimeout(fetchPopup,Math.max(0,target.getTime()-now.getTime()+100)));}});}`)
+	b.WriteString(`function schedulePopupChecks(){clearPopupTimers();fetchPopup();if(!popupEligible){return;}popupTimer=window.setInterval(fetchPopup,5000);var now=new Date();[[9,27],[9,31],[12,57],[13,1]].forEach(function(parts){var target=new Date();target.setHours(parts[0],parts[1],0,0);if(now<target){popupExactTimers.push(window.setTimeout(fetchPopup,Math.max(0,target.getTime()-now.getTime()+100)));}});}`)
 	b.WriteString(`function content(){return document.getElementById("astock-page-content");}`)
 	b.WriteString(`function partialURL(raw){var u=new URL(raw,window.location.origin);u.searchParams.set("partial","1");return u.toString();}`)
 	b.WriteString(`function isPartialLink(anchor){if(!anchor||!anchor.href){return false;}if(anchor.target&&anchor.target!=="_self"){return false;}var u;try{u=new URL(anchor.href,window.location.origin);}catch(e){return false;}if(u.origin!==window.location.origin||u.pathname!=="/a-stock"){return false;}if(u.searchParams.get("refresh_recommendations")||u.searchParams.get("refresh_all_backtests")){return false;}return true;}`)
@@ -5593,21 +5593,41 @@ func aStockPreopenPopupWindows() []aStockPreopenPopupWindow {
 	return []aStockPreopenPopupWindow{
 		{
 			Period:      "morning",
-			KeyPrefix:   "a-stock-morning-preopen-recommendation-",
+			KeyPrefix:   "a-stock-morning-preopen-recommendation-0927-",
 			Title:       "09:27 上午盘前推荐股票",
 			WindowLabel: "08:00-09:26:59",
 			StartHour:   9,
-			StartMinute: 15,
+			StartMinute: 27,
+			EndHour:     9,
+			EndMinute:   31,
+		},
+		{
+			Period:      "morning",
+			KeyPrefix:   "a-stock-morning-preopen-recommendation-0931-",
+			Title:       "09:31 上午盘前推荐股票",
+			WindowLabel: "08:00-09:26:59",
+			StartHour:   9,
+			StartMinute: 31,
 			EndHour:     9,
 			EndMinute:   35,
 		},
 		{
 			Period:      "afternoon",
-			KeyPrefix:   "a-stock-afternoon-preopen-recommendation-",
+			KeyPrefix:   "a-stock-afternoon-preopen-recommendation-1257-",
 			Title:       "12:57 下午盘前推荐股票",
 			WindowLabel: "09:30-12:56:59",
 			StartHour:   12,
-			StartMinute: 45,
+			StartMinute: 57,
+			EndHour:     13,
+			EndMinute:   1,
+		},
+		{
+			Period:      "afternoon",
+			KeyPrefix:   "a-stock-afternoon-preopen-recommendation-1301-",
+			Title:       "13:01 下午盘前推荐股票",
+			WindowLabel: "09:30-12:56:59",
+			StartHour:   13,
+			StartMinute: 1,
 			EndHour:     13,
 			EndMinute:   5,
 		},
