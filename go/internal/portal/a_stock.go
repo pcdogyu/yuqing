@@ -5573,7 +5573,7 @@ func aStockPreopenPopupWindows() []aStockPreopenPopupWindow {
 			StartHour:   9,
 			StartMinute: 15,
 			EndHour:     9,
-			EndMinute:   30,
+			EndMinute:   35,
 		},
 		{
 			Period:      "afternoon",
@@ -5583,7 +5583,7 @@ func aStockPreopenPopupWindows() []aStockPreopenPopupWindow {
 			StartHour:   12,
 			StartMinute: 45,
 			EndHour:     13,
-			EndMinute:   0,
+			EndMinute:   5,
 		},
 	}
 }

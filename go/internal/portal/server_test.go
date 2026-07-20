@@ -6807,6 +6807,47 @@ func TestAStockPopupShowsMorningRecommendationsDuringPreopenWindow(t *testing.T)
 	}
 }
 
+func TestAStockPopupShowsMorningRecommendationsAfterSlowPreviewGeneration(t *testing.T) {
+	setAStockNowForTest(t, time.Date(2026, 6, 23, 9, 31, 30, 0, time.FixedZone("CST", 8*3600)))
+
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/system/popup":
+			writeEnvelope(w, http.StatusOK, "ok", model.PopupState{
+				UserID: parseTestInt64(r.URL.Query().Get("user_id")),
+				Key:    r.URL.Query().Get("key"),
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/a-stock/recommendation-selections":
+			if r.URL.Query().Get("period") != "morning" {
+				t.Fatalf("expected morning selection lookup, got query %s", r.URL.RawQuery)
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{
+				Found: true,
+				Items: []model.AStockRecommendationSelection{{
+					StrategyDate: "2026-06-23",
+					Period:       "morning",
+					Rank:         1,
+					Code:         "002230",
+					Name:         "科大讯飞",
+					Hotspot:      "人工智能",
+					Reason:       "上午预览任务 09:31 才完成",
+				}},
+				UpdatedAt: time.Date(2026, 6, 23, 1, 31, 24, 0, time.UTC),
+			})
+		default:
+			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	popup := srv.buildAStockPreopenPopup(1, "2026-06-23")
+	if !popup.Show || popup.Key != "a-stock-morning-preopen-recommendation-2026-06-23" || popup.Period != "morning" || len(popup.Recommendations) != 1 {
+		t.Fatalf("expected delayed morning preopen popup to show, got %+v", popup)
+	}
+}
+
 func TestAStockPopupDismissesMorningWithoutHidingAfternoon(t *testing.T) {
 	current := time.Date(2026, 6, 23, 9, 27, 0, 0, time.FixedZone("CST", 8*3600))
 	previousNow := aStockNow
