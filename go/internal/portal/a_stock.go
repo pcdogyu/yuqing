@@ -4037,6 +4037,7 @@ func (s *Server) applyAStockBacktestSnapshotOnlyWithCache(ctx *aStockContext, ca
 	}
 	ctx.Backtests = filterAStockBacktestsForSnapshotRecommendations(backtests, ctx.Recommendations)
 	ctx.BacktestStatus = nonEmpty(snapshot.BacktestStatus, "已读取推荐快照")
+	s.enrichAStockCurrentSnapshotMarket(ctx)
 	applyAStockSnapshotMetadata(ctx, snapshot)
 	ctx.EmptyReason = snapshot.EmptyReason
 	if ctx.EmptyReason == "" {

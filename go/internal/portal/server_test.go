@@ -5168,7 +5168,7 @@ func TestAStockCurrentRecommendationSnapshotUsesRealtimeMarketPct(t *testing.T) 
 
 	srv := NewServer(config.Config{ContentURL: content.URL})
 	ctx := aStockContext{Date: "2026-07-21", Period: "morning"}
-	if !srv.applyAStockRecommendationSnapshotWithCache(&ctx, newAStockRequestCache()) {
+	if !srv.applyAStockBacktestSnapshotOnlyWithCache(&ctx, newAStockRequestCache()) {
 		t.Fatal("expected current recommendation snapshot to load")
 	}
 	if len(ctx.Recommendations) != 1 || ctx.Recommendations[0].CurrentPrice != "52.53" || ctx.Recommendations[0].TodayPct != "-1.32%" || ctx.Recommendations[0].TodayPctClass != "astock-down" {
