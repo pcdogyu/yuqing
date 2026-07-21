@@ -4603,6 +4603,7 @@ func (s *Server) applyAStockRecommendationSnapshotWithFreshnessCache(ctx *aStock
 	}
 	ctx.Backtests = filterAStockBacktestsForRecommendations(backtests, ctx.Recommendations)
 	ctx.BacktestStatus = nonEmpty(snapshot.BacktestStatus, "已读取推荐快照")
+	s.enrichAStockCurrentSnapshotMarket(ctx)
 	if exDividendFiltered > 0 {
 		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, formatAStockExDividendFilterStatus(exDividendFiltered))
 	}
@@ -4615,6 +4616,31 @@ func (s *Server) applyAStockRecommendationSnapshotWithFreshnessCache(ctx *aStock
 		ctx.EmptyReason = aStockRecommendationEmptyReason(*ctx)
 	}
 	return true
+}
+
+func (s *Server) enrichAStockCurrentSnapshotMarket(ctx *aStockContext) {
+	if ctx == nil || normalizeAStockStrategyDate(ctx.Date) != aStockTodayDate() || len(ctx.Recommendations) == 0 {
+		return
+	}
+	rows := s.enrichAStockBacktestsWithRealtimeQuotes(ctx.Date, ctx.Period, ctx.Backtests)
+	if len(rows) > 0 {
+		ctx.Backtests = rows
+	}
+	byCode := aStockBacktestRowsByCode(ctx.Backtests)
+	for i := range ctx.Recommendations {
+		code := normalizeAStockCode(ctx.Recommendations[i].Code)
+		row, ok := byCode[code]
+		if !ok {
+			continue
+		}
+		if !aStockBacktestValueMissing(row.CurrentPrice) {
+			ctx.Recommendations[i].CurrentPrice = row.CurrentPrice
+		}
+		if !aStockBacktestValueMissing(row.CurrentMarketPct) {
+			ctx.Recommendations[i].TodayPct = row.CurrentMarketPct
+			ctx.Recommendations[i].TodayPctClass = nonEmpty(strings.TrimSpace(row.CurrentMarketPctClass), aStockPctClassFromText(row.CurrentMarketPct))
+		}
+	}
 }
 
 func (s *Server) loadAStockRecommendationSnapshot(strategyDate string, period string, ignoreRecent bool) (model.AStockRecommendationSnapshot, bool) {
@@ -11965,6 +11991,13 @@ func aStockPctClass(value float64) string {
 	default:
 		return "astock-flat"
 	}
+}
+
+func aStockPctClassFromText(value string) string {
+	if pct, ok := parseAStockPctText(value); ok {
+		return aStockPctClass(pct)
+	}
+	return "astock-flat"
 }
 
 func aStockMarketEndpoint() string {

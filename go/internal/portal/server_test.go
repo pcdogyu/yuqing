@@ -5120,6 +5120,65 @@ func TestAStockContextLoadsPersistedRecommendationSnapshot(t *testing.T) {
 	}
 }
 
+func TestAStockCurrentRecommendationSnapshotUsesRealtimeMarketPct(t *testing.T) {
+	setAStockNowForTest(t, time.Date(2026, 7, 21, 11, 30, 0, 0, time.FixedZone("CST", 8*3600)))
+
+	previousQuoteURL := aStockEastmoneyQuoteURL
+	quote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("secid") != "1.601318" {
+			t.Fatalf("unexpected realtime quote query: %s", r.URL.RawQuery)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{
+				"f43":  5253,
+				"f46":  5368,
+				"f57":  "601318",
+				"f60":  5323,
+				"f170": -132,
+			},
+		})
+	}))
+	defer quote.Close()
+	aStockEastmoneyQuoteURL = quote.URL
+	t.Cleanup(func() {
+		aStockEastmoneyQuoteURL = previousQuoteURL
+	})
+
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/v1/system/a-stock-recommendation-algorithm" {
+			writeEnvelope(w, http.StatusOK, "ok", model.DefaultAStockRecommendationAlgorithmSettings())
+			return
+		}
+		if r.URL.Path != "/api/v1/a-stock/recommendations" {
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+		writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{
+			Found:               true,
+			StrategyDate:        "2026-07-21",
+			Period:              "morning",
+			RecommendationsJSON: `[{"Rank":1,"Hotspot":"半导体","Code":"601318","Name":"中国平安","CurrentPrice":"53.63","TodayPct":"+75.00%","TodayPctClass":"astock-up","Reason":"snapshot"}]`,
+			BacktestsJSON:       `[{"Stock":"601318 中国平安","EntryOpen":"53.68","T0Close":"53.63","T0Return":"-0.09%","T0ReturnClass":"astock-down","CurrentPrice":"53.63","CurrentReturn":"-0.09%","CurrentReturnClass":"astock-down","CurrentMarketPct":"+75.00%","CurrentMarketPctClass":"astock-up","Status":"等待T+1行情"}]`,
+			BacktestStatus:      "已读取推荐快照",
+			GeneratedCount:      1,
+		})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	ctx := aStockContext{Date: "2026-07-21", Period: "morning"}
+	if !srv.applyAStockRecommendationSnapshotWithCache(&ctx, newAStockRequestCache()) {
+		t.Fatal("expected current recommendation snapshot to load")
+	}
+	if len(ctx.Recommendations) != 1 || ctx.Recommendations[0].CurrentPrice != "52.53" || ctx.Recommendations[0].TodayPct != "-1.32%" || ctx.Recommendations[0].TodayPctClass != "astock-down" {
+		t.Fatalf("expected recommendation display to use realtime market pct, got %+v", ctx.Recommendations)
+	}
+	if len(ctx.Backtests) != 1 || ctx.Backtests[0].CurrentPrice != "52.53" || ctx.Backtests[0].CurrentMarketPct != "-1.32%" || ctx.Backtests[0].CurrentMarketPctClass != "astock-down" {
+		t.Fatalf("expected backtest display to use realtime market pct, got %+v", ctx.Backtests)
+	}
+}
+
 func TestAStockContextRefreshKeepsPersistedRecommendationSelections(t *testing.T) {
 	t.Setenv("YUQING_ASTOCK_MARKET_URL", "")
 	market := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
