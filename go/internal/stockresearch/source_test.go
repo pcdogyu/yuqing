@@ -109,6 +109,42 @@ func TestCleanEastMoneyReportTextRemovesNavigationAndTail(t *testing.T) {
 	}
 }
 
+func TestCleanEastMoneyReportTextUsesInvestmentLogicAnchor(t *testing.T) {
+	raw := strings.Join([]string{
+		"财经",
+		"焦点",
+		"股票",
+		"新股",
+		"期指",
+		"特色龙虎榜单融资融券股权质押大宗交易机构调研期指持仓公告大全条件选股",
+		"财报业绩报表最新预告分红送配",
+		"研报个股研报行业研报盈利预测",
+		"公司深度研究：功率测试设备供应商跨界存储，迎行业量价齐升长景气周期",
+		"联动科技(301369)",
+		"投资逻辑",
+		"公司聚焦半导体后道封装测试专用设备领域，凭借“测试系统+激光打标”双轮驱动。",
+		"盈利预测、估值和评级",
+		"风险提示",
+		"SoC新品研发及市场推广不及预期。",
+	}, "\n\n")
+
+	text := CleanEastMoneyReportText(raw)
+
+	if !strings.HasPrefix(text, "联动科技(301369) 投资逻辑") {
+		t.Fatalf("expected eastmoney text to start at investment logic anchor, got %q", text)
+	}
+	for _, unwanted := range []string{"财经", "特色龙虎榜单", "财报业绩报表", "公司深度研究：功率测试设备供应商"} {
+		if strings.Contains(text, unwanted) {
+			t.Fatalf("expected cleaned eastmoney text not to contain %q, got %q", unwanted, text)
+		}
+	}
+	for _, want := range []string{"公司聚焦半导体后道封装测试专用设备领域", "盈利预测、估值和评级", "SoC新品研发及市场推广不及预期"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected cleaned eastmoney text to contain %q, got %q", want, text)
+		}
+	}
+}
+
 func TestCleanSourceTextForURLAppliesEastMoneyRules(t *testing.T) {
 	raw := "财经 焦点 股票\n\n宏远股份(920018)\n\n投资要点\n\n正文内容\n\n首次\n\n评级股票\n\n数据来源：东方财富Choice数据\n\n尾部"
 
