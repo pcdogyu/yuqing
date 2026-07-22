@@ -918,6 +918,7 @@ func renderAStockActionSection(b *strings.Builder, ctx aStockContext) {
 		{Name: "generate", Label: "生成全部推荐股票", Period: ctx.Period},
 		{Name: "backfill_window_news", Label: "补录下午新闻", Period: "afternoon"},
 		{Name: "generate_afternoon_stock", Label: "重新生成下午推荐", Period: "afternoon"},
+		{Name: "generate_evening_stock", Label: "重新生产晚间推荐", Period: "evening"},
 	}
 	for _, action := range actions {
 		b.WriteString(`<form class="astock-action-form" method="post"><input type="hidden" name="date" value="`)

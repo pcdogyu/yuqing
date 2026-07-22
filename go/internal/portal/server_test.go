@@ -7239,10 +7239,13 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"金十快讯", "金十资讯", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "90个交易日内过滤", "涨停过滤", "当日行情", "不过滤", "重新计算", "关闭90个交易日过滤", "关闭涨停过滤", "启用当日行情过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "5日资金动向", "+1200.00万", "+500.00万", "上午推荐", "下午推荐", "推荐窗口", "08:00-09:30", "重新生成上午推荐", "重新生成下午推荐", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="refresh_backtest"`, `name="action" value="recalculate"`, "2026-06-12 周五", "2026-06-15 周一", "今日", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "推荐排名前9股票", "002230 科大讯飞", `002230 科大讯飞<span class="astock-hotspot-date">（2026-06-12）</span>`, "688981 中芯国际", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "已回测"} {
+	for _, want := range []string{"金十快讯", "金十资讯", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "90个交易日内过滤", "涨停过滤", "当日行情", "不过滤", "重新计算", "关闭90个交易日过滤", "关闭涨停过滤", "启用当日行情过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "5日资金动向", "+1200.00万", "+500.00万", "上午推荐", "下午推荐", "推荐窗口", "08:00-09:30", "重新生成上午推荐", "重新生成下午推荐", "重新生产晚间推荐", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="generate_evening_stock"`, `name="action" value="refresh_backtest"`, `name="action" value="recalculate"`, "2026-06-12 周五", "2026-06-15 周一", "今日", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "推荐排名前9股票", "002230 科大讯飞", `002230 科大讯飞<span class="astock-hotspot-date">（2026-06-12）</span>`, "688981 中芯国际", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "已回测"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}
+	}
+	if strings.Index(body, "重新生成下午推荐") < 0 || strings.Index(body, "重新生产晚间推荐") <= strings.Index(body, "重新生成下午推荐") {
+		t.Fatalf("expected evening generation action to render after afternoon generation action, got %s", body)
 	}
 	for _, notWant := range []string{"1. 002230 科大讯飞", "1. 688981 中芯国际"} {
 		if strings.Contains(body, notWant) {
