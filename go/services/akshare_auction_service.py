@@ -3,6 +3,7 @@
 
 The Go scheduler calls:
   GET /api/a-stock/auction?date=YYYY-MM-DD
+  GET /api/a-stock/evening-snapshot?date=YYYY-MM-DD
   GET /api/a-stock/tdx-quote?codes=000001,600000
   GET /api/a-stock/sector-fund-flow?sector_type=行业资金流&indicator=今日&source=eastmoney
   GET /api/a-stock/stock-fund-flow?indicator=今日&source=eastmoney
@@ -63,6 +64,7 @@ EASTMONEY_CLIST_URLS = [
 ]
 EASTMONEY_A_STOCK_FS = "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23"
 EASTMONEY_FIELDS = "f12,f14,f2,f5,f6"
+EASTMONEY_EVENING_FIELDS = "f12,f14,f2,f3,f6,f8,f10,f22"
 EASTMONEY_SORT_FIELD = "f12"
 AUCTION_SNAPSHOT_UNIT_NORMALIZE_MIN_ITEMS = 1000
 AUCTION_SNAPSHOT_UNIT_NORMALIZE_AMOUNT_THRESHOLD = 1_000_000_000_000
@@ -790,6 +792,42 @@ def fetch_market_snapshot(ak: Any, trade_date: str, limit: int) -> list[dict[str
     return items
 
 
+def fetch_evening_snapshot(ak: Any, trade_date: str, limit: int) -> list[dict[str, Any]]:
+    frame = ak.stock_zh_a_spot_em()
+    items: list[dict[str, Any]] = []
+    fetched_at = utc_now_iso()
+    for _, row in frame.iterrows():
+        code = text_value(first_existing(row, ["代码", "code", "股票代码"]))
+        name = text_value(first_existing(row, ["名称", "name", "股票名称"]))
+        if not code or not is_sh_sz_code(code) or not has_resolved_stock_name(code, name):
+            continue
+        price = finite_float(first_existing(row, ["最新价", "当前价", "price"]))
+        change_pct = parse_percent_value(first_existing(row, ["涨跌幅", "change_pct"]))
+        volume_ratio = finite_float(first_existing(row, ["量比", "volume_ratio"]))
+        turnover_pct = parse_percent_value(first_existing(row, ["换手率", "turnover_pct"]))
+        amount = finite_float(first_existing(row, ["成交额", "amount"]))
+        speed = parse_percent_value(first_existing(row, ["涨速", "speed"]))
+        items.append(
+            {
+                "trade_date": trade_date,
+                "code": code.zfill(6),
+                "name": name,
+                "price": price,
+                "change_pct": change_pct,
+                "volume_ratio": volume_ratio,
+                "turnover_pct": turnover_pct,
+                "amount": amount,
+                "speed": speed,
+                "source": "akshare_spot_em",
+                "status": "ok" if price > 0 and amount > 0 else "no_evening_market_data",
+                "fetched_at": fetched_at,
+            }
+        )
+        if limit > 0 and len(items) >= limit:
+            break
+    return items
+
+
 def eastmoney_rows_to_items(rows: list[dict[str, Any]], trade_date: str, limit: int) -> list[dict[str, Any]]:
     fetched_at = utc_now_iso()
     items: list[dict[str, Any]] = []
@@ -822,6 +860,63 @@ def eastmoney_rows_to_items(rows: list[dict[str, Any]], trade_date: str, limit: 
         if limit > 0 and len(items) >= limit:
             break
     return items
+
+
+def eastmoney_rows_to_evening_items(rows: list[dict[str, Any]], trade_date: str, limit: int) -> list[dict[str, Any]]:
+    fetched_at = utc_now_iso()
+    items: list[dict[str, Any]] = []
+    seen_codes: set[str] = set()
+    for row in rows:
+        code = text_value(row.get("f12"))
+        name = text_value(row.get("f14"))
+        if not code or not is_sh_sz_code(code) or not has_resolved_stock_name(code, name):
+            continue
+        code = code.zfill(6)
+        if code in seen_codes:
+            continue
+        seen_codes.add(code)
+        price = finite_float(row.get("f2"))
+        change_pct = finite_float(row.get("f3"))
+        amount = finite_float(row.get("f6"))
+        turnover_pct = finite_float(row.get("f8"))
+        volume_ratio = finite_float(row.get("f10"))
+        speed = finite_float(row.get("f22"))
+        items.append(
+            {
+                "trade_date": trade_date,
+                "code": code,
+                "name": name,
+                "price": price,
+                "change_pct": change_pct,
+                "volume_ratio": volume_ratio,
+                "turnover_pct": turnover_pct,
+                "amount": amount,
+                "speed": speed,
+                "source": "eastmoney_clist",
+                "status": "ok" if price > 0 and amount > 0 else "no_evening_market_data",
+                "fetched_at": fetched_at,
+            }
+        )
+        if limit > 0 and len(items) >= limit:
+            break
+    return items
+
+
+def evening_snapshot_metric_warning(items: list[dict[str, Any]]) -> str:
+    if not items:
+        return ""
+    missing_metrics: list[str] = []
+    if not any(finite_float(item.get("volume_ratio")) > 0 for item in items):
+        missing_metrics.append("volume_ratio")
+    if not any(finite_float(item.get("speed")) != 0 for item in items):
+        missing_metrics.append("speed")
+    if not missing_metrics:
+        return ""
+    return (
+        "evening snapshot missing usable "
+        + "/".join(missing_metrics)
+        + " metrics; rows are returned for diagnostics only"
+    )
 
 
 def should_normalize_auction_snapshot_units(items: list[dict[str, Any]]) -> bool:
@@ -933,6 +1028,68 @@ def fetch_eastmoney_snapshot(trade_date: str, limit: int) -> list[dict[str, Any]
             errors.append(str(exc))
             continue
     raise RuntimeError("; ".join(errors) or "Eastmoney clist returned no data")
+
+
+def fetch_eastmoney_evening_snapshot(trade_date: str, limit: int) -> list[dict[str, Any]]:
+    page_size = eastmoney_page_size(limit)
+    errors: list[str] = []
+    for base_url in EASTMONEY_CLIST_URLS:
+        rows: list[dict[str, Any]] = []
+        total = 0
+        try:
+            page = 1
+            while True:
+                params = {
+                    "pn": str(page),
+                    "pz": str(page_size),
+                    "po": "1",
+                    "np": "1",
+                    "fltt": "2",
+                    "invt": "2",
+                    "fid": EASTMONEY_SORT_FIELD,
+                    "fs": EASTMONEY_A_STOCK_FS,
+                    "fields": EASTMONEY_EVENING_FIELDS,
+                    "_": str(int(time.time() * 1000)),
+                }
+                query = urllib.parse.urlencode(params)
+                url = base_url + "?" + query
+                payload: dict[str, Any] | None = None
+                page_errors: list[str] = []
+                for attempt in range(3):
+                    try:
+                        request = urllib.request.Request(url, headers=EASTMONEY_HEADERS)
+                        with urllib.request.urlopen(request, timeout=20) as response:
+                            payload = json.loads(response.read().decode("utf-8"))
+                        break
+                    except Exception as exc:  # pragma: no cover - external service variability
+                        page_errors.append(f"{base_url} evening page {page} attempt {attempt + 1}: {exc}")
+                        time.sleep(0.3 * (attempt + 1))
+                if payload is None:
+                    raise RuntimeError("; ".join(page_errors) or f"{base_url}: evening request failed")
+                data = payload.get("data") if isinstance(payload, dict) else None
+                page_rows = data.get("diff") if isinstance(data, dict) else None
+                if total <= 0:
+                    total = int(data.get("total") or 0) if isinstance(data, dict) else 0
+                if not isinstance(page_rows, list) or not page_rows:
+                    if rows:
+                        break
+                    raise RuntimeError(f"{base_url}: empty evening diff on page {page}")
+                rows.extend(page_rows)
+                target_rows = eastmoney_target_row_count(total, limit)
+                if limit > 0 and len(rows) >= limit:
+                    break
+                if target_rows > 0 and len(rows) >= target_rows:
+                    break
+                if len(page_rows) < page_size:
+                    break
+                page += 1
+            if rows:
+                return eastmoney_rows_to_evening_items(rows, trade_date, limit)
+            errors.append(f"{base_url}: empty evening diff")
+        except Exception as exc:  # pragma: no cover - external service variability
+            errors.append(str(exc))
+            continue
+    raise RuntimeError("; ".join(errors) or "Eastmoney evening clist returned no data")
 
 
 def fetch_one_auction(ak: Any, symbol: dict[str, str], trade_date: str) -> dict[str, Any]:
@@ -2338,6 +2495,57 @@ class AuctionService:
             ) + "AKShare returned rows but no usable auction amounts; cache was not updated."
         return payload
 
+    def fetch_evening_snapshot(self, query: dict[str, list[str]]) -> dict[str, Any]:
+        requested_date = first_query_value(query, "date")
+        trade_date = normalize_date(requested_date)
+        limit = int_value(first_query_value(query, "limit"), self.default_limit)
+        force = first_query_value(query, "force") in {"1", "true", "yes"}
+        ak = load_akshare()
+        latest_date = latest_trading_day(ak, local_today())
+        if not requested_date:
+            trade_date = latest_date
+        if trade_date != latest_date and not force:
+            return {
+                "_http_status": 422,
+                "date": trade_date,
+                "items": [],
+                "message": (
+                    "AKShare evening snapshot only serves the latest trading day "
+                    f"({latest_date}) unless force=1 is provided."
+                ),
+                "fetched_at": utc_now_iso(),
+            }
+        started = time.time()
+        warning = ""
+        try:
+            items = fetch_evening_snapshot(ak, trade_date, limit)
+            if not items:
+                raise RuntimeError("stock_zh_a_spot_em returned no evening rows")
+        except Exception as exc:
+            try:
+                items = fetch_eastmoney_evening_snapshot(trade_date, limit)
+                warning = f"stock_zh_a_spot_em evening snapshot failed, used direct Eastmoney snapshot: {exc}"
+            except Exception as eastmoney_exc:
+                items = []
+                warning = f"evening snapshot failed: akshare={exc}; eastmoney={eastmoney_exc}"
+        payload: dict[str, Any] = {
+            "date": trade_date,
+            "items": items,
+            "count": len(items),
+            "ok": sum(1 for item in items if item.get("status") == "ok"),
+            "elapsed_sec": round(time.time() - started, 3),
+            "fetched_at": utc_now_iso(),
+        }
+        metric_warning = evening_snapshot_metric_warning(items)
+        if metric_warning:
+            warning = (warning + "; " if warning else "") + metric_warning
+        if warning:
+            payload["warning"] = warning
+        if not items:
+            payload["_http_status"] = 502
+            payload["message"] = warning or "evening snapshot returned no usable rows"
+        return payload
+
     def fetch_stock_research(self, query: dict[str, list[str]]) -> dict[str, Any]:
         ak = load_akshare()
         start = normalize_optional_date(first_query_value(query, "start"))
@@ -2627,6 +2835,14 @@ class RequestHandler(BaseHTTPRequestHandler):
                     payload.pop("_http_status", None)
                 self.write_json(status, payload)
                 return
+            if parsed.path == "/api/a-stock/evening-snapshot":
+                payload = self.service.fetch_evening_snapshot(query)
+                status = int(payload.get("_http_status", 200))
+                if "_http_status" in payload:
+                    payload = dict(payload)
+                    payload.pop("_http_status", None)
+                self.write_json(status, payload)
+                return
             if parsed.path == "/api/a-stock/trading-day":
                 payload = self.service.fetch_trading_day(query)
                 status = int(payload.get("_http_status", 200))
@@ -2794,6 +3010,74 @@ def run_self_test() -> None:
     assert eastmoney_items[0]["name"] == "平安银行"
     assert eastmoney_items[0]["source"] == "eastmoney_clist"
     assert eastmoney_items[0]["status"] == "ok"
+    evening_items = eastmoney_rows_to_evening_items(
+        [
+            {"f12": "000001", "f14": "平安银行", "f2": "12.30", "f3": "4.50", "f6": "300000000", "f8": "3.20", "f10": "4.10", "f22": "0.50"},
+            {"f12": "920118", "f14": "太湖远大", "f2": "18", "f3": "4", "f6": "300000000", "f8": "3", "f10": "4", "f22": "1"},
+        ],
+        "2026-07-22",
+        0,
+    )
+    assert len(evening_items) == 1
+    assert evening_items[0]["code"] == "000001"
+    assert evening_items[0]["source"] == "eastmoney_clist"
+    assert evening_items[0]["price"] == 12.3
+    assert evening_items[0]["change_pct"] == 4.5
+    assert evening_items[0]["volume_ratio"] == 4.1
+    assert evening_items[0]["turnover_pct"] == 3.2
+    assert evening_items[0]["amount"] == 300000000
+    assert evening_items[0]["speed"] == 0.5
+    assert not evening_snapshot_metric_warning(evening_items)
+
+    class FakeEveningSpotFrame:
+        def iterrows(self) -> Any:
+            return iter(
+                [
+                    (
+                        0,
+                        {
+                            "代码": "600000",
+                            "名称": "浦发银行",
+                            "最新价": "8.88",
+                            "涨跌幅": "5.20",
+                            "量比": "4.30",
+                            "换手率": "3.70%",
+                            "成交额": "450000000",
+                            "涨速": "0.60%",
+                        },
+                    )
+                ]
+            )
+
+    class FakeEveningAK:
+        def stock_zh_a_spot_em(self) -> Any:
+            return FakeEveningSpotFrame()
+
+    ak_evening_items = fetch_evening_snapshot(FakeEveningAK(), "2026-07-22", 0)
+    assert len(ak_evening_items) == 1
+    assert ak_evening_items[0]["code"] == "600000"
+    assert ak_evening_items[0]["source"] == "akshare_spot_em"
+    assert ak_evening_items[0]["price"] == 8.88
+    assert ak_evening_items[0]["change_pct"] == 5.2
+    assert ak_evening_items[0]["volume_ratio"] == 4.3
+    assert ak_evening_items[0]["turnover_pct"] == 3.7
+    assert ak_evening_items[0]["amount"] == 450000000
+    assert ak_evening_items[0]["speed"] == 0.6
+    missing_metric_warning = evening_snapshot_metric_warning(
+        [
+            {
+                "code": "000001",
+                "name": "平安银行",
+                "price": 12.3,
+                "change_pct": 4.5,
+                "turnover_pct": 3.2,
+                "amount": 300000000,
+                "volume_ratio": 0,
+                "speed": 0,
+            }
+        ]
+    )
+    assert "volume_ratio" in missing_metric_warning and "speed" in missing_metric_warning
     oversized_items = [
         {
             "code": f"30{i:04d}",

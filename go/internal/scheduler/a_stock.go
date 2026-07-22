@@ -121,7 +121,7 @@ func (w *Worker) runAStockDailyBacktestRefresh(ctx context.Context) error {
 }
 
 func (w *Worker) runAStockDailyBacktestRefreshForDate(ctx context.Context, strategyDate string, previousTradingDays int) error {
-	return w.runAStockBacktestRefreshForDate(ctx, strategyDate, previousTradingDays, []string{"morning", "afternoon"}, "a-stock daily backtest refresh")
+	return w.runAStockBacktestRefreshForDate(ctx, strategyDate, previousTradingDays, []string{"morning", "afternoon", "evening"}, "a-stock daily backtest refresh")
 }
 
 func (w *Worker) runAStockBacktestRefreshForDate(ctx context.Context, strategyDate string, previousTradingDays int, periods []string, label string) error {
@@ -1399,22 +1399,25 @@ func (w *Worker) runAStockRecommendationForDate(ctx context.Context, strategyDat
 	if err != nil {
 		return err
 	}
-	crawlSummary, err := w.crawlAStockRecommendationSources(ctx, strategyDate, period, normalizedPhase, start, end, "a-stock recommendation")
-	if err != nil {
-		return err
-	}
-	resp, err := w.client.R().
-		SetContext(ctx).
-		SetQueryParam("page", "1").
-		SetQueryParam("page_size", "200").
-		SetQueryParam("start", start.UTC().Format(time.RFC3339)).
-		SetQueryParam("end", end.UTC().Format(time.RFC3339)).
-		Get(w.cfg.ContentURL + "/api/v1/articles")
-	if err != nil {
-		return err
-	}
-	if !resp.IsSuccess() {
-		return fmt.Errorf("a-stock %s recommendation content warmup failed: %s", label, resp.Status())
+	crawlSummary := aStockRecommendationCrawlSummary{}
+	if normalizeAStockRecommendationPeriod(period) != "evening" {
+		crawlSummary, err = w.crawlAStockRecommendationSources(ctx, strategyDate, period, normalizedPhase, start, end, "a-stock recommendation")
+		if err != nil {
+			return err
+		}
+		resp, err := w.client.R().
+			SetContext(ctx).
+			SetQueryParam("page", "1").
+			SetQueryParam("page_size", "200").
+			SetQueryParam("start", start.UTC().Format(time.RFC3339)).
+			SetQueryParam("end", end.UTC().Format(time.RFC3339)).
+			Get(w.cfg.ContentURL + "/api/v1/articles")
+		if err != nil {
+			return err
+		}
+		if !resp.IsSuccess() {
+			return fmt.Errorf("a-stock %s recommendation content warmup failed: %s", label, resp.Status())
+		}
 	}
 	refreshMode := ""
 	if normalizeAStockRecommendationPeriod(period) == "morning" && normalizedPhase == "final" {
@@ -1647,7 +1650,16 @@ func normalizeAStockRecommendationDate(strategyDate string) string {
 }
 
 func normalizeAStockRecommendationPeriod(period string) string {
-	return strings.TrimSpace(period)
+	switch strings.ToLower(strings.TrimSpace(period)) {
+	case "after", "pm":
+		return "afternoon"
+	case "evening", "night", "pm2":
+		return "evening"
+	case "afternoon":
+		return "afternoon"
+	default:
+		return "morning"
+	}
 }
 
 func normalizeAStockRecommendationPhase(phase string) string {
@@ -1851,7 +1863,7 @@ func aStockRecommendationWindow(strategyDate string, period string, phase string
 		return time.Time{}, time.Time{}, "", err
 	}
 	normalizedPhase := normalizeAStockRecommendationPhase(phase)
-	switch period {
+	switch normalizeAStockRecommendationPeriod(period) {
 	case "afternoon":
 		if normalizedPhase == "preopen" {
 			return time.Date(day.Year(), day.Month(), day.Day(), 9, 30, 0, 0, location),
@@ -1861,6 +1873,10 @@ func aStockRecommendationWindow(strategyDate string, period string, phase string
 		return time.Date(day.Year(), day.Month(), day.Day(), 9, 30, 0, 0, location),
 			time.Date(day.Year(), day.Month(), day.Day(), 13, 0, 59, 0, location),
 			"09:30-13:00:59", nil
+	case "evening":
+		return time.Date(day.Year(), day.Month(), day.Day(), 15, 0, 0, 0, location),
+			time.Date(day.Year(), day.Month(), day.Day(), 18, 30, 59, 0, location),
+			"15:00-18:30:59", nil
 	default:
 		if normalizedPhase == "preopen" {
 			return time.Date(day.Year(), day.Month(), day.Day(), 8, 0, 0, 0, location),

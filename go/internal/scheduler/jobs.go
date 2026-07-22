@@ -463,6 +463,16 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 			},
 		}, "AStockDailyBacktestRefresh", "0 5 15 * * ?"),
 		withJobMeta(jobDefinition{
+			Name:        "a-stock-evening-recommendation",
+			Group:       "a-stock",
+			Description: "A股晚间推荐：18:30 按量比、涨跌幅、价格、换手率、成交额和涨速筛选推荐股票",
+			Interval:    24 * time.Hour,
+			Enabled:     true,
+			Run: func(ctx context.Context) error {
+				return w.runAStockRecommendation(ctx, "evening", "final")
+			},
+		}, "AStockEveningRecommendation", "0 30 18 * * ?"),
+		withJobMeta(jobDefinition{
 			Name:        "a-stock-exact-snapshot-backfill",
 			Group:       "a-stock",
 			Description: "A股精确快照补齐：按资金过滤开启/关闭状态自动生成缺失快照，页面日期切换保持只读",

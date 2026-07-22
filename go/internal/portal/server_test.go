@@ -1794,7 +1794,7 @@ func TestAStockStockGenerateActionsSelectPeriod(t *testing.T) {
 			fromPeriod: "morning",
 			action:     "refresh_backtest",
 			wantPeriod: "morning",
-			wantMsg:    "上午和下午消息回测已按当前推荐股票、13:01价格和行情收益重新刷新。",
+			wantMsg:    "上午、下午和晚间消息回测已按当前推荐股票、13:01价格和行情收益重新刷新。",
 		},
 		{
 			name:       "refresh current backtest",
@@ -2258,15 +2258,26 @@ func TestAStockBacktestPageGetUsesSnapshotOnly(t *testing.T) {
 			http.Error(w, "unexpected endpoint", http.StatusInternalServerError)
 			return
 		}
-		if got := r.URL.Query().Get("date"); got != "2026-06-30" {
-			http.Error(w, "unexpected date", http.StatusBadRequest)
-			return
-		}
-		switch r.URL.Query().Get("period") {
+		period := r.URL.Query().Get("period")
+		switch period {
 		case "morning":
+			if got := r.URL.Query().Get("date"); got != "2026-06-30" {
+				http.Error(w, "unexpected date", http.StatusBadRequest)
+				return
+			}
 			writeEnvelope(w, http.StatusOK, "ok", morningSnapshot)
 		case "afternoon":
+			if got := r.URL.Query().Get("date"); got != "2026-06-30" {
+				http.Error(w, "unexpected date", http.StatusBadRequest)
+				return
+			}
 			writeEnvelope(w, http.StatusOK, "ok", afternoonSnapshot)
+		case "evening":
+			if got := r.URL.Query().Get("date"); got != "2026-06-29" {
+				http.Error(w, "unexpected evening date", http.StatusBadRequest)
+				return
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
 		default:
 			http.Error(w, "unexpected period", http.StatusBadRequest)
 		}
@@ -2289,8 +2300,8 @@ func TestAStockBacktestPageGetUsesSnapshotOnly(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(requests) != 4 {
-		t.Fatalf("expected morning/afternoon snapshots plus two performance requests, got %d: %v", len(requests), requests)
+	if len(requests) != 5 {
+		t.Fatalf("expected morning/afternoon/evening snapshots plus two performance requests, got %d: %v", len(requests), requests)
 	}
 	periodHits := map[string]int{}
 	performanceHits := 0
@@ -2308,8 +2319,8 @@ func TestAStockBacktestPageGetUsesSnapshotOnly(t *testing.T) {
 		}
 		periodHits[u.Query().Get("period")]++
 	}
-	if periodHits["morning"] != 1 || periodHits["afternoon"] != 1 {
-		t.Fatalf("expected one morning and one afternoon snapshot request, got %v from %v", periodHits, requests)
+	if periodHits["morning"] != 1 || periodHits["afternoon"] != 1 || periodHits["evening"] != 1 {
+		t.Fatalf("expected one morning, afternoon, and evening snapshot request, got %v from %v", periodHits, requests)
 	}
 	if performanceHits != 2 {
 		t.Fatalf("expected official and shadow performance requests, got %d from %v", performanceHits, requests)
@@ -2536,7 +2547,7 @@ func TestAStockBacktestPagePostRedirectsBackToBacktest(t *testing.T) {
 		t.Fatalf("expected redirect back to /a-stock/backtest with state, got %q", loc)
 	}
 	decoded, _ := url.QueryUnescape(loc)
-	if !strings.Contains(decoded, "上午和下午消息回测已按当前推荐股票、13:01价格和行情收益重新刷新。") {
+	if !strings.Contains(decoded, "上午、下午和晚间消息回测已按当前推荐股票、13:01价格和行情收益重新刷新。") {
 		t.Fatalf("expected refresh backtest message, got %q", decoded)
 	}
 }
@@ -4585,6 +4596,8 @@ func TestAStockPageUsesValidSnapshotsBeforeSelections(t *testing.T) {
 				writeEnvelope(w, http.StatusOK, "ok", morningSnapshot)
 			case "afternoon":
 				writeEnvelope(w, http.StatusOK, "ok", afternoonSnapshot)
+			case "evening":
+				writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
 			default:
 				t.Fatalf("unexpected snapshot period: %s", r.URL.RawQuery)
 			}
@@ -5512,6 +5525,8 @@ func TestAStockContextRefreshDoesNotRefilterLockedAfternoonSelectionsByMorningQu
 						{Rank: 2, Code: "688367", Name: "工大高科", Hotspot: "机器人", MarketScore: 87, Reason: "locked-2"},
 					},
 				})
+			case "evening":
+				writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{Found: false})
 			default:
 				t.Fatalf("unexpected selection period: %s", r.URL.RawQuery)
 			}
@@ -5901,6 +5916,8 @@ func TestAStockPageRefreshAllBacktestsPersistsAfternoonBacktestUpdate(t *testing
 						{Rank: 1, Code: "002008", Name: "大族激光", Hotspot: "机器人", MarketScore: 87, Reason: "afternoon"},
 					},
 				})
+			case "evening":
+				writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{Found: false})
 			default:
 				t.Fatalf("unexpected selection period: %s", r.URL.RawQuery)
 			}
@@ -6044,6 +6061,8 @@ func TestAStockPageRefreshAllBacktestsSupplementsPartialCustomMarketHistory(t *t
 						{Rank: 1, Code: "002008", Name: "大族激光", Hotspot: "机器人", MarketScore: 87, Reason: "afternoon"},
 					},
 				})
+			case "evening":
+				writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{Found: false})
 			default:
 				t.Fatalf("unexpected selection period: %s", r.URL.RawQuery)
 			}
@@ -6187,6 +6206,8 @@ func TestAStockPageRefreshAllBacktestsSupplementsCurrentDayAfternoonBacktest(t *
 						{Rank: 1, Code: "300024", Name: "机器人", Hotspot: "人工智能", MarketScore: 92, Reason: "afternoon"},
 					},
 				})
+			case "evening":
+				writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{Found: false})
 			default:
 				t.Fatalf("unexpected selection period: %s", r.URL.RawQuery)
 			}
@@ -6437,6 +6458,8 @@ func TestAStockPageRefreshAllBacktestsPreservesPersistedAfternoonPrices(t *testi
 						{Rank: 1, Code: "002008", Name: "大族激光", Hotspot: "机器人", MarketScore: 87, Reason: "afternoon"},
 					},
 				})
+			case "evening":
+				writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{Found: false})
 			default:
 				t.Fatalf("unexpected selection period: %s", r.URL.RawQuery)
 			}
@@ -11819,6 +11842,8 @@ func TestAStockBacktestRepairStockNamesActionRepairsVisiblePeriods(t *testing.T)
 				Total: 1,
 				Items: []model.AStockCodeName{{Code: "000021", Name: "深科技", Source: "auction"}},
 			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/a-stock/recommendation-selections":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{Found: false})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/internal/a-stock/recommendation-selections":
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionUpsertResult{Updated: 1})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/internal/a-stock/recommendations":
@@ -11926,6 +11951,8 @@ func TestAStockBacktestRefreshCurrentOnBacktestPageRefreshesVisiblePeriodsWithDe
 				return
 			}
 			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/a-stock/recommendation-selections":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{Found: false})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/internal/a-stock/recommendations":
 			var snapshot model.AStockRecommendationSnapshot
 			if err := json.NewDecoder(r.Body).Decode(&snapshot); err != nil {

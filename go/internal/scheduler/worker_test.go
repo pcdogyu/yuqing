@@ -472,10 +472,10 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	if err := json.Unmarshal(listRR.Body.Bytes(), &listEnvelope); err != nil {
 		t.Fatalf("unmarshal jobs list: %v", err)
 	}
-	if len(listEnvelope.Data) != 46 {
-		t.Fatalf("expected 46 scheduler jobs, got %d", len(listEnvelope.Data))
+	if len(listEnvelope.Data) != 47 {
+		t.Fatalf("expected 47 scheduler jobs, got %d", len(listEnvelope.Data))
 	}
-	var heartbeatJob, hotJob, eastmoneyJob, eastmoneyFullJob, jin10FullJob, wallStreetCNJob, clsJob, sinaJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningNewsCrawlJob, aStockMorningPreviewJob, aStockMorningJob, aStockAfternoonPreviewJob, aStockMiddayNewsCrawlJob, aStockAfternoonJob, aStockAfternoonOpenRefreshJob, aStockDailyBacktestRefreshJob, aStockExactSnapshotBackfillJob, hotspotSwitchingSnapshotJob, aStockAuctionJob, aStockSectorFundFlowJob, aStockSectorFundFlowIntradayJob, aStockHoldingsJob, stockResearchJob, stockResearchNLPJob, investorRelationsJob Job
+	var heartbeatJob, hotJob, eastmoneyJob, eastmoneyFullJob, jin10FullJob, wallStreetCNJob, clsJob, sinaJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningNewsCrawlJob, aStockMorningPreviewJob, aStockMorningJob, aStockAfternoonPreviewJob, aStockMiddayNewsCrawlJob, aStockAfternoonJob, aStockAfternoonOpenRefreshJob, aStockDailyBacktestRefreshJob, aStockEveningJob, aStockExactSnapshotBackfillJob, hotspotSwitchingSnapshotJob, aStockAuctionJob, aStockSectorFundFlowJob, aStockSectorFundFlowIntradayJob, aStockHoldingsJob, stockResearchJob, stockResearchNLPJob, investorRelationsJob Job
 	aStockSectorFundFlowJobCount := 0
 	aStockSectorFundFlowIntradayJobCount := 0
 	for _, job := range listEnvelope.Data {
@@ -524,6 +524,8 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 			aStockAfternoonOpenRefreshJob = job
 		case "a-stock-daily-backtest-refresh":
 			aStockDailyBacktestRefreshJob = job
+		case "a-stock-evening-recommendation":
+			aStockEveningJob = job
 		case "a-stock-exact-snapshot-backfill":
 			aStockExactSnapshotBackfillJob = job
 		case "hotspot-switching-snapshot-refresh":
@@ -605,6 +607,9 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	}
 	if aStockDailyBacktestRefreshJob.Cron != "0 5 15 * * ?" || aStockDailyBacktestRefreshJob.NextRunAt == nil {
 		t.Fatalf("expected A股 daily backtest refresh cron metadata, got %+v", aStockDailyBacktestRefreshJob)
+	}
+	if aStockEveningJob.JavaQuartzName != "AStockEveningRecommendation" || aStockEveningJob.Cron != "0 30 18 * * ?" || aStockEveningJob.NextRunAt == nil {
+		t.Fatalf("expected A股 evening recommendation cron metadata, got %+v", aStockEveningJob)
 	}
 	if aStockExactSnapshotBackfillJob.Cron != "0 29 2 * * ?; 0 29 9 * * ?; 0 59 12 * * ?; 0 35 15 * * ?" || aStockExactSnapshotBackfillJob.NextRunAt == nil {
 		t.Fatalf("expected A股 exact snapshot backfill cron metadata, got %+v", aStockExactSnapshotBackfillJob)
@@ -825,6 +830,57 @@ func TestRunAStockRecommendationGeneratesMorningSnapshot(t *testing.T) {
 	}
 }
 
+func TestRunAStockEveningRecommendationGeneratesWithoutNewsWarmup(t *testing.T) {
+	t.Setenv("YUQING_A_STOCK_NEWS_SOURCE_CONFIG", filepath.Join(t.TempDir(), "sources.json"))
+	var generatedPeriod string
+	var generatedPhase string
+	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/a-stock/trading-day" {
+			t.Fatalf("unexpected akshare request: %s", r.URL.String())
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"date":           "2026-06-16",
+			"is_trading_day": true,
+			"source":         "test",
+			"reason":         "trading_day",
+			"message":        "open",
+		})
+	}))
+	defer akshare.Close()
+	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("evening recommendation should not crawl news: %s", r.URL.String())
+	}))
+	defer crawler.Close()
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("evening recommendation should not warm up articles: %s", r.URL.String())
+	}))
+	defer content.Close()
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/internal/a-stock/recommendations/generate" {
+			t.Fatalf("unexpected gateway request: %s %s", r.Method, r.URL.String())
+		}
+		generatedPeriod = r.URL.Query().Get("period")
+		generatedPhase = r.URL.Query().Get("phase")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer gateway.Close()
+
+	worker := NewWorker(config.Config{
+		AStockAuctionURL:      akshare.URL,
+		CrawlerURL:            crawler.URL,
+		ContentURL:            content.URL,
+		GatewayWebURL:         gateway.URL,
+		HTTPTimeout:           time.Second,
+		SchedulerCrawlTimeout: time.Second,
+	})
+	if err := worker.runAStockRecommendationForDate(context.Background(), "2026-06-16", "evening", "final"); err != nil {
+		t.Fatalf("runAStockRecommendationForDate evening error: %v", err)
+	}
+	if generatedPeriod != "evening" || generatedPhase != "final" {
+		t.Fatalf("expected evening final generation, got period=%q phase=%q", generatedPeriod, generatedPhase)
+	}
+}
+
 func TestRunAStockWindowNewsCrawlForDateCrawlsMorningSourcesOnly(t *testing.T) {
 	t.Setenv("YUQING_A_STOCK_NEWS_SOURCE_CONFIG", filepath.Join(t.TempDir(), "sources.json"))
 	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -937,6 +993,7 @@ func TestAStockRecommendationWindowUsesPhase(t *testing.T) {
 		{name: "morning final", period: "morning", phase: "final", wantStart: "08:00:00", wantEnd: "09:26:59", wantLabel: "08:00-09:26:59"},
 		{name: "afternoon preopen", period: "afternoon", phase: "preopen", wantStart: "09:30:00", wantEnd: "12:56:59", wantLabel: "09:30-12:56:59"},
 		{name: "afternoon final", period: "afternoon", phase: "final", wantStart: "09:30:00", wantEnd: "13:00:59", wantLabel: "09:30-13:00:59"},
+		{name: "evening final", period: "evening", phase: "final", wantStart: "15:00:00", wantEnd: "18:30:59", wantLabel: "15:00-18:30:59"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1241,12 +1298,12 @@ func TestRunAStockDailyBacktestRefreshForDateRefreshesCurrentAndPreviousTradingD
 		t.Fatalf("runAStockDailyBacktestRefreshForDate error: %v", err)
 	}
 	expected := []string{
-		"2026-06-22/morning", "2026-06-22/afternoon",
-		"2026-06-19/morning", "2026-06-19/afternoon",
-		"2026-06-18/morning", "2026-06-18/afternoon",
-		"2026-06-17/morning", "2026-06-17/afternoon",
-		"2026-06-16/morning", "2026-06-16/afternoon",
-		"2026-06-15/morning", "2026-06-15/afternoon",
+		"2026-06-22/morning", "2026-06-22/afternoon", "2026-06-22/evening",
+		"2026-06-19/morning", "2026-06-19/afternoon", "2026-06-19/evening",
+		"2026-06-18/morning", "2026-06-18/afternoon", "2026-06-18/evening",
+		"2026-06-17/morning", "2026-06-17/afternoon", "2026-06-17/evening",
+		"2026-06-16/morning", "2026-06-16/afternoon", "2026-06-16/evening",
+		"2026-06-15/morning", "2026-06-15/afternoon", "2026-06-15/evening",
 	}
 	slices.Sort(gatewayCalls)
 	slices.Sort(expected)
@@ -1397,7 +1454,7 @@ func TestRunAStockDailyBacktestRefreshForDateContinuesAfterGatewayFailure(t *tes
 	if err == nil || !strings.Contains(err.Error(), "2026-06-19/afternoon") {
 		t.Fatalf("expected aggregated failure mentioning 2026-06-19/afternoon, got %v", err)
 	}
-	expected := []string{"2026-06-22/morning", "2026-06-22/afternoon", "2026-06-19/morning", "2026-06-19/afternoon"}
+	expected := []string{"2026-06-22/morning", "2026-06-22/afternoon", "2026-06-22/evening", "2026-06-19/morning", "2026-06-19/afternoon", "2026-06-19/evening"}
 	slices.Sort(gatewayCalls)
 	slices.Sort(expected)
 	if !slices.Equal(gatewayCalls, expected) {
