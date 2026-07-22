@@ -472,10 +472,10 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	if err := json.Unmarshal(listRR.Body.Bytes(), &listEnvelope); err != nil {
 		t.Fatalf("unmarshal jobs list: %v", err)
 	}
-	if len(listEnvelope.Data) != 45 {
-		t.Fatalf("expected 45 scheduler jobs, got %d", len(listEnvelope.Data))
+	if len(listEnvelope.Data) != 46 {
+		t.Fatalf("expected 46 scheduler jobs, got %d", len(listEnvelope.Data))
 	}
-	var heartbeatJob, hotJob, eastmoneyJob, eastmoneyFullJob, jin10FullJob, wallStreetCNJob, clsJob, sinaJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningNewsCrawlJob, aStockMorningPreviewJob, aStockMorningJob, aStockAfternoonPreviewJob, aStockMiddayNewsCrawlJob, aStockAfternoonJob, aStockAfternoonOpenRefreshJob, aStockDailyBacktestRefreshJob, aStockExactSnapshotBackfillJob, hotspotSwitchingSnapshotJob, aStockAuctionJob, aStockSectorFundFlowJob, aStockSectorFundFlowIntradayJob, aStockHoldingsJob, stockResearchJob, investorRelationsJob Job
+	var heartbeatJob, hotJob, eastmoneyJob, eastmoneyFullJob, jin10FullJob, wallStreetCNJob, clsJob, sinaJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningNewsCrawlJob, aStockMorningPreviewJob, aStockMorningJob, aStockAfternoonPreviewJob, aStockMiddayNewsCrawlJob, aStockAfternoonJob, aStockAfternoonOpenRefreshJob, aStockDailyBacktestRefreshJob, aStockExactSnapshotBackfillJob, hotspotSwitchingSnapshotJob, aStockAuctionJob, aStockSectorFundFlowJob, aStockSectorFundFlowIntradayJob, aStockHoldingsJob, stockResearchJob, stockResearchNLPJob, investorRelationsJob Job
 	aStockSectorFundFlowJobCount := 0
 	aStockSectorFundFlowIntradayJobCount := 0
 	for _, job := range listEnvelope.Data {
@@ -540,6 +540,8 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 			aStockHoldingsJob = job
 		case "stock-research-crawl":
 			stockResearchJob = job
+		case "stock-research-nlp-parse":
+			stockResearchNLPJob = job
 		case "investor-relations-crawl":
 			investorRelationsJob = job
 		}
@@ -630,6 +632,9 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	}
 	if stockResearchJob.Cron != "0 30 16 * * ?" || stockResearchJob.Enabled {
 		t.Fatalf("expected stock research crawl disabled by default in test config, got %+v", stockResearchJob)
+	}
+	if stockResearchNLPJob.JavaQuartzName != "StockResearchNLPParse" || stockResearchNLPJob.Cron != "0 50 16 * * ?" || stockResearchNLPJob.Enabled {
+		t.Fatalf("expected stock research nlp parse disabled without NLP URL, got %+v", stockResearchNLPJob)
 	}
 	if investorRelationsJob.Cron != "0 45 16 * * ?" || investorRelationsJob.Enabled {
 		t.Fatalf("expected investor relations crawl disabled by default in test config, got %+v", investorRelationsJob)
@@ -3263,6 +3268,32 @@ func TestSchedulerAStockHoldingsJobEnabledWhenEndpointConfigured(t *testing.T) {
 	}
 	if !holdingsJob.Enabled || holdingsJob.Cron != "0 35 2 * * ?" || holdingsJob.NextRunAt == nil {
 		t.Fatalf("expected enabled A股 holdings crawl with 02:35 cron, got %+v", holdingsJob)
+	}
+}
+
+func TestSchedulerStockResearchNLPJobEnabledWhenConfigured(t *testing.T) {
+	worker := NewWorker(config.Config{
+		HTTPTimeout:           time.Second,
+		ContentURL:            "http://content.example",
+		NLPURL:                "http://nlp.example",
+		FlashInterval:         time.Hour,
+		HeadlineInterval:      time.Hour,
+		AnalysisInterval:      time.Hour,
+		WechatCleanupInterval: time.Hour,
+		WechatPushInterval:    time.Hour,
+	})
+	var nlpJob Job
+	for _, job := range worker.Jobs() {
+		if job.Name == "stock-research-nlp-parse" {
+			nlpJob = job
+			break
+		}
+	}
+	if nlpJob.Name == "" {
+		t.Fatalf("expected stock research nlp parse job")
+	}
+	if !nlpJob.Enabled || nlpJob.Cron != "0 50 16 * * ?" || nlpJob.IntervalSec != 86400 || nlpJob.NextRunAt == nil {
+		t.Fatalf("expected enabled stock research nlp parse job, got %+v", nlpJob)
 	}
 }
 

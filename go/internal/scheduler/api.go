@@ -208,14 +208,15 @@ func (w *Worker) handleRunStockResearchNLPParse(wr http.ResponseWriter, r *http.
 		id = parsedID
 	}
 	opts := stockResearchNLPParseOptions{
-		ID:      id,
-		Code:    strings.TrimSpace(r.URL.Query().Get("code")),
-		Company: strings.TrimSpace(r.URL.Query().Get("company")),
-		Kind:    strings.TrimSpace(r.URL.Query().Get("kind")),
-		Source:  strings.TrimSpace(r.URL.Query().Get("source")),
-		Start:   strings.TrimSpace(r.URL.Query().Get("start")),
-		End:     strings.TrimSpace(r.URL.Query().Get("end")),
-		DryRun:  parseBoolQuery(r, "dry_run"),
+		ID:          id,
+		Code:        strings.TrimSpace(r.URL.Query().Get("code")),
+		Company:     strings.TrimSpace(r.URL.Query().Get("company")),
+		Kind:        strings.TrimSpace(r.URL.Query().Get("kind")),
+		Source:      strings.TrimSpace(r.URL.Query().Get("source")),
+		Start:       strings.TrimSpace(r.URL.Query().Get("start")),
+		End:         strings.TrimSpace(r.URL.Query().Get("end")),
+		DryRun:      parseBoolQuery(r, "dry_run"),
+		OnlyMissing: parseBoolQuery(r, "only_missing"),
 	}
 	startedAt := time.Now().UTC()
 	result, err := w.runStockResearchNLPParse(r.Context(), opts)

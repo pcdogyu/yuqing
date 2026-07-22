@@ -523,6 +523,16 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 			},
 		}, "StockResearchCrawl", "0 30 16 * * ?"),
 		withJobMeta(jobDefinition{
+			Name:        "stock-research-nlp-parse",
+			Group:       "a-stock",
+			Description: "上市公司研报 NLP 补解析：每日补最近 30 天未评分研报",
+			Interval:    24 * time.Hour,
+			Enabled:     strings.TrimSpace(w.cfg.ContentURL) != "" && strings.TrimSpace(w.cfg.NLPURL) != "",
+			Run: func(ctx context.Context) error {
+				return w.runStockResearchScheduledNLPParse(ctx)
+			},
+		}, "StockResearchNLPParse", "0 50 16 * * ?"),
+		withJobMeta(jobDefinition{
 			Name:        "investor-relations-crawl",
 			Group:       "a-stock",
 			Description: "CNINFO 投资者关系活动记录抓取，下载 PDF 并解析文本评分",

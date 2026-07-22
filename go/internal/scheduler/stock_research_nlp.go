@@ -12,14 +12,15 @@ import (
 )
 
 type stockResearchNLPParseOptions struct {
-	ID      int64
-	Code    string
-	Company string
-	Kind    string
-	Source  string
-	Start   string
-	End     string
-	DryRun  bool
+	ID          int64
+	Code        string
+	Company     string
+	Kind        string
+	Source      string
+	Start       string
+	End         string
+	DryRun      bool
+	OnlyMissing bool
 }
 
 type stockResearchNLPParseResult struct {
@@ -43,6 +44,9 @@ func (w *Worker) runStockResearchNLPParse(ctx context.Context, opts stockResearc
 	})
 	if err != nil {
 		return stockResearchNLPParseResult{}, err
+	}
+	if opts.OnlyMissing {
+		items = filterStockResearchNLPMissingItems(items)
 	}
 	result := stockResearchNLPParseResult{Total: len(items), DryRun: opts.DryRun}
 	if !opts.DryRun && len(items) > 0 && strings.TrimSpace(w.cfg.NLPURL) == "" {
@@ -83,6 +87,35 @@ func (w *Worker) runStockResearchNLPParse(ctx context.Context, opts stockResearc
 		return result, errors.New(strings.Join(errs, "; "))
 	}
 	return result, nil
+}
+
+func (w *Worker) runStockResearchScheduledNLPParse(ctx context.Context) error {
+	end := stockResearchToday()
+	start := end.AddDate(0, 0, -30)
+	result, err := w.runStockResearchNLPParse(ctx, stockResearchNLPParseOptions{
+		Kind:        "report",
+		Start:       start.Format("2006-01-02"),
+		End:         end.Format("2006-01-02"),
+		OnlyMissing: true,
+	})
+	if err != nil {
+		return err
+	}
+	if result.Failed > 0 {
+		return fmt.Errorf("stock research scheduled nlp parse failed: total=%d scored=%d no_text=%d failed=%d", result.Total, result.Scored, result.NoText, result.Failed)
+	}
+	return nil
+}
+
+func filterStockResearchNLPMissingItems(items []model.StockResearchSurvey) []model.StockResearchSurvey {
+	out := make([]model.StockResearchSurvey, 0, len(items))
+	for _, item := range items {
+		if strings.TrimSpace(item.NLPScoredAt) != "" {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func stockResearchNLPText(item model.StockResearchSurvey) (string, string) {

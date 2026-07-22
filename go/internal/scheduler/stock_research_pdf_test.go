@@ -429,6 +429,77 @@ func TestRunStockResearchNLPParseScoresSourceText(t *testing.T) {
 	}
 }
 
+func TestRunStockResearchNLPParseOnlyMissingSkipsScoredItems(t *testing.T) {
+	nlpCalls := 0
+	nlp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		nlpCalls++
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/nlp/stock-score" {
+			t.Fatalf("unexpected nlp request: %s %s", r.Method, r.URL.String())
+		}
+		var req model.NLPStockScoreRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode nlp request: %v", err)
+		}
+		if req.Code != "600026" || !strings.Contains(req.Text, "油运景气持续") {
+			t.Fatalf("unexpected nlp request payload: %+v", req)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": model.NLPStockScoreResponse{Score: 82, Rating: "积极", Reason: "盈利改善", Status: "ok"}})
+	}))
+	defer nlp.Close()
+
+	var captured []model.StockResearchNLPUpdate
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/stock-research":
+			if r.URL.Query().Get("kind") != "report" || r.URL.Query().Get("start") != "2026-07-01" || r.URL.Query().Get("end") != "2026-07-22" {
+				t.Fatalf("unexpected stock research query: %s", r.URL.RawQuery)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockResearchListResult{
+				Page: 1, PageSize: 200, Total: 3,
+				Items: []model.StockResearchSurvey{
+					{ID: 4900, Code: "600026", Name: "中远海能", Kind: "report", Title: "油运景气持续", SourceText: "油运景气持续，盈利改善。", NLPScoredAt: ""},
+					{ID: 4901, Code: "002230", Name: "科大讯飞", Kind: "report", Title: "AI 业务增长", SourceText: "已有评分正文", NLPScoredAt: "2026-07-20T01:00:00Z"},
+					{ID: 4902, Code: "000001", Name: "平安银行", Kind: "report", Title: "无正文", NLPScoredAt: ""},
+				},
+			}})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/internal/stock-research/4900/nlp":
+			var update model.StockResearchNLPUpdate
+			if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
+				t.Fatalf("decode captured nlp update: %v", err)
+			}
+			captured = append(captured, update)
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": update})
+		default:
+			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	worker := NewWorker(config.Config{
+		ContentURL:          content.URL,
+		NLPURL:              nlp.URL,
+		HTTPTimeout:         time.Second,
+		ExternalRetryWait:   time.Millisecond,
+		StockResearchPDFDir: t.TempDir(),
+	})
+	result, err := worker.runStockResearchNLPParse(context.Background(), stockResearchNLPParseOptions{
+		Kind:        "report",
+		Start:       "2026-07-01",
+		End:         "2026-07-22",
+		OnlyMissing: true,
+	})
+	if err != nil {
+		t.Fatalf("runStockResearchNLPParse only missing error: %v", err)
+	}
+	if result.Total != 2 || result.Scored != 1 || result.NoText != 1 || result.Failed != 0 {
+		t.Fatalf("unexpected only-missing nlp parse result: %+v", result)
+	}
+	if nlpCalls != 1 || len(captured) != 1 || captured[0].NLPScore != 82 || captured[0].NLPScoredAt == "" {
+		t.Fatalf("unexpected only-missing calls=%d updates=%+v", nlpCalls, captured)
+	}
+}
+
 func TestSchedulerStockResearchPDFParseEndpoint(t *testing.T) {
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -464,7 +535,17 @@ func TestSchedulerStockResearchNLPParseEndpoint(t *testing.T) {
 		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/stock-research" {
 			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockResearchListResult{Page: 1, PageSize: 200, Total: 0}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockResearchListResult{
+			Page: 1, PageSize: 200, Total: 1,
+			Items: []model.StockResearchSurvey{{
+				ID:          4900,
+				Code:        "002230",
+				Kind:        "report",
+				Title:       "已有评分研报",
+				SourceText:  "已有评分正文",
+				NLPScoredAt: "2026-07-20T01:00:00Z",
+			}},
+		}})
 	}))
 	defer content.Close()
 
@@ -478,7 +559,7 @@ func TestSchedulerStockResearchNLPParseEndpoint(t *testing.T) {
 		StockResearchPDFDir: t.TempDir(),
 	})
 	router := worker.Router()
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/stock-research/nlp/parse?code=002230", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/stock-research/nlp/parse?code=002230&only_missing=true", nil)
 	req.Header.Set("X-Service-Token", "secret-token")
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
