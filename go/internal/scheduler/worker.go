@@ -25,6 +25,7 @@ type Worker struct {
 	cfg                    config.Config
 	client                 *resty.Client
 	crawlClient            *resty.Client
+	holdingClient          *resty.Client
 	stockResearchPDFClient *resty.Client
 	store                  *sqlitestore.Store
 	mu                     sync.Mutex
@@ -48,6 +49,9 @@ func NewWorker(cfg config.Config) *Worker {
 			SetHeader("X-Service-Token", cfg.ServiceToken),
 		crawlClient: resty.New().
 			SetTimeout(crawlTimeout).
+			SetHeader("X-Service-Token", cfg.ServiceToken),
+		holdingClient: resty.New().
+			SetTimeout(aStockHoldingsHTTPTimeout(crawlTimeout)).
 			SetHeader("X-Service-Token", cfg.ServiceToken),
 		stockResearchPDFClient: resty.New().
 			SetTimeout(stockResearchPDFContentTimeout).

@@ -36,6 +36,9 @@ func TestNewWorkerSetsTokenHeader(t *testing.T) {
 	if got := worker.crawlClient.Header.Get("X-Service-Token"); got != "secret-token" {
 		t.Fatalf("expected crawl service token header, got %q", got)
 	}
+	if got := worker.holdingClient.Header.Get("X-Service-Token"); got != "secret-token" {
+		t.Fatalf("expected holding service token header, got %q", got)
+	}
 }
 
 func TestRunCrawlUsesDedicatedTimeout(t *testing.T) {
@@ -2623,7 +2626,7 @@ func TestRunAStockHoldingsBackfillFetchesExternalAndWritesContent(t *testing.T) 
 	}
 }
 
-func TestRunAStockHoldingsBackfillUsesCrawlTimeout(t *testing.T) {
+func TestRunAStockHoldingsBackfillUsesHoldingTimeout(t *testing.T) {
 	external := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(50 * time.Millisecond)
 		w.Header().Set("Content-Type", "application/json")
@@ -2655,7 +2658,19 @@ func TestRunAStockHoldingsBackfillUsesCrawlTimeout(t *testing.T) {
 		SchedulerCrawlTimeout: time.Second,
 	})
 	if err := worker.runAStockHoldingsBackfill(context.Background(), aStockHoldingCrawlOptions{Period: "20260331"}); err != nil {
-		t.Fatalf("runAStockHoldingsBackfill should use scheduler crawl timeout, got %v", err)
+		t.Fatalf("runAStockHoldingsBackfill should use dedicated holding timeout, got %v", err)
+	}
+}
+
+func TestAStockHoldingsTimeoutsAllowFullMarketBackfill(t *testing.T) {
+	if got := aStockHoldingsHTTPTimeout(time.Second); got < 30*time.Minute {
+		t.Fatalf("expected holdings request timeout to be at least 30m, got %s", got)
+	}
+	if got := aStockHoldingsBackfillTimeout(time.Second, aStockHoldingCrawlOptions{}); got < 2*time.Hour {
+		t.Fatalf("expected default holdings backfill timeout to be at least 2h, got %s", got)
+	}
+	if got := aStockHoldingsBackfillTimeout(time.Second, aStockHoldingCrawlOptions{StartPeriod: "20250930", EndPeriod: "20260630"}); got < 2*time.Hour {
+		t.Fatalf("expected year holdings backfill timeout to be at least 2h, got %s", got)
 	}
 }
 

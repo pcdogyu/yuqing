@@ -330,13 +330,13 @@ func renderAStockHoldingFilters(b *strings.Builder, ctx model.StockInstitutionHo
 		b.WriteString(html.EscapeString(value))
 		b.WriteString(`">`)
 	}
-	b.WriteString(`<button type="submit">回补当前筛选持仓</button></form><form method="post"><input type="hidden" name="action" value="backfill_all"><button class="holding-danger" type="submit">抓取全量股票历史持仓</button></form></div><p class="holding-muted">全量抓取会调用 scheduler 的机构持仓回补接口，不带股票代码时按最近可用报告期抓取全市场数据。</p></section>`)
+	b.WriteString(`<button type="submit">回补当前筛选持仓</button></form><form method="post"><input type="hidden" name="action" value="backfill_all"><button class="holding-danger" type="submit">回补近一年全市场</button></form></div><p class="holding-muted">近一年全市场回补会调用 scheduler 的机构持仓回补接口，不带股票代码时默认抓取最近 4 个可用报告期，用于跨季度对比。</p></section>`)
 }
 
 func renderAStockHoldingTable(b *strings.Builder, ctx model.StockInstitutionHoldingListResult) {
 	b.WriteString(`<section><h2>持仓明细</h2><div class="holding-scroll"><table class="holding-table"><tr><th>报告期</th><th>股票</th><th>持有人</th><th>类型</th><th>基金公司</th><th>披露口径</th><th>排名</th><th>持股数</th><th>变化</th><th>变化比例</th><th>流通占比</th><th>持股市值</th><th>公告日</th><th>来源</th></tr>`)
 	if len(ctx.Items) == 0 {
-		b.WriteString(`<tr><td colspan="14">暂无机构持仓数据，请点击“抓取全量股票历史持仓”或配置定时抓取任务。</td></tr>`)
+		b.WriteString(`<tr><td colspan="14">暂无机构持仓数据，请点击“回补近一年全市场”或配置定时抓取任务。</td></tr>`)
 	} else {
 		for _, item := range ctx.Items {
 			b.WriteString(`<tr><td>`)
@@ -468,6 +468,9 @@ func (s *Server) triggerAStockHoldingsBackfill(filter model.StockInstitutionHold
 	}
 	if !resp.IsSuccess() {
 		return "机构持仓回补失败：" + stockResearchSchedulerError(resp.Body(), resp.String())
+	}
+	if filter.Code == "" && filter.Period == "" {
+		return "近一年全市场机构持仓回补任务已触发，请稍后刷新查看。"
 	}
 	return "机构持仓回补任务已触发，请稍后刷新查看。"
 }
