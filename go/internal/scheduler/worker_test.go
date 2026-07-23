@@ -2560,21 +2560,31 @@ func TestRunAStockAuctionCrawlRejectsZeroAmountPayload(t *testing.T) {
 
 func TestRunAStockHoldingsBackfillFetchesExternalAndWritesContent(t *testing.T) {
 	var contentPayload struct {
-		Items []model.StockInstitutionHolding `json:"items"`
+		Items   []model.StockInstitutionHolding    `json:"items"`
+		Reports []model.StockHoldingReportDocument `json:"reports"`
 	}
 	external := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/a-stock/holdings" || r.URL.Query().Get("period") != "20260331" || r.URL.Query().Get("code") != "002230" || r.URL.Query().Get("tushare_token") != "token" {
 			t.Fatalf("unexpected external holdings request: %s", r.URL.String())
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"items": []model.StockInstitutionHolding{{
-			StockCode:    "002230",
-			StockName:    "科大讯飞",
-			ReportPeriod: "20260331",
-			HolderName:   "易方达基金",
-			HolderType:   "fund",
-			SourceType:   "stock_institute_hold_detail",
-		}}})
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"items": []model.StockInstitutionHolding{{
+				StockCode:    "002230",
+				StockName:    "科大讯飞",
+				ReportPeriod: "20260331",
+				HolderName:   "易方达基金",
+				HolderType:   "fund",
+				SourceType:   "stock_institute_hold_detail",
+			}},
+			"reports": []model.StockHoldingReportDocument{{
+				SourceType:        "tiantian_fund_regular_report",
+				SourceKey:         "report-1",
+				ReportPeriod:      "20260331",
+				FundCode:          "110001",
+				AnnouncementTitle: "易方达蓝筹精选2026年第1季度报告",
+			}},
+		})
 	}))
 	defer external.Close()
 
@@ -2607,6 +2617,9 @@ func TestRunAStockHoldingsBackfillFetchesExternalAndWritesContent(t *testing.T) 
 	}
 	if len(contentPayload.Items) != 1 || contentPayload.Items[0].StockCode != "002230" || contentPayload.Items[0].ReportPeriod != "20260331" {
 		t.Fatalf("unexpected holdings content payload: %+v", contentPayload)
+	}
+	if len(contentPayload.Reports) != 1 || contentPayload.Reports[0].SourceKey != "report-1" || contentPayload.Reports[0].ReportPeriod != "20260331" {
+		t.Fatalf("unexpected holdings report content payload: %+v", contentPayload)
 	}
 }
 

@@ -1654,28 +1654,32 @@ func TestAStockHoldingsPageLoadsSummaryRowsAndFilters(t *testing.T) {
 				HolderTypes: []string{"fund"},
 				Sources:     []string{"stock_institute_hold_detail"},
 				Items: []model.StockInstitutionHolding{{
-					StockCode:    "002230",
-					StockName:    "科大讯飞",
-					ReportPeriod: "20260331",
-					HolderName:   "易方达基金",
-					HolderType:   "fund",
-					Shares:       1000,
-					FloatRatio:   1.5,
-					SourceType:   "stock_institute_hold_detail",
+					StockCode:       "002230",
+					StockName:       "科大讯飞",
+					ReportPeriod:    "20260331",
+					HolderName:      "易方达基金",
+					HolderType:      "fund",
+					FundCompany:     "易方达基金管理有限公司",
+					DisclosureScope: "fund_quarterly",
+					Shares:          1000,
+					FloatRatio:      1.5,
+					SourceType:      "stock_institute_hold_detail",
+					SourceURL:       "https://example.com/holding",
 				}},
 			}})
 		case "/api/v1/a-stock/holdings/summary":
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockInstitutionHoldingSummary{
-				StockCode:       "002230",
-				ReportPeriod:    "20260331",
-				HolderCount:     2,
-				FundCount:       1,
-				HolderTypeCount: 2,
-				TotalShares:     3000,
-				TotalFloatRatio: 3.5,
-				MaxHolderName:   "易方达基金",
-				MaxHolderType:   "fund",
-				MaxHolderShares: 1000,
+				StockCode:        "002230",
+				ReportPeriod:     "20260331",
+				HolderCount:      2,
+				FundCount:        1,
+				HolderTypeCount:  2,
+				FundCompanyCount: 1,
+				TotalShares:      3000,
+				TotalFloatRatio:  3.5,
+				MaxHolderName:    "易方达基金",
+				MaxHolderType:    "fund",
+				MaxHolderShares:  1000,
 			}})
 		case "/api/v1/a-stock/holdings/signals":
 			if r.URL.Query().Get("code") != "002230" || r.URL.Query().Get("period") != "20260331" {
@@ -1695,18 +1699,44 @@ func TestAStockHoldingsPageLoadsSummaryRowsAndFilters(t *testing.T) {
 					FloatRatioChange:  3,
 				},
 				Items: []model.StockInstitutionHoldingSignal{{
-					StockCode:         "002230",
-					StockName:         "科大讯飞",
-					CurrentPeriod:     "20260331",
-					PreviousPeriod:    "20251231",
-					HolderCountChange: 5,
-					FundCountChange:   3,
-					FloatRatioChange:  4,
-					SharesChange:      6000,
-					MarketValueChange: 120000,
-					NewMajorHolders:   []string{"社保基金一一八组合"},
-					Level:             "medium",
-					Reason:            "机构数 +5，基金数 +3，流通占比 +4.00%",
+					StockCode:              "002230",
+					StockName:              "科大讯飞",
+					SignalType:             "new_entry",
+					CurrentPeriod:          "20260331",
+					PreviousPeriod:         "20251231",
+					HolderCountChange:      5,
+					NewHolderCount:         5,
+					FundCountChange:        3,
+					NewFundCount:           3,
+					FundCompanyCountChange: 1,
+					NewFundCompanyCount:    1,
+					FloatRatioChange:       4,
+					SharesChange:           6000,
+					MarketValueChange:      120000,
+					NewMajorHolders:        []string{"社保基金一一八组合"},
+					SourceTypes:            []string{"stock_institute_hold_detail"},
+					Level:                  "medium",
+					Reason:                 "新进披露机构 5 家，新进基金 3 只，流通占比 +4.00%",
+				}},
+			}})
+		case "/api/v1/a-stock/holding-reports":
+			if r.URL.Query().Get("period") != "20260331" {
+				t.Fatalf("unexpected holdings reports query: %s", r.URL.RawQuery)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockHoldingReportDocumentListResult{
+				Page:     1,
+				PageSize: 10,
+				Total:    1,
+				Items: []model.StockHoldingReportDocument{{
+					ReportPeriod:      "20260331",
+					FundCode:          "110001",
+					FundName:          "易方达蓝筹精选",
+					FundCompany:       "易方达基金管理有限公司",
+					AnnouncementTitle: "易方达蓝筹精选2026年第1季度报告",
+					AnnouncementDate:  "2026-04-22",
+					SourceType:        "tiantian_fund_regular_report",
+					SourceURL:         "https://example.com/report",
+					ParseStatus:       "indexed",
 				}},
 			}})
 		default:
@@ -1723,7 +1753,7 @@ func TestAStockHoldingsPageLoadsSummaryRowsAndFilters(t *testing.T) {
 		t.Fatalf("expected holdings page 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"机构持仓", "机构持仓异动", "2025-Q4 -> 2026-Q1", "社保基金一一八组合", "+4.00%", "共持摘要", "2026-Q1", "易方达基金", "基金", "3.50%", "抓取全量股票历史持仓"} {
+	for _, want := range []string{"机构持仓", "机构持仓异动", "新进", "退出披露名单", "2025-Q4 -> 2026-Q1", "社保基金一一八组合", "+4.00%", "共持摘要", "基金公司数", "2026-Q1", "易方达基金", "易方达基金管理有限公司", "基金季报索引", "易方达蓝筹精选2026年第1季度报告", "已索引", "3.50%", "抓取全量股票历史持仓"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected holdings page to contain %q, got %s", want, body)
 		}

@@ -139,6 +139,8 @@ type Store interface {
 	ListStockInstitutionHoldings(rctx context.Context, filter model.StockInstitutionHoldingFilter) (model.StockInstitutionHoldingListResult, error)
 	GetStockInstitutionHoldingSummary(rctx context.Context, code string, period string) (model.StockInstitutionHoldingSummary, error)
 	ListStockInstitutionHoldingSignals(rctx context.Context, filter model.StockInstitutionHoldingSignalFilter) (model.StockInstitutionHoldingSignalListResult, error)
+	UpsertStockHoldingReportDocuments(rctx context.Context, items []model.StockHoldingReportDocument) (model.StockHoldingReportDocumentUpsertResult, error)
+	ListStockHoldingReportDocuments(rctx context.Context, filter model.StockHoldingReportDocumentFilter) (model.StockHoldingReportDocumentListResult, error)
 }
 
 type Service struct {
@@ -238,7 +240,9 @@ func (s *Service) Routes(r chi.Router) {
 	r.Get("/api/v1/a-stock/holdings", s.handleListStockInstitutionHoldings)
 	r.Get("/api/v1/a-stock/holdings/summary", s.handleGetStockInstitutionHoldingSummary)
 	r.Get("/api/v1/a-stock/holdings/signals", s.handleListStockInstitutionHoldingSignals)
+	r.Get("/api/v1/a-stock/holding-reports", s.handleListStockHoldingReportDocuments)
 	r.Post("/api/v1/internal/a-stock/holdings/batch", s.handleUpsertStockInstitutionHoldings)
+	r.Post("/api/v1/internal/a-stock/holding-reports/batch", s.handleUpsertStockHoldingReportDocuments)
 	r.Get("/api/v1/search/articles", s.handleSearchArticles)
 	r.Get("/api/v1/search/full", s.handleSearchFull)
 	r.Get("/api/v1/search/timely", s.handleSearchTimely)
@@ -2280,14 +2284,15 @@ func normalizeStockResearchKind(value string) string {
 
 func (s *Service) handleListStockInstitutionHoldings(w http.ResponseWriter, r *http.Request) {
 	filter := model.StockInstitutionHoldingFilter{
-		Code:       normalizeAStockContentCode(r.URL.Query().Get("code")),
-		Company:    strings.TrimSpace(nonEmpty(r.URL.Query().Get("company"), r.URL.Query().Get("q"))),
-		Period:     normalizeStockHoldingPeriod(r.URL.Query().Get("period")),
-		Holder:     strings.TrimSpace(r.URL.Query().Get("holder")),
-		HolderType: strings.TrimSpace(r.URL.Query().Get("holder_type")),
-		Source:     strings.TrimSpace(r.URL.Query().Get("source")),
-		Page:       apiutil.IntQuery(r, "page", 1),
-		PageSize:   apiutil.IntQuery(r, "page_size", 50),
+		Code:        normalizeAStockContentCode(r.URL.Query().Get("code")),
+		Company:     strings.TrimSpace(nonEmpty(r.URL.Query().Get("company"), r.URL.Query().Get("q"))),
+		Period:      normalizeStockHoldingPeriod(r.URL.Query().Get("period")),
+		Holder:      strings.TrimSpace(r.URL.Query().Get("holder")),
+		HolderType:  strings.TrimSpace(r.URL.Query().Get("holder_type")),
+		FundCompany: strings.TrimSpace(r.URL.Query().Get("fund_company")),
+		Source:      strings.TrimSpace(r.URL.Query().Get("source")),
+		Page:        apiutil.IntQuery(r, "page", 1),
+		PageSize:    apiutil.IntQuery(r, "page_size", 50),
 	}
 	result, err := s.store.ListStockInstitutionHoldings(r.Context(), filter)
 	if err != nil {
@@ -2310,11 +2315,13 @@ func (s *Service) handleGetStockInstitutionHoldingSummary(w http.ResponseWriter,
 
 func (s *Service) handleListStockInstitutionHoldingSignals(w http.ResponseWriter, r *http.Request) {
 	filter := model.StockInstitutionHoldingSignalFilter{
-		Code:     normalizeAStockContentCode(r.URL.Query().Get("code")),
-		Company:  strings.TrimSpace(nonEmpty(r.URL.Query().Get("company"), r.URL.Query().Get("q"))),
-		Period:   normalizeStockHoldingPeriod(r.URL.Query().Get("period")),
-		Page:     apiutil.IntQuery(r, "page", 1),
-		PageSize: apiutil.IntQuery(r, "page_size", 20),
+		Code:        normalizeAStockContentCode(r.URL.Query().Get("code")),
+		Company:     strings.TrimSpace(nonEmpty(r.URL.Query().Get("company"), r.URL.Query().Get("q"))),
+		Period:      normalizeStockHoldingPeriod(r.URL.Query().Get("period")),
+		FundCompany: strings.TrimSpace(r.URL.Query().Get("fund_company")),
+		SignalType:  strings.TrimSpace(r.URL.Query().Get("signal_type")),
+		Page:        apiutil.IntQuery(r, "page", 1),
+		PageSize:    apiutil.IntQuery(r, "page_size", 20),
 	}
 	result, err := s.store.ListStockInstitutionHoldingSignals(r.Context(), filter)
 	if err != nil {
@@ -2326,7 +2333,8 @@ func (s *Service) handleListStockInstitutionHoldingSignals(w http.ResponseWriter
 
 func (s *Service) handleUpsertStockInstitutionHoldings(w http.ResponseWriter, r *http.Request) {
 	var payload struct {
-		Items []model.StockInstitutionHolding `json:"items"`
+		Items   []model.StockInstitutionHolding    `json:"items"`
+		Reports []model.StockHoldingReportDocument `json:"reports"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid json", nil)
@@ -2336,7 +2344,62 @@ func (s *Service) handleUpsertStockInstitutionHoldings(w http.ResponseWriter, r 
 	for i := range payload.Items {
 		payload.Items[i] = normalizeStockInstitutionHolding(payload.Items[i], now)
 	}
+	for i := range payload.Reports {
+		payload.Reports[i] = normalizeStockHoldingReportDocument(payload.Reports[i], now)
+	}
 	result, err := s.store.UpsertStockInstitutionHoldings(r.Context(), payload.Items)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	if len(payload.Reports) > 0 {
+		reportResult, reportErr := s.store.UpsertStockHoldingReportDocuments(r.Context(), payload.Reports)
+		if reportErr != nil {
+			apiutil.WriteJSON(w, http.StatusInternalServerError, reportErr.Error(), nil)
+			return
+		}
+		result.ReportInserted = reportResult.Inserted
+		result.ReportUpdated = reportResult.Updated
+		result.ReportTotal = reportResult.Total
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleListStockHoldingReportDocuments(w http.ResponseWriter, r *http.Request) {
+	filter := model.StockHoldingReportDocumentFilter{
+		Period:      normalizeStockHoldingPeriod(r.URL.Query().Get("period")),
+		FundCompany: strings.TrimSpace(r.URL.Query().Get("fund_company")),
+		Fund:        strings.TrimSpace(nonEmpty(r.URL.Query().Get("fund"), r.URL.Query().Get("q"))),
+		Source:      strings.TrimSpace(r.URL.Query().Get("source")),
+		Page:        apiutil.IntQuery(r, "page", 1),
+		PageSize:    apiutil.IntQuery(r, "page_size", 50),
+	}
+	result, err := s.store.ListStockHoldingReportDocuments(r.Context(), filter)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleUpsertStockHoldingReportDocuments(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		Reports []model.StockHoldingReportDocument `json:"reports"`
+		Items   []model.StockHoldingReportDocument `json:"items"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid json", nil)
+		return
+	}
+	items := payload.Reports
+	if len(items) == 0 {
+		items = payload.Items
+	}
+	now := time.Now().UTC()
+	for i := range items {
+		items[i] = normalizeStockHoldingReportDocument(items[i], now)
+	}
+	result, err := s.store.UpsertStockHoldingReportDocuments(r.Context(), items)
 	if err != nil {
 		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
 		return
@@ -2353,11 +2416,58 @@ func normalizeStockInstitutionHolding(item model.StockInstitutionHolding, now ti
 	item.HolderType = normalizeStockInstitutionHolderType(item.HolderType, item.HolderName)
 	item.HolderCode = strings.TrimSpace(item.HolderCode)
 	item.HolderRank = strings.TrimSpace(item.HolderRank)
+	if item.HolderType == "fund" {
+		item.FundCompany = normalizeStockHoldingFundCompany(item.FundCompany, item.HolderName)
+	} else {
+		item.FundCompany = strings.TrimSpace(item.FundCompany)
+	}
+	item.FundCode = strings.TrimSpace(item.FundCode)
+	if item.FundCode != "" && item.HolderCode == "" {
+		item.HolderCode = item.FundCode
+	}
+	if item.HolderType == "fund" && item.FundCode == "" {
+		item.FundCode = item.HolderCode
+	}
+	item.DisclosureScope = normalizeStockHoldingDisclosureScope(item.DisclosureScope, item.SourceType)
 	item.SourceType = strings.TrimSpace(item.SourceType)
 	item.SourceURL = strings.TrimSpace(item.SourceURL)
 	item.RawPayload = strings.TrimSpace(item.RawPayload)
 	if item.SourceType == "" {
 		item.SourceType = "akshare_stock_holding"
+	}
+	if item.RawPayload == "" {
+		item.RawPayload = "{}"
+	}
+	if item.FetchedAt.IsZero() {
+		item.FetchedAt = now
+	}
+	if item.CreatedAt.IsZero() {
+		item.CreatedAt = now
+	}
+	if item.UpdatedAt.IsZero() {
+		item.UpdatedAt = now
+	}
+	return item
+}
+
+func normalizeStockHoldingReportDocument(item model.StockHoldingReportDocument, now time.Time) model.StockHoldingReportDocument {
+	item.SourceType = strings.TrimSpace(item.SourceType)
+	item.SourceKey = strings.TrimSpace(item.SourceKey)
+	item.ReportPeriod = normalizeStockHoldingPeriod(item.ReportPeriod)
+	item.FundCode = strings.TrimSpace(item.FundCode)
+	item.FundName = strings.TrimSpace(item.FundName)
+	item.FundCompany = normalizeStockHoldingFundCompany(item.FundCompany, item.FundName)
+	item.AnnouncementTitle = strings.TrimSpace(item.AnnouncementTitle)
+	item.AnnouncementDate = strings.TrimSpace(item.AnnouncementDate)
+	item.SourceURL = strings.TrimSpace(item.SourceURL)
+	item.PDFURL = strings.TrimSpace(item.PDFURL)
+	item.ParseStatus = normalizeStockHoldingReportParseStatus(item.ParseStatus)
+	item.RawPayload = strings.TrimSpace(item.RawPayload)
+	if item.SourceType == "" {
+		item.SourceType = "fund_quarterly_report"
+	}
+	if item.SourceKey == "" {
+		item.SourceKey = strings.Join([]string{item.SourceType, item.ReportPeriod, item.FundCode, item.FundName, item.AnnouncementTitle, nonEmpty(item.PDFURL, item.SourceURL)}, "|")
 	}
 	if item.RawPayload == "" {
 		item.RawPayload = "{}"
@@ -2441,6 +2551,58 @@ func normalizeStockInstitutionHolderType(value string, holderName string) string
 		return "institution"
 	default:
 		return "other"
+	}
+}
+
+func normalizeStockHoldingFundCompany(value string, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value != "" {
+		return value
+	}
+	name := strings.TrimSpace(fallback)
+	if name == "" || !strings.Contains(name, "基金") {
+		return ""
+	}
+	for _, suffix := range []string{"管理有限公司", "基金管理有限公司", "股份有限公司", "有限责任公司"} {
+		if idx := strings.Index(name, suffix); idx > 0 {
+			return strings.TrimSpace(name[:idx+len(suffix)])
+		}
+	}
+	if idx := strings.Index(name, "基金"); idx > 0 {
+		return strings.TrimSpace(name[:idx+len("基金")])
+	}
+	return ""
+}
+
+func normalizeStockHoldingDisclosureScope(value string, sourceType string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "top10", "top_10", "十大", "前十大":
+		return "top10"
+	case "free_float_top10", "流通十大", "十大流通":
+		return "free_float_top10"
+	case "fund_quarterly", "quarterly", "季报", "季度报告":
+		return "fund_quarterly"
+	case "full", "all", "全量":
+		return "full"
+	}
+	switch strings.TrimSpace(sourceType) {
+	case "stock_gdfx_free_holding_detail_em":
+		return "free_float_top10"
+	case "stock_gdfx_holding_detail_em":
+		return "top10"
+	case "stock_fund_stock_holder", "tushare_fund_portfolio":
+		return "fund_quarterly"
+	default:
+		return "quarter_disclosure"
+	}
+}
+
+func normalizeStockHoldingReportParseStatus(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "pending", "indexed", "parsed", "failed", "no_pdf":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return "indexed"
 	}
 }
 

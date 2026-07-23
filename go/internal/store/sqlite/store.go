@@ -178,6 +178,10 @@ CREATE TABLE IF NOT EXISTS stock_institution_holdings (
 	holder_type TEXT NOT NULL DEFAULT '',
 	holder_code TEXT NOT NULL DEFAULT '',
 	holder_rank TEXT NOT NULL DEFAULT '',
+	fund_company TEXT NOT NULL DEFAULT '',
+	fund_code TEXT NOT NULL DEFAULT '',
+	report_doc_id INTEGER NOT NULL DEFAULT 0,
+	disclosure_scope TEXT NOT NULL DEFAULT '',
 	shares REAL NOT NULL DEFAULT 0,
 	shares_change REAL NOT NULL DEFAULT 0,
 	change_ratio REAL NOT NULL DEFAULT 0,
@@ -190,6 +194,26 @@ CREATE TABLE IF NOT EXISTS stock_institution_holdings (
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL,
 	UNIQUE (source_type, report_period, stock_code, holder_name, holder_type, holder_code)
+);
+
+CREATE TABLE IF NOT EXISTS stock_holding_report_documents (
+	id INTEGER PRIMARY KEY,
+	source_type TEXT NOT NULL DEFAULT '',
+	source_key TEXT NOT NULL DEFAULT '',
+	report_period TEXT NOT NULL DEFAULT '',
+	fund_code TEXT NOT NULL DEFAULT '',
+	fund_name TEXT NOT NULL DEFAULT '',
+	fund_company TEXT NOT NULL DEFAULT '',
+	announcement_title TEXT NOT NULL DEFAULT '',
+	announcement_date TEXT NOT NULL DEFAULT '',
+	source_url TEXT NOT NULL DEFAULT '',
+	pdf_url TEXT NOT NULL DEFAULT '',
+	parse_status TEXT NOT NULL DEFAULT '',
+	raw_payload TEXT NOT NULL DEFAULT '{}',
+	fetched_at TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	UNIQUE (source_type, source_key)
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
@@ -881,6 +905,9 @@ CREATE INDEX IF NOT EXISTS idx_stock_research_source_date ON stock_research_surv
 CREATE INDEX IF NOT EXISTS idx_stock_holdings_code_period ON stock_institution_holdings(stock_code, report_period DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_stock_holdings_holder_period ON stock_institution_holdings(holder_name, report_period DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_stock_holdings_type_period ON stock_institution_holdings(holder_type, report_period DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_stock_holdings_fund_company_period ON stock_institution_holdings(fund_company, report_period DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_stock_holding_reports_period ON stock_holding_report_documents(report_period DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_stock_holding_reports_fund_company ON stock_holding_report_documents(fund_company, report_period DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_crawl_templates_enabled_updated ON crawl_templates(enabled, updated_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_a_stock_auction_date_amount ON a_stock_auction_amounts(trade_date DESC, capture_slot, auction_amount DESC);
 CREATE INDEX IF NOT EXISTS idx_a_stock_auction_code ON a_stock_auction_amounts(code);
@@ -953,6 +980,13 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_action_created_at ON audit_logs(action
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE stock_research_surveys ADD COLUMN nlp_rating TEXT NOT NULL DEFAULT ''`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE stock_research_surveys ADD COLUMN nlp_reason TEXT NOT NULL DEFAULT ''`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE stock_research_surveys ADD COLUMN nlp_scored_at TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE stock_institution_holdings ADD COLUMN fund_company TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE stock_institution_holdings ADD COLUMN fund_code TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE stock_institution_holdings ADD COLUMN report_doc_id INTEGER NOT NULL DEFAULT 0`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE stock_institution_holdings ADD COLUMN disclosure_scope TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_stock_holdings_fund_company_period ON stock_institution_holdings(fund_company, report_period DESC, id DESC)`)
+	_, _ = s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_stock_holding_reports_period ON stock_holding_report_documents(report_period DESC, id DESC)`)
+	_, _ = s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_stock_holding_reports_fund_company ON stock_holding_report_documents(fund_company, report_period DESC, id DESC)`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN limit_up_filter_enabled INTEGER NOT NULL DEFAULT 0`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN limit_up_filtered INTEGER NOT NULL DEFAULT 0`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE a_stock_recommendation_snapshots ADD COLUMN today_market_filter_enabled INTEGER NOT NULL DEFAULT 0`)

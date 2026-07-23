@@ -1291,6 +1291,11 @@ type aStockHoldingCrawlOptions struct {
 	EndPeriod   string
 }
 
+type aStockHoldingFetchResult struct {
+	Items   []model.StockInstitutionHolding
+	Reports []model.StockHoldingReportDocument
+}
+
 func (w *Worker) runAStockHoldingsCrawl(ctx context.Context) error {
 	return w.runAStockHoldingsBackfill(ctx, aStockHoldingCrawlOptions{})
 }
@@ -1301,14 +1306,19 @@ func (w *Worker) runAStockHoldingsBackfill(ctx context.Context, opts aStockHoldi
 		periods = latestAStockHoldingPeriods(4, time.Now().In(aStockLocation()))
 	}
 	items := make([]model.StockInstitutionHolding, 0)
+	reports := make([]model.StockHoldingReportDocument, 0)
 	for _, period := range periods {
 		fetched, err := w.fetchExternalAStockHoldings(ctx, period, opts.Code)
 		if err != nil {
 			return err
 		}
-		items = append(items, fetched...)
+		items = append(items, fetched.Items...)
+		reports = append(reports, fetched.Reports...)
 	}
 	payload := map[string]any{"items": items}
+	if len(reports) > 0 {
+		payload["reports"] = reports
+	}
 	resp, err := w.client.R().
 		SetContext(ctx).
 		SetBody(payload).
@@ -1325,14 +1335,15 @@ func (w *Worker) runAStockHoldingsBackfill(ctx context.Context, opts aStockHoldi
 		Str("start_period", opts.StartPeriod).
 		Str("end_period", opts.EndPeriod).
 		Int("items", len(items)).
+		Int("reports", len(reports)).
 		Msg("a-stock institution holdings crawled")
 	return nil
 }
 
-func (w *Worker) fetchExternalAStockHoldings(ctx context.Context, period string, code string) ([]model.StockInstitutionHolding, error) {
+func (w *Worker) fetchExternalAStockHoldings(ctx context.Context, period string, code string) (aStockHoldingFetchResult, error) {
 	baseURL := strings.TrimRight(strings.TrimSpace(w.cfg.AStockHoldingURL), "/")
 	if baseURL == "" {
-		return nil, fmt.Errorf("YUQING_ASTOCK_HOLDING_URL not configured")
+		return aStockHoldingFetchResult{}, fmt.Errorf("YUQING_ASTOCK_HOLDING_URL not configured")
 	}
 	req := w.client.R().
 		SetContext(ctx).
@@ -1345,22 +1356,27 @@ func (w *Worker) fetchExternalAStockHoldings(ctx context.Context, period string,
 	}
 	resp, err := req.Get(baseURL + "/api/a-stock/holdings")
 	if err != nil {
-		return nil, err
+		return aStockHoldingFetchResult{}, err
 	}
 	if !resp.IsSuccess() {
-		return nil, fmt.Errorf("a-stock holdings endpoint failed: %s", resp.Status())
+		return aStockHoldingFetchResult{}, fmt.Errorf("a-stock holdings endpoint failed: %s", resp.Status())
 	}
 	var envelope struct {
-		Items []model.StockInstitutionHolding `json:"items"`
-		Data  struct {
-			Items []model.StockInstitutionHolding `json:"items"`
+		Items   []model.StockInstitutionHolding    `json:"items"`
+		Reports []model.StockHoldingReportDocument `json:"reports"`
+		Data    struct {
+			Items   []model.StockInstitutionHolding    `json:"items"`
+			Reports []model.StockHoldingReportDocument `json:"reports"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(resp.Body(), &envelope); err != nil {
-		return nil, err
+		return aStockHoldingFetchResult{}, err
 	}
 	if len(envelope.Items) == 0 && len(envelope.Data.Items) > 0 {
 		envelope.Items = envelope.Data.Items
+	}
+	if len(envelope.Reports) == 0 && len(envelope.Data.Reports) > 0 {
+		envelope.Reports = envelope.Data.Reports
 	}
 	now := time.Now().UTC()
 	for i := range envelope.Items {
@@ -1374,7 +1390,18 @@ func (w *Worker) fetchExternalAStockHoldings(ctx context.Context, period string,
 			envelope.Items[i].FetchedAt = now
 		}
 	}
-	return envelope.Items, nil
+	for i := range envelope.Reports {
+		if envelope.Reports[i].ReportPeriod == "" {
+			envelope.Reports[i].ReportPeriod = period
+		}
+		if envelope.Reports[i].SourceType == "" {
+			envelope.Reports[i].SourceType = "fund_quarterly_report"
+		}
+		if envelope.Reports[i].FetchedAt.IsZero() {
+			envelope.Reports[i].FetchedAt = now
+		}
+	}
+	return aStockHoldingFetchResult{Items: envelope.Items, Reports: envelope.Reports}, nil
 }
 
 func (w *Worker) runAStockRecommendationForDate(ctx context.Context, strategyDate string, period string, phase string) error {

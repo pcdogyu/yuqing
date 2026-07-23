@@ -753,7 +753,7 @@ func TestStockInstitutionHoldingAPIUpsertsListsAndSummarizes(t *testing.T) {
 	svc := NewService(config.Config{}, store)
 	router := svc.Router()
 
-	payload := `{"items":[{"stock_code":"SH.002230","stock_name":"科大讯飞","report_period":"2026-Q1","announce_date":"2026-04-30","holder_name":"易方达基金","holder_type":"基金","holder_code":"110001","holder_rank":"1","shares":1000,"float_ratio":1.5,"market_value":50000,"source_type":"stock_institute_hold_detail","raw_payload":"{\"id\":1}"},{"stock_code":"002230","stock_name":"科大讯飞","report_period":"20260331","holder_name":"社保基金一一八组合","holder_type":"社保基金","shares":2000,"float_ratio":2.5,"market_value":100000,"source_type":"stock_gdfx_free_holding_detail_em"}]}`
+	payload := `{"items":[{"stock_code":"SH.002230","stock_name":"科大讯飞","report_period":"2026-Q1","announce_date":"2026-04-30","holder_name":"易方达基金","holder_type":"基金","holder_code":"110001","holder_rank":"1","fund_company":"易方达基金管理有限公司","fund_code":"110001","shares":1000,"float_ratio":1.5,"market_value":50000,"source_type":"stock_institute_hold_detail","raw_payload":"{\"id\":1}"},{"stock_code":"002230","stock_name":"科大讯飞","report_period":"20260331","holder_name":"社保基金一一八组合","holder_type":"社保基金","shares":2000,"float_ratio":2.5,"market_value":100000,"source_type":"stock_gdfx_free_holding_detail_em"}],"reports":[{"source_type":"tiantian_fund_regular_report","report_period":"2026-Q1","fund_code":"110001","fund_name":"易方达蓝筹精选","fund_company":"易方达基金管理有限公司","announcement_title":"易方达蓝筹精选2026年第1季度报告","announcement_date":"2026-04-22","source_url":"https://example.com/report","parse_status":"indexed"}]}`
 	postReq := httptest.NewRequest(http.MethodPost, "/api/v1/internal/a-stock/holdings/batch", strings.NewReader(payload))
 	postRR := httptest.NewRecorder()
 	router.ServeHTTP(postRR, postReq)
@@ -777,7 +777,7 @@ func TestStockInstitutionHoldingAPIUpsertsListsAndSummarizes(t *testing.T) {
 		t.Fatalf("unexpected holdings list payload: %+v", listEnvelope.Data)
 	}
 	item := listEnvelope.Data.Items[0]
-	if item.StockCode != "002230" || item.ReportPeriod != "20260331" || item.HolderType != "fund" || !strings.Contains(item.RawPayload, `"id":1`) {
+	if item.StockCode != "002230" || item.ReportPeriod != "20260331" || item.HolderType != "fund" || item.FundCompany != "易方达基金管理有限公司" || item.DisclosureScope != "quarter_disclosure" || !strings.Contains(item.RawPayload, `"id":1`) {
 		t.Fatalf("expected normalized holding row, got %+v", item)
 	}
 
@@ -793,8 +793,24 @@ func TestStockInstitutionHoldingAPIUpsertsListsAndSummarizes(t *testing.T) {
 	if err := json.Unmarshal(summaryRR.Body.Bytes(), &summaryEnvelope); err != nil {
 		t.Fatalf("unmarshal holdings summary: %v", err)
 	}
-	if summaryEnvelope.Data.HolderCount != 2 || summaryEnvelope.Data.FundCount != 1 || summaryEnvelope.Data.HolderTypeCount != 2 || summaryEnvelope.Data.TotalFloatRatio != 4 {
+	if summaryEnvelope.Data.HolderCount != 2 || summaryEnvelope.Data.FundCount != 1 || summaryEnvelope.Data.FundCompanyCount != 1 || summaryEnvelope.Data.HolderTypeCount != 2 || summaryEnvelope.Data.TotalFloatRatio != 4 {
 		t.Fatalf("unexpected holdings summary: %+v", summaryEnvelope.Data)
+	}
+
+	reportReq := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/holding-reports?period=2026Q1&fund_company=易方达&page=1&page_size=10", nil)
+	reportRR := httptest.NewRecorder()
+	router.ServeHTTP(reportRR, reportReq)
+	if reportRR.Code != http.StatusOK {
+		t.Fatalf("expected holding reports list 200, got %d body=%s", reportRR.Code, reportRR.Body.String())
+	}
+	var reportEnvelope struct {
+		Data model.StockHoldingReportDocumentListResult `json:"data"`
+	}
+	if err := json.Unmarshal(reportRR.Body.Bytes(), &reportEnvelope); err != nil {
+		t.Fatalf("unmarshal holding reports list: %v", err)
+	}
+	if reportEnvelope.Data.Total != 1 || len(reportEnvelope.Data.Items) != 1 || reportEnvelope.Data.Items[0].ReportPeriod != "20260331" || reportEnvelope.Data.Items[0].ParseStatus != "indexed" {
+		t.Fatalf("unexpected holding reports payload: %+v", reportEnvelope.Data)
 	}
 }
 
@@ -1013,8 +1029,24 @@ func TestStockInstitutionHoldingSignalsAPI(t *testing.T) {
 		t.Fatalf("unexpected holdings signals metadata: %+v", envelope.Data)
 	}
 	signal := envelope.Data.Items[0]
-	if signal.StockCode != "002230" || signal.HolderCountChange != 5 || signal.FloatRatioChange != 4 {
+	if signal.StockCode != "002230" || signal.SignalType != "new_entry" || signal.NewHolderCount != 5 || signal.HolderCountChange != 5 || signal.FloatRatioChange != 4 {
 		t.Fatalf("unexpected holdings signal payload: %+v", signal)
+	}
+
+	exitReq := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/holdings/signals?code=002230&signal_type=exit_disclosure&page=1&page_size=20", nil)
+	exitRR := httptest.NewRecorder()
+	router.ServeHTTP(exitRR, exitReq)
+	if exitRR.Code != http.StatusOK {
+		t.Fatalf("expected holdings exit signals 200, got %d body=%s", exitRR.Code, exitRR.Body.String())
+	}
+	var exitEnvelope struct {
+		Data model.StockInstitutionHoldingSignalListResult `json:"data"`
+	}
+	if err := json.Unmarshal(exitRR.Body.Bytes(), &exitEnvelope); err != nil {
+		t.Fatalf("unmarshal holdings exit signals: %v", err)
+	}
+	if exitEnvelope.Data.Total != 0 || exitEnvelope.Data.SignalType != "exit_disclosure" {
+		t.Fatalf("unexpected exit-disclosure filtered signals: %+v", exitEnvelope.Data)
 	}
 }
 

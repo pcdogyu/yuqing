@@ -25,6 +25,12 @@ CREATE TABLE IF NOT EXISTS items (
 	updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS item_deletion_tombstones (
+	source_key TEXT PRIMARY KEY,
+	deleted_at TEXT NOT NULL,
+	reason TEXT NOT NULL DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS crawl_runs (
 	id BIGSERIAL PRIMARY KEY,
 	source_type TEXT NOT NULL,
@@ -110,6 +116,10 @@ CREATE TABLE IF NOT EXISTS stock_institution_holdings (
 	holder_type TEXT NOT NULL DEFAULT '',
 	holder_code TEXT NOT NULL DEFAULT '',
 	holder_rank TEXT NOT NULL DEFAULT '',
+	fund_company TEXT NOT NULL DEFAULT '',
+	fund_code TEXT NOT NULL DEFAULT '',
+	report_doc_id BIGINT NOT NULL DEFAULT 0,
+	disclosure_scope TEXT NOT NULL DEFAULT '',
 	shares DOUBLE PRECISION NOT NULL DEFAULT 0,
 	shares_change DOUBLE PRECISION NOT NULL DEFAULT 0,
 	change_ratio DOUBLE PRECISION NOT NULL DEFAULT 0,
@@ -122,6 +132,30 @@ CREATE TABLE IF NOT EXISTS stock_institution_holdings (
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL,
 	UNIQUE (source_type, report_period, stock_code, holder_name, holder_type, holder_code)
+);
+ALTER TABLE stock_institution_holdings ADD COLUMN IF NOT EXISTS fund_company TEXT NOT NULL DEFAULT '';
+ALTER TABLE stock_institution_holdings ADD COLUMN IF NOT EXISTS fund_code TEXT NOT NULL DEFAULT '';
+ALTER TABLE stock_institution_holdings ADD COLUMN IF NOT EXISTS report_doc_id BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE stock_institution_holdings ADD COLUMN IF NOT EXISTS disclosure_scope TEXT NOT NULL DEFAULT '';
+
+CREATE TABLE IF NOT EXISTS stock_holding_report_documents (
+	id BIGSERIAL PRIMARY KEY,
+	source_type TEXT NOT NULL DEFAULT '',
+	source_key TEXT NOT NULL DEFAULT '',
+	report_period TEXT NOT NULL DEFAULT '',
+	fund_code TEXT NOT NULL DEFAULT '',
+	fund_name TEXT NOT NULL DEFAULT '',
+	fund_company TEXT NOT NULL DEFAULT '',
+	announcement_title TEXT NOT NULL DEFAULT '',
+	announcement_date TEXT NOT NULL DEFAULT '',
+	source_url TEXT NOT NULL DEFAULT '',
+	pdf_url TEXT NOT NULL DEFAULT '',
+	parse_status TEXT NOT NULL DEFAULT '',
+	raw_payload TEXT NOT NULL DEFAULT '{}',
+	fetched_at TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	UNIQUE (source_type, source_key)
 );
 
 CREATE TABLE IF NOT EXISTS users (
@@ -781,6 +815,7 @@ CREATE TABLE IF NOT EXISTS wechat_bindings (
 
 CREATE INDEX IF NOT EXISTS idx_items_source_type_captured_at ON items(source_type, captured_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_items_title ON items(title);
+CREATE INDEX IF NOT EXISTS idx_item_deletion_tombstones_deleted_at ON item_deletion_tombstones(deleted_at DESC);
 CREATE INDEX IF NOT EXISTS idx_crawl_runs_source_type_started_at ON crawl_runs(source_type, started_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_crawl_states_updated ON crawl_states(source_type, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_stock_research_code_date ON stock_research_surveys(code, research_date DESC, id DESC);
@@ -789,6 +824,9 @@ CREATE INDEX IF NOT EXISTS idx_stock_research_source_date ON stock_research_surv
 CREATE INDEX IF NOT EXISTS idx_stock_holdings_code_period ON stock_institution_holdings(stock_code, report_period DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_stock_holdings_holder_period ON stock_institution_holdings(holder_name, report_period DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_stock_holdings_type_period ON stock_institution_holdings(holder_type, report_period DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_stock_holdings_fund_company_period ON stock_institution_holdings(fund_company, report_period DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_stock_holding_reports_period ON stock_holding_report_documents(report_period DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_stock_holding_reports_fund_company ON stock_holding_report_documents(fund_company, report_period DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_crawl_templates_enabled_updated ON crawl_templates(enabled, updated_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_projects_group_id ON projects(group_id);
 CREATE INDEX IF NOT EXISTS idx_monitor_rules_project_id ON monitor_rules(project_id);

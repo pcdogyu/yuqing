@@ -23,6 +23,7 @@ import argparse
 import concurrent.futures
 import datetime as dt
 import hashlib
+import html
 import json
 import math
 import os
@@ -54,6 +55,7 @@ DEFAULT_TDX_HQ_SERVERS = [
 ]
 HOLDING_DETAIL_TYPES = ["基金", "QFII", "社保", "券商", "信托", "保险"]
 HOLDING_DETAIL_CHANGES = ["新进", "增加", "不变", "减少"]
+TIANTIAN_FUND_REGULAR_REPORT_URL = "https://fund.eastmoney.com/gonggao/dingqibaogao.html"
 EASTMONEY_CLIST_URLS = [
     "https://push2delay.eastmoney.com/api/qt/clist/get",
     "http://push2delay.eastmoney.com/api/qt/clist/get",
@@ -2049,12 +2051,49 @@ def average_fund_flow_items(items: list[dict[str, Any]], key_fields: list[str], 
 
 
 def normalize_holding_period(value: str | None) -> str:
-    text = text_value(value).replace("-", "").replace("/", "").replace(".", "")
+    raw = text_value(value)
+    text = raw.upper().replace("-", "").replace("/", "").replace(".", "")
+    if len(text) == 6 and text[4] == "Q" and text[:4].isdigit():
+        quarter_end = {"1": "0331", "2": "0630", "3": "0930", "4": "1231"}.get(text[5])
+        return text[:4] + quarter_end if quarter_end else ""
     if len(text) == 8 and text.isdigit():
         return text
+    from_text = holding_report_period_from_text(raw)
+    if from_text:
+        return from_text
     parsed = normalize_optional_date(value)
     compact = parsed.replace("-", "") if parsed else ""
     return compact if len(compact) == 8 and compact.isdigit() else ""
+
+
+def holding_report_period_from_text(value: str | None) -> str:
+    text = text_value(value)
+    if not text:
+        return ""
+    compact = text.upper().replace("-", "").replace("/", "").replace(".", "")
+    match = re.search(r"(20\d{2})Q([1-4])", compact)
+    if match:
+        return match.group(1) + {"1": "0331", "2": "0630", "3": "0930", "4": "1231"}[match.group(2)]
+    quarter_words = {
+        "1": "0331",
+        "一": "0331",
+        "第一": "0331",
+        "2": "0630",
+        "二": "0630",
+        "第二": "0630",
+        "3": "0930",
+        "三": "0930",
+        "第三": "0930",
+        "4": "1231",
+        "四": "1231",
+        "第四": "1231",
+    }
+    match = re.search(r"(20\d{2})\s*年?\s*(第?\s*[一二三四1234])\s*(季度|季报|季)", text)
+    if match:
+        key = match.group(2).replace("第", "").strip()
+        quarter_end = quarter_words.get(key)
+        return match.group(1) + quarter_end if quarter_end else ""
+    return ""
 
 
 def holding_period_to_sina_quarter(period: str) -> str:
@@ -2091,6 +2130,33 @@ def normalize_holder_type(value: Any) -> str:
     return "other"
 
 
+def normalize_fund_company(value: Any, fallback: Any = "") -> str:
+    text = text_value(value)
+    if text:
+        return text
+    name = text_value(fallback)
+    if "基金" not in name:
+        return ""
+    for suffix in ["基金管理有限公司", "管理有限公司", "股份有限公司", "有限责任公司"]:
+        idx = name.find(suffix)
+        if idx > 0:
+            return name[: idx + len(suffix)].strip()
+    idx = name.find("基金")
+    if idx > 0:
+        return name[: idx + len("基金")].strip()
+    return ""
+
+
+def holding_disclosure_scope(source_type: str) -> str:
+    if source_type == "stock_gdfx_free_holding_detail_em":
+        return "free_float_top10"
+    if source_type == "stock_gdfx_holding_detail_em":
+        return "top10"
+    if source_type in {"stock_fund_stock_holder", "tushare_fund_portfolio"}:
+        return "fund_quarterly"
+    return "quarter_disclosure"
+
+
 def compact_stock_code(value: Any) -> str:
     text = text_value(value)
     digits = "".join(ch for ch in text if ch.isdigit())
@@ -2107,6 +2173,10 @@ def holding_row_item(row: Any, source_type: str, fallback_period: str, fallback_
     holder_code = text_value(first_existing(row, ["基金代码", "持股机构代码", "holder_code"]))
     holder_type_raw = first_existing(row, ["股东类型", "持股机构类型", "holder_type"])
     holder_type = normalize_holder_type(holder_type_raw or holder_name)
+    fund_code = text_value(first_existing(row, ["基金代码", "fund_code"])) if holder_type == "fund" else ""
+    if holder_type == "fund" and not fund_code:
+        fund_code = holder_code
+    fund_company = normalize_fund_company(first_existing(row, ["基金公司", "基金管理人", "管理人", "fund_company"]), holder_name)
     if not code or not period or not holder_name:
         return None
     shares = finite_float(first_existing(row, ["期末持股-数量", "持仓数量", "持股数", "最新持股数", "shares"]))
@@ -2126,6 +2196,9 @@ def holding_row_item(row: Any, source_type: str, fallback_period: str, fallback_
         "holder_type": holder_type,
         "holder_code": holder_code,
         "holder_rank": rank,
+        "fund_company": fund_company,
+        "fund_code": fund_code,
+        "disclosure_scope": holding_disclosure_scope(source_type),
         "shares": shares,
         "shares_change": shares_change,
         "change_ratio": change_ratio,
@@ -2171,6 +2244,96 @@ def dedupe_holding_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         seen.add(key)
         out.append(item)
     return out
+
+
+def strip_html_tags(value: str) -> str:
+    text = re.sub(r"<[^>]+>", "", value or "")
+    return re.sub(r"\s+", " ", html.unescape(text)).strip()
+
+
+def fund_name_from_report_title(title: str) -> str:
+    title = re.sub(r"^[\[\【].*?[\]\】]\s*", "", title).strip()
+    match = re.search(r"(20\d{2})", title)
+    if match and match.start() > 0:
+        return title[: match.start()].strip(" ：:,-_")
+    for marker in ["年度报告", "中期报告", "季度报告", "季报"]:
+        idx = title.find(marker)
+        if idx > 0:
+            return title[:idx].strip(" ：:,-_")
+    return ""
+
+
+def holding_report_document_item(title: str, href: str, fallback_period: str, source_type: str) -> dict[str, Any] | None:
+    title = strip_html_tags(title)
+    href = html.unescape(text_value(href))
+    if not title or not href:
+        return None
+    if not any(keyword in title for keyword in ["季度报告", "季报", "第1季度", "第2季度", "第3季度", "第4季度", "第一季度", "第二季度", "第三季度", "第四季度"]):
+        return None
+    period = normalize_holding_period(title) or normalize_holding_period(fallback_period)
+    if not period:
+        return None
+    if fallback_period and period != normalize_holding_period(fallback_period):
+        return None
+    source_url = urllib.parse.urljoin(TIANTIAN_FUND_REGULAR_REPORT_URL, href)
+    fund_code_match = re.search(r"(?<!\d)(\d{6})(?!\d)", title)
+    fund_code = fund_code_match.group(1) if fund_code_match else ""
+    fund_name = fund_name_from_report_title(title)
+    raw = {"title": title, "href": href}
+    return {
+        "source_type": source_type,
+        "source_key": source_key([source_type, period, fund_code, fund_name, title, source_url]),
+        "report_period": period,
+        "fund_code": fund_code,
+        "fund_name": fund_name,
+        "fund_company": normalize_fund_company("", fund_name),
+        "announcement_title": title,
+        "announcement_date": normalize_optional_date(title),
+        "source_url": source_url,
+        "pdf_url": source_url if source_url.lower().split("?", 1)[0].endswith(".pdf") else "",
+        "parse_status": "indexed",
+        "raw_payload": json.dumps(raw, ensure_ascii=False, separators=(",", ":")),
+        "fetched_at": utc_now_iso(),
+    }
+
+
+def parse_tiantian_fund_report_documents(html_text: str, period: str, limit: int) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for match in re.finditer(r"<a\b[^>]*href=[\"']([^\"']+)[\"'][^>]*>(.*?)</a>", html_text or "", re.IGNORECASE | re.DOTALL):
+        item = holding_report_document_item(match.group(2), match.group(1), period, "tiantian_fund_regular_report")
+        if item is None:
+            continue
+        items.append(item)
+        if limit > 0 and len(items) >= limit:
+            break
+    seen: set[tuple[str, str]] = set()
+    out: list[dict[str, Any]] = []
+    for item in items:
+        key = (text_value(item.get("source_type")), text_value(item.get("source_key")))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+    return out
+
+
+def fetch_tiantian_fund_report_documents(period: str, limit: int) -> tuple[list[dict[str, Any]], str]:
+    headers = dict(EASTMONEY_HEADERS)
+    headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    headers["Referer"] = "https://fund.eastmoney.com/"
+    request = urllib.request.Request(TIANTIAN_FUND_REGULAR_REPORT_URL, headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            body = response.read()
+    except Exception as exc:  # pragma: no cover - external service variability
+        return [], f"tiantian_fund_regular_report {period}: {exc}"
+    text = body.decode("utf-8", errors="replace")
+    if "�" in text:
+        text = body.decode("gbk", errors="replace")
+    items = parse_tiantian_fund_report_documents(text, period, limit)
+    if not items:
+        return items, f"tiantian_fund_regular_report {period}: no report links parsed"
+    return items, ""
 
 
 def fetch_market_holdings_for_period(ak: Any, period: str) -> tuple[list[dict[str, Any]], list[str]]:
@@ -2743,16 +2906,22 @@ class AuctionService:
             }
         code = compact_stock_code(first_query_value(query, "code") or first_query_value(query, "symbol") or "")
         limit = int_value(first_query_value(query, "limit"), 0)
+        report_limit = min(max(int_value(first_query_value(query, "report_limit"), 200), 0), 1000)
         started = time.time()
         if code:
             items, warnings = fetch_symbol_holdings_for_period(ak, period, code)
         else:
             items, warnings = fetch_market_holdings_for_period(ak, period)
+        reports, report_warning = fetch_tiantian_fund_report_documents(period, report_limit)
+        if report_warning:
+            warnings.append(report_warning)
         if limit > 0:
             items = items[:limit]
         payload: dict[str, Any] = {
             "items": items,
+            "reports": reports,
             "count": len(items),
+            "report_count": len(reports),
             "period": period,
             "code": code,
             "elapsed_sec": round(time.time() - started, 3),
@@ -2761,6 +2930,32 @@ class AuctionService:
         if warnings:
             payload["warning"] = "; ".join(warnings)
         if not items and warnings:
+            payload["_http_status"] = 502
+        return payload
+
+    def fetch_holding_reports(self, query: dict[str, list[str]]) -> dict[str, Any]:
+        period = normalize_holding_period(first_query_value(query, "period"))
+        if not period:
+            return {
+                "_http_status": 400,
+                "items": [],
+                "message": "period is required, e.g. 20260331",
+                "fetched_at": utc_now_iso(),
+            }
+        limit = min(max(int_value(first_query_value(query, "limit"), 200), 0), 1000)
+        started = time.time()
+        items, warning = fetch_tiantian_fund_report_documents(period, limit)
+        payload: dict[str, Any] = {
+            "items": items,
+            "reports": items,
+            "count": len(items),
+            "period": period,
+            "elapsed_sec": round(time.time() - started, 3),
+            "fetched_at": utc_now_iso(),
+        }
+        if warning:
+            payload["warning"] = warning
+        if not items and warning:
             payload["_http_status"] = 502
         return payload
 
@@ -2869,6 +3064,14 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/a-stock/holdings":
                 payload = self.service.fetch_holdings(query)
+                status = int(payload.get("_http_status", 200))
+                if "_http_status" in payload:
+                    payload = dict(payload)
+                    payload.pop("_http_status", None)
+                self.write_json(status, payload)
+                return
+            if parsed.path == "/api/a-stock/holding-reports":
+                payload = self.service.fetch_holding_reports(query)
                 status = int(payload.get("_http_status", 200))
                 if "_http_status" in payload:
                     payload = dict(payload)
@@ -3293,7 +3496,8 @@ def run_self_test() -> None:
     assert report["source_type"] == "akshare_stock_research"
     assert report["pdf_status"] == "pending"
     assert date_in_range("2026-06-16", "2026-06-01", "2026-06-30")
-    assert normalize_holding_period("2026-Q1") == ""
+    assert normalize_holding_period("2026-Q1") == "20260331"
+    assert normalize_holding_period("2026年第2季度报告") == "20260630"
     assert normalize_holding_period("2026-03-31") == "20260331"
     assert holding_period_to_sina_quarter("20260331") == "20261"
     holding = holding_row_item(
@@ -3318,6 +3522,31 @@ def run_self_test() -> None:
     assert holding["report_period"] == "20260331"
     assert holding["holder_type"] == "social_security"
     assert holding["shares"] == 1000
+    fund_holding = holding_row_item(
+        {
+            "股票代码": "002230",
+            "报告期": "2026-Q2",
+            "基金名称": "易方达蓝筹精选混合型证券投资基金",
+            "基金代码": "005827",
+            "基金公司": "易方达基金管理有限公司",
+            "持股数": "2000",
+        },
+        "stock_fund_stock_holder",
+        "20260630",
+    )
+    assert fund_holding is not None
+    assert fund_holding["holder_type"] == "fund"
+    assert fund_holding["fund_code"] == "005827"
+    assert fund_holding["fund_company"] == "易方达基金管理有限公司"
+    assert fund_holding["disclosure_scope"] == "fund_quarterly"
+    docs = parse_tiantian_fund_report_documents(
+        '<a href="/gonggao/005827,AN202607231650000000.html">易方达蓝筹精选混合型证券投资基金2026年第2季度报告</a>',
+        "20260630",
+        10,
+    )
+    assert len(docs) == 1
+    assert docs[0]["report_period"] == "20260630"
+    assert docs[0]["source_type"] == "tiantian_fund_regular_report"
     print("akshare auction service self-test passed")
 
 

@@ -1326,7 +1326,7 @@ func TestStockInstitutionHoldingsUpsertListAndSummary(t *testing.T) {
 	fetchedAt := time.Date(2026, 6, 17, 2, 35, 0, 0, time.UTC)
 
 	first, err := store.UpsertStockInstitutionHoldings(ctx, []model.StockInstitutionHolding{
-		{StockCode: "002230", StockName: "科大讯飞", ReportPeriod: "20260331", AnnounceDate: "2026-04-30", HolderName: "易方达基金", HolderType: "fund", HolderCode: "110001", HolderRank: "1", Shares: 1000, SharesChange: 100, ChangeRatio: 10, FloatRatio: 1.5, MarketValue: 50000, SourceType: "stock_institute_hold_detail", SourceURL: "https://example.com/1", RawPayload: `{"id":1}`, FetchedAt: fetchedAt},
+		{StockCode: "002230", StockName: "科大讯飞", ReportPeriod: "20260331", AnnounceDate: "2026-04-30", HolderName: "易方达基金", HolderType: "fund", HolderCode: "110001", FundCompany: "易方达基金管理有限公司", FundCode: "110001", DisclosureScope: "fund_quarterly", HolderRank: "1", Shares: 1000, SharesChange: 100, ChangeRatio: 10, FloatRatio: 1.5, MarketValue: 50000, SourceType: "stock_institute_hold_detail", SourceURL: "https://example.com/1", RawPayload: `{"id":1}`, FetchedAt: fetchedAt},
 		{StockCode: "002230", StockName: "科大讯飞", ReportPeriod: "20260331", HolderName: "社保基金一一八组合", HolderType: "social_security", Shares: 2000, FloatRatio: 2.5, MarketValue: 100000, SourceType: "stock_gdfx_free_holding_detail_em", RawPayload: `{}`, FetchedAt: fetchedAt},
 		{StockCode: "300059", StockName: "东方财富", ReportPeriod: "20260331", HolderName: "香港中央结算有限公司", HolderType: "institution", Shares: 3000, FloatRatio: 3, SourceType: "stock_gdfx_holding_detail_em", RawPayload: `{}`, FetchedAt: fetchedAt},
 	})
@@ -1338,7 +1338,7 @@ func TestStockInstitutionHoldingsUpsertListAndSummary(t *testing.T) {
 	}
 
 	second, err := store.UpsertStockInstitutionHoldings(ctx, []model.StockInstitutionHolding{
-		{StockCode: "002230", StockName: "科大讯飞", ReportPeriod: "20260331", HolderName: "易方达基金", HolderType: "fund", HolderCode: "110001", Shares: 1500, FloatRatio: 1.8, MarketValue: 80000, SourceType: "stock_institute_hold_detail", RawPayload: `{"id":2}`, FetchedAt: fetchedAt},
+		{StockCode: "002230", StockName: "科大讯飞", ReportPeriod: "20260331", HolderName: "易方达基金", HolderType: "fund", HolderCode: "110001", FundCompany: "易方达基金管理有限公司", FundCode: "110001", Shares: 1500, FloatRatio: 1.8, MarketValue: 80000, SourceType: "stock_institute_hold_detail", RawPayload: `{"id":2}`, FetchedAt: fetchedAt},
 	})
 	if err != nil {
 		t.Fatalf("UpsertStockInstitutionHoldings update error: %v", err)
@@ -1351,7 +1351,7 @@ func TestStockInstitutionHoldingsUpsertListAndSummary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListStockInstitutionHoldings error: %v", err)
 	}
-	if list.Total != 1 || len(list.Items) != 1 || list.Items[0].Shares != 1500 || list.Items[0].HolderType != "fund" {
+	if list.Total != 1 || len(list.Items) != 1 || list.Items[0].Shares != 1500 || list.Items[0].HolderType != "fund" || list.Items[0].FundCompany != "易方达基金管理有限公司" {
 		t.Fatalf("unexpected holdings list: %+v", list)
 	}
 	if len(list.Periods) != 1 || len(list.HolderTypes) != 3 || len(list.Sources) != 3 {
@@ -1362,11 +1362,39 @@ func TestStockInstitutionHoldingsUpsertListAndSummary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetStockInstitutionHoldingSummary error: %v", err)
 	}
-	if summary.HolderCount != 2 || summary.FundCount != 1 || summary.HolderTypeCount != 2 {
+	if summary.HolderCount != 2 || summary.FundCount != 1 || summary.FundCompanyCount != 1 || summary.HolderTypeCount != 2 {
 		t.Fatalf("unexpected holder counts: %+v", summary)
 	}
 	if summary.TotalShares != 3500 || summary.TotalFloatRatio != 4.3 || summary.MaxHolderName != "社保基金一一八组合" {
 		t.Fatalf("unexpected summary totals: %+v", summary)
+	}
+
+	reportResult, err := store.UpsertStockHoldingReportDocuments(ctx, []model.StockHoldingReportDocument{{
+		SourceType:        "tiantian_fund_regular_report",
+		SourceKey:         "110001-20260331",
+		ReportPeriod:      "20260331",
+		FundCode:          "110001",
+		FundName:          "易方达蓝筹精选",
+		FundCompany:       "易方达基金管理有限公司",
+		AnnouncementTitle: "易方达蓝筹精选2026年第1季度报告",
+		AnnouncementDate:  "2026-04-22",
+		SourceURL:         "https://example.com/report",
+		ParseStatus:       "indexed",
+		RawPayload:        "{}",
+		FetchedAt:         fetchedAt,
+	}})
+	if err != nil {
+		t.Fatalf("UpsertStockHoldingReportDocuments error: %v", err)
+	}
+	if reportResult.Inserted != 1 || reportResult.Updated != 0 || reportResult.Total != 1 {
+		t.Fatalf("unexpected report upsert result: %+v", reportResult)
+	}
+	reportList, err := store.ListStockHoldingReportDocuments(ctx, model.StockHoldingReportDocumentFilter{Period: "20260331", FundCompany: "易方达", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListStockHoldingReportDocuments error: %v", err)
+	}
+	if reportList.Total != 1 || len(reportList.Items) != 1 || reportList.Items[0].FundCode != "110001" || len(reportList.Periods) != 1 || len(reportList.Sources) != 1 {
+		t.Fatalf("unexpected report list: %+v", reportList)
 	}
 }
 
@@ -1670,6 +1698,41 @@ func TestStockInstitutionHoldingSignalsComparePeriods(t *testing.T) {
 	}
 	if filtered.Total != 1 || filtered.Items[0].StockCode != "002230" {
 		t.Fatalf("expected one filtered signal for 002230, got %+v", filtered)
+	}
+}
+
+func TestStockInstitutionHoldingSignalsDetectExitDisclosure(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	fetchedAt := time.Date(2026, 7, 23, 2, 35, 0, 0, time.UTC)
+	items := []model.StockInstitutionHolding{
+		{StockCode: "600000", StockName: "浦发银行", ReportPeriod: "20260331", HolderName: "易方达基金", HolderType: "fund", HolderCode: "exit-1", FundCompany: "易方达基金管理有限公司", Shares: 1000, FloatRatio: 1, MarketValue: 10000, SourceType: "stock_fund_stock_holder", FetchedAt: fetchedAt},
+		{StockCode: "600000", StockName: "浦发银行", ReportPeriod: "20260331", HolderName: "华夏基金", HolderType: "fund", HolderCode: "exit-2", FundCompany: "华夏基金管理有限公司", Shares: 900, FloatRatio: 0.9, MarketValue: 9000, SourceType: "stock_fund_stock_holder", FetchedAt: fetchedAt},
+		{StockCode: "600000", StockName: "浦发银行", ReportPeriod: "20260331", HolderName: "南方基金", HolderType: "fund", HolderCode: "exit-3", FundCompany: "南方基金管理股份有限公司", Shares: 800, FloatRatio: 0.8, MarketValue: 8000, SourceType: "stock_fund_stock_holder", FetchedAt: fetchedAt},
+		{StockCode: "600000", StockName: "浦发银行", ReportPeriod: "20260331", HolderName: "社保基金一一八组合", HolderType: "social_security", HolderCode: "exit-4", Shares: 700, FloatRatio: 0.7, MarketValue: 7000, SourceType: "stock_institute_hold_detail", FetchedAt: fetchedAt},
+		{StockCode: "600000", StockName: "浦发银行", ReportPeriod: "20260331", HolderName: "QFII Alpha", HolderType: "qfii", HolderCode: "exit-5", Shares: 600, FloatRatio: 0.6, MarketValue: 6000, SourceType: "stock_institute_hold_detail", FetchedAt: fetchedAt},
+		{StockCode: "002230", StockName: "科大讯飞", ReportPeriod: "20260630", HolderName: "易方达基金", HolderType: "fund", HolderCode: "keep-1", FundCompany: "易方达基金管理有限公司", Shares: 100, FloatRatio: 0.1, MarketValue: 1000, SourceType: "stock_fund_stock_holder", FetchedAt: fetchedAt},
+	}
+	if _, err := store.UpsertStockInstitutionHoldings(ctx, items); err != nil {
+		t.Fatalf("UpsertStockInstitutionHoldings error: %v", err)
+	}
+
+	signals, err := store.ListStockInstitutionHoldingSignals(ctx, model.StockInstitutionHoldingSignalFilter{Period: "20260630", SignalType: "exit_disclosure", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListStockInstitutionHoldingSignals exit error: %v", err)
+	}
+	if signals.Total != 1 || signals.Items[0].StockCode != "600000" || signals.Items[0].SignalType != "exit_disclosure" {
+		t.Fatalf("expected one exit disclosure signal for 600000, got %+v", signals)
+	}
+	signal := signals.Items[0]
+	if signal.CurrentHolderCount != 0 || signal.PreviousHolderCount != 5 || signal.ExitedHolderCount != 5 || signal.ExitedFundCount != 3 || signal.ExitedFundCompanyCount != 3 {
+		t.Fatalf("unexpected exit disclosure stats: %+v", signal)
+	}
+	if !strings.Contains(signal.Reason, "退出披露名单") || strings.Contains(signal.Reason, "清仓") {
+		t.Fatalf("expected cautious exit disclosure reason, got %q", signal.Reason)
+	}
+	if len(signal.ExitedMajorHolders) == 0 || signal.ExitedMajorHolders[0] != "易方达基金" {
+		t.Fatalf("expected exited holders sorted by market value, got %+v", signal.ExitedMajorHolders)
 	}
 }
 
