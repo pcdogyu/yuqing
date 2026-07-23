@@ -1812,6 +1812,24 @@ func TestStockInstitutionHoldingSignalsComparePeriods(t *testing.T) {
 	if filtered.Total != 1 || filtered.Items[0].StockCode != "002230" {
 		t.Fatalf("expected one filtered signal for 002230, got %+v", filtered)
 	}
+
+	increase, err := store.ListStockInstitutionHoldingSignals(ctx, model.StockInstitutionHoldingSignalFilter{Period: "20260331", SignalType: "increase", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("increase ListStockInstitutionHoldingSignals error: %v", err)
+	}
+	if increase.Total != 2 {
+		t.Fatalf("expected overlapping increase signals for 002230 and 300059, got %+v", increase)
+	}
+	seenIncrease := map[string]bool{}
+	for _, item := range increase.Items {
+		if item.SignalType != "increase" {
+			t.Fatalf("expected increase filtered rows to use increase signal type, got %+v", item)
+		}
+		seenIncrease[item.StockCode] = true
+	}
+	if !seenIncrease["002230"] || !seenIncrease["300059"] {
+		t.Fatalf("expected new-entry and float-ratio rows in increase filter, got %+v", increase.Items)
+	}
 }
 
 func TestStockInstitutionHoldingSignalsDetectExitDisclosure(t *testing.T) {
@@ -1846,6 +1864,17 @@ func TestStockInstitutionHoldingSignalsDetectExitDisclosure(t *testing.T) {
 	}
 	if len(signal.ExitedMajorHolders) == 0 || signal.ExitedMajorHolders[0] != "易方达基金" {
 		t.Fatalf("expected exited holders sorted by market value, got %+v", signal.ExitedMajorHolders)
+	}
+
+	decrease, err := store.ListStockInstitutionHoldingSignals(ctx, model.StockInstitutionHoldingSignalFilter{Period: "20260630", SignalType: "decrease", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListStockInstitutionHoldingSignals decrease error: %v", err)
+	}
+	if decrease.Total != 1 || decrease.Items[0].StockCode != "600000" || decrease.Items[0].SignalType != "decrease" {
+		t.Fatalf("expected overlapping decrease signal for 600000, got %+v", decrease)
+	}
+	if !strings.Contains(decrease.Items[0].Reason, "持股数 -") || !strings.Contains(decrease.Items[0].Reason, "市值 -") {
+		t.Fatalf("expected decrease reason to include signed shares and market value, got %q", decrease.Items[0].Reason)
 	}
 }
 

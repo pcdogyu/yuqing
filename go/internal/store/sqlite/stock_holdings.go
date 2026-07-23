@@ -17,6 +17,7 @@ const (
 	defaultStockSignalFundCountChange   = 3
 	defaultStockSignalFundCompanyChange = 2
 	defaultStockSignalFloatRatioChange  = 3.0
+	defaultStockSignalValueChangeRatio  = 0.10
 )
 
 type stockHoldingAggregate struct {
@@ -525,12 +526,17 @@ func (s *Store) ListStockInstitutionHoldingSignals(ctx context.Context, filter m
 			SourceTypes:              stockHoldingSortedSetUnion(cur.SourceTypes, prev.SourceTypes),
 			DisclosureScope:          stockHoldingDisclosureScope(cur.DisclosureScopes, prev.DisclosureScopes),
 		}
-		signal.SignalType = stockHoldingSignalType(signal, result.Thresholds)
-		if !stockHoldingSignalTriggered(signal, result.Thresholds) {
+		signalTypes := stockHoldingSignalTypes(signal, result.Thresholds)
+		if len(signalTypes) == 0 {
 			continue
 		}
-		if filter.SignalType != "" && signal.SignalType != filter.SignalType {
-			continue
+		if filter.SignalType != "" {
+			if !stockHoldingSignalTypeIn(signalTypes, filter.SignalType) {
+				continue
+			}
+			signal.SignalType = filter.SignalType
+		} else {
+			signal.SignalType = signalTypes[0]
 		}
 		signal.Level = stockHoldingSignalLevel(signal)
 		signal.Reason = stockHoldingSignalReason(signal)
@@ -698,10 +704,6 @@ FROM stock_institution_holdings `+where, args...)
 	return out, rows.Err()
 }
 
-func stockHoldingSignalTriggered(signal model.StockInstitutionHoldingSignal, thresholds model.StockInstitutionSignalThreshold) bool {
-	return signal.SignalType != ""
-}
-
 func stockHoldingSignalLevel(signal model.StockInstitutionHoldingSignal) string {
 	if signal.NewHolderCount >= 10 || signal.ExitedHolderCount >= 10 ||
 		signal.NewFundCount >= 5 || signal.ExitedFundCount >= 5 ||
@@ -741,12 +743,24 @@ func stockHoldingSignalReason(signal model.StockInstitutionHoldingSignal) string
 		if signal.FundCountChange > 0 {
 			parts = append(parts, fmt.Sprintf("基金数 +%d", signal.FundCountChange))
 		}
+		if signal.SharesChange > 0 {
+			parts = append(parts, "持股数 "+stockHoldingReasonSignedNumber(signal.SharesChange))
+		}
+		if signal.MarketValueChange > 0 {
+			parts = append(parts, "市值 "+stockHoldingReasonSignedMoney(signal.MarketValueChange))
+		}
 	case "decrease":
 		if signal.HolderCountChange < 0 {
 			parts = append(parts, fmt.Sprintf("机构数 %d", signal.HolderCountChange))
 		}
 		if signal.FundCountChange < 0 {
 			parts = append(parts, fmt.Sprintf("基金数 %d", signal.FundCountChange))
+		}
+		if signal.SharesChange < 0 {
+			parts = append(parts, "持股数 "+stockHoldingReasonSignedNumber(signal.SharesChange))
+		}
+		if signal.MarketValueChange < 0 {
+			parts = append(parts, "市值 "+stockHoldingReasonSignedMoney(signal.MarketValueChange))
 		}
 	}
 	if signal.FloatRatioChange > 0 {
@@ -760,7 +774,50 @@ func stockHoldingSignalReason(signal model.StockInstitutionHoldingSignal) string
 	return strings.Join(parts, "，")
 }
 
-func stockHoldingSignalType(signal model.StockInstitutionHoldingSignal, thresholds model.StockInstitutionSignalThreshold) string {
+func stockHoldingReasonSignedNumber(value float64) string {
+	if value > 0 {
+		return fmt.Sprintf("+%.0f", value)
+	}
+	return fmt.Sprintf("%.0f", value)
+}
+
+func stockHoldingReasonSignedMoney(value float64) string {
+	sign := ""
+	if value > 0 {
+		sign = "+"
+	} else if value < 0 {
+		sign = "-"
+	}
+	absValue := math.Abs(value)
+	if absValue >= 100000000 {
+		return fmt.Sprintf("%s%.2f亿", sign, absValue/100000000)
+	}
+	if absValue >= 10000 {
+		return fmt.Sprintf("%s%.2f万", sign, absValue/10000)
+	}
+	return fmt.Sprintf("%s%.0f", sign, absValue)
+}
+
+func stockHoldingSignalTypes(signal model.StockInstitutionHoldingSignal, thresholds model.StockInstitutionSignalThreshold) []string {
+	types := make([]string, 0, 2)
+	primary := stockHoldingPrimarySignalType(signal, thresholds)
+	if primary != "" {
+		types = append(types, primary)
+	}
+	switch direction := stockHoldingValueChangeDirection(signal, thresholds); direction {
+	case 1:
+		if !stockHoldingSignalTypeIn(types, "increase") {
+			types = append(types, "increase")
+		}
+	case -1:
+		if !stockHoldingSignalTypeIn(types, "decrease") {
+			types = append(types, "decrease")
+		}
+	}
+	return types
+}
+
+func stockHoldingPrimarySignalType(signal model.StockInstitutionHoldingSignal, thresholds model.StockInstitutionSignalThreshold) string {
 	newTriggered := signal.NewHolderCount >= thresholds.HolderCountChange ||
 		signal.NewFundCount >= thresholds.FundCountChange ||
 		signal.NewFundCompanyCount >= thresholds.FundCompanyCountChange ||
@@ -780,13 +837,57 @@ func stockHoldingSignalType(signal model.StockInstitutionHoldingSignal, threshol
 		return "new_entry"
 	case exitTriggered:
 		return "exit_disclosure"
-	case signal.FloatRatioChange >= thresholds.FloatRatioChange:
+	}
+	switch direction := stockHoldingValueChangeDirection(signal, thresholds); direction {
+	case 1:
 		return "increase"
-	case signal.FloatRatioChange <= -thresholds.FloatRatioChange:
+	case -1:
 		return "decrease"
 	default:
 		return ""
 	}
+}
+
+func stockHoldingValueChangeDirection(signal model.StockInstitutionHoldingSignal, thresholds model.StockInstitutionSignalThreshold) int {
+	if signal.FloatRatioChange >= thresholds.FloatRatioChange {
+		return 1
+	}
+	if signal.FloatRatioChange <= -thresholds.FloatRatioChange {
+		return -1
+	}
+	if stockHoldingRelativeChangeTriggered(signal.SharesChange, signal.PreviousShares) {
+		if signal.SharesChange > 0 {
+			return 1
+		}
+		return -1
+	}
+	if stockHoldingRelativeChangeTriggered(signal.MarketValueChange, signal.PreviousMarketValue) {
+		if signal.MarketValueChange > 0 {
+			return 1
+		}
+		return -1
+	}
+	return 0
+}
+
+func stockHoldingRelativeChangeTriggered(change float64, previous float64) bool {
+	if change == 0 {
+		return false
+	}
+	base := math.Abs(previous)
+	if base == 0 {
+		return true
+	}
+	return math.Abs(change)/base >= defaultStockSignalValueChangeRatio
+}
+
+func stockHoldingSignalTypeIn(types []string, signalType string) bool {
+	for _, value := range types {
+		if value == signalType {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeStockHoldingSignalType(value string) string {

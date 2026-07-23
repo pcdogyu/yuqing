@@ -186,6 +186,7 @@ func renderAStockHoldingSignals(b *strings.Builder, signals model.StockInstituti
 		b.WriteString(fmt.Sprintf("%d", signals.Thresholds.FundCountChange))
 		b.WriteString(` / 流通占比 +`)
 		b.WriteString(html.EscapeString(formatAStockHoldingPct(signals.Thresholds.FloatRatioChange)))
+		b.WriteString(`；增减按持股数、市值或流通占比方向筛选`)
 		b.WriteString(`</p>`)
 	}
 	renderAStockHoldingSignalTabs(b, filter, signalType)

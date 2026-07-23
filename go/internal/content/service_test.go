@@ -1142,6 +1142,25 @@ func TestStockInstitutionHoldingSignalsAPI(t *testing.T) {
 	if exitEnvelope.Data.Total != 0 || exitEnvelope.Data.SignalType != "exit_disclosure" {
 		t.Fatalf("unexpected exit-disclosure filtered signals: %+v", exitEnvelope.Data)
 	}
+
+	increaseReq := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/holdings/signals?code=002230&signal_type=increase&page=1&page_size=20", nil)
+	increaseRR := httptest.NewRecorder()
+	router.ServeHTTP(increaseRR, increaseReq)
+	if increaseRR.Code != http.StatusOK {
+		t.Fatalf("expected holdings increase signals 200, got %d body=%s", increaseRR.Code, increaseRR.Body.String())
+	}
+	var increaseEnvelope struct {
+		Data model.StockInstitutionHoldingSignalListResult `json:"data"`
+	}
+	if err := json.Unmarshal(increaseRR.Body.Bytes(), &increaseEnvelope); err != nil {
+		t.Fatalf("unmarshal holdings increase signals: %v", err)
+	}
+	if increaseEnvelope.Data.Total != 1 || increaseEnvelope.Data.SignalType != "increase" || increaseEnvelope.Data.Items[0].SignalType != "increase" {
+		t.Fatalf("unexpected increase filtered signals: %+v", increaseEnvelope.Data)
+	}
+	if !strings.Contains(increaseEnvelope.Data.Items[0].Reason, "持股数 +") || !strings.Contains(increaseEnvelope.Data.Items[0].Reason, "市值 +") {
+		t.Fatalf("expected increase reason to include signed shares and market value, got %q", increaseEnvelope.Data.Items[0].Reason)
+	}
 }
 
 func TestAuditMiddlewareWritesSanitizedAccessLog(t *testing.T) {
