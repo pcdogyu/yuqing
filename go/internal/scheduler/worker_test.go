@@ -2627,10 +2627,13 @@ func TestRunAStockHoldingsBackfillFetchesExternalAndWritesContent(t *testing.T) 
 }
 
 func TestRunAStockHoldingsBackfillWritesEachPeriod(t *testing.T) {
+	var mu sync.Mutex
 	requestedPeriods := []string{}
 	external := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		period := r.URL.Query().Get("period")
+		mu.Lock()
 		requestedPeriods = append(requestedPeriods, period)
+		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"items": []model.StockInstitutionHolding{{
@@ -2654,7 +2657,9 @@ func TestRunAStockHoldingsBackfillWritesEachPeriod(t *testing.T) {
 		if len(payload.Items) != 1 {
 			t.Fatalf("expected one holding item per period write, got %+v", payload.Items)
 		}
+		mu.Lock()
 		writtenPeriods = append(writtenPeriods, payload.Items[0].ReportPeriod)
+		mu.Unlock()
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockInstitutionHoldingUpsertResult{Inserted: 1, Total: 1}})
 	}))
 	defer content.Close()
@@ -2673,11 +2678,60 @@ func TestRunAStockHoldingsBackfillWritesEachPeriod(t *testing.T) {
 		t.Fatalf("runAStockHoldingsBackfill error: %v", err)
 	}
 	want := []string{"20260331", "20260630"}
+	sort.Strings(requestedPeriods)
+	sort.Strings(writtenPeriods)
 	if !slices.Equal(requestedPeriods, want) {
 		t.Fatalf("expected external requests per period %v, got %v", want, requestedPeriods)
 	}
 	if !slices.Equal(writtenPeriods, want) {
 		t.Fatalf("expected content writes per period %v, got %v", want, writtenPeriods)
+	}
+}
+
+func TestRunAStockHoldingsBackfillFetchesPeriodsConcurrently(t *testing.T) {
+	var active atomic.Int32
+	var maxActive atomic.Int32
+	external := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		current := active.Add(1)
+		for {
+			previous := maxActive.Load()
+			if current <= previous || maxActive.CompareAndSwap(previous, current) {
+				break
+			}
+		}
+		time.Sleep(80 * time.Millisecond)
+		active.Add(-1)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"items": []model.StockInstitutionHolding{{
+				StockCode:  "002230",
+				HolderName: "易方达基金",
+				HolderType: "fund",
+			}},
+		})
+	}))
+	defer external.Close()
+
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockInstitutionHoldingUpsertResult{Inserted: 1, Total: 1}})
+	}))
+	defer content.Close()
+
+	worker := NewWorker(config.Config{
+		AStockHoldingURL:      external.URL,
+		ContentURL:            content.URL,
+		HTTPTimeout:           time.Second,
+		ServiceToken:          "secret-token",
+		ExternalRetryCount:    0,
+		ExternalRetryWait:     time.Millisecond,
+		SchedulerCrawlTimeout: time.Second,
+	})
+	opts := aStockHoldingCrawlOptions{StartPeriod: "20260331", EndPeriod: "20260630"}
+	if err := worker.runAStockHoldingsBackfill(context.Background(), opts); err != nil {
+		t.Fatalf("runAStockHoldingsBackfill error: %v", err)
+	}
+	if maxActive.Load() < 2 {
+		t.Fatalf("expected holdings periods to fetch concurrently, max active=%d", maxActive.Load())
 	}
 }
 

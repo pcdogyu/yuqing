@@ -42,6 +42,7 @@ from typing import Any
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8087
 DEFAULT_WORKERS = 12
+DEFAULT_HOLDING_WORKERS = 6
 DEFAULT_CACHE_DIR = Path("data") / "akshare-cache" / "a-stock-auction"
 DEFAULT_TRADING_DAY_CACHE_TTL_SEC = 6 * 60 * 60
 DEFAULT_TDX_QUOTE_CACHE_TTL_SEC = 60
@@ -2336,22 +2337,46 @@ def fetch_tiantian_fund_report_documents(period: str, limit: int) -> tuple[list[
     return items, ""
 
 
-def fetch_market_holdings_for_period(ak: Any, period: str) -> tuple[list[dict[str, Any]], list[str]]:
-    items: list[dict[str, Any]] = []
-    warnings: list[str] = []
+def holding_worker_count(workers: int, task_count: int) -> int:
+    if task_count <= 1:
+        return 1
+    return max(1, min(max(1, workers), DEFAULT_HOLDING_WORKERS, task_count))
+
+
+def fetch_market_holding_free_detail(ak: Any, period: str) -> tuple[list[dict[str, Any]], list[str]]:
     try:
         frame = ak.stock_gdfx_free_holding_detail_em(date=period)
-        items.extend(holding_frame_items(frame, "stock_gdfx_free_holding_detail_em", period))
+        return holding_frame_items(frame, "stock_gdfx_free_holding_detail_em", period), []
     except Exception as exc:  # pragma: no cover - external service variability
-        warnings.append(f"stock_gdfx_free_holding_detail_em {period}: {exc}")
+        return [], [f"stock_gdfx_free_holding_detail_em {period}: {exc}"]
 
+
+def fetch_market_holding_detail(ak: Any, period: str, holder_type: str, change: str) -> tuple[list[dict[str, Any]], list[str]]:
+    try:
+        frame = ak.stock_gdfx_holding_detail_em(date=period, indicator=holder_type, symbol=change)
+        return holding_frame_items(frame, "stock_gdfx_holding_detail_em", period), []
+    except Exception as exc:  # pragma: no cover - external service variability
+        return [], [f"stock_gdfx_holding_detail_em {period} {holder_type}/{change}: {exc}"]
+
+
+def fetch_market_holdings_for_period(ak: Any, period: str, workers: int = DEFAULT_HOLDING_WORKERS) -> tuple[list[dict[str, Any]], list[str]]:
+    items: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    tasks = [lambda: fetch_market_holding_free_detail(ak, period)]
     for holder_type in HOLDING_DETAIL_TYPES:
         for change in HOLDING_DETAIL_CHANGES:
+            tasks.append(lambda holder_type=holder_type, change=change: fetch_market_holding_detail(ak, period, holder_type, change))
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=holding_worker_count(workers, len(tasks))) as pool:
+        futures = [pool.submit(task) for task in tasks]
+        for future in concurrent.futures.as_completed(futures):
             try:
-                frame = ak.stock_gdfx_holding_detail_em(date=period, indicator=holder_type, symbol=change)
-                items.extend(holding_frame_items(frame, "stock_gdfx_holding_detail_em", period))
-            except Exception as exc:  # pragma: no cover - external service variability
-                warnings.append(f"stock_gdfx_holding_detail_em {period} {holder_type}/{change}: {exc}")
+                fetched_items, fetched_warnings = future.result()
+            except Exception as exc:  # pragma: no cover - defensive isolation
+                warnings.append(f"stock holding task {period}: {exc}")
+                continue
+            items.extend(fetched_items)
+            warnings.extend(fetched_warnings)
     return dedupe_holding_items(items), warnings
 
 
@@ -2911,7 +2936,7 @@ class AuctionService:
         if code:
             items, warnings = fetch_symbol_holdings_for_period(ak, period, code)
         else:
-            items, warnings = fetch_market_holdings_for_period(ak, period)
+            items, warnings = fetch_market_holdings_for_period(ak, period, self.workers)
         reports, report_warning = fetch_tiantian_fund_report_documents(period, report_limit)
         if report_warning:
             warnings.append(report_warning)
@@ -3539,6 +3564,28 @@ def run_self_test() -> None:
     assert fund_holding["fund_code"] == "005827"
     assert fund_holding["fund_company"] == "易方达基金管理有限公司"
     assert fund_holding["disclosure_scope"] == "fund_quarterly"
+    assert holding_worker_count(12, 25) == DEFAULT_HOLDING_WORKERS
+    assert holding_worker_count(2, 25) == 2
+
+    class FakeHoldingFrame:
+        def __init__(self, rows: list[dict[str, Any]]) -> None:
+            self.rows = rows
+
+        def iterrows(self) -> Any:
+            return iter(enumerate(self.rows))
+
+    class FakeHoldingAK:
+        def stock_gdfx_free_holding_detail_em(self, date: str) -> Any:
+            return FakeHoldingFrame([{"股票代码": "002230", "报告期": date, "股东名称": "全国社保基金一一八组合"}])
+
+        def stock_gdfx_holding_detail_em(self, date: str, indicator: str, symbol: str) -> Any:
+            if indicator == "基金" and symbol == "新进":
+                return FakeHoldingFrame([{"股票代码": "300059", "报告期": date, "股东名称": "易方达基金"}])
+            return FakeHoldingFrame([])
+
+    market_holdings, market_warnings = fetch_market_holdings_for_period(FakeHoldingAK(), "20260331", 4)
+    assert not market_warnings
+    assert sorted(item["stock_code"] for item in market_holdings) == ["002230", "300059"]
     docs = parse_tiantian_fund_report_documents(
         '<a href="/gonggao/005827,AN202607231650000000.html">易方达蓝筹精选混合型证券投资基金2026年第2季度报告</a>',
         "20260630",

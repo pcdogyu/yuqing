@@ -81,7 +81,7 @@ A 股策略工作台 `/a-stock` 默认按 `Asia/Shanghai` 增加 A 股新闻和�
 
 集合竞价页面 `/a-stock/auction` 展示全市场 A 股集合竞价金额。`run.bat` 默认构建并启动仓库内 AKShare 适配服务 `bin\akshare-service.exe`，地址为 `http://127.0.0.1:8087`，并自动设置 `YUQING_ASTOCK_AUCTION_URL` 和 `YUQING_ASTOCK_HOLDING_URL`。`a-stock-auction-crawl` 会在每日 `09:20:00`、`09:25:00`、`09:29:59` 抓取 `/api/a-stock/auction?date=YYYY-MM-DD` 并通过 content-service 分别写入 `0920`、`0925`、`0929` 快照；生产建议使用 PostgreSQL 配置。可用 `YUQING_SCHEDULER_A_STOCK_AUCTION_CRAWL_CRON` 覆盖执行时间。若最终快照定时任务漏抓，门户“获取最新交易日集合竞价金额”会调用 scheduler 的 latest 接口，不带日期请求 AKShare 适配服务并按 `0929` 快照写库；更早历史交易日仍依赖过去抓取形成的本地缓存或业务库记录。
 
-机构持仓页面 `/a-stock/holdings` 的“抓取全量股票历史持仓”按钮会触发 scheduler 的 `/api/v1/scheduler/a-stock/holdings/backfill`，不带股票代码时按最近 4 个报告期抓取全市场持仓。AKShare 适配服务提供 `/api/a-stock/holdings?period=YYYYMMDD&code=002230`，其中 `code` 可选；全市场抓取优先读取东方财富十大股东/十大流通股东，单股回补会叠加新浪机构持股和基金持股。持仓回补会同步保存基金季报公告索引，适配服务可通过 `/api/a-stock/holding-reports?period=YYYYMMDD` 单独检查报告元数据。页面信号按当前报告期与上一报告期对比，区分新进、退出披露名单、增持、减持；退出披露名单表示“上期披露、本期未披露”，不直接等同确认清仓。
+机构持仓页面 `/a-stock/holdings` 的“回补近一年全市场”按钮会触发 scheduler 的 `/api/v1/scheduler/a-stock/holdings/backfill`，不带股票代码时按最近 4 个报告期抓取全市场持仓。回补按报告期分批入库，scheduler 最多同时抓取 2 个报告期；AKShare 适配服务单个报告期最多并发 6 个东方财富持仓组合接口。AKShare 适配服务提供 `/api/a-stock/holdings?period=YYYYMMDD&code=002230`，其中 `code` 可选；全市场抓取优先读取东方财富十大股东/十大流通股东，单股回补会叠加新浪机构持股和基金持股。持仓回补会同步保存基金季报公告索引，适配服务可通过 `/api/a-stock/holding-reports?period=YYYYMMDD` 单独检查报告元数据。页面信号按当前报告期与上一报告期对比，区分新进、退出披露名单、增持、减持；退出披露名单表示“上期披露、本期未披露”，不直接等同确认清仓。
 
 AKShare 集合竞价服务可单独启动和检查：
 

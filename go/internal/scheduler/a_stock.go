@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -1305,24 +1306,85 @@ func (w *Worker) runAStockHoldingsBackfill(ctx context.Context, opts aStockHoldi
 	if len(periods) == 0 {
 		periods = latestAStockHoldingPeriods(4, time.Now().In(aStockLocation()))
 	}
+	taskCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	type periodResult struct {
+		Period  string
+		Items   int
+		Reports int
+		Err     error
+	}
+	jobs := make(chan string)
+	results := make(chan periodResult, len(periods))
+	workerCount := aStockHoldingsPeriodConcurrency(len(periods))
+
+	var wg sync.WaitGroup
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-taskCtx.Done():
+					return
+				case period, ok := <-jobs:
+					if !ok {
+						return
+					}
+					fetched, err := w.fetchExternalAStockHoldings(taskCtx, period, opts.Code)
+					if err == nil {
+						err = w.upsertAStockHoldings(taskCtx, fetched.Items, fetched.Reports)
+					}
+					results <- periodResult{Period: period, Items: len(fetched.Items), Reports: len(fetched.Reports), Err: err}
+					if err != nil {
+						cancel()
+						return
+					}
+				}
+			}
+		}()
+	}
+
+	go func() {
+		defer close(jobs)
+		for _, period := range periods {
+			select {
+			case <-taskCtx.Done():
+				return
+			case jobs <- period:
+			}
+		}
+	}()
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
 	totalItems := 0
 	totalReports := 0
-	for _, period := range periods {
-		fetched, err := w.fetchExternalAStockHoldings(ctx, period, opts.Code)
-		if err != nil {
-			return err
+	var firstErr error
+	for result := range results {
+		if result.Err != nil && firstErr == nil {
+			firstErr = result.Err
 		}
-		if err := w.upsertAStockHoldings(ctx, fetched.Items, fetched.Reports); err != nil {
-			return err
+		if result.Err != nil {
+			continue
 		}
-		totalItems += len(fetched.Items)
-		totalReports += len(fetched.Reports)
+		totalItems += result.Items
+		totalReports += result.Reports
 		log.Info().
 			Str("code", opts.Code).
-			Str("period", period).
-			Int("items", len(fetched.Items)).
-			Int("reports", len(fetched.Reports)).
+			Str("period", result.Period).
+			Int("items", result.Items).
+			Int("reports", result.Reports).
 			Msg("a-stock institution holdings period crawled")
+	}
+	if firstErr != nil {
+		return firstErr
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	log.Info().
 		Str("code", opts.Code).
@@ -1425,6 +1487,13 @@ func aStockHoldingsBackfillTimeout(base time.Duration, opts aStockHoldingCrawlOp
 		periodCount = 4
 	}
 	return maxDuration(aStockHoldingsHTTPTimeout(base)*time.Duration(periodCount+1), 2*time.Hour)
+}
+
+func aStockHoldingsPeriodConcurrency(periodCount int) int {
+	if periodCount <= 1 {
+		return 1
+	}
+	return 2
 }
 
 func aStockHoldingsHTTPTimeout(base time.Duration) time.Duration {
