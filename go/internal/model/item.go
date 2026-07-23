@@ -152,6 +152,32 @@ type ArticleFilter struct {
 	Lite       bool   `json:"lite,omitempty"`
 }
 
+type ArticleCleanupFilter struct {
+	Mode          string `json:"mode,omitempty"`
+	RetentionDays int    `json:"retention_days,omitempty"`
+	Scope         string `json:"scope,omitempty"`
+	Confirm       bool   `json:"confirm,omitempty"`
+	Cutoff        string `json:"cutoff,omitempty"`
+}
+
+type ArticleCleanupSourceCount struct {
+	SourceType string `json:"source_type"`
+	Count      int    `json:"count"`
+}
+
+type ArticleCleanupResult struct {
+	Mode          string                      `json:"mode,omitempty"`
+	RetentionDays int                         `json:"retention_days"`
+	Scope         string                      `json:"scope"`
+	Cutoff        string                      `json:"cutoff"`
+	Total         int                         `json:"total"`
+	Sources       []ArticleCleanupSourceCount `json:"sources"`
+	Applied       bool                        `json:"applied"`
+	Affected      int                         `json:"affected"`
+	Tombstoned    int                         `json:"tombstoned"`
+	BeforeTotal   int                         `json:"before_total"`
+	AfterTotal    int                         `json:"after_total"`
+}
 type HotspotSwitchingResult struct {
 	Days              int                    `json:"days"`
 	StartDate         string                 `json:"start_date"`

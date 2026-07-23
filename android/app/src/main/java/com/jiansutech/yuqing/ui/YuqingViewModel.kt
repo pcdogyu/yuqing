@@ -1069,7 +1069,10 @@ class YuqingViewModel(
             runCatching {
                 val response = currentYuqingApi(session)
                     .runAction(pending.action, AndroidActionRequest(pending.params))
-                val status = response.data?.status ?: response.message
+                val status = listOfNotNull(
+                    response.data?.status?.takeIf { it.isNotBlank() },
+                    response.data?.message?.takeIf { it.isNotBlank() },
+                ).joinToString("：").ifBlank { response.message }
                 _uiState.update { it.copy(message = "${pending.title}: $status") }
             }.onFailure { throwable ->
                 _uiState.update { it.copy(error = throwable.message ?: "操作失败") }

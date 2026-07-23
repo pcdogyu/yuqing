@@ -108,6 +108,12 @@ CREATE TABLE IF NOT EXISTS items (
 	updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS item_deletion_tombstones (
+	source_key TEXT PRIMARY KEY,
+	deleted_at TEXT NOT NULL,
+	reason TEXT NOT NULL DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS crawl_runs (
 	id INTEGER PRIMARY KEY,
 	source_type TEXT NOT NULL,
@@ -897,6 +903,7 @@ CREATE INDEX IF NOT EXISTS idx_items_source_type_captured_at ON items(source_typ
 CREATE INDEX IF NOT EXISTS idx_items_captured_at ON items(captured_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_items_publish_time ON items(publish_time DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_items_title ON items(title);
+CREATE INDEX IF NOT EXISTS idx_item_deletion_tombstones_deleted_at ON item_deletion_tombstones(deleted_at DESC);
 CREATE INDEX IF NOT EXISTS idx_crawl_runs_source_type_started_at ON crawl_runs(source_type, started_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_crawl_states_updated ON crawl_states(source_type, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_stock_research_code_date ON stock_research_surveys(code, research_date DESC, id DESC);
@@ -1341,6 +1348,10 @@ func (s *Store) FailRunningCrawlRuns(ctx context.Context, errText string, finish
 }
 
 func (s *Store) UpsertItems(ctx context.Context, items []model.Item) (inserted, updated int, err error) {
+	items, err = s.filterItemDeletionTombstones(ctx, items)
+	if err != nil || len(items) == 0 {
+		return 0, 0, err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, 0, err

@@ -153,6 +153,8 @@ type pageData struct {
 	AStockAlgorithmGroups      []aStockAlgorithmParamGroupView
 	AStockNewsStatsDate        string
 	AStockNewsStatsHTML        template.HTML
+	ArticleCleanupPreview      model.ArticleCleanupResult
+	ArticleCleanupPreviewError string
 	Dashboard                  model.DashboardSnapshot
 	Groups                     []model.ProjectGroup
 	Project                    model.Project
@@ -3438,6 +3440,30 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) 
 			} else {
 				message = "分析刷新已提交"
 			}
+		case "article_cleanup_preview":
+			preview, err := s.articleCleanupPreview(r.FormValue("retention_days"), r.FormValue("scope"))
+			if err != nil {
+				message = "历史文章清理预览失败：" + err.Error()
+			} else {
+				message = "历史文章清理预览：" + articleCleanupPortalSummary(preview)
+			}
+		case "article_cleanup_soft", "article_cleanup_hard":
+			if !parseBoolLike(r.FormValue("confirm")) {
+				message = "历史文章清理未执行：请先勾选确认"
+				break
+			}
+			mode := "soft"
+			if strings.TrimSpace(r.FormValue("form_type")) == "article_cleanup_hard" {
+				mode = "hard"
+			}
+			result, err := s.articleCleanupRun(mode, r.FormValue("retention_days"), r.FormValue("scope"))
+			if err != nil {
+				message = "历史文章清理执行失败：" + err.Error()
+			} else if mode == "hard" {
+				message = "历史文章硬清理完成：" + articleCleanupPortalSummary(result)
+			} else {
+				message = "历史文章软删除完成：" + articleCleanupPortalSummary(result)
+			}
 		case "restart_service":
 			serviceName := strings.TrimSpace(r.FormValue("service_name"))
 			resp, err := s.client.R().
@@ -3680,53 +3706,64 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request, user any) 
 	if sectionKey == "newsstats" {
 		aStockNewsStatsHTML = template.HTML(s.renderAStockNewsStatsHTML(aStockNewsStatsDate))
 	}
+	articleCleanupPreview := model.ArticleCleanupResult{}
+	articleCleanupPreviewError := ""
+	if sectionKey == "opactions" {
+		var err error
+		articleCleanupPreview, err = s.articleCleanupPreview("90", "all")
+		if err != nil {
+			articleCleanupPreviewError = err.Error()
+		}
+	}
 	_ = s.render(w, "system", pageData{
-		Title:                    "系统设置",
-		User:                     user,
-		SectionKey:               sectionKey,
-		AStockRepair:             aStockRepair,
-		AStockAlgorithm:          aStockAlgorithm,
-		AStockAlgorithmGroups:    buildAStockAlgorithmParamGroups(aStockAlgorithm),
-		AStockNewsStatsDate:      aStockNewsStatsDate,
-		AStockNewsStatsHTML:      aStockNewsStatsHTML,
-		Notices:                  notices,
-		FeedbackItems:            feedbackItems,
-		AuditLogs:                auditLogs,
-		TaskRuns:                 taskRuns,
-		SchedulerJobs:            schedulerJobs,
-		LegacyRouteSummary:       chooseLegacyRouteSummary(operations.LegacyRegistry),
-		LegacyLiveRoutes:         collectLegacyLiveRoutes(),
-		CrawlRuns:                crawlRuns,
-		Projects:                 projects,
-		ProjectNames:             projectNames,
-		GroupNames:               groupNames,
-		Services:                 chooseServiceStatuses(operations.Services, s.collectServiceStatuses()),
-		Operations:               operations,
-		DatabaseConfig:           databaseConfig,
-		ReleaseSettings:          releaseSettings,
-		Preferences:              preferences,
-		PopupState:               popupState,
-		MailConfig:               mailConfig,
-		WarningSetting:           warningSetting,
-		ServiceLogName:           serviceLogName,
-		ServiceLogText:           serviceLogText,
-		FavoriteItems:            favoriteArticles,
-		FavoritePage:             currentPage,
-		FavoritePagePrev:         maxInt(currentPage-1, 1),
-		FavoritePageNext:         minInt(currentPage+1, totalPages),
-		FavoriteProjectID:        projectID,
-		FavoriteTotalPages:       totalPages,
-		WarningArticles:          warningArticles,
-		WarningArticlePage:       warningArticlePage,
-		WarningArticlePrev:       warningArticlePrev,
-		WarningArticleNext:       warningArticleNext,
-		WarningArticleTotalPages: warningArticleTotalPages,
-		WarningArticleProjectID:  warningArticleProjectID,
-		WarningArticleOpenFlag:   warningArticleOpenFlag,
-		WarningArticleKeyword:    warningArticleKeyword,
-		CrawlTemplates:           crawlTemplates,
-		Section:                  nonEmpty(sectionLabel, "系统工作台"),
-		Message:                  r.URL.Query().Get("msg"),
+		Title:                      "系统设置",
+		User:                       user,
+		SectionKey:                 sectionKey,
+		AStockRepair:               aStockRepair,
+		AStockAlgorithm:            aStockAlgorithm,
+		AStockAlgorithmGroups:      buildAStockAlgorithmParamGroups(aStockAlgorithm),
+		AStockNewsStatsDate:        aStockNewsStatsDate,
+		AStockNewsStatsHTML:        aStockNewsStatsHTML,
+		ArticleCleanupPreview:      articleCleanupPreview,
+		ArticleCleanupPreviewError: articleCleanupPreviewError,
+		Notices:                    notices,
+		FeedbackItems:              feedbackItems,
+		AuditLogs:                  auditLogs,
+		TaskRuns:                   taskRuns,
+		SchedulerJobs:              schedulerJobs,
+		LegacyRouteSummary:         chooseLegacyRouteSummary(operations.LegacyRegistry),
+		LegacyLiveRoutes:           collectLegacyLiveRoutes(),
+		CrawlRuns:                  crawlRuns,
+		Projects:                   projects,
+		ProjectNames:               projectNames,
+		GroupNames:                 groupNames,
+		Services:                   chooseServiceStatuses(operations.Services, s.collectServiceStatuses()),
+		Operations:                 operations,
+		DatabaseConfig:             databaseConfig,
+		ReleaseSettings:            releaseSettings,
+		Preferences:                preferences,
+		PopupState:                 popupState,
+		MailConfig:                 mailConfig,
+		WarningSetting:             warningSetting,
+		ServiceLogName:             serviceLogName,
+		ServiceLogText:             serviceLogText,
+		FavoriteItems:              favoriteArticles,
+		FavoritePage:               currentPage,
+		FavoritePagePrev:           maxInt(currentPage-1, 1),
+		FavoritePageNext:           minInt(currentPage+1, totalPages),
+		FavoriteProjectID:          projectID,
+		FavoriteTotalPages:         totalPages,
+		WarningArticles:            warningArticles,
+		WarningArticlePage:         warningArticlePage,
+		WarningArticlePrev:         warningArticlePrev,
+		WarningArticleNext:         warningArticleNext,
+		WarningArticleTotalPages:   warningArticleTotalPages,
+		WarningArticleProjectID:    warningArticleProjectID,
+		WarningArticleOpenFlag:     warningArticleOpenFlag,
+		WarningArticleKeyword:      warningArticleKeyword,
+		CrawlTemplates:             crawlTemplates,
+		Section:                    nonEmpty(sectionLabel, "系统工作台"),
+		Message:                    r.URL.Query().Get("msg"),
 	})
 }
 
@@ -4829,6 +4866,78 @@ func legacyJSONString(value any) string {
 	return string(raw)
 }
 
+func (s *Server) articleCleanupPreview(retentionDaysRaw, scopeRaw string) (model.ArticleCleanupResult, error) {
+	filter := articleCleanupPortalFilter(retentionDaysRaw, scopeRaw)
+	resp, err := s.client.R().
+		SetQueryParam("retention_days", strconv.Itoa(filter.RetentionDays)).
+		SetQueryParam("scope", filter.Scope).
+		Get(s.cfg.ContentURL + "/api/v1/admin/articles/cleanup/preview")
+	if err != nil {
+		return model.ArticleCleanupResult{}, err
+	}
+	if !resp.IsSuccess() {
+		return model.ArticleCleanupResult{}, errors.New(responseErrorMessage(resp, nil))
+	}
+	return decodeArticleCleanupPortalResponse(resp.Body())
+}
+
+func (s *Server) articleCleanupRun(mode, retentionDaysRaw, scopeRaw string) (model.ArticleCleanupResult, error) {
+	filter := articleCleanupPortalFilter(retentionDaysRaw, scopeRaw)
+	filter.Mode = strings.ToLower(strings.TrimSpace(mode))
+	filter.Confirm = true
+	resp, err := s.client.R().
+		SetBody(filter).
+		Post(s.cfg.ContentURL + "/api/v1/admin/articles/cleanup")
+	if err != nil {
+		return model.ArticleCleanupResult{}, err
+	}
+	if !resp.IsSuccess() {
+		return model.ArticleCleanupResult{}, errors.New(responseErrorMessage(resp, nil))
+	}
+	return decodeArticleCleanupPortalResponse(resp.Body())
+}
+
+func articleCleanupPortalFilter(retentionDaysRaw, scopeRaw string) model.ArticleCleanupFilter {
+	retentionDays := parseLegacyInt(retentionDaysRaw, 90)
+	if retentionDays <= 0 {
+		retentionDays = 90
+	}
+	scope := strings.ToLower(strings.TrimSpace(scopeRaw))
+	if scope == "" {
+		scope = "all"
+	}
+	return model.ArticleCleanupFilter{RetentionDays: retentionDays, Scope: scope}
+}
+
+func decodeArticleCleanupPortalResponse(raw []byte) (model.ArticleCleanupResult, error) {
+	var envelope struct {
+		Data    model.ArticleCleanupResult `json:"data"`
+		Message string                     `json:"message"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return model.ArticleCleanupResult{}, err
+	}
+	return envelope.Data, nil
+}
+
+func articleCleanupPortalSummary(result model.ArticleCleanupResult) string {
+	sourceParts := make([]string, 0, minInt(len(result.Sources), 5))
+	for i, source := range result.Sources {
+		if i >= 5 {
+			break
+		}
+		sourceParts = append(sourceParts, fmt.Sprintf("%s %d", source.SourceType, source.Count))
+	}
+	sourceText := "无候选来源"
+	if len(sourceParts) > 0 {
+		sourceText = strings.Join(sourceParts, "；")
+	}
+	if result.Applied {
+		return fmt.Sprintf("候选 %d 篇，影响 %d 篇，墓碑 %d 条，总数 %d -> %d，%s", result.Total, result.Affected, result.Tombstoned, result.BeforeTotal, result.AfterTotal, sourceText)
+	}
+	return fmt.Sprintf("候选 %d 篇，当前总数 %d，截止 %s，%s", result.Total, result.BeforeTotal, result.Cutoff, sourceText)
+}
+
 func boolToLegacyInt(value bool) int {
 	if value {
 		return 1
@@ -5505,6 +5614,11 @@ func buildSystemTemplate() string {
 	template = strings.Replace(template,
 		`{{end}}{{if eq .SectionKey "database"}}<section class="section-block"><h2>数据库配置</h2>`,
 		`{{end}}{{if eq .SectionKey "newsstats"}}<section class="section-block astock-newsstats-section"><form class="newsstats-filter inline" method="get" action="/system"><input type="hidden" name="section" value="newsstats"><label>策略日期 <input type="date" name="strategy_date" value="{{.AStockNewsStatsDate}}"></label><button type="submit">刷新新闻统计</button></form>{{.AStockNewsStatsHTML}}</section>{{end}}{{if eq .SectionKey "database"}}<section class="section-block"><h2>数据库配置</h2>`,
+		1,
+	)
+	template = strings.Replace(template,
+		`<button type="submit">刷新分析快照</button></form></div></div></section>{{end}}{{if eq .SectionKey "announcements"}}`,
+		`<button type="submit">刷新分析快照</button></form></div><div class="crawl-card"><h3>历史文章清理</h3><p class="muted">默认全部来源，保留最近 90 天；先软删除，核对后再硬清理。</p>{{if .ArticleCleanupPreviewError}}<p class="bad">预览失败：{{.ArticleCleanupPreviewError}}</p>{{else}}<table><tr><th>指标</th><th>值</th></tr><tr><td>候选文章</td><td>{{.ArticleCleanupPreview.Total}}</td></tr><tr><td>当前文章总数</td><td>{{.ArticleCleanupPreview.BeforeTotal}}</td></tr><tr><td>截止时间</td><td>{{.ArticleCleanupPreview.Cutoff}}</td></tr></table><table><tr><th>来源</th><th>候选数</th></tr>{{range .ArticleCleanupPreview.Sources}}<tr><td>{{.SourceType}}</td><td>{{.Count}}</td></tr>{{else}}<tr><td colspan="2">暂无 90 天以前候选文章</td></tr>{{end}}</table>{{end}}<form method="post"><input type="hidden" name="form_type" value="article_cleanup_preview"><input type="hidden" name="section" value="opactions"><input type="hidden" name="retention_days" value="90"><input type="hidden" name="scope" value="all"><button type="submit">预览 90 天以前文章</button></form><form method="post" onsubmit="return confirm('确认软删除 90 天以前的历史文章？')"><input type="hidden" name="form_type" value="article_cleanup_soft"><input type="hidden" name="section" value="opactions"><input type="hidden" name="retention_days" value="90"><input type="hidden" name="scope" value="all"><label><input type="checkbox" name="confirm" value="true"> 已预览并确认软删除</label><button type="submit">执行软删除</button></form><form method="post" onsubmit="return confirm('确认硬清理已软删除的 90 天以前文章？必须已完成数据库备份。')"><input type="hidden" name="form_type" value="article_cleanup_hard"><input type="hidden" name="section" value="opactions"><input type="hidden" name="retention_days" value="90"><input type="hidden" name="scope" value="all"><label><input type="checkbox" name="confirm" value="true"> 已备份并确认硬清理</label><button type="submit">执行硬清理</button></form></div></div></section>{{end}}{{if eq .SectionKey "announcements"}}`,
 		1,
 	)
 	template = strings.Replace(template,

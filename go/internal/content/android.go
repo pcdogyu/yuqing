@@ -214,7 +214,7 @@ func (s *Service) handleAndroidAction(w http.ResponseWriter, r *http.Request) {
 		apiutil.WriteJSON(w, resp.StatusCode(), resp.Status(), androidActionResponse{Action: action, Status: "failed", TargetURL: endpoint, Message: string(resp.Body())})
 		return
 	}
-	apiutil.WriteJSON(w, http.StatusOK, "ok", androidActionResponse{Action: action, Status: "triggered", TargetURL: endpoint})
+	apiutil.WriteJSON(w, http.StatusOK, "ok", androidActionResponse{Action: action, Status: "triggered", TargetURL: endpoint, Message: androidActionSuccessMessage(action, resp.Body())})
 }
 
 func (s *Service) handleAndroidServiceRestart(w http.ResponseWriter, r *http.Request, action string, params map[string]string) {
@@ -260,6 +260,16 @@ func (s *Service) androidActionTarget(action string, params map[string]string) (
 		return http.MethodPost, withQuery(strings.TrimRight(s.cfg.SchedulerURL, "/")+"/api/v1/scheduler/a-stock/auction/backfill", query), true
 	case "a_stock_holdings_backfill":
 		return http.MethodPost, withQuery(strings.TrimRight(s.cfg.SchedulerURL, "/")+"/api/v1/scheduler/a-stock/holdings/backfill", query), true
+	case "article_cleanup_preview":
+		return http.MethodGet, withQuery(strings.TrimRight(s.cfg.ContentURL, "/")+"/api/v1/admin/articles/cleanup/preview", query), true
+	case "article_cleanup_soft":
+		query.Set("mode", "soft")
+		query.Set("confirm", "true")
+		return http.MethodPost, withQuery(strings.TrimRight(s.cfg.ContentURL, "/")+"/api/v1/admin/articles/cleanup", query), true
+	case "article_cleanup_hard":
+		query.Set("mode", "hard")
+		query.Set("confirm", "true")
+		return http.MethodPost, withQuery(strings.TrimRight(s.cfg.ContentURL, "/")+"/api/v1/admin/articles/cleanup", query), true
 	default:
 		return "", "", false
 	}
@@ -293,6 +303,9 @@ func androidSupportedActions() []string {
 		"a_stock_auction_latest",
 		"a_stock_auction_backfill",
 		"a_stock_holdings_backfill",
+		"article_cleanup_preview",
+		"article_cleanup_soft",
+		"article_cleanup_hard",
 		"service_restart",
 	}
 }
@@ -332,4 +345,21 @@ func withQuery(base string, query url.Values) string {
 		return base
 	}
 	return fmt.Sprintf("%s?%s", base, query.Encode())
+}
+
+func androidActionSuccessMessage(action string, body []byte) string {
+	if !strings.HasPrefix(action, "article_cleanup_") {
+		return ""
+	}
+	var envelope struct {
+		Data model.ArticleCleanupResult `json:"data"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil || envelope.Data.Cutoff == "" {
+		return strings.TrimSpace(string(body))
+	}
+	data := envelope.Data
+	if data.Applied {
+		return fmt.Sprintf("候选%d篇，影响%d篇，总数%d->%d，墓碑%d条", data.Total, data.Affected, data.BeforeTotal, data.AfterTotal, data.Tombstoned)
+	}
+	return fmt.Sprintf("候选%d篇，当前总数%d，截止%s", data.Total, data.BeforeTotal, data.Cutoff)
 }

@@ -55,6 +55,119 @@ func TestUpsertAndListItems(t *testing.T) {
 	}
 }
 
+func TestArticleCleanupSoftDeletesOldItems(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	cutoff := "2026-04-01T00:00:00Z"
+
+	oldItem := sampleItem("flash", "cleanup-soft-old", "CleanupSoftOldToken")
+	oldItem.CapturedAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	oldItem.CreatedAt = oldItem.CapturedAt
+	oldItem.UpdatedAt = oldItem.CapturedAt
+	recentItem := sampleItem("headline", "cleanup-soft-recent", "CleanupSoftRecentToken")
+	recentItem.CapturedAt = time.Date(2026, 4, 2, 0, 0, 0, 0, time.UTC)
+	recentItem.CreatedAt = recentItem.CapturedAt
+	recentItem.UpdatedAt = recentItem.CapturedAt
+	if _, _, err := store.UpsertItems(ctx, []model.Item{oldItem, recentItem}); err != nil {
+		t.Fatalf("UpsertItems error: %v", err)
+	}
+
+	preview, err := store.PreviewArticleCleanup(ctx, model.ArticleCleanupFilter{RetentionDays: 90, Scope: "all", Cutoff: cutoff})
+	if err != nil {
+		t.Fatalf("PreviewArticleCleanup error: %v", err)
+	}
+	if preview.Total != 1 || len(preview.Sources) != 1 || preview.Sources[0].SourceType != "flash" {
+		t.Fatalf("unexpected preview: %+v", preview)
+	}
+
+	result, err := store.CleanupArticles(ctx, model.ArticleCleanupFilter{Mode: "soft", RetentionDays: 90, Scope: "all", Cutoff: cutoff})
+	if err != nil {
+		t.Fatalf("CleanupArticles soft error: %v", err)
+	}
+	if result.Affected != 1 || result.BeforeTotal != 2 || result.AfterTotal != 1 {
+		t.Fatalf("unexpected soft cleanup result: %+v", result)
+	}
+	list, err := store.ListItems(ctx, model.ArticleFilter{Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListItems error: %v", err)
+	}
+	if list.Total != 1 || list.Items[0].SourceKey != "cleanup-soft-recent" {
+		t.Fatalf("expected only recent item after soft cleanup, got %+v", list)
+	}
+	search, err := store.SearchItemsFTS(ctx, model.ArticleFilter{Page: 1, PageSize: 10, Keyword: "CleanupSoftOldToken"})
+	if err != nil {
+		t.Fatalf("SearchItemsFTS error: %v", err)
+	}
+	if search.Total != 0 {
+		t.Fatalf("expected soft-deleted item excluded from FTS, got %+v", search)
+	}
+}
+
+func TestArticleCleanupHardDeletesRelationsAndTombstonesSourceKey(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	cutoff := "2026-04-01T00:00:00Z"
+
+	item := sampleItem("flash", "cleanup-hard-old", "CleanupHardOldToken")
+	item.CapturedAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	item.CreatedAt = item.CapturedAt
+	item.UpdatedAt = item.CapturedAt
+	if _, _, err := store.UpsertItems(ctx, []model.Item{item}); err != nil {
+		t.Fatalf("UpsertItems error: %v", err)
+	}
+	var itemID int64
+	if err := store.db.QueryRowContext(ctx, `SELECT id FROM items WHERE source_key = ?`, item.SourceKey).Scan(&itemID); err != nil {
+		t.Fatalf("item lookup error: %v", err)
+	}
+	now := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339)
+	for _, query := range []string{
+		`INSERT INTO item_relations (item_id, project_id, rule_id, created_at) VALUES (?, 1, 1, ?)`,
+		`INSERT INTO favorites (user_id, item_id, created_at) VALUES (7, ?, ?)`,
+		`INSERT INTO item_reads (user_id, item_id, created_at) VALUES (7, ?, ?)`,
+		`INSERT INTO item_shares (user_id, item_id, channel, created_at) VALUES (7, ?, 'wechat', ?)`,
+	} {
+		if _, err := store.db.ExecContext(ctx, query, itemID, now); err != nil {
+			t.Fatalf("insert relation query %q error: %v", query, err)
+		}
+	}
+	if _, err := store.CleanupArticles(ctx, model.ArticleCleanupFilter{Mode: "soft", RetentionDays: 90, Scope: "all", Cutoff: cutoff}); err != nil {
+		t.Fatalf("soft cleanup error: %v", err)
+	}
+
+	result, err := store.CleanupArticles(ctx, model.ArticleCleanupFilter{Mode: "hard", RetentionDays: 90, Scope: "all", Cutoff: cutoff})
+	if err != nil {
+		t.Fatalf("hard cleanup error: %v", err)
+	}
+	if result.Affected != 1 || result.Tombstoned != 1 {
+		t.Fatalf("unexpected hard cleanup result: %+v", result)
+	}
+	for _, table := range []string{"item_relations", "item_tags", "favorites", "item_reads", "item_shares", "items"} {
+		var count int
+		if err := store.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM `+table+` WHERE `+cleanupItemIDColumn(table)+` = ?`, itemID).Scan(&count); err != nil {
+			t.Fatalf("count %s error: %v", table, err)
+		}
+		if count != 0 {
+			t.Fatalf("expected %s rows deleted, got %d", table, count)
+		}
+	}
+	search, err := store.SearchItemsFTS(ctx, model.ArticleFilter{Page: 1, PageSize: 10, Keyword: "CleanupHardOldToken"})
+	if err != nil {
+		t.Fatalf("SearchItemsFTS error: %v", err)
+	}
+	if search.Total != 0 {
+		t.Fatalf("expected hard-deleted item removed from FTS, got %+v", search)
+	}
+
+	inserted, updated, err := store.UpsertItems(ctx, []model.Item{item})
+	if err != nil {
+		t.Fatalf("UpsertItems tombstoned source_key error: %v", err)
+	}
+	if inserted != 0 || updated != 0 {
+		t.Fatalf("expected tombstoned source_key skipped, inserted=%d updated=%d", inserted, updated)
+	}
+	assertItemTitleCount(t, store, ctx, "CleanupHardOldToken", 0)
+}
+
 func TestListItemsLiteOmitsLargeFields(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
@@ -2060,6 +2173,13 @@ func assertItemTitleCount(t *testing.T, store *Store, ctx context.Context, title
 	if count != expected {
 		t.Fatalf("expected title %q count %d, got %d", title, expected, count)
 	}
+}
+
+func cleanupItemIDColumn(table string) string {
+	if table == "items" {
+		return "id"
+	}
+	return "item_id"
 }
 
 func sampleItem(sourceType, key, title string) model.Item {

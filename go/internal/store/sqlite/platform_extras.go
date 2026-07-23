@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -594,6 +595,311 @@ func (s *Store) MarkItemDeleted(ctx context.Context, itemID int64) error {
 	return err
 }
 
+const (
+	articleCleanupDefaultRetentionDays = 90
+	articleCleanupScopeAll             = "all"
+	articleCleanupModeSoft             = "soft"
+	articleCleanupModeHard             = "hard"
+	articleCleanupTombstoneReason      = "article_cleanup"
+)
+
+func (s *Store) PreviewArticleCleanup(ctx context.Context, filter model.ArticleCleanupFilter) (model.ArticleCleanupResult, error) {
+	filter, cutoff, err := normalizeArticleCleanupFilter(filter)
+	if err != nil {
+		return model.ArticleCleanupResult{}, err
+	}
+	result, err := s.articleCleanupPreview(ctx, filter, cutoff)
+	if err != nil {
+		return model.ArticleCleanupResult{}, err
+	}
+	before, err := s.visibleArticleCount(ctx)
+	if err != nil {
+		return model.ArticleCleanupResult{}, err
+	}
+	result.BeforeTotal = before
+	result.AfterTotal = before
+	return result, nil
+}
+
+func (s *Store) CleanupArticles(ctx context.Context, filter model.ArticleCleanupFilter) (result model.ArticleCleanupResult, err error) {
+	filter, cutoff, err := normalizeArticleCleanupFilter(filter)
+	if err != nil {
+		return model.ArticleCleanupResult{}, err
+	}
+	before, err := s.visibleArticleCount(ctx)
+	if err != nil {
+		return model.ArticleCleanupResult{}, err
+	}
+	result, err = s.articleCleanupPreview(ctx, filter, cutoff)
+	if err != nil {
+		return model.ArticleCleanupResult{}, err
+	}
+	result.BeforeTotal = before
+	result.Applied = true
+
+	switch filter.Mode {
+	case articleCleanupModeSoft:
+		result.Affected, err = s.softCleanupArticles(ctx, cutoff)
+	case articleCleanupModeHard:
+		result.Affected, result.Tombstoned, err = s.hardCleanupArticles(ctx, cutoff)
+	default:
+		err = fmt.Errorf("unsupported cleanup mode %q", filter.Mode)
+	}
+	if err != nil {
+		return model.ArticleCleanupResult{}, err
+	}
+	after, err := s.visibleArticleCount(ctx)
+	if err != nil {
+		return model.ArticleCleanupResult{}, err
+	}
+	result.AfterTotal = after
+	return result, nil
+}
+
+func normalizeArticleCleanupFilter(filter model.ArticleCleanupFilter) (model.ArticleCleanupFilter, time.Time, error) {
+	filter.Mode = strings.ToLower(strings.TrimSpace(filter.Mode))
+	if filter.Mode == "" {
+		filter.Mode = articleCleanupModeSoft
+	}
+	if filter.Mode != articleCleanupModeSoft && filter.Mode != articleCleanupModeHard {
+		return filter, time.Time{}, fmt.Errorf("mode must be soft or hard")
+	}
+	filter.Scope = strings.ToLower(strings.TrimSpace(filter.Scope))
+	if filter.Scope == "" {
+		filter.Scope = articleCleanupScopeAll
+	}
+	if filter.Scope != articleCleanupScopeAll {
+		return filter, time.Time{}, fmt.Errorf("scope must be all")
+	}
+	if filter.RetentionDays <= 0 {
+		filter.RetentionDays = articleCleanupDefaultRetentionDays
+	}
+	if filter.RetentionDays > 3650 {
+		return filter, time.Time{}, fmt.Errorf("retention_days must be <= 3650")
+	}
+	cutoff := time.Now().UTC().AddDate(0, 0, -filter.RetentionDays)
+	if raw := strings.TrimSpace(filter.Cutoff); raw != "" {
+		parsed, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			parsedDate, dateErr := time.Parse("2006-01-02", raw)
+			if dateErr != nil {
+				return filter, time.Time{}, fmt.Errorf("invalid cutoff")
+			}
+			parsed = parsedDate
+		}
+		cutoff = parsed.UTC()
+	}
+	filter.Cutoff = cutoff.Format(time.RFC3339)
+	return filter, cutoff, nil
+}
+
+func (s *Store) articleCleanupPreview(ctx context.Context, filter model.ArticleCleanupFilter, cutoff time.Time) (model.ArticleCleanupResult, error) {
+	where := articleCleanupCandidateWhere(filter.Mode)
+	args := []any{cutoff.Format(time.RFC3339)}
+	result := model.ArticleCleanupResult{
+		Mode:          filter.Mode,
+		RetentionDays: filter.RetentionDays,
+		Scope:         filter.Scope,
+		Cutoff:        cutoff.Format(time.RFC3339),
+		Sources:       []model.ArticleCleanupSourceCount{},
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM items WHERE `+where, args...).Scan(&result.Total); err != nil {
+		return model.ArticleCleanupResult{}, err
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT source_type, COUNT(1)
+FROM items
+WHERE `+where+`
+GROUP BY source_type
+ORDER BY COUNT(1) DESC, source_type ASC`, args...)
+	if err != nil {
+		return model.ArticleCleanupResult{}, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var item model.ArticleCleanupSourceCount
+		if err := rows.Scan(&item.SourceType, &item.Count); err != nil {
+			return model.ArticleCleanupResult{}, err
+		}
+		result.Sources = append(result.Sources, item)
+	}
+	if err := rows.Err(); err != nil {
+		return model.ArticleCleanupResult{}, err
+	}
+	return result, nil
+}
+
+func (s *Store) softCleanupArticles(ctx context.Context, cutoff time.Time) (int, error) {
+	insert := `
+INSERT OR IGNORE INTO item_tags (item_id, tag, created_at)
+SELECT id, 'deleted', ? FROM items WHERE ` + articleCleanupCandidateWhere(articleCleanupModeSoft)
+	if s.Driver() == "postgres" {
+		insert = `
+INSERT INTO item_tags (item_id, tag, created_at)
+SELECT id, 'deleted', ? FROM items WHERE ` + articleCleanupCandidateWhere(articleCleanupModeSoft) + `
+ON CONFLICT DO NOTHING`
+	}
+	res, err := s.db.ExecContext(ctx, insert, time.Now().UTC().Format(time.RFC3339), cutoff.Format(time.RFC3339))
+	if err != nil {
+		return 0, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(affected), nil
+}
+
+func (s *Store) hardCleanupArticles(ctx context.Context, cutoff time.Time) (affected int, tombstoned int, err error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	if err = s.createArticleCleanupCandidateTable(ctx, tx); err != nil {
+		return 0, 0, err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM article_cleanup_candidates`); err != nil {
+		return 0, 0, err
+	}
+	if _, err = tx.ExecContext(ctx,
+		`INSERT INTO article_cleanup_candidates (id, source_key) SELECT id, source_key FROM items WHERE `+articleCleanupCandidateWhere(articleCleanupModeHard),
+		cutoff.Format(time.RFC3339),
+	); err != nil {
+		return 0, 0, err
+	}
+	var candidateCount int
+	if err = tx.QueryRowContext(ctx, `SELECT COUNT(1) FROM article_cleanup_candidates`).Scan(&candidateCount); err != nil {
+		return 0, 0, err
+	}
+	if candidateCount == 0 {
+		err = tx.Commit()
+		return 0, 0, err
+	}
+	tombstoneQuery := `
+INSERT OR IGNORE INTO item_deletion_tombstones (source_key, deleted_at, reason)
+SELECT source_key, ?, ? FROM article_cleanup_candidates WHERE source_key <> ''`
+	if s.Driver() == "postgres" {
+		tombstoneQuery = `
+INSERT INTO item_deletion_tombstones (source_key, deleted_at, reason)
+SELECT source_key, ?, ? FROM article_cleanup_candidates WHERE source_key <> ''
+ON CONFLICT DO NOTHING`
+	}
+	res, err := tx.ExecContext(ctx, tombstoneQuery, time.Now().UTC().Format(time.RFC3339), articleCleanupTombstoneReason)
+	if err != nil {
+		return 0, 0, err
+	}
+	if rows, rowsErr := res.RowsAffected(); rowsErr == nil {
+		tombstoned = int(rows)
+	}
+	for _, table := range []string{"item_relations", "item_tags", "favorites", "item_reads", "item_shares"} {
+		if _, err = tx.ExecContext(ctx, `DELETE FROM `+table+` WHERE item_id IN (SELECT id FROM article_cleanup_candidates)`); err != nil {
+			return 0, 0, err
+		}
+	}
+	res, err = tx.ExecContext(ctx, `DELETE FROM items WHERE id IN (SELECT id FROM article_cleanup_candidates)`)
+	if err != nil {
+		return 0, 0, err
+	}
+	if rows, rowsErr := res.RowsAffected(); rowsErr == nil {
+		affected = int(rows)
+	}
+	err = tx.Commit()
+	return affected, tombstoned, err
+}
+
+func (s *Store) createArticleCleanupCandidateTable(ctx context.Context, tx *Tx) error {
+	if s.Driver() == "postgres" {
+		_, err := tx.ExecContext(ctx, `CREATE TEMP TABLE IF NOT EXISTS article_cleanup_candidates (id BIGINT PRIMARY KEY, source_key TEXT NOT NULL) ON COMMIT DELETE ROWS`)
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `CREATE TEMP TABLE IF NOT EXISTS article_cleanup_candidates (id INTEGER PRIMARY KEY, source_key TEXT NOT NULL)`)
+	return err
+}
+
+func articleCleanupCandidateWhere(mode string) string {
+	base := `items.captured_at < ?`
+	switch mode {
+	case articleCleanupModeHard:
+		return base + ` AND EXISTS (SELECT 1 FROM item_tags WHERE item_tags.item_id = items.id AND item_tags.tag = 'deleted')`
+	default:
+		return base + ` AND NOT EXISTS (SELECT 1 FROM item_tags WHERE item_tags.item_id = items.id AND item_tags.tag = 'deleted')`
+	}
+}
+
+func (s *Store) visibleArticleCount(ctx context.Context) (int, error) {
+	var total int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM items WHERE NOT EXISTS (SELECT 1 FROM item_tags WHERE item_tags.item_id = items.id AND item_tags.tag = 'deleted')`).Scan(&total)
+	return total, err
+}
+
+func (s *Store) filterItemDeletionTombstones(ctx context.Context, items []model.Item) ([]model.Item, error) {
+	if len(items) == 0 {
+		return items, nil
+	}
+	keys := make([]string, 0, len(items))
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		key := strings.TrimSpace(item.SourceKey)
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		keys = append(keys, key)
+	}
+	if len(keys) == 0 {
+		return items, nil
+	}
+	tombstoned := make(map[string]struct{}, len(keys))
+	const chunkSize = 500
+	for start := 0; start < len(keys); start += chunkSize {
+		end := start + chunkSize
+		if end > len(keys) {
+			end = len(keys)
+		}
+		chunk := keys[start:end]
+		args := make([]any, 0, len(chunk))
+		for _, key := range chunk {
+			args = append(args, key)
+		}
+		rows, err := s.db.QueryContext(ctx, `SELECT source_key FROM item_deletion_tombstones WHERE source_key IN (`+placeholders(len(chunk))+`)`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var key string
+			if err := rows.Scan(&key); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			tombstoned[key] = struct{}{}
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	if len(tombstoned) == 0 {
+		return items, nil
+	}
+	filtered := make([]model.Item, 0, len(items))
+	for _, item := range items {
+		if _, ok := tombstoned[strings.TrimSpace(item.SourceKey)]; ok {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	return filtered, nil
+}
 func (s *Store) SetItemLegacyStatus(ctx context.Context, itemID int64, status string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

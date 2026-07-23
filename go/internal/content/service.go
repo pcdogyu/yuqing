@@ -50,6 +50,8 @@ type Store interface {
 	UpdateCrawlTemplate(rctx context.Context, tpl model.CrawlTemplate) (model.CrawlTemplate, error)
 	DeleteCrawlTemplate(rctx context.Context, id int64) error
 	ListItems(rctx context.Context, filter model.ArticleFilter) (model.ItemListResult, error)
+	PreviewArticleCleanup(rctx context.Context, filter model.ArticleCleanupFilter) (model.ArticleCleanupResult, error)
+	CleanupArticles(rctx context.Context, filter model.ArticleCleanupFilter) (model.ArticleCleanupResult, error)
 	GetHotspotSwitchingSnapshot(rctx context.Context, days int) (model.HotspotSwitchingResult, bool, error)
 	UpsertHotspotSwitchingSnapshot(rctx context.Context, days int, result model.HotspotSwitchingResult, capturedAt time.Time) error
 	GetItem(rctx context.Context, id int64) (model.Item, error)
@@ -197,6 +199,8 @@ func (s *Service) Routes(r chi.Router) {
 	r.Get("/api/v1/articles", s.handleListArticles)
 	r.Get("/api/v1/articles/{id}", s.handleGetArticle)
 	r.Get("/api/v1/articles/{id}/related", s.handleGetRelatedArticles)
+	r.Get("/api/v1/admin/articles/cleanup/preview", s.handleArticleCleanupPreview)
+	r.Post("/api/v1/admin/articles/cleanup", s.handleArticleCleanup)
 	r.Get("/api/v1/hotspots/switching", s.handleHotspotSwitching)
 	r.Post("/api/v1/internal/hotspots/switching/snapshot", s.handleSnapshotHotspotSwitching)
 	r.Post("/api/v1/articles/{id}/emotion", s.handleSetArticleEmotion)
@@ -638,6 +642,91 @@ func (s *Service) handleListArticles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleArticleCleanupPreview(w http.ResponseWriter, r *http.Request) {
+	filter, err := articleCleanupFilterFromRequest(r, false)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+	result, err := s.store.PreviewArticleCleanup(r.Context(), filter)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleArticleCleanup(w http.ResponseWriter, r *http.Request) {
+	filter, err := articleCleanupFilterFromRequest(r, true)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+	if !filter.Confirm {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "confirm=true required", nil)
+		return
+	}
+	result, err := s.store.CleanupArticles(r.Context(), filter)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func articleCleanupFilterFromRequest(r *http.Request, readBody bool) (model.ArticleCleanupFilter, error) {
+	_ = r.ParseForm()
+	filter := model.ArticleCleanupFilter{
+		Mode:          strings.TrimSpace(r.FormValue("mode")),
+		Scope:         strings.TrimSpace(r.FormValue("scope")),
+		Confirm:       boolParam(r.FormValue("confirm")),
+		RetentionDays: 90,
+	}
+	if raw := strings.TrimSpace(r.FormValue("retention_days")); raw != "" {
+		days, err := strconv.Atoi(raw)
+		if err != nil {
+			return model.ArticleCleanupFilter{}, fmt.Errorf("invalid retention_days")
+		}
+		filter.RetentionDays = days
+	}
+	if raw := strings.TrimSpace(r.FormValue("cutoff")); raw != "" {
+		filter.Cutoff = raw
+	}
+
+	contentType := strings.ToLower(r.Header.Get("Content-Type"))
+	if readBody && strings.Contains(contentType, "application/json") && r.Body != nil && r.ContentLength != 0 {
+		var body model.ArticleCleanupFilter
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			return model.ArticleCleanupFilter{}, fmt.Errorf("invalid body")
+		}
+		if strings.TrimSpace(body.Mode) != "" {
+			filter.Mode = body.Mode
+		}
+		if strings.TrimSpace(body.Scope) != "" {
+			filter.Scope = body.Scope
+		}
+		if body.RetentionDays != 0 {
+			filter.RetentionDays = body.RetentionDays
+		}
+		if strings.TrimSpace(body.Cutoff) != "" {
+			filter.Cutoff = body.Cutoff
+		}
+		if body.Confirm {
+			filter.Confirm = true
+		}
+	}
+	return filter, nil
+}
+
+func boolParam(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Service) handleHotspotSwitching(w http.ResponseWriter, r *http.Request) {

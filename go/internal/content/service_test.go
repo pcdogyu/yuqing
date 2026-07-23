@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -164,6 +165,99 @@ func TestSystemFeedbackAPIUpsertsAndLists(t *testing.T) {
 	}
 	if len(envelope.Data) != 0 {
 		t.Fatalf("expected feedback list empty after delete, got %+v", envelope.Data)
+	}
+}
+
+func TestArticleCleanupAPIPreviewsAndRequiresConfirm(t *testing.T) {
+	store := newContentSearchTestStore(t)
+	ctx := context.Background()
+	cutoff := "2026-04-01T00:00:00Z"
+	oldCapturedAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	recentCapturedAt := time.Date(2026, 4, 2, 0, 0, 0, 0, time.UTC)
+	if _, _, err := store.UpsertItems(ctx, []model.Item{
+		{
+			SourceType: "flash",
+			SourceKey:  "cleanup-api-old",
+			Title:      "Cleanup API old",
+			Content:    "Cleanup API old content",
+			SourceURL:  "https://example.com/old",
+			CapturedAt: oldCapturedAt,
+			CreatedAt:  oldCapturedAt,
+			UpdatedAt:  oldCapturedAt,
+		},
+		{
+			SourceType: "headline",
+			SourceKey:  "cleanup-api-recent",
+			Title:      "Cleanup API recent",
+			Content:    "Cleanup API recent content",
+			SourceURL:  "https://example.com/recent",
+			CapturedAt: recentCapturedAt,
+			CreatedAt:  recentCapturedAt,
+			UpdatedAt:  recentCapturedAt,
+		},
+	}); err != nil {
+		t.Fatalf("UpsertItems error: %v", err)
+	}
+	svc := NewService(config.Config{}, store)
+	router := svc.Router()
+
+	previewReq := httptest.NewRequest(http.MethodGet, "/api/v1/admin/articles/cleanup/preview?retention_days=90&scope=all&cutoff="+url.QueryEscape(cutoff), nil)
+	previewRR := httptest.NewRecorder()
+	router.ServeHTTP(previewRR, previewReq)
+	if previewRR.Code != http.StatusOK {
+		t.Fatalf("expected preview 200, got %d body=%s", previewRR.Code, previewRR.Body.String())
+	}
+	var envelope struct {
+		Data model.ArticleCleanupResult `json:"data"`
+	}
+	if err := json.Unmarshal(previewRR.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode preview response: %v", err)
+	}
+	if envelope.Data.Total != 1 || envelope.Data.BeforeTotal != 2 || envelope.Data.AfterTotal != 2 || len(envelope.Data.Sources) != 1 {
+		t.Fatalf("unexpected preview payload: %+v", envelope.Data)
+	}
+	list, err := store.ListItems(ctx, model.ArticleFilter{Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListItems after preview error: %v", err)
+	}
+	if list.Total != 2 {
+		t.Fatalf("preview should not modify articles, got total %d", list.Total)
+	}
+
+	noConfirmReq := httptest.NewRequest(http.MethodPost, "/api/v1/admin/articles/cleanup", strings.NewReader(`{"mode":"soft","retention_days":90,"scope":"all","cutoff":"`+cutoff+`"}`))
+	noConfirmReq.Header.Set("Content-Type", "application/json")
+	noConfirmRR := httptest.NewRecorder()
+	router.ServeHTTP(noConfirmRR, noConfirmReq)
+	if noConfirmRR.Code != http.StatusBadRequest {
+		t.Fatalf("expected cleanup without confirm 400, got %d body=%s", noConfirmRR.Code, noConfirmRR.Body.String())
+	}
+
+	softReq := httptest.NewRequest(http.MethodPost, "/api/v1/admin/articles/cleanup", strings.NewReader(`{"mode":"soft","retention_days":90,"scope":"all","confirm":true,"cutoff":"`+cutoff+`"}`))
+	softReq.Header.Set("Content-Type", "application/json")
+	softRR := httptest.NewRecorder()
+	router.ServeHTTP(softRR, softReq)
+	if softRR.Code != http.StatusOK {
+		t.Fatalf("expected soft cleanup 200, got %d body=%s", softRR.Code, softRR.Body.String())
+	}
+	if err := json.Unmarshal(softRR.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode soft response: %v", err)
+	}
+	if envelope.Data.Affected != 1 || envelope.Data.BeforeTotal != 2 || envelope.Data.AfterTotal != 1 {
+		t.Fatalf("unexpected soft cleanup payload: %+v", envelope.Data)
+	}
+
+	hardReq := httptest.NewRequest(http.MethodPost, "/api/v1/admin/articles/cleanup", strings.NewReader(`{"mode":"hard","retention_days":90,"scope":"all","confirm":true,"cutoff":"`+cutoff+`"}`))
+	hardReq.Header.Set("Content-Type", "application/json")
+	hardRR := httptest.NewRecorder()
+	router.ServeHTTP(hardRR, hardReq)
+	if hardRR.Code != http.StatusOK {
+		t.Fatalf("expected hard cleanup 200, got %d body=%s", hardRR.Code, hardRR.Body.String())
+	}
+	if err := json.Unmarshal(hardRR.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode hard response: %v", err)
+	}
+	if envelope.Data.Affected != 1 || envelope.Data.Tombstoned != 1 || envelope.Data.BeforeTotal != 1 || envelope.Data.AfterTotal != 1 {
+		t.Fatalf("unexpected hard cleanup payload: %+v", envelope.Data)
 	}
 }
 

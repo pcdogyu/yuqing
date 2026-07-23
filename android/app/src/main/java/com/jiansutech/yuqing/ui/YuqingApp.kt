@@ -574,7 +574,7 @@ private fun DashboardModule(
                 MetricCard("任务", dashboard.overview.crawlRunCount.toString(), Modifier.weight(1f))
                 MetricCard(
                     title = "清除",
-                    value = "缓存",
+                    value = "本机缓存",
                     onClick = { viewModel.clearCache() },
                     icon = Icons.Default.Refresh,
                     modifier = Modifier.weight(1f),
@@ -1454,6 +1454,8 @@ private fun SystemModule(
                 )
             }
         }
+        item { SectionTitle("历史文章清理") }
+        item { ArticleCleanupActionCard(viewModel) }
         item { SectionTitle("服务") }
         items(dashboard.operations.services) { ServiceRow(it, viewModel) }
         item { SectionTitle("调度任务") }
@@ -1472,6 +1474,55 @@ private fun GenericModule(key: String, dashboard: AndroidDashboard) {
         item { SectionTitle(key) }
         item { SimpleRow("入口", "该模块已纳入原生导航，后续按现有 BFF/API 数据扩展详情页。") }
         item { SimpleRow("当前数据", "文章 ${dashboard.overview.articleCount} / 项目 ${dashboard.overview.projectCount}") }
+    }
+}
+
+@Composable
+private fun ArticleCleanupActionCard(viewModel: YuqingViewModel) {
+    val params = mapOf("retention_days" to "90", "scope" to "all")
+    Card {
+        Column(
+            Modifier.fillMaxWidth().padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("全部来源，保留最近90天", style = MaterialTheme.typography.bodySmall)
+            Button(
+                onClick = {
+                    viewModel.requestAction(
+                        "article_cleanup_preview",
+                        "预览历史文章清理",
+                        params,
+                    )
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("预览90天以前文章")
+            }
+            OutlinedButton(
+                onClick = {
+                    viewModel.requestAction(
+                        "article_cleanup_soft",
+                        "软删除90天以前历史文章",
+                        params,
+                    )
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("执行软删除")
+            }
+            OutlinedButton(
+                onClick = {
+                    viewModel.requestAction(
+                        "article_cleanup_hard",
+                        "硬清理已软删历史文章",
+                        params,
+                    )
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("硬清理已软删文章")
+            }
+        }
     }
 }
 
