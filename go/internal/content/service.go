@@ -1221,7 +1221,7 @@ func (s *Service) handleListAStockAuctionAmounts(w http.ResponseWriter, r *http.
 		Keyword:     strings.TrimSpace(nonEmpty(r.URL.Query().Get("keyword"), r.URL.Query().Get("code"))),
 		Page:        apiutil.IntQuery(r, "page", 1),
 		PageSize:    apiutil.IntQuery(r, "page_size", 50),
-		TrendDays:   normalizeAStockAuctionTrendDays(apiutil.IntQuery(r, "trend_days", 7)),
+		TrendDays:   normalizeAStockAuctionTrendDays(apiutil.IntQuery(r, "trend_days", 14)),
 	}
 	result, err := s.store.ListAStockAuctionAmounts(r.Context(), filter)
 	if err != nil {
@@ -1246,12 +1246,14 @@ func (s *Service) handleListAStockCodeNames(w http.ResponseWriter, r *http.Reque
 
 func normalizeAStockAuctionTrendDays(days int) int {
 	switch days {
+	case 7:
+		return 7
 	case 14:
 		return 14
 	case 30:
 		return 30
 	default:
-		return 7
+		return 14
 	}
 }
 

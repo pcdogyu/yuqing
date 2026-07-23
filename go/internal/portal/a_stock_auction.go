@@ -50,7 +50,7 @@ func (s *Server) handleAStockAuctionPage(w http.ResponseWriter, r *http.Request,
 		.auction-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
 		.auction-actions form{margin:0}
 		.auction-actions button{margin:0}
-		.auction-chart{width:100%;height:auto;min-height:260px}
+		.auction-chart{width:100%;height:auto;min-height:286px}
 		.auction-chart-line{fill:none;stroke-width:3}
 		.auction-chart-line-0920{stroke:#2563eb}
 		.auction-chart-line-0925{stroke:#15803d}
@@ -130,23 +130,27 @@ func (s *Server) loadAStockAuctionContext(date string, keyword string, captureSl
 
 func normalizeAStockAuctionTrendDaysText(value string) int {
 	switch strings.TrimSpace(value) {
+	case "7":
+		return 7
 	case "14":
 		return 14
 	case "30":
 		return 30
 	default:
-		return 7
+		return 14
 	}
 }
 
 func normalizeAStockAuctionTrendDays(days int) int {
 	switch days {
+	case 7:
+		return 7
 	case 14:
 		return 14
 	case 30:
 		return 30
 	default:
-		return 7
+		return 14
 	}
 }
 
@@ -535,9 +539,9 @@ func aStockAuctionTrendWindows(series map[string][]model.AStockAuctionTrend, day
 func aStockAuctionTrendSVG(series map[string][]model.AStockAuctionTrend, title string, days int) string {
 	const (
 		width  = 1120.0
-		height = 280.0
+		height = 308.0
 		left   = 56.0
-		right  = 24.0
+		right  = 72.0
 		top    = 24.0
 		bottom = 52.0
 	)
@@ -556,8 +560,12 @@ func aStockAuctionTrendSVG(series map[string][]model.AStockAuctionTrend, title s
 	}
 	plotWidth := width - left - right
 	plotHeight := height - top - bottom
+	rightLabelX := left + plotWidth + 8
+	xLabelY := height - 12
 	var b strings.Builder
-	b.WriteString(`<svg class="auction-chart" viewBox="0 0 1120 280" role="img" aria-label="`)
+	b.WriteString(`<svg class="auction-chart" viewBox="0 0 `)
+	b.WriteString(fmt.Sprintf("%.0f %.0f", width, height))
+	b.WriteString(`" role="img" aria-label="`)
 	b.WriteString(html.EscapeString(title))
 	b.WriteString(`">`)
 	legend := []struct {
@@ -583,6 +591,7 @@ func aStockAuctionTrendSVG(series map[string][]model.AStockAuctionTrend, title s
 	for i := 0; i <= 4; i++ {
 		y := top + float64(i)*plotHeight/4
 		amount := maxAmount * float64(4-i) / 4
+		amountLabel := formatAStockAuctionAxisMoney(amount)
 		b.WriteString(`<line class="auction-chart-axis" x1="`)
 		b.WriteString(fmt.Sprintf("%.1f", left))
 		b.WriteString(`" y1="`)
@@ -596,7 +605,13 @@ func aStockAuctionTrendSVG(series map[string][]model.AStockAuctionTrend, title s
 		b.WriteString(`" y="`)
 		b.WriteString(fmt.Sprintf("%.1f", y+4))
 		b.WriteString(`">`)
-		b.WriteString(html.EscapeString(formatAStockAuctionAxisMoney(amount)))
+		b.WriteString(html.EscapeString(amountLabel))
+		b.WriteString(`</text><text class="auction-chart-label" text-anchor="start" x="`)
+		b.WriteString(fmt.Sprintf("%.1f", rightLabelX))
+		b.WriteString(`" y="`)
+		b.WriteString(fmt.Sprintf("%.1f", y+4))
+		b.WriteString(`">`)
+		b.WriteString(html.EscapeString(amountLabel))
 		b.WriteString(`</text>`)
 	}
 	for i, date := range dates {
@@ -668,7 +683,9 @@ func aStockAuctionTrendSVG(series map[string][]model.AStockAuctionTrend, title s
 		b.WriteString(fmt.Sprintf("%.1f", x))
 		b.WriteString(`" text-anchor="`)
 		b.WriteString(anchor)
-		b.WriteString(`" y="268">`)
+		b.WriteString(`" y="`)
+		b.WriteString(fmt.Sprintf("%.1f", xLabelY))
+		b.WriteString(`">`)
 		b.WriteString(html.EscapeString(date))
 		b.WriteString(`</text>`)
 	}

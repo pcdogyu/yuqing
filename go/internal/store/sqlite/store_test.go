@@ -620,6 +620,43 @@ func TestAStockAuctionAmountsFinalTrendMergesLegacy0930(t *testing.T) {
 	}
 }
 
+func TestAStockAuctionAmountsDefaultTrendWindowIsTwoWeeks(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	fetchedAt := time.Date(2026, 6, 15, 1, 30, 5, 0, time.UTC)
+
+	for day := 1; day <= 15; day++ {
+		date := fmt.Sprintf("2026-06-%02d", day)
+		if _, err := store.UpsertAStockAuctionAmounts(ctx, date, []model.AStockAuctionAmount{{
+			Code:          "600000",
+			Name:          "浦发银行",
+			AuctionVolume: float64(day * 10000),
+			AuctionAmount: float64(day * 1000000),
+			Source:        "eastmoney_clist",
+			Status:        "ok",
+			FetchedAt:     fetchedAt.AddDate(0, 0, day-15),
+		}}, true); err != nil {
+			t.Fatalf("UpsertAStockAuctionAmounts %s error: %v", date, err)
+		}
+	}
+
+	defaultList, err := store.ListAStockAuctionAmounts(ctx, model.AStockAuctionFilter{Date: "2026-06-15", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListAStockAuctionAmounts default trend error: %v", err)
+	}
+	if len(defaultList.Trend) != 14 || defaultList.Trend[0].Date != "2026-06-02" || defaultList.Trend[13].Date != "2026-06-15" {
+		t.Fatalf("expected default two-week auction trend, got %+v", defaultList.Trend)
+	}
+
+	sevenDayList, err := store.ListAStockAuctionAmounts(ctx, model.AStockAuctionFilter{Date: "2026-06-15", Page: 1, PageSize: 10, TrendDays: 7})
+	if err != nil {
+		t.Fatalf("ListAStockAuctionAmounts explicit 7-day trend error: %v", err)
+	}
+	if len(sevenDayList.Trend) != 7 || sevenDayList.Trend[0].Date != "2026-06-09" || sevenDayList.Trend[6].Date != "2026-06-15" {
+		t.Fatalf("expected explicit 7-day auction trend, got %+v", sevenDayList.Trend)
+	}
+}
+
 func TestAStockAuctionAmountsRequested0929FallsBackToLegacy0930Only(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()

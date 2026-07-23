@@ -378,12 +378,14 @@ func mergeAStockAuctionFinalTrendSeries(current0929 []model.AStockAuctionTrend, 
 
 func normalizeAStockAuctionTrendDays(days int) int {
 	switch days {
+	case 7:
+		return 7
 	case 14:
 		return 14
 	case 30:
 		return 30
 	default:
-		return 7
+		return 14
 	}
 }
 
