@@ -76,6 +76,19 @@ object AStockRecommendationScheduler {
             windowEndHour = 12,
             windowEndMinute = 55,
         ),
+        AStockRecommendationSlot(
+            id = "evening_1830",
+            period = "evening",
+            kind = AStockNotificationKind.Recommendation,
+            title = "18:30 晚间热门股票推荐",
+            windowLabel = "15:00-18:30",
+            hour = 18,
+            minute = 30,
+            windowStartHour = 15,
+            windowStartMinute = 0,
+            windowEndHour = 18,
+            windowEndMinute = 30,
+        ),
     )
 
     fun ensureNotificationChannels(context: Context) {
@@ -85,7 +98,7 @@ object AStockRecommendationScheduler {
             "A股热门股票推荐",
             NotificationManager.IMPORTANCE_DEFAULT,
         ).apply {
-            description = "每日 A股 上午和下午热门股票推荐提醒"
+            description = "每日 A股 上午、下午和晚间热门股票推荐提醒"
         }
         val newsCountChannel = NotificationChannel(
             newsCountChannelId,

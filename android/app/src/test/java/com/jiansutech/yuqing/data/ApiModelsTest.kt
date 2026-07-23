@@ -165,6 +165,30 @@ class ApiModelsTest {
     }
 
     @Test
+    fun aStockRecommendationRequestSupportsEveningPeriod() = runTest {
+        val server = MockWebServer()
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody("""{"code":200,"message":"ok","data":{"found":true,"strategy_date":"2026-07-10","period":"evening","recommendations_json":"[]","backtests_json":"[]"}}"""),
+        )
+        server.start()
+        try {
+            val result = ApiFactory.yuqing(server.url("/").toString())
+                .aStockRecommendations(date = "2026-07-10", period = "evening")
+                .data
+            val request = server.takeRequest()
+
+            assertEquals("/api/v1/a-stock/recommendations", request.requestUrl?.encodedPath)
+            assertEquals("2026-07-10", request.requestUrl?.queryParameter("date"))
+            assertEquals("evening", request.requestUrl?.queryParameter("period"))
+            assertEquals("evening", result?.period)
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
     fun aStockRecommendationRequestSendsExplicitFilterState() = runTest {
         val server = MockWebServer()
         server.enqueue(

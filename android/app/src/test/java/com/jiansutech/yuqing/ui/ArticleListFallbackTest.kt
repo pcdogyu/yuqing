@@ -4,6 +4,7 @@ import com.jiansutech.yuqing.data.AndroidDashboard
 import com.jiansutech.yuqing.data.AStockBacktestCell
 import com.jiansutech.yuqing.data.AStockBacktestRow
 import com.jiansutech.yuqing.data.AStockRecommendation
+import com.jiansutech.yuqing.data.AStockRecommendationSnapshot
 import com.jiansutech.yuqing.data.ArticleItem
 import com.jiansutech.yuqing.data.ItemListResult
 import com.jiansutech.yuqing.data.StockResearch
@@ -106,6 +107,18 @@ class ArticleListFallbackTest {
     }
 
     @Test
+    fun aStockRecommendationWindowRecognizesEveningAliases() {
+        val evening = aStockRecommendationWindow("2026-07-10", "evening")
+
+        assertEquals("evening", evening.period)
+        assertEquals("晚间推荐", evening.periodLabel)
+        assertEquals("15:00-18:30", evening.windowLabel)
+        assertEquals("evening", aStockRecommendationWindow("2026-07-10", "night").period)
+        assertEquals("evening", aStockRecommendationWindow("2026-07-10", "pm2").period)
+        assertEquals("afternoon", aStockRecommendationWindow("2026-07-10", "pm").period)
+    }
+
+    @Test
     fun backtestValueToneUsesAStockRedUpGreenDownSemantics() {
         assertEquals(BacktestValueTone.Up, backtestValueTone("+10.44%"))
         assertEquals(BacktestValueTone.Down, backtestValueTone(" -3.27%"))
@@ -139,6 +152,54 @@ class ArticleListFallbackTest {
         assertEquals(AStockBacktestAdjacentTargetKind.Stock, morningLastTargets.next?.kind)
         assertEquals("688135 利扬芯片", afternoonFirstTargets.previous?.label)
         assertEquals(AStockBacktestAdjacentTargetKind.Stock, afternoonFirstTargets.previous?.kind)
+    }
+
+    @Test
+    fun aStockBacktestNavigationJoinsMorningAfternoonAndEvening() {
+        val items = buildAStockBacktestNavigationItems(
+            strategyDate = "2026-07-10",
+            morningRecommendations = listOf(testAStockRecommendation("300054", "鼎龙股份", 1)),
+            morningBacktests = emptyList(),
+            afternoonRecommendations = listOf(testAStockRecommendation("002747", "埃斯顿", 2)),
+            afternoonBacktests = emptyList(),
+            eveningRecommendations = listOf(testAStockRecommendation("600000", "浦发银行", 3)),
+            eveningBacktests = emptyList(),
+        )
+
+        assertEquals(listOf("morning", "afternoon", "evening"), items.map { it.period })
+        assertEquals("晚间推荐", items.last().sectionLabel)
+        assertEquals("600000 浦发银行", aStockBacktestAdjacentTargets(items[1].toDetailState(items)).next?.label)
+        assertEquals("002747 埃斯顿", aStockBacktestAdjacentTargets(items[2].toDetailState(items)).previous?.label)
+    }
+
+    @Test
+    fun aStockBacktestDetailSnapshotKeepsEveningSectionLabel() {
+        val items = buildAStockBacktestNavigationItems(
+            strategyDate = "2026-07-10",
+            morningRecommendations = emptyList(),
+            morningBacktests = emptyList(),
+            afternoonRecommendations = emptyList(),
+            afternoonBacktests = emptyList(),
+            eveningRecommendations = listOf(testAStockRecommendation("600000", "浦发银行", 1)),
+            eveningBacktests = emptyList(),
+        )
+        val state = items.first().toDetailState(items)
+        val snapshot = AStockRecommendationSnapshot(
+            found = true,
+            strategyDate = "2026-07-10",
+            period = "evening",
+            recommendationsJson = """
+                [{"Rank":1,"Hotspot":"晚间量价筛选","Code":"600000","Name":"浦发银行","Reason":"量比 4.00"}]
+            """.trimIndent(),
+            backtestsJson = """[{"Stock":"600000 浦发银行","CurrentPrice":"11.20"}]""",
+        )
+
+        val updated = applyAStockBacktestDetailSnapshot(state, snapshot)
+
+        assertEquals("evening", updated.period)
+        assertEquals("晚间推荐", updated.sectionLabel)
+        assertEquals("晚间推荐", updated.navigationItems.first().sectionLabel)
+        assertEquals("600000", updated.recommendation.code)
     }
 
     @Test

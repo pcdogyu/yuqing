@@ -196,14 +196,20 @@ private fun PortalScreen(
     }
     fun openAStockBacktestTradingDate(date: String, pick: AStockBacktestTradingDatePick) {
         backtestNavigationMessage = ""
-        viewModel.loadAStockRecommendationDay(date) { morning, afternoon ->
-            val snapshotDate = morning.strategyDate.ifBlank { afternoon.strategyDate.ifBlank { date } }
+        viewModel.loadAStockRecommendationDay(date) { morning, afternoon, evening ->
+            val snapshotDate = morning.strategyDate.ifBlank {
+                afternoon.strategyDate.ifBlank {
+                    evening.strategyDate.ifBlank { date }
+                }
+            }
             val items = buildAStockBacktestNavigationItems(
                 strategyDate = snapshotDate,
                 morningRecommendations = parseAStockRecommendations(morning.recommendationsJson),
                 morningBacktests = parseAStockBacktests(morning.backtestsJson),
                 afternoonRecommendations = parseAStockRecommendations(afternoon.recommendationsJson),
                 afternoonBacktests = parseAStockBacktests(afternoon.backtestsJson),
+                eveningRecommendations = parseAStockRecommendations(evening.recommendationsJson),
+                eveningBacktests = parseAStockBacktests(evening.backtestsJson),
             )
             val target = when (pick) {
                 AStockBacktestTradingDatePick.First -> items.firstOrNull()
@@ -721,15 +727,28 @@ private fun AStockModule(
     val morningRecommendations = state.morningAStockRecommendations
     val afternoonSnapshot = state.afternoonAStockRecommendation
     val afternoonRecommendations = state.afternoonAStockRecommendations
+    val eveningSnapshot = state.eveningAStockRecommendation
+    val eveningRecommendations = state.eveningAStockRecommendations
     val morningBacktests = remember(morningSnapshot?.backtestsJson) { parseAStockBacktests(morningSnapshot?.backtestsJson) }
     val afternoonBacktests = remember(afternoonSnapshot?.backtestsJson) { parseAStockBacktests(afternoonSnapshot?.backtestsJson) }
-    val backtestNavigationItems = remember(window.date, morningRecommendations, morningBacktests, afternoonRecommendations, afternoonBacktests) {
+    val eveningBacktests = remember(eveningSnapshot?.backtestsJson) { parseAStockBacktests(eveningSnapshot?.backtestsJson) }
+    val backtestNavigationItems = remember(
+        window.date,
+        morningRecommendations,
+        morningBacktests,
+        afternoonRecommendations,
+        afternoonBacktests,
+        eveningRecommendations,
+        eveningBacktests,
+    ) {
         buildAStockBacktestNavigationItems(
             strategyDate = window.date,
             morningRecommendations = morningRecommendations,
             morningBacktests = morningBacktests,
             afternoonRecommendations = afternoonRecommendations,
             afternoonBacktests = afternoonBacktests,
+            eveningRecommendations = eveningRecommendations,
+            eveningBacktests = eveningBacktests,
         )
     }
     val isLatestDate = isLatestSelectableAStockDate(window.date)
@@ -786,7 +805,8 @@ private fun AStockModule(
                 listOf(
                     "上午 ${morningRecommendations.size}",
                     "下午 ${afternoonRecommendations.size}",
-                    "合计 ${morningRecommendations.size + afternoonRecommendations.size}",
+                    "晚间 ${eveningRecommendations.size}",
+                    "合计 ${morningRecommendations.size + afternoonRecommendations.size + eveningRecommendations.size}",
                 ).joinToString("  "),
             )
         }
@@ -807,6 +827,18 @@ private fun AStockModule(
             item { SimpleRow("暂无下午推荐", afternoonSnapshot?.emptyReason.ifNullOrBlank("09:30-13:00 暂无推荐股票")) }
         }
         items(backtestNavigationItems.filter { it.period == "afternoon" }) { navItem ->
+            AStockRecommendationRow(navItem.recommendation) {
+                onOpenAStockBacktest(
+                    navItem.toDetailState(backtestNavigationItems),
+                )
+            }
+        }
+        item { RecommendationSeparator() }
+        item { SectionTitle("晚间推荐") }
+        if (eveningRecommendations.isEmpty()) {
+            item { SimpleRow("暂无晚间推荐", eveningSnapshot?.emptyReason.ifNullOrBlank("15:00-18:30 暂无推荐股票")) }
+        }
+        items(backtestNavigationItems.filter { it.period == "evening" }) { navItem ->
             AStockRecommendationRow(navItem.recommendation) {
                 onOpenAStockBacktest(
                     navItem.toDetailState(backtestNavigationItems),
@@ -2340,14 +2372,14 @@ private fun parseAStockBacktests(raw: String?): List<AStockBacktestRow> {
     }.getOrDefault(emptyList())
 }
 
-private fun applyAStockBacktestDetailSnapshot(
+internal fun applyAStockBacktestDetailSnapshot(
     state: AStockBacktestDetailState,
     snapshot: AStockRecommendationSnapshot,
 ): AStockBacktestDetailState {
     val recommendations = parseAStockRecommendations(snapshot.recommendationsJson)
     val backtests = parseAStockBacktests(snapshot.backtestsJson)
     val snapshotDate = snapshot.strategyDate.ifBlank { state.strategyDate }
-    val snapshotPeriod = snapshot.period.ifBlank { state.period }
+    val snapshotPeriod = normalizeAStockRecommendationPeriod(snapshot.period.ifBlank { state.period })
     val recommendation = recommendations.firstOrNull { sameAStockRecommendation(it, state.recommendation) }
         ?: state.recommendation
     val row = findAStockBacktest(backtests, recommendation) ?: findAStockBacktest(backtests, state.recommendation) ?: state.row
@@ -2355,7 +2387,7 @@ private fun applyAStockBacktestDetailSnapshot(
         items = state.navigationItems,
         strategyDate = snapshotDate,
         period = snapshotPeriod,
-        sectionLabel = if (snapshotPeriod == "afternoon") "下午推荐" else "上午推荐",
+        sectionLabel = aStockRecommendationSectionLabel(snapshotPeriod),
         recommendations = recommendations,
         backtests = backtests,
     )
@@ -2369,7 +2401,7 @@ private fun applyAStockBacktestDetailSnapshot(
         row = row,
         strategyDate = snapshotDate,
         period = snapshotPeriod,
-        sectionLabel = if (snapshotPeriod == "afternoon") "下午推荐" else "上午推荐",
+        sectionLabel = aStockRecommendationSectionLabel(snapshotPeriod),
         navigationItems = navigationItems,
         navigationIndex = navigationIndex,
     )
@@ -2401,6 +2433,8 @@ internal fun buildAStockBacktestNavigationItems(
     morningBacktests: List<AStockBacktestRow>,
     afternoonRecommendations: List<AStockRecommendation>,
     afternoonBacktests: List<AStockBacktestRow>,
+    eveningRecommendations: List<AStockRecommendation> = emptyList(),
+    eveningBacktests: List<AStockBacktestRow> = emptyList(),
 ): List<AStockBacktestNavigationItem> {
     return buildList {
         morningRecommendations.forEach { item ->
@@ -2422,6 +2456,17 @@ internal fun buildAStockBacktestNavigationItems(
                     strategyDate = strategyDate,
                     period = "afternoon",
                     sectionLabel = "下午推荐",
+                ),
+            )
+        }
+        eveningRecommendations.forEach { item ->
+            add(
+                AStockBacktestNavigationItem(
+                    recommendation = item,
+                    row = findAStockBacktest(eveningBacktests, item),
+                    strategyDate = strategyDate,
+                    period = "evening",
+                    sectionLabel = "晚间推荐",
                 ),
             )
         }

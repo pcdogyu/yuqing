@@ -111,6 +111,8 @@ data class YuqingUiState(
     val morningAStockRecommendations: List<AStockRecommendation> = emptyList(),
     val afternoonAStockRecommendation: AStockRecommendationSnapshot? = null,
     val afternoonAStockRecommendations: List<AStockRecommendation> = emptyList(),
+    val eveningAStockRecommendation: AStockRecommendationSnapshot? = null,
+    val eveningAStockRecommendations: List<AStockRecommendation> = emptyList(),
     val aStockRecommendationWindow: AStockRecommendationWindow = currentAStockRecommendationWindow(),
     val aStockBacktestPriceRefreshing: Boolean = false,
     val stockResearch: StockResearchListResult = StockResearchListResult(),
@@ -701,10 +703,23 @@ class YuqingViewModel(
                     date = result.strategyDate.ifBlank { window.date },
                     period = result.period.ifBlank { window.period },
                 )
-                _uiState.update {
-                    it.copy(
+                _uiState.update { current ->
+                    val normalizedPeriod = resultWindow.period
+                    val morningSnapshot = if (normalizedPeriod == "morning") result else current.morningAStockRecommendation
+                    val morningRecommendations = if (normalizedPeriod == "morning") recommendations else current.morningAStockRecommendations
+                    val afternoonSnapshot = if (normalizedPeriod == "afternoon") result else current.afternoonAStockRecommendation
+                    val afternoonRecommendations = if (normalizedPeriod == "afternoon") recommendations else current.afternoonAStockRecommendations
+                    val eveningSnapshot = if (normalizedPeriod == "evening") result else current.eveningAStockRecommendation
+                    val eveningRecommendations = if (normalizedPeriod == "evening") recommendations else current.eveningAStockRecommendations
+                    current.copy(
                         aStockRecommendation = result,
                         aStockRecommendations = recommendations,
+                        morningAStockRecommendation = morningSnapshot,
+                        morningAStockRecommendations = morningRecommendations,
+                        afternoonAStockRecommendation = afternoonSnapshot,
+                        afternoonAStockRecommendations = afternoonRecommendations,
+                        eveningAStockRecommendation = eveningSnapshot,
+                        eveningAStockRecommendations = eveningRecommendations,
                         aStockRecommendationWindow = resultWindow,
                         message = if (recommendations.isEmpty()) "当前推荐暂无股票" else "推荐股票已加载",
                     )
@@ -748,7 +763,7 @@ class YuqingViewModel(
 
     fun loadAStockRecommendationDay(
         date: String = _uiState.value.aStockRecommendationWindow.date,
-        onSuccess: ((AStockRecommendationSnapshot, AStockRecommendationSnapshot) -> Unit)? = null,
+        onSuccess: ((AStockRecommendationSnapshot, AStockRecommendationSnapshot, AStockRecommendationSnapshot) -> Unit)? = null,
     ) {
         viewModelScope.launch {
             _uiState.update { it.copy(loading = true, error = "", message = "") }
@@ -765,28 +780,34 @@ class YuqingViewModel(
                     .data ?: error("上午推荐股票数据为空")
                 val afternoon = api.aStockRecommendations(date = requestedDate, period = "afternoon")
                     .data ?: error("下午推荐股票数据为空")
-                Pair(morning, afternoon)
-            }.onSuccess { (morning, afternoon) ->
+                val evening = api.aStockRecommendations(date = requestedDate, period = "evening")
+                    .data ?: error("晚间推荐股票数据为空")
+                Triple(morning, afternoon, evening)
+            }.onSuccess { (morning, afternoon, evening) ->
                 val morningItems = parseAStockRecommendations(morning.recommendationsJson)
                 val afternoonItems = parseAStockRecommendations(afternoon.recommendationsJson)
+                val eveningItems = parseAStockRecommendations(evening.recommendationsJson)
                 _uiState.update {
                     it.copy(
                         morningAStockRecommendation = morning,
                         morningAStockRecommendations = morningItems,
                         afternoonAStockRecommendation = afternoon,
                         afternoonAStockRecommendations = afternoonItems,
-                        aStockRecommendation = afternoon.takeIf { snapshot -> snapshot.found }
+                        eveningAStockRecommendation = evening,
+                        eveningAStockRecommendations = eveningItems,
+                        aStockRecommendation = evening.takeIf { snapshot -> snapshot.found }
+                            ?: afternoon.takeIf { snapshot -> snapshot.found }
                             ?: morning.takeIf { snapshot -> snapshot.found },
-                        aStockRecommendations = morningItems + afternoonItems,
-                        aStockRecommendationWindow = aStockRecommendationWindow(requestedDate, "morning"),
-                        message = if (morningItems.isEmpty() && afternoonItems.isEmpty()) {
+                        aStockRecommendations = morningItems + afternoonItems + eveningItems,
+                        aStockRecommendationWindow = aStockRecommendationWindow(requestedDate, currentAStockRecommendationWindow().period),
+                        message = if (morningItems.isEmpty() && afternoonItems.isEmpty() && eveningItems.isEmpty()) {
                             "当日推荐暂无股票"
                         } else {
                             "当日推荐股票已加载"
                         },
                     )
                 }
-                onSuccess?.invoke(morning, afternoon)
+                onSuccess?.invoke(morning, afternoon, evening)
             }.onFailure { throwable ->
                 _uiState.update { it.copy(error = throwable.message ?: "推荐股票加载失败") }
             }
@@ -809,24 +830,28 @@ class YuqingViewModel(
                     .data ?: error("刷新价格结果为空")
             }.onSuccess { result ->
                 val snapshot = result.snapshot
-                val normalizedPeriod = snapshot.period.ifBlank { period }
+                val normalizedPeriod = normalizeAStockRecommendationPeriod(snapshot.period.ifBlank { period })
                 val recommendations = parseAStockRecommendations(snapshot.recommendationsJson)
                 _uiState.update { current ->
                     val morningSnapshot = if (normalizedPeriod == "morning") snapshot else current.morningAStockRecommendation
                     val morningRecommendations = if (normalizedPeriod == "morning") recommendations else current.morningAStockRecommendations
                     val afternoonSnapshot = if (normalizedPeriod == "afternoon") snapshot else current.afternoonAStockRecommendation
                     val afternoonRecommendations = if (normalizedPeriod == "afternoon") recommendations else current.afternoonAStockRecommendations
+                    val eveningSnapshot = if (normalizedPeriod == "evening") snapshot else current.eveningAStockRecommendation
+                    val eveningRecommendations = if (normalizedPeriod == "evening") recommendations else current.eveningAStockRecommendations
                     current.copy(
                         morningAStockRecommendation = morningSnapshot,
                         morningAStockRecommendations = morningRecommendations,
                         afternoonAStockRecommendation = afternoonSnapshot,
                         afternoonAStockRecommendations = afternoonRecommendations,
+                        eveningAStockRecommendation = eveningSnapshot,
+                        eveningAStockRecommendations = eveningRecommendations,
                         aStockRecommendation = if (current.aStockRecommendationWindow.period == normalizedPeriod) {
                             snapshot
                         } else {
                             current.aStockRecommendation
                         },
-                        aStockRecommendations = morningRecommendations + afternoonRecommendations,
+                        aStockRecommendations = morningRecommendations + afternoonRecommendations + eveningRecommendations,
                         message = result.summary.ifBlank { "价格已刷新" },
                     )
                 }
@@ -1079,21 +1104,49 @@ private val articleTimeFormats = listOf(
 private fun currentAStockRecommendationWindow(): AStockRecommendationWindow {
     val zone = ZoneId.of("Asia/Shanghai")
     val now = LocalTime.now(zone)
-    val period = if (now.isBefore(LocalTime.of(9, 31))) "morning" else "afternoon"
+    val period = when {
+        now.isBefore(LocalTime.of(9, 31)) -> "morning"
+        now.isBefore(LocalTime.of(18, 31)) -> "afternoon"
+        else -> "evening"
+    }
     return aStockRecommendationWindow(
         date = AStockTradingCalendar.latestSelectableTradingDay(LocalDate.now(zone)).toString(),
         period = period,
     )
 }
 
-private fun aStockRecommendationWindow(date: String, period: String): AStockRecommendationWindow {
-    val normalizedPeriod = if (period == "afternoon" || period == "pm" || period == "after") "afternoon" else "morning"
+internal fun aStockRecommendationWindow(date: String, period: String): AStockRecommendationWindow {
+    val normalizedPeriod = normalizeAStockRecommendationPeriod(period)
     return AStockRecommendationWindow(
         date = date,
         period = normalizedPeriod,
-        periodLabel = if (normalizedPeriod == "afternoon") "下午推荐" else "上午推荐",
-        windowLabel = if (normalizedPeriod == "afternoon") "09:30-13:00" else "08:00-09:30",
+        periodLabel = aStockRecommendationSectionLabel(normalizedPeriod),
+        windowLabel = aStockRecommendationWindowLabel(normalizedPeriod),
     )
+}
+
+internal fun normalizeAStockRecommendationPeriod(period: String): String {
+    return when (period.trim().lowercase()) {
+        "afternoon", "pm", "after" -> "afternoon"
+        "evening", "night", "pm2" -> "evening"
+        else -> "morning"
+    }
+}
+
+internal fun aStockRecommendationSectionLabel(period: String): String {
+    return when (normalizeAStockRecommendationPeriod(period)) {
+        "afternoon" -> "下午推荐"
+        "evening" -> "晚间推荐"
+        else -> "上午推荐"
+    }
+}
+
+internal fun aStockRecommendationWindowLabel(period: String): String {
+    return when (normalizeAStockRecommendationPeriod(period)) {
+        "afternoon" -> "09:30-13:00"
+        "evening" -> "15:00-18:30"
+        else -> "08:00-09:30"
+    }
 }
 
 internal fun parseAStockRecommendations(raw: String): List<AStockRecommendation> {
