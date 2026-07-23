@@ -2577,19 +2577,31 @@ internal fun AStockBacktestNavigationItem.toDetailState(
 }
 
 internal fun aStockBacktestDetailCurrentPrice(row: AStockBacktestRow?): String {
-    return aStockUsableDisplayValue(row?.currentPrice)
+    return aStockBacktestRealtimeCurrentPrice(row)
         ?: "--"
 }
 
 internal fun aStockBacktestDetailRecommendedReturn(row: AStockBacktestRow?): String {
+    if (aStockBacktestRealtimeCurrentPrice(row) == null) {
+        return "--"
+    }
     return aStockUsableDisplayValue(row?.currentReturn)
         ?: calculateAStockBacktestRecommendedReturn(row)
         ?: "--"
 }
 
-private fun calculateAStockBacktestRecommendedReturn(row: AStockBacktestRow?): String? {
+private fun aStockBacktestRealtimeCurrentPrice(row: AStockBacktestRow?): String? {
     row ?: return null
-    val current = parseAStockBacktestDisplayNumber(row.currentPrice) ?: return null
+    val currentPrice = aStockUsableDisplayValue(row.currentPrice) ?: return null
+    if (aStockUsableDisplayValue(row.currentMarketPct) == null) {
+        return null
+    }
+    return currentPrice
+}
+
+private fun calculateAStockBacktestRecommendedReturn(row: AStockBacktestRow?): String? {
+	row ?: return null
+	val current = parseAStockBacktestDisplayNumber(row.currentPrice) ?: return null
     val entry = parseAStockBacktestDisplayNumber(row.displayEntryOpen()) ?: return null
     if (entry <= 0.0) {
         return null

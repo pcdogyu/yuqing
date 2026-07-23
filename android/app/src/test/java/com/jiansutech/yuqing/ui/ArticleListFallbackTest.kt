@@ -307,12 +307,28 @@ class ArticleListFallbackTest {
     }
 
     @Test
+    fun aStockBacktestDetailCurrentPriceRejectsLegacyT5SnapshotValueWithoutRealtimePct() {
+        val row = AStockBacktestRow(
+            stock = "600276 恒瑞医药",
+            entryOpen = "56.81",
+            currentPrice = "54.73",
+            currentReturn = "-3.66%",
+            days = listOf(AStockBacktestCell(close = "54.73", returnPct = "-3.66%")),
+            status = "已回测T+5",
+        )
+
+        assertEquals("--", aStockBacktestDetailCurrentPrice(row))
+        assertEquals("--", aStockBacktestDetailRecommendedReturn(row))
+    }
+
+    @Test
     fun aStockBacktestDetailRecommendedReturnCalculatesFromCurrentAndEntryPrice() {
         val row = AStockBacktestRow(
             stock = "301017 漱玉平民",
             afternoonOpen = "13.70",
             currentPrice = "12.47",
             currentReturn = "",
+            currentMarketPct = "-1.97%",
         )
 
         assertEquals("12.47", aStockBacktestDetailCurrentPrice(row))
