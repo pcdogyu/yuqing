@@ -42,6 +42,7 @@ body[data-page='a-stock-holdings'] header,body[data-page='a-stock-holdings'] mai
 .holding-tab{display:inline-flex;align-items:center;padding:8px 12px;border:1px solid #d6ccbb;border-radius:8px;color:#214e34;text-decoration:none;background:#fff}
 .holding-tab-active{background:#214e34;color:#fff;border-color:#214e34}
 .holding-source{font-size:12px;padding:3px 8px;border-radius:999px;background:#eff6f0;color:#214e34}
+.holding-change-up{color:#c5221f;font-weight:700}.holding-change-down{color:#087a3d;font-weight:700}
 .holding-level{font-size:12px;padding:3px 8px;border-radius:999px;background:#f6e9c6;color:#6a4b00}.holding-level-high{background:#f9d8d2;color:#7a2618}
 .holding-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
 .holding-card{padding:14px;border:1px solid #ece7dc;border-radius:12px;background:#faf8f2}.holding-card strong{display:block;font-size:22px;margin-top:6px}
@@ -218,9 +219,9 @@ func renderAStockHoldingSignals(b *strings.Builder, signals model.StockInstituti
 			b.WriteString(`</td><td>`)
 			b.WriteString(html.EscapeString(formatAStockHoldingSignedPct(item.FloatRatioChange)))
 			b.WriteString(`</td><td>`)
-			b.WriteString(html.EscapeString(formatAStockHoldingSignedNumber(item.SharesChange)))
+			writeAStockHoldingSignedValue(b, item.SharesChange, formatAStockHoldingSignedNumber(item.SharesChange))
 			b.WriteString(`</td><td>`)
-			b.WriteString(html.EscapeString(formatAStockHoldingSignedMoney(item.MarketValueChange)))
+			writeAStockHoldingSignedValue(b, item.MarketValueChange, formatAStockHoldingSignedMoney(item.MarketValueChange))
 			b.WriteString(`</td><td>`)
 			b.WriteString(html.EscapeString(nonEmptyText(strings.Join(item.NewMajorHolders, "、"), "--")))
 			b.WriteString(`</td><td>`)
@@ -355,9 +356,9 @@ func renderAStockHoldingTable(b *strings.Builder, ctx model.StockInstitutionHold
 			b.WriteString(`</td><td>`)
 			b.WriteString(html.EscapeString(formatAStockHoldingNumber(item.Shares)))
 			b.WriteString(`</td><td>`)
-			b.WriteString(html.EscapeString(formatAStockHoldingNumber(item.SharesChange)))
+			writeAStockHoldingSignedValue(b, item.SharesChange, formatAStockHoldingSignedNumber(item.SharesChange))
 			b.WriteString(`</td><td>`)
-			b.WriteString(html.EscapeString(formatAStockHoldingPct(item.ChangeRatio)))
+			writeAStockHoldingSignedValue(b, item.ChangeRatio, formatAStockHoldingSignedPct(item.ChangeRatio))
 			b.WriteString(`</td><td>`)
 			b.WriteString(html.EscapeString(formatAStockHoldingPct(item.FloatRatio)))
 			b.WriteString(`</td><td>`)
@@ -545,6 +546,25 @@ func writeAStockHoldingSourceCell(b *strings.Builder, sourceType string, sourceU
 	b.WriteString(`">`)
 	b.WriteString(html.EscapeString(label))
 	b.WriteString(`</a>`)
+}
+
+func writeAStockHoldingSignedValue(b *strings.Builder, value float64, text string) {
+	className := ""
+	switch {
+	case value > 0:
+		className = "holding-change-up"
+	case value < 0:
+		className = "holding-change-down"
+	}
+	if className == "" {
+		b.WriteString(html.EscapeString(text))
+		return
+	}
+	b.WriteString(`<span class="`)
+	b.WriteString(className)
+	b.WriteString(`">`)
+	b.WriteString(html.EscapeString(text))
+	b.WriteString(`</span>`)
 }
 
 func stockHoldingSignalLevelLabel(value string) string {
