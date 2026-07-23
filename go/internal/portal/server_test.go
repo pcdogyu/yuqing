@@ -1753,9 +1753,14 @@ func TestAStockHoldingsPageLoadsSummaryRowsAndFilters(t *testing.T) {
 		t.Fatalf("expected holdings page 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"机构持仓", "机构持仓异动", "新进", "退出披露名单", "2025-Q4 -> 2026-Q1", "社保基金一一八组合", "+4.00%", "共持摘要", "基金公司数", "2026-Q1", "易方达基金", "易方达基金管理有限公司", "基金季报索引", "易方达蓝筹精选2026年第1季度报告", "已索引", "3.50%", "回补近一年全市场", "body[data-page='a-stock-holdings'] header,body[data-page='a-stock-holdings'] main,body[data-page='a-stock-holdings'] .site-footer{max-width:none;width:98%;box-sizing:border-box}"} {
+	for _, want := range []string{"机构持仓", "机构持仓异动", "新进", "退出披露名单", "2025-Q4 -> 2026-Q1", "社保基金一一八组合", "+4.00%", "共持摘要", "基金公司数", "2026-Q1", "易方达基金", "易方达基金管理有限公司", "基金季报索引", "易方达蓝筹精选2026年第1季度报告", "已索引", "3.50%", "回补近一年全市场", "body[data-page='a-stock-holdings'] header,body[data-page='a-stock-holdings'] main,body[data-page='a-stock-holdings'] .site-footer{max-width:none;width:98%;box-sizing:border-box}", ".holding-table,.holding-signal-table{font-size:12px;line-height:1.25}", ".holding-table th,.holding-table td,.holding-signal-table th,.holding-signal-table td{white-space:nowrap;padding:7px 10px}", "<th>代表退出披露</th><th>原因</th>", "<th>公告日</th></tr>", "<th>解析状态</th></tr>"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected holdings page to contain %q, got %s", want, body)
+		}
+	}
+	for _, notWant := range []string{"<th>来源</th>", "https://example.com/holding", "https://example.com/report"} {
+		if strings.Contains(body, notWant) {
+			t.Fatalf("expected holdings page to hide %q, got %s", notWant, body)
 		}
 	}
 }

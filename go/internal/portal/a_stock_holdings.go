@@ -38,6 +38,7 @@ body[data-page='a-stock-holdings'] header,body[data-page='a-stock-holdings'] mai
 .holding-toolbar button{margin:0}.holding-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:end}.holding-actions form{margin:0}.holding-actions button{margin:0}
 .holding-danger{background:#8f6a20}.holding-scroll{overflow:auto}
 .holding-table{min-width:1280px}.holding-signal-table{min-width:1180px}.holding-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.holding-table,.holding-signal-table{font-size:12px;line-height:1.25}.holding-table th,.holding-table td,.holding-signal-table th,.holding-signal-table td{white-space:nowrap;padding:7px 10px}
 .holding-tab{display:inline-flex;align-items:center;padding:8px 12px;border:1px solid #d6ccbb;border-radius:8px;color:#214e34;text-decoration:none;background:#fff}
 .holding-tab-active{background:#214e34;color:#fff;border-color:#214e34}
 .holding-source{font-size:12px;padding:3px 8px;border-radius:999px;background:#eff6f0;color:#214e34}
@@ -187,9 +188,9 @@ func renderAStockHoldingSignals(b *strings.Builder, signals model.StockInstituti
 		b.WriteString(`</p>`)
 	}
 	renderAStockHoldingSignalTabs(b, filter, signalType)
-	b.WriteString(`<div class="holding-scroll"><table class="holding-signal-table"><tr><th>类型</th><th>等级</th><th>股票</th><th>报告期对比</th><th>机构新进/退出</th><th>基金新进/退出</th><th>基金公司变化</th><th>流通占比变化</th><th>持股数变化</th><th>市值变化</th><th>代表新进</th><th>代表退出披露</th><th>来源</th><th>原因</th></tr>`)
+	b.WriteString(`<div class="holding-scroll"><table class="holding-signal-table"><tr><th>类型</th><th>等级</th><th>股票</th><th>报告期对比</th><th>机构新进/退出</th><th>基金新进/退出</th><th>基金公司变化</th><th>流通占比变化</th><th>持股数变化</th><th>市值变化</th><th>代表新进</th><th>代表退出披露</th><th>原因</th></tr>`)
 	if len(signals.Items) == 0 {
-		b.WriteString(`<tr><td colspan="14">暂无机构持仓异动结果：需要至少两个报告期的数据，且变化达到监控阈值。</td></tr>`)
+		b.WriteString(`<tr><td colspan="13">暂无机构持仓异动结果：需要至少两个报告期的数据，且变化达到监控阈值。</td></tr>`)
 	} else {
 		for _, item := range signals.Items {
 			levelClass := "holding-level"
@@ -224,8 +225,6 @@ func renderAStockHoldingSignals(b *strings.Builder, signals model.StockInstituti
 			b.WriteString(html.EscapeString(nonEmptyText(strings.Join(item.NewMajorHolders, "、"), "--")))
 			b.WriteString(`</td><td>`)
 			b.WriteString(html.EscapeString(nonEmptyText(strings.Join(item.ExitedMajorHolders, "、"), "--")))
-			b.WriteString(`</td><td>`)
-			b.WriteString(html.EscapeString(nonEmptyText(stockHoldingSourceLabels(item.SourceTypes), "--")))
 			b.WriteString(`</td><td>`)
 			b.WriteString(html.EscapeString(nonEmptyText(item.Reason, "--")))
 			b.WriteString(`</td></tr>`)
@@ -334,9 +333,9 @@ func renderAStockHoldingFilters(b *strings.Builder, ctx model.StockInstitutionHo
 }
 
 func renderAStockHoldingTable(b *strings.Builder, ctx model.StockInstitutionHoldingListResult) {
-	b.WriteString(`<section><h2>持仓明细</h2><div class="holding-scroll"><table class="holding-table"><tr><th>报告期</th><th>股票</th><th>持有人</th><th>类型</th><th>基金公司</th><th>披露口径</th><th>排名</th><th>持股数</th><th>变化</th><th>变化比例</th><th>流通占比</th><th>持股市值</th><th>公告日</th><th>来源</th></tr>`)
+	b.WriteString(`<section><h2>持仓明细</h2><div class="holding-scroll"><table class="holding-table"><tr><th>报告期</th><th>股票</th><th>持有人</th><th>类型</th><th>基金公司</th><th>披露口径</th><th>排名</th><th>持股数</th><th>变化</th><th>变化比例</th><th>流通占比</th><th>持股市值</th><th>公告日</th></tr>`)
 	if len(ctx.Items) == 0 {
-		b.WriteString(`<tr><td colspan="14">暂无机构持仓数据，请点击“回补近一年全市场”或配置定时抓取任务。</td></tr>`)
+		b.WriteString(`<tr><td colspan="13">暂无机构持仓数据，请点击“回补近一年全市场”或配置定时抓取任务。</td></tr>`)
 	} else {
 		for _, item := range ctx.Items {
 			b.WriteString(`<tr><td>`)
@@ -365,8 +364,6 @@ func renderAStockHoldingTable(b *strings.Builder, ctx model.StockInstitutionHold
 			b.WriteString(html.EscapeString(formatAStockHoldingMoney(item.MarketValue)))
 			b.WriteString(`</td><td>`)
 			b.WriteString(html.EscapeString(nonEmptyText(item.AnnounceDate, "--")))
-			b.WriteString(`</td><td>`)
-			writeAStockHoldingSourceCell(b, item.SourceType, item.SourceURL)
 			b.WriteString(`</td></tr>`)
 		}
 	}
@@ -401,9 +398,9 @@ func renderAStockHoldingPagination(b *strings.Builder, ctx model.StockInstitutio
 }
 
 func renderAStockHoldingReports(b *strings.Builder, reports model.StockHoldingReportDocumentListResult) {
-	b.WriteString(`<section><h2>基金季报索引</h2><p class="holding-muted">保存公开定期报告的公告元数据和来源链接，用于回溯结构化持仓结果；v1 不强制解析 PDF 全文。</p><div class="holding-scroll"><table class="holding-table"><tr><th>报告期</th><th>基金</th><th>基金公司</th><th>公告标题</th><th>公告日</th><th>解析状态</th><th>来源</th></tr>`)
+	b.WriteString(`<section><h2>基金季报索引</h2><p class="holding-muted">保存公开定期报告的公告元数据和来源链接，用于回溯结构化持仓结果；v1 不强制解析 PDF 全文。</p><div class="holding-scroll"><table class="holding-table"><tr><th>报告期</th><th>基金</th><th>基金公司</th><th>公告标题</th><th>公告日</th><th>解析状态</th></tr>`)
 	if len(reports.Items) == 0 {
-		b.WriteString(`<tr><td colspan="7">暂无基金季报索引；持仓回补时若适配服务返回报告元数据会自动写入。</td></tr>`)
+		b.WriteString(`<tr><td colspan="6">暂无基金季报索引；持仓回补时若适配服务返回报告元数据会自动写入。</td></tr>`)
 	} else {
 		for _, item := range reports.Items {
 			b.WriteString(`<tr><td>`)
@@ -418,8 +415,6 @@ func renderAStockHoldingReports(b *strings.Builder, reports model.StockHoldingRe
 			b.WriteString(html.EscapeString(nonEmptyText(item.AnnouncementDate, "--")))
 			b.WriteString(`</td><td>`)
 			b.WriteString(html.EscapeString(stockHoldingReportParseStatusLabel(item.ParseStatus)))
-			b.WriteString(`</td><td>`)
-			writeAStockHoldingSourceCell(b, item.SourceType, nonEmptyText(item.PDFURL, item.SourceURL))
 			b.WriteString(`</td></tr>`)
 		}
 	}
