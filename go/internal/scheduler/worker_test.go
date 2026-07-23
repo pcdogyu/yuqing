@@ -2623,6 +2623,125 @@ func TestRunAStockHoldingsBackfillFetchesExternalAndWritesContent(t *testing.T) 
 	}
 }
 
+func TestRunAStockHoldingsBackfillUsesCrawlTimeout(t *testing.T) {
+	external := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(50 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"items": []model.StockInstitutionHolding{{
+				StockCode:    "002230",
+				StockName:    "科大讯飞",
+				ReportPeriod: "20260331",
+				HolderName:   "易方达基金",
+				HolderType:   "fund",
+				SourceType:   "stock_institute_hold_detail",
+			}},
+		})
+	}))
+	defer external.Close()
+
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(50 * time.Millisecond)
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockInstitutionHoldingUpsertResult{Inserted: 1, Total: 1}})
+	}))
+	defer content.Close()
+
+	worker := NewWorker(config.Config{
+		AStockHoldingURL:      external.URL,
+		ContentURL:            content.URL,
+		HTTPTimeout:           10 * time.Millisecond,
+		ServiceToken:          "secret-token",
+		ExternalRetryCount:    0,
+		SchedulerCrawlTimeout: time.Second,
+	})
+	if err := worker.runAStockHoldingsBackfill(context.Background(), aStockHoldingCrawlOptions{Period: "20260331"}); err != nil {
+		t.Fatalf("runAStockHoldingsBackfill should use scheduler crawl timeout, got %v", err)
+	}
+}
+
+func TestSchedulerAStockHoldingsBackfillEndpointReturnsImmediately(t *testing.T) {
+	released := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() {
+		releaseOnce.Do(func() {
+			close(released)
+		})
+	}
+	defer release()
+
+	contentWritten := make(chan struct{})
+	var contentOnce sync.Once
+	external := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/a-stock/holdings" || r.URL.Query().Get("period") != "20260331" || r.URL.Query().Get("code") != "002230" {
+			t.Errorf("unexpected external holdings request: %s", r.URL.String())
+		}
+		<-released
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"items": []model.StockInstitutionHolding{{
+				StockCode:    "002230",
+				StockName:    "科大讯飞",
+				ReportPeriod: "20260331",
+				HolderName:   "易方达基金",
+				HolderType:   "fund",
+				SourceType:   "stock_institute_hold_detail",
+			}},
+		})
+	}))
+	defer external.Close()
+
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/internal/a-stock/holdings/batch" {
+			t.Errorf("unexpected content holdings request: %s %s", r.Method, r.URL.String())
+		}
+		contentOnce.Do(func() {
+			close(contentWritten)
+		})
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockInstitutionHoldingUpsertResult{Inserted: 1, Total: 1}})
+	}))
+	defer content.Close()
+
+	worker := NewWorker(config.Config{
+		AStockHoldingURL:      external.URL,
+		ContentURL:            content.URL,
+		HTTPTimeout:           10 * time.Millisecond,
+		ServiceToken:          "secret-token",
+		ExternalRetryCount:    0,
+		SchedulerCrawlTimeout: time.Second,
+	})
+	router := worker.Router()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/a-stock/holdings/backfill?code=002230&period=20260331", nil)
+	req.Header.Set("X-Service-Token", "secret-token")
+	rr := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		router.ServeHTTP(rr, req)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(100 * time.Millisecond):
+		release()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+		}
+		t.Fatal("holdings backfill endpoint should return before external crawl finishes")
+	}
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "triggered") {
+		t.Fatalf("expected immediate triggered response, got status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	release()
+	select {
+	case <-contentWritten:
+	case <-time.After(time.Second):
+		t.Fatal("expected background holdings backfill to write content after release")
+	}
+}
+
 func TestParseFinanceReportDocumentExtractsRows(t *testing.T) {
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(`<html><body><table><tr><td>1</td><td><a href="/report/1.html">科大讯飞深度研究：AI 应用点评</a></td><td>公司研究</td><td>2026-06-16</td><td>中金公司</td><td>张三</td></tr></table></body></html>`))
 	if err != nil {

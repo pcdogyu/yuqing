@@ -1319,7 +1319,7 @@ func (w *Worker) runAStockHoldingsBackfill(ctx context.Context, opts aStockHoldi
 	if len(reports) > 0 {
 		payload["reports"] = reports
 	}
-	resp, err := w.client.R().
+	resp, err := w.crawlClient.R().
 		SetContext(ctx).
 		SetBody(payload).
 		Post(w.cfg.ContentURL + "/api/v1/internal/a-stock/holdings/batch")
@@ -1345,7 +1345,7 @@ func (w *Worker) fetchExternalAStockHoldings(ctx context.Context, period string,
 	if baseURL == "" {
 		return aStockHoldingFetchResult{}, fmt.Errorf("YUQING_ASTOCK_HOLDING_URL not configured")
 	}
-	req := w.client.R().
+	req := w.crawlClient.R().
 		SetContext(ctx).
 		SetQueryParam("period", period)
 	if strings.TrimSpace(code) != "" {
@@ -1402,6 +1402,15 @@ func (w *Worker) fetchExternalAStockHoldings(ctx context.Context, period string,
 		}
 	}
 	return aStockHoldingFetchResult{Items: envelope.Items, Reports: envelope.Reports}, nil
+}
+
+func aStockHoldingsBackfillTimeout(base time.Duration, opts aStockHoldingCrawlOptions) time.Duration {
+	periods := aStockHoldingPeriods(opts)
+	periodCount := len(periods)
+	if periodCount == 0 {
+		periodCount = 4
+	}
+	return maxDuration(base*time.Duration(periodCount+1), 10*time.Minute)
 }
 
 func (w *Worker) runAStockRecommendationForDate(ctx context.Context, strategyDate string, period string, phase string) error {

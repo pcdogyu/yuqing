@@ -323,7 +323,14 @@ func (w *Worker) handleRunAStockHoldingsBackfill(wr http.ResponseWriter, r *http
 		EndPeriod:   strings.TrimSpace(r.URL.Query().Get("end_period")),
 	}
 	startedAt := time.Now().UTC()
-	err := w.runAStockHoldingsBackfill(r.Context(), opts)
+	go w.runAStockHoldingsBackfillTask(context.Background(), opts, startedAt)
+	apiutil.WriteJSON(wr, http.StatusOK, "ok", map[string]string{"status": "triggered"})
+}
+
+func (w *Worker) runAStockHoldingsBackfillTask(parent context.Context, opts aStockHoldingCrawlOptions, startedAt time.Time) {
+	ctx, cancel := context.WithTimeout(parent, aStockHoldingsBackfillTimeout(w.cfg.SchedulerCrawlTimeout, opts))
+	defer cancel()
+	err := w.runAStockHoldingsBackfill(ctx, opts)
 	finishedAt := time.Now().UTC()
 	status := "success"
 	message := "a-stock holdings backfill completed"
@@ -331,12 +338,14 @@ func (w *Worker) handleRunAStockHoldingsBackfill(wr http.ResponseWriter, r *http
 		status = "failed"
 		message = err.Error()
 	}
-	_ = w.recordTaskRun(r.Context(), "a-stock-holdings-backfill", status, message, startedAt, &finishedAt)
+	if recordErr := w.recordTaskRun(context.Background(), "a-stock-holdings-backfill", status, message, startedAt, &finishedAt); recordErr != nil {
+		log.Warn().Err(recordErr).Str("task", "a-stock-holdings-backfill").Msg("record scheduler task run failed")
+	}
 	if err != nil {
-		apiutil.WriteJSON(wr, http.StatusInternalServerError, err.Error(), nil)
+		log.Error().Err(err).Str("task", "a-stock-holdings-backfill").Msg("scheduler task failed")
 		return
 	}
-	apiutil.WriteJSON(wr, http.StatusOK, "ok", map[string]string{"status": "triggered"})
+	log.Info().Str("task", "a-stock-holdings-backfill").Msg("scheduler task completed")
 }
 
 func (w *Worker) handleRunAStockSectorFundFlowLatest(wr http.ResponseWriter, r *http.Request) {
