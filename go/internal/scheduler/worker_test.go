@@ -2626,6 +2626,61 @@ func TestRunAStockHoldingsBackfillFetchesExternalAndWritesContent(t *testing.T) 
 	}
 }
 
+func TestRunAStockHoldingsBackfillWritesEachPeriod(t *testing.T) {
+	requestedPeriods := []string{}
+	external := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		period := r.URL.Query().Get("period")
+		requestedPeriods = append(requestedPeriods, period)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"items": []model.StockInstitutionHolding{{
+				StockCode:  "002230",
+				StockName:  "科大讯飞",
+				HolderName: "易方达基金",
+				HolderType: "fund",
+			}},
+		})
+	}))
+	defer external.Close()
+
+	writtenPeriods := []string{}
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Items []model.StockInstitutionHolding `json:"items"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode holdings content payload: %v", err)
+		}
+		if len(payload.Items) != 1 {
+			t.Fatalf("expected one holding item per period write, got %+v", payload.Items)
+		}
+		writtenPeriods = append(writtenPeriods, payload.Items[0].ReportPeriod)
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": model.StockInstitutionHoldingUpsertResult{Inserted: 1, Total: 1}})
+	}))
+	defer content.Close()
+
+	worker := NewWorker(config.Config{
+		AStockHoldingURL:      external.URL,
+		ContentURL:            content.URL,
+		HTTPTimeout:           time.Second,
+		ServiceToken:          "secret-token",
+		ExternalRetryCount:    0,
+		ExternalRetryWait:     time.Millisecond,
+		SchedulerCrawlTimeout: time.Second,
+	})
+	opts := aStockHoldingCrawlOptions{StartPeriod: "20260331", EndPeriod: "20260630"}
+	if err := worker.runAStockHoldingsBackfill(context.Background(), opts); err != nil {
+		t.Fatalf("runAStockHoldingsBackfill error: %v", err)
+	}
+	want := []string{"20260331", "20260630"}
+	if !slices.Equal(requestedPeriods, want) {
+		t.Fatalf("expected external requests per period %v, got %v", want, requestedPeriods)
+	}
+	if !slices.Equal(writtenPeriods, want) {
+		t.Fatalf("expected content writes per period %v, got %v", want, writtenPeriods)
+	}
+}
+
 func TestRunAStockHoldingsBackfillUsesHoldingTimeout(t *testing.T) {
 	external := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(50 * time.Millisecond)
@@ -2671,6 +2726,14 @@ func TestAStockHoldingsTimeoutsAllowFullMarketBackfill(t *testing.T) {
 	}
 	if got := aStockHoldingsBackfillTimeout(time.Second, aStockHoldingCrawlOptions{StartPeriod: "20250930", EndPeriod: "20260630"}); got < 2*time.Hour {
 		t.Fatalf("expected year holdings backfill timeout to be at least 2h, got %s", got)
+	}
+}
+
+func TestAStockHoldingPeriodsIncludeAdjacentQuarterEnds(t *testing.T) {
+	got := aStockHoldingPeriods(aStockHoldingCrawlOptions{StartPeriod: "20260331", EndPeriod: "20260630"})
+	want := []string{"20260331", "20260630"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("expected adjacent quarter ends %v, got %v", want, got)
 	}
 }
 

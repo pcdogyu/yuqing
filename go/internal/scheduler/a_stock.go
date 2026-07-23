@@ -1305,16 +1305,38 @@ func (w *Worker) runAStockHoldingsBackfill(ctx context.Context, opts aStockHoldi
 	if len(periods) == 0 {
 		periods = latestAStockHoldingPeriods(4, time.Now().In(aStockLocation()))
 	}
-	items := make([]model.StockInstitutionHolding, 0)
-	reports := make([]model.StockHoldingReportDocument, 0)
+	totalItems := 0
+	totalReports := 0
 	for _, period := range periods {
 		fetched, err := w.fetchExternalAStockHoldings(ctx, period, opts.Code)
 		if err != nil {
 			return err
 		}
-		items = append(items, fetched.Items...)
-		reports = append(reports, fetched.Reports...)
+		if err := w.upsertAStockHoldings(ctx, fetched.Items, fetched.Reports); err != nil {
+			return err
+		}
+		totalItems += len(fetched.Items)
+		totalReports += len(fetched.Reports)
+		log.Info().
+			Str("code", opts.Code).
+			Str("period", period).
+			Int("items", len(fetched.Items)).
+			Int("reports", len(fetched.Reports)).
+			Msg("a-stock institution holdings period crawled")
 	}
+	log.Info().
+		Str("code", opts.Code).
+		Str("period", opts.Period).
+		Str("start_period", opts.StartPeriod).
+		Str("end_period", opts.EndPeriod).
+		Int("items", totalItems).
+		Int("reports", totalReports).
+		Int("periods", len(periods)).
+		Msg("a-stock institution holdings crawled")
+	return nil
+}
+
+func (w *Worker) upsertAStockHoldings(ctx context.Context, items []model.StockInstitutionHolding, reports []model.StockHoldingReportDocument) error {
 	payload := map[string]any{"items": items}
 	if len(reports) > 0 {
 		payload["reports"] = reports
@@ -1329,14 +1351,6 @@ func (w *Worker) runAStockHoldingsBackfill(ctx context.Context, opts aStockHoldi
 	if !resp.IsSuccess() {
 		return fmt.Errorf("content stock holdings upsert failed: %s", resp.Status())
 	}
-	log.Info().
-		Str("code", opts.Code).
-		Str("period", opts.Period).
-		Str("start_period", opts.StartPeriod).
-		Str("end_period", opts.EndPeriod).
-		Int("items", len(items)).
-		Int("reports", len(reports)).
-		Msg("a-stock institution holdings crawled")
 	return nil
 }
 
@@ -1835,11 +1849,12 @@ func aStockHoldingPeriods(opts aStockHoldingCrawlOptions) []string {
 		startTime, endTime = endTime, startTime
 	}
 	out := make([]string, 0)
-	for cursor := startTime; !cursor.After(endTime); cursor = cursor.AddDate(0, 3, 0) {
+	for cursor := startTime; !cursor.After(endTime); {
 		period := quarterEndDate(cursor)
 		if !period.Before(startTime) && !period.After(endTime) {
 			out = append(out, period.Format("20060102"))
 		}
+		cursor = period.AddDate(0, 0, 1)
 	}
 	return out
 }
