@@ -1,6 +1,8 @@
 package com.jiansutech.yuqing.ui
 
 import com.jiansutech.yuqing.data.AndroidDashboard
+import com.jiansutech.yuqing.data.AStockAuctionListResult
+import com.jiansutech.yuqing.data.AStockAuctionTrend
 import com.jiansutech.yuqing.data.AStockBacktestCell
 import com.jiansutech.yuqing.data.AStockBacktestRow
 import com.jiansutech.yuqing.data.AStockRecommendation
@@ -96,6 +98,99 @@ class ArticleListFallbackTest {
         assertEquals(30, normalizeAStockAuctionTrendDays(30))
         assertEquals(DEFAULT_A_STOCK_AUCTION_TREND_DAYS, normalizeAStockAuctionTrendDays(0))
         assertEquals(DEFAULT_A_STOCK_AUCTION_TREND_DAYS, normalizeAStockAuctionTrendDays(15))
+    }
+
+    @Test
+    fun aStockAuctionSnapshotAmountsShows0925AndFinal0930() {
+        val result = AStockAuctionListResult(
+            date = "2026-07-09",
+            captureSlot = "0929",
+            trendSeries = mapOf(
+                "0925" to listOf(
+                    AStockAuctionTrend(
+                        date = "2026-07-09",
+                        captureSlot = "0925",
+                        stockCount = 4000,
+                        totalAmount = 9250000.0,
+                    ),
+                ),
+                "0929" to listOf(
+                    AStockAuctionTrend(
+                        date = "2026-07-09",
+                        captureSlot = "0929",
+                        stockCount = 4100,
+                        totalAmount = 9300000.0,
+                    ),
+                ),
+            ),
+        )
+
+        val amounts = aStockAuctionSnapshotAmounts(result)
+
+        assertEquals(listOf("09:25", "09:30"), amounts.map { it.label })
+        assertEquals(9250000.0, amounts[0].amount ?: 0.0, 0.001)
+        assertEquals(9300000.0, amounts[1].amount ?: 0.0, 0.001)
+        assertEquals("09:30", aStockAuctionCaptureSlotLabel("0929"))
+    }
+
+    @Test
+    fun aStockAuctionFinalTrendSeriesPrefers0929OverLegacy0930() {
+        val result = AStockAuctionListResult(
+            trendSeries = mapOf(
+                "0930" to listOf(
+                    AStockAuctionTrend(date = "2026-07-13", captureSlot = "0930", totalAmount = 1300000.0),
+                    AStockAuctionTrend(date = "2026-07-14", captureSlot = "0930", totalAmount = 1400000.0),
+                ),
+                "0929" to listOf(
+                    AStockAuctionTrend(date = "2026-07-14", captureSlot = "0929", totalAmount = 1429000.0),
+                    AStockAuctionTrend(date = "2026-07-15", captureSlot = "0929", totalAmount = 1529000.0),
+                ),
+            ),
+        )
+
+        val finalSeries = aStockAuctionFinalTrendSeries(result)
+
+        assertEquals(listOf("2026-07-13", "2026-07-14", "2026-07-15"), finalSeries.map { it.date })
+        assertEquals("0930", finalSeries[0].captureSlot)
+        assertEquals("0929", finalSeries[1].captureSlot)
+        assertEquals(1429000.0, finalSeries[1].totalAmount, 0.001)
+    }
+
+    @Test
+    fun aStockAuctionSnapshotAmountsDoNotBorrowPreviousDate0925() {
+        val result = AStockAuctionListResult(
+            date = "2026-07-09",
+            captureSlot = "0929",
+            totalAmount = 9300000.0,
+            trendSeries = mapOf(
+                "0925" to listOf(
+                    AStockAuctionTrend(date = "2026-07-08", captureSlot = "0925", totalAmount = 8250000.0),
+                ),
+                "0929" to listOf(
+                    AStockAuctionTrend(date = "2026-07-09", captureSlot = "0929", totalAmount = 9300000.0),
+                ),
+            ),
+        )
+
+        val amounts = aStockAuctionSnapshotAmounts(result)
+
+        assertEquals(null, amounts[0].amount)
+        assertEquals(9300000.0, amounts[1].amount ?: 0.0, 0.001)
+    }
+
+    @Test
+    fun aStockAuctionTrendChartSeriesFallsBackToLegacyTrend() {
+        val result = AStockAuctionListResult(
+            trend = listOf(
+                AStockAuctionTrend(date = "2026-07-08", totalAmount = 8000000.0),
+                AStockAuctionTrend(date = "2026-07-09", totalAmount = 9000000.0),
+            ),
+        )
+
+        val series = aStockAuctionTrendChartSeries(result, 7)
+
+        assertEquals(listOf("09:30"), series.map { it.label })
+        assertEquals(listOf("2026-07-08", "2026-07-09"), series.first().points.map { it.date })
     }
 
     @Test

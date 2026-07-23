@@ -118,7 +118,56 @@ class ApiModelsTest {
         server.enqueue(
             MockResponse()
                 .setHeader("Content-Type", "application/json")
-                .setBody("""{"code":200,"message":"ok","data":{"items":[],"page":1,"page_size":6000,"total":0,"date":"2026-07-09","trend":[]}}"""),
+                .setBody(
+                    """
+                    {
+                      "code": 200,
+                      "message": "ok",
+                      "data": {
+                        "items": [
+                          {
+                            "trade_date": "2026-07-09",
+                            "capture_slot": "0929",
+                            "code": "600000",
+                            "name": "浦发银行",
+                            "auction_amount": 9300000
+                          }
+                        ],
+                        "page": 1,
+                        "page_size": 6000,
+                        "total": 1,
+                        "date": "2026-07-09",
+                        "capture_slot": "0929",
+                        "trend": [
+                          {
+                            "date": "2026-07-09",
+                            "capture_slot": "0929",
+                            "stock_count": 1,
+                            "total_amount": 9300000
+                          }
+                        ],
+                        "trend_series": {
+                          "0925": [
+                            {
+                              "date": "2026-07-09",
+                              "capture_slot": "0925",
+                              "stock_count": 1,
+                              "total_amount": 9250000
+                            }
+                          ],
+                          "0929": [
+                            {
+                              "date": "2026-07-09",
+                              "capture_slot": "0929",
+                              "stock_count": 1,
+                              "total_amount": 9300000
+                            }
+                          ]
+                        }
+                      }
+                    }
+                    """.trimIndent(),
+                ),
         )
         server.start()
         try {
@@ -128,6 +177,10 @@ class ApiModelsTest {
             val request = server.takeRequest()
 
             assertEquals("2026-07-09", result?.date)
+            assertEquals("0929", result?.captureSlot)
+            assertEquals("0929", result?.items?.firstOrNull()?.captureSlot)
+            assertEquals("0925", result?.trendSeries?.get("0925")?.firstOrNull()?.captureSlot)
+            assertEquals(9250000.0, result?.trendSeries?.get("0925")?.firstOrNull()?.totalAmount ?: 0.0, 0.001)
             assertEquals("/api/v1/a-stock/auction", request.requestUrl?.encodedPath)
             assertEquals("2026-07-09", request.requestUrl?.queryParameter("date"))
             assertEquals("6000", request.requestUrl?.queryParameter("page_size"))

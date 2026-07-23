@@ -305,16 +305,19 @@ data class AStockAuctionListResult(
     val keyword: String = "",
     @SerialName("latest_date") val latestDate: String = "",
     val dates: List<String> = emptyList(),
+    @SerialName("capture_slot") val captureSlot: String = "",
     @SerialName("summary_count") val summaryCount: Int = 0,
     @SerialName("total_amount") val totalAmount: Double = 0.0,
     @SerialName("max_item") val maxItem: AStockAuctionAmount? = null,
     @SerialName("fetched_at") val fetchedAt: String = "",
     val trend: List<AStockAuctionTrend> = emptyList(),
+    @SerialName("trend_series") val trendSeries: Map<String, List<AStockAuctionTrend>> = emptyMap(),
 )
 
 @Serializable
 data class AStockAuctionAmount(
     @SerialName("trade_date") val tradeDate: String = "",
+    @SerialName("capture_slot") val captureSlot: String = "",
     val code: String = "",
     val name: String = "",
     @SerialName("auction_price") val auctionPrice: Double = 0.0,
@@ -328,6 +331,7 @@ data class AStockAuctionAmount(
 @Serializable
 data class AStockAuctionTrend(
     val date: String = "",
+    @SerialName("capture_slot") val captureSlot: String = "",
     @SerialName("stock_count") val stockCount: Int = 0,
     @SerialName("total_volume") val totalVolume: Double = 0.0,
     @SerialName("total_amount") val totalAmount: Double = 0.0,

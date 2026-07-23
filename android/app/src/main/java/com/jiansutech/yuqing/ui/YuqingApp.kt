@@ -108,6 +108,7 @@ import com.jiansutech.yuqing.data.AndroidDashboard
 import com.jiansutech.yuqing.data.AndroidModule
 import com.jiansutech.yuqing.data.AStockAuctionAmount
 import com.jiansutech.yuqing.data.AStockAuctionListResult
+import com.jiansutech.yuqing.data.AStockAuctionTrend
 import com.jiansutech.yuqing.data.AStockBacktestRow
 import com.jiansutech.yuqing.data.AStockRecommendation
 import com.jiansutech.yuqing.data.AStockRecommendationSnapshot
@@ -877,6 +878,8 @@ private fun AStockModule(
 private fun AStockAuctionModule(result: AStockAuctionListResult, trendDays: Int, viewModel: YuqingViewModel) {
     val storedCount = result.summaryCount.takeIf { it > 0 } ?: result.total
     val completenessText = if (storedCount in 1 until 4000) "数据可能不全" else ""
+    val snapshotAmounts = aStockAuctionSnapshotAmounts(result)
+    val trendSeries = aStockAuctionTrendChartSeries(result, trendDays)
     val shenzhenLeaders = result.items
         .filter { it.code.startsWith("0") || it.code.startsWith("3") }
         .sortedByDescending { it.auctionAmount }
@@ -892,7 +895,9 @@ private fun AStockAuctionModule(result: AStockAuctionListResult, trendDays: Int,
                 listOf(
                     "入库 $storedCount",
                     "本页 ${result.items.size}",
-                    "总额 ${formatAuctionAmount(result.totalAmount)}",
+                    snapshotAmounts.joinToString("  ") { amount ->
+                        "${amount.label} ${amount.amount?.let(::formatAuctionAmount) ?: "--"}"
+                    },
                     completenessText,
                     result.fetchedAt,
                 ).filter { it.isNotBlank() }.joinToString("  "),
@@ -908,7 +913,7 @@ private fun AStockAuctionModule(result: AStockAuctionListResult, trendDays: Int,
         }
         item { AuctionTrendHeader(trendDays, onPeriodSelected = viewModel::selectAStockAuctionTrendDays) }
         item { AStockAuctionTrendChart(result, trendDays) }
-        if (result.trend.isEmpty()) {
+        if (trendSeries.isEmpty()) {
             item { SimpleRow("暂无历史走势", "接口暂未返回历史集合竞价金额") }
         }
         item { SectionTitle("沪市金额最高") }
@@ -2290,11 +2295,177 @@ private fun AStockRecommendationRow(item: AStockRecommendation, onClick: () -> U
     )
 }
 
+internal data class AStockAuctionSnapshotAmount(
+    val label: String,
+    val amount: Double?,
+    val stockCount: Int = 0,
+    val captureSlot: String = "",
+)
+
+internal data class AStockAuctionChartSeries(
+    val label: String,
+    val captureSlot: String,
+    val points: List<AStockAuctionTrend>,
+)
+
+internal fun aStockAuctionSnapshotAmounts(result: AStockAuctionListResult): List<AStockAuctionSnapshotAmount> {
+    val displayDate = aStockAuctionDisplayDate(result)
+    val resultSlot = normalizeAStockAuctionCaptureSlot(result.captureSlot)
+    val resultCount = result.summaryCount.takeIf { it > 0 } ?: result.total
+    val point0925 = aStockAuctionTrendPointForDate(
+        aStockAuctionTrendSeriesForSlot(result, "0925"),
+        displayDate,
+    ) ?: if (resultSlot == "0925" && result.totalAmount > 0) {
+        AStockAuctionTrend(
+            date = displayDate,
+            captureSlot = result.captureSlot,
+            stockCount = resultCount,
+            totalAmount = result.totalAmount,
+        )
+    } else {
+        null
+    }
+    val finalPoint = aStockAuctionTrendPointForDate(aStockAuctionFinalTrendSeries(result), displayDate)
+        ?: if (isAStockAuctionFinalCaptureSlot(resultSlot) && result.totalAmount > 0) {
+            AStockAuctionTrend(
+                date = displayDate,
+                captureSlot = result.captureSlot,
+                stockCount = resultCount,
+                totalAmount = result.totalAmount,
+            )
+        } else {
+            null
+        }
+
+    return listOf(
+        AStockAuctionSnapshotAmount(
+            label = "09:25",
+            amount = point0925?.totalAmount?.takeIf { it > 0 },
+            stockCount = point0925?.stockCount ?: 0,
+            captureSlot = point0925?.captureSlot ?: "0925",
+        ),
+        AStockAuctionSnapshotAmount(
+            label = "09:30",
+            amount = finalPoint?.totalAmount?.takeIf { it > 0 },
+            stockCount = finalPoint?.stockCount ?: 0,
+            captureSlot = finalPoint?.captureSlot ?: "0929",
+        ),
+    )
+}
+
+internal fun aStockAuctionTrendChartSeries(
+    result: AStockAuctionListResult,
+    days: Int,
+): List<AStockAuctionChartSeries> {
+    val limit = normalizeAStockAuctionTrendDays(days)
+    val point0925 = aStockAuctionTrendSeriesForSlot(result, "0925")
+        .filter { it.totalAmount > 0 }
+        .sortedBy { it.date }
+        .takeLast(limit)
+    val finalPoints = aStockAuctionFinalTrendSeries(result)
+        .filter { it.totalAmount > 0 }
+        .sortedBy { it.date }
+        .takeLast(limit)
+
+    return listOfNotNull(
+        point0925.takeIf { it.isNotEmpty() }?.let {
+            AStockAuctionChartSeries(label = "09:25", captureSlot = "0925", points = it)
+        },
+        finalPoints.takeIf { it.isNotEmpty() }?.let {
+            AStockAuctionChartSeries(label = "09:30", captureSlot = "0929", points = it)
+        },
+    )
+}
+
+internal fun aStockAuctionFinalTrendSeries(result: AStockAuctionListResult): List<AStockAuctionTrend> {
+    val merged = mergeAStockAuctionFinalTrendSeries(
+        current0929 = aStockAuctionTrendSeriesForSlot(result, "0929"),
+        legacy0930 = aStockAuctionTrendSeriesForSlot(result, "0930"),
+    )
+    if (merged.isNotEmpty()) {
+        return merged
+    }
+    val fallback = result.trend.filter { point ->
+        val slot = normalizeAStockAuctionCaptureSlot(point.captureSlot)
+        slot.isBlank() || isAStockAuctionFinalCaptureSlot(slot)
+    }
+    return fallback.ifEmpty { result.trend }
+}
+
+internal fun mergeAStockAuctionFinalTrendSeries(
+    current0929: List<AStockAuctionTrend>,
+    legacy0930: List<AStockAuctionTrend>,
+): List<AStockAuctionTrend> {
+    val byDate = mutableMapOf<String, AStockAuctionTrend>()
+    legacy0930
+        .filter { it.date.isNotBlank() && it.totalAmount > 0 }
+        .forEach { byDate[it.date] = it }
+    current0929
+        .filter { it.date.isNotBlank() && it.totalAmount > 0 }
+        .forEach { byDate[it.date] = it }
+    return byDate.values.sortedBy { it.date }
+}
+
+internal fun aStockAuctionCaptureSlotLabel(captureSlot: String): String {
+    return when (normalizeAStockAuctionCaptureSlot(captureSlot)) {
+        "0920" -> "09:20"
+        "0925" -> "09:25"
+        "0929", "0930" -> "09:30"
+        "" -> "--"
+        else -> captureSlot.trim()
+    }
+}
+
+private fun aStockAuctionDisplayDate(result: AStockAuctionListResult): String {
+    return result.date.ifBlank {
+        result.latestDate.ifBlank {
+            result.trend.lastOrNull { it.date.isNotBlank() }?.date.orEmpty()
+        }
+    }
+}
+
+private fun aStockAuctionTrendSeriesForSlot(
+    result: AStockAuctionListResult,
+    captureSlot: String,
+): List<AStockAuctionTrend> {
+    return result.trendSeries.entries
+        .firstOrNull { normalizeAStockAuctionCaptureSlot(it.key) == captureSlot }
+        ?.value
+        .orEmpty()
+}
+
+private fun aStockAuctionTrendPointForDate(
+    points: List<AStockAuctionTrend>,
+    date: String,
+): AStockAuctionTrend? {
+    val validPoints = points.filter { it.totalAmount > 0 }
+    return if (date.isBlank()) {
+        validPoints.lastOrNull()
+    } else {
+        validPoints.lastOrNull { it.date == date }
+    }
+}
+
+private fun normalizeAStockAuctionCaptureSlot(captureSlot: String): String {
+    return when (captureSlot.trim().filter { it.isDigit() }) {
+        "920", "0920" -> "0920"
+        "925", "0925" -> "0925"
+        "929", "0929" -> "0929"
+        "930", "0930" -> "0930"
+        else -> captureSlot.trim()
+    }
+}
+
+private fun isAStockAuctionFinalCaptureSlot(captureSlot: String): Boolean {
+    return captureSlot.isBlank() || captureSlot == "0929" || captureSlot == "0930"
+}
+
 @Composable
 private fun AStockAuctionRow(item: AStockAuctionAmount) {
     SimpleRow(
         "${item.code} ${item.name}",
         listOf(
+            item.captureSlot.takeIf { it.isNotBlank() }?.let { "快照 ${aStockAuctionCaptureSlotLabel(it)}" }.orEmpty(),
             "价格 ${item.auctionPrice}",
             "成交量 ${formatAuctionAmount(item.auctionVolume)}",
             "成交额 ${formatAuctionAmount(item.auctionAmount)}",
@@ -2335,18 +2506,49 @@ private fun AuctionTrendPeriodChip(
 
 @Composable
 private fun AStockAuctionTrendChart(result: AStockAuctionListResult, days: Int) {
-    val trend = result.trend
-        .filter { it.totalAmount > 0 }
-        .takeLast(normalizeAStockAuctionTrendDays(days))
-    if (trend.isEmpty()) {
+    val limit = normalizeAStockAuctionTrendDays(days)
+    val series = aStockAuctionTrendChartSeries(result, limit)
+    if (series.isEmpty()) {
         return
     }
-    val lineColor = MaterialTheme.colorScheme.primary
+    val dateLabels = series
+        .flatMap { chartSeries -> chartSeries.points.map { it.date } }
+        .filter { it.isNotBlank() }
+        .distinct()
+        .sorted()
+        .takeLast(limit)
+    if (dateLabels.isEmpty()) {
+        return
+    }
+    val visibleDates = dateLabels.toSet()
+    val visibleSeries = series
+        .map { chartSeries -> chartSeries.copy(points = chartSeries.points.filter { it.date in visibleDates }) }
+        .filter { it.points.isNotEmpty() }
+    if (visibleSeries.isEmpty()) {
+        return
+    }
+    val lineColors = listOf(MaterialTheme.colorScheme.tertiary, MaterialTheme.colorScheme.primary)
     val gridColor = MaterialTheme.colorScheme.outlineVariant
-    val maxAmount = trend.maxOf { it.totalAmount }.coerceAtLeast(1.0)
+    val maxAmount = visibleSeries
+        .flatMap { it.points }
+        .maxOf { it.totalAmount }
+        .coerceAtLeast(1.0)
     Card {
         Column(Modifier.fillMaxWidth().padding(12.dp)) {
             Text("金额最高 ${formatAuctionAmount(maxAmount)}", style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                visibleSeries.forEachIndexed { index, chartSeries ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            Modifier
+                                .size(8.dp)
+                                .background(lineColors[index % lineColors.size], CircleShape),
+                        )
+                        Text(chartSeries.label, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                    }
+                }
+            }
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(
@@ -2373,32 +2575,42 @@ private fun AStockAuctionTrendChart(result: AStockAuctionListResult, days: Int) 
                         val y = top + (bottom - top) * index / 3f
                         drawLine(gridColor, Offset(left, y), Offset(right, y), strokeWidth = 1f)
                     }
-                    val points = trend.mapIndexed { index, item ->
-                        val x = if (trend.size == 1) {
+                    dateLabels.forEachIndexed { index, _ ->
+                        val x = if (dateLabels.size == 1) {
                             (left + right) / 2f
                         } else {
-                            left + (right - left) * index / (trend.size - 1).toFloat()
+                            left + (right - left) * index / (dateLabels.size - 1).toFloat()
                         }
-                        val y = bottom - ((item.totalAmount / maxAmount).toFloat() * (bottom - top))
-                        Offset(x, y)
-                    }
-                    points.forEach { point ->
-                        drawLine(gridColor, Offset(point.x, top), Offset(point.x, bottom), strokeWidth = 1f)
+                        drawLine(gridColor, Offset(x, top), Offset(x, bottom), strokeWidth = 1f)
                     }
                     drawLine(gridColor, Offset(left, top), Offset(left, bottom), strokeWidth = 1f)
                     drawLine(gridColor, Offset(left, bottom), Offset(right, bottom), strokeWidth = 1f)
-                    points.zipWithNext().forEach { (start, end) ->
-                        drawLine(lineColor, start, end, strokeWidth = 4f, cap = StrokeCap.Round)
-                    }
-                    points.forEach { point ->
-                        drawCircle(lineColor, radius = 4f, center = point)
+                    visibleSeries.forEachIndexed { seriesIndex, chartSeries ->
+                        val byDate = chartSeries.points.associateBy { it.date }
+                        val points = dateLabels.mapIndexedNotNull { index, date ->
+                            val item = byDate[date] ?: return@mapIndexedNotNull null
+                            val x = if (dateLabels.size == 1) {
+                                (left + right) / 2f
+                            } else {
+                                left + (right - left) * index / (dateLabels.size - 1).toFloat()
+                            }
+                            val y = bottom - ((item.totalAmount / maxAmount).toFloat() * (bottom - top))
+                            Offset(x, y)
+                        }
+                        val lineColor = lineColors[seriesIndex % lineColors.size]
+                        points.zipWithNext().forEach { (start, end) ->
+                            drawLine(lineColor, start, end, strokeWidth = 4f, cap = StrokeCap.Round)
+                        }
+                        points.forEach { point ->
+                            drawCircle(lineColor, radius = 4f, center = point)
+                        }
                     }
                 }
             }
             Spacer(Modifier.height(6.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(trend.first().date, style = MaterialTheme.typography.labelSmall)
-                Text(trend.last().date, style = MaterialTheme.typography.labelSmall)
+                Text(dateLabels.first(), style = MaterialTheme.typography.labelSmall)
+                Text(dateLabels.last(), style = MaterialTheme.typography.labelSmall)
             }
         }
     }
