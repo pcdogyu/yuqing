@@ -195,33 +195,52 @@ private fun PortalScreen(
             }
         }
     }
-    fun openAStockBacktestTradingDate(date: String, pick: AStockBacktestTradingDatePick) {
+    fun openAStockBacktestTradingDate(
+        date: String,
+        pick: AStockBacktestTradingDatePick,
+        direction: AStockRecommendationDateSearchDirection,
+    ) {
         backtestNavigationMessage = ""
-        viewModel.loadAStockRecommendationDay(date) { morning, afternoon, evening ->
-            val snapshotDate = morning.strategyDate.ifBlank {
-                afternoon.strategyDate.ifBlank {
-                    evening.strategyDate.ifBlank { date }
+        viewModel.loadNearestNonEmptyAStockRecommendationDay(
+            date = date,
+            direction = direction,
+            onSuccess = { result ->
+                val morning = result.day.morning
+                val afternoon = result.day.afternoon
+                val evening = result.day.evening
+                val snapshotDate = morning.strategyDate.ifBlank {
+                    afternoon.strategyDate.ifBlank {
+                        evening.strategyDate.ifBlank { result.day.date }
+                    }
                 }
-            }
-            val items = buildAStockBacktestNavigationItems(
-                strategyDate = snapshotDate,
-                morningRecommendations = parseAStockRecommendations(morning.recommendationsJson),
-                morningBacktests = parseAStockBacktests(morning.backtestsJson),
-                afternoonRecommendations = parseAStockRecommendations(afternoon.recommendationsJson),
-                afternoonBacktests = parseAStockBacktests(afternoon.backtestsJson),
-                eveningRecommendations = parseAStockRecommendations(evening.recommendationsJson),
-                eveningBacktests = parseAStockBacktests(evening.backtestsJson),
-            )
-            val target = when (pick) {
-                AStockBacktestTradingDatePick.First -> items.firstOrNull()
-                AStockBacktestTradingDatePick.Last -> items.lastOrNull()
-            }
-            if (target == null) {
-                backtestNavigationMessage = "${snapshotDate} 暂无推荐股票"
-            } else {
-                backtestDetail = target.toDetailState(items)
-            }
-        }
+                val items = buildAStockBacktestNavigationItems(
+                    strategyDate = snapshotDate,
+                    morningRecommendations = parseAStockRecommendations(morning.recommendationsJson),
+                    morningBacktests = parseAStockBacktests(morning.backtestsJson),
+                    afternoonRecommendations = parseAStockRecommendations(afternoon.recommendationsJson),
+                    afternoonBacktests = parseAStockBacktests(afternoon.backtestsJson),
+                    eveningRecommendations = parseAStockRecommendations(evening.recommendationsJson),
+                    eveningBacktests = parseAStockBacktests(evening.backtestsJson),
+                )
+                val target = when (pick) {
+                    AStockBacktestTradingDatePick.First -> items.firstOrNull()
+                    AStockBacktestTradingDatePick.Last -> items.lastOrNull()
+                }
+                if (target == null) {
+                    backtestNavigationMessage = "${snapshotDate} 暂无推荐股票"
+                } else {
+                    backtestNavigationMessage = if (result.skippedDates.isEmpty()) {
+                        ""
+                    } else {
+                        "已跳过${result.skippedDates.joinToString("、")}空推荐日"
+                    }
+                    backtestDetail = target.toDetailState(items)
+                }
+            },
+            onFailure = { message ->
+                backtestNavigationMessage = message
+            },
+        )
     }
     fun openAStockBacktestAdjacentTarget(current: AStockBacktestDetailState, target: AStockBacktestAdjacentTarget, offset: Int) {
         backtestNavigationMessage = ""
@@ -232,7 +251,12 @@ private fun PortalScreen(
             AStockBacktestAdjacentTargetKind.TradingDate -> {
                 val targetDate = target.tradingDate ?: return
                 val pick = target.tradingDatePick ?: return
-                openAStockBacktestTradingDate(targetDate, pick)
+                val direction = if (offset < 0) {
+                    AStockRecommendationDateSearchDirection.Previous
+                } else {
+                    AStockRecommendationDateSearchDirection.Next
+                }
+                openAStockBacktestTradingDate(targetDate, pick, direction)
             }
         }
     }

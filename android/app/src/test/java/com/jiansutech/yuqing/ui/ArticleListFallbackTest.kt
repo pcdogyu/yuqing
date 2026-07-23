@@ -9,6 +9,7 @@ import com.jiansutech.yuqing.data.ArticleItem
 import com.jiansutech.yuqing.data.ItemListResult
 import com.jiansutech.yuqing.data.StockResearch
 import androidx.compose.material3.SwipeToDismissBoxValue
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -236,6 +237,54 @@ class ArticleListFallbackTest {
         assertNull(todayLastTargets.next)
         assertEquals("2026-07-10", yesterdayLastTargets.next?.label)
         assertEquals(AStockBacktestTradingDatePick.First, yesterdayLastTargets.next?.tradingDatePick)
+    }
+
+    @Test
+    fun aStockRecommendationDateSearchSkipsEmptyPreviousTradingDay() = runTest {
+        val loadedDates = mutableListOf<String>()
+        val result = findAStockRecommendationDayWithItems(
+            startDate = LocalDate.parse("2026-07-01"),
+            direction = AStockRecommendationDateSearchDirection.Previous,
+            latestTradingDate = LocalDate.parse("2026-07-02"),
+            loadDay = { date ->
+                loadedDates += date
+                when (date) {
+                    "2026-06-30" -> testAStockRecommendationDay(
+                        date = date,
+                        morningRecommendations = listOf(testAStockRecommendation("600111", "北方稀土", 3)),
+                    )
+                    else -> testAStockRecommendationDay(date = date, found = true)
+                }
+            },
+        )
+
+        assertEquals("2026-06-30", result?.day?.date)
+        assertEquals(listOf("2026-07-01"), result?.skippedDates)
+        assertEquals(listOf("2026-07-01", "2026-06-30"), loadedDates)
+    }
+
+    @Test
+    fun aStockRecommendationDayTreatsFoundEmptySnapshotsAsEmpty() {
+        val day = testAStockRecommendationDay(date = "2026-07-01", found = true)
+
+        assertEquals(false, aStockRecommendationDayHasRecommendations(day))
+    }
+
+    @Test
+    fun aStockRecommendationDateSearchNextDoesNotPassLatestTradingDate() = runTest {
+        val loadedDates = mutableListOf<String>()
+        val result = findAStockRecommendationDayWithItems(
+            startDate = LocalDate.parse("2026-07-02"),
+            direction = AStockRecommendationDateSearchDirection.Next,
+            latestTradingDate = LocalDate.parse("2026-07-02"),
+            loadDay = { date ->
+                loadedDates += date
+                testAStockRecommendationDay(date = date, found = true)
+            },
+        )
+
+        assertNull(result)
+        assertEquals(listOf("2026-07-02"), loadedDates)
     }
 
     @Test
@@ -555,4 +604,43 @@ class ArticleListFallbackTest {
 
 private fun testAStockRecommendation(code: String, name: String, rank: Int): AStockRecommendation {
     return AStockRecommendation(rank = rank, code = code, name = name)
+}
+
+private fun testAStockRecommendationDay(
+    date: String,
+    found: Boolean = true,
+    morningRecommendations: List<AStockRecommendation> = emptyList(),
+    afternoonRecommendations: List<AStockRecommendation> = emptyList(),
+    eveningRecommendations: List<AStockRecommendation> = emptyList(),
+): AStockRecommendationDaySnapshots {
+    return AStockRecommendationDaySnapshots(
+        date = date,
+        morning = testAStockRecommendationSnapshot(date, "morning", found, morningRecommendations),
+        afternoon = testAStockRecommendationSnapshot(date, "afternoon", found, afternoonRecommendations),
+        evening = testAStockRecommendationSnapshot(date, "evening", found, eveningRecommendations),
+    )
+}
+
+private fun testAStockRecommendationSnapshot(
+    date: String,
+    period: String,
+    found: Boolean,
+    recommendations: List<AStockRecommendation>,
+): AStockRecommendationSnapshot {
+    return AStockRecommendationSnapshot(
+        found = found,
+        strategyDate = date,
+        period = period,
+        recommendationsJson = testAStockRecommendationsJson(recommendations),
+        backtestsJson = "[]",
+    )
+}
+
+private fun testAStockRecommendationsJson(recommendations: List<AStockRecommendation>): String {
+    if (recommendations.isEmpty()) {
+        return "[]"
+    }
+    return recommendations.joinToString(prefix = "[", postfix = "]") { item ->
+        """{"Rank":${item.rank},"Code":"${item.code}","Name":"${item.name}"}"""
+    }
 }

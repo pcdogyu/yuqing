@@ -67,6 +67,23 @@ data class AStockRecommendationWindow(
     val windowLabel: String,
 )
 
+internal enum class AStockRecommendationDateSearchDirection {
+    Previous,
+    Next,
+}
+
+internal data class AStockRecommendationDaySnapshots(
+    val date: String,
+    val morning: AStockRecommendationSnapshot,
+    val afternoon: AStockRecommendationSnapshot,
+    val evening: AStockRecommendationSnapshot,
+)
+
+internal data class AStockRecommendationDaySearchResult(
+    val day: AStockRecommendationDaySnapshots,
+    val skippedDates: List<String>,
+)
+
 data class StockResearchPdfState(
     val itemId: Long = 0,
     val loading: Boolean = false,
@@ -761,6 +778,48 @@ class YuqingViewModel(
         loadAStockRecommendationDay(today.toString())
     }
 
+    internal fun loadNearestNonEmptyAStockRecommendationDay(
+        date: String,
+        direction: AStockRecommendationDateSearchDirection,
+        onSuccess: (AStockRecommendationDaySearchResult) -> Unit,
+        onFailure: (String) -> Unit = {},
+    ) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(loading = true, error = "", message = "") }
+            val session = sessionStore.state.first()
+            val zone = ZoneId.of("Asia/Shanghai")
+            val latestTradingDay = AStockTradingCalendar.latestSelectableTradingDay(LocalDate.now(zone))
+            val parsedDate = runCatching { LocalDate.parse(date) }.getOrDefault(latestTradingDay)
+            val startDate = AStockTradingCalendar.previousOrSameTradingDay(parsedDate)
+                .let { if (it.isAfter(latestTradingDay)) latestTradingDay else it }
+            runCatching {
+                val api = currentYuqingApi(session)
+                findAStockRecommendationDayWithItems(
+                    startDate = startDate,
+                    direction = direction,
+                    latestTradingDate = latestTradingDay,
+                    loadDay = { requestedDate -> loadAStockRecommendationDaySnapshots(api, requestedDate) },
+                ) ?: error("近${A_STOCK_RECOMMENDATION_EMPTY_DAY_SCAN_LIMIT}个交易日暂无推荐股票")
+            }.onSuccess { result ->
+                applyAStockRecommendationDaySnapshots(
+                    day = result.day,
+                    emptyMessage = "当日推荐暂无股票",
+                    loadedMessage = if (result.skippedDates.isEmpty()) {
+                        "当日推荐股票已加载"
+                    } else {
+                        "已跳过${result.skippedDates.joinToString("、")}空推荐日，加载${result.day.date}推荐股票"
+                    },
+                )
+                onSuccess(result)
+            }.onFailure { throwable ->
+                val message = throwable.message ?: "推荐股票加载失败"
+                _uiState.update { it.copy(error = message) }
+                onFailure(message)
+            }
+            _uiState.update { it.copy(loading = false) }
+        }
+    }
+
     fun loadAStockRecommendationDay(
         date: String = _uiState.value.aStockRecommendationWindow.date,
         onSuccess: ((AStockRecommendationSnapshot, AStockRecommendationSnapshot, AStockRecommendationSnapshot) -> Unit)? = null,
@@ -776,42 +835,66 @@ class YuqingViewModel(
             val requestedDate = requestedTradingDate.toString()
             runCatching {
                 val api = currentYuqingApi(session)
-                val morning = api.aStockRecommendations(date = requestedDate, period = "morning")
-                    .data ?: error("上午推荐股票数据为空")
-                val afternoon = api.aStockRecommendations(date = requestedDate, period = "afternoon")
-                    .data ?: error("下午推荐股票数据为空")
-                val evening = api.aStockRecommendations(date = requestedDate, period = "evening")
-                    .data ?: error("晚间推荐股票数据为空")
-                Triple(morning, afternoon, evening)
-            }.onSuccess { (morning, afternoon, evening) ->
-                val morningItems = parseAStockRecommendations(morning.recommendationsJson)
-                val afternoonItems = parseAStockRecommendations(afternoon.recommendationsJson)
-                val eveningItems = parseAStockRecommendations(evening.recommendationsJson)
-                _uiState.update {
-                    it.copy(
-                        morningAStockRecommendation = morning,
-                        morningAStockRecommendations = morningItems,
-                        afternoonAStockRecommendation = afternoon,
-                        afternoonAStockRecommendations = afternoonItems,
-                        eveningAStockRecommendation = evening,
-                        eveningAStockRecommendations = eveningItems,
-                        aStockRecommendation = evening.takeIf { snapshot -> snapshot.found }
-                            ?: afternoon.takeIf { snapshot -> snapshot.found }
-                            ?: morning.takeIf { snapshot -> snapshot.found },
-                        aStockRecommendations = morningItems + afternoonItems + eveningItems,
-                        aStockRecommendationWindow = aStockRecommendationWindow(requestedDate, currentAStockRecommendationWindow().period),
-                        message = if (morningItems.isEmpty() && afternoonItems.isEmpty() && eveningItems.isEmpty()) {
-                            "当日推荐暂无股票"
-                        } else {
-                            "当日推荐股票已加载"
-                        },
-                    )
-                }
-                onSuccess?.invoke(morning, afternoon, evening)
+                loadAStockRecommendationDaySnapshots(api, requestedDate)
+            }.onSuccess { day ->
+                applyAStockRecommendationDaySnapshots(
+                    day = day,
+                    emptyMessage = "当日推荐暂无股票",
+                    loadedMessage = "当日推荐股票已加载",
+                )
+                onSuccess?.invoke(day.morning, day.afternoon, day.evening)
             }.onFailure { throwable ->
                 _uiState.update { it.copy(error = throwable.message ?: "推荐股票加载失败") }
             }
             _uiState.update { it.copy(loading = false) }
+        }
+    }
+
+    private suspend fun loadAStockRecommendationDaySnapshots(
+        api: YuqingApi,
+        requestedDate: String,
+    ): AStockRecommendationDaySnapshots {
+        val morning = api.aStockRecommendations(date = requestedDate, period = "morning")
+            .data ?: error("上午推荐股票数据为空")
+        val afternoon = api.aStockRecommendations(date = requestedDate, period = "afternoon")
+            .data ?: error("下午推荐股票数据为空")
+        val evening = api.aStockRecommendations(date = requestedDate, period = "evening")
+            .data ?: error("晚间推荐股票数据为空")
+        return AStockRecommendationDaySnapshots(
+            date = requestedDate,
+            morning = morning,
+            afternoon = afternoon,
+            evening = evening,
+        )
+    }
+
+    private fun applyAStockRecommendationDaySnapshots(
+        day: AStockRecommendationDaySnapshots,
+        emptyMessage: String,
+        loadedMessage: String,
+    ) {
+        val morningItems = parseAStockRecommendations(day.morning.recommendationsJson)
+        val afternoonItems = parseAStockRecommendations(day.afternoon.recommendationsJson)
+        val eveningItems = parseAStockRecommendations(day.evening.recommendationsJson)
+        _uiState.update {
+            it.copy(
+                morningAStockRecommendation = day.morning,
+                morningAStockRecommendations = morningItems,
+                afternoonAStockRecommendation = day.afternoon,
+                afternoonAStockRecommendations = afternoonItems,
+                eveningAStockRecommendation = day.evening,
+                eveningAStockRecommendations = eveningItems,
+                aStockRecommendation = day.evening.takeIf { snapshot -> snapshot.found }
+                    ?: day.afternoon.takeIf { snapshot -> snapshot.found }
+                    ?: day.morning.takeIf { snapshot -> snapshot.found },
+                aStockRecommendations = morningItems + afternoonItems + eveningItems,
+                aStockRecommendationWindow = aStockRecommendationWindow(day.date, currentAStockRecommendationWindow().period),
+                message = if (morningItems.isEmpty() && afternoonItems.isEmpty() && eveningItems.isEmpty()) {
+                    emptyMessage
+                } else {
+                    loadedMessage
+                },
+            )
         }
     }
 
@@ -1090,6 +1173,7 @@ internal const val DASHBOARD_VISIBLE_ARTICLE_LIMIT = 5
 internal const val DASHBOARD_ARTICLE_CACHE_LIMIT = 10
 private const val DASHBOARD_REFILL_PAGE_SIZE = 50
 private const val ARTICLE_REFILL_MAX_PAGES = 5
+internal const val A_STOCK_RECOMMENDATION_EMPTY_DAY_SCAN_LIMIT = 30
 
 internal fun normalizeAStockAuctionTrendDays(days: Int): Int {
     return when (days) {
@@ -1157,6 +1241,48 @@ internal fun parseAStockRecommendations(raw: String): List<AStockRecommendation>
     return runCatching {
         ApiFactory.json.decodeFromString<List<AStockRecommendation>>(payload)
     }.getOrDefault(emptyList())
+}
+
+internal fun aStockRecommendationDayHasRecommendations(day: AStockRecommendationDaySnapshots): Boolean {
+    return parseAStockRecommendations(day.morning.recommendationsJson).isNotEmpty() ||
+        parseAStockRecommendations(day.afternoon.recommendationsJson).isNotEmpty() ||
+        parseAStockRecommendations(day.evening.recommendationsJson).isNotEmpty()
+}
+
+internal suspend fun findAStockRecommendationDayWithItems(
+    startDate: LocalDate,
+    direction: AStockRecommendationDateSearchDirection,
+    latestTradingDate: LocalDate,
+    maxScanTradingDays: Int = A_STOCK_RECOMMENDATION_EMPTY_DAY_SCAN_LIMIT,
+    loadDay: suspend (String) -> AStockRecommendationDaySnapshots,
+): AStockRecommendationDaySearchResult? {
+    var cursor: LocalDate? = startDate
+    val skippedDates = mutableListOf<String>()
+    repeat(maxScanTradingDays.coerceAtLeast(0)) {
+        val date = cursor ?: return null
+        if (direction == AStockRecommendationDateSearchDirection.Next && date.isAfter(latestTradingDate)) {
+            return null
+        }
+        val day = loadDay(date.toString())
+        if (aStockRecommendationDayHasRecommendations(day)) {
+            return AStockRecommendationDaySearchResult(day = day, skippedDates = skippedDates.toList())
+        }
+        skippedDates += date.toString()
+        cursor = nextAStockRecommendationSearchDate(date, direction, latestTradingDate)
+    }
+    return null
+}
+
+private fun nextAStockRecommendationSearchDate(
+    date: LocalDate,
+    direction: AStockRecommendationDateSearchDirection,
+    latestTradingDate: LocalDate,
+): LocalDate? {
+    return when (direction) {
+        AStockRecommendationDateSearchDirection.Previous -> AStockTradingCalendar.previousTradingDay(date)
+        AStockRecommendationDateSearchDirection.Next -> AStockTradingCalendar.nextTradingDay(date)
+            .takeIf { !it.isAfter(latestTradingDate) }
+    }
 }
 
 internal fun fallbackArticleList(state: YuqingUiState): ItemListResult? {
