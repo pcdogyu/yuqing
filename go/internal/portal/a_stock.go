@@ -12037,6 +12037,11 @@ func decodeEastmoneyAStockRealtimeQuote(body []byte, expectedCode string) (aStoc
 	open := normalizeEastmoneyRealtimeScaledPrice(rawOpen)
 	rawPct, _ := firstFloat(payload.Data, "f170", "pct", "pct_chg", "change_pct")
 	pct := normalizeEastmoneyRealtimeScaledPct(rawPct)
+	if rawPrevClose, ok := firstFloat(payload.Data, "f60", "prev_close", "pre_close", "yesterday_close"); ok {
+		if prevClose := normalizeEastmoneyRealtimeScaledPrice(rawPrevClose); prevClose > 0 {
+			pct = (price/prevClose - 1) * 100
+		}
+	}
 	return aStockRealtimeQuote{Code: code, Price: price, Open: open, Pct: pct}, true
 }
 

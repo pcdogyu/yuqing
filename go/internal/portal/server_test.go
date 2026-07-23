@@ -12230,6 +12230,19 @@ func TestAStockRealtimeQuoteUpdatesCurrentReturnBeyondT5WithoutChangingBacktestD
 	}
 }
 
+func TestAStockEastmoneyRealtimeQuoteComputesPctFromPrevClose(t *testing.T) {
+	quote, ok := decodeEastmoneyAStockRealtimeQuote([]byte(`{"data":{"f43":5521,"f46":5539,"f57":"600276","f58":"恒瑞医药","f60":5539,"f170":-3200}}`), "600276")
+	if !ok {
+		t.Fatalf("expected quote to decode")
+	}
+	if quote.Price != 55.21 {
+		t.Fatalf("expected price 55.21, got %+v", quote)
+	}
+	if got := formatAStockPct(quote.Pct); got != "-0.32%" {
+		t.Fatalf("expected pct to be computed from price and previous close, got %+v formatted=%s", quote, got)
+	}
+}
+
 func TestAStockRealtimeQuotesPreferTongdaxinAndCacheForOneMinute(t *testing.T) {
 	now := time.Date(2026, 7, 10, 10, 30, 0, 0, aStockLocation())
 	previousNow := aStockNow
