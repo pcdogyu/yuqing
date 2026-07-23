@@ -9934,6 +9934,14 @@ func (s *Server) realtimeAStockMarketBarsForDate(barDate string, codes []string)
 }
 
 func aStockRealtimeQuoteDateForStrategyDate(strategyDate string) string {
+	return aStockRealtimeQuoteDateForStrategyDateWithMaxAge(strategyDate, 10*24*time.Hour)
+}
+
+func aStockRealtimeQuoteDateForBacktestCurrentReturn(strategyDate string) string {
+	return aStockRealtimeQuoteDateForStrategyDateWithMaxAge(strategyDate, 0)
+}
+
+func aStockRealtimeQuoteDateForStrategyDateWithMaxAge(strategyDate string, maxAge time.Duration) string {
 	strategyDate = normalizeAStockStrategyDate(strategyDate)
 	today := aStockTodayDate()
 	if strategyDate == "" || today == "" {
@@ -9947,7 +9955,7 @@ func aStockRealtimeQuoteDateForStrategyDate(strategyDate string) string {
 	if err != nil || todayDay.Before(strategyDay) {
 		return ""
 	}
-	if todayDay.Sub(strategyDay) > 10*24*time.Hour {
+	if maxAge > 0 && todayDay.Sub(strategyDay) > maxAge {
 		return ""
 	}
 	return today
@@ -11217,12 +11225,12 @@ func applyAStockLockedMarketBars(strategyDate string, period string, recommendat
 func (s *Server) enrichAStockBacktestsWithRealtimeQuotes(strategyDate string, period string, rows []aStockBacktestRow) []aStockBacktestRow {
 	strategyDate = normalizeAStockStrategyDate(strategyDate)
 	entryDate := aStockBacktestEntryDate(strategyDate, period)
-	quoteDate := aStockRealtimeQuoteDateForStrategyDate(entryDate)
+	quoteDate := aStockRealtimeQuoteDateForBacktestCurrentReturn(entryDate)
 	if len(rows) == 0 || quoteDate == "" {
 		return rows
 	}
 	realtimeOffset := aStockBacktestRealtimeTradingDayOffset(entryDate, quoteDate)
-	if realtimeOffset < 0 || realtimeOffset > 5 {
+	if realtimeOffset < 0 {
 		return rows
 	}
 	codes := make([]string, 0, len(rows))
@@ -11273,7 +11281,7 @@ func (s *Server) enrichAStockBacktestsWithRealtimeQuotes(strategyDate string, pe
 			enriched[i].T0Close = formatAStockPrice(quote.Price)
 			enriched[i].T0Return = formatAStockPct(currentReturn)
 			enriched[i].T0ReturnClass = aStockPctClass(currentReturn)
-		} else {
+		} else if realtimeOffset <= 5 {
 			enriched[i].Days = ensureAStockBacktestCells(enriched[i].Days, 5)
 			enriched[i].Days[realtimeOffset-1] = aStockBacktestCell{
 				Close:          formatAStockPrice(quote.Price),
@@ -11287,7 +11295,7 @@ func (s *Server) enrichAStockBacktestsWithRealtimeQuotes(strategyDate string, pe
 		if aStockBacktestStatusNeedsRestore(enriched[i].Status) && aStockBacktestRealtimeQuoteHasEntryOpen(normalizedPeriod, enriched[i]) {
 			enriched[i].Status = "等待T+1行情"
 		}
-		if realtimeOffset > 0 {
+		if realtimeOffset > 0 && realtimeOffset <= 5 {
 			enriched[i].Status = formatAStockBacktestStatusFromFilledDays(enriched[i].Days)
 		}
 	}

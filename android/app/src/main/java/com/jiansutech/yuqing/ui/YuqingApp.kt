@@ -129,6 +129,7 @@ import java.io.File
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.ZoneId
+import java.util.Locale
 
 @Composable
 fun YuqingApp(
@@ -1967,8 +1968,8 @@ private fun AStockBacktestDetailScreen(
     onRefreshPrice: () -> Unit,
 ) {
     val row = state.row
-    val currentClosePrice = aStockBacktestDetailCurrentPrice(row, state.recommendation)
-    val currentMarketPct = aStockBacktestDetailCurrentMarketPct(row)
+    val currentClosePrice = aStockBacktestDetailCurrentPrice(row)
+    val recommendedReturn = aStockBacktestDetailRecommendedReturn(row)
     val adjacentTargets = aStockBacktestAdjacentTargets(state)
     val swipeThreshold = with(LocalDensity.current) { 96.dp.toPx() }
     var dragOffset by remember(state.recommendation.code, state.sectionLabel) { mutableStateOf(Offset.Zero) }
@@ -2001,7 +2002,7 @@ private fun AStockBacktestDetailScreen(
                     state.strategyDate,
                     state.sectionLabel,
                     "现价 $currentClosePrice",
-                    "今日 $currentMarketPct",
+                    "推荐价相比 $recommendedReturn",
                 ).joinToString("  "),
             )
         }
@@ -2015,7 +2016,7 @@ private fun AStockBacktestDetailScreen(
                 AStockBacktestEntryRow(
                     row = row,
                     currentPrice = currentClosePrice,
-                    currentMarketPct = currentMarketPct,
+                    recommendedReturn = recommendedReturn,
                     refreshingPrice = refreshingPrice,
                     onRefreshPrice = onRefreshPrice,
                 )
@@ -2061,7 +2062,7 @@ private fun AStockBacktestDetailScreen(
 private fun AStockBacktestEntryRow(
     row: AStockBacktestRow,
     currentPrice: String,
-    currentMarketPct: String,
+    recommendedReturn: String,
     refreshingPrice: Boolean,
     onRefreshPrice: () -> Unit,
 ) {
@@ -2100,7 +2101,7 @@ private fun AStockBacktestEntryRow(
                         )
                         Text(
                             currentPrice,
-                            color = backtestValueColor(currentMarketPct),
+                            color = backtestValueColor(recommendedReturn),
                             fontSize = 16.sp,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
@@ -2122,9 +2123,9 @@ private fun AStockBacktestEntryRow(
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        "今日涨跌 $currentMarketPct",
-                        modifier = Modifier.widthIn(min = 96.dp, max = 128.dp),
-                        color = backtestValueColor(currentMarketPct),
+                        "推荐价相比 $recommendedReturn",
+                        modifier = Modifier.widthIn(min = 112.dp, max = 160.dp),
+                        color = backtestValueColor(recommendedReturn),
                         fontSize = 12.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -2575,28 +2576,25 @@ internal fun AStockBacktestNavigationItem.toDetailState(
     )
 }
 
-internal fun aStockBacktestDetailCurrentPrice(row: AStockBacktestRow?, recommendation: AStockRecommendation): String {
+internal fun aStockBacktestDetailCurrentPrice(row: AStockBacktestRow?): String {
     return aStockUsableDisplayValue(row?.currentPrice)
-        ?: latestAStockBacktestClose(row)
-        ?: aStockUsableDisplayValue(recommendation.currentPrice)
         ?: "--"
 }
 
-internal fun aStockBacktestDetailCurrentMarketPct(row: AStockBacktestRow?): String {
-    return aStockUsableDisplayValue(row?.currentMarketPct)
-        ?: latestAStockBacktestMarketPct(row)
+internal fun aStockBacktestDetailRecommendedReturn(row: AStockBacktestRow?): String {
+    return aStockUsableDisplayValue(row?.currentReturn)
+        ?: calculateAStockBacktestRecommendedReturn(row)
         ?: "--"
 }
 
-private fun latestAStockBacktestClose(row: AStockBacktestRow?): String? {
+private fun calculateAStockBacktestRecommendedReturn(row: AStockBacktestRow?): String? {
     row ?: return null
-    return row.days.asReversed().firstNotNullOfOrNull { aStockUsableDisplayValue(it.close) }
-        ?: aStockUsableDisplayValue(row.t0Close)
-}
-
-private fun latestAStockBacktestMarketPct(row: AStockBacktestRow?): String? {
-    row ?: return null
-    return row.days.asReversed().firstNotNullOfOrNull { aStockUsableDisplayValue(it.marketPct) }
+    val current = parseAStockBacktestDisplayNumber(row.currentPrice) ?: return null
+    val entry = parseAStockBacktestDisplayNumber(row.displayEntryOpen()) ?: return null
+    if (entry <= 0.0) {
+        return null
+    }
+    return formatAStockBacktestSignedPercent((current / entry - 1.0) * 100.0)
 }
 
 private fun aStockUsableDisplayValue(value: String?): String? {
@@ -2605,6 +2603,18 @@ private fun aStockUsableDisplayValue(value: String?): String? {
         return null
     }
     return trimmed
+}
+
+private val AStockBacktestNumberPattern = Regex("""[-+]?\d+(?:\.\d+)?""")
+
+internal fun parseAStockBacktestDisplayNumber(value: String?): Double? {
+    val match = AStockBacktestNumberPattern.find(value?.trim().orEmpty()) ?: return null
+    return match.value.toDoubleOrNull()
+}
+
+internal fun formatAStockBacktestSignedPercent(value: Double): String {
+    val sign = if (value > 0.0) "+" else ""
+    return sign + String.format(Locale.US, "%.2f%%", value)
 }
 
 internal fun adjacentAStockBacktestDetail(state: AStockBacktestDetailState, offset: Int): AStockBacktestDetailState? {

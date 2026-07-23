@@ -281,31 +281,20 @@ class ArticleListFallbackTest {
 
     @Test
     fun aStockBacktestDetailCurrentValuesPreferRefreshedRowFields() {
-        val recommendation = AStockRecommendation(
-            code = "300394",
-            name = "天孚通信",
-            currentPrice = "279.31",
-            todayPct = "+2.88%",
-        )
         val row = AStockBacktestRow(
             stock = "300394 天孚通信",
+            entryOpen = "281.00",
             currentPrice = "284.30",
             currentReturn = "+1.17%",
             currentMarketPct = "+1.17%",
         )
 
-        assertEquals("284.30", aStockBacktestDetailCurrentPrice(row, recommendation))
-        assertEquals("+1.17%", aStockBacktestDetailCurrentMarketPct(row))
+        assertEquals("284.30", aStockBacktestDetailCurrentPrice(row))
+        assertEquals("+1.17%", aStockBacktestDetailRecommendedReturn(row))
     }
 
     @Test
-    fun aStockBacktestDetailCurrentPriceFallsBackToLatestBacktestClose() {
-        val recommendation = AStockRecommendation(
-            code = "300394",
-            name = "天孚通信",
-            currentPrice = "279.31",
-            todayPct = "+2.88%",
-        )
+    fun aStockBacktestDetailCurrentPriceDoesNotFallbackToLatestBacktestClose() {
         val row = AStockBacktestRow(
             stock = "300394 天孚通信",
             currentPrice = "--",
@@ -313,26 +302,21 @@ class ArticleListFallbackTest {
             days = listOf(AStockBacktestCell(close = "283.82", marketPct = "+1.00%")),
         )
 
-        assertEquals("283.82", aStockBacktestDetailCurrentPrice(row, recommendation))
-        assertEquals("+1.00%", aStockBacktestDetailCurrentMarketPct(row))
+        assertEquals("--", aStockBacktestDetailCurrentPrice(row))
+        assertEquals("--", aStockBacktestDetailRecommendedReturn(row))
     }
 
     @Test
-    fun aStockBacktestDetailCurrentMarketPctDoesNotFallbackToRecommendationTodayPct() {
-        val recommendation = AStockRecommendation(
-            code = "300394",
-            name = "天孚通信",
-            currentPrice = "279.31",
-            todayPct = "+2.88%",
-        )
+    fun aStockBacktestDetailRecommendedReturnCalculatesFromCurrentAndEntryPrice() {
         val row = AStockBacktestRow(
-            stock = "300394 天孚通信",
-            currentPrice = "--",
-            currentReturn = "+1.17%",
+            stock = "301017 漱玉平民",
+            afternoonOpen = "13.70",
+            currentPrice = "12.47",
+            currentReturn = "",
         )
 
-        assertEquals("279.31", aStockBacktestDetailCurrentPrice(row, recommendation))
-        assertEquals("--", aStockBacktestDetailCurrentMarketPct(row))
+        assertEquals("12.47", aStockBacktestDetailCurrentPrice(row))
+        assertEquals("-8.98%", aStockBacktestDetailRecommendedReturn(row))
     }
 
     @Test

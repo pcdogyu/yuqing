@@ -12188,6 +12188,48 @@ func TestAStockRealtimeQuoteFillsMissingMorningOpenAndT0Return(t *testing.T) {
 	}
 }
 
+func TestAStockRealtimeQuoteUpdatesCurrentReturnBeyondT5WithoutChangingBacktestDays(t *testing.T) {
+	setAStockNowForTest(t, time.Date(2026, 7, 23, 11, 30, 0, 0, aStockLocation()))
+	quote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("secid") != "0.301017" {
+			t.Fatalf("unexpected quote request: %s", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"f43":1247,"f46":1260,"f57":"301017","f58":"漱玉平民","f170":-197}}`))
+	}))
+	defer quote.Close()
+	setAStockEastmoneyQuoteURLForTest(t, quote.URL)
+
+	srv := NewServer(config.Config{})
+	rows := srv.enrichAStockBacktestsWithRealtimeQuotes("2026-07-01", "afternoon", []aStockBacktestRow{{
+		Stock:            "301017 漱玉平民",
+		EntryOpen:        "13.04",
+		AfternoonOpen:    "13.70",
+		CurrentPrice:     "--",
+		CurrentReturn:    "--",
+		CurrentMarketPct: "--",
+		Days: []aStockBacktestCell{
+			{Close: "13.48", Return: "-1.61%"},
+			{Close: "13.49", Return: "-1.53%"},
+			{Close: "12.25", Return: "-10.58%"},
+			{Close: "12.80", Return: "-6.57%"},
+			{Close: "12.72", Return: "-7.15%"},
+		},
+		Status: "已回测T+5",
+	}})
+
+	if len(rows) != 1 {
+		t.Fatalf("expected one row, got %+v", rows)
+	}
+	row := rows[0]
+	if row.CurrentPrice != "12.47" || row.CurrentReturn != "-8.98%" || row.CurrentReturnClass != "astock-down" || row.CurrentMarketPct != "-1.97%" {
+		t.Fatalf("expected realtime current price and entry return beyond T+5, got %+v", row)
+	}
+	if len(row.Days) != 5 || row.Days[4].Close != "12.72" || row.Days[4].Return != "-7.15%" || row.Status != "已回测T+5" {
+		t.Fatalf("expected historical T+5 backtest cells unchanged, got %+v", row)
+	}
+}
+
 func TestAStockRealtimeQuotesPreferTongdaxinAndCacheForOneMinute(t *testing.T) {
 	now := time.Date(2026, 7, 10, 10, 30, 0, 0, aStockLocation())
 	previousNow := aStockNow
