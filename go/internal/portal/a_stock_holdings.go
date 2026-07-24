@@ -32,7 +32,7 @@ func (s *Server) handleAStockHoldingsPage(w http.ResponseWriter, r *http.Request
 	ctx, err := s.loadAStockHoldingsContext(filter)
 	var b strings.Builder
 	b.WriteString(`<style>
-body[data-page='a-stock-holdings'] header,body[data-page='a-stock-holdings'] main,body[data-page='a-stock-holdings'] .site-footer{max-width:none;width:98%;box-sizing:border-box}
+body[data-page='a-stock-holdings'] main,body[data-page='a-stock-holdings'] .site-footer{max-width:none;width:98%;box-sizing:border-box}
 .holding-muted{color:#6a6257}.holding-message{padding:12px;border-radius:10px;background:#e7f4ea;color:#214e34;margin:12px 0}
 .holding-toolbar{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;align-items:end}
 .holding-toolbar button{margin:0}.holding-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:end}.holding-actions form{margin:0}.holding-actions button{margin:0}
