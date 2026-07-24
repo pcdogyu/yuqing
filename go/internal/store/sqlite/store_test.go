@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,82 @@ import (
 	"github.com/pcdogyu/yuqing/go/internal/model"
 	"github.com/pcdogyu/yuqing/go/internal/provider"
 )
+
+func TestMigrateLegacyStockInstitutionHoldingsAddsFundColumnsBeforeIndexes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy-holdings.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open legacy sqlite: %v", err)
+	}
+	_, err = db.Exec(`
+CREATE TABLE stock_institution_holdings (
+	id INTEGER PRIMARY KEY,
+	stock_code TEXT NOT NULL DEFAULT '',
+	stock_name TEXT NOT NULL DEFAULT '',
+	report_period TEXT NOT NULL DEFAULT '',
+	announce_date TEXT NOT NULL DEFAULT '',
+	holder_name TEXT NOT NULL DEFAULT '',
+	holder_type TEXT NOT NULL DEFAULT '',
+	holder_code TEXT NOT NULL DEFAULT '',
+	holder_rank TEXT NOT NULL DEFAULT '',
+	shares REAL NOT NULL DEFAULT 0,
+	shares_change REAL NOT NULL DEFAULT 0,
+	change_ratio REAL NOT NULL DEFAULT 0,
+	float_ratio REAL NOT NULL DEFAULT 0,
+	market_value REAL NOT NULL DEFAULT 0,
+	source_type TEXT NOT NULL DEFAULT '',
+	source_url TEXT NOT NULL DEFAULT '',
+	raw_payload TEXT NOT NULL DEFAULT '{}',
+	fetched_at TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	UNIQUE (source_type, report_period, stock_code, holder_name, holder_type, holder_code)
+);
+`)
+	if closeErr := db.Close(); closeErr != nil {
+		t.Fatalf("close legacy sqlite: %v", closeErr)
+	}
+	if err != nil {
+		t.Fatalf("create legacy holdings table: %v", err)
+	}
+
+	store, err := New(path)
+	if err != nil {
+		t.Fatalf("migrate legacy holdings store: %v", err)
+	}
+	defer store.Close()
+
+	columns := map[string]bool{}
+	rows, err := store.db.QueryContext(context.Background(), `PRAGMA table_info(stock_institution_holdings)`)
+	if err != nil {
+		t.Fatalf("read migrated columns: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull int
+		var defaultValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			t.Fatalf("scan migrated column: %v", err)
+		}
+		columns[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate migrated columns: %v", err)
+	}
+	for _, column := range []string{"fund_company", "fund_code", "report_doc_id", "disclosure_scope"} {
+		if !columns[column] {
+			t.Fatalf("expected migrated column %q, got %#v", column, columns)
+		}
+	}
+
+	var indexName string
+	if err := store.db.QueryRowContext(context.Background(), `SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_stock_holdings_fund_company_period'`).Scan(&indexName); err != nil {
+		t.Fatalf("expected fund company index after migration: %v", err)
+	}
+}
 
 func TestUpsertAndListItems(t *testing.T) {
 	store := newTestStore(t)

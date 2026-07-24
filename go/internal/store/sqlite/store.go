@@ -912,7 +912,6 @@ CREATE INDEX IF NOT EXISTS idx_stock_research_source_date ON stock_research_surv
 CREATE INDEX IF NOT EXISTS idx_stock_holdings_code_period ON stock_institution_holdings(stock_code, report_period DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_stock_holdings_holder_period ON stock_institution_holdings(holder_name, report_period DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_stock_holdings_type_period ON stock_institution_holdings(holder_type, report_period DESC, id DESC);
-CREATE INDEX IF NOT EXISTS idx_stock_holdings_fund_company_period ON stock_institution_holdings(fund_company, report_period DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_stock_holding_reports_period ON stock_holding_report_documents(report_period DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_stock_holding_reports_fund_company ON stock_holding_report_documents(fund_company, report_period DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_crawl_templates_enabled_updated ON crawl_templates(enabled, updated_at DESC, id DESC);
