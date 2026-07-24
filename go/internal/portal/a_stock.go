@@ -3771,14 +3771,15 @@ func (s *Server) loadAStockContextWithCache(strategyDate string, periodKey strin
 }
 
 func (s *Server) loadAStockFastReadOnlyContextWithCache(strategyDate string, periodKey string, newsPage int, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, filterTodayMarket bool, includeHotspotTopStocks bool, cache *aStockRequestCache) (aStockContext, bool) {
-	ctx := newAStockBaseContext(strategyDate, periodKey, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, aStockRecommendationPhaseFinal)
+	period := normalizeAStockPeriod(periodKey)
+	ctx := newAStockBaseContext(strategyDate, period.Key, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, aStockRecommendationPhaseFinal)
 	ctx.FastReadOnly = true
 	ctx.SourceRuns = s.loadAStockSourceRunsWithCache(cache)
 	if err := s.populateAStockContextArticleStatsWithCache(&ctx, newsPage, cache); err != nil {
 		ctx.LoadMessage = err.Error()
 		return ctx, false
 	}
-	settings := s.loadAStockAlgorithmSettingsWithCache(cache)
+	settings := aStockAlgorithmSettingsForRecommendationPeriod(period.Key, s.loadAStockAlgorithmSettingsWithCache(cache))
 	ctx.AuctionAmountLabel = s.loadAStockAuctionAmountLabelWithCache(ctx.Date, cache)
 	if blocked, message, reason := s.aStockRecommendationBlockedStatusWithCache(ctx.Date, cache); blocked {
 		ctx.TradingDayBlocked = true
@@ -3803,7 +3804,7 @@ func (s *Server) loadAStockFastReadOnlyContextWithCache(strategyDate string, per
 		ctx.Hotspots = s.applyAStockHotspotRecommendationDatesWithCache(ctx.Hotspots, ctx.Date, ctx.Period, cache)
 	}
 	sectorGate := s.loadAStockHotspotSectorGateWithCache(ctx.Hotspots, cache)
-	recommendationCandidates := s.buildAStockPriorityCandidatePoolWithCache(ctx.Date, ctx.Hotspots, candidates, sectorGate, cache)
+	recommendationCandidates := s.buildAStockPriorityCandidatePoolWithSettings(ctx.Date, ctx.Hotspots, candidates, sectorGate, cache, settings)
 	ctx.MarketCandidateCount = len(recommendationCandidates)
 	recommendationTarget := 0
 	var recentCodes map[string]struct{}
@@ -4308,7 +4309,7 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 	phase := normalizeAStockRecommendationPhase(recommendationPhase)
 	strategyDate = normalizeAStockStrategyDate(strategyDate)
 	ctx := newAStockBaseContext(strategyDate, period.Key, newsPage, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, phase)
-	settings := s.loadAStockAlgorithmSettingsWithCache(cache)
+	settings := aStockAlgorithmSettingsForRecommendationPeriod(period.Key, s.loadAStockAlgorithmSettingsWithCache(cache))
 	ctx.SourceRuns = s.loadAStockSourceRunsWithCache(cache)
 	if period.Key != "evening" {
 		if err := s.populateAStockContextArticleStatsWithCache(&ctx, newsPage, cache); err != nil {
@@ -4364,10 +4365,10 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 		if ctx.Period == "afternoon" && len(ctx.Recommendations) > 0 {
 			s.applyAStockAfternoonDailyLimitOnlyWithCache(&ctx, cache)
 		}
-		ctx.Recommendations = s.applyAStockHoldingSummariesWithCache(ctx.Recommendations, cache)
+		ctx.Recommendations = s.applyAStockHoldingSummariesWithSettings(ctx.Recommendations, cache, settings)
 		fundFlowStatus := ""
 		if ctx.FundFlowFilterEnabled && len(ctx.Recommendations) > 0 {
-			result := s.applyAStockRecommendationFundFlowFilterWithCache(strategyDate, ctx.Recommendations, nil, nil, len(ctx.Recommendations), cache, false)
+			result := s.applyAStockRecommendationFundFlowFilterWithSettings(strategyDate, ctx.Recommendations, nil, nil, len(ctx.Recommendations), cache, false, settings)
 			ctx.Recommendations = result.Recommendations
 			ctx.FundFlowFiltered = result.Filtered
 			ctx.FundFlowMissingCount = result.Missing
@@ -4404,7 +4405,7 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 				return ctx
 			}
 		}
-		ctx.Recommendations = s.applyAStockHoldingSummariesWithCache(ctx.Recommendations, cache)
+		ctx.Recommendations = s.applyAStockHoldingSummariesWithSettings(ctx.Recommendations, cache, settings)
 		recoveryStatus := s.recoverAStockFilteredRecommendationsAfterClose(&ctx, cache)
 		ctx.Recommendations, ctx.Backtests, ctx.BacktestStatus, ctx.LimitUpFiltered = s.loadAStockLockedMarketView(strategyDate, ctx.Period, ctx.Recommendations)
 		if forceRecommendationRefresh {
@@ -4445,7 +4446,7 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 			}
 		}
 		sectorGate := s.loadAStockHotspotSectorGateWithCache(ctx.Hotspots, cache)
-		candidates := s.buildAStockPriorityCandidatePoolWithCache(strategyDate, ctx.Hotspots, marketCandidates, sectorGate, cache)
+		candidates := s.buildAStockPriorityCandidatePoolWithSettings(strategyDate, ctx.Hotspots, marketCandidates, sectorGate, cache, settings)
 		ctx.MarketCandidateCount = len(candidates)
 		baseRecommendations := buildAStockSnapshotRecommendationsWithPhaseAndLimitAndSectorGateWithSettings(strategyDate, period.Key, phase, ctx.Articles, candidates, settings.Auction.ReplacementPoolLimit, settings.Auction.ReplacementPerHotspot, sectorGate, settings)
 		if filtered, skipped := filterAStockNegativeNoEvidenceRecommendations(baseRecommendations, negativeFilteredCodes); skipped > 0 {
@@ -4494,13 +4495,13 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 		recentReplacementStatus = formatAStockRecentReplenishmentStatusWithStocks(ctx.RecentFiltered, recentResult.FilteredStocks, 0, false)
 	}
 	ctx.Recommendations = withAStockRecommendationEntryTimes(ctx.Recommendations, period.Key, entryTimeOverride)
-	ctx.Recommendations = s.applyAStockHoldingSummariesWithCache(ctx.Recommendations, cache)
+	ctx.Recommendations = s.applyAStockHoldingSummariesWithSettings(ctx.Recommendations, cache, settings)
 	if ctx.FundFlowFilterEnabled && len(ctx.Recommendations) > 0 {
 		if len(fundFlowReplacementPool) > 0 {
 			fundFlowReplacementPool = withAStockRecommendationEntryTimes(fundFlowReplacementPool, period.Key, entryTimeOverride)
-			fundFlowReplacementPool = s.applyAStockHoldingSummariesWithCache(fundFlowReplacementPool, cache)
+			fundFlowReplacementPool = s.applyAStockHoldingSummariesWithSettings(fundFlowReplacementPool, cache, settings)
 		}
-		result := s.applyAStockRecommendationFundFlowFilterWithCache(strategyDate, ctx.Recommendations, fundFlowReplacementPool, recentCodes, len(ctx.Recommendations), cache, false)
+		result := s.applyAStockRecommendationFundFlowFilterWithSettings(strategyDate, ctx.Recommendations, fundFlowReplacementPool, recentCodes, len(ctx.Recommendations), cache, false, settings)
 		ctx.Recommendations = result.Recommendations
 		ctx.FundFlowFiltered = result.Filtered
 		ctx.FundFlowMissingCount = result.Missing
@@ -6596,10 +6597,15 @@ func (s *Server) applyAStockHoldingSummaries(recommendations []aStockRecommendat
 }
 
 func (s *Server) applyAStockHoldingSummariesWithCache(recommendations []aStockRecommendation, cache *aStockRequestCache) []aStockRecommendation {
+	settings := s.loadAStockAlgorithmSettingsWithCache(cache)
+	return s.applyAStockHoldingSummariesWithSettings(recommendations, cache, settings)
+}
+
+func (s *Server) applyAStockHoldingSummariesWithSettings(recommendations []aStockRecommendation, cache *aStockRequestCache, settings model.AStockRecommendationAlgorithmSettings) []aStockRecommendation {
 	if len(recommendations) == 0 {
 		return recommendations
 	}
-	settings := s.loadAStockAlgorithmSettingsWithCache(cache)
+	settings = model.NormalizeAStockRecommendationAlgorithmSettings(settings)
 	for i := range recommendations {
 		recommendations[i].HoldingSummary = "--"
 		recommendations[i].HoldingRatio = "--"
@@ -6660,21 +6666,28 @@ func (s *Server) applyAStockRecommendationFundFlow5DToContext(ctx *aStockContext
 	if ctx == nil || len(ctx.Recommendations) == 0 {
 		return
 	}
-	ctx.Recommendations = s.applyAStockRecommendationFundFlow5DWithCache(ctx.Date, ctx.Recommendations, cache)
+	settings := aStockAlgorithmSettingsForRecommendationPeriod(ctx.Period, s.loadAStockAlgorithmSettingsWithCache(cache))
+	ctx.Recommendations = s.applyAStockRecommendationFundFlow5DWithSettings(ctx.Date, ctx.Recommendations, cache, settings)
 }
 
 func (s *Server) applyAStockRecommendationFundFlow5DWithCache(strategyDate string, recommendations []aStockRecommendation, cache *aStockRequestCache) []aStockRecommendation {
+	settings := s.loadAStockAlgorithmSettingsWithCache(cache)
+	return s.applyAStockRecommendationFundFlow5DWithSettings(strategyDate, recommendations, cache, settings)
+}
+
+func (s *Server) applyAStockRecommendationFundFlow5DWithSettings(strategyDate string, recommendations []aStockRecommendation, cache *aStockRequestCache, settings model.AStockRecommendationAlgorithmSettings) []aStockRecommendation {
 	if len(recommendations) == 0 {
 		return recommendations
 	}
+	settings = model.NormalizeAStockRecommendationAlgorithmSettings(settings)
 	for i := range recommendations {
 		code := normalizeAStockCode(recommendations[i].Code)
 		if code == "" {
-			recommendations[i] = applyAStockFundFlow5DAssessmentToRecommendation(recommendations[i], aStockFundFlow5DAssessment{Missing: true}, false)
+			recommendations[i] = applyAStockFundFlow5DAssessmentToRecommendationWithSettings(recommendations[i], aStockFundFlow5DAssessment{Missing: true}, false, settings)
 			continue
 		}
-		assessment := s.assessAStockRecommendationFundFlow5DWithCache(strategyDate, code, cache)
-		recommendations[i] = applyAStockFundFlow5DAssessmentToRecommendation(recommendations[i], assessment, false)
+		assessment := s.assessAStockRecommendationFundFlow5DWithSettings(strategyDate, code, cache, settings)
+		recommendations[i] = applyAStockFundFlow5DAssessmentToRecommendationWithSettings(recommendations[i], assessment, false, settings)
 	}
 	return recommendations
 }
@@ -6744,6 +6757,12 @@ type aStockFundFlowRecommendationFilterResult struct {
 }
 
 func (s *Server) assessAStockRecommendationFundFlow5DWithCache(strategyDate string, code string, cache *aStockRequestCache) aStockFundFlow5DAssessment {
+	settings := s.loadAStockAlgorithmSettingsWithCache(cache)
+	return s.assessAStockRecommendationFundFlow5DWithSettings(strategyDate, code, cache, settings)
+}
+
+func (s *Server) assessAStockRecommendationFundFlow5DWithSettings(strategyDate string, code string, cache *aStockRequestCache, settings model.AStockRecommendationAlgorithmSettings) aStockFundFlow5DAssessment {
+	settings = model.NormalizeAStockRecommendationAlgorithmSettings(settings)
 	code = normalizeAStockCode(code)
 	if code == "" {
 		return aStockFundFlow5DAssessment{Missing: true}
@@ -6756,7 +6775,6 @@ func (s *Server) assessAStockRecommendationFundFlow5DWithCache(strategyDate stri
 	sort.SliceStable(items, func(i, j int) bool {
 		return normalizeAStockStrategyDate(items[i].TradeDate) > normalizeAStockStrategyDate(items[j].TradeDate)
 	})
-	settings := s.loadAStockAlgorithmSettingsWithCache(cache)
 	assessment := aStockFundFlow5DAssessment{}
 	limit10 := min(len(items), 10)
 	limit5 := min(len(items), 5)
@@ -6785,10 +6803,15 @@ func (s *Server) assessAStockRecommendationFundFlow5DWithCache(strategyDate stri
 }
 
 func (s *Server) applyAStockRecommendationFundFlowFilterWithCache(strategyDate string, base []aStockRecommendation, replacementPool []aStockRecommendation, recentCodes map[string]struct{}, target int, cache *aStockRequestCache, allowHardFilteredFallback bool) aStockFundFlowRecommendationFilterResult {
+	settings := s.loadAStockAlgorithmSettingsWithCache(cache)
+	return s.applyAStockRecommendationFundFlowFilterWithSettings(strategyDate, base, replacementPool, recentCodes, target, cache, allowHardFilteredFallback, settings)
+}
+
+func (s *Server) applyAStockRecommendationFundFlowFilterWithSettings(strategyDate string, base []aStockRecommendation, replacementPool []aStockRecommendation, recentCodes map[string]struct{}, target int, cache *aStockRequestCache, allowHardFilteredFallback bool, settings model.AStockRecommendationAlgorithmSettings) aStockFundFlowRecommendationFilterResult {
 	if target <= 0 {
 		target = len(base)
 	}
-	settings := s.loadAStockAlgorithmSettingsWithCache(cache)
+	settings = model.NormalizeAStockRecommendationAlgorithmSettings(settings)
 	result := aStockFundFlowRecommendationFilterResult{}
 	if len(base) == 0 || target <= 0 {
 		result.Recommendations = rerankAStockRecommendations(base)
@@ -6796,7 +6819,7 @@ func (s *Server) applyAStockRecommendationFundFlowFilterWithCache(strategyDate s
 	}
 	resonancePool := append([]aStockRecommendation(nil), base...)
 	resonancePool = append(resonancePool, replacementPool...)
-	sectorTopStockResonance := s.loadAStockSectorTopStockResonanceWithCache(strategyDate, resonancePool, cache)
+	sectorTopStockResonance := s.loadAStockSectorTopStockResonanceWithSettings(strategyDate, resonancePool, cache, settings)
 	seen := make(map[string]struct{}, len(base))
 	assessments := make(map[string]aStockFundFlow5DAssessment)
 	baseHotspotCounts := make(map[string]int)
@@ -6831,9 +6854,9 @@ func (s *Server) applyAStockRecommendationFundFlowFilterWithCache(strategyDate s
 		if isBlockedAStockRecommendationStock(rec.Code, rec.Name) || isRecent(code) {
 			return false
 		}
-		assessment := s.assessAStockRecommendationFundFlow5DWithCache(strategyDate, code, cache)
+		assessment := s.assessAStockRecommendationFundFlow5DWithSettings(strategyDate, code, cache, settings)
 		if !assessment.Missing && assessment.ScoreDelta > 0 {
-			assessment = s.applyAStockHotspotSectorFundFlowCap(strategyDate, rec.Hotspot, assessment, cache)
+			assessment = s.applyAStockHotspotSectorFundFlowCapWithSettings(strategyDate, rec.Hotspot, assessment, cache, settings)
 		}
 		if !assessment.Missing {
 			assessments[code] = assessment
@@ -6851,7 +6874,7 @@ func (s *Server) applyAStockRecommendationFundFlowFilterWithCache(strategyDate s
 			return false
 		}
 		rec = applyAStockFundFlow5DAssessmentToRecommendationWithSettings(rec, assessment, true, settings)
-		rec = s.applyAStockSectorFundFlowTrendScoreWithCache(strategyDate, rec, cache)
+		rec = s.applyAStockSectorFundFlowTrendScoreWithSettings(strategyDate, rec, cache, settings)
 		rec = applyAStockSectorTopStockResonanceToRecommendationWithSettings(rec, sectorTopStockResonance[code], settings)
 		seen[code] = struct{}{}
 		kept = append(kept, rec)
@@ -7274,16 +7297,22 @@ func (s *Server) loadAStockStockFundFlowListWithCache(strategyDate string, indic
 }
 
 func (s *Server) applyAStockHotspotSectorFundFlowCap(strategyDate string, hotspot string, assessment aStockFundFlow5DAssessment, cache *aStockRequestCache) aStockFundFlow5DAssessment {
+	settings := s.loadAStockAlgorithmSettingsWithCache(cache)
+	return s.applyAStockHotspotSectorFundFlowCapWithSettings(strategyDate, hotspot, assessment, cache, settings)
+}
+
+func (s *Server) applyAStockHotspotSectorFundFlowCapWithSettings(strategyDate string, hotspot string, assessment aStockFundFlow5DAssessment, cache *aStockRequestCache, settings model.AStockRecommendationAlgorithmSettings) aStockFundFlow5DAssessment {
 	if assessment.Missing || strings.TrimSpace(hotspot) == "" {
 		return assessment
 	}
+	settings = model.NormalizeAStockRecommendationAlgorithmSettings(settings)
 	status := s.assessAStockHotspotSectorFundFlowWithCache(strategyDate, hotspot, cache)
 	if !status.found {
 		return assessment
 	}
 	assessment.SectorWeak = status.weak
 	assessment.SectorNetOutflow = status.netOutflow
-	return scoreAStockFundFlowAssessmentWithSettings(assessment, s.loadAStockAlgorithmSettingsWithCache(cache))
+	return scoreAStockFundFlowAssessmentWithSettings(assessment, settings)
 }
 
 type aStockHotspotSectorFundFlowStatus struct {
@@ -7355,26 +7384,37 @@ func (s *Server) loadAStockSectorFundFlowsWithCache(strategyDate string, alias a
 }
 
 func (s *Server) applyAStockSectorFundFlowTrendScoreWithCache(strategyDate string, rec aStockRecommendation, cache *aStockRequestCache) aStockRecommendation {
+	settings := s.loadAStockAlgorithmSettingsWithCache(cache)
+	return s.applyAStockSectorFundFlowTrendScoreWithSettings(strategyDate, rec, cache, settings)
+}
+
+func (s *Server) applyAStockSectorFundFlowTrendScoreWithSettings(strategyDate string, rec aStockRecommendation, cache *aStockRequestCache, settings model.AStockRecommendationAlgorithmSettings) aStockRecommendation {
 	if strings.TrimSpace(rec.Hotspot) == "" || aStockRecommendationHasScoreLabel(rec, "板块资金趋势") {
 		return rec
 	}
-	settings := s.loadAStockAlgorithmSettingsWithCache(cache)
-	assessment := s.assessAStockRecommendationSectorFundFlowTrendWithCache(strategyDate, rec.Hotspot, cache)
+	settings = model.NormalizeAStockRecommendationAlgorithmSettings(settings)
+	assessment := s.assessAStockRecommendationSectorFundFlowTrendWithSettings(strategyDate, rec.Hotspot, cache, settings)
 	return applyAStockSectorFundFlowTrendAssessmentToRecommendationWithSettings(rec, assessment, settings)
 }
 
 func (s *Server) assessAStockRecommendationSectorFundFlowTrendWithCache(strategyDate string, hotspot string, cache *aStockRequestCache) aStockSectorFundFlowTrendAssessment {
+	settings := s.loadAStockAlgorithmSettingsWithCache(cache)
+	return s.assessAStockRecommendationSectorFundFlowTrendWithSettings(strategyDate, hotspot, cache, settings)
+}
+
+func (s *Server) assessAStockRecommendationSectorFundFlowTrendWithSettings(strategyDate string, hotspot string, cache *aStockRequestCache, settings model.AStockRecommendationAlgorithmSettings) aStockSectorFundFlowTrendAssessment {
 	aliases := aStockHotspotSectorAliases(hotspot)
 	if len(aliases) == 0 || strings.TrimSpace(s.cfg.ContentURL) == "" {
 		return aStockSectorFundFlowTrendAssessment{Missing: true}
 	}
+	settings = model.NormalizeAStockRecommendationAlgorithmSettings(settings)
 	best := aStockSectorFundFlowTrendAssessment{Missing: true}
 	for _, alias := range aliases {
 		result, err := s.loadAStockSectorFundFlowTrendWithCache(strategyDate, alias, 10, cache)
 		if err != nil || len(result.Items) == 0 {
 			continue
 		}
-		assessment := scoreAStockSectorFundFlowTrendAssessmentWithSettings(alias, result.Items, s.loadAStockAlgorithmSettingsWithCache(cache))
+		assessment := scoreAStockSectorFundFlowTrendAssessmentWithSettings(alias, result.Items, settings)
 		if betterAStockSectorFundFlowTrendAssessment(assessment, best) {
 			best = assessment
 		}
@@ -7650,9 +7690,15 @@ func (s *Server) loadAStockSectorFundFlowListWithCache(strategyDate string, sect
 }
 
 func (s *Server) loadAStockSectorTopStockResonanceWithCache(strategyDate string, recommendations []aStockRecommendation, cache *aStockRequestCache) map[string]aStockSectorTopStockResonance {
+	settings := s.loadAStockAlgorithmSettingsWithCache(cache)
+	return s.loadAStockSectorTopStockResonanceWithSettings(strategyDate, recommendations, cache, settings)
+}
+
+func (s *Server) loadAStockSectorTopStockResonanceWithSettings(strategyDate string, recommendations []aStockRecommendation, cache *aStockRequestCache, settings model.AStockRecommendationAlgorithmSettings) map[string]aStockSectorTopStockResonance {
 	if normalizeAStockStrategyDate(strategyDate) < aStockSectorTopStockResonanceEffectiveDate {
 		return nil
 	}
+	settings = model.NormalizeAStockRecommendationAlgorithmSettings(settings)
 	resolver := newAStockSectorTopStockCodeResolver(recommendations)
 	if resolver.empty() || strings.TrimSpace(s.cfg.ContentURL) == "" {
 		return nil
@@ -7665,7 +7711,7 @@ func (s *Server) loadAStockSectorTopStockResonanceWithCache(strategyDate string,
 		}
 		flows = append(flows, result.Items...)
 	}
-	return buildAStockSectorTopStockResonanceMapWithSettings(flows, resolver, s.loadAStockAlgorithmSettingsWithCache(cache))
+	return buildAStockSectorTopStockResonanceMapWithSettings(flows, resolver, settings)
 }
 
 func newAStockSectorTopStockCodeResolver(recommendations []aStockRecommendation) aStockSectorTopStockCodeResolver {
@@ -9697,7 +9743,8 @@ func (s *Server) loadAStockMarketViewDetailed(strategyDate string, period string
 		s.enrichAStockMiddaySessionPrices(strategyDate, codes, bars)
 	}
 	s.enrichAStockRecommendationEntryPrices(strategyDate, period, recommendations, bars)
-	return applyAStockMarketBarsDetailedWithSettings(strategyDate, period, recommendations, bars, filterLimitUp, filterTodayMarket, maxRecommendations, s.loadAStockAlgorithmSettings())
+	settings := aStockAlgorithmSettingsForRecommendationPeriod(period, s.loadAStockAlgorithmSettings())
+	return applyAStockMarketBarsDetailedWithSettings(strategyDate, period, recommendations, bars, filterLimitUp, filterTodayMarket, maxRecommendations, settings)
 }
 
 func (s *Server) recoverAStockFilteredRecommendationsAfterClose(ctx *aStockContext, cache *aStockRequestCache) string {
@@ -13187,13 +13234,6 @@ func mergeAStockStringSet(left []string, right []string) []string {
 
 func (s *Server) buildAStockPriorityCandidatePoolWithCache(strategyDate string, hotspots []aStockHotspot, marketCandidates []aStockMarketCandidate, sectorGate *aStockHotspotSectorGate, cache *aStockRequestCache) []aStockMarketCandidate {
 	settings := s.loadAStockAlgorithmSettingsWithCache(cache)
-	hotspots = aStockRecommendationHotspotSliceWithSettings(hotspots, settings)
-	if !s.aStockPriorityExternalSignalsEnabled() {
-		return aStockRecommendationCandidatesForLimitWithSettings(hotspots, marketCandidates, settings.Auction.RecommendationLimit, settings.Auction.StocksPerHotspot, settings)
-	}
-	if sectorGate == nil {
-		sectorGate = s.loadAStockHotspotSectorGateWithCache(hotspots, cache)
-	}
 	return s.buildAStockPriorityCandidatePoolWithSettings(strategyDate, hotspots, marketCandidates, sectorGate, cache, settings)
 }
 
@@ -13202,6 +13242,14 @@ func (s *Server) aStockPriorityExternalSignalsEnabled() bool {
 }
 
 func (s *Server) buildAStockPriorityCandidatePoolWithSettings(strategyDate string, hotspots []aStockHotspot, marketCandidates []aStockMarketCandidate, sectorGate *aStockHotspotSectorGate, cache *aStockRequestCache, settings model.AStockRecommendationAlgorithmSettings) []aStockMarketCandidate {
+	settings = model.NormalizeAStockRecommendationAlgorithmSettings(settings)
+	hotspots = aStockRecommendationHotspotSliceWithSettings(hotspots, settings)
+	if !s.aStockPriorityExternalSignalsEnabled() {
+		return aStockRecommendationCandidatesForLimitWithSettings(hotspots, marketCandidates, settings.Auction.RecommendationLimit, settings.Auction.StocksPerHotspot, settings)
+	}
+	if sectorGate == nil {
+		sectorGate = s.loadAStockHotspotSectorGateWithCache(hotspots, cache)
+	}
 	if len(hotspots) == 0 {
 		return nil
 	}
@@ -13254,7 +13302,7 @@ func (s *Server) buildAStockPriorityCandidatePoolWithSettings(strategyDate strin
 		if hotspotName == "" {
 			continue
 		}
-		assessment := s.assessAStockRecommendationSectorFundFlowTrendWithCache(strategyDate, hotspotName, cache)
+		assessment := s.assessAStockRecommendationSectorFundFlowTrendWithSettings(strategyDate, hotspotName, cache, settings)
 		sectorAssessments[hotspotName] = assessment
 		if aStockSectorFundFlowTrendBlocksAuction(assessment) {
 			continue
@@ -13418,7 +13466,7 @@ func (s *Server) appendAStockFundFlowPriorityCandidates(strategyDate string, hot
 		if !mentioned && !aStockCandidateMatchesAnyHotspotSector(hotspots, candidate, sectorGate) && !aStockCandidateMatchesAnyHotspot(hotspots, candidate) {
 			return
 		}
-		assessment := s.assessAStockRecommendationFundFlow5DWithCache(strategyDate, code, cache)
+		assessment := s.assessAStockRecommendationFundFlow5DWithSettings(strategyDate, code, cache, settings)
 		if !mentioned && isAStockFundFlowHardFiltered(assessment) {
 			return
 		}
@@ -13712,11 +13760,12 @@ func buildAStockRecommendationScoreBreakdown(hotspot aStockHotspot, stock aStock
 }
 
 func buildAStockRecommendationScoreBreakdownWithSettings(hotspot aStockHotspot, stock aStockMarketCandidate, settings model.AStockRecommendationAlgorithmSettings) []aStockRecommendationScoreComponent {
+	settings = model.NormalizeAStockRecommendationAlgorithmSettings(settings)
 	components := make([]aStockRecommendationScoreComponent, 0, 8)
 	components = append(components, newAStockScoreComponentWithFactor(aStockScoreFactorEmotion, "新闻热度", fmt.Sprintf("证据新闻 %d 条", hotspot.Evidence), settings.Emotion.NewsEvidenceScore, hotspot.Evidence*settings.Emotion.NewsEvidenceScore))
 	components = append(components, newAStockScoreComponentWithFactor(aStockScoreFactorEmotion, "热点关键词", fmt.Sprintf("命中关键词 %d 个", len(hotspot.Keywords)), settings.Emotion.KeywordScore, len(hotspot.Keywords)*settings.Emotion.KeywordScore))
 	if hasAStockCandidateSource(stock, aStockCandidateSourceNews) {
-		components = append(components, newAStockScoreComponentWithFactor(aStockScoreFactorEmotion, "候选来源", aStockCandidateSourceNews, 80, 80))
+		components = append(components, newAStockScoreComponentWithFactor(aStockScoreFactorEmotion, "候选来源", aStockCandidateSourceNews, settings.Emotion.NewsSourceScore, settings.Emotion.NewsSourceScore))
 	}
 	if hotspot.NegativeNewsPenalty > 0 {
 		components = append(components, newAStockScoreComponentWithFactor(aStockScoreFactorEmotion, "负面新闻", fmt.Sprintf("负面新闻 %d 条，情绪扣分 %d", hotspot.NegativeNewsCount, hotspot.NegativeNewsPenalty), -hotspot.NegativeNewsPenalty, -hotspot.NegativeNewsPenalty))

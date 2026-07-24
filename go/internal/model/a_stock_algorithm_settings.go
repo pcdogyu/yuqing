@@ -67,6 +67,7 @@ type AStockRecommendationCandidateFactor struct {
 type AStockRecommendationEmotionFactor struct {
 	FactorScoreCap        int `json:"factor_score_cap"`
 	NewsEvidenceScore     int `json:"news_evidence_score"`
+	NewsSourceScore       int `json:"news_source_score"`
 	KeywordScore          int `json:"keyword_score"`
 	NegativeNewsPenalty   int `json:"negative_news_penalty"`
 	HotspotMinScore       int `json:"hotspot_min_score"`
@@ -157,7 +158,7 @@ type AStockRecommendationVolatilityFactor struct {
 
 func DefaultAStockRecommendationAlgorithmSettings() AStockRecommendationAlgorithmSettings {
 	return AStockRecommendationAlgorithmSettings{
-		Version: 4,
+		Version: 5,
 		Auction: AStockRecommendationAuctionFactor{
 			FactorScoreCap:              120,
 			RecommendationLimit:         5,
@@ -207,6 +208,7 @@ func DefaultAStockRecommendationAlgorithmSettings() AStockRecommendationAlgorith
 		Emotion: AStockRecommendationEmotionFactor{
 			FactorScoreCap:        300,
 			NewsEvidenceScore:     5,
+			NewsSourceScore:       80,
 			KeywordScore:          4,
 			NegativeNewsPenalty:   40,
 			HotspotMinScore:       0,
@@ -302,17 +304,22 @@ func NormalizeAStockRecommendationAlgorithmSettings(settings AStockRecommendatio
 	}
 	if loadedVersion > 0 && loadedVersion < defaults.Version {
 		settings.Version = defaults.Version
-		settings.Auction.FactorScoreCap = defaults.Auction.FactorScoreCap
-		settings.Emotion.FactorScoreCap = defaults.Emotion.FactorScoreCap
-		settings.Sector.FactorScoreCap = defaults.Sector.FactorScoreCap
-		settings.Fund.FactorScoreCap = defaults.Fund.FactorScoreCap
-		settings.Volatility.FactorScoreCap = defaults.Volatility.FactorScoreCap
+		if loadedVersion < 4 {
+			settings.Auction.FactorScoreCap = defaults.Auction.FactorScoreCap
+			settings.Emotion.FactorScoreCap = defaults.Emotion.FactorScoreCap
+			settings.Sector.FactorScoreCap = defaults.Sector.FactorScoreCap
+			settings.Fund.FactorScoreCap = defaults.Fund.FactorScoreCap
+			settings.Volatility.FactorScoreCap = defaults.Volatility.FactorScoreCap
+		}
 	}
 	if settings.Auction.FactorScoreCap <= 0 {
 		settings.Auction.FactorScoreCap = defaults.Auction.FactorScoreCap
 	}
 	if settings.Emotion.FactorScoreCap <= 0 {
 		settings.Emotion.FactorScoreCap = defaults.Emotion.FactorScoreCap
+	}
+	if loadedVersion < 5 && settings.Emotion.NewsSourceScore == 0 {
+		settings.Emotion.NewsSourceScore = defaults.Emotion.NewsSourceScore
 	}
 	if settings.Sector.FactorScoreCap <= 0 {
 		settings.Sector.FactorScoreCap = defaults.Sector.FactorScoreCap
@@ -397,6 +404,12 @@ func ValidateAStockRecommendationAlgorithmSettings(settings AStockRecommendation
 	}
 	if settings.Auction.MarketRankScoreDivisor <= 0 {
 		return errors.New("market_rank_score_divisor must be greater than 0")
+	}
+	if settings.Emotion.NewsSourceScore < 0 {
+		return errors.New("emotion.news_source_score cannot be negative")
+	}
+	if settings.Emotion.NewsSourceScore > 1000 {
+		return errors.New("emotion.news_source_score cannot exceed 1000")
 	}
 	lowOpenThresholds := []float64{
 		settings.Auction.LowOpenThreshold1Pct,

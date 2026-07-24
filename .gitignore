@@ -35,8 +35,9 @@ release/*.apk
 release/*.zip
 release/netuser.json
 
-# Local browser/front-end troubleshooting credentials
-go/pem/admin.json
+# Local credentials
+pem/
+go/pem/
 
 # Local Git pack/index artifacts are handled by the run script; keep them out of the tree if they surface during maintenance.
 .git/objects/pack/*.idx

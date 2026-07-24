@@ -32,6 +32,28 @@ func TestItemIncludesProjectIDsWhenPresent(t *testing.T) {
 	}
 }
 
+func TestAStockRecommendationAlgorithmSettingsNewsSourceScoreDefaultAndMigration(t *testing.T) {
+	defaults := DefaultAStockRecommendationAlgorithmSettings()
+	if defaults.Version != 5 {
+		t.Fatalf("expected default settings version 5, got %d", defaults.Version)
+	}
+	if defaults.Emotion.NewsSourceScore != 80 {
+		t.Fatalf("expected default news source score 80, got %d", defaults.Emotion.NewsSourceScore)
+	}
+
+	old := defaults
+	old.Version = 4
+	old.Emotion.NewsSourceScore = 0
+	old.Auction.FactorScoreCap = 321
+	normalized := NormalizeAStockRecommendationAlgorithmSettings(old)
+	if normalized.Emotion.NewsSourceScore != 80 {
+		t.Fatalf("expected v4 settings to migrate news source score to 80, got %d", normalized.Emotion.NewsSourceScore)
+	}
+	if normalized.Auction.FactorScoreCap != 321 {
+		t.Fatalf("expected v4 custom auction factor cap to be preserved, got %d", normalized.Auction.FactorScoreCap)
+	}
+}
+
 func containsProjectIDs(body []byte) bool {
 	return string(body) != "" && jsonContains(string(body), `"project_ids"`)
 }

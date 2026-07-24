@@ -59,6 +59,36 @@ func (s *Server) loadAStockAlgorithmSettingsWithCache(cache *aStockRequestCache)
 	return settings
 }
 
+func aStockAlgorithmSettingsForRecommendationPeriod(period string, settings model.AStockRecommendationAlgorithmSettings) model.AStockRecommendationAlgorithmSettings {
+	settings = model.NormalizeAStockRecommendationAlgorithmSettings(settings)
+	switch normalizeAStockPeriod(period).Key {
+	case "morning", "afternoon":
+		return withAStockCapitalMomentumRecommendationSettings(settings)
+	default:
+		return settings
+	}
+}
+
+func withAStockCapitalMomentumRecommendationSettings(settings model.AStockRecommendationAlgorithmSettings) model.AStockRecommendationAlgorithmSettings {
+	settings.Auction.FactorScoreCap = 180
+	settings.Auction.MarketRankScoreBase = 260
+	settings.Auction.MarketRankScoreDivisor = 2
+	settings.Fund.FactorScoreCap = 280
+	settings.Fund.StrongBonusScore = 75
+	settings.Fund.VeryStrongScore = 120
+	settings.Fund.ExtremeScore = 160
+	settings.Fund.Recent2DInflowScore = 45
+	settings.Sector.FactorScoreCap = 260
+	settings.Sector.TrendContinuousInflowScore = 90
+	settings.Volatility.PreviousLimitUpPenalty = 40
+	settings.Volatility.PreviousHighPctPenalty = 35
+	settings.Emotion.NewsEvidenceScore = 3
+	settings.Emotion.NewsSourceScore = 40
+	settings.Emotion.StockEvidenceScore = 15
+	settings.Emotion.StockNameKeywordScore = 6
+	return settings
+}
+
 func buildAStockAlgorithmParamGroups(settings model.AStockRecommendationAlgorithmSettings) []aStockAlgorithmParamGroupView {
 	defaults := defaultAStockAlgorithmSettings()
 	groups := make([]aStockAlgorithmParamGroupView, 0, 6)
@@ -154,6 +184,7 @@ func aStockAlgorithmParamDefs() []aStockAlgorithmParamDef {
 
 		{Group: "emotion", GroupLabel: "情绪因子", Key: "emotion.factor_score_cap", Label: "因子封顶", Unit: "分", Description: "情绪因子正向最高分"},
 		{Group: "emotion", GroupLabel: "情绪因子", Key: "emotion.news_evidence_score", Label: "单条新闻热度分", Unit: "分", Description: "每条证据新闻贡献的热点分"},
+		{Group: "emotion", GroupLabel: "情绪因子", Key: "emotion.news_source_score", Label: "新闻点名来源分", Unit: "分", Description: "候选来源为新闻点名时的加分"},
 		{Group: "emotion", GroupLabel: "情绪因子", Key: "emotion.keyword_score", Label: "关键词命中分", Unit: "分", Description: "每个热点关键词贡献的分值"},
 		{Group: "emotion", GroupLabel: "情绪因子", Key: "emotion.negative_news_penalty", Label: "负面新闻扣分", Unit: "分/条", Description: "每条负面新闻扣分"},
 		{Group: "emotion", GroupLabel: "情绪因子", Key: "emotion.hotspot_min_score", Label: "热点最低分", Unit: "分", Description: "热点分低于该值时按该值展示"},
