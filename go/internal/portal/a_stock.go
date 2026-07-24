@@ -449,6 +449,7 @@ type aStockRecommendationGenerateResult struct {
 	Period                   string `json:"period"`
 	Phase                    string `json:"phase"`
 	DryRun                   bool   `json:"dry_run"`
+	SkipShadow               bool   `json:"skip_shadow"`
 	RecommendationCount      int    `json:"recommendation_count"`
 	GeneratedCount           int    `json:"generated_count"`
 	BacktestStatus           string `json:"backtest_status"`
@@ -1923,7 +1924,7 @@ func writeAStockPageScript(b *strings.Builder, strategyDate string) {
 	b.WriteString(`function showPopup(data){var mask=popupMask();if(!mask||!data||!data.show){return;}if(popupVisible&&popupKey===data.key){return;}var title=document.getElementById("astock-popup-title");var meta=document.getElementById("astock-popup-meta");if(title){title.textContent=data.title||"盘前推荐股票";}if(meta){meta.textContent=data.meta||"";}renderPopupRows(data.recommendations||[]);popupKey=data.key||"";mask.hidden=false;popupVisible=true;}`)
 	b.WriteString(`function fetchPopup(){if(!popupEligible||!popupDate){return;}fetch("/a-stock/popup?date="+encodeURIComponent(popupDate),{credentials:"same-origin"}).then(function(resp){if(!resp.ok){return null;}return resp.json();}).then(function(data){if(!data){return;}if(data.show){showPopup(data);return;}if(!data.show&&popupVisible){hidePopup();}}).catch(function(){});}`)
 	b.WriteString(`function clearPopupTimers(){if(popupTimer){window.clearInterval(popupTimer);popupTimer=0;}popupExactTimers.forEach(function(timer){window.clearTimeout(timer);});popupExactTimers=[];}`)
-	b.WriteString(`function schedulePopupChecks(){clearPopupTimers();fetchPopup();if(!popupEligible){return;}popupTimer=window.setInterval(fetchPopup,5000);var now=new Date();[[9,27],[9,31],[12,57],[13,1]].forEach(function(parts){var target=new Date();target.setHours(parts[0],parts[1],0,0);if(now<target){popupExactTimers.push(window.setTimeout(fetchPopup,Math.max(0,target.getTime()-now.getTime()+100)));}});}`)
+	b.WriteString(`function schedulePopupChecks(){clearPopupTimers();fetchPopup();if(!popupEligible){return;}popupTimer=window.setInterval(fetchPopup,5000);var now=new Date();[[9,27],[9,30],[9,31],[12,57],[13,1]].forEach(function(parts){var target=new Date();target.setHours(parts[0],parts[1],0,0);if(now<target){popupExactTimers.push(window.setTimeout(fetchPopup,Math.max(0,target.getTime()-now.getTime()+100)));}});}`)
 	b.WriteString(`function content(){return document.getElementById("astock-page-content");}`)
 	b.WriteString(`function partialURL(raw){var u=new URL(raw,window.location.origin);u.searchParams.set("partial","1");return u.toString();}`)
 	b.WriteString(`function isPartialLink(anchor){if(!anchor||!anchor.href){return false;}if(anchor.target&&anchor.target!=="_self"){return false;}var u;try{u=new URL(anchor.href,window.location.origin);}catch(e){return false;}if(u.origin!==window.location.origin||u.pathname!=="/a-stock"){return false;}if(u.searchParams.get("refresh_recommendations")||u.searchParams.get("refresh_all_backtests")){return false;}return true;}`)
@@ -3626,6 +3627,7 @@ func (s *Server) handleAStockRecommendationGenerate(w http.ResponseWriter, r *ht
 	ignoreFundFlow := normalizeAStockBool(r.URL.Query().Get("ignore_fund_flow"))
 	filterTodayMarket := normalizeAStockBool(r.URL.Query().Get("filter_today_market"))
 	dryRun := normalizeAStockBool(r.URL.Query().Get("dry_run"))
+	skipShadow := normalizeAStockBool(r.URL.Query().Get("skip_shadow"))
 	refreshMode := aStockRecommendationRebuild
 	if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("refresh_mode")), string(aStockRecommendationPreserveLocked)) {
 		refreshMode = aStockRecommendationPreserveLocked
@@ -3635,7 +3637,9 @@ func (s *Server) handleAStockRecommendationGenerate(w http.ResponseWriter, r *ht
 		ctx = s.loadAStockSimulationContext(strategyDate, period.Key, 1, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, phase, newAStockRequestCache())
 	} else {
 		ctx = s.loadAStockContextWithRecommendationPhasePersistenceMode(strategyDate, period.Key, 1, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, true, phase, newAStockRequestCache(), true, true, refreshMode)
-		_ = s.saveAStockT1ShadowRecommendationSnapshot(ctx)
+		if !skipShadow {
+			_ = s.saveAStockT1ShadowRecommendationSnapshot(ctx)
+		}
 	}
 	writeRawJSON(w, http.StatusOK, map[string]any{
 		"code":    http.StatusOK,
@@ -3645,6 +3649,7 @@ func (s *Server) handleAStockRecommendationGenerate(w http.ResponseWriter, r *ht
 			Period:                   ctx.Period,
 			Phase:                    phase,
 			DryRun:                   dryRun,
+			SkipShadow:               skipShadow,
 			RecommendationCount:      len(ctx.Recommendations),
 			GeneratedCount:           ctx.GeneratedRecommendationCount,
 			BacktestStatus:           ctx.BacktestStatus,

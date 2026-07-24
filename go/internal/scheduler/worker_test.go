@@ -291,6 +291,83 @@ func TestRunAStockExactSnapshotBackfillSkipsWhenRecommendationTaskRunning(t *tes
 	}
 }
 
+func TestRunAStockMorningFinalRetriesWhenRecommendationTaskRunning(t *testing.T) {
+	t.Setenv("YUQING_A_STOCK_NEWS_SOURCE_CONFIG", filepath.Join(t.TempDir(), "sources.json"))
+	previousSources := aStockRecommendationSources
+	aStockRecommendationSources = []string{provider.SourceTypeFlash}
+	t.Cleanup(func() { aStockRecommendationSources = previousSources })
+	previousRetryAttempts := aStockRecommendationLockRetryAttempts
+	previousRetryDelay := aStockRecommendationLockRetryDelay
+	aStockRecommendationLockRetryAttempts = 10
+	aStockRecommendationLockRetryDelay = 5 * time.Millisecond
+	t.Cleanup(func() {
+		aStockRecommendationLockRetryAttempts = previousRetryAttempts
+		aStockRecommendationLockRetryDelay = previousRetryDelay
+	})
+
+	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/a-stock/trading-day" {
+			t.Fatalf("unexpected trading-day request: %s", r.URL.String())
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"date":           "2026-06-16",
+			"is_trading_day": true,
+			"source":         "test",
+			"reason":         "trading_day",
+			"message":        "open",
+		})
+	}))
+	defer akshare.Close()
+	var crawlerCalls int
+	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		crawlerCalls++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer crawler.Close()
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/articles" {
+			t.Fatalf("unexpected content request: %s", r.URL.String())
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer content.Close()
+	var generated int
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/internal/a-stock/recommendations/generate" {
+			t.Fatalf("unexpected gateway request: %s %s", r.Method, r.URL.String())
+		}
+		if r.URL.Query().Get("refresh_mode") != "preserve_locked" {
+			t.Fatalf("expected final generation to preserve locked recommendations, got %s", r.URL.RawQuery)
+		}
+		generated++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer gateway.Close()
+
+	worker := NewWorker(config.Config{
+		AStockAuctionURL:      akshare.URL,
+		CrawlerURL:            crawler.URL,
+		ContentURL:            content.URL,
+		GatewayWebURL:         gateway.URL,
+		HTTPTimeout:           time.Second,
+		SchedulerCrawlTimeout: time.Second,
+	})
+	worker.aStockMu.Lock()
+	unlocked := make(chan struct{})
+	go func() {
+		time.Sleep(15 * time.Millisecond)
+		worker.aStockMu.Unlock()
+		close(unlocked)
+	}()
+	if err := worker.runAStockMorningRecommendationFinalForDate(context.Background(), "2026-06-16"); err != nil {
+		t.Fatalf("expected morning final to retry and succeed, got %v", err)
+	}
+	<-unlocked
+	if crawlerCalls != 1 || generated != 1 {
+		t.Fatalf("expected final job to continue after lock retry, crawls=%d generated=%d", crawlerCalls, generated)
+	}
+}
+
 func newAStockTradingDayStatusTestServer(t *testing.T, previousByDate map[string]string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -475,10 +552,10 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	if err := json.Unmarshal(listRR.Body.Bytes(), &listEnvelope); err != nil {
 		t.Fatalf("unmarshal jobs list: %v", err)
 	}
-	if len(listEnvelope.Data) != 47 {
-		t.Fatalf("expected 47 scheduler jobs, got %d", len(listEnvelope.Data))
+	if len(listEnvelope.Data) != 48 {
+		t.Fatalf("expected 48 scheduler jobs, got %d", len(listEnvelope.Data))
 	}
-	var heartbeatJob, hotJob, eastmoneyJob, eastmoneyFullJob, jin10FullJob, wallStreetCNJob, clsJob, sinaJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningNewsCrawlJob, aStockMorningPreviewJob, aStockMorningJob, aStockAfternoonPreviewJob, aStockMiddayNewsCrawlJob, aStockAfternoonJob, aStockAfternoonOpenRefreshJob, aStockDailyBacktestRefreshJob, aStockEveningJob, aStockExactSnapshotBackfillJob, hotspotSwitchingSnapshotJob, aStockAuctionJob, aStockSectorFundFlowJob, aStockSectorFundFlowIntradayJob, aStockHoldingsJob, stockResearchJob, stockResearchNLPJob, investorRelationsJob Job
+	var heartbeatJob, hotJob, eastmoneyJob, eastmoneyFullJob, jin10FullJob, wallStreetCNJob, clsJob, sinaJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningNewsCrawlJob, aStockMorningWarmupJob, aStockMorningPreviewJob, aStockMorningJob, aStockAfternoonPreviewJob, aStockMiddayNewsCrawlJob, aStockAfternoonJob, aStockAfternoonOpenRefreshJob, aStockDailyBacktestRefreshJob, aStockEveningJob, aStockExactSnapshotBackfillJob, hotspotSwitchingSnapshotJob, aStockAuctionJob, aStockSectorFundFlowJob, aStockSectorFundFlowIntradayJob, aStockHoldingsJob, stockResearchJob, stockResearchNLPJob, investorRelationsJob Job
 	aStockSectorFundFlowJobCount := 0
 	aStockSectorFundFlowIntradayJobCount := 0
 	for _, job := range listEnvelope.Data {
@@ -513,6 +590,8 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 			theBlockJob = job
 		case "a-stock-morning-news-crawl":
 			aStockMorningNewsCrawlJob = job
+		case "a-stock-morning-recommendation-warmup":
+			aStockMorningWarmupJob = job
 		case "a-stock-morning-recommendation":
 			aStockMorningJob = job
 		case "a-stock-morning-recommendation-preview":
@@ -589,6 +668,9 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	}
 	if aStockMorningNewsCrawlJob.Cron != "0 5 9 * * ?" || aStockMorningNewsCrawlJob.NextRunAt == nil {
 		t.Fatalf("expected A股 morning news crawl cron metadata, got %+v", aStockMorningNewsCrawlJob)
+	}
+	if aStockMorningWarmupJob.JavaQuartzName != "AStockMorningRecommendationWarmup" || aStockMorningWarmupJob.Cron != "0 20 9 * * ?" || aStockMorningWarmupJob.NextRunAt == nil {
+		t.Fatalf("expected A股 morning recommendation warmup cron metadata, got %+v", aStockMorningWarmupJob)
 	}
 	if aStockMorningJob.Cron != "0 32 9 * * ?" || aStockMorningJob.NextRunAt == nil {
 		t.Fatalf("expected A股 morning recommendation cron metadata, got %+v", aStockMorningJob)
@@ -830,6 +912,96 @@ func TestRunAStockRecommendationGeneratesMorningSnapshot(t *testing.T) {
 	}
 	if len(generatedRefreshModes) != 1 || generatedRefreshModes[0] != "preserve_locked" {
 		t.Fatalf("expected morning final to preserve locked recommendations, got refresh_modes=%v", generatedRefreshModes)
+	}
+}
+
+func TestRunAStockMorningRecommendationWarmupSkipsCrawlAndShadow(t *testing.T) {
+	t.Setenv("YUQING_A_STOCK_NEWS_SOURCE_CONFIG", filepath.Join(t.TempDir(), "sources.json"))
+	previousSources := aStockRecommendationSources
+	aStockRecommendationSources = []string{provider.SourceTypeFlash}
+	t.Cleanup(func() { aStockRecommendationSources = previousSources })
+	dbPath := filepath.Join(t.TempDir(), "scheduler-warmup.db")
+	store, err := sqlitestore.New(dbPath)
+	if err != nil {
+		t.Fatalf("New store error: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/a-stock/trading-day" {
+			t.Fatalf("unexpected trading-day request: %s", r.URL.String())
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"date":           "2026-06-16",
+			"is_trading_day": true,
+			"source":         "test",
+			"reason":         "trading_day",
+			"message":        "open",
+		})
+	}))
+	defer akshare.Close()
+	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("morning warmup should not repeat full window crawl: %s", r.URL.String())
+	}))
+	defer crawler.Close()
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/articles" {
+			t.Fatalf("unexpected content request: %s", r.URL.String())
+		}
+		if r.URL.Query().Get("start") != "2026-06-16T00:00:00Z" || r.URL.Query().Get("end") != "2026-06-16T01:26:59Z" {
+			t.Fatalf("unexpected A股 warmup window query: %s", r.URL.RawQuery)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer content.Close()
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/internal/a-stock/recommendations/generate" {
+			t.Fatalf("unexpected gateway request: %s %s", r.Method, r.URL.String())
+		}
+		if r.URL.Query().Get("period") != "morning" || r.URL.Query().Get("phase") != "preopen" || r.URL.Query().Get("skip_shadow") != "1" {
+			t.Fatalf("unexpected warmup generate query: %s", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusOK, "message": "ok", "data": map[string]any{
+			"strategy_date":        "2026-06-16",
+			"period":               "morning",
+			"phase":                "preopen",
+			"recommendation_count": 1,
+			"generated_count":      1,
+			"backtest_status":      "pending",
+		}})
+	}))
+	defer gateway.Close()
+
+	worker := NewWorker(config.Config{
+		DatabasePath:          dbPath,
+		AStockAuctionURL:      akshare.URL,
+		CrawlerURL:            crawler.URL,
+		ContentURL:            content.URL,
+		GatewayWebURL:         gateway.URL,
+		HTTPTimeout:           time.Second,
+		SchedulerCrawlTimeout: time.Second,
+		ServiceToken:          "secret-token",
+	})
+	defer func() { _ = worker.Close() }()
+
+	if err := worker.runAStockMorningRecommendationWarmupForDate(context.Background(), "2026-06-16"); err != nil {
+		t.Fatalf("expected morning warmup to succeed, got %v", err)
+	}
+	runs, err := store.ListTaskRuns(context.Background(), 5)
+	if err != nil {
+		t.Fatalf("ListTaskRuns error: %v", err)
+	}
+	byName := map[string]model.TaskRun{}
+	for _, run := range runs {
+		byName[run.TaskName] = run
+	}
+	generateRun, ok := byName["a-stock-recommendation-generate:morning:preopen"]
+	if !ok || generateRun.Status != "success" || !strings.Contains(generateRun.Message, "news_sources=skipped") {
+		t.Fatalf("expected warmup generate task run, got %+v", byName)
+	}
+	if _, ok := byName["a-stock-popup-ready:morning"]; ok {
+		t.Fatalf("warmup should not record popup ready, got %+v", byName)
 	}
 }
 
@@ -1757,10 +1929,7 @@ func TestRunAStockRecommendationRecordsGenerateAndPopupReady(t *testing.T) {
 	defer func() { _ = store.Close() }()
 
 	crawler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("source_type") != provider.SourceTypeFlash {
-			t.Fatalf("unexpected crawler query: %s", r.URL.RawQuery)
-		}
-		w.WriteHeader(http.StatusOK)
+		t.Fatalf("morning preview should not repeat full window crawl: %s", r.URL.String())
 	}))
 	defer crawler.Close()
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1774,6 +1943,9 @@ func TestRunAStockRecommendationRecordsGenerateAndPopupReady(t *testing.T) {
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/internal/a-stock/recommendations/generate" {
 			t.Fatalf("unexpected gateway request: %s %s", r.Method, r.URL.String())
+		}
+		if r.URL.Query().Get("skip_shadow") != "1" {
+			t.Fatalf("expected morning preview to skip shadow snapshot, got query %s", r.URL.RawQuery)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusOK, "message": "ok", "data": map[string]any{
@@ -1802,7 +1974,7 @@ func TestRunAStockRecommendationRecordsGenerateAndPopupReady(t *testing.T) {
 	})
 	defer func() { _ = worker.Close() }()
 
-	if err := worker.runAStockRecommendationForDate(context.Background(), "2026-06-16", "morning", "preopen"); err != nil {
+	if err := worker.runAStockMorningRecommendationPreviewForDate(context.Background(), "2026-06-16"); err != nil {
 		t.Fatalf("expected preopen recommendation to succeed, got %v", err)
 	}
 	runs, err := store.ListTaskRuns(context.Background(), 5)
@@ -1814,7 +1986,7 @@ func TestRunAStockRecommendationRecordsGenerateAndPopupReady(t *testing.T) {
 		byName[run.TaskName] = run
 	}
 	generateRun, ok := byName["a-stock-recommendation-generate:morning:preopen"]
-	if !ok || generateRun.Status != "success" || !strings.Contains(generateRun.Message, "recommendations=2 generated=9") || !strings.Contains(generateRun.Message, "news_sources=1/1") {
+	if !ok || generateRun.Status != "success" || !strings.Contains(generateRun.Message, "recommendations=2 generated=9") || !strings.Contains(generateRun.Message, "news_sources=skipped") {
 		t.Fatalf("expected recommendation generate task run, got %+v", byName)
 	}
 	popupRun, ok := byName["a-stock-popup-ready:morning"]

@@ -393,14 +393,20 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 			},
 		}, "AStockMorningNewsCrawl", "0 5 9 * * ?"),
 		withJobMeta(jobDefinition{
-			Name:        "a-stock-morning-recommendation-preview",
+			Name:        "a-stock-morning-recommendation-warmup",
 			Group:       "a-stock",
-			Description: "A股上午盘前推荐：09:27 生成上午盘前推荐快照并触发弹窗",
+			Description: "A股上午推荐预热：09:20 基于已入库财经新闻提前生成上午盘前推荐快照",
 			Interval:    24 * time.Hour,
 			Enabled:     true,
-			Run: func(ctx context.Context) error {
-				return w.runAStockRecommendation(ctx, "morning", "preopen")
-			},
+			Run:         w.runAStockMorningRecommendationWarmup,
+		}, "AStockMorningRecommendationWarmup", "0 20 9 * * ?"),
+		withJobMeta(jobDefinition{
+			Name:        "a-stock-morning-recommendation-preview",
+			Group:       "a-stock",
+			Description: "A股上午盘前推荐：09:27 轻量补齐上午盘前推荐快照并触发弹窗",
+			Interval:    24 * time.Hour,
+			Enabled:     true,
+			Run:         w.runAStockMorningRecommendationPreview,
 		}, "AStockMorningRecommendationPreview", "0 27 9 * * ?"),
 		withJobMeta(jobDefinition{
 			Name:        "a-stock-morning-recommendation",
@@ -408,9 +414,7 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 			Description: "A股上午推荐补全：09:32 抓取 08:00-09:26:59 财经新闻并补全推荐快照",
 			Interval:    24 * time.Hour,
 			Enabled:     true,
-			Run: func(ctx context.Context) error {
-				return w.runAStockRecommendation(ctx, "morning", "final")
-			},
+			Run:         w.runAStockMorningRecommendationFinal,
 		}, "AStockMorningRecommendation", "0 32 9 * * ?"),
 		withJobMeta(jobDefinition{
 			Name:        "a-stock-afternoon-recommendation-preview",

@@ -6947,7 +6947,7 @@ func TestAStockPopupWaitsUntilAfternoonPreopenWindow(t *testing.T) {
 }
 
 func TestAStockPopupShowsMorningRecommendationsDuringPreopenWindow(t *testing.T) {
-	setAStockNowForTest(t, time.Date(2026, 6, 23, 9, 27, 0, 0, time.FixedZone("CST", 8*3600)))
+	setAStockNowForTest(t, time.Date(2026, 6, 23, 9, 30, 0, 0, time.FixedZone("CST", 8*3600)))
 
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -7321,7 +7321,7 @@ func TestAStockPageLoadsNewsAndRecommendations(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"金十快讯", "金十资讯", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "90个交易日内过滤", "涨停过滤", "当日行情", "不过滤", "重新计算", "关闭90个交易日过滤", "关闭涨停过滤", "启用当日行情过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "5日资金动向", "+1200.00万", "+500.00万", "上午推荐", "下午推荐", "推荐窗口", "08:00-09:30", "重新生成上午推荐", "重新生成下午推荐", "重新生产晚间推荐", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="generate_evening_stock"`, `name="action" value="refresh_backtest"`, `name="action" value="recalculate"`, "2026-06-12 周五", "2026-06-15 周一", "今日", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "推荐排名前9股票", "002230 科大讯飞", `002230 科大讯飞<span class="astock-hotspot-date">（2026-06-12）</span>`, "688981 中芯国际", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "已回测"} {
+	for _, want := range []string{"金十快讯", "金十资讯", "人工智能", "半导体", "科大讯飞", "中芯国际", "财经新闻数", "集合竞价金额", "6417.00万", "90个交易日内过滤", "涨停过滤", "当日行情", "不过滤", "重新计算", "关闭90个交易日过滤", "关闭涨停过滤", "启用当日行情过滤", "昨日收盘价", "昨日涨跌幅", "30天涨跌幅", "60天涨跌幅", "现价", "今日涨跌幅", "5日资金动向", "+1200.00万", "+500.00万", "上午推荐", "下午推荐", "推荐窗口", "08:00-09:30", "重新生成上午推荐", "重新生成下午推荐", "重新生产晚间推荐", `name="action" value="backfill_window_news"`, `name="action" value="generate_morning_stock"`, `name="action" value="generate_afternoon_stock"`, `name="action" value="generate_evening_stock"`, `name="action" value="refresh_backtest"`, `name="action" value="recalculate"`, "2026-06-12 周五", "2026-06-15 周一", "今日", "astock-recommendation-table", "astock-popup-mask", "/a-stock/popup", "[[9,27],[9,30],[9,31]", "推荐排名前9股票", "002230 科大讯飞", `002230 科大讯飞<span class="astock-hotspot-date">（2026-06-12）</span>`, "688981 中芯国际", "10.50", "+1.25%", "+5.00%", "-12.50%", "10.90", "+3.81%", "50.20", "-0.60%", "50.60", "+0.80%", "002230 科大讯飞", "已回测"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected A股 page to contain %q, got %s", want, body)
 		}
@@ -7690,6 +7690,105 @@ func TestAStockRecommendationGenerateDryRunDoesNotWriteRecommendationData(t *tes
 	if writeCount != 0 {
 		t.Fatalf("expected dry-run generate not to write recommendation data, got %d writes", writeCount)
 	}
+}
+
+func TestAStockRecommendationGenerateSkipShadowDoesNotWriteT1Shadow(t *testing.T) {
+	market := httptest.NewServer(http.HandlerFunc(writeAStockTestMarketBars))
+	defer market.Close()
+	t.Setenv("YUQING_ASTOCK_MARKET_URL", market.URL)
+
+	counts := map[string]int{}
+	content := newAStockGenerateWriteCountingContentServerForTest(t, counts)
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	req := httptest.NewRequest(http.MethodPost, "/internal/a-stock/recommendations/generate?date=2026-06-16&period=morning&phase=preopen&ignore_recent=1&ignore_fund_flow=1&skip_shadow=1", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAStockRecommendationGenerate(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected skip-shadow generate 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	var envelope struct {
+		Data aStockRecommendationGenerateResult `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode skip-shadow generate response: %v", err)
+	}
+	if !envelope.Data.SkipShadow {
+		t.Fatalf("expected skip_shadow=true in response, got %+v", envelope.Data)
+	}
+	if counts["snapshot"] == 0 {
+		t.Fatalf("expected normal recommendation snapshot to be written, counts=%v", counts)
+	}
+	if counts["shadow"] != 0 {
+		t.Fatalf("expected T1 shadow snapshot to be skipped, counts=%v", counts)
+	}
+
+	for key := range counts {
+		counts[key] = 0
+	}
+	req = httptest.NewRequest(http.MethodPost, "/internal/a-stock/recommendations/generate?date=2026-06-16&period=morning&phase=preopen&ignore_recent=1&ignore_fund_flow=1", nil)
+	rr = httptest.NewRecorder()
+	srv.handleAStockRecommendationGenerate(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected default generate 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if counts["shadow"] == 0 {
+		t.Fatalf("expected default generation to write T1 shadow snapshot, counts=%v", counts)
+	}
+}
+
+func newAStockGenerateWriteCountingContentServerForTest(t *testing.T, counts map[string]int) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/articles":
+			if r.URL.Query().Get("time_field") == "captured_at" {
+				writeEnvelope(w, http.StatusOK, "ok", model.ItemListResult{Items: []model.Item{}, Page: 1, PageSize: 200, Total: 0})
+				return
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.ItemListResult{
+				Items: []model.Item{{
+					ID:          9901,
+					SourceType:  "flash",
+					Title:       "科大讯飞盘前活跃",
+					Summary:     "AI 人工智能算力需求增长",
+					PublishTime: "2026-06-16 09:26:30",
+					TagFlags:    "0.002230",
+					CapturedAt:  time.Date(2026, 6, 16, 1, 26, 30, 0, time.UTC),
+				}},
+				Page: 1, PageSize: 200, Total: 1,
+			})
+		case "/api/v1/a-stock/auction":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockAuctionListResult{
+				Date:  "2026-06-16",
+				Items: []model.AStockAuctionAmount{{TradeDate: "2026-06-16", Code: "002230", Name: "科大讯飞", AuctionAmount: 10000000, AuctionVolume: 1000000}},
+			})
+		case "/api/v1/a-stock/recommendations":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
+		case "/api/v1/a-stock/recommendation-selections":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSelectionListResult{Found: false})
+		case "/api/v1/a-stock/recommendation-latest-dates":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationLatestDateListResult{Items: []model.AStockRecommendationLatestDate{}})
+		case "/api/v1/a-stock/holdings/summary":
+			writeEnvelope(w, http.StatusOK, "ok", model.StockInstitutionHoldingSummary{})
+		case "/api/v1/internal/a-stock/recommendations":
+			counts["snapshot"]++
+			writeEnvelope(w, http.StatusOK, "ok", map[string]any{"updated": 1})
+		case "/api/v1/internal/a-stock/recommendation-selections":
+			counts["selections"]++
+			writeEnvelope(w, http.StatusOK, "ok", map[string]any{"updated": 1})
+		case "/api/v1/internal/a-stock/recommendation-shadow-snapshots":
+			counts["shadow"]++
+			writeEnvelope(w, http.StatusOK, "ok", map[string]any{"updated": 1})
+		default:
+			if handleEmptyAStockAuctionTestEndpoint(w, r) {
+				return
+			}
+			t.Fatalf("unexpected content path: %s", r.URL.String())
+		}
+	}))
 }
 
 func newAStockSimulationContentServerForTest(t *testing.T, writeCount *int) *httptest.Server {
