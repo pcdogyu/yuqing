@@ -215,6 +215,28 @@ class ArticleListFallbackTest {
     }
 
     @Test
+    fun eveningEmptyRecommendationSubtitleStaysBlank() {
+        val eveningSnapshot = AStockRecommendationSnapshot(
+            period = "evening",
+            emptyReason = "暂无推荐股票：晚间快照读取失败，evening_snapshot_status_422",
+        )
+        val afternoonSnapshot = AStockRecommendationSnapshot(
+            period = "afternoon",
+            emptyReason = "暂无推荐股票：下午推荐已生成候选，但全部被过滤。",
+        )
+
+        assertEquals("", aStockEmptyRecommendationSubtitle("evening", eveningSnapshot))
+        assertEquals(
+            "暂无推荐股票：下午推荐已生成候选，但全部被过滤。",
+            aStockEmptyRecommendationSubtitle("afternoon", afternoonSnapshot),
+        )
+        assertEquals(
+            "08:00-09:30 暂无推荐股票",
+            aStockEmptyRecommendationSubtitle("morning", AStockRecommendationSnapshot(period = "morning")),
+        )
+    }
+
+    @Test
     fun backtestValueToneUsesAStockRedUpGreenDownSemantics() {
         assertEquals(BacktestValueTone.Up, backtestValueTone("+10.44%"))
         assertEquals(BacktestValueTone.Down, backtestValueTone(" -3.27%"))

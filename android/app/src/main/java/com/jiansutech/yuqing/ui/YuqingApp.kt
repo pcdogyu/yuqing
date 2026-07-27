@@ -838,7 +838,7 @@ private fun AStockModule(
         }
         item { SectionTitle("上午推荐") }
         if (morningRecommendations.isEmpty()) {
-            item { SimpleRow("暂无上午推荐", morningSnapshot?.emptyReason.ifNullOrBlank("08:00-09:30 暂无推荐股票")) }
+            item { SimpleRow("暂无上午推荐", aStockEmptyRecommendationSubtitle("morning", morningSnapshot)) }
         }
         items(backtestNavigationItems.filter { it.period == "morning" }) { navItem ->
             AStockRecommendationRow(navItem.recommendation) {
@@ -850,7 +850,7 @@ private fun AStockModule(
         item { RecommendationSeparator() }
         item { SectionTitle("下午推荐") }
         if (afternoonRecommendations.isEmpty()) {
-            item { SimpleRow("暂无下午推荐", afternoonSnapshot?.emptyReason.ifNullOrBlank("09:30-13:00 暂无推荐股票")) }
+            item { SimpleRow("暂无下午推荐", aStockEmptyRecommendationSubtitle("afternoon", afternoonSnapshot)) }
         }
         items(backtestNavigationItems.filter { it.period == "afternoon" }) { navItem ->
             AStockRecommendationRow(navItem.recommendation) {
@@ -862,7 +862,7 @@ private fun AStockModule(
         item { RecommendationSeparator() }
         item { SectionTitle("晚间推荐") }
         if (eveningRecommendations.isEmpty()) {
-            item { SimpleRow("暂无晚间推荐", eveningSnapshot?.emptyReason.ifNullOrBlank("15:00-18:30 暂无推荐股票")) }
+            item { SimpleRow("暂无晚间推荐", aStockEmptyRecommendationSubtitle("evening", eveningSnapshot)) }
         }
         items(backtestNavigationItems.filter { it.period == "evening" }) { navItem ->
             AStockRecommendationRow(navItem.recommendation) {
@@ -3167,6 +3167,17 @@ private fun EmptyState(text: String) {
 
 private fun String?.ifNullOrBlank(fallback: String): String {
     return if (isNullOrBlank()) fallback else this
+}
+
+internal fun aStockEmptyRecommendationSubtitle(
+    period: String,
+    snapshot: AStockRecommendationSnapshot?,
+): String {
+    return when (normalizeAStockRecommendationPeriod(period)) {
+        "afternoon" -> snapshot?.emptyReason.ifNullOrBlank("09:30-13:00 暂无推荐股票")
+        "evening" -> ""
+        else -> snapshot?.emptyReason.ifNullOrBlank("08:00-09:30 暂无推荐股票")
+    }
 }
 
 private fun fallbackModules(): List<AndroidModule> = listOf(
