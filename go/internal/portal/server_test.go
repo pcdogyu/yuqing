@@ -2382,8 +2382,8 @@ func TestAStockBacktestPageGetUsesSnapshotOnly(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(requests) != 5 {
-		t.Fatalf("expected morning/afternoon/evening snapshots plus two performance requests, got %d: %v", len(requests), requests)
+	if len(requests) != 6 {
+		t.Fatalf("expected morning/afternoon/evening snapshots plus three performance requests, got %d: %v", len(requests), requests)
 	}
 	periodHits := map[string]int{}
 	performanceHits := 0
@@ -2404,7 +2404,7 @@ func TestAStockBacktestPageGetUsesSnapshotOnly(t *testing.T) {
 	if periodHits["morning"] != 1 || periodHits["afternoon"] != 1 || periodHits["evening"] != 1 {
 		t.Fatalf("expected one morning, afternoon, and evening snapshot request, got %v from %v", periodHits, requests)
 	}
-	if performanceHits != 2 {
+	if performanceHits != 3 {
 		t.Fatalf("expected official and shadow performance requests, got %d from %v", performanceHits, requests)
 	}
 }
@@ -4327,6 +4327,32 @@ func TestAStockNewsSectionShowsSourceRunDiagnostics(t *testing.T) {
 	}
 	if strings.Contains(body, `<th>说明</th>`) {
 		t.Fatalf("expected A股 news diagnostics to move explanation into tooltip, got %s", body)
+	}
+}
+
+func TestAStockNewsSectionFutureWindowDoesNotShowStaleDiagnostic(t *testing.T) {
+	t.Setenv("YUQING_A_STOCK_NEWS_SOURCE_CONFIG", filepath.Join(t.TempDir(), "sources.json"))
+	setAStockNowForTest(t, time.Date(2026, 7, 29, 9, 13, 0, 0, aStockLocation()))
+	ctx := aStockContext{
+		Date:            "2026-07-29",
+		WindowLabel:     "09:30-13:00",
+		NewsWindowStart: time.Date(2026, 7, 29, 9, 30, 0, 0, aStockLocation()),
+		NewsWindowEnd:   time.Date(2026, 7, 29, 13, 0, 59, 0, aStockLocation()),
+		SourceRuns: []aStockSourceRun{
+			{SourceType: "flash", Status: "success", FetchedCount: 18, InsertedCount: 1, UpdatedCount: 15, StartedAt: time.Date(2026, 7, 29, 1, 9, 0, 0, time.UTC)},
+		},
+	}
+	var b strings.Builder
+	renderAStockNewsWindow(&b, ctx)
+	body := b.String()
+	if !strings.Contains(body, "窗口尚未开始") {
+		t.Fatalf("expected future window empty state, got %s", body)
+	}
+	if strings.Contains(body, "最近抓取早于统计截止") {
+		t.Fatalf("future window should not show stale coverage diagnostic, got %s", body)
+	}
+	if !strings.Contains(body, "18/1/15") {
+		t.Fatalf("expected latest crawl counts to remain visible, got %s", body)
 	}
 }
 
@@ -7733,8 +7759,8 @@ func TestAStockRecommendationGenerateSkipShadowDoesNotWriteT1Shadow(t *testing.T
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected default generate 200, got %d body=%s", rr.Code, rr.Body.String())
 	}
-	if counts["shadow"] == 0 {
-		t.Fatalf("expected default generation to write T1 shadow snapshot, counts=%v", counts)
+	if counts["shadow"] < 2 {
+		t.Fatalf("expected default generation to write T1 and auction-strength shadow snapshots, counts=%v", counts)
 	}
 }
 
@@ -11343,6 +11369,59 @@ func TestAStockT1ShadowFiltersWeakEvidenceAndLimitsByHotspot(t *testing.T) {
 	afternoon, skipped = limitAStockRecommendationsByCount(limited, remainingAStockDailyRecommendationLimit(5))
 	if skipped != aStockT1ShadowRecommendationLimit || len(afternoon) != 0 {
 		t.Fatalf("expected shadow afternoon to stop after five morning recommendations, skipped=%d got %+v", skipped, afternoon)
+	}
+}
+
+func TestAStockAuctionStrengthShadowScoresIncreasingAuctionAndFiltersWeakCandidates(t *testing.T) {
+	settings := aStockAlgorithmSettingsForRecommendationPeriod("morning", defaultAStockAlgorithmSettings())
+	hotspot := aStockHotspot{Name: "人工智能", Keywords: []string{"人工智能"}, Score: 120, Evidence: 2}
+	candidates := []aStockMarketCandidate{
+		{
+			Code:              "300001",
+			Name:              "人工智能强承接",
+			Rank:              1,
+			AuctionAmount:     100000000,
+			AuctionVolume:     1000000,
+			AuctionAmount0920: 20000000,
+			AuctionAmount0925: 60000000,
+			AuctionAmount0929: 100000000,
+			Sources:           []string{aStockCandidateSourceAuction, aStockCandidateSourceNews},
+			PreFundScore:      40,
+			PreFundDetail:     "个股资金持续流入",
+		},
+		{
+			Code:              "300002",
+			Name:              "人工智能末段回落",
+			Rank:              2,
+			AuctionAmount:     20000000,
+			AuctionAmount0920: 10000000,
+			AuctionAmount0925: 100000000,
+			AuctionAmount0929: 20000000,
+			Sources:           []string{aStockCandidateSourceAuction, aStockCandidateSourceNews},
+		},
+		{
+			Code:              "300003",
+			Name:              "纯竞价大额",
+			Rank:              3,
+			AuctionAmount:     200000000,
+			AuctionAmount0929: 200000000,
+		},
+	}
+
+	recommendations := buildAStockAuctionStrengthRecommendationsWithSectorGateWithSettings([]aStockHotspot{hotspot}, candidates, nil, settings)
+	if len(recommendations) != 1 || recommendations[0].Code != "300001" {
+		t.Fatalf("expected only the increasing auction candidate, got %+v", recommendations)
+	}
+	if !strings.Contains(recommendations[0].Reason, "三段递增") || !strings.Contains(recommendations[0].Reason, "集合竞价强承接影子策略") {
+		t.Fatalf("expected reason to explain auction strength, got %q", recommendations[0].Reason)
+	}
+	strengthComponent := mustAStockScoreComponentForTest(t, recommendations[0], "竞价强度")
+	if strengthComponent.Score <= 0 {
+		t.Fatalf("expected positive auction strength component, got %+v", strengthComponent)
+	}
+	fundComponent := mustAStockScoreComponentForTest(t, recommendations[0], "个股资金预选")
+	if fundComponent.Score != 40 {
+		t.Fatalf("expected fund pre-score to be preserved, got %+v", fundComponent)
 	}
 }
 
