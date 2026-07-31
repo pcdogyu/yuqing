@@ -459,6 +459,47 @@ func TestAStockRecommendationSnapshotAPIUpsertsAndGets(t *testing.T) {
 	}
 }
 
+func TestAStockRecommendationSnapshotAPIRepairsNewsPhraseNamesFromCodeNames(t *testing.T) {
+	ctx := context.Background()
+	store := newContentSearchTestStore(t)
+	svc := NewService(config.Config{}, store)
+	router := svc.Router()
+
+	payload := `{"strategy_date":"2026-07-31","period":"morning","recommendations_json":"[{\"Rank\":2,\"Code\":\"001309\",\"Name\":\"存储芯片大幅高开\"}]","filtered_recommendations_json":"[{\"reason\":\"today_high_pct\",\"recommendation\":{\"Code\":\"001309\",\"Name\":\"存储芯片大幅高开\"}}]","backtests_json":"[{\"Stock\":\"001309 存储芯片大幅高开\",\"Status\":\"等待T+1行情\"}]","generated_count":1}`
+	postReq := httptest.NewRequest(http.MethodPost, "/api/v1/internal/a-stock/recommendations", strings.NewReader(payload))
+	postRR := httptest.NewRecorder()
+	router.ServeHTTP(postRR, postReq)
+	if postRR.Code != http.StatusOK {
+		t.Fatalf("expected bad recommendation snapshot upsert 200, got %d body=%s", postRR.Code, postRR.Body.String())
+	}
+
+	if _, err := store.UpsertAStockCodeNames(ctx, []model.AStockCodeName{{Code: "001309", Name: "德明利"}}); err != nil {
+		t.Fatalf("upsert code names: %v", err)
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/recommendations?date=2026-07-31&period=morning", nil)
+	getRR := httptest.NewRecorder()
+	router.ServeHTTP(getRR, getReq)
+	if getRR.Code != http.StatusOK {
+		t.Fatalf("expected recommendation snapshot get 200, got %d body=%s", getRR.Code, getRR.Body.String())
+	}
+	var envelope struct {
+		Data model.AStockRecommendationSnapshot `json:"data"`
+	}
+	if err := json.Unmarshal(getRR.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode snapshot response error: %v", err)
+	}
+	for label, raw := range map[string]string{
+		"recommendations":          envelope.Data.RecommendationsJSON,
+		"filtered recommendations": envelope.Data.FilteredRecommendationsJSON,
+		"backtests":                envelope.Data.BacktestsJSON,
+	} {
+		if !strings.Contains(raw, "德明利") || strings.Contains(raw, "存储芯片大幅高开") {
+			t.Fatalf("expected %s json to repair name to 德明利, got %s", label, raw)
+		}
+	}
+}
+
 func TestAStockRecommendationPerformanceAPIUsesOfficialAndShadowSnapshots(t *testing.T) {
 	store := newContentSearchTestStore(t)
 	svc := NewService(config.Config{}, store)

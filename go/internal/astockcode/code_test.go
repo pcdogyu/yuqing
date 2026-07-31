@@ -21,3 +21,16 @@ func TestHasResolvedNameRejectsGarbledNames(t *testing.T) {
 		t.Fatal("expected normal stock name to be resolved")
 	}
 }
+
+func TestIsInvalidRecommendationNameRejectsNewsPhrases(t *testing.T) {
+	for _, name := range []string{"存储芯片大幅高开", "半导体板块异动", "主力资金监控"} {
+		if !IsInvalidRecommendationName(name) {
+			t.Fatalf("expected news phrase %q to be invalid recommendation name", name)
+		}
+	}
+	for _, name := range []string{"德明利", "中铝国际", "抚顺特钢"} {
+		if IsInvalidRecommendationName(name) {
+			t.Fatalf("expected stock name %q to be valid recommendation name", name)
+		}
+	}
+}

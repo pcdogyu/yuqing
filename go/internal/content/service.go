@@ -1421,6 +1421,7 @@ func (s *Service) handleGetAStockRecommendationSnapshot(w http.ResponseWriter, r
 	}
 	snapshot.Found = found
 	normalizeAStockRecommendationSnapshotJSON(&snapshot)
+	s.repairAStockRecommendationSnapshotNames(r.Context(), &snapshot)
 	apiutil.WriteJSON(w, http.StatusOK, "ok", snapshot)
 }
 
@@ -1496,6 +1497,7 @@ func (s *Service) handleUpsertAStockRecommendationSnapshot(w http.ResponseWriter
 		return
 	}
 	normalizeAStockRecommendationSnapshotJSON(&snapshot)
+	s.repairAStockRecommendationSnapshotNames(r.Context(), &snapshot)
 	result, err := s.store.UpsertAStockRecommendationSnapshot(r.Context(), snapshot)
 	if err != nil {
 		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
@@ -1518,6 +1520,7 @@ func (s *Service) handleUpsertAStockRecommendationShadowSnapshot(w http.Response
 		return
 	}
 	normalizeAStockRecommendationSnapshotJSON(&snapshot.AStockRecommendationSnapshot)
+	s.repairAStockRecommendationSnapshotNames(r.Context(), &snapshot.AStockRecommendationSnapshot)
 	result, err := s.store.UpsertAStockRecommendationShadowSnapshot(r.Context(), snapshot)
 	if err != nil {
 		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
@@ -1541,6 +1544,280 @@ func normalizeAStockRecommendationJSONArray(raw string) string {
 		return "[]"
 	}
 	return raw
+}
+
+func (s *Service) repairAStockRecommendationSnapshotNames(ctx context.Context, snapshot *model.AStockRecommendationSnapshot) {
+	if s == nil || snapshot == nil {
+		return
+	}
+	codes := make(map[string]struct{})
+	collectAStockRecommendationSnapshotJSONCodes(snapshot.RecommendationsJSON, codes)
+	collectAStockRecommendationSnapshotJSONCodes(snapshot.FilteredRecommendationsJSON, codes)
+	collectAStockRecommendationBacktestJSONCodes(snapshot.BacktestsJSON, codes)
+	if len(codes) == 0 {
+		return
+	}
+	codeList := make([]string, 0, len(codes))
+	for code := range codes {
+		codeList = append(codeList, code)
+	}
+	result, err := s.store.ListAStockCodeNames(ctx, codeList)
+	if err != nil || len(result.Items) == 0 {
+		return
+	}
+	names := make(map[string]string, len(result.Items))
+	for _, item := range result.Items {
+		code := astockcode.Normalize(item.Code)
+		name := astockcode.DisplayName(code, item.Name)
+		if validAStockRecommendationSnapshotName(code, name) {
+			names[code] = name
+		}
+	}
+	if len(names) == 0 {
+		return
+	}
+	snapshot.RecommendationsJSON = repairAStockRecommendationSnapshotJSONNames(snapshot.RecommendationsJSON, names)
+	snapshot.FilteredRecommendationsJSON = repairAStockRecommendationSnapshotJSONNames(snapshot.FilteredRecommendationsJSON, names)
+	snapshot.BacktestsJSON = repairAStockRecommendationBacktestJSONNames(snapshot.BacktestsJSON, names)
+}
+
+func collectAStockRecommendationSnapshotJSONCodes(raw string, codes map[string]struct{}) {
+	if len(codes) == 0 {
+		// Keep nil-map callers safe while allowing the normal empty map path.
+		if codes == nil {
+			return
+		}
+	}
+	var payload any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &payload); err != nil {
+		return
+	}
+	collectAStockRecommendationSnapshotValueCodes(payload, codes)
+}
+
+func collectAStockRecommendationSnapshotValueCodes(value any, codes map[string]struct{}) {
+	switch typed := value.(type) {
+	case []any:
+		for _, item := range typed {
+			collectAStockRecommendationSnapshotValueCodes(item, codes)
+		}
+	case map[string]any:
+		if code := aStockRecommendationSnapshotMapCode(typed); code != "" {
+			codes[code] = struct{}{}
+		}
+		for _, child := range typed {
+			collectAStockRecommendationSnapshotValueCodes(child, codes)
+		}
+	}
+}
+
+func collectAStockRecommendationBacktestJSONCodes(raw string, codes map[string]struct{}) {
+	var payload any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &payload); err != nil {
+		return
+	}
+	collectAStockRecommendationBacktestValueCodes(payload, codes)
+}
+
+func collectAStockRecommendationBacktestValueCodes(value any, codes map[string]struct{}) {
+	switch typed := value.(type) {
+	case []any:
+		for _, item := range typed {
+			collectAStockRecommendationBacktestValueCodes(item, codes)
+		}
+	case map[string]any:
+		for _, key := range []string{"Stock", "stock"} {
+			if raw, ok := typed[key].(string); ok {
+				if code := aStockRecommendationSnapshotStockStringCode(raw); code != "" {
+					codes[code] = struct{}{}
+				}
+			}
+		}
+		for _, child := range typed {
+			collectAStockRecommendationBacktestValueCodes(child, codes)
+		}
+	}
+}
+
+func repairAStockRecommendationSnapshotJSONNames(raw string, names map[string]string) string {
+	var payload any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &payload); err != nil {
+		return raw
+	}
+	if !repairAStockRecommendationSnapshotValueNames(payload, names) {
+		return raw
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return raw
+	}
+	return string(data)
+}
+
+func repairAStockRecommendationSnapshotValueNames(value any, names map[string]string) bool {
+	changed := false
+	switch typed := value.(type) {
+	case []any:
+		for _, item := range typed {
+			if repairAStockRecommendationSnapshotValueNames(item, names) {
+				changed = true
+			}
+		}
+	case map[string]any:
+		code := aStockRecommendationSnapshotMapCode(typed)
+		if code != "" {
+			current := aStockRecommendationSnapshotMapName(typed)
+			if resolved := names[code]; shouldUseAStockRecommendationSnapshotResolvedName(code, current, resolved) {
+				setAStockRecommendationSnapshotMapName(typed, resolved)
+				changed = true
+			}
+		}
+		for _, child := range typed {
+			if repairAStockRecommendationSnapshotValueNames(child, names) {
+				changed = true
+			}
+		}
+	}
+	return changed
+}
+
+func repairAStockRecommendationBacktestJSONNames(raw string, names map[string]string) string {
+	var payload any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &payload); err != nil {
+		return raw
+	}
+	if !repairAStockRecommendationBacktestValueNames(payload, names) {
+		return raw
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return raw
+	}
+	return string(data)
+}
+
+func repairAStockRecommendationBacktestValueNames(value any, names map[string]string) bool {
+	changed := false
+	switch typed := value.(type) {
+	case []any:
+		for _, item := range typed {
+			if repairAStockRecommendationBacktestValueNames(item, names) {
+				changed = true
+			}
+		}
+	case map[string]any:
+		for _, key := range []string{"Stock", "stock"} {
+			raw, ok := typed[key].(string)
+			if !ok {
+				continue
+			}
+			code := aStockRecommendationSnapshotStockStringCode(raw)
+			if code == "" {
+				continue
+			}
+			current := aStockRecommendationSnapshotStockStringName(code, raw)
+			if resolved := names[code]; shouldUseAStockRecommendationSnapshotResolvedName(code, current, resolved) {
+				typed[key] = code + " " + resolved
+				changed = true
+			}
+		}
+		for _, child := range typed {
+			if repairAStockRecommendationBacktestValueNames(child, names) {
+				changed = true
+			}
+		}
+	}
+	return changed
+}
+
+func aStockRecommendationSnapshotMapCode(item map[string]any) string {
+	for _, key := range []string{"Code", "code", "stock_code", "stockCode"} {
+		if raw, ok := item[key].(string); ok {
+			code := astockcode.Normalize(raw)
+			if astockcode.IsShanghaiShenzhen(code) {
+				return code
+			}
+		}
+	}
+	return ""
+}
+
+func aStockRecommendationSnapshotMapName(item map[string]any) string {
+	for _, key := range []string{"Name", "name", "stock_name", "stockName"} {
+		if raw, ok := item[key].(string); ok {
+			return strings.TrimSpace(raw)
+		}
+	}
+	return ""
+}
+
+func setAStockRecommendationSnapshotMapName(item map[string]any, name string) {
+	for _, key := range []string{"Name", "name", "stock_name", "stockName"} {
+		if _, ok := item[key]; ok {
+			item[key] = name
+			return
+		}
+	}
+	item["Name"] = name
+}
+
+func aStockRecommendationSnapshotStockStringCode(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	fields := strings.Fields(raw)
+	if len(fields) > 0 {
+		code := astockcode.Normalize(fields[0])
+		if astockcode.IsShanghaiShenzhen(code) {
+			return code
+		}
+	}
+	code := astockcode.Normalize(raw)
+	if astockcode.IsShanghaiShenzhen(code) {
+		return code
+	}
+	return ""
+}
+
+func aStockRecommendationSnapshotStockStringName(code string, raw string) string {
+	code = astockcode.Normalize(code)
+	raw = strings.TrimSpace(raw)
+	if code == "" || raw == "" {
+		return ""
+	}
+	if strings.HasPrefix(raw, code) {
+		return strings.TrimSpace(strings.TrimPrefix(raw, code))
+	}
+	return ""
+}
+
+func shouldUseAStockRecommendationSnapshotResolvedName(code string, name string, resolved string) bool {
+	code = astockcode.Normalize(code)
+	name = astockcode.DisplayName(code, name)
+	resolved = astockcode.DisplayName(code, resolved)
+	if !validAStockRecommendationSnapshotName(code, resolved) {
+		return false
+	}
+	if !validAStockRecommendationSnapshotName(code, name) {
+		return true
+	}
+	if astockcode.IsInvalidRecommendationName(name) {
+		return true
+	}
+	if len([]rune(name)) <= 2 {
+		return true
+	}
+	if name == resolved {
+		return true
+	}
+	return strings.Contains(resolved, name) || strings.Contains(name, resolved)
+}
+
+func validAStockRecommendationSnapshotName(code string, name string) bool {
+	code = astockcode.Normalize(code)
+	name = astockcode.DisplayName(code, name)
+	return astockcode.IsShanghaiShenzhen(code) && astockcode.HasResolvedName(code, name) && !astockcode.IsInvalidRecommendationName(name)
 }
 
 func (s *Service) handleListAStockRecommendationSelections(w http.ResponseWriter, r *http.Request) {

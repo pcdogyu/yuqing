@@ -14487,57 +14487,7 @@ func isAStockRecommendationPlaceholderName(name string) bool {
 }
 
 func isInvalidAStockRecommendationName(name string) bool {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return false
-	}
-	blockedExact := map[string]struct{}{
-		"主力资金监控": {},
-		"资金监控":   {},
-		"资金流向":   {},
-		"市场要闻":   {},
-		"盘前市场要闻": {},
-		"金十数据整理": {},
-	}
-	if _, ok := blockedExact[name]; ok {
-		return true
-	}
-	blockedFragments := []string{
-		"主力资金监控",
-		"资金监控",
-		"融资融券",
-		"盘前市场要闻",
-		"快速",
-		"盘中",
-		"异动",
-		"涨停",
-		"跌停",
-		"涨超",
-		"跌超",
-		"大涨",
-		"大跌",
-		"大幅",
-		"高开",
-		"低开",
-		"拉升",
-		"回调",
-		"走强",
-		"走弱",
-		"封板",
-		"冲高",
-		"跳水",
-		"活跃",
-		"领涨",
-		"领跌",
-		"反弹",
-		"回落",
-	}
-	for _, fragment := range blockedFragments {
-		if strings.Contains(name, fragment) {
-			return true
-		}
-	}
-	return false
+	return astockcode.IsInvalidRecommendationName(name)
 }
 
 func aStockRecommendationHotspotSlice(hotspots []aStockHotspot) []aStockHotspot {
