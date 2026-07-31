@@ -2671,7 +2671,7 @@ func TestHotspotSwitchingEndpointUsesStoredSnapshot(t *testing.T) {
 func TestSnapshotHotspotSwitchingEndpointRefreshesSnapshot(t *testing.T) {
 	ctx := context.Background()
 	store := newContentSearchTestStore(t)
-	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	now := time.Now().Add(-time.Minute).UTC()
 	if _, _, err := store.UpsertItems(ctx, []model.Item{{
 		SourceType: "headline",
 		SourceKey:  "hotspot-snapshot-ai",

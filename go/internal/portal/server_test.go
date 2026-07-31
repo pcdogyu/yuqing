@@ -10486,6 +10486,35 @@ func TestAStockRecommendationsDoNotInferFundMonitorTitleAsStockName(t *testing.T
 	}
 }
 
+func TestAStockRecommendationsDoNotUseNewsPhraseAsStockName(t *testing.T) {
+	hotspot := aStockHotspot{
+		Name:     "半导体",
+		Keywords: []string{"半导体", "芯片", "存储"},
+		Score:    100,
+		Evidence: 1,
+		MatchedItems: []model.Item{{
+			Title:    "存储芯片大幅高开，德明利涨停",
+			Summary:  "半导体板块活跃",
+			TagFlags: "0.001309",
+		}},
+	}
+
+	recommendations := buildAStockRecommendationsWithLimit([]aStockHotspot{hotspot}, []aStockMarketCandidate{
+		{Code: "001309", Name: "德明利", Rank: 1, AuctionAmount: 9000000},
+	}, aStockReplacementPoolLimit, aStockReplacementPerHotspot)
+
+	got := aStockTestRecommendationsByCode(recommendations)["001309"]
+	if got.Code != "001309" {
+		t.Fatalf("expected 001309 recommendation, got %+v", recommendations)
+	}
+	if got.Name != "德明利" {
+		t.Fatalf("expected news phrase name to be replaced by market name 德明利, got %+v", got)
+	}
+	if !isInvalidAStockRecommendationName("存储芯片大幅高开") {
+		t.Fatal("expected intraday news phrase to be treated as invalid stock name")
+	}
+}
+
 func TestAStockRecommendationsExcludeNegativeOnlyStockEvidence(t *testing.T) {
 	hotspot := aStockHotspot{
 		Name:     "半导体测试",
@@ -12864,6 +12893,58 @@ func TestAStockSnapshotSaveRepairsNamesFromEastmoneyQuote(t *testing.T) {
 	}
 	if len(backtests) != 3 {
 		t.Fatalf("expected snapshot backtests to use repaired stock name, got %+v", backtests)
+	}
+}
+
+func TestAStockSnapshotSaveRepairsNewsPhraseNameFromCodeNames(t *testing.T) {
+	var captured model.AStockRecommendationSnapshot
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/a-stock/code-names":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockCodeNameListResult{Items: []model.AStockCodeName{
+				{Code: "001309", Name: "德明利"},
+			}})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/internal/a-stock/recommendations":
+			if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+				t.Fatalf("decode snapshot payload: %v", err)
+			}
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshotUpsertResult{Updated: 1})
+		default:
+			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	err := srv.saveAStockRecommendationSnapshot(aStockContext{
+		Date:   "2026-07-31",
+		Period: "morning",
+		Recommendations: []aStockRecommendation{
+			{Rank: 1, Code: "001309", Name: "存储芯片大幅高开", Hotspot: "半导体", HotspotScore: 21, MarketScore: 281},
+		},
+		Backtests: []aStockBacktestRow{
+			{Stock: "001309 存储芯片大幅高开", Status: "等待T+1行情"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("save snapshot: %v", err)
+	}
+
+	var recommendations []aStockRecommendation
+	if err := json.Unmarshal([]byte(captured.RecommendationsJSON), &recommendations); err != nil {
+		t.Fatalf("decode recommendations: %v", err)
+	}
+	if len(recommendations) != 1 || recommendations[0].Code != "001309" || recommendations[0].Name != "德明利" {
+		t.Fatalf("expected snapshot recommendation name to repair to 德明利, got %+v", recommendations)
+	}
+
+	var backtests []aStockBacktestRow
+	if err := json.Unmarshal([]byte(captured.BacktestsJSON), &backtests); err != nil {
+		t.Fatalf("decode backtests: %v", err)
+	}
+	if len(backtests) != 1 || backtests[0].Stock != "001309 德明利" {
+		t.Fatalf("expected snapshot backtest stock to repair to 001309 德明利, got %+v", backtests)
 	}
 }
 
