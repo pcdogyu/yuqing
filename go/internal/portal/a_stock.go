@@ -639,16 +639,16 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		body[data-page='a-stock'] main{max-width:none;width:100%;box-sizing:border-box}
 		body[data-page='a-stock'] .site-footer{max-width:none;width:100%;box-sizing:border-box}
 		body[data-page='a-stock'] section{width:100%;box-sizing:border-box}
-		body[data-page='a-stock'] table{width:100%;min-width:100%;font-size:13px}
+		body[data-page='a-stock'] table{width:100%;min-width:100%;font-size:12px}
 		.astock-card{padding:18px;border:1px solid #ece7dc;border-radius:14px;background:#fff}
 		.astock-overview-header{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;margin-bottom:14px}
 		.astock-overview-header h2{margin:0}
-		.astock-overview-summary{display:flex;justify-content:flex-start;gap:24px;flex-wrap:wrap;text-align:left;font-size:12px}
+		.astock-overview-summary{display:flex;justify-content:flex-start;gap:24px;flex-wrap:wrap;text-align:left;font-size:11px}
 		.astock-overview-summary .astock-muted{display:block;margin-bottom:4px;white-space:nowrap;word-break:keep-all}
-		.astock-overview-summary strong{display:block;font-size:18px;line-height:1.25;white-space:nowrap}
-		.astock-overview-table{width:100%;min-width:1920px;table-layout:fixed;font-size:12px}
+		.astock-overview-summary strong{display:block;font-size:17px;line-height:1.25;white-space:nowrap}
+		.astock-overview-table{width:100%;min-width:1920px;table-layout:fixed;font-size:11px}
 		.astock-overview-table th,.astock-overview-table td{vertical-align:top}
-		.astock-overview-table .astock-muted{display:block;margin-bottom:7px;font-size:12px;white-space:nowrap;word-break:keep-all}
+		.astock-overview-table .astock-muted{display:block;margin-bottom:7px;font-size:11px;white-space:nowrap;word-break:keep-all}
 		.astock-overview-table .astock-overview-sub-label{margin-top:16px}
 		.astock-overview-period{width:6.4%;min-width:110px}
 		.astock-overview-period strong{white-space:nowrap}
@@ -666,11 +666,11 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-overview-recalculate .astock-muted,.astock-overview-recalculate strong{white-space:nowrap}
 		.astock-overview-window{width:11.2%;min-width:196px}
 		.astock-overview-window strong{white-space:nowrap}
-		.astock-overview-table strong{display:block;font-size:18px;line-height:1.25}
-		.astock-overview-status{width:23.1%;min-width:380px}
+		.astock-overview-table strong{display:block;font-size:17px;line-height:1.25}
+		.astock-overview-status{width:25.4%;min-width:418px}
 		.astock-overview-status strong{white-space:normal;word-break:break-word}
 		.astock-filter-toggle-form{margin:0}
-		.astock-filter-toggle{display:inline-flex;align-items:center;justify-content:center;max-width:100%;box-sizing:border-box;margin-top:8px;padding:6px 10px;border:1px solid #d6ccbb;border-radius:8px;color:#214e34;text-align:center;text-decoration:none;background:#fff;font-size:12px;font-weight:600;font-family:inherit;line-height:1.2;white-space:normal;cursor:pointer}
+		.astock-filter-toggle{display:inline-flex;align-items:center;justify-content:center;max-width:100%;box-sizing:border-box;margin-top:8px;padding:6px 10px;border:1px solid #d6ccbb;border-radius:8px;color:#214e34;text-align:center;text-decoration:none;background:#fff;font-size:11px;font-weight:600;font-family:inherit;line-height:1.2;white-space:normal;cursor:pointer}
 		.astock-overview-table .astock-filter-toggle{width:100%;min-height:28px;white-space:nowrap}
 		.astock-actions{width:100%}
 		.astock-action-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;align-items:stretch}
