@@ -2,6 +2,7 @@ package eastmoneykuaixun
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -248,6 +249,31 @@ func TestProviderFetchWithOptionsPaginatesToHistoricalWindow(t *testing.T) {
 	}
 	if !containsEastMoneyTitle(items, "6月16日上午A股新闻") {
 		t.Fatalf("expected historical morning item to be fetched, got %+v", items)
+	}
+}
+
+func TestProviderFetchWithOptionsStopsOnCanceledContext(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		_, _ = w.Write([]byte(`{"code":"1","data":{"fastNewsList":[]}}`))
+	}))
+	defer server.Close()
+
+	prov := NewProvider(resty.New().SetRetryCount(0), server.URL+"/comm/web/getFastNewsList")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	items, err := prov.FetchWithOptions(ctx, model.CrawlOptions{
+		Start:     "2026-06-16 08:00:00",
+		End:       "2026-06-16 09:30:59",
+		TimeField: "publish_time",
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context canceled error, got items=%+v err=%v", items, err)
+	}
+	if calls != 0 {
+		t.Fatalf("expected no upstream request after context cancellation, got %d", calls)
 	}
 }
 

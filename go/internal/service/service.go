@@ -36,6 +36,8 @@ type restartInterruptedRunStore interface {
 	FailRunningCrawlRuns(context.Context, string, time.Time) (int, error)
 }
 
+const crawlRunFinishTimeout = 5 * time.Second
+
 type Crawler struct {
 	store     Store
 	providers provider.Registry
@@ -94,9 +96,8 @@ func (c *Crawler) RunWithOptions(ctx context.Context, sourceType string, options
 
 	if fetchErr != nil {
 		summary.ErrorText = fetchErr.Error()
-		_ = c.store.FinishCrawlRun(ctx, runID, "failed", 0, 0, 0, fetchErr.Error(), time.Now().UTC())
 		finishedAt := time.Now().UTC()
-		_ = c.store.RecordTaskRun(ctx, "crawl:"+sourceType, "failed", fetchErr.Error(), startedAt, &finishedAt)
+		_ = c.finishCrawlRun(runID, sourceType, "failed", len(items), 0, 0, fetchErr.Error(), startedAt, finishedAt)
 		return summary, fetchErr
 	}
 	items = filterCrawlItemsByOptions(items, options)
@@ -127,9 +128,8 @@ func (c *Crawler) RunWithOptions(ctx context.Context, sourceType string, options
 	inserted, updated, err := c.store.UpsertItems(ctx, items)
 	if err != nil {
 		summary.ErrorText = err.Error()
-		_ = c.store.FinishCrawlRun(ctx, runID, "failed", len(items), 0, 0, err.Error(), time.Now().UTC())
 		finishedAt := time.Now().UTC()
-		_ = c.store.RecordTaskRun(ctx, "crawl:"+sourceType, "failed", err.Error(), startedAt, &finishedAt)
+		_ = c.finishCrawlRun(runID, sourceType, "failed", len(items), 0, 0, err.Error(), startedAt, finishedAt)
 		return summary, err
 	}
 
@@ -143,12 +143,26 @@ func (c *Crawler) RunWithOptions(ctx context.Context, sourceType string, options
 
 	summary.InsertedCount = inserted
 	summary.UpdatedCount = updated
-	if err := c.store.FinishCrawlRun(ctx, runID, "success", len(items), inserted, updated, "", time.Now().UTC()); err != nil {
+	finishedAt := time.Now().UTC()
+	if err := c.finishCrawlRun(runID, sourceType, "success", len(items), inserted, updated, "", startedAt, finishedAt); err != nil {
 		return summary, err
 	}
-	finishedAt := time.Now().UTC()
-	_ = c.store.RecordTaskRun(ctx, "crawl:"+sourceType, "success", "crawl completed", startedAt, &finishedAt)
 	return summary, nil
+}
+
+func (c *Crawler) finishCrawlRun(runID int64, sourceType, status string, fetched, inserted, updated int, errText string, startedAt, finishedAt time.Time) error {
+	finishCtx, cancel := context.WithTimeout(context.Background(), crawlRunFinishTimeout)
+	defer cancel()
+
+	if err := c.store.FinishCrawlRun(finishCtx, runID, status, fetched, inserted, updated, errText, finishedAt); err != nil {
+		return err
+	}
+	message := "crawl completed"
+	if status != "success" {
+		message = errText
+	}
+	_ = c.store.RecordTaskRun(finishCtx, "crawl:"+sourceType, status, message, startedAt, &finishedAt)
+	return nil
 }
 
 func fetchProviderItems(ctx context.Context, prov provider.Provider, options model.CrawlOptions) ([]model.Item, error) {

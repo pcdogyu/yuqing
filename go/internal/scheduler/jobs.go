@@ -489,7 +489,7 @@ func (w *Worker) jobDefinitions() []jobDefinition {
 		withJobMeta(jobDefinition{
 			Name:        "hotspot-switching-snapshot-refresh",
 			Group:       "content",
-			Description: "热点切换快照：每分钟刷新 7/14/30 天统计，页面切换直接读取快照",
+			Description: "热点切换快照：每分钟轮转刷新 7/14/30 天统计，页面切换直接读取快照",
 			Interval:    time.Minute,
 			Enabled:     strings.TrimSpace(w.cfg.ContentURL) != "",
 			Run: func(ctx context.Context) error {

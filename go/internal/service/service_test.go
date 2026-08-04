@@ -3,9 +3,11 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -101,6 +103,53 @@ func TestCrawlerRunWithOptionsFiltersPublishTimeWindow(t *testing.T) {
 	}
 	if len(items.Items) != 1 || items.Items[0].Title != "上午新闻" {
 		t.Fatalf("expected only morning item, got %+v", items.Items)
+	}
+}
+
+func TestCrawlerRunWithCanceledFetchFinishesCrawlRun(t *testing.T) {
+	store, err := sqlitestore.New(filepath.Join(t.TempDir(), "crawler-canceled.db"))
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	defer store.Close()
+
+	started := make(chan struct{})
+	crawler := NewCrawler(store, provider.Registry{
+		Flash: cancelingProvider{
+			sourceType: provider.SourceTypeFlash,
+			started:    started,
+		},
+	}, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		<-started
+		cancel()
+	}()
+
+	summary, err := crawler.Run(ctx, provider.SourceTypeFlash)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context canceled error, got summary=%+v err=%v", summary, err)
+	}
+
+	runs, err := store.ListCrawlRuns(context.Background(), 10, provider.SourceTypeFlash)
+	if err != nil {
+		t.Fatalf("ListCrawlRuns error: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected one crawl run, got %+v", runs)
+	}
+	if runs[0].Status != "failed" || !strings.Contains(runs[0].ErrorText, "context canceled") || runs[0].FinishedAt == nil {
+		t.Fatalf("expected canceled crawl run to be failed and finished, got %+v", runs[0])
+	}
+
+	taskRuns, err := store.ListTaskRuns(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("ListTaskRuns error: %v", err)
+	}
+	if len(taskRuns) != 1 || taskRuns[0].TaskName != "crawl:"+provider.SourceTypeFlash || taskRuns[0].Status != "failed" {
+		t.Fatalf("expected failed crawl task run, got %+v", taskRuns)
 	}
 }
 
@@ -213,6 +262,23 @@ func (p fakeProvider) SourceType() string {
 
 func (p fakeProvider) Fetch(context.Context) ([]model.Item, error) {
 	return p.items, nil
+}
+
+type cancelingProvider struct {
+	sourceType string
+	started    chan<- struct{}
+}
+
+func (p cancelingProvider) SourceType() string {
+	return p.sourceType
+}
+
+func (p cancelingProvider) Fetch(ctx context.Context) ([]model.Item, error) {
+	if p.started != nil {
+		close(p.started)
+	}
+	<-ctx.Done()
+	return nil, ctx.Err()
 }
 
 func mustTemplateConfigJSON(t *testing.T, baseURL string) string {

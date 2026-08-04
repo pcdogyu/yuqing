@@ -17,12 +17,13 @@ import (
 )
 
 const (
-	defaultPageURL      = "https://kuaixun.eastmoney.com/"
-	defaultAPIURL       = "https://np-weblist.eastmoney.com/comm/web/getFastNewsList"
-	defaultSearchAPIURL = "https://search-api-web.eastmoney.com/search/jsonp"
-	fromText            = "东方财富网"
-	maxWindowPages      = 80
-	maxDetailEnrich     = 30
+	defaultPageURL        = "https://kuaixun.eastmoney.com/"
+	defaultAPIURL         = "https://np-weblist.eastmoney.com/comm/web/getFastNewsList"
+	defaultSearchAPIURL   = "https://search-api-web.eastmoney.com/search/jsonp"
+	fromText              = "东方财富网"
+	maxWindowPages        = 80
+	maxDetailEnrich       = 30
+	maxWindowDetailEnrich = 12
 )
 
 type Provider struct {
@@ -63,19 +64,29 @@ func (p *Provider) Fetch(ctx context.Context) ([]model.Item, error) {
 		if err != nil {
 			return nil, err
 		}
-		return p.enrichItems(ctx, dedupe(p.withSourceType(items))), nil
+		items = p.enrichItems(ctx, dedupe(p.withSourceType(items)))
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return items, nil
 	}
 	collected := make([]model.Item, 0, 80)
 	var errs []string
 
 	items, _, err := p.fetchFastNewsPage(ctx, "", time.Now().UTC())
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		errs = append(errs, err.Error())
 	} else {
 		collected = append(collected, items...)
 	}
 
 	collected = p.enrichItems(ctx, dedupe(collected))
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if len(collected) == 0 && len(errs) > 0 {
 		return nil, fmt.Errorf("%s", strings.Join(errs, "; "))
 	}
@@ -88,7 +99,11 @@ func (p *Provider) FetchWithOptions(ctx context.Context, options model.CrawlOpti
 		if err != nil {
 			return nil, err
 		}
-		return p.enrichItems(ctx, dedupe(p.withSourceType(items))), nil
+		items = p.enrichItems(ctx, dedupe(p.withSourceType(items)))
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return items, nil
 	}
 	start, hasStart := parseOptionTime(options.Start)
 	if !hasStart && strings.TrimSpace(options.End) == "" {
@@ -99,8 +114,14 @@ func (p *Provider) FetchWithOptions(ctx context.Context, options model.CrawlOpti
 	sortEnd := ""
 	var errs []string
 	for page := 0; page < maxWindowPages; page++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		items, rows, err := p.fetchFastNewsPage(ctx, sortEnd, time.Now().UTC())
 		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
 			errs = append(errs, err.Error())
 			break
 		}
@@ -121,7 +142,13 @@ func (p *Provider) FetchWithOptions(ctx context.Context, options model.CrawlOpti
 			break
 		}
 	}
-	collected = p.enrichItems(ctx, dedupe(collected))
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	collected = p.enrichItemsWithLimit(ctx, dedupe(collected), maxWindowDetailEnrich)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if len(collected) == 0 && len(errs) > 0 {
 		return nil, fmt.Errorf("%s", strings.Join(errs, "; "))
 	}
@@ -170,6 +197,9 @@ func (p *Provider) fetchSearchItems(ctx context.Context, capturedAt time.Time) (
 	items := make([]model.Item, 0, len(keywords)*10)
 	var errs []string
 	for _, keyword := range keywords {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		param := map[string]any{
 			"uid":           "",
 			"keyword":       keyword,
@@ -197,6 +227,9 @@ func (p *Provider) fetchSearchItems(ctx context.Context, capturedAt time.Time) (
 			SetQueryParam("param", string(rawParam)).
 			Get(p.searchAPIURL)
 		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
 			errs = append(errs, err.Error())
 			continue
 		}
@@ -382,9 +415,16 @@ func searchRowToItem(row searchRow, pageURL string, capturedAt time.Time) model.
 }
 
 func (p *Provider) enrichItems(ctx context.Context, items []model.Item) []model.Item {
+	return p.enrichItemsWithLimit(ctx, items, maxDetailEnrich)
+}
+
+func (p *Provider) enrichItemsWithLimit(ctx context.Context, items []model.Item, limit int) []model.Item {
 	enriched := 0
 	for idx := range items {
-		if enriched >= maxDetailEnrich {
+		if limit <= 0 || enriched >= limit {
+			break
+		}
+		if ctx.Err() != nil {
 			break
 		}
 		if !shouldFetchDetail(items[idx]) {
@@ -398,7 +438,13 @@ func (p *Provider) enrichItems(ctx context.Context, items []model.Item) []model.
 			SetHeader("User-Agent", "Mozilla/5.0 (compatible; YuqingBot/1.0; +https://kuaixun.eastmoney.com/)").
 			Get(items[idx].DetailURL)
 		enriched++
-		if err != nil || resp.IsError() {
+		if err != nil {
+			if ctx.Err() != nil {
+				break
+			}
+			continue
+		}
+		if resp.IsError() {
 			continue
 		}
 		title, content, summary, sourceURL, fromText := parseDetailHTML(resp.String())

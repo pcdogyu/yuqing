@@ -458,6 +458,41 @@ func TestRunCrawlWithOptionsPassesWindowQuery(t *testing.T) {
 	}
 }
 
+func TestRunHotspotSwitchingSnapshotRefreshRotatesDays(t *testing.T) {
+	gotDays := make([]string, 0, 4)
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/internal/hotspots/switching/snapshot" {
+			t.Fatalf("unexpected hotspot refresh request: %s %s", r.Method, r.URL.String())
+		}
+		gotDays = append(gotDays, r.URL.Query().Get("days"))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer content.Close()
+
+	worker := NewWorker(config.Config{
+		ContentURL:         content.URL,
+		HTTPTimeout:        time.Second,
+		ExternalRetryWait:  time.Millisecond,
+		ExternalRetryCount: 0,
+	})
+
+	shanghai, _ := time.LoadLocation("Asia/Shanghai")
+	for _, now := range []time.Time{
+		time.Date(2026, 8, 4, 9, 0, 0, 0, shanghai),
+		time.Date(2026, 8, 4, 9, 1, 0, 0, shanghai),
+		time.Date(2026, 8, 4, 9, 2, 0, 0, shanghai),
+		time.Date(2026, 8, 4, 9, 3, 0, 0, shanghai),
+	} {
+		if err := worker.runHotspotSwitchingSnapshotRefreshAt(context.Background(), now); err != nil {
+			t.Fatalf("runHotspotSwitchingSnapshotRefreshAt error: %v", err)
+		}
+	}
+
+	if got := strings.Join(gotDays, ","); got != "7,14,30,7" {
+		t.Fatalf("expected rotating hotspot days, got %s", got)
+	}
+}
+
 func TestLoopRunsImmediatelyAndStopsOnCancel(t *testing.T) {
 	worker := NewWorker(config.Config{})
 	ctx, cancel := context.WithCancel(context.Background())
