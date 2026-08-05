@@ -93,7 +93,7 @@ body[data-page='sector-fund-flow'] section{width:100%;box-sizing:border-box}
 .sector-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}.sector-card{padding:16px;border:1px solid #ece7dc;border-radius:8px;background:#fff}.sector-card strong{display:block;font-size:20px;margin-top:6px}
 .sector-scroll{overflow:auto}.sector-table{min-width:1240px;width:100%;table-layout:fixed}.sector-table th,.sector-table td{vertical-align:middle;white-space:nowrap}.sector-table th{font-weight:700;text-align:left}.sector-table th:nth-child(1),.sector-table td:nth-child(1){width:54px;text-align:center}.sector-table th:nth-child(2),.sector-table td:nth-child(2){width:140px;text-align:left}.sector-table th:nth-child(3),.sector-table td:nth-child(3){width:70px;text-align:center}.sector-table th:nth-child(4),.sector-table th:nth-child(5),.sector-table th:nth-child(6),.sector-table th:nth-child(7),.sector-table th:nth-child(8),.sector-table th:nth-child(9),.sector-table th:nth-child(10){text-align:right}.sector-table th:nth-child(11),.sector-table td:nth-child(11){width:210px;text-align:left}.sector-table th:nth-child(12),.sector-table td:nth-child(12){width:150px;text-align:left}.sector-num{text-align:right;white-space:nowrap}.sector-positive{color:#d93025;font-weight:700}.sector-negative{color:#087333;font-weight:700}.sector-empty{padding:18px;border:1px dashed #d0c8b8;border-radius:8px;background:#fff;color:#6a6257}
 .sector-name-link,.sector-trend-link{color:#214e34;font-weight:700;text-decoration:none}.sector-name-link:hover,.sector-trend-link:hover{text-decoration:underline}.sector-name-link.active{color:#0b5cab}.sector-detail-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px}.sector-detail-head h3{margin:0}.sector-stock-table{min-width:1240px}.sector-stock-table th:nth-child(2),.sector-stock-table td:nth-child(2){width:90px}.sector-stock-table th:nth-child(3),.sector-stock-table td:nth-child(3){width:120px;text-align:left}.sector-stock-table td.sector-num{text-align:right}.sector-stock-note{margin-top:6px}.sector-trend-tabs{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0}
-.sector-trend-chart-wrap{width:100%;overflow:auto;border:1px solid #ece7dc;border-radius:8px;background:#fff;margin:12px 0 16px}.sector-trend-chart{min-width:900px;width:100%;height:auto;display:block}.sector-trend-chart-label{fill:#6a6257;font-size:12px}.sector-trend-chart-legend{font-size:13px;font-weight:700}.sector-trend-chart-grid{stroke:#ece7dc;stroke-width:1}.sector-trend-chart-zero{stroke:#9a8f7d;stroke-width:1.4}.sector-trend-chart-line-flow{fill:none;stroke:#b3261e;stroke-width:2.7;stroke-linejoin:round;stroke-linecap:round}.sector-trend-chart-line-price{fill:none;stroke:#0b5cab;stroke-width:2.7;stroke-linejoin:round;stroke-linecap:round}.sector-trend-chart-point-flow{fill:#b3261e}.sector-trend-chart-point-price{fill:#0b5cab}.sector-trend-axis-left,.sector-trend-axis-right{stroke:#9a8f7d;stroke-width:1.2}
+.sector-trend-chart-wrap{width:100%;overflow:auto;border:1px solid #ece7dc;border-radius:8px;background:#fff;margin:12px 0 16px}.sector-trend-chart{min-width:900px;width:100%;height:auto;display:block}.sector-trend-chart-label{fill:#6a6257;font-size:12px}.sector-trend-chart-legend{font-size:13px;font-weight:700}.sector-trend-chart-grid,.sector-trend-chart-grid-y,.sector-trend-chart-grid-x{stroke:#ece7dc;stroke-width:1}.sector-trend-chart-zero{stroke:#9a8f7d;stroke-width:1.4}.sector-trend-chart-line-flow{fill:none;stroke:#b3261e;stroke-width:2.7;stroke-linejoin:round;stroke-linecap:round}.sector-trend-chart-line-price{fill:none;stroke:#0b5cab;stroke-width:2.7;stroke-linejoin:round;stroke-linecap:round}.sector-trend-chart-point-flow{fill:#b3261e}.sector-trend-chart-point-price{fill:#0b5cab}.sector-trend-axis-left,.sector-trend-axis-right{stroke:#9a8f7d;stroke-width:1.2}
 @media (max-width:760px){.sector-toolbar{grid-template-columns:1fr}.sector-head{display:block}}
 </style>`)
 	b.WriteString(`<section><div class="sector-head"><div><h2>版块资金</h2><p class="sector-muted">展示 AKShare 行业/概念版块资金流入流出，支持今日、5日、10日切换。</p></div>`)
@@ -694,24 +694,26 @@ func renderSectorFundFlowStockTrendChart(b *strings.Builder, trendCtx sectorFund
 
 	b.WriteString(`<div class="sector-trend-chart-wrap"><svg class="sector-trend-chart" viewBox="0 0 1104 360" role="img" aria-label="最近30个交易日资金进出和股价折线图">`)
 	b.WriteString(`<line class="sector-trend-axis-left" x1="78" y1="30" x2="78" y2="306"></line><line class="sector-trend-axis-right" x1="1026" y1="30" x2="1026" y2="306"></line>`)
-	for _, value := range sectorFundFlowChartTicks(fundMin, fundMax) {
-		y := yForFund(value)
-		className := "sector-trend-chart-grid"
-		if math.Abs(value) < 0.000001 {
-			className = "sector-trend-chart-zero"
+	for _, tick := range sectorFundFlowChartAxisTicks(fundMin, fundMax, 5) {
+		y := top + tick.Ratio*plotH
+		b.WriteString(fmt.Sprintf(`<line class="sector-trend-chart-grid-y" x1="78" y1="%.1f" x2="1026" y2="%.1f"></line>`, y, y))
+		b.WriteString(fmt.Sprintf(`<text class="sector-trend-chart-label sector-trend-chart-label-flow" x="70" y="%.1f" text-anchor="end">%s</text>`, y+4, html.EscapeString(formatSectorFundFlowMoney(tick.Value))))
+	}
+	if fundMin < 0 && fundMax > 0 {
+		zeroY := yForFund(0)
+		if !sectorFundFlowChartTickAtY(sectorFundFlowChartAxisTicks(fundMin, fundMax, 5), zeroY, top, plotH) {
+			b.WriteString(fmt.Sprintf(`<line class="sector-trend-chart-zero" x1="78" y1="%.1f" x2="1026" y2="%.1f"></line>`, zeroY, zeroY))
 		}
-		b.WriteString(fmt.Sprintf(`<line class="%s" x1="78" y1="%.1f" x2="1026" y2="%.1f"></line>`, className, y, y))
-		b.WriteString(fmt.Sprintf(`<text class="sector-trend-chart-label" x="70" y="%.1f" text-anchor="end">%s</text>`, y+4, html.EscapeString(formatSectorFundFlowMoney(value))))
 	}
 	if hasPrice {
-		for _, value := range sectorFundFlowChartTicks(priceMin, priceMax) {
-			y := yForPrice(value)
-			b.WriteString(fmt.Sprintf(`<text class="sector-trend-chart-label" x="1034" y="%.1f" text-anchor="start">%.2f</text>`, y+4, value))
+		for _, tick := range sectorFundFlowChartAxisTicks(priceMin, priceMax, 5) {
+			y := top + tick.Ratio*plotH
+			b.WriteString(fmt.Sprintf(`<text class="sector-trend-chart-label sector-trend-chart-label-price" x="1034" y="%.1f" text-anchor="start">%.2f</text>`, y+4, tick.Value))
 		}
 	}
 	for idx, item := range items {
 		x := xForIndex(idx)
-		b.WriteString(fmt.Sprintf(`<line class="sector-trend-chart-grid" x1="%.1f" y1="30" x2="%.1f" y2="306" opacity="0.38"></line>`, x, x))
+		b.WriteString(fmt.Sprintf(`<line class="sector-trend-chart-grid-x" x1="%.1f" y1="30" x2="%.1f" y2="306" opacity="0.38"></line>`, x, x))
 		if sectorFundFlowShouldLabelChartDate(idx, len(items)) {
 			anchor := "middle"
 			if idx == 0 {
@@ -806,26 +808,40 @@ func sectorFundFlowPriceRange(items []model.AStockStockFundFlow) (float64, float
 	return minValue - padding, maxValue + padding, true
 }
 
-func sectorFundFlowChartTicks(minValue float64, maxValue float64) []float64 {
-	midValue := (minValue + maxValue) / 2
-	if minValue < 0 && maxValue > 0 {
-		midValue = 0
+type sectorFundFlowChartAxisTick struct {
+	Ratio float64
+	Value float64
+}
+
+func sectorFundFlowChartAxisTicks(minValue float64, maxValue float64, count int) []sectorFundFlowChartAxisTick {
+	if count < 4 {
+		count = 4
 	}
-	ticks := []float64{minValue, midValue, maxValue}
-	out := make([]float64, 0, len(ticks))
+	if maxValue == minValue {
+		maxValue = minValue + 1
+	}
+	ticks := make([]sectorFundFlowChartAxisTick, 0, count)
+	for idx := 0; idx < count; idx++ {
+		ratio := 0.0
+		if count > 1 {
+			ratio = float64(idx) / float64(count-1)
+		}
+		ticks = append(ticks, sectorFundFlowChartAxisTick{
+			Ratio: ratio,
+			Value: maxValue - ratio*(maxValue-minValue),
+		})
+	}
+	return ticks
+}
+
+func sectorFundFlowChartTickAtY(ticks []sectorFundFlowChartAxisTick, y float64, top float64, plotH float64) bool {
 	for _, tick := range ticks {
-		duplicate := false
-		for _, existing := range out {
-			if math.Abs(existing-tick) < 0.000001 {
-				duplicate = true
-				break
-			}
-		}
-		if !duplicate {
-			out = append(out, tick)
+		tickY := top + tick.Ratio*plotH
+		if math.Abs(tickY-y) < 0.1 {
+			return true
 		}
 	}
-	return out
+	return false
 }
 
 func sectorFundFlowShouldLabelChartDate(idx int, total int) bool {

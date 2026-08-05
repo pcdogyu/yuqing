@@ -1336,6 +1336,15 @@ func TestSectorFundFlowPageRendersTrendAndStockSearch(t *testing.T) {
 	if got := strings.Count(body, `class="sector-trend-chart-point-flow"`); got != 30 {
 		t.Fatalf("expected stock trend chart to render 30 fund-flow points, got %d body=%s", got, body)
 	}
+	if got := strings.Count(body, `class="sector-trend-chart-grid-y"`); got != 5 {
+		t.Fatalf("expected stock trend chart to render 5 horizontal grid lines, got %d body=%s", got, body)
+	}
+	if got := strings.Count(body, `sector-trend-chart-label-flow`); got != 5 {
+		t.Fatalf("expected stock trend chart to render 5 left-axis flow labels, got %d body=%s", got, body)
+	}
+	if got := strings.Count(body, `sector-trend-chart-label-price`); got != 5 {
+		t.Fatalf("expected stock trend chart to render 5 right-axis price labels, got %d body=%s", got, body)
+	}
 }
 
 func TestSectorFundFlowStockSearchShortTrendShowsChartAndShortfall(t *testing.T) {
@@ -1406,6 +1415,72 @@ func TestSectorFundFlowStockSearchShortTrendShowsChartAndShortfall(t *testing.T)
 	}
 	if got := strings.Count(body, `data-history-row="stock"`); got != 2 {
 		t.Fatalf("expected short stock search history table to render 2 rows, got %d body=%s", got, body)
+	}
+	if got := strings.Count(body, `class="sector-trend-chart-grid-y"`); got != 5 {
+		t.Fatalf("expected short stock trend chart to render 5 horizontal grid lines, got %d body=%s", got, body)
+	}
+	if got := strings.Count(body, `sector-trend-chart-label-flow`); got != 5 {
+		t.Fatalf("expected short stock trend chart to render 5 left-axis flow labels, got %d body=%s", got, body)
+	}
+	if got := strings.Count(body, `sector-trend-chart-label-price`); got != 5 {
+		t.Fatalf("expected short stock trend chart to render 5 right-axis price labels, got %d body=%s", got, body)
+	}
+}
+
+func TestSectorFundFlowStockTrendChartAxisGridLabels(t *testing.T) {
+	base := time.Date(2026, 7, 6, 7, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name            string
+		flows           []float64
+		prices          []float64
+		wantPriceLabels bool
+		wantZero        bool
+	}{
+		{name: "positive fund flow", flows: []float64{1000000, 2200000, 1800000, 3200000}, prices: []float64{4.8, 4.81, 4.82, 4.83}, wantPriceLabels: true},
+		{name: "negative fund flow", flows: []float64{-1000000, -2200000, -1800000, -3200000}, prices: []float64{4.8, 4.81, 4.82, 4.83}, wantPriceLabels: true},
+		{name: "cross zero fund flow", flows: []float64{-1000000, 2200000, -1800000, 3200000}, prices: []float64{4.8, 4.81, 4.82, 4.83}, wantPriceLabels: true, wantZero: true},
+		{name: "missing price labels", flows: []float64{-1000000, 2200000, -1800000, 3200000}, prices: []float64{0, 0, 0, 0}, wantPriceLabels: false, wantZero: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			items := make([]model.AStockStockFundFlow, 0, len(tt.flows))
+			for idx, flow := range tt.flows {
+				price := 0.0
+				if idx < len(tt.prices) {
+					price = tt.prices[idx]
+				}
+				items = append(items, model.AStockStockFundFlow{
+					TradeDate:     base.AddDate(0, 0, -idx).Format("2006-01-02"),
+					Indicator:     "今日",
+					Code:          "600028",
+					Name:          "中国石化",
+					Price:         price,
+					MainNetInflow: flow,
+					FetchedAt:     base.AddDate(0, 0, -idx),
+				})
+			}
+			var b strings.Builder
+			renderSectorFundFlowStockTrendChart(&b, sectorFundFlowTrendContext{
+				StockTrend: model.AStockStockFundFlowTrendResult{Items: items},
+			})
+			body := b.String()
+			if got := strings.Count(body, `class="sector-trend-chart-grid-y"`); got != 5 {
+				t.Fatalf("expected 5 horizontal grid lines, got %d body=%s", got, body)
+			}
+			if got := strings.Count(body, `sector-trend-chart-label-flow`); got != 5 {
+				t.Fatalf("expected 5 left-axis flow labels, got %d body=%s", got, body)
+			}
+			priceLabels := strings.Count(body, `sector-trend-chart-label-price`)
+			if tt.wantPriceLabels && priceLabels != 5 {
+				t.Fatalf("expected 5 right-axis price labels, got %d body=%s", priceLabels, body)
+			}
+			if !tt.wantPriceLabels && priceLabels != 0 {
+				t.Fatalf("expected no right-axis price labels, got %d body=%s", priceLabels, body)
+			}
+			if tt.wantZero && !strings.Contains(body, `class="sector-trend-chart-zero"`) {
+				t.Fatalf("expected cross-zero chart to render a zero reference line, got %s", body)
+			}
+		})
 	}
 }
 
