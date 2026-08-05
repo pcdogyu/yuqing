@@ -93,6 +93,7 @@ body[data-page='sector-fund-flow'] section{width:100%;box-sizing:border-box}
 .sector-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}.sector-card{padding:16px;border:1px solid #ece7dc;border-radius:8px;background:#fff}.sector-card strong{display:block;font-size:20px;margin-top:6px}
 .sector-scroll{overflow:auto}.sector-table{min-width:1240px;width:100%;table-layout:fixed}.sector-table th,.sector-table td{vertical-align:middle;white-space:nowrap}.sector-table th{font-weight:700;text-align:left}.sector-table th:nth-child(1),.sector-table td:nth-child(1){width:54px;text-align:center}.sector-table th:nth-child(2),.sector-table td:nth-child(2){width:140px;text-align:left}.sector-table th:nth-child(3),.sector-table td:nth-child(3){width:70px;text-align:center}.sector-table th:nth-child(4),.sector-table th:nth-child(5),.sector-table th:nth-child(6),.sector-table th:nth-child(7),.sector-table th:nth-child(8),.sector-table th:nth-child(9),.sector-table th:nth-child(10){text-align:right}.sector-table th:nth-child(11),.sector-table td:nth-child(11){width:210px;text-align:left}.sector-table th:nth-child(12),.sector-table td:nth-child(12){width:150px;text-align:left}.sector-num{text-align:right;white-space:nowrap}.sector-positive{color:#d93025;font-weight:700}.sector-negative{color:#087333;font-weight:700}.sector-empty{padding:18px;border:1px dashed #d0c8b8;border-radius:8px;background:#fff;color:#6a6257}
 .sector-name-link,.sector-trend-link{color:#214e34;font-weight:700;text-decoration:none}.sector-name-link:hover,.sector-trend-link:hover{text-decoration:underline}.sector-name-link.active{color:#0b5cab}.sector-detail-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px}.sector-detail-head h3{margin:0}.sector-stock-table{min-width:1240px}.sector-stock-table th:nth-child(2),.sector-stock-table td:nth-child(2){width:90px}.sector-stock-table th:nth-child(3),.sector-stock-table td:nth-child(3){width:120px;text-align:left}.sector-stock-table td.sector-num{text-align:right}.sector-stock-note{margin-top:6px}.sector-trend-tabs{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0}
+.sector-trend-chart-wrap{width:100%;overflow:auto;border:1px solid #ece7dc;border-radius:8px;background:#fff;margin:12px 0 16px}.sector-trend-chart{min-width:900px;width:100%;height:auto;display:block}.sector-trend-chart-label{fill:#6a6257;font-size:12px}.sector-trend-chart-legend{font-size:13px;font-weight:700}.sector-trend-chart-grid{stroke:#ece7dc;stroke-width:1}.sector-trend-chart-zero{stroke:#9a8f7d;stroke-width:1.4}.sector-trend-chart-line-flow{fill:none;stroke:#b3261e;stroke-width:2.7;stroke-linejoin:round;stroke-linecap:round}.sector-trend-chart-line-price{fill:none;stroke:#0b5cab;stroke-width:2.7;stroke-linejoin:round;stroke-linecap:round}.sector-trend-chart-point-flow{fill:#b3261e}.sector-trend-chart-point-price{fill:#0b5cab}.sector-trend-axis-left,.sector-trend-axis-right{stroke:#9a8f7d;stroke-width:1.2}
 @media (max-width:760px){.sector-toolbar{grid-template-columns:1fr}.sector-head{display:block}}
 </style>`)
 	b.WriteString(`<section><div class="sector-head"><div><h2>版块资金</h2><p class="sector-muted">展示 AKShare 行业/概念版块资金流入流出，支持今日、5日、10日切换。</p></div>`)
@@ -519,7 +520,7 @@ func (s *Server) loadSectorFundFlowStockSearchContext(ctx model.AStockSectorFund
 		trendQuery.Set("end_date", ctx.Date)
 		trendQuery.Set("indicator", "今日")
 		trendQuery.Set("code", stocks.Items[0].Code)
-		trendQuery.Set("days", "5")
+		trendQuery.Set("days", "30")
 		var trend model.AStockStockFundFlowTrendResult
 		if err := s.getJSON(s.cfg.ContentURL+"/api/v1/a-stock/stock-fund-flow-trend?"+trendQuery.Encode(), &trend); err == nil {
 			stockCtx.Trend = trend
@@ -550,6 +551,7 @@ func renderSectorFundFlowTrend(b *strings.Builder, ctx model.AStockSectorFundFlo
 	if trendCtx.Mode == "sector" {
 		renderSectorFundFlowSectorTrendTable(b, trendCtx)
 	} else {
+		renderSectorFundFlowStockTrendChart(b, trendCtx)
 		renderSectorFundFlowStockTrendTable(b, trendCtx)
 	}
 	b.WriteString(`</section>`)
@@ -616,6 +618,10 @@ func renderSectorFundFlowSectorTrendTable(b *strings.Builder, trendCtx sectorFun
 }
 
 func renderSectorFundFlowStockTrendTable(b *strings.Builder, trendCtx sectorFundFlowTrendContext) {
+	renderSectorFundFlowStockTrendTableWithLimit(b, trendCtx, 0)
+}
+
+func renderSectorFundFlowStockTrendTableWithLimit(b *strings.Builder, trendCtx sectorFundFlowTrendContext, limit int) {
 	items := trendCtx.StockTrend.Items
 	if len(items) == 0 {
 		b.WriteString(`<div class="sector-empty">暂无个股趋势数据。</div>`)
@@ -626,9 +632,12 @@ func renderSectorFundFlowStockTrendTable(b *strings.Builder, trendCtx sectorFund
 		b.WriteString(fmt.Sprintf("%d", len(items)))
 		b.WriteString(` 个交易日数据。</div>`)
 	}
+	if limit > 0 && len(items) > limit {
+		items = items[:limit]
+	}
 	b.WriteString(`<div class="sector-scroll"><table class="sector-table sector-stock-table"><tr><th>日期</th><th>排名</th><th>代码</th><th>名称</th><th>最新价</th><th>涨跌幅</th><th>主力净流入</th><th>主力净占比</th><th>超大单</th><th>大单</th><th>更新时间</th></tr>`)
 	for _, item := range items {
-		b.WriteString(`<tr><td>`)
+		b.WriteString(`<tr data-history-row="stock"><td>`)
 		b.WriteString(html.EscapeString(item.TradeDate))
 		b.WriteString(`</td><td>`)
 		b.WriteString(fmt.Sprintf("%d", item.Rank))
@@ -648,6 +657,201 @@ func renderSectorFundFlowStockTrendTable(b *strings.Builder, trendCtx sectorFund
 		b.WriteString(`</td></tr>`)
 	}
 	b.WriteString(`</table></div>`)
+}
+
+func renderSectorFundFlowStockTrendChart(b *strings.Builder, trendCtx sectorFundFlowTrendContext) {
+	items := sectorFundFlowStockTrendChartItems(trendCtx.StockTrend.Items)
+	if len(items) == 0 {
+		return
+	}
+	const (
+		width  = 1104.0
+		height = 360.0
+		left   = 78.0
+		right  = 78.0
+		top    = 30.0
+		bottom = 54.0
+	)
+	plotW := width - left - right
+	plotH := height - top - bottom
+	fundMin, fundMax := sectorFundFlowMoneyRange(items)
+	priceMin, priceMax, hasPrice := sectorFundFlowPriceRange(items)
+	xForIndex := func(idx int) float64 {
+		if len(items) <= 1 {
+			return left + plotW/2
+		}
+		return left + float64(idx)*plotW/float64(len(items)-1)
+	}
+	yForFund := func(value float64) float64 {
+		return top + (fundMax-value)/(fundMax-fundMin)*plotH
+	}
+	yForPrice := func(value float64) float64 {
+		if !hasPrice {
+			return top + plotH/2
+		}
+		return top + (priceMax-value)/(priceMax-priceMin)*plotH
+	}
+
+	b.WriteString(`<div class="sector-trend-chart-wrap"><svg class="sector-trend-chart" viewBox="0 0 1104 360" role="img" aria-label="最近30个交易日资金进出和股价折线图">`)
+	b.WriteString(`<line class="sector-trend-axis-left" x1="78" y1="30" x2="78" y2="306"></line><line class="sector-trend-axis-right" x1="1026" y1="30" x2="1026" y2="306"></line>`)
+	for _, value := range sectorFundFlowChartTicks(fundMin, fundMax) {
+		y := yForFund(value)
+		className := "sector-trend-chart-grid"
+		if math.Abs(value) < 0.000001 {
+			className = "sector-trend-chart-zero"
+		}
+		b.WriteString(fmt.Sprintf(`<line class="%s" x1="78" y1="%.1f" x2="1026" y2="%.1f"></line>`, className, y, y))
+		b.WriteString(fmt.Sprintf(`<text class="sector-trend-chart-label" x="70" y="%.1f" text-anchor="end">%s</text>`, y+4, html.EscapeString(formatSectorFundFlowMoney(value))))
+	}
+	if hasPrice {
+		for _, value := range sectorFundFlowChartTicks(priceMin, priceMax) {
+			y := yForPrice(value)
+			b.WriteString(fmt.Sprintf(`<text class="sector-trend-chart-label" x="1034" y="%.1f" text-anchor="start">%.2f</text>`, y+4, value))
+		}
+	}
+	for idx, item := range items {
+		x := xForIndex(idx)
+		b.WriteString(fmt.Sprintf(`<line class="sector-trend-chart-grid" x1="%.1f" y1="30" x2="%.1f" y2="306" opacity="0.38"></line>`, x, x))
+		if sectorFundFlowShouldLabelChartDate(idx, len(items)) {
+			anchor := "middle"
+			if idx == 0 {
+				anchor = "start"
+			} else if idx == len(items)-1 {
+				anchor = "end"
+			}
+			b.WriteString(fmt.Sprintf(`<text class="sector-trend-chart-label" x="%.1f" y="332" text-anchor="%s">%s</text>`, x, anchor, html.EscapeString(item.TradeDate)))
+		}
+	}
+	if flowPath := sectorFundFlowStockTrendPath(items, xForIndex, yForFund, func(item model.AStockStockFundFlow) (float64, bool) {
+		return item.MainNetInflow, true
+	}); flowPath != "" {
+		b.WriteString(`<path class="sector-trend-chart-line-flow" d="`)
+		b.WriteString(flowPath)
+		b.WriteString(`"></path>`)
+	}
+	if hasPrice {
+		if pricePath := sectorFundFlowStockTrendPath(items, xForIndex, yForPrice, func(item model.AStockStockFundFlow) (float64, bool) {
+			return item.Price, item.Price > 0
+		}); pricePath != "" {
+			b.WriteString(`<path class="sector-trend-chart-line-price" d="`)
+			b.WriteString(pricePath)
+			b.WriteString(`"></path>`)
+		}
+	}
+	for idx, item := range items {
+		x := xForIndex(idx)
+		b.WriteString(fmt.Sprintf(`<circle class="sector-trend-chart-point-flow" data-date="%s" cx="%.1f" cy="%.1f" r="2.8"><title>%s 资金进出 %s</title></circle>`, html.EscapeString(item.TradeDate), x, yForFund(item.MainNetInflow), html.EscapeString(item.TradeDate), html.EscapeString(formatSectorFundFlowMoney(item.MainNetInflow))))
+		if hasPrice && item.Price > 0 {
+			b.WriteString(fmt.Sprintf(`<circle class="sector-trend-chart-point-price" data-date="%s" cx="%.1f" cy="%.1f" r="2.8"><title>%s 股价 %.2f</title></circle>`, html.EscapeString(item.TradeDate), x, yForPrice(item.Price), html.EscapeString(item.TradeDate), item.Price))
+		}
+	}
+	b.WriteString(`<text class="sector-trend-chart-legend" x="78" y="20" fill="#b3261e">资金进出（左轴）</text>`)
+	b.WriteString(`<text class="sector-trend-chart-legend" x="1026" y="20" text-anchor="end" fill="#0b5cab">股价（右轴）</text>`)
+	b.WriteString(`</svg></div>`)
+}
+
+func sectorFundFlowStockTrendChartItems(items []model.AStockStockFundFlow) []model.AStockStockFundFlow {
+	out := make([]model.AStockStockFundFlow, 0, len(items))
+	for i := len(items) - 1; i >= 0; i-- {
+		item := items[i]
+		if strings.TrimSpace(item.TradeDate) == "" {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func sectorFundFlowMoneyRange(items []model.AStockStockFundFlow) (float64, float64) {
+	minValue, maxValue := 0.0, 0.0
+	for _, item := range items {
+		minValue = math.Min(minValue, item.MainNetInflow)
+		maxValue = math.Max(maxValue, item.MainNetInflow)
+	}
+	if minValue == maxValue {
+		padding := math.Max(math.Abs(maxValue)*0.1, 1)
+		return minValue - padding, maxValue + padding
+	}
+	padding := math.Max((maxValue-minValue)*0.08, 1)
+	if minValue < 0 {
+		minValue -= padding
+	}
+	if maxValue > 0 {
+		maxValue += padding
+	}
+	if minValue == maxValue {
+		maxValue = minValue + 1
+	}
+	return minValue, maxValue
+}
+
+func sectorFundFlowPriceRange(items []model.AStockStockFundFlow) (float64, float64, bool) {
+	minValue := math.Inf(1)
+	maxValue := math.Inf(-1)
+	for _, item := range items {
+		if item.Price <= 0 || math.IsNaN(item.Price) || math.IsInf(item.Price, 0) {
+			continue
+		}
+		minValue = math.Min(minValue, item.Price)
+		maxValue = math.Max(maxValue, item.Price)
+	}
+	if math.IsInf(minValue, 0) || math.IsInf(maxValue, 0) {
+		return 0, 1, false
+	}
+	if minValue == maxValue {
+		padding := math.Max(math.Abs(maxValue)*0.02, 0.01)
+		return minValue - padding, maxValue + padding, true
+	}
+	padding := math.Max((maxValue-minValue)*0.08, 0.01)
+	return minValue - padding, maxValue + padding, true
+}
+
+func sectorFundFlowChartTicks(minValue float64, maxValue float64) []float64 {
+	midValue := (minValue + maxValue) / 2
+	if minValue < 0 && maxValue > 0 {
+		midValue = 0
+	}
+	ticks := []float64{minValue, midValue, maxValue}
+	out := make([]float64, 0, len(ticks))
+	for _, tick := range ticks {
+		duplicate := false
+		for _, existing := range out {
+			if math.Abs(existing-tick) < 0.000001 {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			out = append(out, tick)
+		}
+	}
+	return out
+}
+
+func sectorFundFlowShouldLabelChartDate(idx int, total int) bool {
+	if total <= 10 {
+		return true
+	}
+	if idx == 0 || idx == total-1 {
+		return true
+	}
+	return idx%5 == 0
+}
+
+func sectorFundFlowStockTrendPath(items []model.AStockStockFundFlow, xForIndex func(int) float64, yForValue func(float64) float64, valueForItem func(model.AStockStockFundFlow) (float64, bool)) string {
+	parts := make([]string, 0, len(items))
+	for idx, item := range items {
+		value, ok := valueForItem(item)
+		if !ok || math.IsNaN(value) || math.IsInf(value, 0) {
+			continue
+		}
+		prefix := "L"
+		if len(parts) == 0 {
+			prefix = "M"
+		}
+		parts = append(parts, fmt.Sprintf("%s%.1f %.1f", prefix, xForIndex(idx), yForValue(value)))
+	}
+	return strings.Join(parts, " ")
 }
 
 func renderSectorFundFlowStockTable(b *strings.Builder, ctx model.AStockSectorFundFlowListResult, stockCtx sectorFundFlowStockContext) {
@@ -723,7 +927,7 @@ func renderSectorFundFlowStockSearch(b *strings.Builder, ctx model.AStockSectorF
 		trendQuery := sectorFundFlowQuery(model.AStockSectorFundFlowFilter{Date: ctx.Date, SectorType: ctx.SectorType, Indicator: ctx.Indicator, Keyword: ctx.Keyword})
 		trendQuery.Set("trend", "stock")
 		trendQuery.Set("code", item.Code)
-		trendQuery.Set("trend_days", "5")
+		trendQuery.Set("trend_days", "30")
 		b.WriteString(`<tr><td>`)
 		b.WriteString(fmt.Sprintf("%d", item.Rank))
 		b.WriteString(`</td><td>`)
@@ -748,15 +952,17 @@ func renderSectorFundFlowStockSearch(b *strings.Builder, ctx model.AStockSectorF
 		nestedTrend := sectorFundFlowTrendContext{
 			Mode:       "stock",
 			Title:      firstStockFundFlowTitle(stockCtx.Trend.Items),
-			Days:       5,
+			Days:       30,
 			StockCode:  stockCtx.Trend.Code,
 			StockName:  firstStockFundFlowName(stockCtx.Trend.Items),
 			StockTrend: stockCtx.Trend,
 		}
+		renderSectorFundFlowStockTrendChart(b, nestedTrend)
 		b.WriteString(`<h3>`)
 		b.WriteString(html.EscapeString(firstStockFundFlowTitle(stockCtx.Trend.Items)))
+		b.WriteString(` 最近10日历史记录`)
 		b.WriteString(`</h3>`)
-		renderSectorFundFlowStockTrendTable(b, nestedTrend)
+		renderSectorFundFlowStockTrendTableWithLimit(b, nestedTrend, 10)
 	}
 	b.WriteString(`</section>`)
 }

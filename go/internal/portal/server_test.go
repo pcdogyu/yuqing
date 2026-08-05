@@ -1189,6 +1189,9 @@ func TestSectorFundFlowPageLoadsFiltersRowsAndRefreshAction(t *testing.T) {
 			t.Fatalf("expected sector fund flow page not to contain %q, got %s", notWant, body)
 		}
 	}
+	if strings.Contains(body, `<svg class="sector-trend-chart"`) {
+		t.Fatalf("expected page without stock search hits not to render trend chart, got %s", body)
+	}
 
 	form := url.Values{}
 	form.Set("action", "refresh_sector_fund_flow")
@@ -1206,6 +1209,24 @@ func TestSectorFundFlowPageLoadsFiltersRowsAndRefreshAction(t *testing.T) {
 
 func TestSectorFundFlowPageRendersTrendAndStockSearch(t *testing.T) {
 	fetchedAt := time.Date(2026, 7, 6, 7, 0, 0, 0, time.UTC)
+	stockTrendItems := make([]model.AStockStockFundFlow, 0, 30)
+	for i := 0; i < 30; i++ {
+		mainNetInflow := float64(217735152 - i*5500000)
+		if i%2 == 1 {
+			mainNetInflow = -float64(10000000 + i*2300000)
+		}
+		stockTrendItems = append(stockTrendItems, model.AStockStockFundFlow{
+			TradeDate:     fetchedAt.AddDate(0, 0, -i).Format("2006-01-02"),
+			Indicator:     "今日",
+			Rank:          95 + i,
+			Code:          "600028",
+			Name:          "中国石化",
+			Price:         4.83 - float64(i)*0.02,
+			ChangePct:     0.2 - float64(i)*0.01,
+			MainNetInflow: mainNetInflow,
+			FetchedAt:     fetchedAt.AddDate(0, 0, -i),
+		})
+	}
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/a-stock/sector-fund-flows":
@@ -1265,15 +1286,15 @@ func TestSectorFundFlowPageRendersTrendAndStockSearch(t *testing.T) {
 				},
 			})
 		case "/api/v1/a-stock/stock-fund-flow-trend":
+			if r.URL.Query().Get("days") != "30" {
+				t.Fatalf("expected stock search trend to request 30 days, got %s", r.URL.RawQuery)
+			}
 			writeRawJSON(w, http.StatusOK, map[string]any{
 				"code":    http.StatusOK,
 				"message": "ok",
 				"data": model.AStockStockFundFlowTrendResult{
-					Items: []model.AStockStockFundFlow{
-						{TradeDate: "2026-07-06", Indicator: "今日", Rank: 95, Code: "600028", Name: "中国石化", MainNetInflow: 217735152, FetchedAt: fetchedAt},
-						{TradeDate: "2026-07-03", Indicator: "今日", Rank: 90, Code: "600028", Name: "中国石化", MainNetInflow: -10000000, FetchedAt: fetchedAt.Add(-24 * time.Hour)},
-					},
-					Total: 2, EndDate: "2026-07-06", Indicator: "今日", Code: "600028", Days: 5,
+					Items: stockTrendItems,
+					Total: len(stockTrendItems), EndDate: "2026-07-06", Indicator: "今日", Code: "600028", Days: 30,
 				},
 			})
 		case "/api/v1/a-stock/sector-fund-flow-trend":
@@ -1304,10 +1325,87 @@ func TestSectorFundFlowPageRendersTrendAndStockSearch(t *testing.T) {
 		t.Fatalf("expected sector trend page 200, got %d body=%s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"石油石化 版块主力资金趋势", "当前仅有 2 个交易日数据", "5日", "10日", "30日", "个股资金流搜索", "600028", "中国石化", "trend=stock", "+2.18亿"} {
+	for _, want := range []string{"石油石化 版块主力资金趋势", "当前仅有 2 个交易日数据", "5日", "10日", "30日", "个股资金流搜索", "600028", "中国石化", "trend=stock", "trend_days=30", "+2.18亿", "最近10日历史记录", `class="sector-trend-chart"`, `class="sector-trend-chart-line-flow"`, `class="sector-trend-chart-line-price"`, "资金进出（左轴）", "股价（右轴）"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected trend/search page to contain %q, got %s", want, body)
 		}
+	}
+	if got := strings.Count(body, `data-history-row="stock"`); got != 10 {
+		t.Fatalf("expected stock search history table to render 10 rows, got %d body=%s", got, body)
+	}
+	if got := strings.Count(body, `class="sector-trend-chart-point-flow"`); got != 30 {
+		t.Fatalf("expected stock trend chart to render 30 fund-flow points, got %d body=%s", got, body)
+	}
+}
+
+func TestSectorFundFlowStockSearchShortTrendShowsChartAndShortfall(t *testing.T) {
+	fetchedAt := time.Date(2026, 7, 6, 7, 0, 0, 0, time.UTC)
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/a-stock/sector-fund-flows":
+			writeRawJSON(w, http.StatusOK, map[string]any{
+				"code": http.StatusOK, "message": "ok",
+				"data": model.AStockSectorFundFlowListResult{
+					Items:      []model.AStockSectorFundFlow{},
+					Page:       1,
+					PageSize:   200,
+					Total:      0,
+					Date:       "2026-07-06",
+					SectorType: "行业资金流",
+					Indicator:  "今日",
+					Keyword:    "600028",
+					Dates:      []string{"2026-07-06"},
+					FetchedAt:  &fetchedAt,
+				},
+			})
+		case "/api/v1/a-stock/stock-fund-flows":
+			writeRawJSON(w, http.StatusOK, map[string]any{
+				"code": http.StatusOK, "message": "ok",
+				"data": model.AStockStockFundFlowListResult{
+					Items:     []model.AStockStockFundFlow{{TradeDate: "2026-07-06", Indicator: "今日", Rank: 95, Code: "600028", Name: "中国石化", Price: 4.83, MainNetInflow: 217735152, FetchedAt: fetchedAt}},
+					Page:      1,
+					PageSize:  50,
+					Total:     1,
+					Date:      "2026-07-06",
+					Indicator: "今日",
+					Keyword:   "600028",
+					FetchedAt: &fetchedAt,
+				},
+			})
+		case "/api/v1/a-stock/stock-fund-flow-trend":
+			if r.URL.Query().Get("days") != "30" {
+				t.Fatalf("expected stock search trend to request 30 days, got %s", r.URL.RawQuery)
+			}
+			writeRawJSON(w, http.StatusOK, map[string]any{
+				"code": http.StatusOK, "message": "ok",
+				"data": model.AStockStockFundFlowTrendResult{
+					Items: []model.AStockStockFundFlow{
+						{TradeDate: "2026-07-06", Indicator: "今日", Rank: 95, Code: "600028", Name: "中国石化", Price: 4.83, MainNetInflow: 217735152, FetchedAt: fetchedAt},
+						{TradeDate: "2026-07-03", Indicator: "今日", Rank: 90, Code: "600028", Name: "中国石化", Price: 4.79, MainNetInflow: -10000000, FetchedAt: fetchedAt.Add(-24 * time.Hour)},
+					},
+					Total: 2, EndDate: "2026-07-06", Indicator: "今日", Code: "600028", Days: 30,
+				},
+			})
+		default:
+			t.Fatalf("unexpected content request: %s", r.URL.String())
+		}
+	}))
+	defer content.Close()
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	req := httptest.NewRequest(http.MethodGet, "/sector-fund-flow?date=2026-07-06&sector_type=行业资金流&indicator=今日&keyword=600028", nil)
+	rr := httptest.NewRecorder()
+	srv.handleSectorFundFlowPage(rr, req, map[string]any{"id": 1})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected stock search page 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"当前仅有 2 个交易日数据", `class="sector-trend-chart"`, "资金进出（左轴）", "股价（右轴）"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected short stock trend page to contain %q, got %s", want, body)
+		}
+	}
+	if got := strings.Count(body, `data-history-row="stock"`); got != 2 {
+		t.Fatalf("expected short stock search history table to render 2 rows, got %d body=%s", got, body)
 	}
 }
 
