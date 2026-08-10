@@ -1844,6 +1844,52 @@ func TestAStockSectorConstituentsAndFundFlowTrends(t *testing.T) {
 	}
 }
 
+func TestAStockMarginTrendUsesPersistedDatesAndKeepsNullFields(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	fp := func(value float64) *float64 { return &value }
+	fetchedAt := time.Date(2026, 7, 1, 2, 35, 0, 0, time.UTC)
+	dates := []string{"2026-06-29", "2026-07-01", "2026-07-03"}
+	for idx, date := range dates {
+		if _, err := store.UpsertAStockMargins(ctx, date, []model.AStockMarginSummary{
+			{TradeDate: date, Market: "sse", MarginBuyAmount: fp(float64(100 + idx)), MarginBalance: fp(float64(1000 + idx)), ShortSellVolume: fp(float64(10 + idx)), ShortBalanceVolume: fp(float64(20 + idx)), ShortBalanceAmount: fp(float64(30 + idx)), MarginTradingBalance: fp(float64(1030 + idx)), FetchedAt: fetchedAt.Add(time.Duration(idx) * time.Hour)},
+			{TradeDate: date, Market: "szse", MarginBuyAmount: fp(float64(200 + idx)), MarginBalance: fp(float64(2000 + idx)), ShortSellVolume: fp(float64(40 + idx)), ShortBalanceVolume: fp(float64(50 + idx)), ShortBalanceAmount: fp(float64(60 + idx)), MarginTradingBalance: fp(float64(2060 + idx)), FetchedAt: fetchedAt.Add(time.Duration(idx) * time.Hour)},
+		}, []model.AStockMarginDetail{
+			{TradeDate: date, Market: "sse", Rank: 1, Code: "sh510050", Name: "50ETF", MarginBuyAmount: fp(float64(70 + idx)), MarginBalance: fp(float64(80 + idx)), ShortSellVolume: fp(float64(90 + idx)), ShortBalanceVolume: fp(float64(100 + idx)), MarginTradingBalance: map[bool]*float64{true: nil, false: fp(float64(180 + idx))}[date == "2026-07-01"], FetchedAt: fetchedAt},
+		}, true); err != nil {
+			t.Fatalf("UpsertAStockMargins %s error: %v", date, err)
+		}
+	}
+
+	trend, err := store.ListAStockMarginTrend(ctx, model.AStockMarginTrendFilter{EndDate: "2026-07-03", Market: "all", Code: "510050", Days: 5})
+	if err != nil {
+		t.Fatalf("ListAStockMarginTrend error: %v", err)
+	}
+	if trend.Days != 5 || strings.Join(trend.Dates, ",") != "2026-07-03,2026-07-01,2026-06-29" {
+		t.Fatalf("unexpected margin trend dates: %+v", trend)
+	}
+	if len(trend.SummarySeries) != 3 || trend.SummarySeries[2].Market != "all" || len(trend.SummarySeries[2].Items) != 3 {
+		t.Fatalf("expected sse/szse/all summary series, got %+v", trend.SummarySeries)
+	}
+	if trend.SummarySeries[2].Items[0].MarginBalance == nil || *trend.SummarySeries[2].Items[0].MarginBalance != 3004 {
+		t.Fatalf("unexpected all-market margin balance: %+v", trend.SummarySeries[2].Items[0])
+	}
+	if len(trend.DetailSeries) != 1 || trend.DetailSeries[0].Code != "510050" || len(trend.DetailSeries[0].Items) != 3 {
+		t.Fatalf("unexpected detail trend series: %+v", trend.DetailSeries)
+	}
+	if trend.DetailSeries[0].Items[1].TradeDate != "2026-07-01" || trend.DetailSeries[0].Items[1].MarginTradingBalance != nil {
+		t.Fatalf("expected nil detail margin trading balance to stay nil, got %+v", trend.DetailSeries[0].Items[1])
+	}
+
+	sseOnly, err := store.ListAStockMarginTrend(ctx, model.AStockMarginTrendFilter{EndDate: "2026-07-03", Market: "sse", Code: "sh510050", Days: 10})
+	if err != nil {
+		t.Fatalf("ListAStockMarginTrend sse error: %v", err)
+	}
+	if sseOnly.Days != 10 || len(sseOnly.SummarySeries) != 1 || sseOnly.SummarySeries[0].Market != "sse" || len(sseOnly.DetailSeries) != 1 {
+		t.Fatalf("unexpected sse-only margin trend: %+v", sseOnly)
+	}
+}
+
 func TestStockInstitutionHoldingSignalsComparePeriods(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()

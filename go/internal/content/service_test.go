@@ -1210,6 +1210,28 @@ func TestAStockMarginTradingAPIUpsertsListsAndAggregates(t *testing.T) {
 	if defaultEnvelope.Data.Date != "2026-07-02" || defaultEnvelope.Data.LatestDate != "2026-07-02" || defaultEnvelope.Data.Total != 1 {
 		t.Fatalf("unexpected default latest margin list: %+v", defaultEnvelope.Data)
 	}
+
+	trendReq := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/margin-trading/trend?end_date=2026-07-02&market=all&code=sh510050&days=5", nil)
+	trendRR := httptest.NewRecorder()
+	router.ServeHTTP(trendRR, trendReq)
+	if trendRR.Code != http.StatusOK {
+		t.Fatalf("expected margin trend 200, got %d body=%s", trendRR.Code, trendRR.Body.String())
+	}
+	var trendEnvelope struct {
+		Data model.AStockMarginTrendResult `json:"data"`
+	}
+	if err := json.Unmarshal(trendRR.Body.Bytes(), &trendEnvelope); err != nil {
+		t.Fatalf("decode margin trend: %v", err)
+	}
+	if trendEnvelope.Data.Days != 5 || trendEnvelope.Data.Market != "all" || trendEnvelope.Data.Code != "510050" || strings.Join(trendEnvelope.Data.Dates, ",") != "2026-07-02,2026-07-01" {
+		t.Fatalf("unexpected margin trend metadata: %+v", trendEnvelope.Data)
+	}
+	if len(trendEnvelope.Data.SummarySeries) != 3 || trendEnvelope.Data.SummarySeries[2].Market != "all" || trendEnvelope.Data.SummarySeries[2].Items[0].TradeDate != "2026-07-02" {
+		t.Fatalf("unexpected margin summary trend: %+v", trendEnvelope.Data.SummarySeries)
+	}
+	if len(trendEnvelope.Data.DetailSeries) != 1 || len(trendEnvelope.Data.DetailSeries[0].Items) != 1 || trendEnvelope.Data.DetailSeries[0].Items[0].MarginTradingBalance != nil {
+		t.Fatalf("expected one detail trend with nil margin trading balance, got %+v", trendEnvelope.Data.DetailSeries)
+	}
 }
 
 func TestStockInstitutionHoldingSignalsAPI(t *testing.T) {

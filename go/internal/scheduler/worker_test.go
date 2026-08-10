@@ -2432,6 +2432,174 @@ func TestRunAStockMarginTradingLatestFailsWhenAllMarketsEmpty(t *testing.T) {
 	}
 }
 
+func TestRunAStockMarginTradingBackfillCountsSuccessSkipAndFailure(t *testing.T) {
+	tradingStatus := map[string]aStockTradingDayStatus{
+		"2026-07-01": {Date: "2026-07-01", IsTradingDay: true, Message: "open"},
+		"2026-07-02": {Date: "2026-07-02", IsTradingDay: false, Message: "closed by exchange"},
+		"2026-07-03": {Date: "2026-07-03", IsTradingDay: true, Message: "open"},
+	}
+	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/a-stock/trading-day":
+			date := r.URL.Query().Get("date")
+			status, ok := tradingStatus[date]
+			if !ok {
+				t.Fatalf("unexpected trading-day date: %s", date)
+			}
+			_ = json.NewEncoder(w).Encode(status)
+		case "/api/a-stock/margin-trading":
+			date := r.URL.Query().Get("date")
+			if r.URL.Query().Get("market") != "all" {
+				t.Fatalf("unexpected margin market query: %s", r.URL.RawQuery)
+			}
+			switch date {
+			case "2026-07-01":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"date": "2026-07-01",
+					"summaries": []map[string]any{{
+						"trade_date":     "2026-07-01",
+						"market":         "sse",
+						"margin_balance": 1000,
+					}},
+					"details": []map[string]any{{
+						"trade_date":     "2026-07-01",
+						"market":         "sse",
+						"rank":           1,
+						"code":           "510050",
+						"name":           "50ETF",
+						"margin_balance": 500,
+					}},
+					"source_errors": []string{"szse: timeout"},
+				})
+			case "2026-07-03":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"date":          "2026-07-03",
+					"summaries":     []map[string]any{},
+					"details":       []map[string]any{},
+					"source_errors": []string{"sse: failed", "szse: failed"},
+				})
+			default:
+				t.Fatalf("unexpected margin date: %s", date)
+			}
+		default:
+			t.Fatalf("unexpected akshare request: %s", r.URL.Path)
+		}
+	}))
+	defer akshare.Close()
+
+	var writeCount int
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/internal/a-stock/margin-trading" {
+			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.Path)
+		}
+		var payload struct {
+			Date      string `json:"date"`
+			Market    string `json:"market"`
+			Replace   bool   `json:"replace"`
+			Summaries []model.AStockMarginSummary
+			Details   []model.AStockMarginDetail
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode content payload: %v", err)
+		}
+		if payload.Date != "2026-07-01" || payload.Market != "all" || !payload.Replace || len(payload.Summaries) != 1 || len(payload.Details) != 1 {
+			t.Fatalf("unexpected content payload: %+v", payload)
+		}
+		writeCount++
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusOK, "message": "ok", "data": map[string]any{"summaries": 1, "details": 1}})
+	}))
+	defer content.Close()
+
+	worker := NewWorker(config.Config{AStockAuctionURL: akshare.URL, ContentURL: content.URL, HTTPTimeout: 2 * time.Second})
+	result, err := worker.runAStockMarginTradingBackfill(context.Background(), 0, "2026-07-01", "2026-07-03")
+	if err != nil {
+		t.Fatalf("runAStockMarginTradingBackfill error: %v result=%+v", err, result)
+	}
+	if result.Requested != 3 || result.Succeeded != 1 || result.Skipped != 1 || result.Failed != 1 || result.Summaries != 1 || result.Details != 1 || writeCount != 1 {
+		t.Fatalf("unexpected margin backfill result=%+v writes=%d", result, writeCount)
+	}
+	joinedErrors := strings.Join(result.Errors, "; ")
+	for _, want := range []string{"2026-07-01: szse: timeout", "2026-07-02: a-stock margin trading skipped", "2026-07-03: sse: failed"} {
+		if !strings.Contains(joinedErrors, want) {
+			t.Fatalf("expected backfill error %q, got %q", want, joinedErrors)
+		}
+	}
+}
+
+func TestAStockMarginTradingBackfillDatesUsesRecentTradingDays(t *testing.T) {
+	now := time.Date(2026, 7, 6, 18, 0, 0, 0, aStockLocation())
+	dates := aStockMarginTradingBackfillDates(5, "", "2026-07-06", now)
+	if got, want := strings.Join(dates, ","), "2026-06-30,2026-07-01,2026-07-02,2026-07-03,2026-07-06"; got != want {
+		t.Fatalf("unexpected recent trading dates: got %s want %s", got, want)
+	}
+}
+
+func TestAStockMarginTradingBackfillEndpointRecordsTaskRun(t *testing.T) {
+	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/a-stock/trading-day":
+			_ = json.NewEncoder(w).Encode(aStockTradingDayStatus{Date: r.URL.Query().Get("date"), IsTradingDay: true, Message: "open"})
+		case "/api/a-stock/margin-trading":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"date": "2026-07-01",
+				"summaries": []map[string]any{{
+					"trade_date":     "2026-07-01",
+					"market":         "sse",
+					"margin_balance": 1000,
+				}},
+				"details": []map[string]any{{
+					"trade_date":     "2026-07-01",
+					"market":         "sse",
+					"rank":           1,
+					"code":           "510050",
+					"name":           "50ETF",
+					"margin_balance": 500,
+				}},
+			})
+		default:
+			t.Fatalf("unexpected akshare request: %s", r.URL.Path)
+		}
+	}))
+	defer akshare.Close()
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Replace bool `json:"replace"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode content payload: %v", err)
+		}
+		if !payload.Replace {
+			t.Fatalf("expected margin backfill write with replace=true")
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusOK, "message": "ok", "data": map[string]any{"summaries": 1, "details": 1}})
+	}))
+	defer content.Close()
+
+	dbPath := filepath.Join(t.TempDir(), "margin-backfill.db")
+	worker := NewWorker(config.Config{DatabasePath: dbPath, AStockAuctionURL: akshare.URL, ContentURL: content.URL, ServiceToken: "secret-token", HTTPTimeout: 2 * time.Second})
+	defer func() { _ = worker.Close() }()
+	router := worker.Router()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/a-stock/margin-trading/backfill?start=2026-07-01&end=2026-07-01", nil)
+	req.Header.Set("X-Service-Token", "secret-token")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"requested":1`) || !strings.Contains(rr.Body.String(), `"succeeded":1`) {
+		t.Fatalf("expected margin backfill endpoint 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	store, err := sqlitestore.New(dbPath)
+	if err != nil {
+		t.Fatalf("open task run store: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	runs, err := store.ListTaskRuns(context.Background(), 5)
+	if err != nil {
+		t.Fatalf("ListTaskRuns error: %v", err)
+	}
+	if len(runs) == 0 || runs[0].TaskName != "a-stock-margin-trading-backfill" || runs[0].Status != "success" {
+		t.Fatalf("expected margin backfill task run, got %+v", runs)
+	}
+}
+
 func TestRunAStockSectorFundFlowIntradayLatestFetchesTodaySectorOnlyAndSnapshots(t *testing.T) {
 	requested := map[string]bool{}
 	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -1213,59 +1213,113 @@ func TestAStockMarginPageLoadsRowsAndRefreshAction(t *testing.T) {
 	fp := func(value float64) *float64 { return &value }
 	fetchedAt := time.Date(2026, 7, 2, 9, 10, 0, 0, time.UTC)
 	var marginRequests int
+	var trendRequests int
 	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		marginRequests++
-		if r.URL.Path != "/api/v1/a-stock/margin-trading" {
+		switch r.URL.Path {
+		case "/api/v1/a-stock/margin-trading":
+			marginRequests++
+			if r.URL.Query().Get("date") != "2026-07-02" || r.URL.Query().Get("keyword") != "平安" || r.URL.Query().Get("page") != "1" || r.URL.Query().Get("page_size") != "200" {
+				t.Fatalf("unexpected margin query: %s", r.URL.RawQuery)
+			}
+			writeRawJSON(w, http.StatusOK, map[string]any{
+				"code":    http.StatusOK,
+				"message": "ok",
+				"data": model.AStockMarginListResult{
+					Summaries: []model.AStockMarginSummary{
+						{TradeDate: "2026-07-02", Market: "sse", MarketLabel: "沪市", MarginBuyAmount: fp(817035126122), MarginBalance: fp(963323626777), ShortSellVolume: fp(1200000), ShortBalanceVolume: fp(2400000), ShortBalanceAmount: fp(18000000), MarginTradingBalance: fp(963341626777)},
+						{TradeDate: "2026-07-02", Market: "szse", MarketLabel: "深市", MarginBuyAmount: fp(723497000000), MarginBalance: fp(535050304170), ShortSellVolume: fp(900000), ShortBalanceVolume: fp(2100000), ShortBalanceAmount: fp(12000000), MarginTradingBalance: fp(535062304170)},
+						{TradeDate: "2026-07-02", Market: "all", MarketLabel: "合计", MarginBuyAmount: fp(1540532126122), MarginBalance: fp(1498373930947), ShortSellVolume: fp(2100000), ShortBalanceVolume: fp(4500000), ShortBalanceAmount: fp(30000000), MarginTradingBalance: fp(1498403930947)},
+					},
+					Details: []model.AStockMarginDetail{
+						{TradeDate: "2026-07-02", Market: "sse", MarketLabel: "沪市", Rank: 1, Code: "510050", Name: "50ETF", MarginBuyAmount: fp(100000000), MarginBalance: fp(200000000), ShortSellVolume: fp(12000), ShortBalanceVolume: fp(45000), ShortRepayVolume: fp(8000)},
+						{TradeDate: "2026-07-02", Market: "szse", MarketLabel: "深市", Rank: 2, Code: "000001", Name: "平安银行", MarginBuyAmount: fp(400000000), MarginBalance: fp(800000000), MarginRepayAmount: fp(180000000), ShortSellVolume: fp(22000), ShortBalanceVolume: fp(58000), ShortRepayVolume: fp(9000), ShortBalanceAmount: fp(3200000), MarginTradingBalance: fp(803200000)},
+					},
+					Page:      1,
+					PageSize:  200,
+					Total:     2,
+					Date:      "2026-07-02",
+					Market:    "all",
+					Keyword:   "平安",
+					Dates:     []string{"2026-07-02", "2026-07-01"},
+					FetchedAt: &fetchedAt,
+				},
+			})
+		case "/api/v1/a-stock/margin-trading/trend":
+			trendRequests++
+			if r.URL.Query().Get("end_date") != "2026-07-02" || r.URL.Query().Get("market") != "all" || r.URL.Query().Get("days") != "5" {
+				t.Fatalf("unexpected margin trend query: %s", r.URL.RawQuery)
+			}
+			writeRawJSON(w, http.StatusOK, map[string]any{
+				"code":    http.StatusOK,
+				"message": "ok",
+				"data": model.AStockMarginTrendResult{
+					Days:    5,
+					EndDate: "2026-07-02",
+					Market:  "all",
+					Dates:   []string{"2026-07-02", "2026-07-01"},
+					SummarySeries: []model.AStockMarginSummaryTrendSeries{
+						{Market: "sse", MarketLabel: "沪市", Items: []model.AStockMarginSummary{
+							{TradeDate: "2026-07-02", Market: "sse", MarketLabel: "沪市", MarginTradingBalance: fp(963341626777)},
+							{TradeDate: "2026-07-01", Market: "sse", MarketLabel: "沪市", MarginTradingBalance: fp(900000000000)},
+						}},
+						{Market: "szse", MarketLabel: "深市", Items: []model.AStockMarginSummary{
+							{TradeDate: "2026-07-02", Market: "szse", MarketLabel: "深市", MarginTradingBalance: fp(535062304170)},
+							{TradeDate: "2026-07-01", Market: "szse", MarketLabel: "深市", MarginTradingBalance: fp(500000000000)},
+						}},
+						{Market: "all", MarketLabel: "合计", Items: []model.AStockMarginSummary{
+							{TradeDate: "2026-07-02", Market: "all", MarketLabel: "合计", MarginTradingBalance: fp(1498403930947)},
+							{TradeDate: "2026-07-01", Market: "all", MarketLabel: "合计", MarginTradingBalance: fp(1400000000000)},
+						}},
+					},
+				},
+			})
+		default:
 			t.Fatalf("unexpected content request: %s", r.URL.String())
 		}
-		if r.URL.Query().Get("date") != "2026-07-02" || r.URL.Query().Get("keyword") != "平安" || r.URL.Query().Get("page") != "1" || r.URL.Query().Get("page_size") != "200" {
-			t.Fatalf("unexpected margin query: %s", r.URL.RawQuery)
-		}
-		writeRawJSON(w, http.StatusOK, map[string]any{
-			"code":    http.StatusOK,
-			"message": "ok",
-			"data": model.AStockMarginListResult{
-				Summaries: []model.AStockMarginSummary{
-					{TradeDate: "2026-07-02", Market: "sse", MarketLabel: "沪市", MarginBuyAmount: fp(817035126122), MarginBalance: fp(963323626777), ShortSellVolume: fp(1200000), ShortBalanceVolume: fp(2400000), ShortBalanceAmount: fp(18000000), MarginTradingBalance: fp(963341626777)},
-					{TradeDate: "2026-07-02", Market: "szse", MarketLabel: "深市", MarginBuyAmount: fp(723497000000), MarginBalance: fp(535050304170), ShortSellVolume: fp(900000), ShortBalanceVolume: fp(2100000), ShortBalanceAmount: fp(12000000), MarginTradingBalance: fp(535062304170)},
-					{TradeDate: "2026-07-02", Market: "all", MarketLabel: "合计", MarginBuyAmount: fp(1540532126122), MarginBalance: fp(1498373930947), ShortSellVolume: fp(2100000), ShortBalanceVolume: fp(4500000), ShortBalanceAmount: fp(30000000), MarginTradingBalance: fp(1498403930947)},
-				},
-				Details: []model.AStockMarginDetail{
-					{TradeDate: "2026-07-02", Market: "sse", MarketLabel: "沪市", Rank: 1, Code: "510050", Name: "50ETF", MarginBuyAmount: fp(100000000), MarginBalance: fp(200000000), ShortSellVolume: fp(12000), ShortBalanceVolume: fp(45000), ShortRepayVolume: fp(8000)},
-					{TradeDate: "2026-07-02", Market: "szse", MarketLabel: "深市", Rank: 2, Code: "000001", Name: "平安银行", MarginBuyAmount: fp(400000000), MarginBalance: fp(800000000), MarginRepayAmount: fp(180000000), ShortSellVolume: fp(22000), ShortBalanceVolume: fp(58000), ShortRepayVolume: fp(9000), ShortBalanceAmount: fp(3200000), MarginTradingBalance: fp(803200000)},
-				},
-				Page:      1,
-				PageSize:  200,
-				Total:     2,
-				Date:      "2026-07-02",
-				Market:    "all",
-				Keyword:   "平安",
-				Dates:     []string{"2026-07-02", "2026-07-01"},
-				FetchedAt: &fetchedAt,
-			},
-		})
 	}))
 	defer content.Close()
 	var refreshRequests int
+	var backfillRequests int
 	scheduler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		refreshRequests++
-		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/scheduler/a-stock/margin-trading/latest" {
+		if r.Method != http.MethodPost {
 			t.Fatalf("unexpected scheduler request: %s %s", r.Method, r.URL.Path)
-		}
-		if r.URL.Query().Get("date") != "2026-07-02" {
-			t.Fatalf("unexpected scheduler date query: %s", r.URL.RawQuery)
 		}
 		if got := r.Header.Get("X-Service-Token"); got != "secret-token" {
 			t.Fatalf("unexpected scheduler token: %q", got)
 		}
-		writeRawJSON(w, http.StatusOK, map[string]any{
-			"code":    http.StatusOK,
-			"message": "ok",
-			"data": map[string]any{
-				"status": "completed",
-				"result": map[string]any{"date": "2026-07-02", "summaries": 2, "details": 2, "source_errors": []string{"szse: timeout"}},
-			},
-		})
+		switch r.URL.Path {
+		case "/api/v1/scheduler/a-stock/margin-trading/latest":
+			refreshRequests++
+			if r.URL.Query().Get("date") != "2026-07-02" {
+				t.Fatalf("unexpected scheduler date query: %s", r.URL.RawQuery)
+			}
+			writeRawJSON(w, http.StatusOK, map[string]any{
+				"code":    http.StatusOK,
+				"message": "ok",
+				"data": map[string]any{
+					"status": "completed",
+					"result": map[string]any{"date": "2026-07-02", "summaries": 2, "details": 2, "source_errors": []string{"szse: timeout"}},
+				},
+			})
+		case "/api/v1/scheduler/a-stock/margin-trading/backfill":
+			backfillRequests++
+			if backfillRequests == 1 && r.URL.Query().Get("days") != "10" {
+				t.Fatalf("unexpected quick backfill query: %s", r.URL.RawQuery)
+			}
+			if backfillRequests == 2 && (r.URL.Query().Get("start") != "2026-07-01" || r.URL.Query().Get("end") != "2026-07-02") {
+				t.Fatalf("unexpected range backfill query: %s", r.URL.RawQuery)
+			}
+			writeRawJSON(w, http.StatusOK, map[string]any{
+				"code":    http.StatusOK,
+				"message": "ok",
+				"data": map[string]any{
+					"status": "completed",
+					"result": map[string]any{"requested": 2, "succeeded": 1, "skipped": 0, "failed": 1, "summaries": 2, "details": 3, "errors": []string{"2026-07-02: szse: timeout"}},
+				},
+			})
+		default:
+			t.Fatalf("unexpected scheduler request: %s %s", r.Method, r.URL.Path)
+		}
 	}))
 	defer scheduler.Close()
 
@@ -1276,11 +1330,11 @@ func TestAStockMarginPageLoadsRowsAndRefreshAction(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected margin page 200, got %d body=%s", rr.Code, rr.Body.String())
 	}
-	if marginRequests != 1 {
-		t.Fatalf("expected one margin content request, got %d", marginRequests)
+	if marginRequests != 1 || trendRequests != 1 {
+		t.Fatalf("expected one margin list and trend content request, got list=%d trend=%d", marginRequests, trendRequests)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"融资融券", "刷新融资融券", "沪市", "深市", "合计", "平安银行", "50ETF", "--", "14983.74亿元", "120.00万股/份", `href="/a-stock">A股</a><a href="/a-stock/backtest">回测</a><a href="/sector-fund-flow">版块资金</a><a href="/stock-research">研报调研</a><a href="/a-stock/margin">融资融券</a><a href="/a-stock/holdings">机构持仓</a><a href="/a-stock/auction">集合竞价</a>`, "body[data-page='a-stock-margin'] main,body[data-page='a-stock-margin'] .site-footer{max-width:none;width:100%;box-sizing:border-box}", ".margin-table{min-width:1380px;width:100%;table-layout:fixed}"} {
+	for _, want := range []string{"融资融券", "刷新融资融券", "回填近5日", "回填近10日", "回填近30日", "范围回填", "沪市", "深市", "合计", "平安银行", "50ETF", "--", "14983.74亿元", "120.00万股/份", "市场汇总趋势", "趋势指标", "<svg", "5日", "10日", "30日", "trend_code=510050", `href="/a-stock">A股</a><a href="/a-stock/backtest">回测</a><a href="/sector-fund-flow">版块资金</a><a href="/stock-research">研报调研</a><a href="/a-stock/margin">融资融券</a><a href="/a-stock/holdings">机构持仓</a><a href="/a-stock/auction">集合竞价</a>`, "body[data-page='a-stock-margin'] main,body[data-page='a-stock-margin'] .site-footer{max-width:none;width:100%;box-sizing:border-box}", ".margin-table{min-width:1460px;width:100%;table-layout:fixed}"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected margin page to contain %q, got %s", want, body)
 		}
@@ -1301,6 +1355,46 @@ func TestAStockMarginPageLoadsRowsAndRefreshAction(t *testing.T) {
 	}
 	if refreshRequests != 1 {
 		t.Fatalf("expected one margin refresh request, got %d", refreshRequests)
+	}
+
+	backfillForm := url.Values{}
+	backfillForm.Set("action", "backfill_margin_trading")
+	backfillForm.Set("date", "2026-07-02")
+	backfillForm.Set("market", "all")
+	backfillForm.Set("keyword", "平安")
+	backfillForm.Set("days", "10")
+	backfillForm.Set("trend_days", "10")
+	backfillForm.Set("trend_metric", "margin_balance")
+	backfillForm.Set("trend_code", "510050")
+	backfillReq := httptest.NewRequest(http.MethodPost, "/a-stock/margin", strings.NewReader(backfillForm.Encode()))
+	backfillReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	backfillRR := httptest.NewRecorder()
+	srv.handleAStockMarginPage(backfillRR, backfillReq, map[string]any{"id": 1})
+	backfillLocation := backfillRR.Header().Get("Location")
+	if backfillRR.Code != http.StatusSeeOther || !strings.Contains(backfillLocation, "trend_code=510050") || !strings.Contains(backfillLocation, "trend_metric=margin_balance") || !strings.Contains(backfillLocation, "msg=") {
+		t.Fatalf("expected margin quick backfill redirect preserving trend, status=%d location=%s", backfillRR.Code, backfillLocation)
+	}
+
+	rangeForm := url.Values{}
+	rangeForm.Set("action", "backfill_range_margin_trading")
+	rangeForm.Set("date", "2026-07-02")
+	rangeForm.Set("market", "all")
+	rangeForm.Set("keyword", "平安")
+	rangeForm.Set("start", "2026-07-01")
+	rangeForm.Set("end", "2026-07-02")
+	rangeForm.Set("trend_days", "5")
+	rangeForm.Set("trend_metric", "margin_trading_balance")
+	rangeForm.Set("trend_code", "000001")
+	rangeReq := httptest.NewRequest(http.MethodPost, "/a-stock/margin", strings.NewReader(rangeForm.Encode()))
+	rangeReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rangeRR := httptest.NewRecorder()
+	srv.handleAStockMarginPage(rangeRR, rangeReq, map[string]any{"id": 1})
+	rangeLocation := rangeRR.Header().Get("Location")
+	if rangeRR.Code != http.StatusSeeOther || !strings.Contains(rangeLocation, "trend_code=000001") || !strings.Contains(rangeLocation, "msg=") {
+		t.Fatalf("expected margin range backfill redirect preserving trend, status=%d location=%s", rangeRR.Code, rangeLocation)
+	}
+	if backfillRequests != 2 {
+		t.Fatalf("expected two margin backfill requests, got %d", backfillRequests)
 	}
 }
 

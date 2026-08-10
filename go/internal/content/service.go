@@ -133,6 +133,7 @@ type Store interface {
 	ListAStockStockFundFlowTrend(rctx context.Context, filter model.AStockFundFlowTrendFilter) (model.AStockStockFundFlowTrendResult, error)
 	UpsertAStockMargins(rctx context.Context, tradeDate string, summaries []model.AStockMarginSummary, details []model.AStockMarginDetail, replace bool) (model.AStockMarginUpsertResult, error)
 	ListAStockMargins(rctx context.Context, filter model.AStockMarginFilter) (model.AStockMarginListResult, error)
+	ListAStockMarginTrend(rctx context.Context, filter model.AStockMarginTrendFilter) (model.AStockMarginTrendResult, error)
 	UpsertStockResearchSurveys(rctx context.Context, items []model.StockResearchSurvey) (model.StockResearchUpsertResult, error)
 	ListStockResearchSurveys(rctx context.Context, filter model.StockResearchFilter) (model.StockResearchListResult, error)
 	GetStockResearchSurvey(rctx context.Context, id int64) (model.StockResearchSurvey, error)
@@ -236,6 +237,7 @@ func (s *Service) Routes(r chi.Router) {
 	r.Post("/api/v1/internal/a-stock/stock-fund-flows", s.handleUpsertAStockStockFundFlows)
 	r.Post("/api/v1/internal/a-stock/stock-fund-flow-sources", s.handleUpsertAStockStockFundFlowSourceRows)
 	r.Get("/api/v1/a-stock/margin-trading", s.handleListAStockMargins)
+	r.Get("/api/v1/a-stock/margin-trading/trend", s.handleListAStockMarginTrend)
 	r.Post("/api/v1/internal/a-stock/margin-trading", s.handleUpsertAStockMargins)
 	r.Get("/api/v1/stock-research", s.handleListStockResearchSurveys)
 	r.Get("/api/v1/stock-research/{id}", s.handleGetStockResearchSurvey)
@@ -2304,6 +2306,21 @@ func (s *Service) handleListAStockMargins(w http.ResponseWriter, r *http.Request
 		PageSize: apiutil.IntQuery(r, "page_size", 100),
 	}
 	result, err := s.store.ListAStockMargins(r.Context(), filter)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleListAStockMarginTrend(w http.ResponseWriter, r *http.Request) {
+	filter := model.AStockMarginTrendFilter{
+		EndDate: strings.TrimSpace(nonEmpty(r.URL.Query().Get("end_date"), r.URL.Query().Get("date"))),
+		Market:  strings.TrimSpace(r.URL.Query().Get("market")),
+		Code:    strings.TrimSpace(nonEmpty(r.URL.Query().Get("code"), r.URL.Query().Get("trend_code"))),
+		Days:    apiutil.IntQuery(r, "days", 5),
+	}
+	result, err := s.store.ListAStockMarginTrend(r.Context(), filter)
 	if err != nil {
 		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
 		return

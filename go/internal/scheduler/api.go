@@ -36,6 +36,7 @@ func (w *Worker) Router() http.Handler {
 	r.Post("/api/v1/scheduler/a-stock/sector-fund-flow/latest", w.handleRunAStockSectorFundFlowLatest)
 	r.Post("/api/v1/scheduler/a-stock/sector-fund-flow/intraday/latest", w.handleRunAStockSectorFundFlowIntradayLatest)
 	r.Post("/api/v1/scheduler/a-stock/margin-trading/latest", w.handleRunAStockMarginTradingLatest)
+	r.Post("/api/v1/scheduler/a-stock/margin-trading/backfill", w.handleRunAStockMarginTradingBackfill)
 	return r
 }
 
@@ -439,6 +440,31 @@ func (w *Worker) handleRunAStockMarginTradingLatest(wr http.ResponseWriter, r *h
 	}
 	if result.Skipped {
 		apiutil.WriteJSON(wr, http.StatusUnprocessableEntity, message, result)
+		return
+	}
+	apiutil.WriteJSON(wr, http.StatusOK, "ok", map[string]any{"status": "completed", "result": result})
+}
+
+func (w *Worker) handleRunAStockMarginTradingBackfill(wr http.ResponseWriter, r *http.Request) {
+	if strings.TrimSpace(r.Header.Get("X-Service-Token")) != strings.TrimSpace(w.cfg.ServiceToken) {
+		apiutil.WriteJSON(wr, http.StatusUnauthorized, "unauthorized", nil)
+		return
+	}
+	days := apiutil.IntQuery(r, "days", 30)
+	start := strings.TrimSpace(r.URL.Query().Get("start"))
+	end := strings.TrimSpace(r.URL.Query().Get("end"))
+	startedAt := time.Now().UTC()
+	result, err := w.runAStockMarginTradingBackfill(r.Context(), days, start, end)
+	finishedAt := time.Now().UTC()
+	status := "success"
+	message := fmt.Sprintf("a-stock margin trading backfill completed: requested=%d succeeded=%d skipped=%d failed=%d summaries=%d details=%d", result.Requested, result.Succeeded, result.Skipped, result.Failed, result.Summaries, result.Details)
+	if err != nil {
+		status = "failed"
+		message = err.Error()
+	}
+	_ = w.recordTaskRun(r.Context(), "a-stock-margin-trading-backfill", status, message, startedAt, &finishedAt)
+	if err != nil {
+		apiutil.WriteJSON(wr, http.StatusInternalServerError, err.Error(), result)
 		return
 	}
 	apiutil.WriteJSON(wr, http.StatusOK, "ok", map[string]any{"status": "completed", "result": result})

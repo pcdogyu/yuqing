@@ -297,6 +297,213 @@ LIMIT ? OFFSET ?`, queryArgs...)
 	return result, nil
 }
 
+func (s *Store) ListAStockMarginTrend(ctx context.Context, filter model.AStockMarginTrendFilter) (model.AStockMarginTrendResult, error) {
+	days := normalizeAStockMarginTrendDays(filter.Days)
+	market := normalizeAStockMarginMarket(filter.Market)
+	code := normalizeAStockMarginCode(filter.Code)
+	result := model.AStockMarginTrendResult{
+		EndDate: strings.TrimSpace(filter.EndDate),
+		Market:  market,
+		Code:    code,
+		Days:    days,
+	}
+	dates, err := s.listAStockMarginTrendDates(ctx, result.EndDate, days)
+	if err != nil {
+		return result, err
+	}
+	result.Dates = dates
+	if result.EndDate == "" && len(dates) > 0 {
+		result.EndDate = dates[0]
+	}
+	if len(dates) == 0 {
+		result.SummarySeries = []model.AStockMarginSummaryTrendSeries{}
+		result.DetailSeries = []model.AStockMarginDetailTrendSeries{}
+		return result, nil
+	}
+	summarySeries, err := s.listAStockMarginSummaryTrendSeries(ctx, dates, market)
+	if err != nil {
+		return result, err
+	}
+	result.SummarySeries = summarySeries
+	for _, series := range summarySeries {
+		result.SummaryPoints += len(series.Items)
+	}
+	if code != "" {
+		detailSeries, err := s.listAStockMarginDetailTrendSeries(ctx, dates, market, code)
+		if err != nil {
+			return result, err
+		}
+		result.DetailSeries = detailSeries
+		for _, series := range detailSeries {
+			result.DetailPoints += len(series.Items)
+		}
+	} else {
+		result.DetailSeries = []model.AStockMarginDetailTrendSeries{}
+	}
+	return result, nil
+}
+
+func (s *Store) listAStockMarginTrendDates(ctx context.Context, endDate string, days int) ([]string, error) {
+	where := ""
+	args := []any{}
+	if strings.TrimSpace(endDate) != "" {
+		where = "WHERE trade_date <= ?"
+		args = append(args, strings.TrimSpace(endDate))
+	}
+	args = append(args, days)
+	rows, err := s.db.QueryContext(ctx, `
+SELECT trade_date FROM (
+	SELECT trade_date FROM a_stock_margin_summaries
+	UNION
+	SELECT trade_date FROM a_stock_margin_details
+) dates `+where+`
+GROUP BY trade_date
+ORDER BY trade_date DESC
+LIMIT ?`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	dates := make([]string, 0, days)
+	for rows.Next() {
+		var date string
+		if err := rows.Scan(&date); err != nil {
+			return nil, err
+		}
+		dates = append(dates, date)
+	}
+	return dates, rows.Err()
+}
+
+func (s *Store) listAStockMarginSummaryTrendSeries(ctx context.Context, dates []string, market string) ([]model.AStockMarginSummaryTrendSeries, error) {
+	markets := []string{"sse", "szse"}
+	if isAStockMarginMarket(market) {
+		markets = []string{market}
+	}
+	placeholders := aStockMarginSQLPlaceholders(len(dates))
+	args := make([]any, 0, len(dates)+len(markets))
+	for _, date := range dates {
+		args = append(args, date)
+	}
+	marketWhere := ""
+	if len(markets) == 1 {
+		marketWhere = " AND market = ?"
+		args = append(args, markets[0])
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT trade_date, market, margin_buy_amount, margin_balance, short_sell_volume, short_balance_volume,
+	short_balance_amount, margin_trading_balance, source_type, raw_payload, fetched_at, created_at, updated_at
+FROM a_stock_margin_summaries
+WHERE trade_date IN (`+placeholders+`)`+marketWhere+`
+ORDER BY trade_date DESC, CASE market WHEN 'sse' THEN 1 WHEN 'szse' THEN 2 ELSE 3 END`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	byMarket := map[string][]model.AStockMarginSummary{}
+	byDate := map[string][]model.AStockMarginSummary{}
+	for rows.Next() {
+		item, scanErr := scanAStockMarginSummary(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		byMarket[item.Market] = append(byMarket[item.Market], item)
+		byDate[item.TradeDate] = append(byDate[item.TradeDate], item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	series := make([]model.AStockMarginSummaryTrendSeries, 0, len(markets)+1)
+	for _, marketName := range markets {
+		items := byMarket[marketName]
+		if len(items) == 0 {
+			items = []model.AStockMarginSummary{}
+		}
+		series = append(series, model.AStockMarginSummaryTrendSeries{
+			Market:      marketName,
+			MarketLabel: aStockMarginMarketLabel(marketName),
+			Items:       items,
+		})
+	}
+	if market == "all" {
+		aggregates := make([]model.AStockMarginSummary, 0, len(dates))
+		for _, date := range dates {
+			items := byDate[date]
+			if len(items) == 0 {
+				continue
+			}
+			aggregates = append(aggregates, aggregateAStockMarginSummary(date, items))
+		}
+		series = append(series, model.AStockMarginSummaryTrendSeries{Market: "all", MarketLabel: "合计", Items: aggregates})
+	}
+	return series, nil
+}
+
+func (s *Store) listAStockMarginDetailTrendSeries(ctx context.Context, dates []string, market string, code string) ([]model.AStockMarginDetailTrendSeries, error) {
+	if code == "" {
+		return []model.AStockMarginDetailTrendSeries{}, nil
+	}
+	markets := []string{"sse", "szse"}
+	if isAStockMarginMarket(market) {
+		markets = []string{market}
+	}
+	placeholders := aStockMarginSQLPlaceholders(len(dates))
+	args := make([]any, 0, len(dates)+2)
+	for _, date := range dates {
+		args = append(args, date)
+	}
+	args = append(args, code)
+	marketWhere := ""
+	if len(markets) == 1 {
+		marketWhere = " AND market = ?"
+		args = append(args, markets[0])
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT trade_date, market, code, rank, name, margin_buy_amount, margin_balance, margin_repay_amount,
+	short_sell_volume, short_balance_volume, short_repay_volume, short_balance_amount, margin_trading_balance,
+	source_type, raw_payload, fetched_at, created_at, updated_at
+FROM a_stock_margin_details
+WHERE trade_date IN (`+placeholders+`) AND code = ?`+marketWhere+`
+ORDER BY trade_date DESC, CASE market WHEN 'sse' THEN 1 WHEN 'szse' THEN 2 ELSE 3 END`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	byMarket := map[string][]model.AStockMarginDetail{}
+	for rows.Next() {
+		item, scanErr := scanAStockMarginDetail(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		byMarket[item.Market] = append(byMarket[item.Market], item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	series := make([]model.AStockMarginDetailTrendSeries, 0, len(markets))
+	for _, marketName := range markets {
+		items := byMarket[marketName]
+		if len(items) == 0 {
+			continue
+		}
+		name := ""
+		for _, item := range items {
+			if strings.TrimSpace(item.Name) != "" {
+				name = strings.TrimSpace(item.Name)
+				break
+			}
+		}
+		series = append(series, model.AStockMarginDetailTrendSeries{
+			Market:      marketName,
+			MarketLabel: aStockMarginMarketLabel(marketName),
+			Code:        code,
+			Name:        name,
+			Items:       items,
+		})
+	}
+	return series, nil
+}
+
 func (s *Store) listAStockMarginDistinctDates(ctx context.Context) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT trade_date FROM (
@@ -578,4 +785,20 @@ func sumFloatPtr(left *float64, right *float64) *float64 {
 		sum += *right
 	}
 	return &sum
+}
+
+func normalizeAStockMarginTrendDays(days int) int {
+	switch days {
+	case 10, 30:
+		return days
+	default:
+		return 5
+	}
+}
+
+func aStockMarginSQLPlaceholders(count int) string {
+	if count <= 0 {
+		return "NULL"
+	}
+	return strings.TrimRight(strings.Repeat("?,", count), ",")
 }

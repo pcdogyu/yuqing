@@ -488,6 +488,39 @@ type AStockMarginFilter struct {
 	PageSize int    `json:"page_size"`
 }
 
+type AStockMarginTrendFilter struct {
+	EndDate string `json:"end_date"`
+	Market  string `json:"market"`
+	Code    string `json:"code"`
+	Days    int    `json:"days"`
+}
+
+type AStockMarginSummaryTrendSeries struct {
+	Market      string                `json:"market"`
+	MarketLabel string                `json:"market_label"`
+	Items       []AStockMarginSummary `json:"items"`
+}
+
+type AStockMarginDetailTrendSeries struct {
+	Market      string               `json:"market"`
+	MarketLabel string               `json:"market_label"`
+	Code        string               `json:"code"`
+	Name        string               `json:"name"`
+	Items       []AStockMarginDetail `json:"items"`
+}
+
+type AStockMarginTrendResult struct {
+	SummarySeries []AStockMarginSummaryTrendSeries `json:"summary_series"`
+	DetailSeries  []AStockMarginDetailTrendSeries  `json:"detail_series"`
+	EndDate       string                           `json:"end_date"`
+	Market        string                           `json:"market"`
+	Code          string                           `json:"code"`
+	Days          int                              `json:"days"`
+	Dates         []string                         `json:"dates"`
+	SummaryPoints int                              `json:"summary_points"`
+	DetailPoints  int                              `json:"detail_points"`
+}
+
 type AStockMarginListResult struct {
 	Summaries  []AStockMarginSummary `json:"summaries"`
 	Details    []AStockMarginDetail  `json:"details"`

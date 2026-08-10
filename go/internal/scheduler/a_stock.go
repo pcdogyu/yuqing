@@ -669,6 +669,17 @@ type aStockMarginTradingCrawlResult struct {
 	Message      string   `json:"message,omitempty"`
 }
 
+type aStockMarginTradingBackfillResult struct {
+	Requested int                              `json:"requested"`
+	Succeeded int                              `json:"succeeded"`
+	Skipped   int                              `json:"skipped"`
+	Failed    int                              `json:"failed"`
+	Summaries int                              `json:"summaries"`
+	Details   int                              `json:"details"`
+	Results   []aStockMarginTradingCrawlResult `json:"results"`
+	Errors    []string                         `json:"errors"`
+}
+
 func aStockAuctionCaptureSlotForTime(value time.Time) string {
 	local := value.In(aStockLocation())
 	if local.Hour() == 9 && local.Minute() == 20 {
@@ -868,6 +879,44 @@ func (w *Worker) runAStockMarginTradingLatest(ctx context.Context) (aStockMargin
 	return w.runAStockMarginTradingForDate(ctx, "")
 }
 
+func (w *Worker) runAStockMarginTradingBackfill(ctx context.Context, days int, start string, end string) (aStockMarginTradingBackfillResult, error) {
+	dates := aStockMarginTradingBackfillDates(days, start, end, time.Now().In(aStockLocation()))
+	result := aStockMarginTradingBackfillResult{Requested: len(dates), Results: make([]aStockMarginTradingCrawlResult, 0, len(dates))}
+	if len(dates) == 0 {
+		return result, fmt.Errorf("a-stock margin trading backfill found no trading days")
+	}
+	for _, date := range dates {
+		item, err := w.runAStockMarginTradingForDate(ctx, date)
+		if err != nil {
+			result.Failed++
+			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", date, err))
+			continue
+		}
+		if item.Skipped {
+			result.Skipped++
+			result.Results = append(result.Results, item)
+			if strings.TrimSpace(item.Message) != "" {
+				result.Errors = append(result.Errors, fmt.Sprintf("%s: %s", date, item.Message))
+			}
+			continue
+		}
+		result.Succeeded++
+		result.Summaries += item.Summaries
+		result.Details += item.Details
+		if len(item.SourceErrors) > 0 {
+			result.Errors = append(result.Errors, fmt.Sprintf("%s: %s", date, strings.Join(item.SourceErrors, "; ")))
+		}
+		result.Results = append(result.Results, item)
+	}
+	if result.Succeeded == 0 && result.Failed > 0 {
+		return result, fmt.Errorf("a-stock margin trading backfill failed: %s", strings.Join(result.Errors, "; "))
+	}
+	if result.Succeeded == 0 && result.Skipped > 0 {
+		return result, fmt.Errorf("a-stock margin trading backfill skipped all dates: %s", strings.Join(result.Errors, "; "))
+	}
+	return result, nil
+}
+
 func (w *Worker) runAStockMarginTradingForDate(ctx context.Context, requestedDate string) (aStockMarginTradingCrawlResult, error) {
 	strategyDate, err := normalizeAStockMarginTradeDate(requestedDate)
 	if err != nil {
@@ -905,6 +954,64 @@ func (w *Worker) runAStockMarginTradingForDate(ctx context.Context, requestedDat
 	result.Summaries = len(payload.Summaries)
 	result.Details = len(payload.Details)
 	return result, nil
+}
+
+func aStockMarginTradingBackfillDates(days int, start string, end string, now time.Time) []string {
+	start = strings.TrimSpace(start)
+	end = strings.TrimSpace(end)
+	location := now.Location()
+	if days <= 0 {
+		days = 30
+	}
+	if days > 60 {
+		days = 60
+	}
+	endDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, location)
+	if parsed, ok := parseAStockMarginBackfillDate(end, location); ok {
+		endDate = parsed
+	}
+	if parsedStart, ok := parseAStockMarginBackfillDate(start, location); ok {
+		startDate := parsedStart
+		if startDate.After(endDate) {
+			startDate, endDate = endDate, startDate
+		}
+		out := make([]string, 0, min(days, 60))
+		for cursor := startDate; !cursor.After(endDate) && len(out) < 60; cursor = cursor.AddDate(0, 0, 1) {
+			date := cursor.Format("2006-01-02")
+			if astockcalendar.IsTradingDay(date) {
+				out = append(out, date)
+			}
+		}
+		return out
+	}
+	out := make([]string, 0, days)
+	for cursor := endDate; len(out) < days; cursor = cursor.AddDate(0, 0, -1) {
+		date := cursor.Format("2006-01-02")
+		if astockcalendar.IsTradingDay(date) {
+			out = append(out, date)
+		}
+	}
+	for left, right := 0, len(out)-1; left < right; left, right = left+1, right-1 {
+		out[left], out[right] = out[right], out[left]
+	}
+	return out
+}
+
+func parseAStockMarginBackfillDate(value string, location *time.Location) (time.Time, bool) {
+	raw := strings.TrimSpace(value)
+	if raw == "" {
+		return time.Time{}, false
+	}
+	if parsed, err := time.ParseInLocation("2006-01-02", raw, location); err == nil {
+		return parsed, true
+	}
+	compact := strings.ReplaceAll(raw, "-", "")
+	if len(compact) == 8 {
+		if parsed, err := time.ParseInLocation("20060102", compact, location); err == nil {
+			return parsed, true
+		}
+	}
+	return time.Time{}, false
 }
 
 func normalizeAStockMarginTradeDate(value string) (string, error) {
