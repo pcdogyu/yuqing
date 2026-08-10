@@ -660,6 +660,15 @@ type aStockSectorFundFlowCrawlResult struct {
 	Indicator      string   `json:"indicator,omitempty"`
 }
 
+type aStockMarginTradingCrawlResult struct {
+	Date         string   `json:"date"`
+	Summaries    int      `json:"summaries"`
+	Details      int      `json:"details"`
+	SourceErrors []string `json:"source_errors,omitempty"`
+	Skipped      bool     `json:"skipped,omitempty"`
+	Message      string   `json:"message,omitempty"`
+}
+
 func aStockAuctionCaptureSlotForTime(value time.Time) string {
 	local := value.In(aStockLocation())
 	if local.Hour() == 9 && local.Minute() == 20 {
@@ -837,6 +846,82 @@ func (w *Worker) runAStockSectorFundFlowIntradayCrawl(ctx context.Context) error
 		Int("snapshot_items", result.SnapshotItems).
 		Msg("a-stock sector fund flow intraday crawled")
 	return nil
+}
+
+func (w *Worker) runAStockMarginTradingCrawl(ctx context.Context) error {
+	result, err := w.runAStockMarginTradingLatest(ctx)
+	if err != nil {
+		return err
+	}
+	if result.Skipped {
+		return jobSkippedError{message: result.Message}
+	}
+	log.Info().
+		Str("trade_date", result.Date).
+		Int("summaries", result.Summaries).
+		Int("details", result.Details).
+		Msg("a-stock margin trading crawled")
+	return nil
+}
+
+func (w *Worker) runAStockMarginTradingLatest(ctx context.Context) (aStockMarginTradingCrawlResult, error) {
+	return w.runAStockMarginTradingForDate(ctx, "")
+}
+
+func (w *Worker) runAStockMarginTradingForDate(ctx context.Context, requestedDate string) (aStockMarginTradingCrawlResult, error) {
+	strategyDate, err := normalizeAStockMarginTradeDate(requestedDate)
+	if err != nil {
+		return aStockMarginTradingCrawlResult{}, err
+	}
+	if strategyDate == "" {
+		now := time.Now().In(aStockLocation())
+		strategyDate = now.Format("2006-01-02")
+	}
+	tradingDay, err := w.loadAStockTradingDayStatus(ctx, strategyDate)
+	if err != nil {
+		return aStockMarginTradingCrawlResult{Date: strategyDate}, fmt.Errorf("a-stock margin trading calendar unavailable for %s: %w", strategyDate, err)
+	}
+	tradeDate := nonEmpty(strings.TrimSpace(tradingDay.Date), strategyDate)
+	if !tradingDay.IsTradingDay {
+		message := strings.TrimSpace(tradingDay.Message)
+		if message == "" {
+			message = "A-share market is closed; margin trading crawl is disabled."
+		}
+		return aStockMarginTradingCrawlResult{Date: tradeDate, Skipped: true, Message: fmt.Sprintf("a-stock margin trading skipped for %s: %s", tradeDate, message)}, nil
+	}
+	payload, err := w.fetchExternalAStockMargins(ctx, tradeDate)
+	result := aStockMarginTradingCrawlResult{Date: tradeDate}
+	if err != nil {
+		return result, err
+	}
+	result.SourceErrors = append(result.SourceErrors, payload.SourceErrors...)
+	if len(payload.Summaries) == 0 && len(payload.Details) == 0 {
+		message := nonEmpty(strings.TrimSpace(payload.Warning), strings.Join(payload.SourceErrors, "; "), "a-stock margin trading returned no rows")
+		return result, fmt.Errorf("%s", message)
+	}
+	if err := w.writeAStockMargins(ctx, tradeDate, payload.Summaries, payload.Details); err != nil {
+		return result, err
+	}
+	result.Summaries = len(payload.Summaries)
+	result.Details = len(payload.Details)
+	return result, nil
+}
+
+func normalizeAStockMarginTradeDate(value string) (string, error) {
+	raw := strings.TrimSpace(value)
+	if raw == "" {
+		return "", nil
+	}
+	if parsed, err := time.ParseInLocation("2006-01-02", raw, aStockLocation()); err == nil {
+		return parsed.Format("2006-01-02"), nil
+	}
+	compact := strings.ReplaceAll(raw, "-", "")
+	if len(compact) == 8 {
+		if parsed, err := time.ParseInLocation("20060102", compact, aStockLocation()); err == nil {
+			return parsed.Format("2006-01-02"), nil
+		}
+	}
+	return "", fmt.Errorf("invalid margin trading date %q, expected YYYY-MM-DD", raw)
 }
 
 func (w *Worker) runAStockSectorFundFlowLatest(ctx context.Context, requireTradingSession bool) (aStockSectorFundFlowCrawlResult, error) {
@@ -1161,12 +1246,91 @@ func (w *Worker) writeAStockStockFundFlowSource(ctx context.Context, tradeDate s
 	return nil
 }
 
+func (w *Worker) fetchExternalAStockMargins(ctx context.Context, tradeDate string) (aStockMarginTradingPayload, error) {
+	baseURL := strings.TrimRight(strings.TrimSpace(w.cfg.AStockAuctionURL), "/")
+	if baseURL == "" {
+		return aStockMarginTradingPayload{}, fmt.Errorf("YUQING_ASTOCK_AUCTION_URL not configured")
+	}
+	resp, err := w.crawlClient.R().
+		SetContext(ctx).
+		SetQueryParam("date", tradeDate).
+		SetQueryParam("market", "all").
+		Get(baseURL + "/api/a-stock/margin-trading")
+	if err != nil {
+		return aStockMarginTradingPayload{}, err
+	}
+	if !resp.IsSuccess() {
+		message := decodeAStockAuctionEndpointMessage(resp.Body(), resp.String())
+		if message == "" {
+			message = resp.Status()
+		}
+		return aStockMarginTradingPayload{}, fmt.Errorf("akshare margin trading endpoint failed: %s", message)
+	}
+	payload, err := decodeAStockMarginTradingPayload(resp.Body())
+	if err != nil {
+		return aStockMarginTradingPayload{}, err
+	}
+	for i := range payload.Summaries {
+		if payload.Summaries[i].TradeDate == "" {
+			payload.Summaries[i].TradeDate = tradeDate
+		}
+		if payload.Summaries[i].FetchedAt.IsZero() {
+			payload.Summaries[i].FetchedAt = time.Now().UTC()
+		}
+	}
+	for i := range payload.Details {
+		if payload.Details[i].TradeDate == "" {
+			payload.Details[i].TradeDate = tradeDate
+		}
+		if payload.Details[i].FetchedAt.IsZero() {
+			payload.Details[i].FetchedAt = time.Now().UTC()
+		}
+	}
+	return payload, nil
+}
+
+func (w *Worker) writeAStockMargins(ctx context.Context, tradeDate string, summaries []model.AStockMarginSummary, details []model.AStockMarginDetail) error {
+	baseURL := strings.TrimRight(strings.TrimSpace(w.cfg.ContentURL), "/")
+	if baseURL == "" {
+		return fmt.Errorf("YUQING_CONTENT_URL not configured")
+	}
+	payload := map[string]any{
+		"date":      tradeDate,
+		"market":    "all",
+		"summaries": summaries,
+		"details":   details,
+		"replace":   true,
+	}
+	resp, err := w.client.R().
+		SetContext(ctx).
+		SetBody(payload).
+		Post(baseURL + "/api/v1/internal/a-stock/margin-trading")
+	if err != nil {
+		return err
+	}
+	if !resp.IsSuccess() {
+		message := decodeAStockAuctionEndpointMessage(resp.Body(), resp.String())
+		if message == "" {
+			message = resp.Status()
+		}
+		return fmt.Errorf("content margin trading upsert failed: %s", message)
+	}
+	return nil
+}
+
 type aStockSectorFundFlowPayload struct {
 	Items []model.AStockSectorFundFlow `json:"items"`
 }
 
 type aStockStockFundFlowPayload struct {
 	Items []model.AStockStockFundFlow `json:"items"`
+}
+
+type aStockMarginTradingPayload struct {
+	Summaries    []model.AStockMarginSummary `json:"summaries"`
+	Details      []model.AStockMarginDetail  `json:"details"`
+	Warning      string                      `json:"warning"`
+	SourceErrors []string                    `json:"source_errors"`
 }
 
 func decodeAStockSectorFundFlowPayload(body []byte) (aStockSectorFundFlowPayload, error) {
@@ -1213,6 +1377,23 @@ func decodeAStockStockFundFlowPayload(body []byte) (aStockStockFundFlowPayload, 
 	}
 	if err := json.Unmarshal(body, &envelope); err == nil && len(envelope.Data.Items) > 0 {
 		payload.Items = envelope.Data.Items
+	}
+	return payload, nil
+}
+
+func decodeAStockMarginTradingPayload(body []byte) (aStockMarginTradingPayload, error) {
+	var payload aStockMarginTradingPayload
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return payload, err
+	}
+	if len(payload.Summaries) > 0 || len(payload.Details) > 0 || payload.Warning != "" || len(payload.SourceErrors) > 0 {
+		return payload, nil
+	}
+	var envelope struct {
+		Data aStockMarginTradingPayload `json:"data"`
+	}
+	if err := json.Unmarshal(body, &envelope); err == nil && (len(envelope.Data.Summaries) > 0 || len(envelope.Data.Details) > 0 || envelope.Data.Warning != "" || len(envelope.Data.SourceErrors) > 0) {
+		payload = envelope.Data
 	}
 	return payload, nil
 }

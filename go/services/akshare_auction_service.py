@@ -8,6 +8,7 @@ The Go scheduler calls:
   GET /api/a-stock/sector-fund-flow?sector_type=行业资金流&indicator=今日&source=eastmoney
   GET /api/a-stock/stock-fund-flow?indicator=今日&source=eastmoney
   GET /api/a-stock/sector-constituents?sector_type=行业资金流&sector_name=半导体
+  GET /api/a-stock/margin-trading?date=YYYY-MM-DD&market=all
   GET /api/a-stock/dividend-events?date=YYYY-MM-DD&codes=000001,600000&window_days=3
   GET /api/a-stock/holdings?period=YYYYMMDD&code=002230
   GET /api/stock-research?code=002230&start=YYYY-MM-DD&end=YYYY-MM-DD
@@ -164,6 +165,7 @@ STOCK_FUND_FLOW_NUMERIC_FIELDS = (
     "small_net_inflow",
     "small_net_inflow_pct",
 )
+MARGIN_MARKETS = ("sse", "szse")
 THS_FUND_FLOW_SYMBOLS = {
     "今日": "即时",
     "5日": "5日排行",
@@ -1384,6 +1386,29 @@ def parse_amount_to_yuan(value: Any, default_unit: str = "") -> float:
     return finite_float(text) * multiplier
 
 
+def parse_unit_number(value: Any, default_unit: str = "") -> float | None:
+    text = text_value(value).replace(",", "")
+    if not text or text in {"-", "--"}:
+        return None
+    multiplier = 1.0
+    if "亿元" in text or "亿股" in text or "亿份" in text or "亿" in text:
+        multiplier = 100000000.0
+    elif "万元" in text or "万股" in text or "万份" in text or "万" in text:
+        multiplier = 10000.0
+    elif default_unit == "亿":
+        multiplier = 100000000.0
+    elif default_unit == "万":
+        multiplier = 10000.0
+    for token in ("亿元", "万元", "元", "亿股", "万股", "亿份", "万份", "股/份", "股", "份", "亿", "万", "%"):
+        text = text.replace(token, "")
+    return finite_float(text) * multiplier
+
+
+def akshare_date_arg(date_text: str) -> str:
+    normalized = normalize_date(date_text)
+    return normalized.replace("-", "")
+
+
 def parse_percent_value(value: Any, decimal_ratio: bool = False) -> float:
     text = text_value(value).replace(",", "")
     if not text or text in {"-", "--"}:
@@ -2166,6 +2191,133 @@ def compact_stock_code(value: Any) -> str:
     return text.zfill(6) if text else ""
 
 
+def normalize_margin_market(value: str | None) -> str:
+    text = text_value(value).lower()
+    aliases = {
+        "sh": "sse",
+        "shanghai": "sse",
+        "沪": "sse",
+        "沪市": "sse",
+        "上海": "sse",
+        "sz": "szse",
+        "shenzhen": "szse",
+        "深": "szse",
+        "深市": "szse",
+        "深圳": "szse",
+        "all": "all",
+        "": "all",
+    }
+    return aliases.get(text, text if text in {"sse", "szse"} else "all")
+
+
+def margin_market_label(market: str) -> str:
+    return "沪市" if market == "sse" else "深市"
+
+
+def set_margin_number(
+    item: dict[str, Any], row: Any, target: str, names: list[str], default_unit: str = ""
+) -> None:
+    value = first_existing(row, names)
+    item[target] = parse_unit_number(value, default_unit) if value is not None else None
+
+
+def margin_summary_item(row: Any, market: str, fallback_date: str) -> dict[str, Any]:
+    trade_date = normalize_optional_date(first_existing(row, ["信用交易日期", "交易日期", "date", "trade_date"])) or fallback_date
+    money_unit = "亿" if market == "szse" else ""
+    volume_unit = "亿" if market == "szse" else ""
+    item: dict[str, Any] = {
+        "trade_date": trade_date,
+        "market": market,
+        "market_label": margin_market_label(market),
+        "source_type": f"akshare_stock_margin_{market}",
+        "raw_payload": json.dumps(json_safe_row(row), ensure_ascii=False, separators=(",", ":")),
+        "fetched_at": utc_now_iso(),
+    }
+    set_margin_number(item, row, "margin_buy_amount", ["融资买入额"], money_unit)
+    set_margin_number(item, row, "margin_balance", ["融资余额"], money_unit)
+    set_margin_number(item, row, "short_sell_volume", ["融券卖出量"], volume_unit)
+    set_margin_number(item, row, "short_balance_volume", ["融券余量"], volume_unit)
+    set_margin_number(item, row, "short_balance_amount", ["融券余额", "融券余量金额"], money_unit)
+    set_margin_number(item, row, "margin_trading_balance", ["融资融券余额"], money_unit)
+    return item
+
+
+def margin_summary_frame_to_items(frame: Any, market: str, trade_date: str) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    try:
+        iterator = frame.iterrows()
+    except Exception:
+        return items
+    for _, row in iterator:
+        item = margin_summary_item(row, market, trade_date)
+        if not item["trade_date"]:
+            item["trade_date"] = trade_date
+        items.append(item)
+    return items
+
+
+def margin_detail_item(row: Any, market: str, fallback_date: str, rank: int) -> dict[str, Any] | None:
+    code = compact_stock_code(first_existing(row, ["标的证券代码", "证券代码", "code"]))
+    name = text_value(first_existing(row, ["标的证券简称", "证券简称", "name"]))
+    if not code:
+        return None
+    trade_date = normalize_optional_date(first_existing(row, ["信用交易日期", "交易日期", "date", "trade_date"])) or fallback_date
+    item: dict[str, Any] = {
+        "trade_date": trade_date,
+        "market": market,
+        "market_label": margin_market_label(market),
+        "rank": rank,
+        "code": code,
+        "name": name,
+        "source_type": f"akshare_stock_margin_detail_{market}",
+        "raw_payload": json.dumps(json_safe_row(row), ensure_ascii=False, separators=(",", ":")),
+        "fetched_at": utc_now_iso(),
+    }
+    set_margin_number(item, row, "margin_buy_amount", ["融资买入额"])
+    set_margin_number(item, row, "margin_balance", ["融资余额"])
+    set_margin_number(item, row, "margin_repay_amount", ["融资偿还额"])
+    set_margin_number(item, row, "short_sell_volume", ["融券卖出量"])
+    set_margin_number(item, row, "short_balance_volume", ["融券余量"])
+    set_margin_number(item, row, "short_repay_volume", ["融券偿还量"])
+    set_margin_number(item, row, "short_balance_amount", ["融券余额"])
+    set_margin_number(item, row, "margin_trading_balance", ["融资融券余额"])
+    return item
+
+
+def margin_detail_frame_to_items(frame: Any, market: str, trade_date: str, limit: int = 0) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    try:
+        iterator = frame.iterrows()
+    except Exception:
+        return items
+    for _, row in iterator:
+        item = margin_detail_item(row, market, trade_date, len(items) + 1)
+        if item is None:
+            continue
+        items.append(item)
+        if limit > 0 and len(items) >= limit:
+            break
+    return items
+
+
+def fetch_margin_trading_market(
+    ak: Any, trade_date: str, market: str, limit: int = 0
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    date_arg = akshare_date_arg(trade_date)
+    if market == "sse":
+        summary_frame = ak.stock_margin_sse(start_date=date_arg, end_date=date_arg)
+        detail_frame = ak.stock_margin_detail_sse(date=date_arg)
+    elif market == "szse":
+        summary_frame = ak.stock_margin_szse(date=date_arg)
+        detail_frame = ak.stock_margin_detail_szse(date=date_arg)
+    else:
+        raise ValueError(f"unsupported margin market: {market}")
+    return (
+        margin_summary_frame_to_items(summary_frame, market, trade_date),
+        margin_detail_frame_to_items(detail_frame, market, trade_date, limit),
+    )
+
+
 def holding_row_item(row: Any, source_type: str, fallback_period: str, fallback_code: str = "", fallback_name: str = "") -> dict[str, Any] | None:
     code = compact_stock_code(first_existing(row, ["股票代码", "stock_code", "code"])) or compact_stock_code(fallback_code)
     name = text_value(first_existing(row, ["股票简称", "股票名称", "name", "stock_name"])) or fallback_name
@@ -2874,6 +3026,51 @@ class AuctionService:
             payload["warning"] = "; ".join(source_errors)
         return payload
 
+    def fetch_margin_trading(self, query: dict[str, list[str]]) -> dict[str, Any]:
+        trade_date = normalize_date(first_query_value(query, "date"))
+        market = normalize_margin_market(first_query_value(query, "market"))
+        limit = int_value(first_query_value(query, "limit"), 0)
+        started = time.time()
+        summaries: list[dict[str, Any]] = []
+        details: list[dict[str, Any]] = []
+        source_errors: list[str] = []
+        try:
+            ak = load_akshare()
+        except Exception as exc:
+            ak = None
+            source_errors.append(f"AKShare load failed: {exc}")
+        markets = list(MARGIN_MARKETS) if market == "all" else [market]
+        if ak is not None:
+            for market_name in markets:
+                try:
+                    market_summaries, market_details = fetch_margin_trading_market(ak, trade_date, market_name, limit)
+                    if market_summaries:
+                        summaries.extend(market_summaries)
+                    if market_details:
+                        details.extend(market_details)
+                    if not market_summaries and not market_details:
+                        source_errors.append(f"{market_name}: returned no rows")
+                except Exception as exc:
+                    source_errors.append(f"{market_name}: {exc}")
+        payload: dict[str, Any] = {
+            "date": trade_date,
+            "market": market,
+            "summaries": summaries,
+            "details": details,
+            "summary_count": len(summaries),
+            "detail_count": len(details),
+            "source_errors": source_errors,
+            "elapsed_sec": round(time.time() - started, 3),
+            "fetched_at": utc_now_iso(),
+        }
+        if source_errors:
+            payload["warning"] = "; ".join(source_errors)
+        if not summaries and not details:
+            payload["_http_status"] = 502
+            if "warning" not in payload:
+                payload["warning"] = "margin trading endpoint returned no rows"
+        return payload
+
     def fetch_sector_constituents(self, query: dict[str, list[str]]) -> dict[str, Any]:
         sector_type = normalize_sector_fund_flow_sector_type(first_query_value(query, "sector_type"))
         sector_name = text_value(
@@ -3113,6 +3310,14 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/a-stock/stock-fund-flow":
                 payload = self.service.fetch_stock_fund_flow(query)
+                status = int(payload.get("_http_status", 200))
+                if "_http_status" in payload:
+                    payload = dict(payload)
+                    payload.pop("_http_status", None)
+                self.write_json(status, payload)
+                return
+            if parsed.path == "/api/a-stock/margin-trading":
+                payload = self.service.fetch_margin_trading(query)
                 status = int(payload.get("_http_status", 200))
                 if "_http_status" in payload:
                     payload = dict(payload)
@@ -3454,6 +3659,94 @@ def run_self_test() -> None:
     assert sina_stock[0]["code"] == "300308"
     assert round(sina_stock[0]["change_pct"], 4) == 0.613
     assert round(sina_stock[0]["main_net_inflow_pct"], 4) == 93.803
+    assert normalize_margin_market("沪市") == "sse"
+    assert normalize_margin_market("深市") == "szse"
+    assert parse_unit_number("1.23亿", "亿") == 123000000
+
+    class FakeMarginFrame:
+        def __init__(self, rows: list[dict[str, Any]]) -> None:
+            self.rows = rows
+
+        def iterrows(self) -> Any:
+            return iter(enumerate(self.rows))
+
+    class FakeMarginAK:
+        def stock_margin_sse(self, start_date: str, end_date: str) -> Any:
+            assert start_date == "20260702" and end_date == "20260702"
+            return FakeMarginFrame(
+                [
+                    {
+                        "信用交易日期": "20260702",
+                        "融资余额": "790606930947",
+                        "融资买入额": "31868581207",
+                        "融券余量": "5024353370",
+                        "融券余量金额": "26428195175",
+                        "融券卖出量": "44179298",
+                        "融资融券余额": "817035126122",
+                    }
+                ]
+            )
+
+        def stock_margin_detail_sse(self, date: str) -> Any:
+            assert date == "20260702"
+            return FakeMarginFrame(
+                [
+                    {
+                        "信用交易日期": "20260702",
+                        "标的证券代码": "510050",
+                        "标的证券简称": "50ETF",
+                        "融资余额": "4756033617",
+                        "融资买入额": "78369279",
+                        "融资偿还额": "91883384",
+                        "融券余量": "13696100",
+                        "融券卖出量": "1936100",
+                        "融券偿还量": "3572000",
+                    }
+                ]
+            )
+
+        def stock_margin_szse(self, date: str) -> Any:
+            assert date == "20260702"
+            return FakeMarginFrame(
+                [
+                    {
+                        "融资买入额": "321.08",
+                        "融资余额": "7077.67",
+                        "融券卖出量": "0.28",
+                        "融券余量": "24.34",
+                        "融券余额": "157.3",
+                        "融资融券余额": "7234.97",
+                    }
+                ]
+            )
+
+        def stock_margin_detail_szse(self, date: str) -> Any:
+            assert date == "20260702"
+            return FakeMarginFrame(
+                [
+                    {
+                        "证券代码": "000001",
+                        "证券简称": "平安银行",
+                        "融资买入额": "153304267",
+                        "融资余额": "4910810456",
+                        "融券卖出量": "3600",
+                        "融券余量": "593200",
+                        "融券余额": "6080300",
+                        "融资融券余额": "4916890756",
+                    }
+                ]
+            )
+
+    sse_summaries, sse_details = fetch_margin_trading_market(FakeMarginAK(), "2026-07-02", "sse", 0)
+    assert sse_summaries[0]["market"] == "sse"
+    assert sse_summaries[0]["trade_date"] == "2026-07-02"
+    assert sse_details[0]["code"] == "510050"
+    assert sse_details[0]["margin_trading_balance"] is None
+    szse_summaries, szse_details = fetch_margin_trading_market(FakeMarginAK(), "2026-07-02", "szse", 0)
+    assert szse_summaries[0]["margin_buy_amount"] == 32108000000
+    assert szse_summaries[0]["short_balance_volume"] == 2434000000
+    assert szse_details[0]["code"] == "000001"
+    assert szse_details[0]["margin_trading_balance"] == 4916890756
 
     class FakeFrame:
         def iterrows(self) -> Any:

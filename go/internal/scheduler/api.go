@@ -35,6 +35,7 @@ func (w *Worker) Router() http.Handler {
 	r.Post("/api/v1/scheduler/a-stock/holdings/backfill", w.handleRunAStockHoldingsBackfill)
 	r.Post("/api/v1/scheduler/a-stock/sector-fund-flow/latest", w.handleRunAStockSectorFundFlowLatest)
 	r.Post("/api/v1/scheduler/a-stock/sector-fund-flow/intraday/latest", w.handleRunAStockSectorFundFlowIntradayLatest)
+	r.Post("/api/v1/scheduler/a-stock/margin-trading/latest", w.handleRunAStockMarginTradingLatest)
 	return r
 }
 
@@ -397,6 +398,41 @@ func (w *Worker) handleRunAStockSectorFundFlowIntradayLatest(wr http.ResponseWri
 		message = err.Error()
 	}
 	_ = w.recordTaskRun(r.Context(), "a-stock-sector-fund-flow-intraday-latest", status, message, startedAt, &finishedAt)
+	if err != nil {
+		apiutil.WriteJSON(wr, http.StatusInternalServerError, err.Error(), result)
+		return
+	}
+	if result.Skipped {
+		apiutil.WriteJSON(wr, http.StatusUnprocessableEntity, message, result)
+		return
+	}
+	apiutil.WriteJSON(wr, http.StatusOK, "ok", map[string]any{"status": "completed", "result": result})
+}
+
+func (w *Worker) handleRunAStockMarginTradingLatest(wr http.ResponseWriter, r *http.Request) {
+	if strings.TrimSpace(r.Header.Get("X-Service-Token")) != strings.TrimSpace(w.cfg.ServiceToken) {
+		apiutil.WriteJSON(wr, http.StatusUnauthorized, "unauthorized", nil)
+		return
+	}
+	startedAt := time.Now().UTC()
+	_ = r.ParseForm()
+	requestedDate := nonEmpty(r.URL.Query().Get("date"), r.FormValue("date"))
+	result, err := w.runAStockMarginTradingForDate(r.Context(), requestedDate)
+	finishedAt := time.Now().UTC()
+	status := "success"
+	message := fmt.Sprintf("a-stock margin trading completed: date=%s summaries=%d details=%d", result.Date, result.Summaries, result.Details)
+	if len(result.SourceErrors) > 0 {
+		message += " source_errors=" + strings.Join(result.SourceErrors, "; ")
+	}
+	if result.Skipped {
+		status = "skipped"
+		message = result.Message
+	}
+	if err != nil {
+		status = "failed"
+		message = err.Error()
+	}
+	_ = w.recordTaskRun(r.Context(), "a-stock-margin-trading-latest", status, message, startedAt, &finishedAt)
 	if err != nil {
 		apiutil.WriteJSON(wr, http.StatusInternalServerError, err.Error(), result)
 		return

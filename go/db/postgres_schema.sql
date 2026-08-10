@@ -763,6 +763,45 @@ CREATE TABLE IF NOT EXISTS a_stock_stock_fund_flow_source_rows (
 	PRIMARY KEY (trade_date, indicator, source_type, code)
 );
 
+CREATE TABLE IF NOT EXISTS a_stock_margin_summaries (
+	trade_date TEXT NOT NULL,
+	market TEXT NOT NULL,
+	margin_buy_amount DOUBLE PRECISION,
+	margin_balance DOUBLE PRECISION,
+	short_sell_volume DOUBLE PRECISION,
+	short_balance_volume DOUBLE PRECISION,
+	short_balance_amount DOUBLE PRECISION,
+	margin_trading_balance DOUBLE PRECISION,
+	source_type TEXT NOT NULL DEFAULT '',
+	raw_payload TEXT NOT NULL DEFAULT '{}',
+	fetched_at TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	PRIMARY KEY (trade_date, market)
+);
+
+CREATE TABLE IF NOT EXISTS a_stock_margin_details (
+	trade_date TEXT NOT NULL,
+	market TEXT NOT NULL,
+	code TEXT NOT NULL,
+	rank INTEGER NOT NULL DEFAULT 0,
+	name TEXT NOT NULL DEFAULT '',
+	margin_buy_amount DOUBLE PRECISION,
+	margin_balance DOUBLE PRECISION,
+	margin_repay_amount DOUBLE PRECISION,
+	short_sell_volume DOUBLE PRECISION,
+	short_balance_volume DOUBLE PRECISION,
+	short_repay_volume DOUBLE PRECISION,
+	short_balance_amount DOUBLE PRECISION,
+	margin_trading_balance DOUBLE PRECISION,
+	source_type TEXT NOT NULL DEFAULT '',
+	raw_payload TEXT NOT NULL DEFAULT '{}',
+	fetched_at TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	PRIMARY KEY (trade_date, market, code)
+);
+
 CREATE TABLE IF NOT EXISTS task_runs (
 	id BIGSERIAL PRIMARY KEY,
 	task_name TEXT NOT NULL,
@@ -861,6 +900,10 @@ CREATE INDEX IF NOT EXISTS idx_a_stock_stock_fund_flow_lookup ON a_stock_stock_f
 CREATE INDEX IF NOT EXISTS idx_a_stock_stock_fund_flow_code ON a_stock_stock_fund_flows(code);
 CREATE INDEX IF NOT EXISTS idx_a_stock_stock_fund_flow_source_lookup ON a_stock_stock_fund_flow_source_rows(trade_date DESC, indicator, source_type, rank);
 CREATE INDEX IF NOT EXISTS idx_a_stock_stock_fund_flow_source_code ON a_stock_stock_fund_flow_source_rows(code);
+CREATE INDEX IF NOT EXISTS idx_a_stock_margin_summary_lookup ON a_stock_margin_summaries(trade_date DESC, market);
+CREATE INDEX IF NOT EXISTS idx_a_stock_margin_detail_lookup ON a_stock_margin_details(trade_date DESC, market, rank);
+CREATE INDEX IF NOT EXISTS idx_a_stock_margin_detail_code ON a_stock_margin_details(code);
+CREATE INDEX IF NOT EXISTS idx_a_stock_margin_detail_name ON a_stock_margin_details(name);
 CREATE INDEX IF NOT EXISTS idx_wechat_challenges_expires_at ON wechat_challenges(expires_at);
 CREATE INDEX IF NOT EXISTS idx_wechat_bindings_openid ON wechat_bindings(openid);
 CREATE INDEX IF NOT EXISTS idx_public_options_user_updated ON public_options(user_id, updatetime DESC, id DESC);

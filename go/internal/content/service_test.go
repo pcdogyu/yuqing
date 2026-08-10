@@ -1127,6 +1127,91 @@ func TestAStockSectorFundFlowAPIUpsertsAndLists(t *testing.T) {
 	}
 }
 
+func TestAStockMarginTradingAPIUpsertsListsAndAggregates(t *testing.T) {
+	store := newContentSearchTestStore(t)
+	svc := NewService(config.Config{}, store)
+	router := svc.Router()
+
+	payload := `{
+		"date":"2026-07-01",
+		"replace":true,
+		"summaries":[
+			{"trade_date":"2026-07-01","market":"sse","margin_buy_amount":31868581207,"margin_balance":790606930947,"short_sell_volume":44179298,"short_balance_volume":5024353370,"short_balance_amount":26428195175,"margin_trading_balance":817035126122},
+			{"trade_date":"2026-07-01","market":"szse","margin_buy_amount":32108000000,"margin_balance":707767000000,"short_sell_volume":28000000,"short_balance_volume":2434000000,"short_balance_amount":15730000000,"margin_trading_balance":723497000000}
+		],
+		"details":[
+			{"trade_date":"2026-07-01","market":"sse","rank":1,"code":"sh510050","name":"50ETF","margin_buy_amount":78369279,"margin_balance":4756033617,"margin_repay_amount":91883384,"short_sell_volume":1936100,"short_balance_volume":13696100,"short_repay_volume":3572000},
+			{"trade_date":"2026-07-01","market":"szse","rank":1,"code":"000001","name":"平安银行","margin_buy_amount":153304267,"margin_balance":4910810456,"short_sell_volume":3600,"short_balance_volume":593200,"short_balance_amount":6080300,"margin_trading_balance":4916890756}
+		]
+	}`
+	postReq := httptest.NewRequest(http.MethodPost, "/api/v1/internal/a-stock/margin-trading", strings.NewReader(payload))
+	postReq.Header.Set("Content-Type", "application/json")
+	postRR := httptest.NewRecorder()
+	router.ServeHTTP(postRR, postReq)
+	if postRR.Code != http.StatusOK {
+		t.Fatalf("expected margin upsert 200, got %d body=%s", postRR.Code, postRR.Body.String())
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/margin-trading?date=2026-07-01&market=all&keyword=平安&page=1&page_size=10", nil)
+	listRR := httptest.NewRecorder()
+	router.ServeHTTP(listRR, listReq)
+	if listRR.Code != http.StatusOK {
+		t.Fatalf("expected margin list 200, got %d body=%s", listRR.Code, listRR.Body.String())
+	}
+	var envelope struct {
+		Data model.AStockMarginListResult `json:"data"`
+	}
+	if err := json.Unmarshal(listRR.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode margin list: %v", err)
+	}
+	if envelope.Data.Date != "2026-07-01" || envelope.Data.Total != 1 || len(envelope.Data.Details) != 1 || envelope.Data.Details[0].Code != "000001" {
+		t.Fatalf("unexpected margin list: %+v", envelope.Data)
+	}
+	if len(envelope.Data.Summaries) != 3 || envelope.Data.Summaries[2].Market != "all" || envelope.Data.Summaries[2].MarginBalance == nil || *envelope.Data.Summaries[2].MarginBalance != 1498373930947 {
+		t.Fatalf("unexpected margin summary aggregation: %+v", envelope.Data.Summaries)
+	}
+
+	sseReq := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/margin-trading?date=2026-07-01&market=沪市&keyword=50ETF&page=1&page_size=10", nil)
+	sseRR := httptest.NewRecorder()
+	router.ServeHTTP(sseRR, sseReq)
+	if sseRR.Code != http.StatusOK {
+		t.Fatalf("expected sse margin list 200, got %d body=%s", sseRR.Code, sseRR.Body.String())
+	}
+	var sseEnvelope struct {
+		Data model.AStockMarginListResult `json:"data"`
+	}
+	if err := json.Unmarshal(sseRR.Body.Bytes(), &sseEnvelope); err != nil {
+		t.Fatalf("decode sse margin list: %v", err)
+	}
+	if sseEnvelope.Data.Market != "sse" || sseEnvelope.Data.Total != 1 || sseEnvelope.Data.Details[0].Code != "510050" || sseEnvelope.Data.Details[0].MarginTradingBalance != nil {
+		t.Fatalf("unexpected sse margin list: %+v", sseEnvelope.Data)
+	}
+
+	latestPayload := `{"date":"2026-07-02","replace":true,"summaries":[{"market":"sse","margin_balance":800}],"details":[{"market":"sse","rank":1,"code":"600000","name":"浦发银行","margin_balance":100}]}`
+	latestReq := httptest.NewRequest(http.MethodPost, "/api/v1/internal/a-stock/margin-trading", strings.NewReader(latestPayload))
+	latestReq.Header.Set("Content-Type", "application/json")
+	latestRR := httptest.NewRecorder()
+	router.ServeHTTP(latestRR, latestReq)
+	if latestRR.Code != http.StatusOK {
+		t.Fatalf("expected latest margin upsert 200, got %d body=%s", latestRR.Code, latestRR.Body.String())
+	}
+	defaultReq := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/margin-trading?page=1&page_size=10", nil)
+	defaultRR := httptest.NewRecorder()
+	router.ServeHTTP(defaultRR, defaultReq)
+	if defaultRR.Code != http.StatusOK {
+		t.Fatalf("expected default margin list 200, got %d body=%s", defaultRR.Code, defaultRR.Body.String())
+	}
+	var defaultEnvelope struct {
+		Data model.AStockMarginListResult `json:"data"`
+	}
+	if err := json.Unmarshal(defaultRR.Body.Bytes(), &defaultEnvelope); err != nil {
+		t.Fatalf("decode default margin list: %v", err)
+	}
+	if defaultEnvelope.Data.Date != "2026-07-02" || defaultEnvelope.Data.LatestDate != "2026-07-02" || defaultEnvelope.Data.Total != 1 {
+		t.Fatalf("unexpected default latest margin list: %+v", defaultEnvelope.Data)
+	}
+}
+
 func TestStockInstitutionHoldingSignalsAPI(t *testing.T) {
 	store := newContentSearchTestStore(t)
 	svc := NewService(config.Config{}, store)

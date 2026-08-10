@@ -131,6 +131,8 @@ type Store interface {
 	UpsertAStockStockFundFlowSourceRows(rctx context.Context, tradeDate string, items []model.AStockStockFundFlow, replace bool) (model.AStockStockFundFlowUpsertResult, error)
 	ListAStockStockFundFlows(rctx context.Context, filter model.AStockStockFundFlowFilter) (model.AStockStockFundFlowListResult, error)
 	ListAStockStockFundFlowTrend(rctx context.Context, filter model.AStockFundFlowTrendFilter) (model.AStockStockFundFlowTrendResult, error)
+	UpsertAStockMargins(rctx context.Context, tradeDate string, summaries []model.AStockMarginSummary, details []model.AStockMarginDetail, replace bool) (model.AStockMarginUpsertResult, error)
+	ListAStockMargins(rctx context.Context, filter model.AStockMarginFilter) (model.AStockMarginListResult, error)
 	UpsertStockResearchSurveys(rctx context.Context, items []model.StockResearchSurvey) (model.StockResearchUpsertResult, error)
 	ListStockResearchSurveys(rctx context.Context, filter model.StockResearchFilter) (model.StockResearchListResult, error)
 	GetStockResearchSurvey(rctx context.Context, id int64) (model.StockResearchSurvey, error)
@@ -233,6 +235,8 @@ func (s *Service) Routes(r chi.Router) {
 	r.Get("/api/v1/a-stock/stock-fund-flow-trend", s.handleListAStockStockFundFlowTrend)
 	r.Post("/api/v1/internal/a-stock/stock-fund-flows", s.handleUpsertAStockStockFundFlows)
 	r.Post("/api/v1/internal/a-stock/stock-fund-flow-sources", s.handleUpsertAStockStockFundFlowSourceRows)
+	r.Get("/api/v1/a-stock/margin-trading", s.handleListAStockMargins)
+	r.Post("/api/v1/internal/a-stock/margin-trading", s.handleUpsertAStockMargins)
 	r.Get("/api/v1/stock-research", s.handleListStockResearchSurveys)
 	r.Get("/api/v1/stock-research/{id}", s.handleGetStockResearchSurvey)
 	r.Get("/api/v1/stock-research/{id}/pdf", s.handleGetStockResearchPDF)
@@ -2289,6 +2293,131 @@ func (s *Service) handleUpsertAStockStockFundFlowSourceRows(w http.ResponseWrite
 		return
 	}
 	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleListAStockMargins(w http.ResponseWriter, r *http.Request) {
+	filter := model.AStockMarginFilter{
+		Date:     strings.TrimSpace(r.URL.Query().Get("date")),
+		Market:   strings.TrimSpace(r.URL.Query().Get("market")),
+		Keyword:  strings.TrimSpace(nonEmpty(r.URL.Query().Get("keyword"), r.URL.Query().Get("q"))),
+		Page:     apiutil.IntQuery(r, "page", 1),
+		PageSize: apiutil.IntQuery(r, "page_size", 100),
+	}
+	result, err := s.store.ListAStockMargins(r.Context(), filter)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleUpsertAStockMargins(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		Date      string                      `json:"date"`
+		Market    string                      `json:"market"`
+		Summaries []model.AStockMarginSummary `json:"summaries"`
+		Details   []model.AStockMarginDetail  `json:"details"`
+		Replace   bool                        `json:"replace"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "invalid json", nil)
+		return
+	}
+	payload.Date = strings.TrimSpace(payload.Date)
+	payload.Market = normalizeAStockMarginMarket(payload.Market)
+	if payload.Date == "" {
+		for _, item := range payload.Summaries {
+			if date := strings.TrimSpace(item.TradeDate); date != "" {
+				payload.Date = date
+				break
+			}
+		}
+	}
+	if payload.Date == "" {
+		for _, item := range payload.Details {
+			if date := strings.TrimSpace(item.TradeDate); date != "" {
+				payload.Date = date
+				break
+			}
+		}
+	}
+	if payload.Date == "" {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "date required", nil)
+		return
+	}
+	now := time.Now().UTC()
+	for i := range payload.Summaries {
+		payload.Summaries[i] = normalizeAStockMarginSummary(payload.Summaries[i], payload.Date, payload.Market, now)
+	}
+	for i := range payload.Details {
+		payload.Details[i] = normalizeAStockMarginDetail(payload.Details[i], payload.Date, payload.Market, now)
+	}
+	result, err := s.store.UpsertAStockMargins(r.Context(), payload.Date, payload.Summaries, payload.Details, payload.Replace)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func normalizeAStockMarginSummary(item model.AStockMarginSummary, date string, market string, now time.Time) model.AStockMarginSummary {
+	item.TradeDate = nonEmpty(strings.TrimSpace(item.TradeDate), strings.TrimSpace(date))
+	item.Market = normalizeAStockMarginMarket(nonEmpty(strings.TrimSpace(item.Market), market))
+	item.MarketLabel = aStockMarginMarketLabel(item.Market)
+	item.SourceType = nonEmpty(strings.TrimSpace(item.SourceType), "akshare_stock_margin_"+item.Market)
+	item.RawPayload = nonEmpty(strings.TrimSpace(item.RawPayload), "{}")
+	if item.FetchedAt.IsZero() {
+		item.FetchedAt = now
+	}
+	if item.CreatedAt.IsZero() {
+		item.CreatedAt = now
+	}
+	if item.UpdatedAt.IsZero() {
+		item.UpdatedAt = now
+	}
+	return item
+}
+
+func normalizeAStockMarginDetail(item model.AStockMarginDetail, date string, market string, now time.Time) model.AStockMarginDetail {
+	item.TradeDate = nonEmpty(strings.TrimSpace(item.TradeDate), strings.TrimSpace(date))
+	item.Market = normalizeAStockMarginMarket(nonEmpty(strings.TrimSpace(item.Market), market))
+	item.MarketLabel = aStockMarginMarketLabel(item.Market)
+	item.Code = strings.TrimSpace(item.Code)
+	item.Name = strings.TrimSpace(item.Name)
+	item.SourceType = nonEmpty(strings.TrimSpace(item.SourceType), "akshare_stock_margin_detail_"+item.Market)
+	item.RawPayload = nonEmpty(strings.TrimSpace(item.RawPayload), "{}")
+	if item.FetchedAt.IsZero() {
+		item.FetchedAt = now
+	}
+	if item.CreatedAt.IsZero() {
+		item.CreatedAt = now
+	}
+	if item.UpdatedAt.IsZero() {
+		item.UpdatedAt = now
+	}
+	return item
+}
+
+func normalizeAStockMarginMarket(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "sse", "sh", "shanghai", "沪", "沪市", "上海":
+		return "sse"
+	case "szse", "sz", "shenzhen", "深", "深市", "深圳":
+		return "szse"
+	default:
+		return "all"
+	}
+}
+
+func aStockMarginMarketLabel(market string) string {
+	switch normalizeAStockMarginMarket(market) {
+	case "sse":
+		return "沪市"
+	case "szse":
+		return "深市"
+	default:
+		return "合计"
+	}
 }
 
 func normalizeAStockStockFundFlow(item model.AStockStockFundFlow, date string, indicator string, sourceType string, now time.Time) model.AStockStockFundFlow {

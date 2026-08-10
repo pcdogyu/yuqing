@@ -587,12 +587,13 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	if err := json.Unmarshal(listRR.Body.Bytes(), &listEnvelope); err != nil {
 		t.Fatalf("unmarshal jobs list: %v", err)
 	}
-	if len(listEnvelope.Data) != 48 {
-		t.Fatalf("expected 48 scheduler jobs, got %d", len(listEnvelope.Data))
+	if len(listEnvelope.Data) != 49 {
+		t.Fatalf("expected 49 scheduler jobs, got %d", len(listEnvelope.Data))
 	}
-	var heartbeatJob, hotJob, eastmoneyJob, eastmoneyFullJob, jin10FullJob, wallStreetCNJob, clsJob, sinaJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningNewsCrawlJob, aStockMorningWarmupJob, aStockMorningPreviewJob, aStockMorningJob, aStockAfternoonPreviewJob, aStockMiddayNewsCrawlJob, aStockAfternoonJob, aStockAfternoonOpenRefreshJob, aStockDailyBacktestRefreshJob, aStockEveningJob, aStockExactSnapshotBackfillJob, hotspotSwitchingSnapshotJob, aStockAuctionJob, aStockSectorFundFlowJob, aStockSectorFundFlowIntradayJob, aStockHoldingsJob, stockResearchJob, stockResearchNLPJob, investorRelationsJob Job
+	var heartbeatJob, hotJob, eastmoneyJob, eastmoneyFullJob, jin10FullJob, wallStreetCNJob, clsJob, sinaJob, cryptoXJob, cryptoTelegramJob, foresightJob, coindeskJob, panewsJob, theBlockJob, aStockMorningNewsCrawlJob, aStockMorningWarmupJob, aStockMorningPreviewJob, aStockMorningJob, aStockAfternoonPreviewJob, aStockMiddayNewsCrawlJob, aStockAfternoonJob, aStockAfternoonOpenRefreshJob, aStockDailyBacktestRefreshJob, aStockEveningJob, aStockExactSnapshotBackfillJob, hotspotSwitchingSnapshotJob, aStockAuctionJob, aStockSectorFundFlowJob, aStockSectorFundFlowIntradayJob, aStockMarginTradingJob, aStockHoldingsJob, stockResearchJob, stockResearchNLPJob, investorRelationsJob Job
 	aStockSectorFundFlowJobCount := 0
 	aStockSectorFundFlowIntradayJobCount := 0
+	aStockMarginTradingJobCount := 0
 	for _, job := range listEnvelope.Data {
 		switch job.Name {
 		case "crawl-link-heartbeat":
@@ -655,6 +656,9 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 		case "a-stock-sector-fund-flow-intraday-crawl":
 			aStockSectorFundFlowIntradayJobCount++
 			aStockSectorFundFlowIntradayJob = job
+		case "a-stock-margin-trading-crawl":
+			aStockMarginTradingJobCount++
+			aStockMarginTradingJob = job
 		case "a-stock-holdings-crawl":
 			aStockHoldingsJob = job
 		case "stock-research-crawl":
@@ -751,6 +755,12 @@ func TestSchedulerJobsAPIListsAndRunsJob(t *testing.T) {
 	}
 	if aStockSectorFundFlowIntradayJob.Cron != "0 30-59 9 * * ?; 0 * 10 * * ?; 0 0-30 11 * * ?; 0 * 13-14 * * ?; 0 0 15 * * ?" || aStockSectorFundFlowIntradayJob.IntervalSec != 60 || aStockSectorFundFlowIntradayJob.Enabled {
 		t.Fatalf("expected A股 sector fund flow intraday crawl disabled by default with minute cron metadata, got %+v", aStockSectorFundFlowIntradayJob)
+	}
+	if aStockMarginTradingJobCount != 1 {
+		t.Fatalf("expected one A股 margin trading job, got %d", aStockMarginTradingJobCount)
+	}
+	if aStockMarginTradingJob.Cron != "0 10 17 * * ?; 0 10 18 * * ?" || aStockMarginTradingJob.IntervalSec != 86400 || aStockMarginTradingJob.Enabled {
+		t.Fatalf("expected A股 margin trading crawl disabled by default with close-after cron metadata, got %+v", aStockMarginTradingJob)
 	}
 	if aStockHoldingsJob.Cron != "0 35 2 * * ?" || aStockHoldingsJob.Enabled {
 		t.Fatalf("expected A股 holdings crawl disabled by default with 02:35 cron, got %+v", aStockHoldingsJob)
@@ -2333,6 +2343,95 @@ func TestRunAStockSectorFundFlowLatestFetchesAllGroupsAndWritesContent(t *testin
 	}
 }
 
+func TestRunAStockMarginTradingForDateAllowsSingleMarketFailure(t *testing.T) {
+	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/a-stock/trading-day":
+			_ = json.NewEncoder(w).Encode(aStockTradingDayStatus{Date: "2026-07-01", IsTradingDay: true, Message: "open"})
+		case "/api/a-stock/margin-trading":
+			if r.URL.Query().Get("date") != "2026-07-01" || r.URL.Query().Get("market") != "all" {
+				t.Fatalf("unexpected margin trading query: %s", r.URL.RawQuery)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"date": "2026-07-01",
+				"summaries": []map[string]any{{
+					"trade_date":     "2026-07-01",
+					"market":         "sse",
+					"margin_balance": 1000,
+				}},
+				"details": []map[string]any{{
+					"trade_date":     "2026-07-01",
+					"market":         "sse",
+					"rank":           1,
+					"code":           "510050",
+					"name":           "50ETF",
+					"margin_balance": 500,
+				}},
+				"source_errors": []string{"szse: connection reset"},
+			})
+		default:
+			t.Fatalf("unexpected akshare request: %s", r.URL.Path)
+		}
+	}))
+	defer akshare.Close()
+
+	var writes int
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/internal/a-stock/margin-trading" {
+			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.Path)
+		}
+		var payload struct {
+			Date      string                      `json:"date"`
+			Market    string                      `json:"market"`
+			Summaries []model.AStockMarginSummary `json:"summaries"`
+			Details   []model.AStockMarginDetail  `json:"details"`
+			Replace   bool                        `json:"replace"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode margin content payload: %v", err)
+		}
+		if payload.Date != "2026-07-01" || payload.Market != "all" || !payload.Replace || len(payload.Summaries) != 1 || len(payload.Details) != 1 || payload.Details[0].Code != "510050" {
+			t.Fatalf("unexpected margin content payload: %+v", payload)
+		}
+		writes++
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": http.StatusOK, "message": "ok", "data": map[string]any{"summaries": 1, "details": 1}})
+	}))
+	defer content.Close()
+
+	worker := NewWorker(config.Config{AStockAuctionURL: akshare.URL, ContentURL: content.URL, HTTPTimeout: 2 * time.Second})
+	result, err := worker.runAStockMarginTradingForDate(context.Background(), "20260701")
+	if err != nil {
+		t.Fatalf("runAStockMarginTradingLatest error: %v", err)
+	}
+	if result.Date != "2026-07-01" || result.Summaries != 1 || result.Details != 1 || len(result.SourceErrors) != 1 || writes != 1 {
+		t.Fatalf("unexpected margin trading result=%+v writes=%d", result, writes)
+	}
+}
+
+func TestRunAStockMarginTradingLatestFailsWhenAllMarketsEmpty(t *testing.T) {
+	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/a-stock/trading-day":
+			_ = json.NewEncoder(w).Encode(aStockTradingDayStatus{Date: "2026-07-01", IsTradingDay: true, Message: "open"})
+		case "/api/a-stock/margin-trading":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"date":          "2026-07-01",
+				"summaries":     []map[string]any{},
+				"details":       []map[string]any{},
+				"source_errors": []string{"sse: failed", "szse: failed"},
+			})
+		default:
+			t.Fatalf("unexpected akshare request: %s", r.URL.Path)
+		}
+	}))
+	defer akshare.Close()
+	worker := NewWorker(config.Config{AStockAuctionURL: akshare.URL, ContentURL: "http://127.0.0.1:1", HTTPTimeout: 2 * time.Second})
+	result, err := worker.runAStockMarginTradingLatest(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "sse: failed") || result.Date != "2026-07-01" {
+		t.Fatalf("expected all-market margin failure, result=%+v err=%v", result, err)
+	}
+}
+
 func TestRunAStockSectorFundFlowIntradayLatestFetchesTodaySectorOnlyAndSnapshots(t *testing.T) {
 	requested := map[string]bool{}
 	akshare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -3750,9 +3849,10 @@ func TestSchedulerAStockSectorFundFlowJobEnabledWhenEndpointConfigured(t *testin
 		WechatCleanupInterval: time.Hour,
 		WechatPushInterval:    time.Hour,
 	})
-	var fundFlowJob, intradayJob Job
+	var fundFlowJob, intradayJob, marginJob Job
 	fundFlowJobCount := 0
 	intradayJobCount := 0
+	marginJobCount := 0
 	for _, job := range worker.Jobs() {
 		switch job.Name {
 		case "a-stock-sector-fund-flow-crawl":
@@ -3761,6 +3861,9 @@ func TestSchedulerAStockSectorFundFlowJobEnabledWhenEndpointConfigured(t *testin
 		case "a-stock-sector-fund-flow-intraday-crawl":
 			intradayJob = job
 			intradayJobCount++
+		case "a-stock-margin-trading-crawl":
+			marginJob = job
+			marginJobCount++
 		}
 	}
 	if fundFlowJobCount != 1 {
@@ -3769,11 +3872,17 @@ func TestSchedulerAStockSectorFundFlowJobEnabledWhenEndpointConfigured(t *testin
 	if intradayJobCount != 1 {
 		t.Fatalf("expected one enabled A股 sector fund flow intraday job, got %d", intradayJobCount)
 	}
+	if marginJobCount != 1 {
+		t.Fatalf("expected one enabled A股 margin trading job, got %d", marginJobCount)
+	}
 	if !fundFlowJob.Enabled || fundFlowJob.Cron != "0 31 9 * * ?; 0 1 10-15 * * ?" || fundFlowJob.IntervalSec != 3600 || fundFlowJob.NextRunAt == nil {
 		t.Fatalf("expected enabled A股 sector fund flow crawl with reduced cron metadata, got %+v", fundFlowJob)
 	}
 	if !intradayJob.Enabled || intradayJob.Cron != "0 30-59 9 * * ?; 0 * 10 * * ?; 0 0-30 11 * * ?; 0 * 13-14 * * ?; 0 0 15 * * ?" || intradayJob.IntervalSec != 60 || intradayJob.NextRunAt == nil {
 		t.Fatalf("expected enabled A股 sector fund flow intraday crawl with minute cron metadata, got %+v", intradayJob)
+	}
+	if !marginJob.Enabled || marginJob.Cron != "0 10 17 * * ?; 0 10 18 * * ?" || marginJob.IntervalSec != 86400 || marginJob.NextRunAt == nil {
+		t.Fatalf("expected enabled A股 margin trading crawl with close-after cron metadata, got %+v", marginJob)
 	}
 }
 

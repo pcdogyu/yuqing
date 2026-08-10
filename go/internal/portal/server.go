@@ -403,6 +403,7 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/a-stock/popup/dismiss", s.requireSessionJSON(s.handleAStockPopupDismiss))
 	mux.HandleFunc("/a-stock/backtest", s.requireSession(s.handleAStockBacktestPage))
 	mux.HandleFunc("/a-stock/auction", s.requireSession(s.handleAStockAuctionPage))
+	mux.HandleFunc("/a-stock/margin", s.requireSession(s.handleAStockMarginPage))
 	mux.HandleFunc("/a-stock/holdings", s.requireSession(s.handleAStockHoldingsPage))
 	mux.HandleFunc("/a-stock/test", s.requireSession(s.handleAStockTestPage))
 	mux.HandleFunc("/a-stock", s.requireSession(s.handleAStockPage))
@@ -5266,7 +5267,7 @@ func collectLegacyLiveRoutes() []legacyRouteSpec {
 	return result
 }
 
-const portalNavHTML = `<nav><a href="/">总览</a><a href="/articles">文章</a><a href="/hotspots">热点</a><a href="/a-stock">A股</a><a href="/a-stock/backtest">回测</a><a href="/sector-fund-flow">版块资金</a><a href="/stock-research">研报调研</a><a href="/a-stock/holdings">机构持仓</a><a href="/a-stock/auction">集合竞价</a><a href="/crypto">Crypto</a><a href="/system">系统</a><a href="/logs">日志</a><button id="portal-upgrade-button" class="portal-upgrade-button" type="button">升级</button><a class="logout-link" href="/logout">退出</a></nav>`
+const portalNavHTML = `<nav><a href="/">总览</a><a href="/articles">文章</a><a href="/hotspots">热点</a><a href="/a-stock">A股</a><a href="/a-stock/backtest">回测</a><a href="/sector-fund-flow">版块资金</a><a href="/stock-research">研报调研</a><a href="/a-stock/margin">融资融券</a><a href="/a-stock/holdings">机构持仓</a><a href="/a-stock/auction">集合竞价</a><a href="/crypto">Crypto</a><a href="/system">系统</a><a href="/logs">日志</a><button id="portal-upgrade-button" class="portal-upgrade-button" type="button">升级</button><a class="logout-link" href="/logout">退出</a></nav>`
 const portalUpgradeShellHTML = `<div id="portal-upgrade-mask" class="portal-upgrade-mask" hidden><div class="portal-upgrade-panel" role="dialog" aria-modal="true" aria-labelledby="portal-upgrade-title"><div class="portal-upgrade-header"><div><h2 id="portal-upgrade-title">系统升级</h2><p id="portal-upgrade-status" class="portal-upgrade-status">等待执行</p></div><button id="portal-upgrade-close" class="portal-upgrade-close" type="button">关闭</button></div><div class="portal-upgrade-console-bar"><span id="portal-upgrade-console-state">等待</span><span id="portal-upgrade-console-clock">--</span></div><pre id="portal-upgrade-log" class="portal-upgrade-log">等待升级日志</pre></div></div><script>
 (function(){
 if(window.__portalUpgradeBound){return}

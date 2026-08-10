@@ -283,9 +283,11 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 	sectorIndex := strings.Index(body, `href="/sector-fund-flow"`)
 	auctionIndex := strings.Index(body, `href="/a-stock/auction"`)
 	researchIndex := strings.Index(body, `href="/stock-research"`)
+	marginIndex := strings.Index(body, `href="/a-stock/margin"`)
+	holdingsIndex := strings.Index(body, `href="/a-stock/holdings"`)
 	cryptoIndex := strings.Index(body, `href="/crypto"`)
-	if aStockIndex < 0 || backtestIndex < 0 || sectorIndex < 0 || auctionIndex < 0 || researchIndex < 0 || cryptoIndex < 0 || aStockIndex > backtestIndex || backtestIndex > sectorIndex || sectorIndex > researchIndex || researchIndex > auctionIndex || auctionIndex > cryptoIndex {
-		t.Fatalf("expected A股, 回测, 版块资金, 研报调研, 集合竞价 nav links before Crypto, got %s", body)
+	if aStockIndex < 0 || backtestIndex < 0 || sectorIndex < 0 || auctionIndex < 0 || researchIndex < 0 || marginIndex < 0 || holdingsIndex < 0 || cryptoIndex < 0 || aStockIndex > backtestIndex || backtestIndex > sectorIndex || sectorIndex > researchIndex || researchIndex > marginIndex || marginIndex > holdingsIndex || holdingsIndex > auctionIndex || auctionIndex > cryptoIndex {
+		t.Fatalf("expected A股, 回测, 版块资金, 研报调研, 融资融券, 机构持仓, 集合竞价 nav links before Crypto, got %s", body)
 	}
 	if strings.Contains(body, `href="/investor-relations"`) {
 		t.Fatalf("expected investor relations to be removed from shared nav, got %s", body)
@@ -1014,7 +1016,7 @@ func TestStockResearchPageLoadsFiltersAndRows(t *testing.T) {
 		t.Fatalf("expected one merged stock research request, got %d", requests)
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"研报调研", "深度研究", "中金公司", "张三", "新浪财经", "东方财富", "搜狐财经", "回补近一年", "解析当前筛选研报PDF", "抓取投资者关系近一年并解析PDF", "补抓当前页原文入库", "下载PDF", "查看文本", "已解析", "无PDF", "重新解析", "抓取原文", `value="科大"`, `href="/stock-research/7?return_to=`, `href="/a-stock">A股</a><a href="/a-stock/backtest">回测</a><a href="/sector-fund-flow">版块资金</a><a href="/stock-research">研报调研</a><a href="/a-stock/holdings">机构持仓</a>`, "body[data-page='stock-research'] main,body[data-page='stock-research'] .site-footer{max-width:none;width:100%;box-sizing:border-box}", "body[data-page='stock-research'] main{font-size:14px;line-height:1.45}", "body[data-page='stock-research'] section{width:100%;box-sizing:border-box}", ".research-scroll{width:100%;overflow:auto}", ".research-table{width:100%;min-width:0;table-layout:fixed}", ".research-col-title{width:22.8%}", ".research-col-institution{width:12.8%}", ".research-col-analyst{width:10.8%}", ".research-col-pdf{width:8.4%}", ".research-col-status{width:18.2%}", ".research-col-date{width:7.5%}", ".research-col-stock{width:8.5%}", ".research-col-source{width:6%}", ".research-col-link{width:5%}", ".research-status-actions{display:flex;align-items:center;gap:8px;white-space:nowrap;flex-wrap:wrap}", ".research-status-actions .research-action-form{flex:1 1 auto;min-width:0}", ".research-status-actions button{width:90%;height:90%;min-height:32px;margin:0;padding:7px 10px}", "<th>日期</th><th>股票</th><th>标题</th>", `<option value="cninfo_investor_relation">互动易投资者关系</option>`, "互动易投资者关系", "投资者关系管理信息20260617"} {
+	for _, want := range []string{"研报调研", "深度研究", "中金公司", "张三", "新浪财经", "东方财富", "搜狐财经", "回补近一年", "解析当前筛选研报PDF", "抓取投资者关系近一年并解析PDF", "补抓当前页原文入库", "下载PDF", "查看文本", "已解析", "无PDF", "重新解析", "抓取原文", `value="科大"`, `href="/stock-research/7?return_to=`, `href="/a-stock">A股</a><a href="/a-stock/backtest">回测</a><a href="/sector-fund-flow">版块资金</a><a href="/stock-research">研报调研</a><a href="/a-stock/margin">融资融券</a><a href="/a-stock/holdings">机构持仓</a>`, "body[data-page='stock-research'] main,body[data-page='stock-research'] .site-footer{max-width:none;width:100%;box-sizing:border-box}", "body[data-page='stock-research'] main{font-size:14px;line-height:1.45}", "body[data-page='stock-research'] section{width:100%;box-sizing:border-box}", ".research-scroll{width:100%;overflow:auto}", ".research-table{width:100%;min-width:0;table-layout:fixed}", ".research-col-title{width:22.8%}", ".research-col-institution{width:12.8%}", ".research-col-analyst{width:10.8%}", ".research-col-pdf{width:8.4%}", ".research-col-status{width:18.2%}", ".research-col-date{width:7.5%}", ".research-col-stock{width:8.5%}", ".research-col-source{width:6%}", ".research-col-link{width:5%}", ".research-status-actions{display:flex;align-items:center;gap:8px;white-space:nowrap;flex-wrap:wrap}", ".research-status-actions .research-action-form{flex:1 1 auto;min-width:0}", ".research-status-actions button{width:90%;height:90%;min-height:32px;margin:0;padding:7px 10px}", "<th>日期</th><th>股票</th><th>标题</th>", `<option value="cninfo_investor_relation">互动易投资者关系</option>`, "互动易投资者关系", "投资者关系管理信息20260617"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected stock research page to contain %q, got %s", want, body)
 		}
@@ -1204,6 +1206,101 @@ func TestSectorFundFlowPageLoadsFiltersRowsAndRefreshAction(t *testing.T) {
 	srv.handleSectorFundFlowPage(postRR, postReq, map[string]any{"id": 1})
 	if postRR.Code != http.StatusSeeOther || !strings.Contains(postRR.Header().Get("Location"), "/sector-fund-flow?") || !strings.Contains(postRR.Header().Get("Location"), "sector_type=") {
 		t.Fatalf("expected sector fund flow refresh redirect, status=%d location=%s", postRR.Code, postRR.Header().Get("Location"))
+	}
+}
+
+func TestAStockMarginPageLoadsRowsAndRefreshAction(t *testing.T) {
+	fp := func(value float64) *float64 { return &value }
+	fetchedAt := time.Date(2026, 7, 2, 9, 10, 0, 0, time.UTC)
+	var marginRequests int
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		marginRequests++
+		if r.URL.Path != "/api/v1/a-stock/margin-trading" {
+			t.Fatalf("unexpected content request: %s", r.URL.String())
+		}
+		if r.URL.Query().Get("date") != "2026-07-02" || r.URL.Query().Get("keyword") != "平安" || r.URL.Query().Get("page") != "1" || r.URL.Query().Get("page_size") != "200" {
+			t.Fatalf("unexpected margin query: %s", r.URL.RawQuery)
+		}
+		writeRawJSON(w, http.StatusOK, map[string]any{
+			"code":    http.StatusOK,
+			"message": "ok",
+			"data": model.AStockMarginListResult{
+				Summaries: []model.AStockMarginSummary{
+					{TradeDate: "2026-07-02", Market: "sse", MarketLabel: "沪市", MarginBuyAmount: fp(817035126122), MarginBalance: fp(963323626777), ShortSellVolume: fp(1200000), ShortBalanceVolume: fp(2400000), ShortBalanceAmount: fp(18000000), MarginTradingBalance: fp(963341626777)},
+					{TradeDate: "2026-07-02", Market: "szse", MarketLabel: "深市", MarginBuyAmount: fp(723497000000), MarginBalance: fp(535050304170), ShortSellVolume: fp(900000), ShortBalanceVolume: fp(2100000), ShortBalanceAmount: fp(12000000), MarginTradingBalance: fp(535062304170)},
+					{TradeDate: "2026-07-02", Market: "all", MarketLabel: "合计", MarginBuyAmount: fp(1540532126122), MarginBalance: fp(1498373930947), ShortSellVolume: fp(2100000), ShortBalanceVolume: fp(4500000), ShortBalanceAmount: fp(30000000), MarginTradingBalance: fp(1498403930947)},
+				},
+				Details: []model.AStockMarginDetail{
+					{TradeDate: "2026-07-02", Market: "sse", MarketLabel: "沪市", Rank: 1, Code: "510050", Name: "50ETF", MarginBuyAmount: fp(100000000), MarginBalance: fp(200000000), ShortSellVolume: fp(12000), ShortBalanceVolume: fp(45000), ShortRepayVolume: fp(8000)},
+					{TradeDate: "2026-07-02", Market: "szse", MarketLabel: "深市", Rank: 2, Code: "000001", Name: "平安银行", MarginBuyAmount: fp(400000000), MarginBalance: fp(800000000), MarginRepayAmount: fp(180000000), ShortSellVolume: fp(22000), ShortBalanceVolume: fp(58000), ShortRepayVolume: fp(9000), ShortBalanceAmount: fp(3200000), MarginTradingBalance: fp(803200000)},
+				},
+				Page:      1,
+				PageSize:  200,
+				Total:     2,
+				Date:      "2026-07-02",
+				Market:    "all",
+				Keyword:   "平安",
+				Dates:     []string{"2026-07-02", "2026-07-01"},
+				FetchedAt: &fetchedAt,
+			},
+		})
+	}))
+	defer content.Close()
+	var refreshRequests int
+	scheduler := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		refreshRequests++
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/scheduler/a-stock/margin-trading/latest" {
+			t.Fatalf("unexpected scheduler request: %s %s", r.Method, r.URL.Path)
+		}
+		if r.URL.Query().Get("date") != "2026-07-02" {
+			t.Fatalf("unexpected scheduler date query: %s", r.URL.RawQuery)
+		}
+		if got := r.Header.Get("X-Service-Token"); got != "secret-token" {
+			t.Fatalf("unexpected scheduler token: %q", got)
+		}
+		writeRawJSON(w, http.StatusOK, map[string]any{
+			"code":    http.StatusOK,
+			"message": "ok",
+			"data": map[string]any{
+				"status": "completed",
+				"result": map[string]any{"date": "2026-07-02", "summaries": 2, "details": 2, "source_errors": []string{"szse: timeout"}},
+			},
+		})
+	}))
+	defer scheduler.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL, SchedulerURL: scheduler.URL, ServiceToken: "secret-token"})
+	req := httptest.NewRequest(http.MethodGet, "/a-stock/margin?date=2026-07-02&market=all&keyword=平安", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAStockMarginPage(rr, req, map[string]any{"id": 1})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected margin page 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if marginRequests != 1 {
+		t.Fatalf("expected one margin content request, got %d", marginRequests)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"融资融券", "刷新融资融券", "沪市", "深市", "合计", "平安银行", "50ETF", "--", "14983.74亿元", "120.00万股/份", `href="/a-stock">A股</a><a href="/a-stock/backtest">回测</a><a href="/sector-fund-flow">版块资金</a><a href="/stock-research">研报调研</a><a href="/a-stock/margin">融资融券</a><a href="/a-stock/holdings">机构持仓</a><a href="/a-stock/auction">集合竞价</a>`, "body[data-page='a-stock-margin'] main,body[data-page='a-stock-margin'] .site-footer{max-width:none;width:100%;box-sizing:border-box}", ".margin-table{min-width:1380px;width:100%;table-layout:fixed}"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected margin page to contain %q, got %s", want, body)
+		}
+	}
+
+	form := url.Values{}
+	form.Set("action", "refresh_margin_trading")
+	form.Set("date", "2026-07-02")
+	form.Set("market", "all")
+	form.Set("keyword", "平安")
+	postReq := httptest.NewRequest(http.MethodPost, "/a-stock/margin", strings.NewReader(form.Encode()))
+	postReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	postRR := httptest.NewRecorder()
+	srv.handleAStockMarginPage(postRR, postReq, map[string]any{"id": 1})
+	location := postRR.Header().Get("Location")
+	if postRR.Code != http.StatusSeeOther || !strings.Contains(location, "/a-stock/margin?") || !strings.Contains(location, "msg=") || !strings.Contains(location, "keyword=") {
+		t.Fatalf("expected margin refresh redirect, status=%d location=%s", postRR.Code, location)
+	}
+	if refreshRequests != 1 {
+		t.Fatalf("expected one margin refresh request, got %d", refreshRequests)
 	}
 }
 

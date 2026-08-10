@@ -440,3 +440,74 @@ type AStockStockFundFlowTrendResult struct {
 	Keyword   string                `json:"keyword"`
 	Days      int                   `json:"days"`
 }
+
+type AStockMarginSummary struct {
+	TradeDate            string    `json:"trade_date"`
+	Market               string    `json:"market"`
+	MarketLabel          string    `json:"market_label"`
+	MarginBuyAmount      *float64  `json:"margin_buy_amount"`
+	MarginBalance        *float64  `json:"margin_balance"`
+	ShortSellVolume      *float64  `json:"short_sell_volume"`
+	ShortBalanceVolume   *float64  `json:"short_balance_volume"`
+	ShortBalanceAmount   *float64  `json:"short_balance_amount"`
+	MarginTradingBalance *float64  `json:"margin_trading_balance"`
+	SourceType           string    `json:"source_type"`
+	RawPayload           string    `json:"raw_payload"`
+	FetchedAt            time.Time `json:"fetched_at"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
+}
+
+type AStockMarginDetail struct {
+	TradeDate            string    `json:"trade_date"`
+	Market               string    `json:"market"`
+	MarketLabel          string    `json:"market_label"`
+	Rank                 int       `json:"rank"`
+	Code                 string    `json:"code"`
+	Name                 string    `json:"name"`
+	MarginBuyAmount      *float64  `json:"margin_buy_amount"`
+	MarginBalance        *float64  `json:"margin_balance"`
+	MarginRepayAmount    *float64  `json:"margin_repay_amount"`
+	ShortSellVolume      *float64  `json:"short_sell_volume"`
+	ShortBalanceVolume   *float64  `json:"short_balance_volume"`
+	ShortRepayVolume     *float64  `json:"short_repay_volume"`
+	ShortBalanceAmount   *float64  `json:"short_balance_amount"`
+	MarginTradingBalance *float64  `json:"margin_trading_balance"`
+	SourceType           string    `json:"source_type"`
+	RawPayload           string    `json:"raw_payload"`
+	FetchedAt            time.Time `json:"fetched_at"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
+}
+
+type AStockMarginFilter struct {
+	Date     string `json:"date"`
+	Market   string `json:"market"`
+	Keyword  string `json:"keyword"`
+	Page     int    `json:"page"`
+	PageSize int    `json:"page_size"`
+}
+
+type AStockMarginListResult struct {
+	Summaries  []AStockMarginSummary `json:"summaries"`
+	Details    []AStockMarginDetail  `json:"details"`
+	Page       int                   `json:"page"`
+	PageSize   int                   `json:"page_size"`
+	Total      int                   `json:"total"`
+	Date       string                `json:"date"`
+	LatestDate string                `json:"latest_date"`
+	Market     string                `json:"market"`
+	Keyword    string                `json:"keyword"`
+	Dates      []string              `json:"dates"`
+	Markets    []string              `json:"markets"`
+	FetchedAt  *time.Time            `json:"fetched_at,omitempty"`
+}
+
+type AStockMarginUpsertResult struct {
+	Date      string `json:"date"`
+	Summaries int    `json:"summaries"`
+	Details   int    `json:"details"`
+	Inserted  int    `json:"inserted"`
+	Updated   int    `json:"updated"`
+	Total     int    `json:"total"`
+}
