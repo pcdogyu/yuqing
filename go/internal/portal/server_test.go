@@ -301,7 +301,7 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		`.astock-overview-header{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;margin-bottom:14px}`,
 		`.astock-overview-summary{display:flex;justify-content:flex-start;gap:24px;flex-wrap:wrap;text-align:left;font-size:11px}`,
 		`.astock-overview-summary strong{display:block;font-size:17px;line-height:1.25;white-space:nowrap}`,
-		`.astock-overview-table{width:100%;min-width:1920px;table-layout:fixed;font-size:11px}`,
+		`.astock-overview-table{width:100%;min-width:2070px;table-layout:fixed;font-size:11px}`,
 		`.astock-overview-table .astock-muted{display:block;margin-bottom:7px;font-size:11px;white-space:nowrap;word-break:keep-all}`,
 		`.astock-overview-period{width:6.4%;min-width:110px}`,
 		`.astock-overview-period strong{white-space:nowrap}`,
@@ -316,7 +316,8 @@ func TestAStockPageUsesSharedNavAndEmptyState(t *testing.T) {
 		`.astock-overview-recalculate .astock-muted,.astock-overview-recalculate strong{white-space:nowrap}`,
 		`.astock-overview-window{width:11.2%;min-width:196px}`,
 		`.astock-overview-table strong{display:block;font-size:17px;line-height:1.25}`,
-		`.astock-overview-status{width:25.4%;min-width:418px}`,
+		`.astock-overview-status{width:20.4%;min-width:336px}`,
+		`.astock-overview-audit{width:7.6%;min-width:126px}`,
 		`.astock-overview-table .astock-filter-toggle{width:100%;min-height:28px;white-space:nowrap}`,
 		`body[data-page='a-stock'] main{max-width:none;width:100%;box-sizing:border-box}`,
 		`.astock-scroll{width:100%;overflow:auto}`,
@@ -8681,6 +8682,26 @@ func TestAStockOverviewBacktestStatusIncludesFilterReasons(t *testing.T) {
 	for _, want := range []string{"已回测 3/3", "90个交易日内重复过滤股票 2", "过滤上午同股票/热点/日内名额 1", "涨停过滤股票 3"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected overview status to contain %q, got %q", want, got)
+		}
+	}
+}
+
+func TestAStockOverviewCandidateAuditLinkUsesRowDateAndPeriod(t *testing.T) {
+	for _, tc := range []struct {
+		period string
+	}{
+		{period: "morning"},
+		{period: "afternoon"},
+		{period: "evening"},
+	} {
+		var b strings.Builder
+		writeAStockOverviewCandidateAuditCell(&b, aStockContext{Date: "2026-08-11", Period: tc.period})
+		body := b.String()
+		wantHref := `href="/a-stock/candidates?date=2026-08-11&period=` + tc.period + `&phase=final"`
+		for _, want := range []string{`class="astock-overview-audit"`, "候选审计", "推荐链路", wantHref} {
+			if !strings.Contains(body, want) {
+				t.Fatalf("period=%s expected audit cell to contain %q, got %s", tc.period, want, body)
+			}
 		}
 	}
 }

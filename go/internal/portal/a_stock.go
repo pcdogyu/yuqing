@@ -656,7 +656,7 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-overview-summary{display:flex;justify-content:flex-start;gap:24px;flex-wrap:wrap;text-align:left;font-size:11px}
 		.astock-overview-summary .astock-muted{display:block;margin-bottom:4px;white-space:nowrap;word-break:keep-all}
 		.astock-overview-summary strong{display:block;font-size:17px;line-height:1.25;white-space:nowrap}
-		.astock-overview-table{width:100%;min-width:1920px;table-layout:fixed;font-size:11px}
+		.astock-overview-table{width:100%;min-width:2070px;table-layout:fixed;font-size:11px}
 		.astock-overview-table th,.astock-overview-table td{vertical-align:top}
 		.astock-overview-table .astock-muted{display:block;margin-bottom:7px;font-size:11px;white-space:nowrap;word-break:keep-all}
 		.astock-overview-table .astock-overview-sub-label{margin-top:16px}
@@ -677,8 +677,10 @@ func (s *Server) handleAStockPage(w http.ResponseWriter, r *http.Request, user a
 		.astock-overview-window{width:11.2%;min-width:196px}
 		.astock-overview-window strong{white-space:nowrap}
 		.astock-overview-table strong{display:block;font-size:17px;line-height:1.25}
-		.astock-overview-status{width:25.4%;min-width:418px}
+		.astock-overview-status{width:20.4%;min-width:336px}
 		.astock-overview-status strong{white-space:normal;word-break:break-word}
+		.astock-overview-audit{width:7.6%;min-width:126px}
+		.astock-overview-audit .astock-muted{white-space:nowrap}
 		.astock-filter-toggle-form{margin:0}
 		.astock-filter-toggle{display:inline-flex;align-items:center;justify-content:center;max-width:100%;box-sizing:border-box;margin-top:8px;padding:6px 10px;border:1px solid #d6ccbb;border-radius:8px;color:#214e34;text-align:center;text-decoration:none;background:#fff;font-size:11px;font-weight:600;font-family:inherit;line-height:1.2;white-space:normal;cursor:pointer}
 		.astock-overview-table .astock-filter-toggle{width:100%;min-height:28px;white-space:nowrap}
@@ -2068,6 +2070,15 @@ func writeAStockOverviewPeriodCells(b *strings.Builder, ctx aStockContext) {
 	writeAStockOverviewFundFlowFilterCell(b, ctx)
 	writeAStockOverviewRecalculateCell(b, ctx)
 	writeAStockOverviewCell(b, "回测状态", aStockOverviewBacktestStatus(ctx), ` class="astock-overview-status"`)
+	writeAStockOverviewCandidateAuditCell(b, ctx)
+}
+
+func writeAStockOverviewCandidateAuditCell(b *strings.Builder, ctx aStockContext) {
+	b.WriteString(`<td class="astock-overview-audit"><span class="astock-muted">候选审计</span><strong>推荐链路</strong><a class="astock-filter-toggle" href="/a-stock/candidates?date=`)
+	b.WriteString(url.QueryEscape(ctx.Date))
+	b.WriteString(`&period=`)
+	b.WriteString(url.QueryEscape(normalizeAStockPeriod(ctx.Period).Key))
+	b.WriteString(`&phase=final">候选审计</a></td>`)
 }
 
 func writeAStockOverviewNewsCountCell(b *strings.Builder, ctx aStockContext) {
