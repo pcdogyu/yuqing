@@ -10383,6 +10383,58 @@ func TestAStockRecommendationsGlobalSortBeforeLimit(t *testing.T) {
 	}
 }
 
+func TestAStockRecommendationsFilterKnownZeroTotalScore(t *testing.T) {
+	settings := defaultAStockAlgorithmSettings()
+	recommendations := []aStockRecommendation{
+		{
+			Rank:         1,
+			Code:         "600001",
+			Name:         "零分股份",
+			Hotspot:      "人工智能",
+			HotspotScore: 800,
+			MarketScore:  0,
+			Reason:       "总分 0/1000，热点很高但综合得分为0",
+			ScoreBreakdown: []aStockRecommendationScoreComponent{
+				{Factor: aStockScoreFactorSector, Label: "板块资金趋势", Detail: "连续流出", Score: -40},
+				{Factor: aStockScoreFactorFund, Label: "资金动向", Detail: "资金流出", Score: -120},
+			},
+		},
+		{
+			Rank:         2,
+			Code:         "600002",
+			Name:         "正分股份",
+			Hotspot:      "人工智能",
+			HotspotScore: 80,
+			MarketScore:  85,
+			Reason:       "总分 85/1000",
+		},
+		{
+			Rank:         3,
+			Code:         "600003",
+			Name:         "历史占位",
+			Hotspot:      "人工智能",
+			HotspotScore: 0,
+			MarketScore:  0,
+			Reason:       "",
+		},
+	}
+
+	filtered, skipped, filteredStocks := filterAStockRecommendationsByPositiveScoreWithSettings(recommendations, settings)
+	if skipped != 1 || len(filteredStocks) != 1 || filteredStocks[0].Code != "600001" {
+		t.Fatalf("expected only known zero-score recommendation to be filtered, skipped=%d stocks=%+v", skipped, filteredStocks)
+	}
+	if got := aStockTestRecommendationsByCode(filtered); len(got) != 2 || got["600002"].Code == "" || got["600003"].Code == "" {
+		t.Fatalf("expected positive and unknown-score recommendations to remain, got %+v", filtered)
+	}
+	limited := limitAStockRecommendationsByScoreWithSettings(recommendations, 3, settings)
+	if _, ok := aStockTestRecommendationsByCode(limited)["600001"]; ok {
+		t.Fatalf("expected known zero-score recommendation to be excluded by final score limit, got %+v", limited)
+	}
+	if status := formatAStockScoreFilterStatus(skipped, filteredStocks); !strings.Contains(status, "过滤总分不高于0股票 1") || !strings.Contains(status, "600001 零分股份") {
+		t.Fatalf("expected score filter status to include code/name, got %q", status)
+	}
+}
+
 func TestAStockRecommendationsPenalizeWeakFinancingEvidence(t *testing.T) {
 	hotspot := aStockHotspot{
 		Name:     "AI测试",

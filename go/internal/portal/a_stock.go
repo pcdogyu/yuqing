@@ -3847,6 +3847,7 @@ func (s *Server) loadAStockFastReadOnlyContextWithCache(strategyDate string, per
 	recentReplacementStatus := ""
 	negativeFilteredCodes := make(map[string]struct{})
 	negativeFilterStatus := ""
+	scoreFilterStatus := ""
 	baseRecommendations := buildAStockSnapshotRecommendationsWithPhaseAndLimitAndSectorGateWithSettings(ctx.Date, ctx.Period, aStockRecommendationPhaseFinal, ctx.Articles, recommendationCandidates, settings.Auction.ReplacementPoolLimit, settings.Auction.ReplacementPerHotspot, sectorGate, settings)
 	if filtered, skipped := filterAStockNegativeNoEvidenceRecommendations(baseRecommendations, negativeFilteredCodes); skipped > 0 {
 		baseRecommendations = filtered
@@ -3888,6 +3889,9 @@ func (s *Server) loadAStockFastReadOnlyContextWithCache(strategyDate string, per
 		ctx.Recommendations = limitAStockRecommendationsByScoreWithSettings(ctx.Recommendations, recommendationTarget, settings)
 		recommendationTarget = minInt(recommendationTarget, len(ctx.Recommendations))
 	}
+	if scoreFiltered, filteredStocks := applyAStockRecommendationPositiveScoreFilterWithSettings(&ctx, settings); scoreFiltered > 0 {
+		scoreFilterStatus = formatAStockScoreFilterStatus(scoreFiltered, filteredStocks)
+	}
 	ctx.Recommendations = withAStockRecommendationEntryTimes(ctx.Recommendations, ctx.Period, "")
 	ctx.Recommendations = initializeAStockRecommendationMarket(ctx.Recommendations)
 	ctx.Backtests = buildAStockBacktestRows(ctx.Date, ctx.Period, ctx.Recommendations, nil)
@@ -3903,6 +3907,9 @@ func (s *Server) loadAStockFastReadOnlyContextWithCache(strategyDate string, per
 	}
 	if dailyLimitStatus != "" {
 		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, dailyLimitStatus)
+	}
+	if scoreFilterStatus != "" {
+		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, scoreFilterStatus)
 	}
 	ctx.EmptyReason = aStockRecommendationEmptyReason(ctx)
 	ctx.LoadMessage = appendAStockLoadMessage(ctx.LoadMessage, "今日推荐使用只读快速结果，未写入推荐快照。")
@@ -4470,6 +4477,7 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 	fundFlowStatus := ""
 	exDividendStatus := ""
 	dailyLimitStatus := ""
+	scoreFilterStatus := ""
 	negativeFilteredCodes := make(map[string]struct{})
 	negativeFilterStatus := ""
 	if len(ctx.Hotspots) > 0 {
@@ -4564,6 +4572,10 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 	if forceRecommendationRefresh {
 		s.restoreAStockBacktestsFromSnapshotWithCache(&ctx, cache)
 	}
+	if scoreFiltered, filteredStocks := applyAStockRecommendationPositiveScoreFilterWithSettings(&ctx, settings); scoreFiltered > 0 {
+		ctx.Backtests = filterAStockBacktestsForRecommendations(ctx.Backtests, ctx.Recommendations)
+		scoreFilterStatus = formatAStockScoreFilterStatus(scoreFiltered, filteredStocks)
+	}
 	if negativeFilterStatus != "" {
 		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, negativeFilterStatus)
 	}
@@ -4578,6 +4590,9 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 	}
 	if dailyLimitStatus != "" {
 		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, dailyLimitStatus)
+	}
+	if scoreFilterStatus != "" {
+		ctx.BacktestStatus = appendAStockBacktestStatus(ctx.BacktestStatus, scoreFilterStatus)
 	}
 	if persist && shouldPersistAStockRecommendationSelectionsForDate(strategyDate, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, forceRecommendationRefresh) && (len(ctx.Recommendations) > 0 || rebuildRecommendations) {
 		if err := s.saveAStockRecommendationSelections(ctx); err != nil && ctx.LoadMessage == "" {
@@ -9455,6 +9470,7 @@ var (
 	aStockReasonHighOpenBonusPattern       = regexp.MustCompile(`(?:([^，；]*高开[^，；]*)，)?高开加分\s*(\d+)`)
 	aStockReasonLowOpenTierPenaltyPattern  = regexp.MustCompile(`(?:([^，；]*低开[^，；]*)，)?低开扣分\s*(\d+)`)
 	aStockReasonMomentumBonusPattern       = regexp.MustCompile(`动能趋势加分\s*(\d+)(?:（([^）]+)）)?`)
+	aStockReasonTotalScorePattern          = regexp.MustCompile(`(?:总分|合计)\s*[:：]?\s*(-?\d+)\s*/\s*1000`)
 )
 
 func parseAStockRecommendationScoreBreakdown(rec aStockRecommendation) []aStockRecommendationScoreComponent {
@@ -14278,6 +14294,10 @@ func limitAStockRecommendationsByScoreWithSettings(recommendations []aStockRecom
 	if len(recommendations) == 0 {
 		return recommendations
 	}
+	recommendations, _, _ = filterAStockRecommendationsByPositiveScoreWithSettings(recommendations, settings)
+	if len(recommendations) == 0 {
+		return nil
+	}
 	recommendations = sortAStockRecommendationsByScore(recommendations)
 	softLimit := settings.Candidate.MaxStocksPerHotspotSoft
 	if maxRecommendations > 0 && maxRecommendations <= settings.Auction.RecommendationLimit && softLimit > 0 && softLimit < maxRecommendations {
@@ -14320,6 +14340,62 @@ func limitAStockRecommendationsByScoreWithSettings(recommendations []aStockRecom
 		recommendations = recommendations[:maxRecommendations]
 	}
 	return rerankAStockRecommendations(recommendations)
+}
+
+func filterAStockRecommendationsByPositiveScoreWithSettings(recommendations []aStockRecommendation, settings model.AStockRecommendationAlgorithmSettings) ([]aStockRecommendation, int, []aStockRecommendation) {
+	if len(recommendations) == 0 {
+		return recommendations, 0, nil
+	}
+	filtered := make([]aStockRecommendation, 0, len(recommendations))
+	filteredStocks := make([]aStockRecommendation, 0)
+	skipped := 0
+	for _, rec := range recommendations {
+		if score, ok := knownAStockRecommendationTotalScoreWithSettings(rec, settings); ok && score <= 0 {
+			skipped++
+			filteredStocks = append(filteredStocks, rec)
+			continue
+		}
+		filtered = append(filtered, rec)
+	}
+	if skipped == 0 {
+		return recommendations, 0, nil
+	}
+	return rerankAStockRecommendations(filtered), skipped, filteredStocks
+}
+
+func knownAStockRecommendationTotalScoreWithSettings(rec aStockRecommendation, settings model.AStockRecommendationAlgorithmSettings) (int, bool) {
+	if len(rec.ScoreBreakdown) > 0 {
+		return aStockRecommendationFactorScoreTotalWithSettings(rec.ScoreBreakdown, settings), true
+	}
+	if score, ok := explicitAStockRecommendationTotalScore(rec.Reason); ok {
+		return score, true
+	}
+	if components := parseAStockRecommendationScoreBreakdown(rec); len(components) > 0 {
+		return aStockRecommendationFactorScoreTotalWithSettings(components, settings), true
+	}
+	if rec.MarketScore != 0 {
+		return rec.MarketScore, true
+	}
+	return 0, false
+}
+
+func explicitAStockRecommendationTotalScore(reason string) (int, bool) {
+	matches := aStockReasonTotalScorePattern.FindAllStringSubmatch(reason, -1)
+	if len(matches) == 0 {
+		return 0, false
+	}
+	last := matches[len(matches)-1]
+	if len(last) != 2 {
+		return 0, false
+	}
+	return atoiAStockScorePart(last[1]), true
+}
+
+func formatAStockScoreFilterStatus(filtered int, filteredStocks []aStockRecommendation) string {
+	if filtered <= 0 {
+		return ""
+	}
+	return formatAStockFilterCountWithStocks("过滤总分不高于0股票", filtered, "", filteredStocks)
 }
 
 func buildAStockRecommendationScoreBreakdown(hotspot aStockHotspot, stock aStockMarketCandidate) []aStockRecommendationScoreComponent {
@@ -15283,8 +15359,21 @@ func formatAStockExDividendFilterStatus(filtered int) string {
 
 func (s *Server) applyAStockRecommendationOutputFiltersWithCache(ctx *aStockContext, cache *aStockRequestCache) (int, int) {
 	exDividendFiltered := s.applyAStockExDividendFilterWithCache(ctx, cache)
-	dailyLimitFiltered := applyAStockRecommendationOutputDailyLimitWithSettings(ctx, s.loadAStockAlgorithmSettingsWithCache(cache))
+	settings := s.loadAStockAlgorithmSettingsWithCache(cache)
+	applyAStockRecommendationPositiveScoreFilterWithSettings(ctx, settings)
+	dailyLimitFiltered := applyAStockRecommendationOutputDailyLimitWithSettings(ctx, settings)
 	return exDividendFiltered, dailyLimitFiltered
+}
+
+func applyAStockRecommendationPositiveScoreFilterWithSettings(ctx *aStockContext, settings model.AStockRecommendationAlgorithmSettings) (int, []aStockRecommendation) {
+	if ctx == nil || len(ctx.Recommendations) == 0 {
+		return 0, nil
+	}
+	filtered, skipped, filteredStocks := filterAStockRecommendationsByPositiveScoreWithSettings(ctx.Recommendations, settings)
+	if skipped > 0 {
+		ctx.Recommendations = filtered
+	}
+	return skipped, filteredStocks
 }
 
 func applyAStockRecommendationOutputDailyLimit(ctx *aStockContext) int {
