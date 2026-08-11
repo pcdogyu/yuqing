@@ -26,7 +26,7 @@ func TestAStockAlgorithmSettingsForRecommendationPeriodCapitalMomentum(t *testin
 			if settings.Volatility.PreviousLimitUpPenalty != 40 || settings.Volatility.PreviousHighPctPenalty != 35 {
 				t.Fatalf("unexpected volatility settings: %+v", settings.Volatility)
 			}
-			if settings.Emotion.NewsEvidenceScore != 3 || settings.Emotion.NewsSourceScore != 40 || settings.Emotion.StockEvidenceScore != 15 || settings.Emotion.StockNameKeywordScore != 6 {
+			if settings.Emotion.NewsEvidenceScore != base.Emotion.NewsEvidenceScore || settings.Emotion.KeywordScore != base.Emotion.KeywordScore || settings.Emotion.NegativeNewsPenalty != base.Emotion.NegativeNewsPenalty || settings.Emotion.NewsSourceScore != 40 || settings.Emotion.StockEvidenceScore != 15 || settings.Emotion.StockNameKeywordScore != 6 {
 				t.Fatalf("unexpected emotion settings: %+v", settings.Emotion)
 			}
 		})

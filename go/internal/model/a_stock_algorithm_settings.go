@@ -207,10 +207,10 @@ func DefaultAStockRecommendationAlgorithmSettings() AStockRecommendationAlgorith
 		},
 		Emotion: AStockRecommendationEmotionFactor{
 			FactorScoreCap:        300,
-			NewsEvidenceScore:     5,
+			NewsEvidenceScore:     12,
 			NewsSourceScore:       80,
 			KeywordScore:          4,
-			NegativeNewsPenalty:   40,
+			NegativeNewsPenalty:   15,
 			HotspotMinScore:       0,
 			HotspotDisplayLimit:   8,
 			StockEvidenceScore:    20,

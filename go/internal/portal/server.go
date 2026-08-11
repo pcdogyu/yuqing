@@ -406,6 +406,7 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("/a-stock/margin", s.requireSession(s.handleAStockMarginPage))
 	mux.HandleFunc("/a-stock/holdings", s.requireSession(s.handleAStockHoldingsPage))
 	mux.HandleFunc("/a-stock/test", s.requireSession(s.handleAStockTestPage))
+	mux.HandleFunc("/a-stock/candidates", s.requireSession(s.handleAStockCandidateAuditPage))
 	mux.HandleFunc("/a-stock", s.requireSession(s.handleAStockPage))
 	mux.HandleFunc("/a-stock/", s.requireSession(s.handleAStockPage))
 	mux.HandleFunc("/sector-fund-flow", s.requireSession(s.handleSectorFundFlowPage))

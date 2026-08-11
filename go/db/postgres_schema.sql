@@ -601,6 +601,21 @@ CREATE TABLE IF NOT EXISTS a_stock_recommendation_selections (
 	PRIMARY KEY (strategy_date, period, code)
 );
 
+CREATE TABLE IF NOT EXISTS a_stock_recommendation_candidate_audit_runs (
+	run_id TEXT PRIMARY KEY,
+	strategy_date TEXT NOT NULL,
+	period TEXT NOT NULL,
+	phase TEXT NOT NULL,
+	raw_candidate_count INTEGER NOT NULL DEFAULT 0,
+	valid_candidate_count INTEGER NOT NULL DEFAULT 0,
+	hotspot_linked_count INTEGER NOT NULL DEFAULT 0,
+	scored_count INTEGER NOT NULL DEFAULT 0,
+	selected_count INTEGER NOT NULL DEFAULT 0,
+	exit_counts_json TEXT NOT NULL DEFAULT '{}',
+	items_json TEXT NOT NULL DEFAULT '[]',
+	created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS a_stock_sector_fund_flows (
 	trade_date TEXT NOT NULL,
 	sector_type TEXT NOT NULL,

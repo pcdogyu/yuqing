@@ -76,6 +76,9 @@ type aStockContext struct {
 	SnapshotUpdatedAt            time.Time
 	SourceRuns                   []aStockSourceRun
 	FastReadOnly                 bool
+	CandidateAuditPhase          string
+	CandidateAuditRawCount       int
+	CandidateAuditCandidates     []aStockMarketCandidate
 }
 
 type aStockSnapshotNewsSummary struct {
@@ -858,6 +861,53 @@ func writeAStockSimulationCheckbox(b *strings.Builder, name string, label string
 	b.WriteString(`</label>`)
 }
 
+func (s *Server) handleAStockCandidateAuditPage(w http.ResponseWriter, r *http.Request, user any) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	date := normalizeAStockStrategyDate(r.URL.Query().Get("date"))
+	period := normalizeAStockPeriod(r.URL.Query().Get("period"))
+	phase := normalizeAStockRecommendationPhase(r.URL.Query().Get("phase"))
+	filter := model.AStockRecommendationCandidateAuditFilter{StrategyDate: date, Period: period.Key, Phase: phase, RunID: strings.TrimSpace(r.URL.Query().Get("run_id"))}
+	run, found := s.loadAStockRecommendationCandidateAuditRun(filter)
+	var b strings.Builder
+	b.WriteString(`<section><h2>A股候选审计</h2><p class="astock-muted">仅保存正式调度生成。每条记录展示进入推荐候选池后的来源、评分和最终退出步骤。</p><form method="get" action="/a-stock/candidates" class="astock-action-grid">`)
+	b.WriteString(`<label>策略日期<input type="date" name="date" value="` + html.EscapeString(date) + `"></label>`)
+	b.WriteString(`<label>时段<select name="period">`)
+	for _, option := range aStockPeriods() {
+		selected := ""
+		if option.Key == period.Key {
+			selected = " selected"
+		}
+		b.WriteString(`<option value="` + html.EscapeString(option.Key) + `"` + selected + `>` + html.EscapeString(option.Label) + `</option>`)
+	}
+	b.WriteString(`</select></label><label>阶段<select name="phase">`)
+	for _, option := range []struct{ Key, Label string }{{"preopen", "盘前"}, {"final", "正式"}} {
+		selected := ""
+		if option.Key == phase {
+			selected = " selected"
+		}
+		b.WriteString(`<option value="` + option.Key + `"` + selected + `>` + option.Label + `</option>`)
+	}
+	b.WriteString(`</select></label><button type="submit">查询审计</button></form></section>`)
+	if !found {
+		b.WriteString(`<section><div class="astock-empty">该日期、时段和阶段尚无正式候选审计记录。</div></section>`)
+		_ = s.writeSimplePage(w, "a-stock-candidates", "A股候选审计", b.String())
+		return
+	}
+	b.WriteString(`<section><h3>生成漏斗</h3><table class="astock-overview"><tr>`)
+	for _, metric := range [][2]string{{"生成批次", run.RunID}, {"原始竞价", fmt.Sprint(run.RawCandidateCount)}, {"推荐候选池", fmt.Sprint(run.ValidCandidateCount)}, {"已评分", fmt.Sprint(run.ScoredCount)}, {"最终入选", fmt.Sprint(run.SelectedCount)}} {
+		b.WriteString(`<th>` + html.EscapeString(metric[0]) + `</th><td>` + html.EscapeString(metric[1]) + `</td>`)
+	}
+	b.WriteString(`</tr></table></section><section><h3>候选明细</h3><div class="astock-scroll"><table class="astock-recommendation-table"><thead><tr><th>股票</th><th>来源</th><th>热点</th><th>竞价</th><th>初始分</th><th>最终分</th><th>状态</th><th>退出步骤/原因</th></tr></thead><tbody>`)
+	for _, item := range run.Items {
+		b.WriteString(`<tr><td>` + html.EscapeString(item.Code+" "+item.Name) + `</td><td>` + html.EscapeString(strings.Join(item.Sources, "、")) + `</td><td>` + html.EscapeString(strings.Join(item.Hotspots, "、")) + `</td><td>` + html.EscapeString(fmt.Sprintf("排名 %d / %s", item.AuctionRank, formatAStockAuctionMoney(item.AuctionAmount))) + `</td><td>` + fmt.Sprint(item.InitialScore) + `</td><td>` + fmt.Sprint(item.FinalScore) + `</td><td>` + html.EscapeString(item.Status) + `</td><td>` + html.EscapeString(strings.TrimSpace(item.ExitStage+" "+item.ExitReason)) + `</td></tr>`)
+	}
+	b.WriteString(`</tbody></table></div></section>`)
+	_ = s.writeSimplePage(w, "a-stock-candidates", "A股候选审计", b.String())
+}
+
 func writeAStockSimulationMetric(b *strings.Builder, label string, value string) {
 	b.WriteString(`<td><span class="astock-muted">`)
 	b.WriteString(html.EscapeString(label))
@@ -953,6 +1003,11 @@ func renderAStockActionSection(b *strings.Builder, ctx aStockContext) {
 		b.WriteString(html.EscapeString(action.Label))
 		b.WriteString(`</button></form>`)
 	}
+	b.WriteString(`<a class="button" href="/a-stock/candidates?date=`)
+	b.WriteString(url.QueryEscape(ctx.Date))
+	b.WriteString(`&period=`)
+	b.WriteString(url.QueryEscape(ctx.Period))
+	b.WriteString(`&phase=final">查看候选审计</a>`)
 	b.WriteString(`</div></div><p class="astock-muted">已接入已有新闻抓取链路：抓取按钮会触发金十快讯、金十资讯、金十全站信息、东方财富快讯、东方财富全站、华尔街见闻、财联社和新浪财经，页面按策略日期和推荐窗口聚合财经新闻。行情接口读取 `)
 	b.WriteString(aStockMarketConfigHint())
 	b.WriteString(`，用于展示昨日收盘价、现价、涨跌幅和行情收益。</p><div class="astock-source-list"><span class="astock-badge">jin10_kuaixun: https://www.jin10.com/</span><span class="astock-badge">jin10_资讯: https://xnews.jin10.com/</span><span class="astock-badge">jin10_full: 金十全站</span><span class="astock-badge">eastmoney_kuaixun: 东方财富快讯</span><span class="astock-badge">eastmoney_full: 东方财富全站</span><span class="astock-badge">wallstreetcn_a_stock: 华尔街见闻</span><span class="astock-badge">cls_telegraph: 财联社</span><span class="astock-badge">sina_finance_7x24: 新浪财经</span></div></section>`)
@@ -3672,6 +3727,9 @@ func (s *Server) handleAStockRecommendationGenerate(w http.ResponseWriter, r *ht
 		ctx = s.loadAStockSimulationContext(strategyDate, period.Key, 1, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, phase, newAStockRequestCache())
 	} else {
 		ctx = s.loadAStockContextWithRecommendationPhasePersistenceMode(strategyDate, period.Key, 1, ignoreRecent, ignoreLimitUp, ignoreFundFlow, filterTodayMarket, true, phase, newAStockRequestCache(), true, true, refreshMode)
+		if err := s.saveAStockRecommendationCandidateAudit(ctx, phase); err != nil && ctx.LoadMessage == "" {
+			ctx.LoadMessage = "候选审计保存失败：" + err.Error()
+		}
 		if !skipShadow {
 			_ = s.saveAStockT1ShadowRecommendationSnapshot(ctx)
 			_ = s.saveAStockAuctionStrengthShadowRecommendationSnapshot(ctx)
@@ -4492,6 +4550,9 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 		sectorGate := s.loadAStockHotspotSectorGateWithCache(ctx.Hotspots, cache)
 		candidates := s.buildAStockPriorityCandidatePoolWithSettings(strategyDate, ctx.Hotspots, marketCandidates, sectorGate, cache, settings)
 		ctx.MarketCandidateCount = len(candidates)
+		ctx.CandidateAuditPhase = phase
+		ctx.CandidateAuditRawCount = len(marketCandidates)
+		ctx.CandidateAuditCandidates = append([]aStockMarketCandidate(nil), candidates...)
 		baseRecommendations := buildAStockSnapshotRecommendationsWithPhaseAndLimitAndSectorGateWithSettings(strategyDate, period.Key, phase, ctx.Articles, candidates, settings.Auction.ReplacementPoolLimit, settings.Auction.ReplacementPerHotspot, sectorGate, settings)
 		if filtered, skipped := filterAStockNegativeNoEvidenceRecommendations(baseRecommendations, negativeFilteredCodes); skipped > 0 {
 			baseRecommendations = filtered
@@ -4929,6 +4990,31 @@ func (s *Server) loadAStockRecommendationSnapshot(strategyDate string, period st
 	return s.loadAStockRecommendationSnapshotWithCache(strategyDate, period, ignoreRecent, nil)
 }
 
+func (s *Server) loadAStockRecommendationCandidateAuditRun(filter model.AStockRecommendationCandidateAuditFilter) (model.AStockRecommendationCandidateAuditRun, bool) {
+	if strings.TrimSpace(s.cfg.ContentURL) == "" || strings.TrimSpace(filter.StrategyDate) == "" || strings.TrimSpace(filter.Period) == "" {
+		return model.AStockRecommendationCandidateAuditRun{}, false
+	}
+	query := url.Values{}
+	query.Set("date", filter.StrategyDate)
+	query.Set("period", filter.Period)
+	if filter.Phase != "" {
+		query.Set("phase", filter.Phase)
+	}
+	if filter.RunID != "" {
+		query.Set("run_id", filter.RunID)
+	}
+	var envelope struct {
+		Data struct {
+			Found bool                                        `json:"found"`
+			Run   model.AStockRecommendationCandidateAuditRun `json:"run"`
+		} `json:"data"`
+	}
+	if err := s.getJSON(strings.TrimRight(s.cfg.ContentURL, "/")+"/api/v1/a-stock/recommendation-candidate-audits?"+query.Encode(), &envelope); err != nil || !envelope.Data.Found {
+		return model.AStockRecommendationCandidateAuditRun{}, false
+	}
+	return envelope.Data.Run, true
+}
+
 func (s *Server) loadAStockRecommendationSnapshotWithCache(strategyDate string, period string, ignoreRecent bool, cache *aStockRequestCache) (model.AStockRecommendationSnapshot, bool) {
 	return s.loadAStockRecommendationSnapshotQueryWithCache(strategyDate, period, ignoreRecent, false, false, false, false, false, false, cache)
 }
@@ -5222,6 +5308,88 @@ func (s *Server) saveAStockRecommendationSnapshot(ctx aStockContext) error {
 	resp, err := s.client.R().
 		SetBody(snapshot).
 		Post(strings.TrimRight(s.cfg.ContentURL, "/") + "/api/v1/internal/a-stock/recommendations")
+	if err != nil {
+		return err
+	}
+	if !resp.IsSuccess() {
+		return fmt.Errorf(resp.Status())
+	}
+	return nil
+}
+
+// saveAStockRecommendationCandidateAudit persists only scheduler-triggered,
+// official generation traces. Manual refreshes and simulation deliberately do
+// not create audit history.
+func (s *Server) saveAStockRecommendationCandidateAudit(ctx aStockContext, phase string) error {
+	if strings.TrimSpace(s.cfg.ContentURL) == "" {
+		return nil
+	}
+	phase = normalizeAStockRecommendationPhase(phase)
+	selected := make(map[string]aStockRecommendation, len(ctx.Recommendations))
+	for _, rec := range ctx.Recommendations {
+		selected[normalizeAStockCode(rec.Code)] = rec
+	}
+	filtered := make(map[string]aStockFilteredRecommendation, len(ctx.FilteredRecommendations))
+	for _, item := range ctx.FilteredRecommendations {
+		filtered[normalizeAStockCode(item.Recommendation.Code)] = item
+	}
+	items := make([]model.AStockRecommendationCandidateAuditItem, 0, len(ctx.CandidateAuditCandidates))
+	exitCounts := map[string]int{}
+	for _, candidate := range ctx.CandidateAuditCandidates {
+		code := normalizeAStockCode(candidate.Code)
+		item := model.AStockRecommendationCandidateAuditItem{
+			Code:          code,
+			Name:          candidate.Name,
+			Sources:       append([]string(nil), candidate.Sources...),
+			Keywords:      append([]string(nil), candidate.Keywords...),
+			AuctionRank:   candidate.Rank,
+			AuctionAmount: candidate.AuctionAmount,
+			InitialScore:  candidate.MatchedScore,
+			Status:        "not_scored",
+		}
+		for _, hotspot := range ctx.Hotspots {
+			if aStockCandidateMatchesHotspot(hotspot, candidate) {
+				item.Hotspots = append(item.Hotspots, hotspot.Name)
+			}
+		}
+		if rec, ok := selected[code]; ok {
+			item.Status = "selected"
+			item.FinalScore = rec.MarketScore
+			if raw, err := json.Marshal(rec.ScoreBreakdown); err == nil {
+				item.ScoreBreakdown = string(raw)
+			}
+		} else if rejected, ok := filtered[code]; ok {
+			item.Status = "filtered"
+			item.ExitStage = rejected.Reason
+			item.ExitReason = rejected.Reason
+			item.FinalScore = rejected.Recommendation.MarketScore
+			exitCounts[item.ExitStage]++
+		} else if len(item.Hotspots) == 0 {
+			item.ExitStage = "hotspot_match"
+			item.ExitReason = "未命中可推荐热点"
+			exitCounts[item.ExitStage]++
+		} else {
+			item.Status = "not_selected"
+			item.ExitStage = "ranking"
+			item.ExitReason = "未进入最终推荐前列，或在重复、资金、除权、总分与名额环节被过滤"
+			exitCounts[item.ExitStage]++
+		}
+		items = append(items, item)
+	}
+	run := model.AStockRecommendationCandidateAuditRun{
+		RunID:               fmt.Sprintf("%s-%s-%s-%d", ctx.Date, ctx.Period, phase, time.Now().UTC().UnixNano()),
+		StrategyDate:        ctx.Date,
+		Period:              ctx.Period,
+		Phase:               phase,
+		RawCandidateCount:   ctx.CandidateAuditRawCount,
+		ValidCandidateCount: len(ctx.CandidateAuditCandidates),
+		HotspotLinkedCount:  len(ctx.CandidateAuditCandidates),
+		ScoredCount:         len(items),
+		SelectedCount:       len(selected),
+		ExitCounts:          exitCounts,
+		Items:               items,
+	}
+	resp, err := s.client.R().SetBody(run).Post(strings.TrimRight(s.cfg.ContentURL, "/") + "/api/v1/internal/a-stock/recommendation-candidate-audits")
 	if err != nil {
 		return err
 	}

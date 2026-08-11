@@ -82,7 +82,6 @@ func withAStockCapitalMomentumRecommendationSettings(settings model.AStockRecomm
 	settings.Sector.TrendContinuousInflowScore = 90
 	settings.Volatility.PreviousLimitUpPenalty = 40
 	settings.Volatility.PreviousHighPctPenalty = 35
-	settings.Emotion.NewsEvidenceScore = 3
 	settings.Emotion.NewsSourceScore = 40
 	settings.Emotion.StockEvidenceScore = 15
 	settings.Emotion.StockNameKeywordScore = 6

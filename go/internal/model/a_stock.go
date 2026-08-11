@@ -133,6 +133,48 @@ type AStockRecommendationSnapshotUpsertResult struct {
 	Updated  int `json:"updated"`
 }
 
+// AStockRecommendationCandidateAuditRun is the immutable trace of one official
+// recommendation generation. Items contains every stock that reached the
+// recommendation candidate pool; source-stage rejects are represented by the
+// funnel counters instead of persisting the entire auction universe.
+type AStockRecommendationCandidateAuditRun struct {
+	RunID               string                                   `json:"run_id"`
+	StrategyDate        string                                   `json:"strategy_date"`
+	Period              string                                   `json:"period"`
+	Phase               string                                   `json:"phase"`
+	RawCandidateCount   int                                      `json:"raw_candidate_count"`
+	ValidCandidateCount int                                      `json:"valid_candidate_count"`
+	HotspotLinkedCount  int                                      `json:"hotspot_linked_count"`
+	ScoredCount         int                                      `json:"scored_count"`
+	SelectedCount       int                                      `json:"selected_count"`
+	ExitCounts          map[string]int                           `json:"exit_counts"`
+	Items               []AStockRecommendationCandidateAuditItem `json:"items"`
+	CreatedAt           time.Time                                `json:"created_at"`
+}
+
+type AStockRecommendationCandidateAuditItem struct {
+	Code           string   `json:"code"`
+	Name           string   `json:"name"`
+	Sources        []string `json:"sources"`
+	Hotspots       []string `json:"hotspots"`
+	Keywords       []string `json:"keywords"`
+	AuctionRank    int      `json:"auction_rank"`
+	AuctionAmount  float64  `json:"auction_amount"`
+	InitialScore   int      `json:"initial_score"`
+	FinalScore     int      `json:"final_score"`
+	Status         string   `json:"status"`
+	ExitStage      string   `json:"exit_stage,omitempty"`
+	ExitReason     string   `json:"exit_reason,omitempty"`
+	ScoreBreakdown string   `json:"score_breakdown_json,omitempty"`
+}
+
+type AStockRecommendationCandidateAuditFilter struct {
+	StrategyDate string `json:"strategy_date"`
+	Period       string `json:"period"`
+	Phase        string `json:"phase"`
+	RunID        string `json:"run_id"`
+}
+
 type AStockRecommendationShadowSnapshot struct {
 	StrategyKey string `json:"strategy_key"`
 	AStockRecommendationSnapshot

@@ -4854,6 +4854,10 @@ func handleEmptyAStockAuctionTestEndpoint(w http.ResponseWriter, r *http.Request
 	if handleAStockAlgorithmSettingsTestEndpoint(w, r) {
 		return true
 	}
+	if r.URL.Path == "/api/v1/internal/a-stock/recommendation-candidate-audits" {
+		writeEnvelope(w, http.StatusOK, "ok", map[string]any{"run_id": "test"})
+		return true
+	}
 	if r.URL.Path == "/api/v1/a-stock/recommendation-performance" {
 		writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationPerformanceSummary{
 			Strategy:  r.URL.Query().Get("strategy"),
@@ -10348,11 +10352,11 @@ func TestAStockHotspotsApplyNegativeNewsPenalty(t *testing.T) {
 	if semiconductor.Name == "" {
 		t.Fatalf("expected semiconductor hotspot, got %+v", hotspots)
 	}
-	if semiconductor.NegativeNewsCount != 1 || semiconductor.NegativeNewsPenalty != 40 {
+	if semiconductor.NegativeNewsCount != 1 || semiconductor.NegativeNewsPenalty != 15 {
 		t.Fatalf("expected one negative news penalty, got %+v", semiconductor)
 	}
-	if semiconductor.Score != 0 {
-		t.Fatalf("expected negative penalty to floor hotspot score at 0, got %+v", semiconductor)
+	if semiconductor.Score != 21 {
+		t.Fatalf("expected adjusted hotspot score 21, got %+v", semiconductor)
 	}
 	if isAStockNegativeNewsItem(model.Item{Title: "半导体板块拉升", Summary: "芯片存储需求走强"}) {
 		t.Fatal("expected positive news text not to trigger negative penalty")
@@ -10364,7 +10368,7 @@ func TestAStockHotspotsApplyNegativeNewsPenalty(t *testing.T) {
 	if len(recommendations) == 0 {
 		t.Fatalf("expected semiconductor matched recommendation, got %+v", recommendations)
 	}
-	if !strings.Contains(recommendations[0].Reason, "负面新闻 1 条，情绪扣分 40") {
+	if !strings.Contains(recommendations[0].Reason, "负面新闻 1 条，情绪扣分 15") {
 		t.Fatalf("expected recommendation reason to include negative news penalty, got %+v", recommendations[0])
 	}
 }
@@ -12341,7 +12345,7 @@ func TestAStockPersistedRecommendationsRepairGarbledHotspotAndReason(t *testing.
 	if !aStockScoreBreakdownContainsComponent(components, aStockRecommendationScoreComponent{Label: "资金动向", Detail: "5日主力资金净流入 +8.03亿，资金加分 25", Score: 25}) {
 		t.Fatalf("expected existing fund-flow component to be preserved, got %+v", components)
 	}
-	if !aStockScoreBreakdownContainsComponent(components, aStockRecommendationScoreComponent{Label: "新闻热度", Detail: "证据新闻 1 条", Score: 5}) {
+	if !aStockScoreBreakdownContainsComponent(components, aStockRecommendationScoreComponent{Label: "新闻热度", Detail: "证据新闻 1 条", Score: 12}) {
 		t.Fatalf("expected rebuilt base score components, got %+v", components)
 	}
 }

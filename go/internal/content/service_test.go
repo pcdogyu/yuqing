@@ -459,6 +459,36 @@ func TestAStockRecommendationSnapshotAPIUpsertsAndGets(t *testing.T) {
 	}
 }
 
+func TestAStockRecommendationCandidateAuditAPIUpsertsAndGets(t *testing.T) {
+	store := newContentSearchTestStore(t)
+	router := NewService(config.Config{}, store).Router()
+	payload := `{"run_id":"2026-08-11-morning-preopen-1","strategy_date":"2026-08-11","period":"morning","phase":"preopen","raw_candidate_count":100,"valid_candidate_count":3,"hotspot_linked_count":3,"scored_count":3,"selected_count":2,"exit_counts":{"ranking":1},"items":[{"code":"600001","name":"审计一号","sources":["新闻点名"],"hotspots":["人工智能"],"initial_score":88,"final_score":120,"status":"selected"}]}`
+	postReq := httptest.NewRequest(http.MethodPost, "/api/v1/internal/a-stock/recommendation-candidate-audits", strings.NewReader(payload))
+	postRR := httptest.NewRecorder()
+	router.ServeHTTP(postRR, postReq)
+	if postRR.Code != http.StatusOK {
+		t.Fatalf("expected audit upsert 200, got %d body=%s", postRR.Code, postRR.Body.String())
+	}
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/recommendation-candidate-audits?date=2026-08-11&period=morning&phase=preopen", nil)
+	getRR := httptest.NewRecorder()
+	router.ServeHTTP(getRR, getReq)
+	if getRR.Code != http.StatusOK {
+		t.Fatalf("expected audit get 200, got %d body=%s", getRR.Code, getRR.Body.String())
+	}
+	var envelope struct {
+		Data struct {
+			Found bool                                        `json:"found"`
+			Run   model.AStockRecommendationCandidateAuditRun `json:"run"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(getRR.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode audit response: %v", err)
+	}
+	if !envelope.Data.Found || envelope.Data.Run.SelectedCount != 2 || len(envelope.Data.Run.Items) != 1 || envelope.Data.Run.Items[0].Code != "600001" {
+		t.Fatalf("unexpected audit response: %+v", envelope.Data)
+	}
+}
+
 func TestAStockRecommendationSnapshotAPIRepairsNewsPhraseNamesFromCodeNames(t *testing.T) {
 	ctx := context.Background()
 	store := newContentSearchTestStore(t)
