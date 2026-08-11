@@ -79,6 +79,13 @@ type aStockContext struct {
 	CandidateAuditPhase          string
 	CandidateAuditRawCount       int
 	CandidateAuditCandidates     []aStockMarketCandidate
+	CandidateAuditScored         []aStockRecommendation
+	CandidateAuditExits          map[string]aStockCandidateAuditExit
+}
+
+type aStockCandidateAuditExit struct {
+	Stage  string
+	Reason string
 }
 
 type aStockSnapshotNewsSummary struct {
@@ -4553,6 +4560,14 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 		ctx.CandidateAuditPhase = phase
 		ctx.CandidateAuditRawCount = len(marketCandidates)
 		ctx.CandidateAuditCandidates = append([]aStockMarketCandidate(nil), candidates...)
+		// Score the complete (already-valid) candidate pool for audit purposes.
+		// The recommendation list below still honours the configured display and
+		// replacement limits; this additional slice is never used to pick stocks.
+		auditScored := buildAStockSnapshotRecommendationsWithPhaseAndLimitAndSectorGateWithSettings(strategyDate, period.Key, phase, ctx.Articles, candidates, len(candidates), len(candidates), sectorGate, settings)
+		ctx.CandidateAuditScored = append([]aStockRecommendation(nil), auditScored...)
+		if filtered, _ := filterAStockNegativeNoEvidenceRecommendations(auditScored, make(map[string]struct{})); len(filtered) != len(auditScored) {
+			aStockCandidateAuditMarkRemoved(&ctx, auditScored, filtered, "negative_no_evidence", "负面新闻且缺少个股有效证据")
+		}
 		baseRecommendations := buildAStockSnapshotRecommendationsWithPhaseAndLimitAndSectorGateWithSettings(strategyDate, period.Key, phase, ctx.Articles, candidates, settings.Auction.ReplacementPoolLimit, settings.Auction.ReplacementPerHotspot, sectorGate, settings)
 		if filtered, skipped := filterAStockNegativeNoEvidenceRecommendations(baseRecommendations, negativeFilteredCodes); skipped > 0 {
 			baseRecommendations = filtered
@@ -4593,26 +4608,32 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 		}
 	}
 	if len(ctx.Recommendations) > 0 && !ctx.IgnoreRecent {
+		beforeRecentFilter := append([]aStockRecommendation(nil), ctx.Recommendations...)
 		recentCodes = s.loadRecentAStockRecommendationCodesForPeriodWithCache(strategyDate, period.Key, aStockRecentLookbackDays, cache)
 		recentResult := filterRecentAStockRecommendationsWithReplenishment(ctx.Recommendations, nil, recentCodes, len(ctx.Recommendations))
 		ctx.Recommendations = recentResult.Recommendations
+		aStockCandidateAuditMarkRemoved(&ctx, beforeRecentFilter, ctx.Recommendations, "recent_recommendation", fmt.Sprintf("近%d个交易日内已推荐", aStockRecentLookbackDays))
 		ctx.RecentFiltered = recentResult.Filtered
 		recentReplacementStatus = formatAStockRecentReplenishmentStatusWithStocks(ctx.RecentFiltered, recentResult.FilteredStocks, 0, false)
 	}
 	ctx.Recommendations = withAStockRecommendationEntryTimes(ctx.Recommendations, period.Key, entryTimeOverride)
 	ctx.Recommendations = s.applyAStockHoldingSummariesWithSettings(ctx.Recommendations, cache, settings)
 	if ctx.FundFlowFilterEnabled && len(ctx.Recommendations) > 0 {
+		beforeFundFlowFilter := append([]aStockRecommendation(nil), ctx.Recommendations...)
 		if len(fundFlowReplacementPool) > 0 {
 			fundFlowReplacementPool = withAStockRecommendationEntryTimes(fundFlowReplacementPool, period.Key, entryTimeOverride)
 			fundFlowReplacementPool = s.applyAStockHoldingSummariesWithSettings(fundFlowReplacementPool, cache, settings)
 		}
 		result := s.applyAStockRecommendationFundFlowFilterWithSettings(strategyDate, ctx.Recommendations, fundFlowReplacementPool, recentCodes, len(ctx.Recommendations), cache, false, settings)
 		ctx.Recommendations = result.Recommendations
+		aStockCandidateAuditMarkRemoved(&ctx, beforeFundFlowFilter, ctx.Recommendations, "fund_flow", "个股资金流硬过滤")
 		ctx.FundFlowFiltered = result.Filtered
 		ctx.FundFlowMissingCount = result.Missing
 		fundFlowStatus = formatAStockFundFlowFilterStatusWithStocks(result.Filtered, result.FilteredStocks, result.Replenished, result.Missing, false)
 	}
+	beforeExDividendFilter := append([]aStockRecommendation(nil), ctx.Recommendations...)
 	if exDividendSkipped := s.applyAStockExDividendFilterWithCache(&ctx, cache); exDividendSkipped > 0 {
+		aStockCandidateAuditMarkRemoved(&ctx, beforeExDividendFilter, ctx.Recommendations, "ex_dividend", "除权除息窗口过滤")
 		exDividendStatus = formatAStockExDividendFilterStatus(exDividendSkipped)
 		recommendationTarget = minInt(recommendationTarget, len(ctx.Recommendations))
 	}
@@ -4620,11 +4641,27 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 		recommendationTarget = minInt(recommendationTarget, len(ctx.Recommendations))
 	}
 	if recommendationTarget > 0 {
+		beforeRankingLimit := append([]aStockRecommendation(nil), ctx.Recommendations...)
 		ctx.Recommendations = limitAStockRecommendationsByScoreWithSettings(ctx.Recommendations, recommendationTarget, settings)
+		aStockCandidateAuditMarkRemoved(&ctx, beforeRankingLimit, ctx.Recommendations, "ranking", "评分排序或热点名额限制")
 		recommendationTarget = minInt(recommendationTarget, len(ctx.Recommendations))
 	}
+	beforeMarketRiskFilter := append([]aStockRecommendation(nil), ctx.Recommendations...)
 	marketView := s.loadAStockMarketViewDetailed(strategyDate, ctx.Period, ctx.Recommendations, ctx.LimitUpFilterEnabled, ctx.TodayMarketFilterEnabled, recommendationTarget)
 	ctx.Recommendations = marketView.Recommendations
+	// Keep the reason emitted by the market layer (limit-up, large gain,
+	// excessive drawdown, and so on) when it is available.
+	aStockCandidateAuditMarkRemoved(&ctx, beforeMarketRiskFilter, ctx.Recommendations, "market_risk", "行情或回撤风控过滤")
+	for _, item := range marketView.FilteredRecommendations {
+		code := normalizeAStockCode(item.Recommendation.Code)
+		if code == "" {
+			continue
+		}
+		if ctx.CandidateAuditExits == nil {
+			ctx.CandidateAuditExits = make(map[string]aStockCandidateAuditExit)
+		}
+		ctx.CandidateAuditExits[code] = aStockCandidateAuditExit{Stage: "market_risk", Reason: "行情风控：" + strings.TrimSpace(item.Reason)}
+	}
 	ctx.Backtests = marketView.Backtests
 	ctx.BacktestStatus = marketView.Status
 	ctx.LimitUpFiltered = marketView.LimitUpFiltered
@@ -4633,7 +4670,9 @@ func (s *Server) loadAStockContextWithRecommendationPhasePersistenceModeEntryTim
 	if forceRecommendationRefresh {
 		s.restoreAStockBacktestsFromSnapshotWithCache(&ctx, cache)
 	}
+	beforePositiveScoreFilter := append([]aStockRecommendation(nil), ctx.Recommendations...)
 	if scoreFiltered, filteredStocks := applyAStockRecommendationPositiveScoreFilterWithSettings(&ctx, settings); scoreFiltered > 0 {
+		aStockCandidateAuditMarkRemoved(&ctx, beforePositiveScoreFilter, ctx.Recommendations, "positive_score", "总分未达到正分门槛")
 		ctx.Backtests = filterAStockBacktestsForRecommendations(ctx.Backtests, ctx.Recommendations)
 		scoreFilterStatus = formatAStockScoreFilterStatus(scoreFiltered, filteredStocks)
 	}
@@ -5333,8 +5372,16 @@ func (s *Server) saveAStockRecommendationCandidateAudit(ctx aStockContext, phase
 	for _, item := range ctx.FilteredRecommendations {
 		filtered[normalizeAStockCode(item.Recommendation.Code)] = item
 	}
+	scored := make(map[string]aStockRecommendation, len(ctx.CandidateAuditScored))
+	for _, rec := range ctx.CandidateAuditScored {
+		code := normalizeAStockCode(rec.Code)
+		if previous, exists := scored[code]; !exists || rec.MarketScore > previous.MarketScore {
+			scored[code] = rec
+		}
+	}
 	items := make([]model.AStockRecommendationCandidateAuditItem, 0, len(ctx.CandidateAuditCandidates))
 	exitCounts := map[string]int{}
+	hotspotLinkedCount := 0
 	for _, candidate := range ctx.CandidateAuditCandidates {
 		code := normalizeAStockCode(candidate.Code)
 		item := model.AStockRecommendationCandidateAuditItem{
@@ -5352,6 +5399,9 @@ func (s *Server) saveAStockRecommendationCandidateAudit(ctx aStockContext, phase
 				item.Hotspots = append(item.Hotspots, hotspot.Name)
 			}
 		}
+		if len(item.Hotspots) > 0 {
+			hotspotLinkedCount++
+		}
 		if rec, ok := selected[code]; ok {
 			item.Status = "selected"
 			item.FinalScore = rec.MarketScore
@@ -5364,17 +5414,39 @@ func (s *Server) saveAStockRecommendationCandidateAudit(ctx aStockContext, phase
 			item.ExitReason = rejected.Reason
 			item.FinalScore = rejected.Recommendation.MarketScore
 			exitCounts[item.ExitStage]++
+		} else if exited, ok := ctx.CandidateAuditExits[code]; ok {
+			item.Status = "filtered"
+			item.ExitStage = exited.Stage
+			item.ExitReason = exited.Reason
+			if rec, scoredOK := scored[code]; scoredOK {
+				item.FinalScore = rec.MarketScore
+				if raw, err := json.Marshal(rec.ScoreBreakdown); err == nil {
+					item.ScoreBreakdown = string(raw)
+				}
+			}
+			exitCounts[item.ExitStage]++
+		} else if rec, ok := scored[code]; ok {
+			item.Status = "not_selected"
+			item.ExitStage = "ranking"
+			item.ExitReason = "评分后未进入最终名额"
+			item.FinalScore = rec.MarketScore
+			if raw, err := json.Marshal(rec.ScoreBreakdown); err == nil {
+				item.ScoreBreakdown = string(raw)
+			}
+			exitCounts[item.ExitStage]++
 		} else if len(item.Hotspots) == 0 {
 			item.ExitStage = "hotspot_match"
 			item.ExitReason = "未命中可推荐热点"
 			exitCounts[item.ExitStage]++
 		} else {
-			item.Status = "not_selected"
-			item.ExitStage = "ranking"
-			item.ExitReason = "未进入最终推荐前列，或在重复、资金、除权、总分与名额环节被过滤"
+			item.ExitStage = "hotspot_scoring"
+			item.ExitReason = "未形成热点内有效评分候选"
 			exitCounts[item.ExitStage]++
 		}
 		items = append(items, item)
+	}
+	if ctx.CandidateAuditRawCount > len(ctx.CandidateAuditCandidates) {
+		exitCounts["candidate_pool_rejected"] = ctx.CandidateAuditRawCount - len(ctx.CandidateAuditCandidates)
 	}
 	run := model.AStockRecommendationCandidateAuditRun{
 		RunID:               fmt.Sprintf("%s-%s-%s-%d", ctx.Date, ctx.Period, phase, time.Now().UTC().UnixNano()),
@@ -5383,8 +5455,8 @@ func (s *Server) saveAStockRecommendationCandidateAudit(ctx aStockContext, phase
 		Phase:               phase,
 		RawCandidateCount:   ctx.CandidateAuditRawCount,
 		ValidCandidateCount: len(ctx.CandidateAuditCandidates),
-		HotspotLinkedCount:  len(ctx.CandidateAuditCandidates),
-		ScoredCount:         len(items),
+		HotspotLinkedCount:  hotspotLinkedCount,
+		ScoredCount:         len(scored),
 		SelectedCount:       len(selected),
 		ExitCounts:          exitCounts,
 		Items:               items,
@@ -5397,6 +5469,25 @@ func (s *Server) saveAStockRecommendationCandidateAudit(ctx aStockContext, phase
 		return fmt.Errorf(resp.Status())
 	}
 	return nil
+}
+
+func aStockCandidateAuditMarkRemoved(ctx *aStockContext, before []aStockRecommendation, after []aStockRecommendation, stage string, reason string) {
+	if ctx == nil || len(before) == 0 {
+		return
+	}
+	if ctx.CandidateAuditExits == nil {
+		ctx.CandidateAuditExits = make(map[string]aStockCandidateAuditExit)
+	}
+	kept := aStockRecommendationCodeSet(after)
+	for _, rec := range before {
+		code := normalizeAStockCode(rec.Code)
+		if code == "" {
+			continue
+		}
+		if _, exists := kept[code]; !exists {
+			ctx.CandidateAuditExits[code] = aStockCandidateAuditExit{Stage: stage, Reason: reason}
+		}
+	}
 }
 
 func (s *Server) buildAStockRecommendationSnapshot(ctx aStockContext) (model.AStockRecommendationSnapshot, error) {

@@ -10851,6 +10851,26 @@ func TestAStockRecommendationsFilterExDividendEvents(t *testing.T) {
 	}
 }
 
+func TestAStockCandidateAuditMarksRemovedWithExplicitExitStage(t *testing.T) {
+	ctx := aStockContext{}
+	before := []aStockRecommendation{
+		{Code: "000001", Name: "保留"},
+		{Code: "000002", Name: "淘汰"},
+	}
+	aStockCandidateAuditMarkRemoved(&ctx, before, before[:1], "fund_flow", "个股资金流硬过滤")
+
+	got, ok := ctx.CandidateAuditExits["000002"]
+	if !ok {
+		t.Fatal("expected removed stock to have an audit exit")
+	}
+	if got.Stage != "fund_flow" || got.Reason != "个股资金流硬过滤" {
+		t.Fatalf("unexpected audit exit: %#v", got)
+	}
+	if _, exists := ctx.CandidateAuditExits["000001"]; exists {
+		t.Fatalf("kept stock must not have an audit exit: %#v", ctx.CandidateAuditExits)
+	}
+}
+
 func TestAStockRecommendationsOutputFiltersApplyDailyLimit(t *testing.T) {
 	ctx := aStockContext{
 		Date: "2026-07-13",
