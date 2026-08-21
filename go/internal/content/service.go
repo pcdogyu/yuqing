@@ -1849,19 +1849,10 @@ func shouldUseAStockRecommendationSnapshotResolvedName(code string, name string,
 	if !validAStockRecommendationSnapshotName(code, resolved) {
 		return false
 	}
-	if !validAStockRecommendationSnapshotName(code, name) {
-		return true
-	}
-	if astockcode.IsInvalidRecommendationName(name) {
-		return true
-	}
-	if len([]rune(name)) <= 2 {
-		return true
-	}
-	if name == resolved {
-		return true
-	}
-	return strings.Contains(resolved, name) || strings.Contains(name, resolved)
+	// Code-name records are authoritative for their code.  A stored name may
+	// look valid while actually being a headline fragment, so heuristic text
+	// matching must not keep it over a verified code-name mapping.
+	return name != resolved
 }
 
 func validAStockRecommendationSnapshotName(code string, name string) bool {

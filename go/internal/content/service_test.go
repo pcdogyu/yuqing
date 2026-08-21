@@ -495,7 +495,7 @@ func TestAStockRecommendationSnapshotAPIRepairsNewsPhraseNamesFromCodeNames(t *t
 	svc := NewService(config.Config{}, store)
 	router := svc.Router()
 
-	payload := `{"strategy_date":"2026-07-31","period":"morning","recommendations_json":"[{\"Rank\":2,\"Code\":\"001309\",\"Name\":\"存储芯片大幅高开\"}]","filtered_recommendations_json":"[{\"reason\":\"today_high_pct\",\"recommendation\":{\"Code\":\"001309\",\"Name\":\"存储芯片大幅高开\"}}]","backtests_json":"[{\"Stock\":\"001309 存储芯片大幅高开\",\"Status\":\"等待T+1行情\"}]","generated_count":1}`
+	payload := `{"strategy_date":"2026-07-31","period":"morning","recommendations_json":"[{\"Rank\":1,\"Code\":\"001309\",\"Name\":\"存储芯片大幅高开\"},{\"Rank\":2,\"Code\":\"000100\",\"Name\":\"早间公告\"},{\"Rank\":3,\"Code\":\"600313\",\"Name\":\"经济日报\"}]","filtered_recommendations_json":"[{\"reason\":\"today_high_pct\",\"recommendation\":{\"Code\":\"001309\",\"Name\":\"存储芯片大幅高开\"}},{\"reason\":\"today_high_pct\",\"recommendation\":{\"Code\":\"000100\",\"Name\":\"早间公告\"}},{\"reason\":\"today_high_pct\",\"recommendation\":{\"Code\":\"600313\",\"Name\":\"经济日报\"}}]","backtests_json":"[{\"Stock\":\"001309 存储芯片大幅高开\",\"Status\":\"等待T+1行情\"},{\"Stock\":\"000100 早间公告\",\"Status\":\"等待T+1行情\"},{\"Stock\":\"600313 经济日报\",\"Status\":\"等待T+1行情\"}]","generated_count":3}`
 	postReq := httptest.NewRequest(http.MethodPost, "/api/v1/internal/a-stock/recommendations", strings.NewReader(payload))
 	postRR := httptest.NewRecorder()
 	router.ServeHTTP(postRR, postReq)
@@ -503,7 +503,11 @@ func TestAStockRecommendationSnapshotAPIRepairsNewsPhraseNamesFromCodeNames(t *t
 		t.Fatalf("expected bad recommendation snapshot upsert 200, got %d body=%s", postRR.Code, postRR.Body.String())
 	}
 
-	if _, err := store.UpsertAStockCodeNames(ctx, []model.AStockCodeName{{Code: "001309", Name: "德明利"}}); err != nil {
+	if _, err := store.UpsertAStockCodeNames(ctx, []model.AStockCodeName{
+		{Code: "001309", Name: "德明利"},
+		{Code: "000100", Name: "TCL科技"},
+		{Code: "600313", Name: "农发种业"},
+	}); err != nil {
 		t.Fatalf("upsert code names: %v", err)
 	}
 
@@ -524,8 +528,14 @@ func TestAStockRecommendationSnapshotAPIRepairsNewsPhraseNamesFromCodeNames(t *t
 		"filtered recommendations": envelope.Data.FilteredRecommendationsJSON,
 		"backtests":                envelope.Data.BacktestsJSON,
 	} {
-		if !strings.Contains(raw, "德明利") || strings.Contains(raw, "存储芯片大幅高开") {
-			t.Fatalf("expected %s json to repair name to 德明利, got %s", label, raw)
+		for wrong, want := range map[string]string{
+			"存储芯片大幅高开": "德明利",
+			"早间公告":     "TCL科技",
+			"经济日报":     "农发种业",
+		} {
+			if !strings.Contains(raw, want) || strings.Contains(raw, wrong) {
+				t.Fatalf("expected %s json to repair %s to %s, got %s", label, wrong, want, raw)
+			}
 		}
 	}
 }

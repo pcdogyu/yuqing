@@ -115,6 +115,8 @@ func IsInvalidRecommendationName(name string) bool {
 		"市场要闻":   {},
 		"盘前市场要闻": {},
 		"金十数据整理": {},
+		"早间公告":   {},
+		"经济日报":   {},
 	}
 	if _, ok := blockedExact[name]; ok {
 		return true
