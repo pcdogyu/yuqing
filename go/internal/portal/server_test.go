@@ -1662,6 +1662,15 @@ func TestSectorFundFlowStockTrendChartAxisGridLabels(t *testing.T) {
 			if got := strings.Count(body, `sector-trend-chart-label-flow`); got != 5 {
 				t.Fatalf("expected 5 left-axis flow labels, got %d body=%s", got, body)
 			}
+			if got := strings.Count(body, `sector-trend-chart-label-date`); got != len(tt.flows) {
+				t.Fatalf("expected one compact date label per chart point, got %d body=%s", got, body)
+			}
+			if !strings.Contains(body, `>07-06</text>`) {
+				t.Fatalf("expected x-axis date labels to use month-day format, got %s", body)
+			}
+			if strings.Contains(body, `>2026-07-06</text>`) {
+				t.Fatalf("expected x-axis date labels to omit the year, got %s", body)
+			}
 			priceLabels := strings.Count(body, `sector-trend-chart-label-price`)
 			if tt.wantPriceLabels && priceLabels != 5 {
 				t.Fatalf("expected 5 right-axis price labels, got %d body=%s", priceLabels, body)

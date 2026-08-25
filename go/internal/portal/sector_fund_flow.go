@@ -93,7 +93,7 @@ body[data-page='sector-fund-flow'] section{width:100%;box-sizing:border-box}
 .sector-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}.sector-card{padding:16px;border:1px solid #ece7dc;border-radius:8px;background:#fff}.sector-card strong{display:block;font-size:20px;margin-top:6px}
 .sector-scroll{overflow:auto}.sector-table{min-width:1240px;width:100%;table-layout:fixed}.sector-table th,.sector-table td{vertical-align:middle;white-space:nowrap}.sector-table th{font-weight:700;text-align:left}.sector-table th:nth-child(1),.sector-table td:nth-child(1){width:54px;text-align:center}.sector-table th:nth-child(2),.sector-table td:nth-child(2){width:140px;text-align:left}.sector-table th:nth-child(3),.sector-table td:nth-child(3){width:70px;text-align:center}.sector-table th:nth-child(4),.sector-table th:nth-child(5),.sector-table th:nth-child(6),.sector-table th:nth-child(7),.sector-table th:nth-child(8),.sector-table th:nth-child(9),.sector-table th:nth-child(10){text-align:right}.sector-table th:nth-child(11),.sector-table td:nth-child(11){width:210px;text-align:left}.sector-table th:nth-child(12),.sector-table td:nth-child(12){width:150px;text-align:left}.sector-num{text-align:right;white-space:nowrap}.sector-positive{color:#d93025;font-weight:700}.sector-negative{color:#087333;font-weight:700}.sector-empty{padding:18px;border:1px dashed #d0c8b8;border-radius:8px;background:#fff;color:#6a6257}
 .sector-name-link,.sector-trend-link{color:#214e34;font-weight:700;text-decoration:none}.sector-name-link:hover,.sector-trend-link:hover{text-decoration:underline}.sector-name-link.active{color:#0b5cab}.sector-detail-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px}.sector-detail-head h3{margin:0}.sector-stock-table{min-width:1240px}.sector-stock-table th:nth-child(2),.sector-stock-table td:nth-child(2){width:90px}.sector-stock-table th:nth-child(3),.sector-stock-table td:nth-child(3){width:120px;text-align:left}.sector-stock-table td.sector-num{text-align:right}.sector-stock-note{margin-top:6px}.sector-trend-tabs{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0}
-.sector-trend-chart-wrap{width:100%;overflow:auto;border:1px solid #ece7dc;border-radius:8px;background:#fff;margin:12px 0 16px}.sector-trend-chart{min-width:900px;width:100%;height:auto;display:block}.sector-trend-chart-label{fill:#6a6257;font-size:12px}.sector-trend-chart-legend{font-size:13px;font-weight:700}.sector-trend-chart-grid,.sector-trend-chart-grid-y,.sector-trend-chart-grid-x{stroke:#ece7dc;stroke-width:1}.sector-trend-chart-zero{stroke:#9a8f7d;stroke-width:1.4}.sector-trend-chart-line-flow{fill:none;stroke:#b3261e;stroke-width:2.7;stroke-linejoin:round;stroke-linecap:round}.sector-trend-chart-line-price{fill:none;stroke:#0b5cab;stroke-width:2.7;stroke-linejoin:round;stroke-linecap:round}.sector-trend-chart-point-flow{fill:#b3261e}.sector-trend-chart-point-price{fill:#0b5cab}.sector-trend-axis-left,.sector-trend-axis-right{stroke:#9a8f7d;stroke-width:1.2}
+.sector-trend-chart-wrap{width:100%;overflow:auto;border:1px solid #ece7dc;border-radius:8px;background:#fff;margin:12px 0 16px}.sector-trend-chart{min-width:900px;width:100%;height:auto;display:block}.sector-trend-chart-label{fill:#6a6257;font-size:12px}.sector-trend-chart-label-date{font-size:10px}.sector-trend-chart-legend{font-size:13px;font-weight:700}.sector-trend-chart-grid,.sector-trend-chart-grid-y,.sector-trend-chart-grid-x{stroke:#ece7dc;stroke-width:1}.sector-trend-chart-zero{stroke:#9a8f7d;stroke-width:1.4}.sector-trend-chart-line-flow{fill:none;stroke:#b3261e;stroke-width:2.7;stroke-linejoin:round;stroke-linecap:round}.sector-trend-chart-line-price{fill:none;stroke:#0b5cab;stroke-width:2.7;stroke-linejoin:round;stroke-linecap:round}.sector-trend-chart-point-flow{fill:#b3261e}.sector-trend-chart-point-price{fill:#0b5cab}.sector-trend-axis-left,.sector-trend-axis-right{stroke:#9a8f7d;stroke-width:1.2}
 @media (max-width:760px){.sector-toolbar{grid-template-columns:1fr}.sector-head{display:block}}
 </style>`)
 	b.WriteString(`<section><div class="sector-head"><div><h2>版块资金</h2><p class="sector-muted">展示 AKShare 行业/概念版块资金流入流出，支持今日、5日、10日切换。</p></div>`)
@@ -721,7 +721,7 @@ func renderSectorFundFlowStockTrendChart(b *strings.Builder, trendCtx sectorFund
 			} else if idx == len(items)-1 {
 				anchor = "end"
 			}
-			b.WriteString(fmt.Sprintf(`<text class="sector-trend-chart-label" x="%.1f" y="332" text-anchor="%s">%s</text>`, x, anchor, html.EscapeString(item.TradeDate)))
+			b.WriteString(fmt.Sprintf(`<text class="sector-trend-chart-label sector-trend-chart-label-date" x="%.1f" y="332" text-anchor="%s">%s</text>`, x, anchor, html.EscapeString(formatSectorFundFlowChartDateLabel(item.TradeDate))))
 		}
 	}
 	if flowPath := sectorFundFlowStockTrendPath(items, xForIndex, yForFund, func(item model.AStockStockFundFlow) (float64, bool) {
@@ -852,6 +852,20 @@ func sectorFundFlowShouldLabelChartDate(idx int, total int) bool {
 		return true
 	}
 	return idx%5 == 0
+}
+
+func formatSectorFundFlowChartDateLabel(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if parsed, err := time.Parse("2006-01-02", value); err == nil {
+		return parsed.Format("01-02")
+	}
+	if len(value) >= len("2006-01-02") && value[4] == '-' && value[7] == '-' {
+		return value[5:10]
+	}
+	return value
 }
 
 func sectorFundFlowStockTrendPath(items []model.AStockStockFundFlow, xForIndex func(int) float64, yForValue func(float64) float64, valueForItem func(model.AStockStockFundFlow) (float64, bool)) string {
