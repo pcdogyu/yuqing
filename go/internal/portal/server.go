@@ -5313,7 +5313,7 @@ var finalMessage=upgradeMessage(data);
 status.textContent=idle?"等待执行":(ok?(finalMessage||"升级完成"):(finalMessage||"升级失败"));
 setConsoleMeta(idle?"等待":(ok?"完成":"失败"),idle?"--":("完成于 "+now()));
 setLog(upgradeLog(data),true);
-if(!idle){scheduleHide()}
+if(idle){hide()}else{scheduleHide()}
 }
 function pollStatus(){fetch("/system/upgrade/status",{method:"GET",credentials:"same-origin",headers:{"Accept":"application/json"}}).then(parseJSON).then(renderUpgrade).catch(function(err){failedPolls++;status.textContent="升级执行中";setConsoleMeta("查询失败","最后刷新 "+now());appendConsoleLine(now()+" 状态查询失败: "+err.message);if(failedPolls>=6&&hasRememberedUpgrade()){if(failedPolls===6){appendConsoleLine(now()+" 服务重启中，仍在等待恢复连接...")}stopPoll();pollTimer=setTimeout(pollStatus,5000);return}schedulePoll()})}
 if(close){close.addEventListener("click",function(){clearTimeout(hideTimer);hide()})}

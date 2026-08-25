@@ -14747,6 +14747,7 @@ func TestPortalNavPlacesLogoutAfterUpgrade(t *testing.T) {
 		`data.status==="running"`,
 		`data.status==="restarting"`,
 		`finalMessage=upgradeMessage(data)`,
+		`if(idle){hide()}else{scheduleHide()}`,
 		`setTimeout(hide,120000)`,
 		`?"重启中":"运行中"`,
 		`setLog(data.log||runningMessage,true)`,

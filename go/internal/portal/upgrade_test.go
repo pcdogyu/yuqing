@@ -145,6 +145,29 @@ func TestPortalUpgradeStatusPersistsAndLoads(t *testing.T) {
 	}
 }
 
+func TestRunBatClearsStalePortalUpgradeStatusAfterSuccessfulStart(t *testing.T) {
+	workingDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get working directory: %v", err)
+	}
+	runBatPath := filepath.Join(workingDir, "..", "..", "run.bat")
+	content, err := os.ReadFile(runBatPath)
+	if err != nil {
+		t.Fatalf("read run.bat: %v", err)
+	}
+	batch := string(content)
+	for _, want := range []string{
+		`call :clear_stale_portal_upgrade_status`,
+		`:clear_stale_portal_upgrade_status`,
+		`%LOG_DIR%\portal-upgrade-status.json`,
+		`Cleared stale portal upgrade status.`,
+	} {
+		if !strings.Contains(batch, want) {
+			t.Fatalf("expected run.bat to include %q", want)
+		}
+	}
+}
+
 func TestPortalUpgradeSnapshotMarksStaleRestartingFailed(t *testing.T) {
 	statusPath := filepath.Join(t.TempDir(), "portal-upgrade-status.json")
 	t.Setenv(portalUpgradeStatusFileEnv, statusPath)

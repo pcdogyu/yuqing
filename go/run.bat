@@ -271,6 +271,7 @@ echo Commit: %YUQING_GIT_COMMIT%
 echo BuildTime: %YUQING_BUILD_TIME%
 echo Branch: %YUQING_GIT_BRANCH%
 echo.
+call :clear_stale_portal_upgrade_status
 echo Service status:
 call :print_service_status
 if errorlevel 1 echo WARNING: Failed to print service status.
@@ -288,6 +289,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%GO_DIR%\scripts\service-st
 set "SERVICE_CHECK_EXIT=%ERRORLEVEL%"
 if "%SERVICE_CHECK_EXIT%"=="0" (
     echo All services are already listening. Upgrade finished without rebuilding or restarting services.
+    call :clear_stale_portal_upgrade_status
     exit /b 0
 )
 if not "%SERVICE_CHECK_EXIT%"=="2" (
@@ -298,7 +300,9 @@ echo One or more services are not listening. Starting missing services with time
 call :start_all_service_processes
 if errorlevel 1 exit /b %ERRORLEVEL%
 call :verify_services_started
-exit /b %ERRORLEVEL%
+set "SERVICE_VERIFY_EXIT=%ERRORLEVEL%"
+if "%SERVICE_VERIFY_EXIT%"=="0" call :clear_stale_portal_upgrade_status
+exit /b %SERVICE_VERIFY_EXIT%
 
 :restart_services_only
 cd /d "%GO_DIR%"
@@ -341,9 +345,21 @@ if defined YUQING_ASTOCK_HOLDING_URL (
 )
 echo LogLevel: %YUQING_LOG_LEVEL%
 echo.
+call :clear_stale_portal_upgrade_status
 echo Service status:
 call :print_service_status
 if errorlevel 1 echo WARNING: Failed to print service status.
+exit /b 0
+
+:clear_stale_portal_upgrade_status
+set "PORTAL_UPGRADE_STATUS=%LOG_DIR%\portal-upgrade-status.json"
+if not exist "%PORTAL_UPGRADE_STATUS%" exit /b 0
+del /Q "%PORTAL_UPGRADE_STATUS%" >nul 2>nul
+if exist "%PORTAL_UPGRADE_STATUS%" (
+    echo WARNING: Failed to clear stale portal upgrade status: %PORTAL_UPGRADE_STATUS%
+) else (
+    echo Cleared stale portal upgrade status.
+)
 exit /b 0
 
 :stop_services
