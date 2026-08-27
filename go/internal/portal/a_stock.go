@@ -5053,16 +5053,14 @@ func (s *Server) loadAStockRecommendationCandidateAuditRun(filter model.AStockRe
 	if filter.RunID != "" {
 		query.Set("run_id", filter.RunID)
 	}
-	var envelope struct {
-		Data struct {
-			Found bool                                        `json:"found"`
-			Run   model.AStockRecommendationCandidateAuditRun `json:"run"`
-		} `json:"data"`
+	var result struct {
+		Found bool                                        `json:"found"`
+		Run   model.AStockRecommendationCandidateAuditRun `json:"run"`
 	}
-	if err := s.getJSON(strings.TrimRight(s.cfg.ContentURL, "/")+"/api/v1/a-stock/recommendation-candidate-audits?"+query.Encode(), &envelope); err != nil || !envelope.Data.Found {
+	if err := s.getJSON(strings.TrimRight(s.cfg.ContentURL, "/")+"/api/v1/a-stock/recommendation-candidate-audits?"+query.Encode(), &result); err != nil || !result.Found {
 		return model.AStockRecommendationCandidateAuditRun{}, false
 	}
-	return envelope.Data.Run, true
+	return result.Run, true
 }
 
 func (s *Server) loadAStockRecommendationSnapshotWithCache(strategyDate string, period string, ignoreRecent bool, cache *aStockRequestCache) (model.AStockRecommendationSnapshot, bool) {
@@ -5375,6 +5373,16 @@ func (s *Server) saveAStockRecommendationCandidateAudit(ctx aStockContext, phase
 		return nil
 	}
 	phase = normalizeAStockRecommendationPhase(phase)
+	if phase == aStockRecommendationPhaseFinal && len(ctx.CandidateAuditCandidates) == 0 && len(ctx.Recommendations) > 0 {
+		prior, found := s.loadAStockRecommendationCandidateAuditRun(model.AStockRecommendationCandidateAuditFilter{
+			StrategyDate: ctx.Date,
+			Period:       ctx.Period,
+			Phase:        aStockRecommendationPhasePreopen,
+		})
+		if found && len(prior.Items) > 0 {
+			return s.postAStockRecommendationCandidateAuditRun(aStockRecommendationCandidateAuditRunFromPrior(ctx, phase, prior))
+		}
+	}
 	selected := make(map[string]aStockRecommendation, len(ctx.Recommendations))
 	for _, rec := range ctx.Recommendations {
 		selected[normalizeAStockCode(rec.Code)] = rec
@@ -5472,6 +5480,10 @@ func (s *Server) saveAStockRecommendationCandidateAudit(ctx aStockContext, phase
 		ExitCounts:          exitCounts,
 		Items:               items,
 	}
+	return s.postAStockRecommendationCandidateAuditRun(run)
+}
+
+func (s *Server) postAStockRecommendationCandidateAuditRun(run model.AStockRecommendationCandidateAuditRun) error {
 	resp, err := s.client.R().SetBody(run).Post(strings.TrimRight(s.cfg.ContentURL, "/") + "/api/v1/internal/a-stock/recommendation-candidate-audits")
 	if err != nil {
 		return err
@@ -5480,6 +5492,88 @@ func (s *Server) saveAStockRecommendationCandidateAudit(ctx aStockContext, phase
 		return fmt.Errorf(resp.Status())
 	}
 	return nil
+}
+
+func aStockRecommendationCandidateAuditRunFromPrior(ctx aStockContext, phase string, prior model.AStockRecommendationCandidateAuditRun) model.AStockRecommendationCandidateAuditRun {
+	selected := make(map[string]aStockRecommendation, len(ctx.Recommendations))
+	for _, rec := range ctx.Recommendations {
+		if code := normalizeAStockCode(rec.Code); code != "" {
+			selected[code] = rec
+		}
+	}
+	items := append([]model.AStockRecommendationCandidateAuditItem(nil), prior.Items...)
+	seen := make(map[string]struct{}, len(items))
+	exitCounts := make(map[string]int)
+	for i := range items {
+		code := normalizeAStockCode(items[i].Code)
+		if code == "" {
+			continue
+		}
+		seen[code] = struct{}{}
+		if rec, ok := selected[code]; ok {
+			items[i].Status = "selected"
+			items[i].ExitStage = ""
+			items[i].ExitReason = ""
+			if strings.TrimSpace(rec.Name) != "" {
+				items[i].Name = rec.Name
+			}
+			if strings.TrimSpace(rec.Hotspot) != "" {
+				items[i].Hotspots = []string{rec.Hotspot}
+			}
+			if rec.MarketScore != 0 {
+				items[i].FinalScore = rec.MarketScore
+			}
+			if raw, err := json.Marshal(rec.ScoreBreakdown); err == nil && string(raw) != "null" && string(raw) != "[]" {
+				items[i].ScoreBreakdown = string(raw)
+			}
+		} else if items[i].Status == "selected" {
+			items[i].Status = "not_selected"
+			items[i].ExitStage = "final_lock"
+			items[i].ExitReason = "正式阶段未保留盘前候选"
+		}
+		if items[i].ExitStage != "" {
+			exitCounts[items[i].ExitStage]++
+		}
+	}
+	for _, rec := range ctx.Recommendations {
+		code := normalizeAStockCode(rec.Code)
+		if code == "" {
+			continue
+		}
+		if _, ok := seen[code]; ok {
+			continue
+		}
+		item := model.AStockRecommendationCandidateAuditItem{
+			Code:       code,
+			Name:       rec.Name,
+			FinalScore: rec.MarketScore,
+			Status:     "selected",
+		}
+		if strings.TrimSpace(rec.Hotspot) != "" {
+			item.Hotspots = []string{rec.Hotspot}
+		}
+		if raw, err := json.Marshal(rec.ScoreBreakdown); err == nil && string(raw) != "null" && string(raw) != "[]" {
+			item.ScoreBreakdown = string(raw)
+		}
+		items = append(items, item)
+	}
+	candidatePoolRejected := maxInt(prior.ExitCounts["candidate_pool_rejected"], prior.RawCandidateCount-prior.ValidCandidateCount)
+	if candidatePoolRejected > 0 {
+		exitCounts["candidate_pool_rejected"] = candidatePoolRejected
+	}
+	return model.AStockRecommendationCandidateAuditRun{
+		RunID:               fmt.Sprintf("%s-%s-%s-%d", ctx.Date, ctx.Period, phase, time.Now().UTC().UnixNano()),
+		StrategyDate:        ctx.Date,
+		Period:              ctx.Period,
+		Phase:               phase,
+		RawCandidateCount:   prior.RawCandidateCount,
+		ValidCandidateCount: prior.ValidCandidateCount,
+		HotspotLinkedCount:  prior.HotspotLinkedCount,
+		ScoredCount:         prior.ScoredCount,
+		SelectedCount:       len(selected),
+		ExitCounts:          exitCounts,
+		Items:               items,
+	}
 }
 
 func aStockCandidateAuditMarkRemoved(ctx *aStockContext, before []aStockRecommendation, after []aStockRecommendation, stage string, reason string) {

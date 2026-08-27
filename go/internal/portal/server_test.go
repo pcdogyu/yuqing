@@ -4864,6 +4864,10 @@ func handleEmptyAStockAuctionTestEndpoint(w http.ResponseWriter, r *http.Request
 	if handleAStockAlgorithmSettingsTestEndpoint(w, r) {
 		return true
 	}
+	if r.Method == http.MethodGet && r.URL.Path == "/api/v1/a-stock/recommendation-candidate-audits" {
+		writeEnvelope(w, http.StatusOK, "ok", map[string]any{"found": false})
+		return true
+	}
 	if r.URL.Path == "/api/v1/internal/a-stock/recommendation-candidate-audits" {
 		writeEnvelope(w, http.StatusOK, "ok", map[string]any{"run_id": "test"})
 		return true
@@ -8712,6 +8716,123 @@ func TestAStockOverviewCandidateAuditLinkUsesRowDateAndPeriod(t *testing.T) {
 				t.Fatalf("period=%s expected audit cell to contain %q, got %s", tc.period, want, body)
 			}
 		}
+	}
+}
+
+func TestAStockCandidateAuditPageRendersContentServiceRun(t *testing.T) {
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/a-stock/recommendation-candidate-audits" {
+			t.Fatalf("unexpected content request path: %s", r.URL.Path)
+		}
+		query := r.URL.Query()
+		if query.Get("date") != "2026-08-27" || query.Get("period") != "morning" || query.Get("phase") != "final" {
+			t.Fatalf("unexpected candidate audit query: %s", r.URL.RawQuery)
+		}
+		writeEnvelope(w, http.StatusOK, "ok", map[string]any{
+			"found": true,
+			"run": model.AStockRecommendationCandidateAuditRun{
+				RunID:               "2026-08-27-morning-final-test",
+				StrategyDate:        "2026-08-27",
+				Period:              "morning",
+				Phase:               "final",
+				RawCandidateCount:   100,
+				ValidCandidateCount: 8,
+				ScoredCount:         6,
+				SelectedCount:       1,
+				Items: []model.AStockRecommendationCandidateAuditItem{{
+					Code:     "000001",
+					Name:     "审计一号",
+					Sources:  []string{"新闻点名"},
+					Hotspots: []string{"人工智能"},
+					Status:   "selected",
+				}},
+			},
+		})
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	req := httptest.NewRequest(http.MethodGet, "/a-stock/candidates?date=2026-08-27&period=morning&phase=final", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAStockCandidateAuditPage(rr, req, map[string]any{"id": int64(1), "username": "admin"})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected candidate audit page 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"2026-08-27-morning-final-test", "000001 审计一号", "新闻点名", "人工智能"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected candidate audit page to contain %q, got %s", want, body)
+		}
+	}
+	if strings.Contains(body, "尚无正式候选审计记录") {
+		t.Fatalf("candidate audit page reported an existing run as missing: %s", body)
+	}
+}
+
+func TestSaveAStockCandidateAuditFinalInheritsPreopenTrace(t *testing.T) {
+	var saved model.AStockRecommendationCandidateAuditRun
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/a-stock/recommendation-candidate-audits":
+			if r.URL.Query().Get("date") != "2026-08-27" || r.URL.Query().Get("period") != "morning" || r.URL.Query().Get("phase") != "preopen" {
+				t.Fatalf("unexpected prior audit query: %s", r.URL.RawQuery)
+			}
+			writeEnvelope(w, http.StatusOK, "ok", map[string]any{
+				"found": true,
+				"run": model.AStockRecommendationCandidateAuditRun{
+					RawCandidateCount:   100,
+					ValidCandidateCount: 2,
+					HotspotLinkedCount:  2,
+					ScoredCount:         2,
+					SelectedCount:       1,
+					ExitCounts:          map[string]int{"candidate_pool_rejected": 98, "ranking": 1},
+					Items: []model.AStockRecommendationCandidateAuditItem{
+						{Code: "000001", Name: "盘前一号", Status: "selected", FinalScore: 90},
+						{Code: "000002", Name: "盘前二号", Status: "not_selected", ExitStage: "ranking", ExitReason: "盘前未入选", FinalScore: 80},
+					},
+				},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/internal/a-stock/recommendation-candidate-audits":
+			if err := json.NewDecoder(r.Body).Decode(&saved); err != nil {
+				t.Fatalf("decode saved candidate audit: %v", err)
+			}
+			writeEnvelope(w, http.StatusOK, "ok", map[string]string{"run_id": saved.RunID})
+		default:
+			t.Fatalf("unexpected content request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	err := srv.saveAStockRecommendationCandidateAudit(aStockContext{
+		Date:   "2026-08-27",
+		Period: "morning",
+		Recommendations: []aStockRecommendation{
+			{Code: "000002", Name: "正式二号", Hotspot: "人工智能", MarketScore: 95},
+			{Code: "000003", Name: "正式三号", Hotspot: "半导体", MarketScore: 88},
+		},
+	}, "final")
+	if err != nil {
+		t.Fatalf("save final candidate audit: %v", err)
+	}
+	if saved.Phase != "final" || saved.RawCandidateCount != 100 || saved.ValidCandidateCount != 2 || saved.ScoredCount != 2 || saved.SelectedCount != 2 {
+		t.Fatalf("unexpected inherited audit funnel: %+v", saved)
+	}
+	if saved.ExitCounts["candidate_pool_rejected"] != 98 || saved.ExitCounts["final_lock"] != 1 {
+		t.Fatalf("unexpected inherited exit counts: %+v", saved.ExitCounts)
+	}
+	byCode := make(map[string]model.AStockRecommendationCandidateAuditItem, len(saved.Items))
+	for _, item := range saved.Items {
+		byCode[item.Code] = item
+	}
+	if item := byCode["000001"]; item.Status != "not_selected" || item.ExitStage != "final_lock" {
+		t.Fatalf("expected removed preopen selection to be marked at final lock, got %+v", item)
+	}
+	if item := byCode["000002"]; item.Status != "selected" || item.ExitStage != "" || item.Name != "正式二号" || item.FinalScore != 95 {
+		t.Fatalf("expected retained selection to use final fields, got %+v", item)
+	}
+	if item := byCode["000003"]; item.Status != "selected" || item.Name != "正式三号" || item.FinalScore != 88 {
+		t.Fatalf("expected new final selection to be appended, got %+v", item)
 	}
 }
 
