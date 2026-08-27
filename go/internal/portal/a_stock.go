@@ -881,6 +881,12 @@ func (s *Server) handleAStockCandidateAuditPage(w http.ResponseWriter, r *http.R
 	filter := model.AStockRecommendationCandidateAuditFilter{StrategyDate: date, Period: period.Key, Phase: phase, RunID: strings.TrimSpace(r.URL.Query().Get("run_id"))}
 	run, found := s.loadAStockRecommendationCandidateAuditRun(filter)
 	var b strings.Builder
+	b.WriteString(`<style>
+		body[data-page='a-stock-candidates'] main,body[data-page='a-stock-candidates'] .site-footer{max-width:none;width:100%;box-sizing:border-box}
+		body[data-page='a-stock-candidates'] section{width:100%;box-sizing:border-box}
+		body[data-page='a-stock-candidates'] .astock-scroll{width:100%;overflow:auto}
+		body[data-page='a-stock-candidates'] .astock-recommendation-table{width:100%;min-width:1460px}
+	</style>`)
 	b.WriteString(`<section><h2>A股候选审计</h2><p class="astock-muted">仅保存正式调度生成。每条记录展示进入推荐候选池后的来源、评分和最终退出步骤。</p><form method="get" action="/a-stock/candidates" class="astock-action-grid">`)
 	b.WriteString(`<label>策略日期<input type="date" name="date" value="` + html.EscapeString(date) + `"></label>`)
 	b.WriteString(`<label>时段<select name="period">`)

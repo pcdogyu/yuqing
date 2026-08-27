@@ -8759,7 +8759,14 @@ func TestAStockCandidateAuditPageRendersContentServiceRun(t *testing.T) {
 		t.Fatalf("expected candidate audit page 200, got %d body=%s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"2026-08-27-morning-final-test", "000001 审计一号", "新闻点名", "人工智能"} {
+	for _, want := range []string{
+		"2026-08-27-morning-final-test",
+		"000001 审计一号",
+		"新闻点名",
+		"人工智能",
+		"body[data-page='a-stock-candidates'] main,body[data-page='a-stock-candidates'] .site-footer{max-width:none;width:100%;box-sizing:border-box}",
+		"body[data-page='a-stock-candidates'] .astock-recommendation-table{width:100%;min-width:1460px}",
+	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected candidate audit page to contain %q, got %s", want, body)
 		}
