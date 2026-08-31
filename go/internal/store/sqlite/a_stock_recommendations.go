@@ -4,9 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/pcdogyu/yuqing/go/internal/astockcode"
 	"github.com/pcdogyu/yuqing/go/internal/model"
 )
 
@@ -402,6 +405,172 @@ ORDER BY rank ASC, code ASC`,
 	}
 	result.Found = len(result.Items) > 0
 	return result, nil
+}
+
+func (s *Store) SearchAStockRecommendationHistory(ctx context.Context, rawQuery string, limit int) (model.AStockRecommendationHistorySearchResult, error) {
+	query := strings.TrimSpace(rawQuery)
+	limit = normalizeAStockRecommendationHistoryLimit(limit)
+	result := model.AStockRecommendationHistorySearchResult{
+		Query: query,
+		Limit: limit,
+		Items: make([]model.AStockRecommendationSelection, 0),
+	}
+	if query == "" {
+		return result, nil
+	}
+
+	officialWindows := make(map[string]struct{})
+	seenItems := make(map[string]struct{})
+	rows, err := s.db.QueryContext(ctx, `
+SELECT strategy_date, period, rank, hotspot, code, name, hotspot_score, market_score, reason, entry_time, created_at, updated_at
+FROM a_stock_recommendation_selections`)
+	if err != nil {
+		return result, err
+	}
+	for rows.Next() {
+		item, scanErr := scanAStockRecommendationSelection(rows)
+		if scanErr != nil {
+			rows.Close()
+			return result, scanErr
+		}
+		officialWindows[aStockRecommendationHistoryWindowKey(item.StrategyDate, item.Period)] = struct{}{}
+		if !aStockRecommendationHistoryMatches(item, query) {
+			continue
+		}
+		key := aStockRecommendationHistoryItemKey(item)
+		seenItems[key] = struct{}{}
+		result.Items = append(result.Items, item)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return result, err
+	}
+	rows.Close()
+
+	snapshotRows, err := s.db.QueryContext(ctx, `
+SELECT strategy_date, period, recommendations_json, created_at, updated_at
+FROM a_stock_recommendation_snapshots
+WHERE ignore_recent = 0
+ORDER BY strategy_date DESC,
+	CASE period WHEN 'evening' THEN 3 WHEN 'afternoon' THEN 2 WHEN 'morning' THEN 1 ELSE 0 END DESC,
+	updated_at DESC`)
+	if err != nil {
+		return result, err
+	}
+	defer snapshotRows.Close()
+	seenSnapshots := make(map[string]struct{})
+	for snapshotRows.Next() {
+		var strategyDate string
+		var period string
+		var recommendationsJSON string
+		var createdAt string
+		var updatedAt string
+		if err := snapshotRows.Scan(&strategyDate, &period, &recommendationsJSON, &createdAt, &updatedAt); err != nil {
+			return result, err
+		}
+		windowKey := aStockRecommendationHistoryWindowKey(strategyDate, period)
+		if _, exists := officialWindows[windowKey]; exists {
+			continue
+		}
+		if _, exists := seenSnapshots[windowKey]; exists {
+			continue
+		}
+		seenSnapshots[windowKey] = struct{}{}
+		var items []model.AStockRecommendationSelection
+		if err := json.Unmarshal([]byte(normalizeAStockRecommendationJSONArray(recommendationsJSON)), &items); err != nil {
+			return result, fmt.Errorf("parse recommendation history %s %s: %w", strategyDate, period, err)
+		}
+		for _, item := range items {
+			item.StrategyDate = strings.TrimSpace(strategyDate)
+			item.Period = strings.TrimSpace(period)
+			item.Code = astockcode.Normalize(item.Code)
+			item.Name = strings.TrimSpace(item.Name)
+			item.CreatedAt = mustParseRFC3339(createdAt)
+			item.UpdatedAt = mustParseRFC3339(updatedAt)
+			if item.Code == "" || !aStockRecommendationHistoryMatches(item, query) {
+				continue
+			}
+			key := aStockRecommendationHistoryItemKey(item)
+			if _, exists := seenItems[key]; exists {
+				continue
+			}
+			seenItems[key] = struct{}{}
+			result.Items = append(result.Items, item)
+		}
+	}
+	if err := snapshotRows.Err(); err != nil {
+		return result, err
+	}
+
+	sort.SliceStable(result.Items, func(i, j int) bool {
+		left := result.Items[i]
+		right := result.Items[j]
+		if left.StrategyDate != right.StrategyDate {
+			return left.StrategyDate > right.StrategyDate
+		}
+		leftPeriod := aStockRecommendationHistoryPeriodOrder(left.Period)
+		rightPeriod := aStockRecommendationHistoryPeriodOrder(right.Period)
+		if leftPeriod != rightPeriod {
+			return leftPeriod > rightPeriod
+		}
+		if left.Rank != right.Rank {
+			return left.Rank < right.Rank
+		}
+		return left.Code < right.Code
+	})
+	result.Total = len(result.Items)
+	if len(result.Items) > limit {
+		result.Items = result.Items[:limit]
+	}
+	return result, nil
+}
+
+func normalizeAStockRecommendationHistoryLimit(limit int) int {
+	if limit <= 0 {
+		return 100
+	}
+	if limit > 200 {
+		return 200
+	}
+	return limit
+}
+
+func aStockRecommendationHistoryMatches(item model.AStockRecommendationSelection, query string) bool {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return false
+	}
+	if normalizedCode := astockcode.Normalize(query); astockcode.IsShanghaiShenzhen(normalizedCode) && astockcode.Normalize(item.Code) == normalizedCode {
+		return true
+	}
+	haystack := strings.ToLower(strings.TrimSpace(item.Code) + " " + strings.TrimSpace(item.Name))
+	for _, term := range strings.Fields(query) {
+		if !strings.Contains(haystack, term) {
+			return false
+		}
+	}
+	return true
+}
+
+func aStockRecommendationHistoryWindowKey(strategyDate string, period string) string {
+	return strings.TrimSpace(strategyDate) + "\x00" + strings.ToLower(strings.TrimSpace(period))
+}
+
+func aStockRecommendationHistoryItemKey(item model.AStockRecommendationSelection) string {
+	return aStockRecommendationHistoryWindowKey(item.StrategyDate, item.Period) + "\x00" + astockcode.Normalize(item.Code)
+}
+
+func aStockRecommendationHistoryPeriodOrder(period string) int {
+	switch strings.ToLower(strings.TrimSpace(period)) {
+	case "evening":
+		return 3
+	case "afternoon":
+		return 2
+	case "morning":
+		return 1
+	default:
+		return 0
+	}
 }
 
 func (s *Store) ListAStockRecommendationLatestDates(ctx context.Context, strategyDate string, period string, codes []string) (model.AStockRecommendationLatestDateListResult, error) {

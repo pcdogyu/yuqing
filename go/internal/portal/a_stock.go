@@ -1280,6 +1280,12 @@ func (s *Server) handleAStockBacktestPage(w http.ResponseWriter, r *http.Request
 		message = ctx.LoadMessage
 	}
 	detail := strings.TrimSpace(r.URL.Query().Get("detail"))
+	stockQuery := strings.TrimSpace(r.URL.Query().Get("stock_query"))
+	stockSearch := model.AStockRecommendationHistorySearchResult{}
+	stockSearchOK := false
+	if stockQuery != "" {
+		stockSearch, stockSearchOK = s.loadAStockRecommendationHistory(stockQuery)
+	}
 	officialPerformance, officialPerformanceOK := s.loadAStockRecommendationPerformance(strategyDate, "all", "official")
 	shadowPerformance, shadowPerformanceOK := s.loadAStockRecommendationPerformance(strategyDate, "all", aStockT1ShadowStrategyKey)
 	auctionStrengthPerformance, auctionStrengthPerformanceOK := s.loadAStockRecommendationPerformance(strategyDate, "all", aStockAuctionStrengthStrategyKey)
@@ -1302,6 +1308,12 @@ func (s *Server) handleAStockBacktestPage(w http.ResponseWriter, r *http.Request
 		.astock-history-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:stretch;margin:0 0 18px}
 		.astock-history-actions form{display:flex;margin:0}
 		.astock-history-actions button,.astock-history-actions .astock-filter-toggle{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;min-height:38px;margin:0;padding:8px 12px;border:1px solid #214e34;border-radius:8px;background:#214e34;color:#fff;font-family:inherit;font-size:14px;font-weight:700;line-height:1.2;text-decoration:none}
+		.astock-history-actions .astock-history-search{gap:8px}
+		.astock-history-search input[type='search']{box-sizing:border-box;width:250px;min-height:38px;padding:8px 11px;border:1px solid #b9b1a4;border-radius:8px;background:#fff;color:#1f2d24;font:inherit}
+		.astock-history-search input[type='search']:focus{outline:2px solid rgba(33,78,52,.22);border-color:#214e34}
+		.astock-search-summary{margin:0 0 10px;color:#6a6257}
+		.astock-search-results{margin:0 0 18px}
+		.astock-search-results .astock-table{min-width:760px}
 		.astock-up{color:#b3261e;font-weight:700}
 		.astock-down{color:#1b7f3a;font-weight:700}
 		.astock-flat{color:#6a6257}
@@ -1319,7 +1331,7 @@ func (s *Server) handleAStockBacktestPage(w http.ResponseWriter, r *http.Request
 		b.WriteString(`</section>`)
 	}
 	renderAStockT1PerformanceSection(&b, officialPerformance, officialPerformanceOK, shadowPerformance, shadowPerformanceOK, auctionStrengthPerformance, auctionStrengthPerformanceOK)
-	renderAStockBacktestSectionForPath(&b, "/a-stock/backtest", strategyDate, ctx.Period, ctx.IgnoreRecent, ctx.IgnoreLimitUp, ctx.IgnoreFundFlow, ctx.FundFlowFilterExplicit, ctx.TodayMarketFilterEnabled, periodContexts)
+	renderAStockBacktestSectionForPathWithSearch(&b, "/a-stock/backtest", strategyDate, ctx.Period, ctx.IgnoreRecent, ctx.IgnoreLimitUp, ctx.IgnoreFundFlow, ctx.FundFlowFilterExplicit, ctx.TodayMarketFilterEnabled, periodContexts, stockQuery, stockSearch, stockSearchOK)
 
 	_ = s.writeSimplePage(w, "a-stock-backtest", "A股回测", b.String())
 }
@@ -3261,12 +3273,17 @@ func renderAStockBacktestSection(b *strings.Builder, strategyDate string, period
 }
 
 func renderAStockBacktestSectionForPath(b *strings.Builder, targetPath string, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, fundFlowExplicit bool, filterTodayMarket bool, contexts []aStockContext) {
+	renderAStockBacktestSectionForPathWithSearch(b, targetPath, strategyDate, period, ignoreRecent, ignoreLimitUp, ignoreFundFlow, fundFlowExplicit, filterTodayMarket, contexts, "", model.AStockRecommendationHistorySearchResult{}, false)
+}
+
+func renderAStockBacktestSectionForPathWithSearch(b *strings.Builder, targetPath string, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, fundFlowExplicit bool, filterTodayMarket bool, contexts []aStockContext, stockQuery string, stockSearch model.AStockRecommendationHistorySearchResult, stockSearchOK bool) {
 	if strings.TrimSpace(strategyDate) == "" {
 		strategyDate = aStockContextsDisplayDate(contexts)
 	}
 	b.WriteString(`<section><h2>消息回测</h2><p class="astock-muted">上午推荐按上午开盘价计算，下午推荐按下午开盘价计算；晚间推荐按后一个交易日开盘价计算。实时价展示当前价格，T+0 到 T+5 及五日内最高收益按对应推荐窗口的基准价回测。</p>`)
 	renderAStockRecommendationHistoryTabsForPath(b, targetPath, strategyDate, period, ignoreRecent, ignoreLimitUp, ignoreFundFlow, fundFlowExplicit, filterTodayMarket)
-	renderAStockRecommendationHistoryActionsForPath(b, targetPath, strategyDate, period, ignoreRecent, ignoreLimitUp, ignoreFundFlow, fundFlowExplicit, filterTodayMarket)
+	renderAStockRecommendationHistoryActionsForPathWithSearch(b, targetPath, strategyDate, period, ignoreRecent, ignoreLimitUp, ignoreFundFlow, fundFlowExplicit, filterTodayMarket, stockQuery)
+	renderAStockRecommendationHistorySearchResults(b, targetPath, strategyDate, period, ignoreRecent, ignoreLimitUp, ignoreFundFlow, fundFlowExplicit, filterTodayMarket, stockQuery, stockSearch, stockSearchOK)
 	mergedRows := combineAStockBacktestRows(contexts)
 	b.WriteString(`<div class="astock-scroll"><table class="astock-table"><tr><th>推荐窗口</th><th>股票</th><th>上午开盘价</th><th>下午开盘价</th><th>实时价</th><th>T+0 收益</th><th>T+1 收益</th><th>T+2 收益</th><th>T+3 收益</th><th>T+4 收益</th><th>T+5 收益</th><th>五日内最高收益</th><th>命中状态</th></tr>`)
 	if len(mergedRows) == 0 {
@@ -3412,6 +3429,8 @@ func aStockPerformancePeriodLabel(period string) string {
 		return "上午推荐"
 	case "afternoon":
 		return "下午推荐"
+	case "evening":
+		return "晚间推荐"
 	default:
 		return period
 	}
@@ -3484,6 +3503,10 @@ func renderAStockPeriodSwitchTabsForPath(b *strings.Builder, targetPath string, 
 
 func renderAStockRecommendationHistoryActionsForPath(b *strings.Builder, targetPath string, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, fundFlowArgs ...bool) {
 	fundFlowExplicit, filterTodayMarket := parseAStockFundFlowRenderArgs(fundFlowArgs...)
+	renderAStockRecommendationHistoryActionsForPathWithSearch(b, targetPath, strategyDate, period, ignoreRecent, ignoreLimitUp, ignoreFundFlow, fundFlowExplicit, filterTodayMarket, "")
+}
+
+func renderAStockRecommendationHistoryActionsForPathWithSearch(b *strings.Builder, targetPath string, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, fundFlowExplicit bool, filterTodayMarket bool, stockQuery string) {
 	targetPath = aStockPagePath(targetPath)
 	b.WriteString(`<div class="astock-history-actions">`)
 	b.WriteString(`<a class="astock-filter-toggle" data-preserve-scroll="1" href="`)
@@ -3529,7 +3552,75 @@ func renderAStockRecommendationHistoryActionsForPath(b *strings.Builder, targetP
 		b.WriteString(html.EscapeString(action.Label))
 		b.WriteString(`</button></form>`)
 	}
+	if targetPath == "/a-stock/backtest" {
+		b.WriteString(`<form class="astock-history-search" method="get" action="/a-stock/backtest"><input type="hidden" name="date" value="`)
+		b.WriteString(html.EscapeString(strategyDate))
+		b.WriteString(`"><input type="hidden" name="period" value="`)
+		b.WriteString(html.EscapeString(normalizeAStockPeriod(period).Key))
+		b.WriteString(`">`)
+		if ignoreRecent {
+			b.WriteString(`<input type="hidden" name="ignore_recent" value="1">`)
+		}
+		if ignoreLimitUp {
+			b.WriteString(`<input type="hidden" name="ignore_limit_up" value="1">`)
+		}
+		writeAStockFundFlowPreserveInput(b, strategyDate, ignoreFundFlow, fundFlowExplicit)
+		if filterTodayMarket {
+			b.WriteString(`<input type="hidden" name="filter_today_market" value="1">`)
+		}
+		b.WriteString(`<input type="search" name="stock_query" value="`)
+		b.WriteString(html.EscapeString(strings.TrimSpace(stockQuery)))
+		b.WriteString(`" placeholder="股票代码或名称" aria-label="搜索股票推荐历史"><button type="submit">搜索</button></form>`)
+	}
 	b.WriteString(`</div>`)
+}
+
+func renderAStockRecommendationHistorySearchResults(b *strings.Builder, targetPath string, strategyDate string, period string, ignoreRecent bool, ignoreLimitUp bool, ignoreFundFlow bool, fundFlowExplicit bool, filterTodayMarket bool, stockQuery string, result model.AStockRecommendationHistorySearchResult, searchOK bool) {
+	stockQuery = strings.TrimSpace(stockQuery)
+	if stockQuery == "" {
+		return
+	}
+	b.WriteString(`<div class="astock-search-results"><h3>股票推荐历史搜索</h3>`)
+	if !searchOK {
+		b.WriteString(`<div class="astock-empty">搜索服务暂时不可用，请稍后重试。</div></div>`)
+		return
+	}
+	b.WriteString(`<p class="astock-search-summary">“`)
+	b.WriteString(html.EscapeString(stockQuery))
+	b.WriteString(`”共找到 `)
+	b.WriteString(fmt.Sprint(result.Total))
+	b.WriteString(` 条推荐记录`)
+	if result.Total > len(result.Items) {
+		b.WriteString(`，当前显示最近 `)
+		b.WriteString(fmt.Sprint(len(result.Items)))
+		b.WriteString(` 条`)
+	}
+	b.WriteString(`。</p>`)
+	if len(result.Items) == 0 {
+		b.WriteString(`<div class="astock-empty">没有找到这只股票的推荐记录，请检查股票代码或名称。</div></div>`)
+		return
+	}
+	b.WriteString(`<div class="astock-scroll"><table class="astock-table"><tr><th>推荐日期</th><th>推荐窗口</th><th>股票</th><th>推荐排名</th><th>热点</th><th>推荐理由</th></tr>`)
+	for _, item := range result.Items {
+		itemDate := normalizeAStockStrategyDate(item.StrategyDate)
+		itemPeriod := normalizeAStockPeriod(item.Period).Key
+		b.WriteString(`<tr><td><a data-preserve-scroll="1" href="`)
+		b.WriteString(html.EscapeString(aStockPageHrefForPathWithFundFlowExplicit(targetPath, itemDate, itemPeriod, 1, ignoreRecent, ignoreLimitUp, ignoreFundFlow, fundFlowExplicit, filterTodayMarket)))
+		b.WriteString(`">`)
+		b.WriteString(html.EscapeString(itemDate))
+		b.WriteString(`</a></td><td>`)
+		b.WriteString(html.EscapeString(aStockPerformancePeriodLabel(itemPeriod)))
+		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(strings.TrimSpace(item.Code) + " " + strings.TrimSpace(item.Name)))
+		b.WriteString(`</td><td>`)
+		b.WriteString(fmt.Sprint(item.Rank))
+		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(item.Hotspot))
+		b.WriteString(`</td><td>`)
+		b.WriteString(html.EscapeString(item.Reason))
+		b.WriteString(`</td></tr>`)
+	}
+	b.WriteString(`</table></div></div>`)
 }
 
 func parseAStockFundFlowRenderArgs(args ...bool) (bool, bool) {
@@ -5158,6 +5249,25 @@ func (s *Server) loadAStockRecommendationPerformance(strategyDate string, period
 		return model.AStockRecommendationPerformanceSummary{}, false
 	}
 	return summary, true
+}
+
+func (s *Server) loadAStockRecommendationHistory(stockQuery string) (model.AStockRecommendationHistorySearchResult, bool) {
+	stockQuery = strings.TrimSpace(stockQuery)
+	if strings.TrimSpace(s.cfg.ContentURL) == "" || stockQuery == "" {
+		return model.AStockRecommendationHistorySearchResult{}, false
+	}
+	query := url.Values{}
+	query.Set("query", stockQuery)
+	query.Set("limit", "100")
+	var result model.AStockRecommendationHistorySearchResult
+	endpoint := strings.TrimRight(s.cfg.ContentURL, "/") + "/api/v1/a-stock/recommendation-history?" + query.Encode()
+	if err := s.getJSON(endpoint, &result); err != nil {
+		return model.AStockRecommendationHistorySearchResult{}, false
+	}
+	if result.Items == nil {
+		result.Items = make([]model.AStockRecommendationSelection, 0)
+	}
+	return result, true
 }
 
 func (s *Server) loadAStockRecommendationSelections(strategyDate string, period string) (model.AStockRecommendationSelectionListResult, bool) {

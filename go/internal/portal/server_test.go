@@ -2783,6 +2783,63 @@ func TestAStockBacktestPageGetUsesSnapshotOnly(t *testing.T) {
 	}
 }
 
+func TestAStockBacktestPageSearchesRecommendationHistoryBesideRefreshAction(t *testing.T) {
+	var searchedQuery string
+	content := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/a-stock/recommendations":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationSnapshot{Found: false})
+		case "/api/v1/a-stock/recommendation-performance":
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationPerformanceSummary{})
+		case "/api/v1/a-stock/recommendation-history":
+			searchedQuery = r.URL.Query().Get("query")
+			writeEnvelope(w, http.StatusOK, "ok", model.AStockRecommendationHistorySearchResult{
+				Query: searchedQuery,
+				Total: 2,
+				Limit: 100,
+				Items: []model.AStockRecommendationSelection{
+					{StrategyDate: "2026-06-27", Period: "afternoon", Rank: 2, Code: "300394", Name: "天孚通信", Hotspot: "光模块", Reason: "下午推荐理由"},
+					{StrategyDate: "2026-06-26", Period: "morning", Rank: 1, Code: "300394", Name: "天孚通信", Hotspot: "通信设备", Reason: "上午推荐理由"},
+				},
+			})
+		default:
+			http.Error(w, "unexpected endpoint", http.StatusInternalServerError)
+		}
+	}))
+	defer content.Close()
+
+	srv := NewServer(config.Config{ContentURL: content.URL})
+	req := httptest.NewRequest(http.MethodGet, "/a-stock/backtest?date=2026-06-30&period=morning&stock_query=%E5%A4%A9%E5%AD%9A%E9%80%9A%E4%BF%A1", nil)
+	rr := httptest.NewRecorder()
+	srv.handleAStockBacktestPage(rr, req, map[string]any{"id": 1})
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if searchedQuery != "天孚通信" {
+		t.Fatalf("expected stock query to reach content service, got %q", searchedQuery)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `刷新全部回测</button></form><form class="astock-history-search"`) {
+		t.Fatalf("expected stock search form immediately after refresh-all action, got %s", body)
+	}
+	for _, want := range []string{
+		`name="stock_query" value="天孚通信"`,
+		"股票推荐历史搜索",
+		"共找到 2 条推荐记录",
+		"2026-06-27",
+		"下午推荐",
+		"300394 天孚通信",
+		"下午推荐理由",
+		`/a-stock/backtest?date=2026-06-27&amp;period=afternoon`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected recommendation history page to contain %q, got %s", want, body)
+		}
+	}
+}
+
 func TestAStockBacktestPageShowsHistoricalSnapshotWhenFundFlowStateDiffers(t *testing.T) {
 	snapshot := model.AStockRecommendationSnapshot{
 		Found:                 true,

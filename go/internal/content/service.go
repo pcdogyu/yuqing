@@ -120,6 +120,7 @@ type Store interface {
 	BuildAStockRecommendationPerformance(rctx context.Context, filter model.AStockRecommendationPerformanceFilter) (model.AStockRecommendationPerformanceSummary, error)
 	UpsertAStockRecommendationSelections(rctx context.Context, selectionSet model.AStockRecommendationSelectionSet) (model.AStockRecommendationSelectionUpsertResult, error)
 	ListAStockRecommendationSelections(rctx context.Context, strategyDate string, period string) (model.AStockRecommendationSelectionListResult, error)
+	SearchAStockRecommendationHistory(rctx context.Context, query string, limit int) (model.AStockRecommendationHistorySearchResult, error)
 	ListAStockRecommendationLatestDates(rctx context.Context, strategyDate string, period string, codes []string) (model.AStockRecommendationLatestDateListResult, error)
 	UpsertAStockSectorFundFlows(rctx context.Context, tradeDate string, items []model.AStockSectorFundFlow, replace bool) (model.AStockSectorFundFlowUpsertResult, error)
 	UpsertAStockSectorFundFlowSourceRows(rctx context.Context, tradeDate string, items []model.AStockSectorFundFlow, replace bool) (model.AStockSectorFundFlowUpsertResult, error)
@@ -226,6 +227,7 @@ func (s *Service) Routes(r chi.Router) {
 	r.Post("/api/v1/internal/a-stock/recommendation-candidate-audits", s.handleUpsertAStockRecommendationCandidateAuditRun)
 	r.Post("/api/v1/internal/a-stock/recommendation-shadow-snapshots", s.handleUpsertAStockRecommendationShadowSnapshot)
 	r.Get("/api/v1/a-stock/recommendation-selections", s.handleListAStockRecommendationSelections)
+	r.Get("/api/v1/a-stock/recommendation-history", s.handleSearchAStockRecommendationHistory)
 	r.Post("/api/v1/internal/a-stock/recommendation-selections", s.handleUpsertAStockRecommendationSelections)
 	r.Get("/api/v1/a-stock/recommendation-latest-dates", s.handleListAStockRecommendationLatestDates)
 	r.Get("/api/v1/a-stock/sector-fund-flows", s.handleListAStockSectorFundFlows)
@@ -1874,6 +1876,26 @@ func (s *Service) handleListAStockRecommendationSelections(w http.ResponseWriter
 		return
 	}
 	result.Found = len(result.Items) > 0
+	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
+}
+
+func (s *Service) handleSearchAStockRecommendationHistory(w http.ResponseWriter, r *http.Request) {
+	query := strings.TrimSpace(r.URL.Query().Get("query"))
+	if query == "" {
+		apiutil.WriteJSON(w, http.StatusBadRequest, "query required", nil)
+		return
+	}
+	limit := 100
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil {
+			limit = parsed
+		}
+	}
+	result, err := s.store.SearchAStockRecommendationHistory(r.Context(), query, limit)
+	if err != nil {
+		apiutil.WriteJSON(w, http.StatusInternalServerError, err.Error(), nil)
+		return
+	}
 	apiutil.WriteJSON(w, http.StatusOK, "ok", result)
 }
 

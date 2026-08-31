@@ -687,6 +687,46 @@ func TestAStockRecommendationSelectionsAPIUpsertsAndLists(t *testing.T) {
 	}
 }
 
+func TestAStockRecommendationHistoryAPIValidatesAndSearches(t *testing.T) {
+	store := newContentSearchTestStore(t)
+	if _, err := store.UpsertAStockRecommendationSelections(context.Background(), model.AStockRecommendationSelectionSet{
+		StrategyDate: "2026-08-28",
+		Period:       "morning",
+		Items: []model.AStockRecommendationSelection{
+			{Rank: 1, Code: "300394", Name: "天孚通信", Hotspot: "光模块", Reason: "测试推荐"},
+		},
+	}); err != nil {
+		t.Fatalf("upsert recommendation history fixture: %v", err)
+	}
+	router := NewService(config.Config{}, store).Router()
+
+	missingReq := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/recommendation-history", nil)
+	missingRR := httptest.NewRecorder()
+	router.ServeHTTP(missingRR, missingReq)
+	if missingRR.Code != http.StatusBadRequest {
+		t.Fatalf("expected missing search query 400, got %d body=%s", missingRR.Code, missingRR.Body.String())
+	}
+
+	searchReq := httptest.NewRequest(http.MethodGet, "/api/v1/a-stock/recommendation-history?query=%E5%A4%A9%E5%AD%9A&limit=20", nil)
+	searchRR := httptest.NewRecorder()
+	router.ServeHTTP(searchRR, searchReq)
+	if searchRR.Code != http.StatusOK {
+		t.Fatalf("expected recommendation history search 200, got %d body=%s", searchRR.Code, searchRR.Body.String())
+	}
+	var envelope struct {
+		Data model.AStockRecommendationHistorySearchResult `json:"data"`
+	}
+	if err := json.Unmarshal(searchRR.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode recommendation history response: %v", err)
+	}
+	if envelope.Data.Query != "天孚" || envelope.Data.Total != 1 || envelope.Data.Limit != 20 || len(envelope.Data.Items) != 1 {
+		t.Fatalf("unexpected recommendation history response: %+v", envelope.Data)
+	}
+	if envelope.Data.Items[0].StrategyDate != "2026-08-28" || envelope.Data.Items[0].Period != "morning" || envelope.Data.Items[0].Code != "300394" {
+		t.Fatalf("unexpected recommendation history item: %+v", envelope.Data.Items[0])
+	}
+}
+
 func TestAStockRecommendationLatestDatesAPIListsBatchHits(t *testing.T) {
 	store := newContentSearchTestStore(t)
 	if _, err := store.UpsertAStockRecommendationSelections(context.Background(), model.AStockRecommendationSelectionSet{

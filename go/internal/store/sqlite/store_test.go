@@ -1218,6 +1218,96 @@ func TestAStockRecommendationSelectionsUpsertAndList(t *testing.T) {
 	}
 }
 
+func TestAStockRecommendationHistorySearchUsesOfficialSelectionsAndSnapshotFallback(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	for _, selectionSet := range []model.AStockRecommendationSelectionSet{
+		{
+			StrategyDate: "2026-08-30",
+			Period:       "evening",
+			Items: []model.AStockRecommendationSelection{
+				{Rank: 1, Code: "300394", Name: "天孚通信", Hotspot: "光模块", Reason: "晚间正式推荐"},
+			},
+		},
+		{
+			StrategyDate: "2026-08-28",
+			Period:       "morning",
+			Items: []model.AStockRecommendationSelection{
+				{Rank: 2, Code: "300394", Name: "天孚通信", Hotspot: "通信设备", Reason: "上午正式推荐"},
+			},
+		},
+		{
+			StrategyDate: "2026-08-27",
+			Period:       "afternoon",
+			Items: []model.AStockRecommendationSelection{
+				{Rank: 1, Code: "600030", Name: "中信证券", Hotspot: "券商"},
+			},
+		},
+	} {
+		if _, err := store.UpsertAStockRecommendationSelections(ctx, selectionSet); err != nil {
+			t.Fatalf("upsert official selections: %v", err)
+		}
+	}
+
+	for _, snapshot := range []model.AStockRecommendationSnapshot{
+		{
+			StrategyDate:        "2026-08-27",
+			Period:              "afternoon",
+			RecommendationsJSON: `[{"Rank":1,"Code":"300394","Name":"天孚通信","Hotspot":"不应采用的快照"}]`,
+		},
+		{
+			StrategyDate:        "2026-08-26",
+			Period:              "morning",
+			RecommendationsJSON: `[{"Rank":3,"Code":"300394","Name":"天孚通信","Hotspot":"旧快照"}]`,
+		},
+		{
+			StrategyDate:        "2026-08-25",
+			Period:              "evening",
+			RecommendationsJSON: `[{"Rank":4,"Code":"300394","Name":"天孚通信旧版","Hotspot":"旧参数"}]`,
+			UpdatedAt:           time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC),
+		},
+		{
+			StrategyDate:             "2026-08-25",
+			Period:                   "evening",
+			TodayMarketFilterEnabled: true,
+			RecommendationsJSON:      `[{"Rank":1,"Code":"300394","Name":"天孚通信新版","Hotspot":"新参数"}]`,
+			UpdatedAt:                time.Date(2026, 8, 25, 13, 0, 0, 0, time.UTC),
+		},
+	} {
+		if _, err := store.UpsertAStockRecommendationSnapshot(ctx, snapshot); err != nil {
+			t.Fatalf("upsert recommendation snapshot: %v", err)
+		}
+	}
+
+	result, err := store.SearchAStockRecommendationHistory(ctx, "SZ.300394", 2)
+	if err != nil {
+		t.Fatalf("SearchAStockRecommendationHistory error: %v", err)
+	}
+	if result.Query != "SZ.300394" || result.Total != 4 || result.Limit != 2 || len(result.Items) != 2 {
+		t.Fatalf("unexpected limited history result: %+v", result)
+	}
+	if result.Items[0].StrategyDate != "2026-08-30" || result.Items[0].Period != "evening" || result.Items[1].StrategyDate != "2026-08-28" || result.Items[1].Period != "morning" {
+		t.Fatalf("expected newest recommendations first, got %+v", result.Items)
+	}
+
+	byName, err := store.SearchAStockRecommendationHistory(ctx, "天孚通信", 100)
+	if err != nil {
+		t.Fatalf("search recommendation history by name: %v", err)
+	}
+	if byName.Total != 4 || len(byName.Items) != 4 {
+		t.Fatalf("expected four deduplicated name hits, got %+v", byName)
+	}
+	if byName.Items[2].StrategyDate != "2026-08-26" || byName.Items[3].StrategyDate != "2026-08-25" || byName.Items[3].Name != "天孚通信新版" {
+		t.Fatalf("expected snapshot fallback and latest snapshot variant, got %+v", byName.Items)
+	}
+	for _, item := range byName.Items {
+		if item.StrategyDate == "2026-08-27" {
+			t.Fatalf("expected official selection window to suppress alternate snapshot, got %+v", byName.Items)
+		}
+	}
+}
+
 func TestAStockRecommendationLatestDatesUseSelectionsAndSnapshots(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()

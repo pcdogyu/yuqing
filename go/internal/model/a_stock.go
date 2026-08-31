@@ -244,6 +244,13 @@ type AStockRecommendationSelectionListResult struct {
 	UpdatedAt    time.Time                       `json:"updated_at"`
 }
 
+type AStockRecommendationHistorySearchResult struct {
+	Query string                          `json:"query"`
+	Total int                             `json:"total"`
+	Limit int                             `json:"limit"`
+	Items []AStockRecommendationSelection `json:"items"`
+}
+
 type AStockRecommendationSelectionUpsertResult struct {
 	Inserted int `json:"inserted"`
 	Updated  int `json:"updated"`
