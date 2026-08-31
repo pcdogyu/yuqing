@@ -199,19 +199,31 @@ type AStockRecommendationPerformanceGroup struct {
 	InsufficientSamples bool    `json:"insufficient_samples"`
 }
 
+type AStockRecommendationPerformanceHorizon struct {
+	Day                 int     `json:"day"`
+	RecommendationCount int     `json:"recommendation_count"`
+	SampleCount         int     `json:"sample_count"`
+	WinCount            int     `json:"win_count"`
+	WinRate             float64 `json:"win_rate"`
+	AverageReturn       float64 `json:"average_return"`
+	RecommendationCover float64 `json:"recommendation_cover"`
+	InsufficientSamples bool    `json:"insufficient_samples"`
+}
+
 type AStockRecommendationPerformanceSummary struct {
-	Strategy            string                                 `json:"strategy"`
-	StartDate           string                                 `json:"start_date"`
-	EndDate             string                                 `json:"end_date"`
-	Period              string                                 `json:"period"`
-	RecommendationCount int                                    `json:"recommendation_count"`
-	SampleCount         int                                    `json:"sample_count"`
-	WinCount            int                                    `json:"win_count"`
-	WinRate             float64                                `json:"win_rate"`
-	AverageReturn       float64                                `json:"average_return"`
-	RecommendationCover float64                                `json:"recommendation_cover"`
-	InsufficientSamples bool                                   `json:"insufficient_samples"`
-	Groups              []AStockRecommendationPerformanceGroup `json:"groups"`
+	Strategy            string                                   `json:"strategy"`
+	StartDate           string                                   `json:"start_date"`
+	EndDate             string                                   `json:"end_date"`
+	Period              string                                   `json:"period"`
+	RecommendationCount int                                      `json:"recommendation_count"`
+	SampleCount         int                                      `json:"sample_count"`
+	WinCount            int                                      `json:"win_count"`
+	WinRate             float64                                  `json:"win_rate"`
+	AverageReturn       float64                                  `json:"average_return"`
+	RecommendationCover float64                                  `json:"recommendation_cover"`
+	InsufficientSamples bool                                     `json:"insufficient_samples"`
+	Horizons            []AStockRecommendationPerformanceHorizon `json:"horizons"`
+	Groups              []AStockRecommendationPerformanceGroup   `json:"groups"`
 }
 
 type AStockRecommendationSelection struct {

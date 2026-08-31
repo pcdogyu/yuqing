@@ -233,9 +233,10 @@ WHERE strategy_key = ? AND strategy_date >= ? AND strategy_date <= ?`
 }
 
 type aStockPerformanceAccumulator struct {
-	filter model.AStockRecommendationPerformanceFilter
-	total  aStockPerformanceBucket
-	groups map[string]*aStockPerformanceBucket
+	filter   model.AStockRecommendationPerformanceFilter
+	total    aStockPerformanceBucket
+	horizons [5]aStockPerformanceBucket
+	groups   map[string]*aStockPerformanceBucket
 }
 
 type aStockPerformanceBucket struct {
@@ -275,9 +276,14 @@ func (a *aStockPerformanceAccumulator) addSnapshot(snapshot aStockPerformanceSna
 		if code == "" {
 			continue
 		}
-		t1Return, matured := aStockPerformanceT1Return(backtestsByCode[code])
+		row := backtestsByCode[code]
+		t1Return, matured := aStockPerformanceReturn(row, 0)
 		groups := aStockPerformanceRecommendationGroups(snapshot.Period, rec)
 		a.total.add(t1Return, matured)
+		for day := range a.horizons {
+			returnValue, dayMatured := aStockPerformanceReturn(row, day)
+			a.horizons[day].add(returnValue, dayMatured)
+		}
 		for _, group := range groups {
 			a.group(group.dimension, group.key).add(t1Return, matured)
 		}
@@ -325,6 +331,21 @@ func (a *aStockPerformanceAccumulator) summary() model.AStockRecommendationPerfo
 		RecommendationCover: aStockPerformanceRate(a.total.sampleCount, a.total.recommendationCount),
 		InsufficientSamples: a.total.sampleCount < aStockPerformanceMinSamples,
 	}
+	horizons := make([]model.AStockRecommendationPerformanceHorizon, 0, len(a.horizons))
+	for day := range a.horizons {
+		bucket := a.horizons[day]
+		horizons = append(horizons, model.AStockRecommendationPerformanceHorizon{
+			Day:                 day + 1,
+			RecommendationCount: bucket.recommendationCount,
+			SampleCount:         bucket.sampleCount,
+			WinCount:            bucket.winCount,
+			WinRate:             aStockPerformanceRate(bucket.winCount, bucket.sampleCount),
+			AverageReturn:       aStockPerformanceAverage(bucket.returnSum, bucket.sampleCount),
+			RecommendationCover: aStockPerformanceRate(bucket.sampleCount, bucket.recommendationCount),
+			InsufficientSamples: bucket.sampleCount < aStockPerformanceMinSamples,
+		})
+	}
+	summary.Horizons = horizons
 	groups := make([]model.AStockRecommendationPerformanceGroup, 0, len(a.groups))
 	for _, bucket := range a.groups {
 		groups = append(groups, model.AStockRecommendationPerformanceGroup{
@@ -370,11 +391,15 @@ func aStockPerformanceRecommendationGroups(period string, rec aStockPerformanceR
 	}
 }
 
-func aStockPerformanceT1Return(row aStockPerformanceBacktestRow) (float64, bool) {
-	if len(row.Days) == 0 {
+func aStockPerformanceReturn(row aStockPerformanceBacktestRow, day int) (float64, bool) {
+	if day < 0 || day >= len(row.Days) {
 		return 0, false
 	}
-	return parseAStockPerformancePct(row.Days[0].Return)
+	return parseAStockPerformancePct(row.Days[day].Return)
+}
+
+func aStockPerformanceT1Return(row aStockPerformanceBacktestRow) (float64, bool) {
+	return aStockPerformanceReturn(row, 0)
 }
 
 func aStockPerformanceBacktestRowCode(row aStockPerformanceBacktestRow) string {

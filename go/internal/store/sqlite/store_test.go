@@ -1103,8 +1103,8 @@ func TestAStockRecommendationPerformanceBuildsT1Metrics(t *testing.T) {
 			{"Rank":8,"Hotspot":"机器人","Code":"600004","Name":"无回测四号","MarketScore":120,"FundFlow5D":"+0.00亿","Change30":"+1.00%","Change60":"+2.00%"}
 		]`,
 		BacktestsJSON: `[
-			{"Stock":"600001 胜率一号","Days":[{"Return":"+1.23%"}]},
-			{"Stock":"600002 持平二号","Days":[{"Return":"0.00%"}]},
+			{"Stock":"600001 胜率一号","Days":[{"Return":"+1.23%"},{"Return":"-2.00%"},{"Return":"+3.00%"},{"Return":"--"},{"Return":"+5.00%"}]},
+			{"Stock":"600002 持平二号","Days":[{"Return":"0.00%"},{"Return":"+4.00%"},{"Return":"-1.00%"},{"Return":"+2.00%"},{"Return":"0.00%"}]},
 			{"Stock":"600003 未成熟三号","Days":[{"Return":"--"}]}
 		]`,
 		BacktestStatus: "已回测",
@@ -1127,6 +1127,15 @@ func TestAStockRecommendationPerformanceBuildsT1Metrics(t *testing.T) {
 	}
 	if summary.WinRate != 0.5 || summary.AverageReturn < 0.61 || summary.AverageReturn > 0.62 || summary.RecommendationCover != 0.5 {
 		t.Fatalf("unexpected summary metrics: %+v", summary)
+	}
+	if len(summary.Horizons) != 5 {
+		t.Fatalf("expected T+1 through T+5 metrics, got %+v", summary.Horizons)
+	}
+	if summary.Horizons[1].Day != 2 || summary.Horizons[1].SampleCount != 2 || summary.Horizons[1].WinCount != 1 || summary.Horizons[1].AverageReturn != 1 {
+		t.Fatalf("unexpected T+2 metrics: %+v", summary.Horizons[1])
+	}
+	if summary.Horizons[3].Day != 4 || summary.Horizons[3].SampleCount != 1 || summary.Horizons[3].WinCount != 1 || summary.Horizons[3].AverageReturn != 2 {
+		t.Fatalf("unexpected T+4 metrics: %+v", summary.Horizons[3])
 	}
 	groups := map[string]model.AStockRecommendationPerformanceGroup{}
 	for _, group := range summary.Groups {

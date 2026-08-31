@@ -2749,15 +2749,15 @@ func TestAStockBacktestPageGetUsesSnapshotOnly(t *testing.T) {
 		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	for _, want := range []string{"消息回测", "上午推荐", "下午推荐", "603986 兆易创新", "600519 贵州茅台", "721.00", "1418.00"} {
+	for _, want := range []string{"消息回测", "上午推荐", "下午推荐", "T+1～T+5 收益跟踪", aStock0831SectorOptimizationStrategyKey, "603986 兆易创新", "600519 贵州茅台", "721.00", "1418.00"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected snapshot-only backtest page to contain %q, got %s", want, body)
 		}
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(requests) != 6 {
-		t.Fatalf("expected morning/afternoon/evening snapshots plus three performance requests, got %d: %v", len(requests), requests)
+	if len(requests) != 7 {
+		t.Fatalf("expected morning/afternoon/evening snapshots plus four performance requests, got %d: %v", len(requests), requests)
 	}
 	periodHits := map[string]int{}
 	performanceHits := 0
@@ -2778,7 +2778,7 @@ func TestAStockBacktestPageGetUsesSnapshotOnly(t *testing.T) {
 	if periodHits["morning"] != 1 || periodHits["afternoon"] != 1 || periodHits["evening"] != 1 {
 		t.Fatalf("expected one morning, afternoon, and evening snapshot request, got %v from %v", periodHits, requests)
 	}
-	if performanceHits != 3 {
+	if performanceHits != 4 {
 		t.Fatalf("expected official and shadow performance requests, got %d from %v", performanceHits, requests)
 	}
 }
@@ -8192,14 +8192,14 @@ func TestAStockRecommendationGenerateSkipShadowDoesNotWriteT1Shadow(t *testing.T
 	for key := range counts {
 		counts[key] = 0
 	}
-	req = httptest.NewRequest(http.MethodPost, "/internal/a-stock/recommendations/generate?date=2026-06-16&period=morning&phase=preopen&ignore_recent=1&ignore_fund_flow=1", nil)
+	req = httptest.NewRequest(http.MethodPost, "/internal/a-stock/recommendations/generate?date=2026-08-31&period=morning&phase=preopen&ignore_recent=1&ignore_fund_flow=1", nil)
 	rr = httptest.NewRecorder()
 	srv.handleAStockRecommendationGenerate(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected default generate 200, got %d body=%s", rr.Code, rr.Body.String())
 	}
-	if counts["shadow"] < 2 {
-		t.Fatalf("expected default generation to write T1 and auction-strength shadow snapshots, counts=%v", counts)
+	if counts["shadow"] < 3 {
+		t.Fatalf("expected default generation to write T1, auction-strength, and 0831 sector-optimization shadow snapshots, counts=%v", counts)
 	}
 }
 
@@ -12106,6 +12106,63 @@ func TestAStockAuctionStrengthShadowScoresIncreasingAuctionAndFiltersWeakCandida
 	fundComponent := mustAStockScoreComponentForTest(t, recommendations[0], "个股资金预选")
 	if fundComponent.Score != 40 {
 		t.Fatalf("expected fund pre-score to be preserved, got %+v", fundComponent)
+	}
+}
+
+func TestAStock0831SectorOptimizationUsesPositiveSectorAndActualAuctionRank(t *testing.T) {
+	settings := aStockAlgorithmSettingsForRecommendationPeriod("morning", defaultAStockAlgorithmSettings())
+	hotspot := aStockHotspot{Name: "人工智能", Score: 120, NegativeNewsCount: 3}
+	stock := aStockMarketCandidate{Code: "300001", Name: "人工智能一号", Rank: 35, AuctionAmount: 80000000}
+	sector := aStockSectorFundFlowTrendAssessment{Total5D: 300000000, Missing: false}
+	fund := aStockFundFlow5DAssessment{Total5D: 50000000, Recent2DTotal: 40000000, Recent2DInflow: true}
+
+	scored, ok := buildAStock0831SectorOptimizationRecommendationWithSettings(hotspot, stock, sector, fund, settings)
+	if !ok {
+		t.Fatal("expected candidate to pass 0831 sector optimization factor")
+	}
+	rec := scored.Recommendation
+	if scored.AuctionRank != 35 || rec.MarketScore != aStock0831SectorOptimizationSectorScore+aStock0831SectorOptimizationRankScore+aStock0831SectorOptimizationRecentFundScore {
+		t.Fatalf("expected actual rank 35 and factor-only score, got %+v", scored)
+	}
+	if aStockRecommendationScoreByLabel(rec, "实际竞价排名") != aStock0831SectorOptimizationRankScore || !strings.Contains(rec.Reason, aStock0831SectorOptimizationStrategyKey) {
+		t.Fatalf("expected exact strategy name and 21-50 auction score, got %+v", rec)
+	}
+
+	hotspot.NegativeNewsCount = aStock0831SectorOptimizationNegativeNewsMax
+	if _, ok := buildAStock0831SectorOptimizationRecommendationWithSettings(hotspot, stock, sector, fund, settings); ok {
+		t.Fatal("expected hotspot with at least four negative news items to be rejected")
+	}
+	hotspot.NegativeNewsCount = 0
+	stock.Rank = aStock0831SectorOptimizationMaxRank + 1
+	if _, ok := buildAStock0831SectorOptimizationRecommendationWithSettings(hotspot, stock, sector, fund, settings); ok {
+		t.Fatal("expected actual auction rank after 50 to be rejected")
+	}
+	stock.Rank = 1
+	sector.Total5D = -1
+	if _, ok := buildAStock0831SectorOptimizationRecommendationWithSettings(hotspot, stock, sector, fund, settings); ok {
+		t.Fatal("expected non-positive sector fund flow to be rejected")
+	}
+}
+
+func TestAStock0831SectorOptimizationFiltersHighOpenAndKeepsDrawdownBonusOnly(t *testing.T) {
+	settings := aStockAlgorithmSettingsForRecommendationPeriod("morning", defaultAStockAlgorithmSettings())
+	base := []aStockRecommendationScoreComponent{
+		newAStockScoreComponentWithFactor(aStockScoreFactorSector, "板块资金为正", "近5日净流入", aStock0831SectorOptimizationSectorScore, aStock0831SectorOptimizationSectorScore),
+		newAStockScoreComponentWithFactor(aStockScoreFactorAuction, "实际竞价排名", "09:29实际排名 30", aStock0831SectorOptimizationRankScore, aStock0831SectorOptimizationRankScore),
+	}
+	recommendations := []aStockRecommendation{
+		{Code: "300001", Name: "高开一号", MarketScore: 70, Change30: "+5.00%", Change60: "-1.00%", ScoreBreakdown: append(append([]aStockRecommendationScoreComponent{}, base...), newAStockScoreComponentWithFactor(aStockScoreFactorAuction, "当日高开", "高开", 30, 30))},
+		{Code: "300002", Name: "回撤二号", MarketScore: 90, Change30: "+5.00%", Change60: "-1.00%", ScoreBreakdown: append(append([]aStockRecommendationScoreComponent{}, base...), newAStockScoreComponentWithFactor(aStockScoreFactorVolatility, "动能趋势", "MACD转强", 50, 50))},
+	}
+	backtests := []aStockBacktestRow{{Stock: "300001 高开一号"}, {Stock: "300002 回撤二号"}}
+
+	filtered, filteredBacktests, count := filterAStock0831SectorOptimizationMarketRiskRecommendations(recommendations, backtests, settings)
+	if count != 1 || len(filtered) != 1 || filtered[0].Code != "300002" || len(filteredBacktests) != 1 {
+		t.Fatalf("expected high-open candidate to be filtered, got count=%d recommendations=%+v backtests=%+v", count, filtered, filteredBacktests)
+	}
+	wantScore := aStock0831SectorOptimizationSectorScore + aStock0831SectorOptimizationRankScore + aStock0831SectorOptimizationDrawdownScore
+	if filtered[0].MarketScore != wantScore || aStockRecommendationScoreByLabel(filtered[0], "动能趋势") != 0 || aStockRecommendationScoreByLabel(filtered[0], "60日非正涨幅") != aStock0831SectorOptimizationDrawdownScore {
+		t.Fatalf("expected factor-only score with 60-day bonus, got %+v", filtered[0])
 	}
 }
 
