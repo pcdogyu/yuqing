@@ -70,9 +70,15 @@ EASTMONEY_A_STOCK_FS = "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23"
 EASTMONEY_FIELDS = "f12,f14,f2,f5,f6"
 EASTMONEY_EVENING_FIELDS = "f12,f14,f2,f3,f6,f8,f10,f22"
 EASTMONEY_SORT_FIELD = "f12"
-EASTMONEY_SNAPSHOT_DEADLINE_SEC = 90
+EASTMONEY_SNAPSHOT_DEADLINE_SEC = 25
 EASTMONEY_SNAPSHOT_REQUEST_TIMEOUT_SEC = 8
 EASTMONEY_SNAPSHOT_REQUEST_ATTEMPTS = 2
+TENCENT_QUOTE_URL = "https://qt.gtimg.cn/q="
+TENCENT_QUOTE_BATCH_SIZE = 50
+TENCENT_SNAPSHOT_DEADLINE_SEC = 75
+TENCENT_QUOTE_REQUEST_TIMEOUT_SEC = 5
+TENCENT_AUCTION_FALLBACK_START = dt.time(9, 15)
+TENCENT_AUCTION_FALLBACK_END = dt.time(9, 31, 30)
 AUCTION_SNAPSHOT_UNIT_NORMALIZE_MIN_ITEMS = 1000
 AUCTION_SNAPSHOT_UNIT_NORMALIZE_AMOUNT_THRESHOLD = 1_000_000_000_000
 AUCTION_SNAPSHOT_UNIT_NORMALIZE_VOLUME_THRESHOLD = 100_000_000
@@ -871,6 +877,115 @@ def eastmoney_rows_to_items(rows: list[dict[str, Any]], trade_date: str, limit: 
         )
         if limit > 0 and len(items) >= limit:
             break
+    return items
+
+
+def tencent_quote_symbol(code: str) -> str:
+    normalized = normalize_sh_sz_code(code)
+    if not normalized:
+        return ""
+    prefix = "sh" if tdx_market_for_code(normalized) == 1 else "sz"
+    return prefix + normalized
+
+
+def parse_tencent_quote_response(payload: bytes, trade_date: str) -> list[dict[str, Any]]:
+    text = payload.decode("gb18030", errors="replace")
+    fetched_at = utc_now_iso()
+    items: list[dict[str, Any]] = []
+    seen_codes: set[str] = set()
+    for quote in re.findall(r'v_[^=]+="([^"]*)";', text):
+        fields = quote.split("~")
+        if len(fields) <= 35:
+            continue
+        code = normalize_sh_sz_code(fields[2])
+        name = text_value(fields[1])
+        if not code or code in seen_codes or not has_resolved_stock_name(code, name):
+            continue
+        seen_codes.add(code)
+        price = finite_float(fields[3])
+        volume = finite_float(fields[6])
+        amount = 0.0
+        summary = fields[35].split("/")
+        if len(summary) >= 3:
+            price = finite_float(summary[0]) or price
+            volume = finite_float(summary[1]) or volume
+            amount = finite_float(summary[2])
+        items.append(
+            {
+                "trade_date": trade_date,
+                "code": code,
+                "name": name,
+                "auction_price": price,
+                "auction_volume": volume,
+                "auction_amount": amount,
+                "source": "tencent_quote",
+                "status": "ok" if amount > 0 or volume > 0 else "no_auction_amount",
+                "fetched_at": fetched_at,
+            }
+        )
+    return items
+
+
+def tencent_auction_fallback_allowed(now: dt.datetime | None = None) -> bool:
+    current = now or dt.datetime.now(dt.timezone(dt.timedelta(hours=8)))
+    current_time = current.timetz().replace(tzinfo=None)
+    return TENCENT_AUCTION_FALLBACK_START <= current_time <= TENCENT_AUCTION_FALLBACK_END
+
+
+def latest_cached_code_names(cache_dir: Path, limit: int = 0) -> list[dict[str, str]]:
+    if not cache_dir.exists():
+        return []
+    for path in sorted(cache_dir.glob("*.json"), reverse=True):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        raw_items = payload.get("code_names") or payload.get("items") or []
+        items: list[dict[str, str]] = []
+        seen_codes: set[str] = set()
+        for row in raw_items:
+            if not isinstance(row, dict):
+                continue
+            code = normalize_sh_sz_code(row.get("code"))
+            name = text_value(row.get("name"))
+            if not code or code in seen_codes or not has_resolved_stock_name(code, name):
+                continue
+            seen_codes.add(code)
+            items.append({"code": code, "name": name})
+            if limit > 0 and len(items) >= limit:
+                break
+        if items:
+            return items
+    return []
+
+
+def fetch_tencent_snapshot(code_names: list[dict[str, str]], trade_date: str, limit: int) -> list[dict[str, Any]]:
+    universe = code_names[:limit] if limit > 0 else code_names
+    symbols = [tencent_quote_symbol(item.get("code", "")) for item in universe]
+    symbols = [symbol for symbol in symbols if symbol]
+    if not symbols:
+        raise RuntimeError("Tencent auction fallback has no cached stock universe")
+    deadline = time.monotonic() + TENCENT_SNAPSHOT_DEADLINE_SEC
+    items: list[dict[str, Any]] = []
+    errors: list[str] = []
+    headers = {"User-Agent": "Mozilla/5.0", "Referer": "https://gu.qq.com/"}
+    for offset in range(0, len(symbols), TENCENT_QUOTE_BATCH_SIZE):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError(f"Tencent auction fallback deadline exceeded after {len(items)} rows")
+        batch = symbols[offset : offset + TENCENT_QUOTE_BATCH_SIZE]
+        request = urllib.request.Request(TENCENT_QUOTE_URL + ",".join(batch), headers=headers)
+        try:
+            timeout = max(0.5, min(float(TENCENT_QUOTE_REQUEST_TIMEOUT_SEC), remaining))
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                batch_items = parse_tencent_quote_response(response.read(), trade_date)
+            items.extend(batch_items)
+        except Exception as exc:  # pragma: no cover - external service variability
+            errors.append(f"batch {offset // TENCENT_QUOTE_BATCH_SIZE + 1}: {exc}")
+    minimum = max(1, math.ceil(len(symbols) * 0.8))
+    if len(items) < minimum:
+        detail = "; ".join(errors[:3])
+        raise RuntimeError(f"Tencent auction fallback incomplete: expected at least {minimum} rows, got {len(items)}; {detail}")
     return items
 
 
@@ -2793,6 +2908,15 @@ class AuctionService:
             except Exception as exc:
                 items = []
                 warning = f"direct Eastmoney full-market snapshot failed within deadline: {exc}"
+                if tencent_auction_fallback_allowed():
+                    code_names = latest_cached_code_names(self.cache_dir, limit)
+                    if not code_names:
+                        code_names, code_name_warning = load_stock_code_names(ak, limit)
+                    try:
+                        items = fetch_tencent_snapshot(code_names, trade_date, limit)
+                        warning += "; used Tencent quote fallback during the opening auction window"
+                    except Exception as tencent_exc:
+                        warning += f"; Tencent auction fallback failed: {tencent_exc}"
             code_names = [
                 {"code": text_value(item.get("code")).zfill(6), "name": text_value(item.get("name"))}
                 for item in items
@@ -3433,6 +3557,22 @@ def run_self_test() -> None:
     assert tdx_market_for_code("000001") == 0
     assert tdx_market_for_code("600000") == 1
     assert parse_tdx_quote_codes("000001,sh600000,920118") == ["000001", "600000"]
+    assert tencent_quote_symbol("000001") == "sz000001"
+    assert tencent_quote_symbol("600000") == "sh600000"
+    assert tencent_auction_fallback_allowed(dt.datetime(2026, 9, 28, 9, 25))
+    assert not tencent_auction_fallback_allowed(dt.datetime(2026, 9, 28, 11, 30))
+    tencent_items = parse_tencent_quote_response(
+        'v_sz000001="51~平安银行~000001~11.34~11.30~11.28~467292~~~~~~~~~~~~~~~~~~~~~~~~~~~~~11.34/467292/530319055";'.encode(
+            "gb18030"
+        ),
+        "2026-09-28",
+    )
+    assert len(tencent_items) == 1
+    assert tencent_items[0]["code"] == "000001"
+    assert tencent_items[0]["auction_price"] == 11.34
+    assert tencent_items[0]["auction_volume"] == 467292
+    assert tencent_items[0]["auction_amount"] == 530319055
+    assert tencent_items[0]["source"] == "tencent_quote"
     tdx_item = tdx_quote_item_from_row({"code": "000977", "price": 93.67, "last_close": 86.0, "open": 92.0})
     assert tdx_item is not None
     assert tdx_item["code"] == "000977"
