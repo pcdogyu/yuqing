@@ -741,6 +741,23 @@ func TestAStockAuctionAmountsKeepCaptureSlots(t *testing.T) {
 	if len(defaultList.TrendSeries["0920"]) != 1 || len(defaultList.TrendSeries["0925"]) != 1 || len(defaultList.TrendSeries["0929"]) != 1 {
 		t.Fatalf("expected three current trend series, got %+v", defaultList.TrendSeries)
 	}
+	marketTopCode := func(slot string) string {
+		t.Helper()
+		trend := defaultList.TrendSeries[slot]
+		if len(trend) != 1 || len(trend[0].MarketTop) != 1 || len(trend[0].MarketTop[0].Items) != 1 {
+			t.Fatalf("expected one market-top item for slot %s, got %+v", slot, trend)
+		}
+		return trend[0].MarketTop[0].Items[0].Code
+	}
+	if got := marketTopCode("0920"); got != "002230" {
+		t.Fatalf("expected 0920 market top 002230, got %s", got)
+	}
+	if got := marketTopCode("0925"); got != "600000" {
+		t.Fatalf("expected 0925 market top 600000, got %s", got)
+	}
+	if got := marketTopCode("0929"); got != "002230" {
+		t.Fatalf("expected 0929 market top 002230, got %s", got)
+	}
 }
 
 func TestAStockAuctionAmountsDefaultFallsBackToLegacy0930(t *testing.T) {

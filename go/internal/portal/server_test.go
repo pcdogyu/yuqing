@@ -595,8 +595,8 @@ func TestAStockAuctionPageLoadsSummaryAndRows(t *testing.T) {
 		if r.URL.Query().Get("date") != "2026-06-16" || r.URL.Query().Get("keyword") != "科" {
 			t.Fatalf("unexpected auction query: %s", r.URL.RawQuery)
 		}
-		if r.URL.Query().Get("page_size") != "6000" {
-			t.Fatalf("expected auction page to request full-market page_size=6000, got %s", r.URL.RawQuery)
+		if r.URL.Query().Get("page_size") != "200" {
+			t.Fatalf("expected auction page to request page_size=200, got %s", r.URL.RawQuery)
 		}
 		if r.URL.Query().Get("trend_days") != "14" {
 			t.Fatalf("expected auction page to request default 14-day trend, got %s", r.URL.RawQuery)
@@ -614,7 +614,7 @@ func TestAStockAuctionPageLoadsSummaryAndRows(t *testing.T) {
 				SummaryCount: 2,
 				Total:        1,
 				Page:         1,
-				PageSize:     6000,
+				PageSize:     200,
 				TotalAmount:  151000000,
 				MaxItem: &model.AStockAuctionAmount{
 					TradeDate:     "2026-06-16",

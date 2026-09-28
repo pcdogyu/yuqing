@@ -13,6 +13,8 @@ import (
 	"github.com/pcdogyu/yuqing/go/internal/model"
 )
 
+const aStockAuctionPageSize = 200
+
 func (s *Server) handleAStockAuctionPage(w http.ResponseWriter, r *http.Request, user any) {
 	if r.Method == http.MethodPost {
 		s.handleAStockAuctionAction(w, r)
@@ -112,7 +114,7 @@ func (s *Server) handleAStockAuctionAction(w http.ResponseWriter, r *http.Reques
 func (s *Server) loadAStockAuctionContext(date string, keyword string, captureSlot string, page int, trendDays int) (model.AStockAuctionListResult, error) {
 	query := url.Values{}
 	query.Set("page", fmt.Sprintf("%d", page))
-	query.Set("page_size", "6000")
+	query.Set("page_size", fmt.Sprintf("%d", aStockAuctionPageSize))
 	query.Set("trend_days", fmt.Sprintf("%d", trendDays))
 	if date != "" {
 		query.Set("date", date)

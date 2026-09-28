@@ -408,22 +408,12 @@ func (s *Store) latestAStockAuctionDates(ctx context.Context, limit int) ([]stri
 }
 
 func (s *Store) listAStockAuctionTrendSeries(ctx context.Context, limit int) (map[string][]model.AStockAuctionTrend, error) {
-	out := map[string][]model.AStockAuctionTrend{}
-	for _, slot := range []string{aStockAuctionCaptureSlot0920, aStockAuctionCaptureSlot0925, aStockAuctionCaptureSlot0929, aStockAuctionCaptureSlot0930} {
-		trend, err := s.listAStockAuctionTrend(ctx, limit, slot)
-		if err != nil {
-			return nil, err
-		}
-		out[slot] = trend
-	}
-	return out, nil
-}
-
-func (s *Store) listAStockAuctionTrend(ctx context.Context, limit int, captureSlot string) ([]model.AStockAuctionTrend, error) {
 	limit = max(limit, 1)
-	captureSlot = normalizeAStockAuctionCaptureSlot(captureSlot)
-	if captureSlot == "" {
-		captureSlot = aStockAuctionCaptureSlot0929
+	out := map[string][]model.AStockAuctionTrend{
+		aStockAuctionCaptureSlot0920: {},
+		aStockAuctionCaptureSlot0925: {},
+		aStockAuctionCaptureSlot0929: {},
+		aStockAuctionCaptureSlot0930: {},
 	}
 	rows, err := s.db.QueryContext(ctx, `
 WITH recent_dates AS (
@@ -433,65 +423,55 @@ WITH recent_dates AS (
 	ORDER BY trade_date DESC
 	LIMIT ?
 ),
-daily AS (
-	SELECT trade_date, COUNT(*) AS stock_count, COALESCE(SUM(auction_volume), 0) AS total_volume, COALESCE(SUM(auction_amount), 0) AS total_amount
+filtered AS (
+	SELECT trade_date, capture_slot, code, name, auction_volume, auction_amount
 	FROM a_stock_auction_amounts
 	WHERE trade_date IN (SELECT trade_date FROM recent_dates)
-	  AND capture_slot = ?
+	  AND capture_slot IN ('0920', '0925', '0929', '0930')
 	  AND `+aStockAuctionSHSZFilterSQL+`
-	GROUP BY trade_date
+),
+daily AS (
+	SELECT trade_date, capture_slot, COUNT(*) AS stock_count, COALESCE(SUM(auction_volume), 0) AS total_volume, COALESCE(SUM(auction_amount), 0) AS total_amount
+	FROM filtered
+	GROUP BY trade_date, capture_slot
 ),
 max_rows AS (
-	SELECT a.trade_date, a.code, a.name
-	FROM a_stock_auction_amounts a
-	WHERE a.trade_date IN (SELECT trade_date FROM recent_dates)
-	  AND a.capture_slot = ?
-	  AND `+aStockAuctionSHSZFilterSQL+`
-	  AND NOT EXISTS (
-		SELECT 1
-		FROM a_stock_auction_amounts b
-		WHERE b.trade_date = a.trade_date
-		  AND b.capture_slot = a.capture_slot
-		  AND `+aStockAuctionSHSZFilterSQL+`
-		  AND (b.auction_amount > a.auction_amount OR (b.auction_amount = a.auction_amount AND b.code < a.code))
-	  )
+	SELECT trade_date, capture_slot, code, name,
+		ROW_NUMBER() OVER (PARTITION BY trade_date, capture_slot ORDER BY auction_amount DESC, code ASC) AS rn
+	FROM filtered
 )
-SELECT daily.trade_date, daily.stock_count, daily.total_volume, daily.total_amount, COALESCE(max_rows.code, ''), COALESCE(max_rows.name, '')
+SELECT daily.trade_date, daily.capture_slot, daily.stock_count, daily.total_volume, daily.total_amount, COALESCE(max_rows.code, ''), COALESCE(max_rows.name, '')
 FROM daily
-LEFT JOIN max_rows ON max_rows.trade_date = daily.trade_date
-ORDER BY daily.trade_date ASC`, limit, captureSlot, captureSlot)
+LEFT JOIN max_rows ON max_rows.trade_date = daily.trade_date AND max_rows.capture_slot = daily.capture_slot AND max_rows.rn = 1
+ORDER BY daily.trade_date ASC, daily.capture_slot ASC`, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := make([]model.AStockAuctionTrend, 0, limit)
 	for rows.Next() {
 		var point model.AStockAuctionTrend
-		if err := rows.Scan(&point.Date, &point.StockCount, &point.TotalVolume, &point.TotalAmount, &point.MaxStockCode, &point.MaxStockName); err != nil {
+		if err := rows.Scan(&point.Date, &point.CaptureSlot, &point.StockCount, &point.TotalVolume, &point.TotalAmount, &point.MaxStockCode, &point.MaxStockName); err != nil {
 			return nil, err
 		}
-		point.CaptureSlot = captureSlot
-		out = append(out, point)
+		out[point.CaptureSlot] = append(out[point.CaptureSlot], point)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	marketTop, err := s.listAStockAuctionTrendMarketTop(ctx, limit, captureSlot)
+	marketTop, err := s.listAStockAuctionTrendMarketTopSeries(ctx, limit)
 	if err != nil {
 		return nil, err
 	}
-	for i := range out {
-		out[i].MarketTop = marketTop[out[i].Date]
+	for slot := range out {
+		for i := range out[slot] {
+			out[slot][i].MarketTop = marketTop[slot][out[slot][i].Date]
+		}
 	}
 	return out, nil
 }
 
-func (s *Store) listAStockAuctionTrendMarketTop(ctx context.Context, limit int, captureSlot string) (map[string][]model.AStockAuctionMarketTop, error) {
+func (s *Store) listAStockAuctionTrendMarketTopSeries(ctx context.Context, limit int) (map[string]map[string][]model.AStockAuctionMarketTop, error) {
 	limit = max(limit, 1)
-	captureSlot = normalizeAStockAuctionCaptureSlot(captureSlot)
-	if captureSlot == "" {
-		captureSlot = aStockAuctionCaptureSlot0929
-	}
 	rows, err := s.db.QueryContext(ctx, `
 WITH recent_dates AS (
 	SELECT DISTINCT trade_date
@@ -511,7 +491,7 @@ classified AS (
 		capture_slot, code, name, auction_price, auction_volume, auction_amount, source, status, fetched_at, created_at, updated_at
 	FROM a_stock_auction_amounts
 	WHERE trade_date IN (SELECT trade_date FROM recent_dates)
-	  AND capture_slot = ?
+	  AND capture_slot IN ('0920', '0925', '0929', '0930')
 	  AND `+aStockAuctionSHSZFilterSQL+`
 	  AND auction_amount > 0
 ),
@@ -534,7 +514,7 @@ ORDER BY trade_date ASC,
 		WHEN '深市' THEN 2
 		ELSE 3
 	END,
-	rn ASC`, limit, captureSlot)
+	rn ASC`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -564,17 +544,18 @@ ORDER BY trade_date ASC,
 		item.FetchedAt = mustParseRFC3339(fetchedAt)
 		item.CreatedAt = mustParseRFC3339(createdAt)
 		item.UpdatedAt = mustParseRFC3339(updatedAt)
-		if byDateMarket[item.TradeDate] == nil {
-			byDateMarket[item.TradeDate] = map[string][]model.AStockAuctionAmount{}
+		slotDate := item.CaptureSlot + "\x00" + item.TradeDate
+		if byDateMarket[slotDate] == nil {
+			byDateMarket[slotDate] = map[string][]model.AStockAuctionAmount{}
 		}
-		byDateMarket[item.TradeDate][market] = append(byDateMarket[item.TradeDate][market], item)
+		byDateMarket[slotDate][market] = append(byDateMarket[slotDate][market], item)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	out := make(map[string][]model.AStockAuctionMarketTop, len(byDateMarket))
+	out := make(map[string]map[string][]model.AStockAuctionMarketTop)
 	marketOrder := []string{"沪市", "深市"}
-	for date, markets := range byDateMarket {
+	for slotDate, markets := range byDateMarket {
 		groups := make([]model.AStockAuctionMarketTop, 0, len(markets))
 		for _, market := range marketOrder {
 			items := markets[market]
@@ -583,7 +564,14 @@ ORDER BY trade_date ASC,
 			}
 			groups = append(groups, model.AStockAuctionMarketTop{Market: market, Items: items})
 		}
-		out[date] = groups
+		parts := strings.SplitN(slotDate, "\x00", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		if out[parts[0]] == nil {
+			out[parts[0]] = map[string][]model.AStockAuctionMarketTop{}
+		}
+		out[parts[0]][parts[1]] = groups
 	}
 	return out, nil
 }
